@@ -80,7 +80,7 @@ pub const Config = struct {
                     const value_type = property_value.jsType();
 
                     if (!value_type.isStringLike()) {
-                        return globalThis.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
+                        return globalThis.throwInvalidArguments("define \"{f}\" must be a JSON string", .{prop});
                     }
 
                     names[define_iter.i] = prop.toOwnedSlice(allocator) catch unreachable;

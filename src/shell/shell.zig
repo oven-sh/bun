@@ -49,7 +49,7 @@ pub const ShellErr = union(enum) {
 
     pub fn format(this: *const ShellErr, writer: *std.Io.Writer) !void {
         return switch (this.*) {
-            .sys => |e| writer.print("bun: {s}: {}", .{ e.message, e.path }),
+            .sys => |e| writer.print("bun: {f}: {f}", .{ e.message, e.path }),
             .custom => |msg| writer.print("bun: {s}", .{msg}),
             .invalid_arguments => |args| writer.print("bun: invalid arguments: {s}", .{args.val}),
             .todo => |msg| writer.print("bun: TODO: {s}", .{msg}),

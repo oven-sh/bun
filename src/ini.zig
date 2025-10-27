@@ -1220,7 +1220,7 @@ pub fn loadNpmrc(
                             source,
                             iter.config.properties.at(iter.prop_idx - 1).key.?.loc,
                             allocator,
-                            "The following .npmrc registry option was not applied:\n\n  <b>{s}<r>\n\nBecause we currently don't support the <b>{s}<r> option.",
+                            "The following .npmrc registry option was not applied:\n\n  <b>{f}<r>\n\nBecause we currently don't support the <b>{s}<r> option.",
                             .{
                                 conf_item,
                                 @tagName(conf_item.optname),

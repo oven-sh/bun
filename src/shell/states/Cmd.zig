@@ -521,7 +521,7 @@ fn initSubproc(this: *Cmd) Yield {
         .result => this.exec.subproc.child,
         .err => |*e| {
             this.exec = .none;
-            return this.writeFailingError("{}\n", .{e});
+            return this.writeFailingError("{f}\n", .{e});
         },
     };
     subproc.ref();

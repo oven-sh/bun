@@ -740,9 +740,9 @@ pub const Installer = struct {
                                     if (PackageManager.verbose_install) {
                                         Output.prettyErrorln(
                                             \\<red><b>error<r><d>:<r>Failed to open cache directory for copyfile
-                                            \\{}
+                                            \\{f}
                                             \\<d>From: {s}<r>
-                                            \\<d>  To: {}<r>
+                                            \\<d>  To: {f}<r>
                                             \\<r>
                                         ,
                                             .{

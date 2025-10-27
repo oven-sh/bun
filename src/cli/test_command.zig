@@ -1093,7 +1093,7 @@ pub const CommandLineReporter = struct {
             switch (file) {
                 .err => |err| {
                     Output.err(.lcovCoverageError, "Failed to create lcov file", .{});
-                    Output.printError("\n{s}", .{err});
+                    Output.printError("\n{f}", .{err});
                     Global.exit(1);
                 },
                 .result => |f| {

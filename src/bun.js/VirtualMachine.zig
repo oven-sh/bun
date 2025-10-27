@@ -3375,7 +3375,7 @@ pub noinline fn printGithubAnnotation(exception: *ZigException) void {
     if (name.isEmpty() or name.eqlComptime("Error")) {
         writer.print("error", .{}) catch {};
     } else {
-        writer.print("{s}", .{name.githubAction()}) catch {};
+        writer.print("{f}", .{name.githubAction()}) catch {};
     }
 
     if (!message.isEmpty()) {
@@ -3388,11 +3388,11 @@ pub noinline fn printGithubAnnotation(exception: *ZigException) void {
             cursor = i + 1;
             if (msg[i] == '\n') {
                 const first_line = bun.String.borrowUTF8(msg[0..i]);
-                writer.print(": {s}::", .{first_line.githubAction()}) catch {};
+                writer.print(": {f}::", .{first_line.githubAction()}) catch {};
                 break;
             }
         } else {
-            writer.print(": {s}::", .{message.githubAction()}) catch {};
+            writer.print(": {f}::", .{message.githubAction()}) catch {};
         }
 
         while (strings.indexOfNewlineOrNonASCIIOrANSI(msg, cursor)) |i| {
@@ -3404,7 +3404,7 @@ pub noinline fn printGithubAnnotation(exception: *ZigException) void {
 
         if (cursor > 0) {
             const body = ZigString.initUTF8(msg[cursor..]);
-            writer.print("{s}", .{body.githubAction()}) catch {};
+            writer.print("{f}", .{body.githubAction()}) catch {};
         }
     } else {
         writer.print("::", .{}) catch {};
@@ -3432,7 +3432,7 @@ pub noinline fn printGithubAnnotation(exception: *ZigException) void {
             // %0A = escaped newline
             if (has_name) {
                 writer.print(
-                    "%0A      at {any} ({any})",
+                    "%0A      at {f} ({f})",
                     .{
                         frame.nameFormatter(false),
                         frame.sourceURLFormatter(
@@ -3445,7 +3445,7 @@ pub noinline fn printGithubAnnotation(exception: *ZigException) void {
                 ) catch {};
             } else {
                 writer.print(
-                    "%0A      at {any}",
+                    "%0A      at {f}",
                     .{
                         frame.sourceURLFormatter(
                             file,

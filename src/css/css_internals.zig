@@ -327,7 +327,7 @@ pub fn attrTest(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
             if (log.hasAny()) {
                 return log.toJS(globalThis, bun.default_allocator, "parsing failed:");
             }
-            return globalThis.throw("parsing failed: {}", .{err.kind});
+            return globalThis.throw("parsing failed: {f}", .{err.kind});
         },
     }
 }

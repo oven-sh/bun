@@ -629,7 +629,7 @@ pub const OutdatedCommand = struct {
                     for (0..column_left_pad) |_| Output.pretty(" ", .{});
                     if (update.unwrap()) |update_version| {
                         bun.handleOom(version_writer.print("{}", .{update_version.version.fmt(manifest.string_buf)}));
-                        Output.pretty("{s}", .{update_version.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
+                        Output.pretty("{f}", .{update_version.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
                     } else {
                         bun.handleOom(version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}));
                         Output.pretty("<d>{s}<r>", .{version_buf.items});
@@ -649,7 +649,7 @@ pub const OutdatedCommand = struct {
                     for (0..column_left_pad) |_| Output.pretty(" ", .{});
                     if (latest.unwrap()) |latest_version| {
                         bun.handleOom(version_writer.print("{}", .{latest_version.version.fmt(manifest.string_buf)}));
-                        Output.pretty("{s}", .{latest_version.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
+                        Output.pretty("{f}", .{latest_version.version.diffFmt(resolution.value.npm.version, manifest.string_buf, string_buf)});
                     } else {
                         bun.handleOom(version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}));
                         Output.pretty("<d>{s}<r>", .{version_buf.items});

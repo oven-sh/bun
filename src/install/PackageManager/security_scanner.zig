@@ -550,8 +550,8 @@ const JSONBuilder = struct {
                 try writer.print(
                     \\  {{
                     \\    "name": {f},
-                    \\    "version": "{s}",
-                    \\    "requestedRange": "{s}",
+                    \\    "version": "{f}",
+                    \\    "requestedRange": "{f}",
                     \\    "tarball": {f}
                     \\  }}
                 , .{
@@ -565,7 +565,7 @@ const JSONBuilder = struct {
                 try writer.print(
                     \\  {{
                     \\    "name": {f},
-                    \\    "version": "{s}",
+                    \\    "version": "{f}",
                     \\    "requestedRange": {f},
                     \\    "tarball": {f}
                     \\  }}

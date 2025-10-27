@@ -108,7 +108,7 @@ fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: Dependency
             try w.write(dep.name.slice(sb));
 
             try w.objectField("version");
-            try w.print("\"catalog:{s}\"", .{info.fmtJson(sb, .{ .quote = false })});
+            try w.print("\"catalog:{f}\"", .{info.fmtJson(sb, .{ .quote = false })});
         },
     }
 
@@ -273,10 +273,10 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
                 try w.write(@tagName(res.tag));
 
                 try w.objectField("value");
-                try w.print("\"{s}\"", .{res.fmt(sb, .posix)});
+                try w.print("\"{f}\"", .{res.fmt(sb, .posix)});
 
                 try w.objectField("resolved");
-                try w.print("\"{}\"", .{res.fmtURL(sb)});
+                try w.print("\"{f}\"", .{res.fmtURL(sb)});
             }
 
             try w.objectField("dependencies");

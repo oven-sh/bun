@@ -463,7 +463,7 @@ pub const PublishCommand = struct {
         const encoded_name = bun.fmt.dependencyUrl(package_name);
 
         // Try to get package metadata to check if version exists
-        url_buf.writer().print("{s}/{s}", .{ registry_url, encoded_name }) catch return false;
+        url_buf.writer().print("{s}/{f}", .{ registry_url, encoded_name }) catch return false;
 
         const package_url = URL.parse(url_buf.items);
 

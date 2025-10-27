@@ -350,7 +350,7 @@ pub fn runTasks(
                                 null,
                                 logger.Loc.Empty,
                                 manager.allocator,
-                                "<r><yellow>warn:<r> {s} downloading tarball <b>{s}@{s}<r>. Retrying {d}/{d}...",
+                                "<r><yellow>warn:<r> {s} downloading tarball <b>{s}@{f}<r>. Retrying {d}/{d}...",
                                 .{
                                     bun.span(@errorName(err)),
                                     extract.name.slice(),
@@ -381,7 +381,7 @@ pub fn runTasks(
                         continue;
                     }
 
-                    const fmt = "{s} downloading tarball <b>{s}@{s}<r>";
+                    const fmt = "{s} downloading tarball <b>{s}@{f}<r>";
                     if (manager.isNetworkTaskRequired(task.task_id)) {
                         manager.log.addErrorFmt(
                             null,

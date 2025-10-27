@@ -1965,7 +1965,7 @@ pub const Formatter = struct {
                         this.addForNewLine(key.len + 1);
 
                         writer.print(
-                            comptime Output.prettyFmt("<r>{}<d>:<r> ", enable_ansi_colors),
+                            comptime Output.prettyFmt("<r>{f}<d>:<r> ", enable_ansi_colors),
                             .{key},
                         );
                     } else if (key.is16Bit() and (!this.quote_keys and JSLexer.isLatin1Identifier(@TypeOf(key.utf16SliceAligned()), key.utf16SliceAligned()))) {
@@ -2286,7 +2286,7 @@ pub const Formatter = struct {
                 });
                 // Strings are printed directly, otherwise we recurse. It is possible to end up in an infinite loop.
                 if (result.isString()) {
-                    writer.print("{}", .{result.fmtString(this.globalThis)});
+                    writer.print("{f}", .{result.fmtString(this.globalThis)});
                 } else {
                     try this.format(try ConsoleObject.Formatter.Tag.get(result, this.globalThis), Writer, writer_, result, this.globalThis, enable_ansi_colors);
                 }

@@ -203,7 +203,7 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
                 }
                 const err = globalThis.toTypeError(
                     .PARSE_ARGS_INVALID_OPTION_VALUE,
-                    "Option '{s}{s}{s}--{s} <value>' argument missing",
+                    "Option '{s}{f}{s}--{f} <value>' argument missing",
                     .{
                         if (!option.short_name.isEmpty()) "-" else "",
                         option.short_name,
@@ -216,7 +216,7 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
             .boolean => if (token.value != .jsvalue or !token.value.jsvalue.isUndefined()) {
                 const err = globalThis.toTypeError(
                     .PARSE_ARGS_INVALID_OPTION_VALUE,
-                    "Option '{s}{s}{s}--{s}' does not take an argument",
+                    "Option '{s}{f}{s}--{f}' does not take an argument",
                     .{
                         if (!option.short_name.isEmpty()) "-" else "",
                         option.short_name,
@@ -295,17 +295,17 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
         };
 
         const obj: JSValue = iter.value;
-        try validators.validateObject(globalThis, obj, "options.{s}", .{option.long_name}, .{});
+        try validators.validateObject(globalThis, obj, "options.{f}", .{option.long_name}, .{});
 
         // type field is required
         const option_type: JSValue = try obj.getOwn(globalThis, "type") orelse .js_undefined;
-        option.type = try validators.validateStringEnum(OptionValueType, globalThis, option_type, "options.{s}.type", .{option.long_name});
+        option.type = try validators.validateStringEnum(OptionValueType, globalThis, option_type, "options.{f}.type", .{option.long_name});
 
         if (try obj.getOwn(globalThis, "short")) |short_option| {
-            try validators.validateString(globalThis, short_option, "options.{s}.short", .{option.long_name});
+            try validators.validateString(globalThis, short_option, "options.{f}.short", .{option.long_name});
             var short_option_str = try short_option.toBunString(globalThis);
             if (short_option_str.length() != 1) {
-                const err = globalThis.toTypeError(.INVALID_ARG_VALUE, "options.{s}.short must be a single character", .{option.long_name});
+                const err = globalThis.toTypeError(.INVALID_ARG_VALUE, "options.{f}.short must be a single character", .{option.long_name});
                 return globalThis.throwValue(err);
             }
             option.short_name = short_option_str;
@@ -313,7 +313,7 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
 
         if (try obj.getOwn(globalThis, "multiple")) |multiple_value| {
             if (!multiple_value.isUndefined()) {
-                option.multiple = try validators.validateBoolean(globalThis, multiple_value, "options.{s}.multiple", .{option.long_name});
+                option.multiple = try validators.validateBoolean(globalThis, multiple_value, "options.{f}.multiple", .{option.long_name});
             }
         }
 
@@ -322,16 +322,16 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
                 switch (option.type) {
                     .string => {
                         if (option.multiple) {
-                            _ = try validators.validateStringArray(globalThis, default_value, "options.{s}.default", .{option.long_name});
+                            _ = try validators.validateStringArray(globalThis, default_value, "options.{f}.default", .{option.long_name});
                         } else {
-                            try validators.validateString(globalThis, default_value, "options.{s}.default", .{option.long_name});
+                            try validators.validateString(globalThis, default_value, "options.{f}.default", .{option.long_name});
                         }
                     },
                     .boolean => {
                         if (option.multiple) {
-                            _ = try validators.validateBooleanArray(globalThis, default_value, "options.{s}.default", .{option.long_name});
+                            _ = try validators.validateBooleanArray(globalThis, default_value, "options.{f}.default", .{option.long_name});
                         } else {
-                            _ = try validators.validateBoolean(globalThis, default_value, "options.{s}.default", .{option.long_name});
+                            _ = try validators.validateBoolean(globalThis, default_value, "options.{f}.default", .{option.long_name});
                         }
                     },
                 }
@@ -339,7 +339,7 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
             }
         }
 
-        log("[OptionDef] \"{s}\" (type={s}, short={s}, multiple={d}, default={?s})", .{
+        log("[OptionDef] \"{f}\" (type={s}, short={f}, multiple={d}, default={?s})", .{
             String.init(long_option),
             @tagName(option.type),
             if (!option.short_name.isEmpty()) option.short_name else String.static("none"),
@@ -578,7 +578,7 @@ const ParseArgsState = struct {
                 if (!this.allow_positionals) {
                     const err = globalThis.toTypeError(
                         .PARSE_ARGS_UNEXPECTED_POSITIONAL,
-                        "Unexpected argument '{s}'. This command does not take positional arguments",
+                        "Unexpected argument '{f}'. This command does not take positional arguments",
                         .{token.value.asBunString(globalThis)},
                     );
                     return globalThis.throwValue(err);

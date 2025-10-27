@@ -3705,7 +3705,7 @@ pub const ParserOptions = struct {
                 warning.location.line,
                 warning.location.column,
                 this.allocator,
-                "{}",
+                "{f}",
                 .{warning.kind},
             ) catch unreachable;
         }
@@ -4367,7 +4367,7 @@ pub const Parser = struct {
             .result => |t| .{ .err = start.sourceLocation().newUnexpectedTokenError(t.*) },
             .err => |e| brk: {
                 if (e.kind == .basic and e.kind.basic == .end_of_input) break :brk .success;
-                bun.unreachablePanic("Unexpected error encountered: {}", .{e.kind});
+                bun.unreachablePanic("Unexpected error encountered: {f}", .{e.kind});
             },
         };
         this.reset(&start);

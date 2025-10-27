@@ -71,7 +71,7 @@ pub fn Err(comptime T: type) type {
                 .kind = .err,
                 .data = .{
                     .location = if (this.loc) |*loc| try loc.toLocation(source, allocator) else null,
-                    .text = try std.fmt.allocPrint(allocator, "{}", .{this.kind}),
+                    .text = try std.fmt.allocPrint(allocator, "{f}", .{this.kind}),
                 },
             });
 
@@ -263,7 +263,7 @@ pub const ParserError = union(enum) {
             .invalid_page_selector => writer.writeAll("Invalid @page selector"),
             .invalid_value => writer.writeAll("Invalid value"),
             .qualified_rule_invalid => writer.writeAll("Invalid qualified rule"),
-            .selector_error => |err| writer.print("Invalid selector. {s}", .{err}),
+            .selector_error => |err| writer.print("Invalid selector. {f}", .{err}),
             .unexpected_import_rule => writer.writeAll("@import rules must come before any other rules except @charset and @layer"),
             .unexpected_namespace_rule => writer.writeAll("@namespace rules must come before any other rules except @charset, @import, and @layer"),
             .unexpected_token => |token| writer.print("Unexpected token: {}", .{token}),

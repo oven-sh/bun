@@ -537,7 +537,7 @@ pub const BuildCommand = struct {
                 }
 
                 try writer.splatByteAll(' ', padding_count);
-                try writer.print("{s}  ", .{bun.fmt.size(f.size, .{})});
+                try writer.print("{f}  ", .{bun.fmt.size(f.size, .{})});
                 try writer.splatByteAll(' ', size_padding - std.fmt.count("{f}", .{bun.fmt.size(f.size, .{})}));
 
                 if (Output.enable_ansi_colors_stdout) {

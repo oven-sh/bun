@@ -505,7 +505,7 @@ pub fn crashHandler(
             // call abort()
             var stderr_w = std.fs.File.stderr().writerStreaming(&.{});
             const stderr = &stderr_w.interface;
-            stderr.print("\npanic: {s}\n", .{reason}) catch std.posix.abort();
+            stderr.print("\npanic: {f}\n", .{reason}) catch std.posix.abort();
             stderr.print("panicked during a panic. Aborting.\n", .{}) catch std.posix.abort();
         },
         3 => {

@@ -638,20 +638,20 @@ fn updatePackageJSONAndInstallAndCLI(
                             switch (instructions.shell) {
                                 .unknown => {
                                     // Unfortunately really difficult to do this in one line on PowerShell.
-                                    try writer.print("{}", .{path});
+                                    try writer.print("{f}", .{path});
                                 },
                                 .bash => {
-                                    try writer.print("export PATH=\"{}:$PATH\"", .{path});
+                                    try writer.print("export PATH=\"{f}:$PATH\"", .{path});
                                 },
                                 .zsh => {
-                                    try writer.print("export PATH=\"{}:$PATH\"", .{path});
+                                    try writer.print("export PATH=\"{f}:$PATH\"", .{path});
                                 },
                                 .fish => {
                                     // Regular quotes will do here.
                                     try writer.print("fish_add_path {f}", .{bun.fmt.quote(instructions.folder)});
                                 },
                                 .pwsh => {
-                                    try writer.print("$env:PATH += \";{}\"", .{path});
+                                    try writer.print("$env:PATH += \";{f}\"", .{path});
                                 },
                             }
                         }

@@ -143,7 +143,7 @@ pub fn childDone(this: *Subshell, child_ptr: ChildPtr, exit_code: ExitCode) Yiel
             const err = this.state.expanding_redirect.expansion.state.err;
             defer err.deinit(bun.default_allocator);
             this.state.expanding_redirect.expansion.deinit();
-            return this.writeFailingError("{}\n", .{err});
+            return this.writeFailingError("{f}\n", .{err});
         }
         child_ptr.deinit();
         return .{ .subshell = this };

@@ -1108,7 +1108,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 inner: {
                     var fixed_buffer = std.heap.FixedBufferAllocator.init(&close_reason_buf);
                     const allocator = fixed_buffer.allocator();
-                    const wrote = std.fmt.allocPrint(allocator, "{}", .{str.*}) catch break :inner;
+                    const wrote = std.fmt.allocPrint(allocator, "{f}", .{str.*}) catch break :inner;
                     this.sendCloseWithBody(tcp, code, wrote.ptr[0..125], wrote.len);
                     return;
                 }

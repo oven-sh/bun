@@ -54,9 +54,9 @@ pub const List = struct {
             const this = formatter.list;
 
             if (this.next) |ptr| {
-                try writer.print("{} || {}", .{ this.head.fmt(formatter.buffer), ptr.fmt(formatter.buffer) });
+                try writer.print("{f} || {f}", .{ this.head.fmt(formatter.buffer), ptr.fmt(formatter.buffer) });
             } else {
-                try writer.print("{}", .{this.head.fmt(formatter.buffer)});
+                try writer.print("{f}", .{this.head.fmt(formatter.buffer)});
             }
         }
     };
@@ -151,17 +151,17 @@ pub const Group = struct {
             }
 
             if (this.tail == null and this.head.tail == null) {
-                try writer.print("{}", .{this.head.fmt(formatter.buf)});
+                try writer.print("{f}", .{this.head.fmt(formatter.buf)});
                 return;
             }
 
             var list = &this.head;
             while (list.next) |next| {
-                try writer.print("{} && ", .{list.fmt(formatter.buf)});
+                try writer.print("{f} && ", .{list.fmt(formatter.buf)});
                 list = next;
             }
 
-            try writer.print("{}", .{list.fmt(formatter.buf)});
+            try writer.print("{f}", .{list.fmt(formatter.buf)});
         }
     };
 
@@ -173,7 +173,7 @@ pub const Group = struct {
     }
 
     pub fn jsonStringify(this: *const Group, writer: anytype) !void {
-        const temp = try std.fmt.allocPrint(bun.default_allocator, "{}", .{this.fmt()});
+        const temp = try std.fmt.allocPrint(bun.default_allocator, "{f}", .{this.fmt()});
         defer bun.default_allocator.free(temp);
         try std.json.encodeJsonString(temp, .{}, writer);
     }

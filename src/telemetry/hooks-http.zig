@@ -305,11 +305,19 @@ fn extractTraceparentFromFetchHeaders(
     // Get "traceparent" header value directly from FetchHeaders (no JS needed)
     const traceparent_value = fetch_headers.get("traceparent", globalObject) orelse return;
     if (traceparent_value.len == 0) return;
+    const tracestate_value = fetch_headers.get("tracestate", globalObject) orelse "";
+    attrs.set(otel.semconv.http_request_header_tracestate, tracestate_value);
+    attrs.set(otel.semconv.http_request_header_traceparent, traceparent_value);
+
+    // not sure why claude thought we had to do this, it was just reconstructed in TS layer
+    // TODO - review with claude. If it is not needed,
+    // and extractTraceparentFromFetchHeaders is not needed, remove it and the TraceContext parser!
 
     // Parse using W3C spec-compliant parser
     const ctx = traceparent.TraceContext.parse(traceparent_value) orelse return;
 
     // Set attributes for distributed tracing
+
     attrs.set(otel.semconv.trace_parent_trace_id, &ctx.trace_id);
     attrs.set(otel.semconv.trace_parent_span_id, &ctx.span_id);
     attrs.set(otel.semconv.trace_parent_trace_flags, ctx.trace_flags);
@@ -319,6 +327,8 @@ fn extractTraceparentFromFetchHeaders(
 /// Sets attributes: trace.parent.trace_id, trace.parent.span_id, trace.parent.trace_flags
 ///
 /// Uses the W3C spec-compliant parser from ../telemetry/traceparent.zig
+///
+/// TODO: this may be dead code?
 fn extractTraceparent(
     attrs: *AttributeMap,
     headers_jsvalue: JSValue,
@@ -362,6 +372,7 @@ fn extractTraceparent(
     const ctx = traceparent.TraceContext.parse(traceparent_slice.slice()) orelse return;
 
     // Set attributes for distributed tracing
+    attrs.set(otel.semconv.http_request_header_traceparent, &ctx.traceparent);
     attrs.set(otel.semconv.trace_parent_trace_id, &ctx.trace_id);
     attrs.set(otel.semconv.trace_parent_span_id, &ctx.span_id);
     attrs.set(otel.semconv.trace_parent_trace_flags, ctx.trace_flags);

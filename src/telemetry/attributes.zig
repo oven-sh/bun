@@ -105,7 +105,9 @@ pub const AttributeKeys = struct {
     trace_parent_trace_id: *AttributeKey,
     trace_parent_span_id: *AttributeKey,
     trace_parent_trace_flags: *AttributeKey,
-
+    http_request_header_traceparent: *AttributeKey,
+    http_request_header_tracestate: *AttributeKey,
+    http_response_header_traceid: *AttributeKey,
     // Error attributes
     error_stack_trace: *AttributeKey,
 
@@ -170,6 +172,9 @@ pub const AttributeKeys = struct {
         keys.db_response_returned_rows = try keys.allocateAttribute("db.response.returned_rows");
 
         // Distributed tracing attributes (W3C Trace Context)
+        keys.http_request_header_traceparent = try keys.allocateAttribute("http.request.header.traceparent");
+        keys.http_request_header_tracestate = try keys.allocateAttribute("http.request.header.tracestate");
+        keys.http_response_header_traceid = try keys.allocateAttribute("http.response.header.traceid");
         keys.trace_parent_trace_id = try keys.allocateAttribute("trace.parent.trace_id");
         keys.trace_parent_span_id = try keys.allocateAttribute("trace.parent.span_id");
         keys.trace_parent_trace_flags = try keys.allocateAttribute("trace.parent.trace_flags");

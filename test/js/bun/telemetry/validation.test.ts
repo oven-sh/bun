@@ -46,7 +46,7 @@ describe("Bun.telemetry.attach() validation", () => {
     }).toThrow(/type/i);
   });
 
-  test("throws when 'type' property is invalid", () => {
+  test("throws when 'type' property is invalid (non-string, non-number, or out of range number)", () => {
     expect(() => {
       Bun.telemetry.attach({
         type: -1, // Invalid negative
@@ -68,33 +68,38 @@ describe("Bun.telemetry.attach() validation", () => {
     expect(() => {
       Bun.telemetry.attach({
         // @ts-expect-error - testing error case
-        type: [], // Wrong type (should be string)
+        type: [], // Wrong type (should be string or number)
         name: "test",
         version: "1.0.0",
         onOperationStart: () => {},
       });
     }).toThrow(/type/i);
+  });
 
-    // Invalid string types should throw, not silently default to "custom"
-    expect(() => {
-      Bun.telemetry.attach({
-        // @ts-expect-error - testing error case
-        type: "invalid-kind",
-        name: "test",
-        version: "1.0.0",
-        onOperationStart: () => {},
-      });
-    }).toThrow(/type/i);
+  test("accepts unknown string types and defaults them to 'custom' for forward compatibility", () => {
+    // Invalid string types should NOT throw - they default to "custom"
+    // This allows newer instrumentations to work with older Bun versions
+    using instrument1 = new InstrumentRef({
+      // @ts-expect-error - testing forward compatibility with unknown type
+      type: "invalid-kind",
+      name: "test-1",
+      version: "1.0.0",
+      onOperationStart: () => {},
+    });
 
-    expect(() => {
-      Bun.telemetry.attach({
-        // @ts-expect-error - testing error case
-        type: "foo",
-        name: "test",
-        version: "1.0.0",
-        onOperationStart: () => {},
-      });
-    }).toThrow(/type/i);
+    expect(typeof instrument1.id).toBe("number");
+    expect(instrument1.id).toBeGreaterThan(0);
+
+    using instrument2 = new InstrumentRef({
+      // @ts-expect-error - testing forward compatibility with unknown type
+      type: "future-feature",
+      name: "test-2",
+      version: "1.0.0",
+      onOperationStart: () => {},
+    });
+
+    expect(typeof instrument2.id).toBe("number");
+    expect(instrument2.id).toBeGreaterThan(0);
   });
 
   test("throws when no hook functions are provided", () => {

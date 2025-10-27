@@ -132,13 +132,27 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
                 functionName = const_cast<JSC::SamplingProfiler::StackFrame*>(&frame)->displayName(vm);
 
                 auto sourceProviderAndID = const_cast<JSC::SamplingProfiler::StackFrame*>(&frame)->sourceProviderAndID();
-                if (std::get<0>(sourceProviderAndID)) {
-                    url = std::get<0>(sourceProviderAndID)->sourceURL();
+                auto* provider = std::get<0>(sourceProviderAndID);
+                if (provider) {
+                    url = provider->sourceURL();
                 }
 
                 if (frame.hasExpressionInfo()) {
                     lineNumber = frame.lineNumber();
                     columnNumber = frame.columnNumber();
+
+                    // Apply sourcemap if available
+                    if (provider) {
+#if USE(BUN_JSC_ADDITIONS)
+                        auto& fn = vm.computeLineColumnWithSourcemap();
+                        if (fn) {
+                            JSC::LineColumn sourceMappedLineColumn { static_cast<unsigned>(lineNumber), static_cast<unsigned>(columnNumber) };
+                            fn(vm, provider, sourceMappedLineColumn);
+                            lineNumber = static_cast<int>(sourceMappedLineColumn.line);
+                            columnNumber = static_cast<int>(sourceMappedLineColumn.column);
+                        }
+#endif
+                    }
                 }
             } else if (frame.frameType == JSC::SamplingProfiler::FrameType::Host) {
                 functionName = "(native)"_s;

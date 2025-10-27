@@ -1,5 +1,4 @@
 pub const CPUProfilerConfig = struct {
-    enabled: bool,
     name: []const u8,
     dir: []const u8,
 };

@@ -269,7 +269,6 @@ pub const Run = struct {
             const cpu_prof_opts = this.ctx.runtime_options.cpu_prof;
 
             vm.cpu_profiler_config = CPUProfiler.CPUProfilerConfig{
-                .enabled = true,
                 .name = cpu_prof_opts.name,
                 .dir = cpu_prof_opts.dir,
             };

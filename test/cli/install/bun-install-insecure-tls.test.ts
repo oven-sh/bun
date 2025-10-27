@@ -81,7 +81,7 @@ registry = "https://localhost:${server.port}/"
     const stderrText2 = await proc2.stderr.text();
     const exitCode2 = await proc2.exited;
 
-    expect(stderrText2).toContain("--insecure");
+    expect(stderrText2).toContain("Insecure mode enabled");
     expect(stderrText2).toContain("TLS/SSL certificate verification is disabled");
     expect(stderrText2).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
     expect(exitCode2).toBe(0);

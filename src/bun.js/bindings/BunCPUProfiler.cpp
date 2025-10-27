@@ -53,27 +53,22 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
     // Shut down the profiler thread first - this is critical!
     profiler->shutdown();
 
-    // Extract stack traces while holding locks, then release them before JSON processing
-    WTF::Vector<JSC::SamplingProfiler::StackTrace> stackTraces;
+    // Need to hold the VM lock to safely access stack traces
+    JSC::JSLockHolder locker(vm);
+
+    // Defer GC while we're working with stack traces
+    JSC::DeferGC deferGC(vm);
+
+    auto& lock = profiler->getLock();
+    WTF::Locker profilerLocker { lock };
+
+    // Process stack traces within a heap iteration scope to safely access JSCells
     {
-        // Need to hold the VM lock to safely access stack traces
-        JSC::JSLockHolder locker(vm);
-
-        // Defer GC while we're working with stack traces
-        JSC::DeferGC deferGC(vm);
-
-        auto& lock = profiler->getLock();
-        WTF::Locker profilerLocker { lock };
-
-        // Process stack traces within a heap iteration scope to safely access JSCells
-        {
-            JSC::HeapIterationScope heapIterationScope(vm.heap);
-            profiler->processUnverifiedStackTraces();
-        }
-
-        stackTraces = profiler->releaseStackTraces();
+        JSC::HeapIterationScope heapIterationScope(vm.heap);
+        profiler->processUnverifiedStackTraces();
     }
-    // Locks are now released - can do heavy JSON processing without holding them
+
+    auto stackTraces = profiler->releaseStackTraces();
 
     if (stackTraces.isEmpty())
         return WTF::String();

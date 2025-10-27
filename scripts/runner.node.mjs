@@ -81,6 +81,7 @@ function getNodeParallelTestTimeout(testPath) {
     return 90_000;
   }
   if (!isCI) return 60_000; // everything slower in debug mode
+  if (basename(options["exec-path"]).includes("-asan")) return 60_000;
   return 20_000;
 }
 

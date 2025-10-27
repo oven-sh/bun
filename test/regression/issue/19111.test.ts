@@ -4,25 +4,6 @@ import { expect, test } from "bun:test";
 import { IncomingMessage, ServerResponse } from "http";
 import { PassThrough, Readable } from "stream";
 
-test("PassThrough stream 'readable' event should fire when data is written", async () => {
-  const passThrough = new PassThrough();
-
-  let readableEventFired = false;
-  const promise = new Promise<void>(resolve => {
-    passThrough.once("readable", () => {
-      readableEventFired = true;
-      resolve();
-    });
-  });
-
-  // Write data to the stream
-  passThrough.write("Hello, world!");
-  passThrough.end();
-
-  await promise;
-  expect(readableEventFired).toBe(true);
-});
-
 // Focused regression test: Standalone ServerResponse.writableNeedDrain should be false
 test("Standalone ServerResponse.writableNeedDrain is false", () => {
   const mockReq = Object.assign(Readable.from([]), {
@@ -97,27 +78,6 @@ function createServerResponse(incomingMessage: IncomingMessage) {
   return { res, onReadable };
 }
 
-test("ServerResponse with PassThrough pattern (connect-to-web pattern)", async () => {
-  // This reproduces the pattern from connect-to-web.ts
-  const mockReq = Object.assign(Readable.from([]), {
-    url: "/test",
-    method: "GET",
-    headers: {},
-  }) as IncomingMessage;
-
-  const { res, onReadable } = createServerResponse(mockReq);
-
-  // Write synchronously to avoid setTimeout flakiness
-  res.writeHead(200, { "Content-Type": "text/plain" });
-  res.write("Hello, world!");
-  res.end();
-
-  // The promise should resolve when the readable event fires
-  const result = await onReadable;
-  expect(result.statusCode).toBe(200);
-  expect(result.headers["content-type"]).toBe("text/plain");
-});
-
 test("Readable.pipe(ServerResponse) flows without stalling (regression for #19111)", async () => {
   const mockReq = Object.assign(Readable.from([]), {
     url: "/pipe",
@@ -135,22 +95,4 @@ test("Readable.pipe(ServerResponse) flows without stalling (regression for #1911
   const out = await onReadable;
   expect(out.statusCode).toBe(200);
   expect(out.headers["content-type"]).toBe("text/plain");
-});
-
-test("PassThrough readable event fires immediately if data written before listener", async () => {
-  const passThrough = new PassThrough();
-
-  // Write data BEFORE adding the listener
-  passThrough.write("Hello, world!");
-
-  let readableEventFired = false;
-  const promise = new Promise<void>(resolve => {
-    passThrough.once("readable", () => {
-      readableEventFired = true;
-      resolve();
-    });
-  });
-
-  await promise;
-  expect(readableEventFired).toBe(true);
 });

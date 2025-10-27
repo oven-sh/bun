@@ -46,37 +46,54 @@ pub fn stopAndWriteProfile(vm: *jsc.VM, config: CPUProfilerConfig) !void {
     var path_buf: bun.PathBuffer = undefined;
     const output_path = try getOutputPath(&path_buf, config);
 
-    // Write the profile to disk
-    const file = try std.fs.cwd().createFile(output_path, .{});
-    defer file.close();
-
-    try file.writeAll(json_slice.slice());
+    // Write the profile to disk using bun.sys.File.writeFile
+    const result = bun.sys.File.writeFile(bun.FD.cwd(), output_path, json_slice.slice());
+    if (result.asErr()) |err| {
+        // If we got ENOENT, try creating the directory and retry
+        const errno = err.getErrno();
+        if (errno == .NOENT) {
+            const dir_str = config.dir();
+            if (dir_str.len > 0) {
+                bun.makePath(std.fs.cwd(), dir_str) catch {};
+                // Retry write
+                const retry_result = bun.sys.File.writeFile(bun.FD.cwd(), output_path, json_slice.slice());
+                if (retry_result.asErr()) |_| {
+                    return error.WriteFailed;
+                }
+            } else {
+                return error.WriteFailed;
+            }
+        } else {
+            return error.WriteFailed;
+        }
+    }
 
     // Print confirmation message
     bun.Output.prettyErrorln("Wrote CPU profile to: {s}", .{output_path});
     bun.Output.flush();
 }
 
-fn getOutputPath(buf: *bun.PathBuffer, config: CPUProfilerConfig) ![]const u8 {
+fn getOutputPath(buf: *bun.PathBuffer, config: CPUProfilerConfig) ![:0]const u8 {
     const name_str = config.name();
     const dir_str = config.dir();
 
-    // Build the filename
+    // Generate filename
+    var filename_buf: bun.PathBuffer = undefined;
     const filename = if (name_str.len > 0)
         name_str
     else
-        try generateDefaultFilename(buf);
+        try generateDefaultFilename(&filename_buf);
 
-    // Build the full path
+    // Get the current working directory
+    const cwd = bun.fs.FileSystem.instance.top_level_dir;
+
+    // Join directory and filename if directory is specified
     if (dir_str.len > 0) {
-        // Ensure directory exists
-        try std.fs.cwd().makePath(dir_str);
-
-        // Combine dir and filename
-        return try std.fmt.bufPrint(buf, "{s}/{s}", .{ dir_str, filename });
+        // Use bun.path.joinAbsStringBufZ to join cwd, dir, and filename
+        return bun.path.joinAbsStringBufZ(cwd, buf, &.{ dir_str, filename }, .auto);
     } else {
-        // Use current directory
-        return filename;
+        // Just join cwd and filename
+        return bun.path.joinAbsStringBufZ(cwd, buf, &.{filename}, .auto);
     }
 }
 

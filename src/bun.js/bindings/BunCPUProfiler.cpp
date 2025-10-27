@@ -7,6 +7,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ScriptExecutable.h>
 #include <JavaScriptCore/SourceProvider.h>
+#include <JavaScriptCore/HeapIterationScope.h>
 #include <wtf/Stopwatch.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/JSONValues.h>
@@ -41,14 +42,23 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
     if (!profiler)
         return WTF::String();
 
+    // Shut down the profiler thread first - this is critical!
+    profiler->shutdown();
+
     // Need to hold the VM lock to safely access stack traces
     JSC::JSLockHolder locker(vm);
+
+    // Defer GC while we're working with stack traces
+    JSC::DeferGC deferGC(vm);
 
     auto& lock = profiler->getLock();
     WTF::Locker profilerLocker { lock };
 
-    profiler->pause();
-    profiler->processUnverifiedStackTraces();
+    // Process stack traces within a heap iteration scope to safely access JSCells
+    {
+        JSC::HeapIterationScope heapIterationScope(vm.heap);
+        profiler->processUnverifiedStackTraces();
+    }
 
     auto stackTraces = profiler->releaseStackTraces();
 

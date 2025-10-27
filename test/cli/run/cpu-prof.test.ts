@@ -83,7 +83,13 @@ describe.concurrent("--cpu-prof", () => {
 
   test("--cpu-prof-name sets custom filename", async () => {
     using dir = tempDir("cpu-prof-name", {
-      "test.js": `console.log("test");`,
+      "test.js": `
+        function loop() {
+          const end = Date.now() + 16;
+          while (Date.now() < end) {}
+        }
+        loop();
+      `,
     });
 
     const customName = "my-profile.cpuprofile";
@@ -107,12 +113,11 @@ describe.concurrent("--cpu-prof", () => {
   test("--cpu-prof-dir sets custom directory", async () => {
     using dir = tempDir("cpu-prof-dir", {
       "test.js": `
-        // Do some work so profiler has time to collect samples
-        let sum = 0;
-        for (let i = 0; i < 100000; i++) {
-          sum += i;
+        function loop() {
+          const end = Date.now() + 16;
+          while (Date.now() < end) {}
         }
-        console.log(sum);
+        loop();
       `,
       "profiles": {},
     });

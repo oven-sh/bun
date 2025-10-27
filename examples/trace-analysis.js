@@ -58,33 +58,33 @@ console.log("Key events:");
 const keyEvents = events.filter(e => {
   // Show operation completions (exit traces)
   return (
-    e.data.bytes_read !== undefined ||
-    e.data.bytes_written !== undefined ||
-    e.data.status !== undefined ||
-    e.data.success !== undefined ||
-    e.data.size !== undefined
+    e[3].bytes_read !== undefined ||
+    e[3].bytes_written !== undefined ||
+    e[3].status !== undefined ||
+    e[3].success !== undefined ||
+    e[3].size !== undefined
   );
 });
 
 keyEvents.slice(0, 10).forEach(e => {
-  const elapsed = ((e.ts - startTime) / 1000).toFixed(3);
+  const elapsed = ((e[1] - startTime) / 1000).toFixed(3);
   const icon =
     {
       fs: "📁",
       fetch: "🌐",
       response_body: "📄",
       bun_write: "✍️",
-    }[e.ns] || "•";
+    }[e[0]] || "•";
 
-  let summary = `${icon} [+${elapsed}s] ${e.ns}.${e.data.call}`;
+  let summary = `${icon} [+${elapsed}s] ${e[0]}.${e[2]}`;
 
   // Add context
-  if (e.data.path) summary += ` ${e.data.path}`;
-  if (e.data.url) summary += ` ${e.data.url}`;
-  if (e.data.bytes_read) summary += ` (read ${e.data.bytes_read}B)`;
-  if (e.data.bytes_written) summary += ` (wrote ${e.data.bytes_written}B)`;
-  if (e.data.size) summary += ` (${e.data.size}B)`;
-  if (e.data.status) summary += ` [${e.data.status}]`;
+  if (e[3].path) summary += ` ${e[3].path}`;
+  if (e[3].url) summary += ` ${e[3].url}`;
+  if (e[3].bytes_read) summary += ` (read ${e[3].bytes_read}B)`;
+  if (e[3].bytes_written) summary += ` (wrote ${e[3].bytes_written}B)`;
+  if (e[3].size) summary += ` (${e[3].size}B)`;
+  if (e[3].status) summary += ` [${e[3].status}]`;
 
   console.log(`  ${summary}`);
 });
@@ -102,9 +102,9 @@ console.log("📈 OPERATIONS BY NAMESPACE");
 console.log("─────────────────────────────────────────────────────────────────");
 const byNs = {};
 events.forEach(e => {
-  if (!byNs[e.ns]) byNs[e.ns] = { total: 0, operations: {} };
-  byNs[e.ns].total++;
-  byNs[e.ns].operations[e.data.call] = (byNs[e.ns].operations[e.data.call] || 0) + 1;
+  if (!byNs[e[0]]) byNs[e[0]] = { total: 0, operations: {} };
+  byNs[e[0]].total++;
+  byNs[e[0]].operations[e[2]] = (byNs[e[0]].operations[e[2]] || 0) + 1;
 });
 
 Object.entries(byNs).forEach(([ns, data]) => {
@@ -122,7 +122,7 @@ console.log();
 // FILE SYSTEM ANALYSIS
 // ============================================================================
 
-const fsEvents = events.filter(e => e.ns === "fs");
+const fsEvents = events.filter(e => e[0] === "fs");
 if (fsEvents.length > 0) {
   console.log("📁 FILE SYSTEM ANALYSIS");
   console.log("─────────────────────────────────────────────────────────────────");
@@ -133,15 +133,15 @@ if (fsEvents.length > 0) {
   const filesStatted = new Set();
 
   fsEvents.forEach(e => {
-    if (e.data.path) {
-      if (e.data.call === "readFile" || e.data.call === "read") {
-        filesRead.add(e.data.path);
+    if (e[3].path) {
+      if (e[2] === "readFile" || e[2] === "read") {
+        filesRead.add(e[3].path);
       }
-      if (e.data.call === "writeFile" || e.data.call === "write") {
-        filesWritten.add(e.data.path);
+      if (e[2] === "writeFile" || e[2] === "write") {
+        filesWritten.add(e[3].path);
       }
-      if (e.data.call === "stat" || e.data.call === "lstat") {
-        filesStatted.add(e.data.path);
+      if (e[2] === "stat" || e[2] === "lstat") {
+        filesStatted.add(e[3].path);
       }
     }
   });
@@ -171,8 +171,8 @@ if (fsEvents.length > 0) {
   let totalBytesWritten = 0;
 
   fsEvents.forEach(e => {
-    if (e.data.bytes_read) totalBytesRead += e.data.bytes_read;
-    if (e.data.bytes_written) totalBytesWritten += e.data.bytes_written;
+    if (e[3].bytes_read) totalBytesRead += e[3].bytes_read;
+    if (e[3].bytes_written) totalBytesWritten += e[3].bytes_written;
   });
 
   console.log(`\nData transfer:`);
@@ -180,10 +180,10 @@ if (fsEvents.length > 0) {
   console.log(`  Bytes written: ${totalBytesWritten.toLocaleString()} (${formatBytes(totalBytesWritten)})`);
 
   // Directory operations
-  const dirOps = fsEvents.filter(e => ["mkdir", "rmdir", "readdir"].includes(e.data.call));
+  const dirOps = fsEvents.filter(e => ["mkdir", "rmdir", "readdir"].includes(e[2]));
   if (dirOps.length > 0) {
     console.log(`\nDirectory operations: ${dirOps.length}`);
-    const dirs = new Set(dirOps.map(e => e.data.path).filter(Boolean));
+    const dirs = new Set(dirOps.map(e => e[3].path).filter(Boolean));
     dirs.forEach(d => console.log(`  • ${d}`));
   }
 
@@ -194,13 +194,13 @@ if (fsEvents.length > 0) {
 // HTTP ANALYSIS
 // ============================================================================
 
-const fetchEvents = events.filter(e => e.ns === "fetch");
+const fetchEvents = events.filter(e => e[0] === "fetch");
 if (fetchEvents.length > 0) {
   console.log("🌐 HTTP ANALYSIS");
   console.log("─────────────────────────────────────────────────────────────────");
 
-  const requests = fetchEvents.filter(e => e.data.call === "request");
-  const responses = fetchEvents.filter(e => e.data.call === "response");
+  const requests = fetchEvents.filter(e => e[2] === "request");
+  const responses = fetchEvents.filter(e => e[2] === "response");
 
   console.log(`Total requests:  ${requests.length}`);
   console.log(`Total responses: ${responses.length}\n`);
@@ -208,15 +208,15 @@ if (fetchEvents.length > 0) {
   // Group by URL
   const byUrl = {};
   requests.forEach(r => {
-    if (!byUrl[r.data.url]) {
-      byUrl[r.data.url] = { requests: 0, method: r.data.method, responses: [] };
+    if (!byUrl[r[3].url]) {
+      byUrl[r[3].url] = { requests: 0, method: r[3].method, responses: [] };
     }
-    byUrl[r.data.url].requests++;
+    byUrl[r[3].url].requests++;
   });
 
   responses.forEach(r => {
-    if (byUrl[r.data.url]) {
-      byUrl[r.data.url].responses.push(r);
+    if (byUrl[r[3].url]) {
+      byUrl[r[3].url].responses.push(r);
     }
   });
 
@@ -227,7 +227,7 @@ if (fetchEvents.length > 0) {
     console.log(`    Responses: ${data.responses.length}`);
 
     if (data.responses.length > 0) {
-      const statuses = data.responses.map(r => r.data.status || "error");
+      const statuses = data.responses.map(r => r[3].status || "error");
       const statusCounts = {};
       statuses.forEach(s => {
         statusCounts[s] = (statusCounts[s] || 0) + 1;
@@ -236,13 +236,13 @@ if (fetchEvents.length > 0) {
         console.log(`      ${status}: ${count}`);
       });
 
-      const totalBytes = data.responses.reduce((sum, r) => sum + (r.data.body_size || 0), 0);
+      const totalBytes = data.responses.reduce((sum, r) => sum + (r[3].body_size || 0), 0);
       console.log(`      Total bytes: ${totalBytes.toLocaleString()} (${formatBytes(totalBytes)})`);
     }
 
     // Calculate timing
-    const reqTimes = requests.filter(r => r.data.url === url).map(r => r.ts);
-    const respTimes = data.responses.map(r => r.ts);
+    const reqTimes = requests.filter(r => r[3].url === url).map(r => r[1]);
+    const respTimes = data.responses.map(r => r[1]);
     if (reqTimes.length > 0 && respTimes.length > 0) {
       const avgLatency =
         respTimes.reduce((sum, rt, i) => {
@@ -265,14 +265,14 @@ console.log("──────────────────────�
 // Find slowest operations
 const operationPairs = new Map();
 events.forEach((e, i) => {
-  const key = `${e.ns}.${e.data.call}.${e.data.path || e.data.url || ""}`;
+  const key = `${e[0]}.${e[2]}.${e[3].path || e[3].url || ""}`;
 
   if (!operationPairs.has(key)) {
-    operationPairs.set(key, { start: e.ts, events: [e] });
+    operationPairs.set(key, { start: e[1], events: [e] });
   } else {
     const pair = operationPairs.get(key);
     pair.events.push(e);
-    pair.end = e.ts;
+    pair.end = e[1];
   }
 });
 
@@ -315,9 +315,9 @@ if (fsEvents.length > 100) {
 // Check for repeated reads of same file
 const readCounts = {};
 fsEvents
-  .filter(e => e.data.call === "readFile")
+  .filter(e => e[2] === "readFile")
   .forEach(e => {
-    readCounts[e.data.path] = (readCounts[e.data.path] || 0) + 1;
+    readCounts[e[3].path] = (readCounts[e[3].path] || 0) + 1;
   });
 const repeatedReads = Object.entries(readCounts).filter(([_, count]) => count > 3);
 if (repeatedReads.length > 0) {
@@ -326,7 +326,7 @@ if (repeatedReads.length > 0) {
 
 // Check for HTTP requests in loops
 if (fetchEvents.length > 10) {
-  const urls = fetchEvents.filter(e => e.data.call === "request").map(e => e.data.url);
+  const urls = fetchEvents.filter(e => e[2] === "request").map(e => e[3].url);
   const urlCounts = {};
   urls.forEach(u => {
     urlCounts[u] = (urlCounts[u] || 0) + 1;

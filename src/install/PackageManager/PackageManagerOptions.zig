@@ -689,7 +689,9 @@ pub fn load(
         if (cli.ca_file_name.len > 0) {
             this.ca_file_name = cli.ca_file_name;
         }
-        this.insecure = cli.insecure;
+        if (cli.insecure) {
+            this.insecure = true;
+        }
 
         // `bun pm version` command options
         this.git_tag_version = cli.git_tag_version;

@@ -920,9 +920,9 @@ pub fn init(
     var ca: []stringZ = &.{};
     var abs_ca_file_name: stringZ = &.{};
     
-    // Skip CA file loading if --insecure is set
+    // Skip CA file loading if insecure mode is enabled (via --insecure flag or bunfig)
     if (manager.options.insecure) {
-        Output.warn("Using --insecure flag: TLS/SSL certificate verification is disabled. This is dangerous and should only be used for debugging.", .{});
+        Output.warn("Insecure mode enabled (--insecure or bunfig): TLS/SSL certificate verification is disabled. This is dangerous and should only be used for debugging.", .{});
         Output.flush();
     } else {
         if (manager.options.ca.len > 0) {

@@ -20,7 +20,11 @@ namespace Bun {
 
 void startCPUProfiler(JSC::VM& vm)
 {
-    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::Stopwatch::create());
+    // Create a stopwatch and start it
+    auto stopwatch = WTF::Stopwatch::create();
+    stopwatch->start();
+
+    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTFMove(stopwatch));
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
 }
@@ -84,14 +88,25 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
     WTF::Vector<int> samples;
     WTF::Vector<int> timeDeltas;
 
-    double startTime = stackTraces[0].stopwatchTimestamp.seconds() * 1000000.0;
-    double lastTime = startTime;
+    // Get the wall clock time for the first sample
+    // We use approximateWallTime to convert MonotonicTime to wall clock time
+    double wallClockStart = stackTraces[0].timestamp.approximateWallTime().secondsSinceEpoch().value() * 1000000.0;
+
+    // The stopwatchTimestamp for the first sample (elapsed time from profiler start)
+    double stopwatchStart = stackTraces[0].stopwatchTimestamp.seconds() * 1000000.0;
+
+    // Calculate the offset to convert stopwatch times to wall clock times
+    // startTime will be the wall clock time when profiling started
+    double startTime = wallClockStart - stopwatchStart;
+    // lastTime should also start from the converted first sample time
+    double lastTime = startTime + stopwatchStart;
 
     // Process each stack trace
     for (const auto& stackTrace : stackTraces) {
         if (stackTrace.frames.isEmpty()) {
             samples.append(1); // Root node
-            double currentTime = stackTrace.stopwatchTimestamp.seconds() * 1000000.0;
+            // Convert stopwatch time to wall clock time
+            double currentTime = startTime + (stackTrace.stopwatchTimestamp.seconds() * 1000000.0);
             timeDeltas.append(static_cast<int>(currentTime - lastTime));
             lastTime = currentTime;
             continue;
@@ -177,11 +192,13 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
         samples.append(currentParentId);
 
         // Add time delta
-        double currentTime = stackTrace.stopwatchTimestamp.seconds() * 1000000.0;
+        // Convert stopwatch time to wall clock time
+        double currentTime = startTime + (stackTrace.stopwatchTimestamp.seconds() * 1000000.0);
         timeDeltas.append(static_cast<int>(currentTime - lastTime));
         lastTime = currentTime;
     }
 
+    // endTime is the wall clock time of the last sample
     double endTime = lastTime;
 
     // Build JSON using WTF::JSON

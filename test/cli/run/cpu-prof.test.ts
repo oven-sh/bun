@@ -106,7 +106,14 @@ describe.concurrent("--cpu-prof", () => {
 
   test("--cpu-prof-dir sets custom directory", async () => {
     using dir = tempDir("cpu-prof-dir", {
-      "test.js": `console.log("test");`,
+      "test.js": `
+        // Do some work so profiler has time to collect samples
+        let sum = 0;
+        for (let i = 0; i < 100000; i++) {
+          sum += i;
+        }
+        console.log(sum);
+      `,
       "profiles": {},
     });
 

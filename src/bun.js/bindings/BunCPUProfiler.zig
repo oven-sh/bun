@@ -41,8 +41,7 @@ pub fn stopAndWriteProfile(vm: *jsc.VM, config: CPUProfilerConfig) !void {
         const errno = err.getErrno();
         if (errno == .NOENT or errno == .PERM or errno == .ACCES) {
             if (config.dir.len > 0) {
-                const cwd_dir = std.fs.Dir{ .fd = bun.FD.cwd().cast() };
-                bun.makePath(cwd_dir, config.dir) catch {};
+                bun.makePath(bun.FD.cwd().stdDir(), config.dir) catch {};
                 // Retry write
                 const retry_result = bun.sys.File.writeFile(bun.FD.cwd(), output_path_os, json_slice.slice());
                 if (retry_result.asErr()) |_| {

@@ -762,11 +762,11 @@ pub const Loader = struct {
         const source: logger.Source = switch (bun.sys.File.toSource(file_path, this.allocator, .{ .convert_bom = true })) {
             .err => |err| brk: {
                 switch (err.getErrno()) {
-                    .ISDIR, .NOENT, .PERM, .NOTDIR => {
+                    .AGAIN, .ISDIR, .NOENT, .PERM, .NOTDIR => {
                         // prevent retrying
                         break :brk logger.Source.initPathString(file_path, "");
                     },
-                    .BUSY, .AGAIN, .ACCES, .PIPE => {
+                    .BUSY, .ACCES, .PIPE => {
                         if (!this.quiet) {
                             Output.errGeneric("loading {s} file: {}", .{ file_path, err });
                         }

@@ -65,6 +65,10 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
     WTF::Locker profilerLocker { lock };
 
     // Process stack traces within a heap iteration scope to safely access JSCells
+    // NOTE: This may produce benign UBSAN warnings from JSC's SamplingProfiler.cpp
+    // where HeapUtil::isValueGCObject is called with null pointers. JSC handles
+    // this safely but doesn't null-check before calling isPreciseAllocation().
+    // See: SamplingProfiler.cpp line ~564 in processUnverifiedStackTraces()
     {
         JSC::HeapIterationScope heapIterationScope(vm.heap);
         profiler->processUnverifiedStackTraces();

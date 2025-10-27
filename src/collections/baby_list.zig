@@ -577,6 +577,8 @@ pub fn BabyList(comptime Type: type) type {
                 bun.assert(this.len <= this.cap);
             }
         }
+
+        pub const looksLikeContainerTypeBabyList = Type;
     };
 }
 

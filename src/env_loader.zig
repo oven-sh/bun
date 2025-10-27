@@ -709,74 +709,36 @@ pub const Loader = struct {
             return;
         }
 
-        var file = dir.openFile(base, .{ .mode = .read_only }) catch |err| {
-            switch (err) {
-                error.IsDir, error.FileNotFound => {
-                    // prevent retrying
-                    @field(this, base) = logger.Source.initPathString(base, "");
-                    return;
-                },
-                error.Unexpected, error.FileBusy, error.DeviceBusy, error.AccessDenied => {
-                    if (!this.quiet) {
-                        Output.prettyErrorln("<r><red>{s}<r> error loading {s} file", .{ @errorName(err), base });
-                    }
-
-                    // prevent retrying
-                    @field(this, base) = logger.Source.initPathString(base, "");
-                    return;
-                },
-                else => {
-                    return err;
-                },
-            }
-        };
-        defer file.close();
-
-        const end = brk: {
-            if (comptime Environment.isWindows) {
-                const pos = try file.getEndPos();
-                if (pos == 0) {
-                    @field(this, base) = logger.Source.initPathString(base, "");
-                    return;
+        const source: logger.Source = switch (bun.sys.File.toSourceAt(dir.fd, base, this.allocator, .{ .convert_bom = true })) {
+            .err => |err| brk: {
+                switch (err.getErrno()) {
+                    .ISDIR, .NOENT, .PERM, .NOTDIR => {
+                        // prevent retrying
+                        break :brk logger.Source.initPathString(base, "");
+                    },
+                    .BUSY, .AGAIN, .ACCES, .PIPE => {
+                        if (!this.quiet) {
+                            Output.errGeneric("loading {s} file: {}", .{ base, err });
+                        }
+                        break :brk logger.Source.initPathString(base, "");
+                    },
+                    else => {
+                        @field(this, base) = logger.Source.initEmptyFile(base);
+                        return err.toZigErr();
+                    },
                 }
-
-                break :brk pos;
-            }
-
-            const stat = try file.stat();
-
-            if (stat.size == 0 or stat.kind != .file) {
-                @field(this, base) = logger.Source.initPathString(base, "");
-                return;
-            }
-
-            break :brk stat.size;
+            },
+            .result => |source| source,
         };
 
-        var buf = try this.allocator.alloc(u8, end + 1);
-        errdefer this.allocator.free(buf);
-        const amount_read = file.readAll(buf[0..end]) catch |err| switch (err) {
-            error.Unexpected, error.SystemResources, error.OperationAborted, error.BrokenPipe, error.AccessDenied, error.IsDir => {
-                if (!this.quiet) {
-                    Output.prettyErrorln("<r><red>{s}<r> error loading {s} file", .{ @errorName(err), base });
-                }
+        @field(this, base) = source;
 
-                // prevent retrying
-                @field(this, base) = logger.Source.initPathString(base, "");
-                return;
-            },
-            else => {
-                return err;
-            },
-        };
-
-        // The null byte here is mostly for debugging purposes.
-        buf[end] = 0;
-
-        const source = &logger.Source.initPathString(base, buf[0..amount_read]);
+        if (source.contents.len == 0) {
+            return;
+        }
 
         try Parser.parse(
-            source,
+            &@field(this, base).?,
             this.allocator,
             this.map,
             value_buffer,
@@ -784,8 +746,6 @@ pub const Loader = struct {
             false,
             true,
         );
-
-        @field(this, base) = source.*;
     }
 
     pub fn loadEnvFileDynamic(
@@ -794,62 +754,40 @@ pub const Loader = struct {
         comptime override: bool,
         value_buffer: *std.ArrayList(u8),
     ) !void {
-        if (this.custom_files_loaded.contains(file_path)) {
+        const gpe = try this.custom_files_loaded.getOrPut(file_path);
+        if (gpe.found_existing) {
             return;
         }
 
-        var file = bun.openFile(file_path, .{ .mode = .read_only }) catch {
-            // prevent retrying
-            try this.custom_files_loaded.put(file_path, logger.Source.initPathString(file_path, ""));
+        const source: logger.Source = switch (bun.sys.File.toSource(file_path, this.allocator, .{ .convert_bom = true })) {
+            .err => |err| brk: {
+                switch (err.getErrno()) {
+                    .ISDIR, .NOENT, .PERM, .NOTDIR => {
+                        // prevent retrying
+                        break :brk logger.Source.initPathString(file_path, "");
+                    },
+                    .BUSY, .AGAIN, .ACCES, .PIPE => {
+                        if (!this.quiet) {
+                            Output.errGeneric("loading {s} file: {}", .{ file_path, err });
+                        }
+                        break :brk logger.Source.initPathString(file_path, "");
+                    },
+                    else => {
+                        return err.toZigErr();
+                    },
+                }
+            },
+            .result => |source| source,
+        };
+
+        gpe.value_ptr.* = source;
+
+        if (source.contents.len == 0) {
             return;
-        };
-        defer file.close();
-
-        const end = brk: {
-            if (comptime Environment.isWindows) {
-                const pos = try file.getEndPos();
-                if (pos == 0) {
-                    try this.custom_files_loaded.put(file_path, logger.Source.initPathString(file_path, ""));
-                    return;
-                }
-
-                break :brk pos;
-            }
-
-            const stat = try file.stat();
-
-            if (stat.size == 0 or stat.kind != .file) {
-                try this.custom_files_loaded.put(file_path, logger.Source.initPathString(file_path, ""));
-                return;
-            }
-
-            break :brk stat.size;
-        };
-
-        var buf = try this.allocator.alloc(u8, end + 1);
-        errdefer this.allocator.free(buf);
-        const amount_read = file.readAll(buf[0..end]) catch |err| switch (err) {
-            error.Unexpected, error.SystemResources, error.OperationAborted, error.BrokenPipe, error.AccessDenied, error.IsDir => {
-                if (!this.quiet) {
-                    Output.prettyErrorln("<r><red>{s}<r> error loading {s} file", .{ @errorName(err), file_path });
-                }
-
-                // prevent retrying
-                try this.custom_files_loaded.put(file_path, logger.Source.initPathString(file_path, ""));
-                return;
-            },
-            else => {
-                return err;
-            },
-        };
-
-        // The null byte here is mostly for debugging purposes.
-        buf[end] = 0;
-
-        const source = &logger.Source.initPathString(file_path, buf[0..amount_read]);
+        }
 
         try Parser.parse(
-            source,
+            &source,
             this.allocator,
             this.map,
             value_buffer,
@@ -857,8 +795,6 @@ pub const Loader = struct {
             false,
             true,
         );
-
-        try this.custom_files_loaded.put(file_path, source.*);
     }
 };
 

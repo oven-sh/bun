@@ -2,7 +2,6 @@ pub const jsc = @import("./bun.js/jsc.zig");
 pub const webcore = @import("./bun.js/webcore.zig");
 pub const api = @import("./bun.js/api.zig");
 pub const bindgen = @import("./bun.js/bindgen.zig");
-const CPUProfiler = @import("./bun.js/bindings/BunCPUProfiler.zig");
 
 pub const Run = struct {
     ctx: Command.Context,
@@ -544,6 +543,7 @@ const VirtualMachine = jsc.VirtualMachine;
 
 const string = []const u8;
 
+const CPUProfiler = @import("./bun.js/bindings/BunCPUProfiler.zig");
 const options = @import("./options.zig");
 const std = @import("std");
 const Command = @import("./cli.zig").Command;

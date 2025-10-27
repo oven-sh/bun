@@ -1,9 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const JSGlobalObject = jsc.JSGlobalObject;
-
 pub const CPUProfilerConfig = extern struct {
     enabled: bool,
     name_ptr: [*]const u8,
@@ -125,3 +119,8 @@ fn generateDefaultFilename(buf: *bun.PathBuffer) ![]const u8 {
         pid,
     });
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const jsc = bun.jsc;

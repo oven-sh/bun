@@ -3707,12 +3707,13 @@ const IPC = @import("./ipc.zig");
 const Resolver = @import("../resolver/resolver.zig");
 const Runtime = @import("../runtime.zig");
 const node_module_module = @import("./bindings/NodeModuleModule.zig");
-const CPUProfiler = @import("./bindings/BunCPUProfiler.zig");
-const CPUProfilerConfig = CPUProfiler.CPUProfilerConfig;
 const std = @import("std");
 const PackageManager = @import("../install/install.zig").PackageManager;
 const URL = @import("../url.zig").URL;
 const Allocator = std.mem.Allocator;
+
+const CPUProfiler = @import("./bindings/BunCPUProfiler.zig");
+const CPUProfilerConfig = CPUProfiler.CPUProfilerConfig;
 
 const bun = @import("bun");
 const Async = bun.Async;

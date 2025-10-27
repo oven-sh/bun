@@ -15,11 +15,13 @@ This creates a trace file with line-delimited JSON (JSONL) format, where each li
 ### File System Operations (`ns: "fs"`)
 
 **Low-level operations:**
+
 - `open` - File descriptor allocation
 - `read` / `write` - Data transfer operations
 - `close` - File descriptor release
 
 **High-level operations:**
+
 - `readFile` / `writeFile` - Complete file read/write
 - `stat` / `lstat` / `fstat` - File metadata queries
 - `mkdir` / `rmdir` - Directory creation/removal
@@ -46,9 +48,10 @@ Each trace event is a JSON object with:
 
 ```json
 {
-  "ns": "fs",           // Namespace (fs, fetch, response_body, bun_write)
-  "ts": 1761595797038,  // Timestamp in milliseconds
-  "data": {             // Operation-specific data
+  "ns": "fs", // Namespace (fs, fetch, response_body, bun_write)
+  "ts": 1761595797038, // Timestamp in milliseconds
+  "data": {
+    // Operation-specific data
     "call": "readFile",
     "path": "/path/to/file",
     "bytes_read": 1234
@@ -98,6 +101,7 @@ $ cat trace.jsonl
 ### Filesystem Operations
 
 **Entry traces** (operation starting):
+
 - `call` - Operation name
 - `path` - File/directory path
 - `fd` - File descriptor (for fd-based ops)
@@ -110,6 +114,7 @@ $ cat trace.jsonl
 - `recursive` - Recursive flag (for mkdir/rmdir/readdir)
 
 **Exit traces** (operation complete):
+
 - `call` - Operation name (same as entry)
 - `path` / `fd` - Identifier (same as entry)
 - `bytes_read` - Bytes successfully read
@@ -124,11 +129,13 @@ $ cat trace.jsonl
 ### HTTP Operations
 
 **Request trace:**
+
 - `call: "request"`
 - `url` - Request URL
 - `method` - HTTP method (GET, POST, etc.)
 
 **Response trace:**
+
 - `call: "response"`
 - `url` - Request URL
 - `status` - HTTP status (OK, NotFound, etc.)
@@ -137,6 +144,7 @@ $ cat trace.jsonl
 - `err` - Error name (on failure)
 
 **Body consumption trace:**
+
 - `call` - Consumption method (text, json, arrayBuffer, blob)
 - `status` - Consumption status (immediate, streaming, already_used)
 
@@ -147,8 +155,11 @@ $ cat trace.jsonl
 Find which operations are slow by analyzing timestamps:
 
 ```javascript
-const traces = require('fs').readFileSync('trace.jsonl', 'utf8')
-  .trim().split('\n').map(JSON.parse);
+const traces = require("fs")
+  .readFileSync("trace.jsonl", "utf8")
+  .trim()
+  .split("\n")
+  .map(JSON.parse);
 
 // Find operations and their durations
 const ops = new Map();
@@ -172,6 +183,7 @@ Array.from(ops.entries())
 ### Understanding Application Behavior
 
 AI agents can analyze traces to understand:
+
 - What files the application reads/writes
 - What external services it contacts
 - Order of operations
@@ -185,23 +197,23 @@ Verify your application's I/O behavior:
 ```javascript
 // Check that app only writes to temp directory
 const traces = getTraces();
-const writes = traces.filter(t =>
-  t.ns === 'fs' &&
-  ['write', 'writeFile'].includes(t.data.call)
+const writes = traces.filter(
+  t => t.ns === "fs" && ["write", "writeFile"].includes(t.data.call),
 );
 writes.forEach(w => {
-  assert(w.data.path.startsWith('/tmp'),
-    `Unexpected write to ${w.data.path}`);
+  assert(w.data.path.startsWith("/tmp"), `Unexpected write to ${w.data.path}`);
 });
 ```
 
 ## Performance Impact
 
 Tracing has **minimal overhead** when disabled (the default):
+
 - Single boolean check per instrumentation point
 - No file I/O, JSON serialization, or string allocation
 
 When enabled, tracing adds:
+
 - JSON serialization overhead per event
 - Mutex locking for thread-safe file writes
 - Buffered I/O to the trace file
@@ -220,6 +232,7 @@ For CPU-bound applications, overhead is negligible. For I/O-bound applications w
 ## Implementation Details
 
 The trace implementation is integrated into Bun's core I/O layer:
+
 - `src/output.zig` - Core tracing infrastructure
 - `src/cli/Arguments.zig` - CLI flag parsing
 - `src/bun.js/node/node_fs.zig` - Filesystem operation tracing

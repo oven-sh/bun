@@ -748,10 +748,10 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
+const Output = bun.Output;
 const invalid_fd = bun.invalid_fd;
 const io = bun.io;
 const uv = bun.windows.libuv;
-const Output = bun.Output;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

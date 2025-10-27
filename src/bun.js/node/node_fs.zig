@@ -7095,6 +7095,14 @@ const NodeFSFunctionEnum = std.meta.DeclEnum(NodeFS);
 
 const string = []const u8;
 
+// Tracing helper
+inline fn traceFS(args: anytype) void {
+    if (Output.trace_enabled) {
+        const tracer = Output.tracer("fs");
+        tracer.trace(args);
+    }
+}
+
 const DirIterator = @import("./dir_iterator.zig");
 const FileSystem = @import("../../fs.zig").FileSystem;
 
@@ -7103,20 +7111,12 @@ const Environment = bun.Environment;
 const FD = bun.FD;
 const FileDescriptor = bun.FileDescriptor;
 const Mode = bun.Mode;
+const Output = bun.Output;
 const PathString = bun.PathString;
 const c = bun.c;
 const strings = bun.strings;
 const AbortSignal = bun.webcore.AbortSignal;
 const Buffer = bun.api.node.Buffer;
-const Output = bun.Output;
-
-// Tracing helper
-inline fn traceFS(args: anytype) void {
-    if (Output.trace_enabled) {
-        const tracer = Output.tracer("fs");
-        tracer.trace(args);
-    }
-}
 
 const jsc = bun.jsc;
 const ArrayBuffer = jsc.MarkedArrayBuffer;

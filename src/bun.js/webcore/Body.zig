@@ -1802,7 +1802,6 @@ const std = @import("std");
 const bun = @import("bun");
 const MutableString = bun.MutableString;
 const Output = bun.Output;
-const Environment = bun.Environment;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const strings = bun.strings;

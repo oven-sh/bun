@@ -161,9 +161,11 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
                 }
             }
 
-            // Create a unique key for this frame based on callFrame only
-            // This deduplicates nodes across different call paths
+            // Create a unique key for this frame based on parent + callFrame
+            // This creates separate nodes for the same function in different call paths
             WTF::StringBuilder keyBuilder;
+            keyBuilder.append(currentParentId);
+            keyBuilder.append(':');
             keyBuilder.append(functionName);
             keyBuilder.append(':');
             keyBuilder.append(url);
@@ -192,8 +194,11 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
                 nodes.append(WTFMove(node));
 
                 // Add this node as child of parent
-                nodes[currentParentId - 1].children.append(nodeId);
+                if (currentParentId > 0) {
+                    nodes[currentParentId - 1].children.append(nodeId);
+                }
             } else {
+                // Node already exists with this parent+callFrame combination
                 nodeId = it->value;
             }
 

@@ -104,6 +104,10 @@ const a0 = args.shift();
 await Bun.write(
   out_args,
   args
+    .filter(arg => {
+      if (arg === "-fsanitize-address") return false; // not available upstream
+      return true;
+    })
     .map(arg => {
       if (arg.includes("=")) {
         const [flag, value] = arg.split("=");

@@ -2970,18 +2970,16 @@ const typeBaseNameT = bun.meta.typeBaseNameT;
 const strings = bun.strings;
 const L = strings.literal;
 
-/// Find the nearest package.json file starting from a given path
+/// Find the nearest package.json file starting from a given path using the resolver cache
 /// Returns the absolute path to the package.json, or an empty string if not found
-export fn Bun__findPackageJSON(input_path: *bun.String, result: *bun.String) void {
-    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+export fn Bun__findPackageJSON(globalObject: *jsc.JSGlobalObject, input_path: *bun.String, result: *bun.String) void {
     var slice = input_path.toUTF8(bun.default_allocator);
     defer slice.deinit();
 
     var current_dir = slice.slice();
 
     // If the input is a file, start from its directory
-    // We need to make a null-terminated copy for stat
+    // Check if it's a regular file by trying to get parent directory
     var path_buf_z: [bun.MAX_PATH_BYTES:0]u8 = undefined;
     if (current_dir.len < path_buf_z.len) {
         @memcpy(path_buf_z[0..current_dir.len], current_dir);
@@ -3016,41 +3014,33 @@ export fn Bun__findPackageJSON(input_path: *bun.String, result: *bun.String) voi
         }
     }
 
+    // Use the resolver's DirInfo cache to find package.json
+    const bun_vm = globalObject.bunVM();
+    const resolver = &bun_vm.transpiler.resolver;
+
+    // Walk up the directory tree using the resolver cache
+    var search_dir = current_dir;
     while (true) {
-        const pkg_path = if (Environment.isWindows)
-            joinWindowsT(u8, &.{ current_dir, "package.json" }, &path_buf, &path_buf2)
-        else
-            joinPosixT(u8, &.{ current_dir, "package.json" }, &path_buf, &path_buf2);
-
-        var pkg_path_buf_z: [bun.MAX_PATH_BYTES:0]u8 = undefined;
-        if (pkg_path.len >= pkg_path_buf_z.len) {
-            // Path too long; treat as not found to avoid overflow
-            result.* = bun.String.empty;
-            return;
-        }
-        @memcpy(pkg_path_buf_z[0..pkg_path.len], pkg_path);
-        pkg_path_buf_z[pkg_path.len] = 0;
-
-        const pkg_path_z = pkg_path_buf_z[0..pkg_path.len :0];
-        const st = bun.sys.stat(pkg_path_z);
-        if (st == .result) {
-            const mode = st.result.mode;
-            const S = bun.S;
-            if ((mode & S.IFMT) == S.IFREG) {
+        // Try to get DirInfo from the cache
+        if (resolver.readDirInfo(search_dir) catch null) |dir_info| {
+            if (dir_info.package_json) |pkg_json| {
+                // Found a package.json in the cache
+                const pkg_path = pkg_json.source.path.text;
                 result.* = bun.String.cloneUTF8(pkg_path);
                 return;
             }
         }
 
+        // Move to parent directory
         const parent = if (Environment.isWindows)
-            dirnameWindowsT(u8, current_dir)
+            dirnameWindowsT(u8, search_dir)
         else
-            dirnamePosixT(u8, current_dir);
+            dirnamePosixT(u8, search_dir);
 
-        if (strings.eql(parent, current_dir)) {
+        if (strings.eql(parent, search_dir)) {
             break;
         }
-        current_dir = parent;
+        search_dir = parent;
     }
 
     // Not found

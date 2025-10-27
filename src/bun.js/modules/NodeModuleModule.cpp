@@ -289,7 +289,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
         scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val)));
 }
 
-extern "C" void Bun__findPackageJSON(BunString* path, BunString* result);
+extern "C" void Bun__findPackageJSON(JSC::JSGlobalObject* globalObject, BunString* path, BunString* result);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPackageJSON,
     (JSC::JSGlobalObject * globalObject,
@@ -328,7 +328,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionFindPackageJSON,
 
     BunString input = Bun::toString(val);
     BunString result;
-    Bun__findPackageJSON(&input, &result);
+    Bun__findPackageJSON(globalObject, &input, &result);
 
     if (result.tag == BunStringTag::Empty) {
         return JSValue::encode(jsNull());

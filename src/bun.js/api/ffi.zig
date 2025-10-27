@@ -319,6 +319,8 @@ pub const FFI = struct {
         }
 
         pub fn compile(this: *CompileC, globalThis: *JSGlobalObject) !struct { *TCC.State, []u8 } {
+            bun.analytics.Features.ffi += 1;
+
             const compile_options: [:0]const u8 = if (this.flags.len > 0)
                 this.flags
             else if (bun.env_var.BUN_TCC_OPTIONS.get()) |tcc_options|
@@ -1066,6 +1068,8 @@ pub const FFI = struct {
             };
         };
 
+        bun.analytics.Features.ffi += 1;
+
         var size = symbols.values().len;
         if (size >= 63) {
             size = 0;
@@ -1512,6 +1516,8 @@ pub const FFI = struct {
         const tcc_options = "-std=c11 -nostdlib -Wl,--export-all-symbols" ++ if (Environment.isDebug) " -g" else "";
 
         pub fn compile(this: *Function, napiEnv: ?*napi.NapiEnv) !void {
+            bun.analytics.Features.ffi += 1;
+
             var source_code = std.ArrayList(u8).init(this.allocator);
             var source_code_writer = source_code.writer();
             try this.printSourceCode(&source_code_writer);
@@ -1586,6 +1592,8 @@ pub const FFI = struct {
             js_function: JSValue,
             is_threadsafe: bool,
         ) !void {
+            bun.analytics.Features.ffi += 1;
+
             jsc.markBinding(@src());
             var source_code = std.ArrayList(u8).init(this.allocator);
             var source_code_writer = source_code.writer();

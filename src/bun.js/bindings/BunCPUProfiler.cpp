@@ -42,7 +42,6 @@ struct ProfileNode {
     int columnNumber;
     int hitCount;
     WTF::Vector<int> children;
-    WTF::HashMap<WTF::String, int> positionTicks;
 };
 
 WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
@@ -54,22 +53,27 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
     // Shut down the profiler thread first - this is critical!
     profiler->shutdown();
 
-    // Need to hold the VM lock to safely access stack traces
-    JSC::JSLockHolder locker(vm);
-
-    // Defer GC while we're working with stack traces
-    JSC::DeferGC deferGC(vm);
-
-    auto& lock = profiler->getLock();
-    WTF::Locker profilerLocker { lock };
-
-    // Process stack traces within a heap iteration scope to safely access JSCells
+    // Extract stack traces while holding locks, then release them before JSON processing
+    WTF::Vector<JSC::SamplingProfiler::StackTrace> stackTraces;
     {
-        JSC::HeapIterationScope heapIterationScope(vm.heap);
-        profiler->processUnverifiedStackTraces();
-    }
+        // Need to hold the VM lock to safely access stack traces
+        JSC::JSLockHolder locker(vm);
 
-    auto stackTraces = profiler->releaseStackTraces();
+        // Defer GC while we're working with stack traces
+        JSC::DeferGC deferGC(vm);
+
+        auto& lock = profiler->getLock();
+        WTF::Locker profilerLocker { lock };
+
+        // Process stack traces within a heap iteration scope to safely access JSCells
+        {
+            JSC::HeapIterationScope heapIterationScope(vm.heap);
+            profiler->processUnverifiedStackTraces();
+        }
+
+        stackTraces = profiler->releaseStackTraces();
+    }
+    // Locks are now released - can do heavy JSON processing without holding them
 
     if (stackTraces.isEmpty())
         return WTF::String();
@@ -93,17 +97,28 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
     WTF::Vector<int> samples;
     WTF::Vector<long long> timeDeltas;
 
-    // Get the wall clock time for the first sample
-    // We use approximateWallTime to convert MonotonicTime to wall clock time
-    double wallClockStart = stackTraces[0].timestamp.approximateWallTime().secondsSinceEpoch().value() * 1000000.0;
+    // Find the minimum stopwatch timestamp to determine the actual start time
+    // Don't assume stackTraces are ordered
+    WTF::Seconds minStopwatchTimestamp = stackTraces[0].stopwatchTimestamp;
+    MonotonicTime minMonotonicTime = stackTraces[0].timestamp;
 
-    // The stopwatchTimestamp for the first sample (elapsed time from profiler start)
-    double stopwatchStart = stackTraces[0].stopwatchTimestamp.seconds() * 1000000.0;
+    for (const auto& stackTrace : stackTraces) {
+        if (stackTrace.stopwatchTimestamp < minStopwatchTimestamp) {
+            minStopwatchTimestamp = stackTrace.stopwatchTimestamp;
+            minMonotonicTime = stackTrace.timestamp;
+        }
+    }
+
+    // Get the wall clock time for the earliest sample
+    double wallClockStart = minMonotonicTime.approximateWallTime().secondsSinceEpoch().value() * 1000000.0;
+
+    // The stopwatch timestamp for the earliest sample
+    double stopwatchStart = minStopwatchTimestamp.seconds() * 1000000.0;
 
     // Calculate the offset to convert stopwatch times to wall clock times
     // startTime will be the wall clock time when profiling started
     double startTime = wallClockStart - stopwatchStart;
-    // lastTime should also start from the converted first sample time
+    // lastTime should also start from the converted earliest sample time
     double lastTime = startTime + stopwatchStart;
 
     // Process each stack trace

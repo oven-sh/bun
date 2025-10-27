@@ -1,18 +1,36 @@
 import { $ } from "bun";
 import { relative, join, dirname } from "path";
 
-// // Check for local changes in git before proceeding
-// const statusOutput = await $`git status --porcelain`.text();
+// Check for local changes in git before proceeding
+const statusOutput = await $`git status --porcelain --untracked-files=normal`.text();
 
-// if (statusOutput.trim().length > 0) {
-//   console.error("There are local changes in git. Please commit or stash them before running this command.");
-//   console.error("Git status:");
-//   console.error(statusOutput);
-//   process.exit(1);
-// }
+if (statusOutput.trim().length > 0) {
+  console.error("There are local changes in git. Please commit or stash them before running this command.");
+  console.error("Git status:");
+  console.error(statusOutput);
+  process.exit(1);
+}
 
-// TODO: automatically run `./vendor/zig/zig fmt src --upstream` and then revert local changes at the end
-// only do this with the above git state assertion
+async function revertUnstagedChanges() {
+  // Discard ONLY worktree changes; keep index (staged) intact.
+  // Prefer `git restore` (Git ≥2.23), fall back to `git checkout` for older Git.
+  try {
+    const restore = Bun.spawn({
+      cmd: ["git", "restore", "--worktree", "--", "."],
+      stdio: ["ignore", "ignore", "inherit"],
+    });
+    await restore.exited;
+    if (restore.exitCode !== 0) {
+      const checkout = Bun.spawn({
+        cmd: ["git", "checkout", "--", "."],
+        stdio: ["ignore", "ignore", "inherit"],
+      });
+      await checkout.exited;
+    }
+  } catch {
+    // Best-effort; ignore restore errors so the main task can still complete.
+  }
+}
 
 let skip = -1;
 const args = process.argv.slice(2).filter((arg, i) => {
@@ -96,18 +114,34 @@ await Bun.write(
     .join(" "),
 );
 
-const spawned = Bun.spawn({
-  cmd: ["tar", "--no-xattrs", "-zcf", out, out_args, ...resolvedZigFiles],
-  stdio: ["inherit", "inherit", "inherit"],
-});
-await spawned.exited;
-if (spawned.exitCode !== 0) {
-  console.error("Failed to create zip: ", spawned.exitCode);
-  process.exit(1);
+// Prepare zig source for use with the upstream compiler
+{
+  const fmt = Bun.spawn({
+    cmd: ["./vendor/zig/zig", "fmt", "--upstream", "src"],
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  await fmt.exited;
+  if (fmt.exitCode !== 0) {
+    await revertUnstagedChanges();
+    console.error("`zig fmt` failed.");
+    process.exit(fmt.exitCode ?? 1);
+  }
 }
-console.log(`
+
+try {
+  const spawned = Bun.spawn({
+    cmd: ["tar", "--no-xattrs", "-zcf", out, out_args, ...resolvedZigFiles],
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  await spawned.exited;
+
+  if (spawned.exitCode !== 0) {
+    console.error("Failed to create zip: ", spawned.exitCode);
+    process.exit(1);
+  }
+
+  console.log(`
 pack-codegen-for-zig-team
-Reminder: Use \`./vendor/zig/zig fmt --upstream src\` before running pack-codegen-for-zig-team.ts
 Reminder: Test that the reproduction steps work with the official Zig binary before submitting the issue.
 
 Output file: ${out}
@@ -122,4 +156,8 @@ tar -xvzf codegen-for-zig-team.tar.gz
 zig ${a0} @${out_args}
 \`\`\`
 `);
-console.log("->", out);
+  console.log("->", out);
+} finally {
+  // Always clean up any fmt-induced worktree changes (preserve index)
+  await revertUnstagedChanges();
+}

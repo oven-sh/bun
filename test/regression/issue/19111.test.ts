@@ -23,73 +23,82 @@ test("PassThrough stream 'readable' event should fire when data is written", asy
   expect(readableEventFired).toBe(true);
 });
 
-test("ServerResponse with PassThrough pattern (connect-to-web pattern)", async () => {
-  // This reproduces the pattern from connect-to-web.ts
-  function createServerResponse(incomingMessage: IncomingMessage) {
-    const res = new ServerResponse(incomingMessage);
-    const passThrough = new PassThrough();
-    let resolved = false;
+// Focused regression test: Standalone ServerResponse.writableNeedDrain should be false
+test("Standalone ServerResponse.writableNeedDrain is false", () => {
+  const mockReq = Object.assign(Readable.from([]), {
+    url: "/need-drain",
+    method: "GET",
+    headers: {},
+  }) as IncomingMessage;
+  const res = new ServerResponse(mockReq);
 
-    const onReadable = new Promise<{
-      readable: Readable;
-      headers: Record<string, any>;
-      statusCode: number;
-    }>((resolve, reject) => {
-      const handleReadable = () => {
-        if (resolved) return;
-        resolved = true;
-        resolve({
-          readable: Readable.from(passThrough),
-          headers: res.getHeaders(),
-          statusCode: res.statusCode,
-        });
-      };
+  // Regression for #19111: previously true due to defaulting bufferedAmount to 1
+  expect(res.writableNeedDrain).toBe(false);
+});
 
-      const handleError = (err: Error) => {
-        reject(err);
-      };
+// Helper function for connect-to-web pattern
+function createServerResponse(incomingMessage: IncomingMessage) {
+  const res = new ServerResponse(incomingMessage);
+  const passThrough = new PassThrough();
+  let resolved = false;
 
-      passThrough.once("readable", handleReadable);
-      passThrough.once("end", handleReadable);
-      passThrough.once("error", handleError);
-      res.once("error", handleError);
-    });
-
-    res.once("finish", () => {
-      passThrough.end();
-    });
-
-    passThrough.on("drain", () => {
-      res.emit("drain");
-    });
-
-    res.write = passThrough.write.bind(passThrough);
-    res.end = (passThrough as any).end.bind(passThrough);
-
-    res.writeHead = function writeHead(
-      statusCode: number,
-      statusMessage?: string | any,
-      headers?: any,
-    ): ServerResponse {
-      res.statusCode = statusCode;
-      if (typeof statusMessage === "object") {
-        headers = statusMessage;
-        statusMessage = undefined;
-      }
-      if (headers) {
-        Object.entries(headers).forEach(([key, value]) => {
-          if (value !== undefined) {
-            res.setHeader(key, value);
-          }
-        });
-      }
-      return res;
+  const onReadable = new Promise<{
+    readable: Readable;
+    headers: Record<string, any>;
+    statusCode: number;
+  }>((resolve, reject) => {
+    const handleReadable = () => {
+      if (resolved) return;
+      resolved = true;
+      resolve({
+        readable: Readable.from(passThrough),
+        headers: res.getHeaders(),
+        statusCode: res.statusCode,
+      });
     };
 
-    return { res, onReadable };
-  }
+    const handleError = (err: Error) => {
+      reject(err);
+    };
 
-  // Create a mock IncomingMessage
+    passThrough.once("readable", handleReadable);
+    passThrough.once("end", handleReadable);
+    passThrough.once("error", handleError);
+    res.once("error", handleError);
+  });
+
+  res.once("finish", () => {
+    passThrough.end();
+  });
+
+  passThrough.on("drain", () => {
+    res.emit("drain");
+  });
+
+  res.write = passThrough.write.bind(passThrough);
+  res.end = (passThrough as any).end.bind(passThrough);
+
+  res.writeHead = function writeHead(statusCode: number, statusMessage?: string | any, headers?: any): ServerResponse {
+    res.statusCode = statusCode;
+    if (typeof statusMessage === "object") {
+      headers = statusMessage;
+      statusMessage = undefined;
+    }
+    if (headers) {
+      Object.entries(headers).forEach(([key, value]) => {
+        if (value !== undefined) {
+          res.setHeader(key, value);
+        }
+      });
+    }
+    return res;
+  };
+
+  return { res, onReadable };
+}
+
+test("ServerResponse with PassThrough pattern (connect-to-web pattern)", async () => {
+  // This reproduces the pattern from connect-to-web.ts
   const mockReq = Object.assign(Readable.from([]), {
     url: "/test",
     method: "GET",
@@ -98,18 +107,35 @@ test("ServerResponse with PassThrough pattern (connect-to-web pattern)", async (
 
   const { res, onReadable } = createServerResponse(mockReq);
 
-  // Simulate a middleware writing to the response
-  setTimeout(() => {
-    res.writeHead(200, { "Content-Type": "text/plain" });
-    res.write("Hello, world!");
-    res.end();
-  }, 10);
+  // Write synchronously to avoid setTimeout flakiness
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.write("Hello, world!");
+  res.end();
 
   // The promise should resolve when the readable event fires
   const result = await onReadable;
   expect(result.statusCode).toBe(200);
   expect(result.headers["content-type"]).toBe("text/plain");
-}, 1000);
+});
+
+test("Readable.pipe(ServerResponse) flows without stalling (regression for #19111)", async () => {
+  const mockReq = Object.assign(Readable.from([]), {
+    url: "/pipe",
+    method: "GET",
+    headers: {},
+  }) as IncomingMessage;
+
+  const { res, onReadable } = createServerResponse(mockReq);
+
+  // Pipe a readable source into ServerResponse; should not stall
+  const src = Readable.from(["Hello, ", "world!"]);
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  src.pipe(res);
+
+  const out = await onReadable;
+  expect(out.statusCode).toBe(200);
+  expect(out.headers["content-type"]).toBe("text/plain");
+});
 
 test("PassThrough readable event fires immediately if data written before listener", async () => {
   const passThrough = new PassThrough();

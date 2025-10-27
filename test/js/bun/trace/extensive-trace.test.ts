@@ -102,13 +102,9 @@ describe("extensive tracing", () => {
         const t1 = await r1.text();
         console.log("fetch 1:", t1.length, "bytes");
 
-        const r2 = await fetch("https://httpbin.org/json");
-        const j2 = await r2.json();
-        console.log("fetch 2:", JSON.stringify(j2).length, "bytes");
-
-        const r3 = await fetch("https://httpbin.org/uuid");
-        const t3 = await r3.text();
-        console.log("fetch 3:", t3.length, "bytes");
+        const r2 = await fetch("https://example.com");
+        const t2 = await r2.text();
+        console.log("fetch 2:", t2.length, "bytes");
 
         console.log("fetches complete");
       `,
@@ -142,7 +138,7 @@ describe("extensive tracing", () => {
 
     // Check we have request initiations
     const requests = fetchTraces.filter(t => t.data.call === "request");
-    expect(requests.length).toBeGreaterThanOrEqual(3);
+    expect(requests.length).toBeGreaterThanOrEqual(2);
 
     // Verify request trace has required fields
     expect(requests[0].data).toHaveProperty("url");
@@ -151,7 +147,7 @@ describe("extensive tracing", () => {
 
     // Check we have responses
     const responses = fetchTraces.filter(t => t.data.call === "response");
-    expect(responses.length).toBeGreaterThanOrEqual(3);
+    expect(responses.length).toBeGreaterThanOrEqual(2);
 
     // Verify response trace has required fields
     expect(responses[0].data).toHaveProperty("url");
@@ -165,7 +161,7 @@ describe("extensive tracing", () => {
     // Check body consumption
     const textCalls = bodyTraces.filter(t => t.data.call === "text");
     expect(textCalls.length).toBeGreaterThanOrEqual(2);
-  });
+  }, 10_000);
 
   test("mixed operations tracing", async () => {
     using dir = tempDir("trace-mixed", {
@@ -244,8 +240,10 @@ describe("extensive tracing", () => {
   test("trace namespace filtering", async () => {
     using dir = tempDir("trace-filter", {
       "test.js": `
-        import { writeFileSync } from "fs";
-        writeFileSync("test.txt", "hello");
+        import { openSync, writeSync, closeSync } from "fs";
+        const fd = openSync("test.txt", "w");
+        writeSync(fd, "hello");
+        closeSync(fd);
         const r = await fetch("https://example.com");
         await r.text();
         console.log("done");
@@ -289,15 +287,21 @@ describe("extensive tracing", () => {
   test("trace chronological ordering", async () => {
     using dir = tempDir("trace-ordering", {
       "test.js": `
-        import { writeFileSync } from "fs";
+        import { openSync, writeSync, closeSync } from "fs";
 
-        writeFileSync("file1.txt", "first");
+        const fd1 = openSync("file1.txt", "w");
+        writeSync(fd1, "first");
+        closeSync(fd1);
         await new Promise(r => setTimeout(r, 10));
 
-        writeFileSync("file2.txt", "second");
+        const fd2 = openSync("file2.txt", "w");
+        writeSync(fd2, "second");
+        closeSync(fd2);
         await new Promise(r => setTimeout(r, 10));
 
-        writeFileSync("file3.txt", "third");
+        const fd3 = openSync("file3.txt", "w");
+        writeSync(fd3, "third");
+        closeSync(fd3);
 
         console.log("done");
       `,

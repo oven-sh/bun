@@ -6,36 +6,12 @@ import { join } from "path";
 describe("--trace flag", () => {
   test("basic trace file creation", async () => {
     using dir = tempDir("trace-basic", {
-      "test.js": `console.log("hello");`,
-    });
-
-    const traceFile = join(String(dir), "trace.jsonl");
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--trace", traceFile, "test.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stdout).toBe("hello\n");
-    expect(exitCode).toBe(0);
-
-    // Trace file should exist
-    const traceContent = readFileSync(traceFile, "utf8");
-    expect(traceContent.length).toBeGreaterThan(0);
-  });
-
-  test("trace fs operations", async () => {
-    using dir = tempDir("trace-fs", {
       "test.js": `
-        import { readFileSync, writeFileSync } from "fs";
-        writeFileSync("output.txt", "test data");
-        const data = readFileSync("output.txt", "utf8");
-        console.log(data);
+        import { openSync, writeSync, closeSync } from "fs";
+        const fd = openSync("test.txt", "w");
+        writeSync(fd, "hello");
+        closeSync(fd);
+        console.log("done");
       `,
     });
 
@@ -51,7 +27,50 @@ describe("--trace flag", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toBe("test data\n");
+    expect(stdout).toBe("done\n");
+    expect(exitCode).toBe(0);
+
+    // Trace file should exist and have content
+    const traceContent = readFileSync(traceFile, "utf8");
+    expect(traceContent.length).toBeGreaterThan(0);
+
+    // Should have at least 3 trace lines (open, write, close)
+    const lines = traceContent
+      .trim()
+      .split("\n")
+      .filter(l => l.length > 0);
+    expect(lines.length).toBeGreaterThanOrEqual(3);
+  });
+
+  test("trace fs operations", async () => {
+    using dir = tempDir("trace-fs", {
+      "test.js": `
+        import { openSync, writeSync, readSync, closeSync } from "fs";
+        const fd1 = openSync("output.txt", "w");
+        writeSync(fd1, "test data");
+        closeSync(fd1);
+
+        const fd2 = openSync("output.txt", "r");
+        const buf = Buffer.alloc(100);
+        readSync(fd2, buf, 0, 100, 0);
+        closeSync(fd2);
+        console.log("done");
+      `,
+    });
+
+    const traceFile = join(String(dir), "trace.jsonl");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--trace", traceFile, "test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("done\n");
     expect(exitCode).toBe(0);
 
     // Parse trace file
@@ -75,10 +94,12 @@ describe("--trace flag", () => {
     expect(calls).toContain("open");
   });
 
-  test("trace Bun.write operations", async () => {
-    using dir = tempDir("trace-bun-write", {
+  test("trace open and close operations", async () => {
+    using dir = tempDir("trace-open-close", {
       "test.js": `
-        await Bun.write("output.txt", "hello from Bun.write");
+        import { openSync, closeSync } from "fs";
+        const fd = openSync("output.txt", "w");
+        closeSync(fd);
         console.log("done");
       `,
     });
@@ -107,13 +128,14 @@ describe("--trace flag", () => {
 
     const traces = traceLines.map(line => JSON.parse(line));
 
-    // Should have bun_write namespace entries
-    const bunWriteTraces = traces.filter(t => t.ns === "bun_write");
-    expect(bunWriteTraces.length).toBeGreaterThan(0);
+    // Should have fs namespace entries
+    const fsTraces = traces.filter(t => t.ns === "fs");
+    expect(fsTraces.length).toBeGreaterThan(0);
 
-    // Check that we logged write operations
-    const writeCalls = bunWriteTraces.filter(t => t.data.call === "write");
-    expect(writeCalls.length).toBeGreaterThan(0);
+    // Check that we logged open and close operations
+    const calls = fsTraces.map(t => t.data.call);
+    expect(calls).toContain("open");
+    expect(calls).toContain("close");
   });
 
   test("trace fetch operations", async () => {

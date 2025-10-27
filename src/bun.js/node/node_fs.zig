@@ -4256,16 +4256,23 @@ pub const NodeFS = struct {
         buf = buf[@min(args.offset, buf.len)..];
         buf = buf[0..@min(buf.len, args.length)];
 
-        return switch (Syscall.pread(args.fd, buf, args.position.?)) {
-            .err => |err| .{ .err = .{
-                .errno = err.errno,
-                .fd = args.fd,
-                .syscall = .read,
-            } },
-            .result => |amt| .{ .result = .{
-                .bytes_read = @as(u52, @truncate(amt)),
-            } },
-        };
+        const result = Syscall.pread(args.fd, buf, args.position.?);
+
+        switch (result) {
+            .result => |amt| {
+                const bytes_read = @as(u52, @truncate(amt));
+                traceFS(.{ .call = "read", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .position = args.position.?, .bytes_read = bytes_read });
+                return .{ .result = .{ .bytes_read = bytes_read } };
+            },
+            .err => |err| {
+                traceFS(.{ .call = "read", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .position = args.position.?, .errno = err.errno });
+                return .{ .err = .{
+                    .errno = err.errno,
+                    .fd = args.fd,
+                    .syscall = .read,
+                } };
+            },
+        }
     }
 
     pub fn read(this: *NodeFS, args: Arguments.Read, _: Flavor) Maybe(Return.Read) {
@@ -4377,16 +4384,23 @@ pub const NodeFS = struct {
         buf = buf[@min(args.offset, buf.len)..];
         buf = buf[0..@min(args.length, buf.len)];
 
-        return switch (Syscall.pwrite(args.fd, buf, position)) {
-            .err => |err| .{ .err = .{
-                .errno = err.errno,
-                .fd = args.fd,
-                .syscall = .write,
-            } },
-            .result => |amt| .{ .result = .{
-                .bytes_written = @as(u52, @truncate(amt)),
-            } },
-        };
+        const result = Syscall.pwrite(args.fd, buf, position);
+
+        switch (result) {
+            .result => |amt| {
+                const bytes_written = @as(u52, @truncate(amt));
+                traceFS(.{ .call = "write", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .position = position, .bytes_written = bytes_written });
+                return .{ .result = .{ .bytes_written = bytes_written } };
+            },
+            .err => |err| {
+                traceFS(.{ .call = "write", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .position = position, .errno = err.errno });
+                return .{ .err = .{
+                    .errno = err.errno,
+                    .fd = args.fd,
+                    .syscall = .write,
+                } };
+            },
+        }
     }
 
     fn preadvInner(_: *NodeFS, args: Arguments.Readv) Maybe(Return.Readv) {

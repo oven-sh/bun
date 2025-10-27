@@ -945,7 +945,7 @@ if(NOT WIN32)
     if (NOT ABI STREQUAL "musl")
       target_compile_options(${bun} PUBLIC
         -fsanitize=null
-        -fsanitize-recover=all
+        -fno-sanitize-recover=all
         -fsanitize=bounds
         -fsanitize=return
         -fsanitize=nullability-arg
@@ -1000,6 +1000,20 @@ if(NOT WIN32)
     )
 
     if(ENABLE_ASAN)
+      target_compile_options(${bun} PUBLIC
+        -fsanitize=null
+        -fno-sanitize-recover=all
+        -fsanitize=bounds
+        -fsanitize=return
+        -fsanitize=nullability-arg
+        -fsanitize=nullability-assign
+        -fsanitize=nullability-return
+        -fsanitize=returns-nonnull-attribute
+        -fsanitize=unreachable
+      )
+      target_link_libraries(${bun} PRIVATE
+        -fsanitize=null
+      )
       target_compile_options(${bun} PUBLIC -fsanitize=address)
       target_link_libraries(${bun} PUBLIC -fsanitize=address)
     endif()

@@ -52,10 +52,16 @@ This creates a trace file with line-delimited JSON (JSONL) format, where each li
 Each trace event is a compact JSON array:
 
 ```json
-["fs", 1761595797038, "readFile", {"path": "/path/to/file", "bytes_read": 1234}]
+[
+  "fs",
+  1761595797038,
+  "readFile",
+  { "path": "/path/to/file", "bytes_read": 1234 }
+]
 ```
 
 Array structure:
+
 - `[0]` - Namespace (fs, fetch, response_body, bun_write, subprocess)
 - `[1]` - Timestamp in milliseconds
 - `[2]` - Operation name (readFile, spawn, request, etc.)
@@ -66,6 +72,7 @@ Only applicable fields are included in the data object - no null/undefined value
 ### Why Array Format?
 
 The array format is:
+
 - **40% more compact** than object format
 - **Easier to filter** with jq: `select(.[0] == "fs" and .[2] == "writeFile")`
 - **Faster to parse** (arrays vs objects with string keys)

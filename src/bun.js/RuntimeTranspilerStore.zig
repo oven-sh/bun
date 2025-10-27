@@ -70,17 +70,18 @@ pub fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written
             ) catch "";
             defer bun.default_allocator.free(source_file);
 
-            var bufw = std.io.bufferedWriter(file.writer());
-            const w = bufw.writer();
+            var bufw_buffer: [4096]u8 = undefined;
+            var bufw = file.writer(&bufw_buffer);
+            const w = &bufw.interface;
             try w.print(
                 \\{{
                 \\  "version": 3,
-                \\  "file": {},
+                \\  "file": {f},
                 \\  "sourceRoot": "",
-                \\  "sources": [{}],
-                \\  "sourcesContent": [{}],
+                \\  "sources": [{f}],
+                \\  "sourcesContent": [{f}],
                 \\  "names": [],
-                \\  "mappings": "{}"
+                \\  "mappings": "{f}"
                 \\}}
             , .{
                 bun.fmt.formatJSONStringUTF8(std.fs.path.basename(specifier), .{}),
@@ -88,7 +89,7 @@ pub fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written
                 bun.fmt.formatJSONStringUTF8(source_file, .{}),
                 mappings.formatVLQs(),
             });
-            try bufw.flush();
+            try w.flush();
         }
     } else {
         dir.writeFile(.{

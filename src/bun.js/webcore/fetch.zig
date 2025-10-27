@@ -1316,6 +1316,18 @@ pub const FetchTasklet = struct {
             promise,
         );
 
+        // Trace request initiation
+        if (Output.trace_enabled) {
+            const tracer = Output.tracer("fetch");
+            const url = node.http.?.url.href;
+            const method = @tagName(node.http.?.method);
+            tracer.trace(.{
+                .call = "request",
+                .url = url,
+                .method = method,
+            });
+        }
+
         var batch = bun.ThreadPool.Batch{};
         node.http.?.schedule(allocator, &batch);
         node.poll_ref.ref(global.bunVM());

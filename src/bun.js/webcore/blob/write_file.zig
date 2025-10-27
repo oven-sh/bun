@@ -742,6 +742,7 @@ const Environment = bun.Environment;
 const invalid_fd = bun.invalid_fd;
 const io = bun.io;
 const uv = bun.windows.libuv;
+const Output = bun.Output;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

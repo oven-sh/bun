@@ -1103,6 +1103,34 @@ pub fn Mixin(comptime Type: type) type {
 
         pub fn getText(this: *Type, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
             var value: *Body.Value = this.getBodyValue();
+
+            if (Output.trace_enabled) {
+                const trace = Output.tracer("response_body");
+
+                if (value.* == .Used) {
+                    trace.trace(.{ .call = "text", .status = "already_used" });
+                } else if (value.* == .Locked) {
+                    if (@hasDecl(Type, "getBodyReadableStream")) {
+                        if (this.getBodyReadableStream(globalObject)) |readable| {
+                            if (readable.isDisturbed(globalObject)) {
+                                trace.trace(.{ .call = "text", .status = "already_used" });
+                            } else {
+                                trace.trace(.{ .call = "text", .status = "streaming" });
+                            }
+                        }
+                    } else if (value.Locked.action != .none or value.Locked.isDisturbed(Type, globalObject, callframe.this())) {
+                        trace.trace(.{ .call = "text", .status = "already_used" });
+                    } else {
+                        trace.trace(.{ .call = "text", .status = "locked" });
+                    }
+                } else {
+                    const blob = value.*;
+                    if (blob == .Blob or blob == .WTFStringImpl or blob == .InternalBlob) {
+                        trace.trace(.{ .call = "text", .status = "immediate" });
+                    }
+                }
+            }
+
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
             }
@@ -1774,6 +1802,7 @@ const std = @import("std");
 const bun = @import("bun");
 const MutableString = bun.MutableString;
 const Output = bun.Output;
+const Environment = bun.Environment;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const strings = bun.strings;

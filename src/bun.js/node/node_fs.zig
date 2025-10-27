@@ -6971,6 +6971,7 @@ const c = bun.c;
 const strings = bun.strings;
 const AbortSignal = bun.webcore.AbortSignal;
 const Buffer = bun.api.node.Buffer;
+const Output = bun.Output;
 
 const jsc = bun.jsc;
 const ArrayBuffer = jsc.MarkedArrayBuffer;

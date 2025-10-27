@@ -1322,6 +1322,84 @@ pub const Synchronized = struct {
     }
 };
 
+/// Structured tracer for logging events to a JSON file
+/// Used by agents like Claude to receive logs about what applications are doing
+/// without having to manually add console.log everywhere.
+///
+/// Usage:
+///   const tracer = Output.tracer("fs");
+///   tracer.trace(.{ .call = "open", .path = path, .rc = errno });
+///
+/// Enable with: --trace=file.json
+///
+pub fn tracer(comptime namespace: []const u8) type {
+    return Tracer(namespace);
+}
+
+fn Tracer(comptime ns: []const u8) type {
+    return struct {
+        pub fn trace(args: anytype) void {
+            if (!trace_enabled) return;
+
+            const file = trace_file orelse return;
+
+            trace_lock.lock();
+            defer trace_lock.unlock();
+
+            // Get timestamp
+            const timestamp = std.time.milliTimestamp();
+
+            // Write line-delimited JSON: {"ns":"namespace","ts":123,"data":{...}}
+            var buffered = std.io.bufferedWriter(file.writer());
+            const w = buffered.writer();
+
+            w.writeAll("{\"ns\":\"") catch return;
+            w.writeAll(ns) catch return;
+            w.writeAll("\",\"ts\":") catch return;
+            w.print("{d}", .{timestamp}) catch return;
+            w.writeAll(",\"data\":") catch return;
+            std.json.stringify(args, .{}, w) catch return;
+            w.writeAll("}\n") catch return;
+            buffered.flush() catch return;
+        }
+    };
+}
+
+var trace_file: ?bun.sys.File = null;
+pub var trace_enabled: bool = false;
+var trace_lock = bun.Mutex{};
+
+/// Initialize trace file from CLI argument
+pub fn initTrace(path: []const u8) !void {
+    if (trace_file != null) return;
+
+    const flags = bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC;
+    const mode = 0o644;
+    switch (bun.sys.openA(path, flags, mode)) {
+        .result => |fd| {
+            trace_file = bun.sys.File{ .handle = fd };
+            trace_enabled = true;
+        },
+        .err => {
+            return error.FailedToOpenTraceFile;
+        },
+    }
+}
+
+/// Close trace file on exit
+pub fn closeTrace() void {
+    if (trace_file) |file| {
+        _ = file.close();
+        trace_file = null;
+        trace_enabled = false;
+    }
+}
+
+/// Callback for Global.addExitCallback
+pub fn closeTraceCallback() callconv(.C) void {
+    closeTrace();
+}
+
 const Environment = @import("./env.zig");
 const root = @import("root");
 const std = @import("std");

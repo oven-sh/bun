@@ -128,9 +128,10 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
             int lineNumber = -1;
             int columnNumber = -1;
 
-            if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
-                functionName = const_cast<JSC::SamplingProfiler::StackFrame*>(&frame)->displayName(vm);
+            // Get function name - displayName works for all frame types
+            functionName = const_cast<JSC::SamplingProfiler::StackFrame*>(&frame)->displayName(vm);
 
+            if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
                 auto sourceProviderAndID = const_cast<JSC::SamplingProfiler::StackFrame*>(&frame)->sourceProviderAndID();
                 auto* provider = std::get<0>(sourceProviderAndID);
                 if (provider) {
@@ -154,12 +155,6 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
 #endif
                     }
                 }
-            } else if (frame.frameType == JSC::SamplingProfiler::FrameType::Host) {
-                functionName = "(native)"_s;
-            } else if (frame.frameType == JSC::SamplingProfiler::FrameType::C || frame.frameType == JSC::SamplingProfiler::FrameType::Unknown) {
-                functionName = "(program)"_s;
-            } else {
-                functionName = "(anonymous)"_s;
             }
 
             // Create a unique key for this frame

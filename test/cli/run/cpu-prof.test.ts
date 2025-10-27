@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
-describe("--cpu-prof", () => {
+describe.concurrent("--cpu-prof", () => {
   test("generates CPU profile with default name", async () => {
     using dir = tempDir("cpu-prof", {
       "test.js": `
@@ -119,6 +119,7 @@ describe("--cpu-prof", () => {
 
     const exitCode = await proc.exited;
 
+    // The directory should be created automatically
     const profilesDir = join(String(dir), "profiles");
     const files = readdirSync(profilesDir);
     const profileFiles = files.filter(f => f.endsWith(".cpuprofile"));

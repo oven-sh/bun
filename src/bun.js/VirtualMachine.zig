@@ -834,7 +834,9 @@ pub fn setEntryPointEvalResultCJS(this: *VirtualMachine, value: JSValue) callcon
 
 pub fn onExit(this: *VirtualMachine) void {
     // Write CPU profile if profiling was enabled - do this FIRST before any shutdown begins
+    // Grab the config and null it out to make this idempotent
     if (this.cpu_profiler_config) |config| {
+        this.cpu_profiler_config = null;
         CPUProfiler.stopAndWriteProfile(this.jsc_vm, config) catch |err| {
             Output.errGeneric("Failed to write CPU profile: {s}", .{@errorName(err)});
         };

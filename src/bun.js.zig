@@ -270,9 +270,9 @@ pub const Run = struct {
 
             vm.cpu_profiler_config = CPUProfiler.CPUProfilerConfig{
                 .enabled = true,
-                .name_ptr = if (cpu_prof_opts.name.len > 0) cpu_prof_opts.name.ptr else "",
+                .name_ptr = cpu_prof_opts.name.ptr,
                 .name_len = cpu_prof_opts.name.len,
-                .dir_ptr = if (cpu_prof_opts.dir.len > 0) cpu_prof_opts.dir.ptr else "",
+                .dir_ptr = cpu_prof_opts.dir.ptr,
                 .dir_len = cpu_prof_opts.dir.len,
             };
             CPUProfiler.startCPUProfiler(vm.jsc_vm);

@@ -789,6 +789,14 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             if (args.option("--cpu-prof-dir")) |dir| {
                 ctx.runtime_options.cpu_prof.dir = dir;
             }
+        } else {
+            // Warn if --cpu-prof-name or --cpu-prof-dir is used without --cpu-prof
+            if (args.option("--cpu-prof-name")) |_| {
+                Output.warn("--cpu-prof-name requires --cpu-prof to be enabled", .{});
+            }
+            if (args.option("--cpu-prof-dir")) |_| {
+                Output.warn("--cpu-prof-dir requires --cpu-prof to be enabled", .{});
+            }
         }
 
         if (args.flag("--no-deprecation")) {

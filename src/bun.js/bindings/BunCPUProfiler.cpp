@@ -90,7 +90,7 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
 
     int nextNodeId = 2;
     WTF::Vector<int> samples;
-    WTF::Vector<int> timeDeltas;
+    WTF::Vector<long long> timeDeltas;
 
     // Get the wall clock time for the first sample
     // We use approximateWallTime to convert MonotonicTime to wall clock time
@@ -111,7 +111,7 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
             samples.append(1); // Root node
             // Convert stopwatch time to wall clock time
             double currentTime = startTime + (stackTrace.stopwatchTimestamp.seconds() * 1000000.0);
-            timeDeltas.append(static_cast<int>(currentTime - lastTime));
+            timeDeltas.append(static_cast<long long>(currentTime - lastTime));
             lastTime = currentTime;
             continue;
         }
@@ -198,7 +198,7 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
         // Add time delta
         // Convert stopwatch time to wall clock time
         double currentTime = startTime + (stackTrace.stopwatchTimestamp.seconds() * 1000000.0);
-        timeDeltas.append(static_cast<int>(currentTime - lastTime));
+        timeDeltas.append(static_cast<long long>(currentTime - lastTime));
         lastTime = currentTime;
     }
 
@@ -250,7 +250,7 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
 
     // Add timeDeltas array
     auto timeDeltasArray = JSON::Array::create();
-    for (int delta : timeDeltas) {
+    for (long long delta : timeDeltas) {
         timeDeltasArray->pushInteger(delta);
     }
     json->setValue("timeDeltas"_s, timeDeltasArray);

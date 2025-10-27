@@ -5,12 +5,12 @@ pub const CPUProfilerConfig = extern struct {
     dir_ptr: [*]const u8,
     dir_len: usize,
 
-    pub fn name(this: *const CPUProfilerConfig) []const u8 {
+    pub inline fn name(this: *const CPUProfilerConfig) []const u8 {
         if (this.name_len == 0) return "";
         return this.name_ptr[0..this.name_len];
     }
 
-    pub fn dir(this: *const CPUProfilerConfig) []const u8 {
+    pub inline fn dir(this: *const CPUProfilerConfig) []const u8 {
         if (this.dir_len == 0) return "";
         return this.dir_ptr[0..this.dir_len];
     }
@@ -42,17 +42,17 @@ pub fn stopAndWriteProfile(vm: *jsc.VM, config: CPUProfilerConfig) !void {
 
     // Convert to OS-specific path (UTF-16 on Windows, UTF-8 elsewhere)
     var path_buf_os: bun.OSPathBuffer = undefined;
-    const output_path_os: bun.OSPathSliceZ = if (bun.Environment.isWindows) blk: {
-        const utf16_len = bun.strings.convertUTF8toUTF16InBufferZ(&path_buf_os, output_path);
-        break :blk path_buf_os[0..utf16_len :0];
-    } else output_path;
+    const output_path_os: bun.OSPathSliceZ = if (bun.Environment.isWindows)
+        bun.strings.convertUTF8toUTF16InBufferZ(&path_buf_os, output_path)
+    else
+        output_path;
 
     // Write the profile to disk using bun.sys.File.writeFile
     const result = bun.sys.File.writeFile(bun.FD.cwd(), output_path_os, json_slice.slice());
     if (result.asErr()) |err| {
-        // If we got ENOENT, try creating the directory and retry
+        // If we got ENOENT, PERM, or ACCES, try creating the directory and retry
         const errno = err.getErrno();
-        if (errno == .NOENT) {
+        if (errno == .NOENT or errno == .PERM or errno == .ACCES) {
             const dir_str = config.dir();
             if (dir_str.len > 0) {
                 bun.makePath(std.fs.cwd(), dir_str) catch {};
@@ -98,30 +98,15 @@ fn getOutputPath(buf: *bun.PathBuffer, config: CPUProfilerConfig) ![:0]const u8 
 extern "c" fn getpid() c_int;
 
 fn generateDefaultFilename(buf: *bun.PathBuffer) ![]const u8 {
-    // Generate filename like: CPU.20240101.120000.1234.0.001.cpuprofile
+    // Generate filename like: CPU.{timestamp}.{pid}.cpuprofile
+    // Use microsecond timestamp for uniqueness
     const timespec = bun.timespec.now();
     const pid = getpid();
 
-    // Convert timestamp to date/time using wrapping arithmetic
-    const epoch_seconds: u64 = @intCast(timespec.sec);
-    const days_since_epoch = epoch_seconds / 86400;
-    const seconds_today = epoch_seconds % 86400;
+    const epoch_microseconds: u64 = @intCast(timespec.sec *% 1_000_000 +% @divTrunc(timespec.nsec, 1000));
 
-    const year: u32 = @intCast(1970 +% (days_since_epoch / 365)); // Approximate, wrapping add
-    const month: u32 = 1; // Simplified for now
-    const day: u32 = @intCast((days_since_epoch % 365) +% 1); // Wrapping add
-
-    const hours: u32 = @intCast(seconds_today / 3600);
-    const minutes: u32 = @intCast((seconds_today % 3600) / 60);
-    const seconds: u32 = @intCast(seconds_today % 60);
-
-    return try std.fmt.bufPrint(buf, "CPU.{d:0>4}{d:0>2}{d:0>2}.{d:0>2}{d:0>2}{d:0>2}.{d}.0.001.cpuprofile", .{
-        year,
-        month,
-        day,
-        hours,
-        minutes,
-        seconds,
+    return try std.fmt.bufPrint(buf, "CPU.{d}.{d}.cpuprofile", .{
+        epoch_microseconds,
         pid,
     });
 }

@@ -34,8 +34,6 @@ describe.concurrent("--cpu-prof", () => {
     expect(profileFiles.length).toBeGreaterThan(0);
     expect(exitCode).toBe(0);
 
-    expect(profileFiles.length).toBeGreaterThan(0);
-
     // Read and validate the profile
     const profilePath = join(String(dir), profileFiles[0]);
     const profileContent = readFileSync(profilePath, "utf-8");

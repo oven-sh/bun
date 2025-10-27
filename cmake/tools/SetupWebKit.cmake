@@ -76,6 +76,15 @@ if(ENABLE_ASAN)
   # change their layout according to whether ASan is used, for example:
   # https://github.com/oven-sh/WebKit/blob/eda8b0fb4fb1aa23db9c2b00933df8b58bcdd289/Source/WTF/wtf/Vector.h#L682
   set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-asan")
+
+  if(LINUX AND ABI STREQUAL "musl")
+    message(FATAL_ERROR
+      "Our WebKit does not provide musl builds with ASAN enabled.\n"
+      "Please use one of the following options:\n"
+      "  1. Disable ASAN: cmake -DENABLE_ASAN=OFF ...\n"
+      "  2. Use the build script: bun run build:debug:noasan\n"
+      "Available musl builds: debug, release, lto")
+  endif()
 endif()
 
 setx(WEBKIT_NAME bun-webkit-${WEBKIT_OS}-${WEBKIT_ARCH}${WEBKIT_SUFFIX})

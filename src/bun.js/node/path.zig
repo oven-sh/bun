@@ -2977,11 +2977,19 @@ export fn Bun__findPackageJSON(globalObject: *jsc.JSGlobalObject, input_path: *b
     defer slice.deinit();
 
     var current_dir = slice.slice();
+    if (current_dir.len == 0) {
+        result.* = bun.String.empty;
+        return;
+    }
 
     // If the input is a file, start from its directory
     // Check if it's a regular file by trying to get parent directory
     var path_buf_z: [bun.MAX_PATH_BYTES:0]u8 = undefined;
-    if (current_dir.len < path_buf_z.len) {
+    if (current_dir.len >= path_buf_z.len) {
+        // Path too long to process
+        result.* = bun.String.empty;
+        return;
+    } else {
         @memcpy(path_buf_z[0..current_dir.len], current_dir);
         path_buf_z[current_dir.len] = 0;
         const current_dir_z = path_buf_z[0..current_dir.len :0];
@@ -3019,28 +3027,15 @@ export fn Bun__findPackageJSON(globalObject: *jsc.JSGlobalObject, input_path: *b
     const resolver = &bun_vm.transpiler.resolver;
 
     // Walk up the directory tree using the resolver cache
-    var search_dir = current_dir;
-    while (true) {
-        // Try to get DirInfo from the cache
-        if (resolver.readDirInfo(search_dir) catch null) |dir_info| {
+    // Use std.fs.path.dirname to get null once we reach the root
+    var search_dir: ?[]const u8 = current_dir;
+    while (search_dir) |dir| : (search_dir = std.fs.path.dirname(dir)) {
+        if (resolver.dirInfoCached(dir) catch null) |dir_info| {
             if (dir_info.package_json) |pkg_json| {
-                // Found a package.json in the cache
-                const pkg_path = pkg_json.source.path.text;
-                result.* = bun.String.cloneUTF8(pkg_path);
+                result.* = bun.String.cloneUTF8(pkg_json.source.path.text);
                 return;
             }
         }
-
-        // Move to parent directory
-        const parent = if (Environment.isWindows)
-            dirnameWindowsT(u8, search_dir)
-        else
-            dirnamePosixT(u8, search_dir);
-
-        if (strings.eql(parent, search_dir)) {
-            break;
-        }
-        search_dir = parent;
     }
 
     // Not found

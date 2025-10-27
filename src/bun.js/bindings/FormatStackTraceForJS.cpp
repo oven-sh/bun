@@ -543,11 +543,19 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
 
 void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* sourceProvider, JSC::LineColumn& lineColumn)
 {
+    auto sourceURL = sourceProvider->sourceURL();
+    if (sourceURL.isEmpty()) {
+        return;
+    }
+
     ZigStackFrame frame = {};
-    frame.position.line_zero_based = lineColumn.line - 1;
-    frame.position.column_zero_based = lineColumn.column - 1;
-    frame.source_url = Bun::toStringRef(sourceProvider->sourceURL());
+    // Convert to zero-based safely (avoid underflow if line/column is 0)
+    frame.position.line_zero_based = lineColumn.line > 0 ? lineColumn.line - 1 : 0;
+    frame.position.column_zero_based = lineColumn.column > 0 ? lineColumn.column - 1 : 0;
+    frame.source_url = Bun::toStringRef(sourceURL);
+
     Bun__remapStackFramePositions(Bun::vm(vm), &frame, 1);
+
     if (frame.remapped) {
         lineColumn.line = frame.position.line().oneBasedInt();
         lineColumn.column = frame.position.column().oneBasedInt();

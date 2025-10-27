@@ -253,7 +253,7 @@ This resets the `.mock.calls`, `.mock.instances`, `.mock.contexts`, and `.mock.r
 
 Instead of manually restoring each mock individually with `mockFn.mockRestore()`, restore all mocks with one command by calling `mock.restore()`. Doing so does not reset the value of modules overridden with `mock.module()`.
 
-Using `mock.restore()` can reduce the amount of code in your tests by adding it to `afterEach` blocks in each test file or even in your [test preload code](https://bun.sh/docs/runtime/bunfig#test-preload).
+Using `mock.restore()` can reduce the amount of code in your tests by adding it to `afterEach` blocks in each test file or even in your [test preload code](https://bun.com/docs/runtime/bunfig#test-preload).
 
 ```ts
 import { expect, mock, spyOn, test } from "bun:test";

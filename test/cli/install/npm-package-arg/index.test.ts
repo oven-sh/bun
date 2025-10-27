@@ -23,7 +23,7 @@ const expectedPatch = (expected: any) => {
 };
 
 const platformAgnosticTests = Object.entries(cases).filter(([name]) => name !== "windows");
-const windowsTests = Object.entries(cases).filter(([name]) => name !== "windows");
+const windowsTests = Object.entries(cases).filter(([name]) => name === "windows");
 
 describe("npa", () => {
   describe("valid cases", () => {
@@ -40,7 +40,7 @@ describe("npa", () => {
       describe.each(windowsTests)("%s", (_, caseSet: object) => {
         it.each(Object.entries(caseSet))("parses %s", (input, expected) => {
           const result = Npa.npa(input as string);
-          expect(normalizePaths(result)).toMatchObject(expected);
+          expect(normalizePaths(result)).toMatchObject(expectedPatch(expected));
         });
       });
     });

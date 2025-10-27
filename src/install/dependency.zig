@@ -574,9 +574,14 @@ pub const Version = struct {
                                         defer allocator.free(copy);
                                         if (hosted_git_info.HostedGitInfo.fromUrl(allocator, copy) catch null) |info| {
                                             defer info.deinit();
+                                            // npa.js correctly identifies github urls as github
+                                            // even when using a git+https:// protocol and so on.
+                                            // Legacy bun implementation used to only treat
+                                            // "shortcut" (eg. "foo/bar") git repos as .github. We
+                                            // now add this bridge to help match the old behavior.
                                             return switch (info.host_provider) {
-                                                .github => .github,
-                                                .bitbucket, .gitlab, .gist, .sourcehut => .git,
+                                                .github => if (info.default_representation == .shortcut) .github else .git,
+                                                else => .git,
                                             };
                                         }
 
@@ -616,8 +621,17 @@ pub const Version = struct {
                                             defer allocator.free(dep_copy);
                                             if (hosted_git_info.HostedGitInfo.fromUrl(allocator, dep_copy) catch null) |info| {
                                                 defer info.deinit();
+                                                // npa.js correctly identifies github urls as
+                                                // github even when using a git+https:// protocol
+                                                // and so on. Legacy bun implementation used to
+                                                // only treat "shortcut" (eg. "foo/bar") git repos
+                                                // as .github. We now add this bridge to help match
+                                                // the old behavior.
                                                 return switch (info.host_provider) {
-                                                    .github => .github,
+                                                    .github => if (info.default_representation == .shortcut)
+                                                        .github
+                                                    else
+                                                        .git,
                                                     .bitbucket, .gitlab, .gist, .sourcehut => .git,
                                                 };
                                             }
@@ -776,9 +790,13 @@ pub const Version = struct {
                 defer allocator.free(dep_copy);
                 if (hosted_git_info.HostedGitInfo.fromUrl(allocator, dep_copy) catch null) |info| {
                     defer info.deinit();
+                    // npa.js correctly identifies github urls as github even when using a
+                    // git+https:// protocol and so on. Legacy bun implementation used to only
+                    // treat "shortcut" (eg. "foo/bar") git repos as .github. We now add this
+                    // bridge to help match the old behavior.
                     return switch (info.host_provider) {
-                        .github => .github,
-                        .bitbucket, .gitlab, .gist, .sourcehut => .git,
+                        .github => if (info.default_representation == .shortcut) .github else .git,
+                        else => .git,
                     };
                 }
                 return .git;
@@ -1062,70 +1080,76 @@ pub fn parseWithTag(
             };
         },
         .github => {
-            var from_url = false;
-            var input = dependency;
-            if (strings.hasPrefixComptime(input, "github:")) {
-                input = input["github:".len..];
-            } else if (strings.hasPrefixComptime(input, "git://github.com/")) {
-                input = input["git://github.com/".len..];
-                from_url = true;
-            } else {
-                if (strings.hasPrefixComptime(input, "git+")) {
-                    input = input["git+".len..];
-                }
-                if (strings.hasPrefixComptime(input, "http")) {
-                    var url = input["http".len..];
-                    if (url.len > 2) {
-                        switch (url[0]) {
-                            ':' => {
-                                if (strings.hasPrefixComptime(url, "://")) {
-                                    url = url["://".len..];
-                                }
-                            },
-                            's' => {
-                                if (strings.hasPrefixComptime(url, "s://")) {
-                                    url = url["s://".len..];
-                                }
-                            },
-                            else => {},
-                        }
-                        if (strings.hasPrefixComptime(url, "github.com/")) {
-                            input = url["github.com/".len..];
-                            from_url = true;
-                        }
-                    }
-                }
-            }
+            // Unfortunately, HostedGitInfo.fromUrl may need to mutate the input string so we copy
+            // it here.
+            const dep_copy = bun.handleOom(allocator.dupe(u8, dependency));
+            defer allocator.free(dep_copy);
 
-            if (comptime Environment.allow_assert) bun.assert(hosted_git_info.isGitHubShorthand(input));
-
-            var hash_index: usize = 0;
-            var slash_index: usize = 0;
-            for (input, 0..) |c, i| {
-                switch (c) {
-                    '/' => {
-                        slash_index = i;
+            const info = hosted_git_info.HostedGitInfo.fromUrl(allocator, dep_copy) catch {
+                // Fallback to empty if parsing fails
+                return .{
+                    .literal = sliced.value(),
+                    .value = .{
+                        .github = .{
+                            .owner = String.from(""),
+                            .repo = String.from(""),
+                            .committish = String.from(""),
+                        },
                     },
-                    '#' => {
-                        hash_index = i;
-                        break;
+                    .tag = .github,
+                };
+            } orelse {
+                // Fallback to empty if parsing returns null
+                return .{
+                    .literal = sliced.value(),
+                    .value = .{
+                        .github = .{
+                            .owner = String.from(""),
+                            .repo = String.from(""),
+                            .committish = String.from(""),
+                        },
                     },
-                    else => {},
-                }
-            }
+                    .tag = .github,
+                };
+            };
+            defer info.deinit();
 
-            var repo = if (hash_index == 0) input[slash_index + 1 ..] else input[slash_index + 1 .. hash_index];
-            if (from_url and strings.endsWithComptime(repo, ".git")) {
-                repo = repo[0 .. repo.len - ".git".len];
-            }
+            // Now we have parsed info, we need to find these substrings in the original dependency
+            // to create String objects that point to the original buffer
+            const owner_str = info.user orelse "";
+            const repo_str = info.project;
+            const committish_str = info.committish orelse "";
+
+            // Find owner in dependency string
+            const owner_idx = strings.indexOf(dependency, owner_str);
+            const owner = if (owner_idx) |idx|
+                sliced.sub(dependency[idx .. idx + owner_str.len]).value()
+            else
+                String.from("");
+
+            // Find repo in dependency string
+            const repo_idx = strings.indexOf(dependency, repo_str);
+            const repo = if (repo_idx) |idx|
+                sliced.sub(dependency[idx .. idx + repo_str.len]).value()
+            else
+                String.from("");
+
+            // Find committish in dependency string
+            const committish = if (committish_str.len > 0) blk: {
+                const committish_idx = strings.indexOf(dependency, committish_str);
+                break :blk if (committish_idx) |idx|
+                    sliced.sub(dependency[idx .. idx + committish_str.len]).value()
+                else
+                    String.from("");
+            } else String.from("");
 
             return .{
                 .literal = sliced.value(),
                 .value = .{
                     .github = .{
-                        .owner = sliced.sub(input[0..slash_index]).value(),
-                        .repo = sliced.sub(repo).value(),
-                        .committish = if (hash_index == 0) String.from("") else sliced.sub(input[hash_index + 1 ..]).value(),
+                        .owner = owner,
+                        .repo = repo,
+                        .committish = committish,
                     },
                 },
                 .tag = .github,

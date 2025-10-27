@@ -40,7 +40,8 @@ inline fn nqlAtIndexCaseInsensitive(comptime string_count: comptime_int, index: 
 /// The given string contains separators that match the platform's path separator style.
 pub fn hasPlatformPathSeparators(input_path: []const u8) bool {
     if (bun.Environment.isWindows) {
-        return bun.strings.containsChar(input_path, '\\');
+        // Windows accepts both forward and backward slashes as path separators
+        return bun.strings.containsChar(input_path, '\\') or bun.strings.containsChar(input_path, '/');
     } else {
         return bun.strings.containsChar(input_path, '/');
     }

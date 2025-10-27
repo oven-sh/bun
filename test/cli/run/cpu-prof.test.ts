@@ -7,7 +7,7 @@ describe.concurrent("--cpu-prof", () => {
   test("generates CPU profile with default name", async () => {
     using dir = tempDir("cpu-prof", {
       "test.js": `
-        // Simple CPU-intensive task
+        // CPU-intensive task
         function fibonacci(n) {
           if (n <= 1) return n;
           return fibonacci(n - 1) + fibonacci(n - 2);
@@ -106,6 +106,7 @@ describe.concurrent("--cpu-prof", () => {
   test("--cpu-prof-dir sets custom directory", async () => {
     using dir = tempDir("cpu-prof-dir", {
       "test.js": `console.log("test");`,
+      "profiles": {},
     });
 
     const proc = Bun.spawn({
@@ -119,7 +120,6 @@ describe.concurrent("--cpu-prof", () => {
     // Drain pipes to prevent deadlock
     const [exitCode] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
 
-    // The directory should be created automatically
     const profilesDir = join(String(dir), "profiles");
     const files = readdirSync(profilesDir);
     const profileFiles = files.filter(f => f.endsWith(".cpuprofile"));

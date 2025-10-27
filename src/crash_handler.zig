@@ -298,11 +298,11 @@ pub fn crashHandler(
                     if (Output.enable_ansi_colors) {
                         writer.writeAll(Output.prettyFmt("<r>", true)) catch std.posix.abort();
                     }
-                    writer.print("{}\n", .{reason}) catch std.posix.abort();
+                    writer.print("{f}\n", .{reason}) catch std.posix.abort();
                 }
 
                 if (current_action) |action| {
-                    writer.print("Crashed while {}\n", .{action}) catch std.posix.abort();
+                    writer.print("Crashed while {f}\n", .{action}) catch std.posix.abort();
                 }
 
                 var addr_buf: [20]usize = undefined;
@@ -377,7 +377,7 @@ pub fn crashHandler(
 
                     dumpStackTrace(trace.*, .{});
 
-                    trace_str_buf.writer().print("{}", .{TraceString{
+                    trace_str_buf.writer().print("{f}", .{TraceString{
                         .trace = trace,
                         .reason = reason,
                         .action = .view_trace,
@@ -442,7 +442,7 @@ pub fn crashHandler(
 
                     writer.writeAll(" ") catch std.posix.abort();
 
-                    trace_str_buf.writer().print("{}", .{TraceString{
+                    trace_str_buf.writer().print("{f}", .{TraceString{
                         .trace = trace,
                         .reason = reason,
                         .action = .open_issue,
@@ -991,7 +991,7 @@ pub fn printMetadata(writer: anytype) !void {
         }
 
         if (!cpu_features.isEmpty()) {
-            try writer.print("CPU: {}\n", .{cpu_features});
+            try writer.print("CPU: {f}\n", .{cpu_features});
         }
 
         try writer.print("Args: ", .{});
@@ -1006,7 +1006,7 @@ pub fn printMetadata(writer: anytype) !void {
             }
         }
     }
-    try writer.print("\n{}", .{bun.analytics.Features.formatter()});
+    try writer.print("\n{f}", .{bun.analytics.Features.formatter()});
 
     if (bun.use_mimalloc) {
         var elapsed_msecs: usize = 0;
@@ -1616,14 +1616,14 @@ noinline fn coldHandleErrorReturnTrace(err_int_workaround_for_zig_ccall_bug: std
                 \\To send a redacted crash report to Bun's team,
                 \\please file a GitHub issue using the link below:
                 \\
-                \\ <cyan>{}<r>
+                \\ <cyan>{f}<r>
                 \\
             ,
                 .{ts},
             );
         } else {
             Output.prettyErrorln(
-                "<cyan>trace<r>: error.{s}: <d>{}<r>",
+                "<cyan>trace<r>: error.{s}: <d>{f}<r>",
                 .{ @errorName(err), ts },
             );
         }
@@ -1659,7 +1659,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
     const stderr = &stderr_w.interface;
     if (!bun.Environment.show_crash_trace) {
         // debug symbols aren't available, lets print a tracestring
-        stderr.print("View Debug Trace: {}\n", .{TraceString{
+        stderr.print("View Debug Trace: {f}\n", .{TraceString{
             .action = .view_trace,
             .reason = .{ .zig_error = error.DumpStackTrace },
             .trace = &trace,

@@ -133,7 +133,7 @@ pub fn forManifest(
                     null,
                     logger.Loc.Empty,
                     allocator,
-                    "Registry URL must be http:// or https://\nReceived: \"{}\"",
+                    "Registry URL must be http:// or https://\nReceived: \"{f}\"",
                     .{tmp},
                 ) catch |err| bun.handleOom(err);
             } else {
@@ -141,7 +141,7 @@ pub fn forManifest(
                     null,
                     logger.Loc.Empty,
                     allocator,
-                    "Registry URL must be http:// or https://\nReceived: \"{}\"",
+                    "Registry URL must be http:// or https://\nReceived: \"{f}\"",
                     .{tmp},
                 ) catch |err| bun.handleOom(err);
             }

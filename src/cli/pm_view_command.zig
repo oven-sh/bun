@@ -174,7 +174,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
             if (versions_to_display.len > 0) {
                 Output.prettyErrorln("\nRecent versions:<r>", .{});
                 for (versions_to_display) |*v| {
-                    Output.prettyErrorln("<d>-<r> {}", .{v.fmt(parsed_manifest.string_buf)});
+                    Output.prettyErrorln("<d>-<r> {f}", .{v.fmt(parsed_manifest.string_buf)});
                 }
 
                 if (start_index > 0) {

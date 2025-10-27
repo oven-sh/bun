@@ -180,7 +180,7 @@ pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader, options: ?*const Options) Ca
 }
 
 pub fn cachedGitFolderNamePrint(buf: []u8, resolved: string, patch_hash: ?u64) stringZ {
-    return std.fmt.bufPrintZ(buf, "@G@{s}{}", .{ resolved, PatchHashFmt{ .hash = patch_hash } }) catch unreachable;
+    return std.fmt.bufPrintZ(buf, "@G@{s}{f}", .{ resolved, PatchHashFmt{ .hash = patch_hash } }) catch unreachable;
 }
 
 pub fn cachedGitFolderName(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {
@@ -196,7 +196,7 @@ pub fn cachedGitFolderNamePrintAuto(this: *const PackageManager, repository: *co
         const string_buf = this.lockfile.buffers.string_bytes.items;
         return std.fmt.bufPrintZ(
             &PackageManager.cached_package_folder_name_buf,
-            "@G@{any}{}{}",
+            "@G@{any}{f}{f}",
             .{
                 repository.committish.fmt(string_buf),
                 CacheVersion.Formatter{ .version_number = CacheVersion.current },
@@ -209,7 +209,7 @@ pub fn cachedGitFolderNamePrintAuto(this: *const PackageManager, repository: *co
 }
 
 pub fn cachedGitHubFolderNamePrint(buf: []u8, resolved: string, patch_hash: ?u64) stringZ {
-    return std.fmt.bufPrintZ(buf, "@GH@{s}{}{}", .{
+    return std.fmt.bufPrintZ(buf, "@GH@{s}{f}{f}", .{
         resolved,
         CacheVersion.Formatter{ .version_number = CacheVersion.current },
         PatchHashFmt{ .hash = patch_hash },
@@ -256,7 +256,7 @@ pub fn cachedNPMPackageFolderNamePrint(this: *const PackageManager, buf: []u8, n
             PatchHashFmt{ .hash = patch_hash },
         }) catch unreachable;
     } else {
-        end = std.fmt.bufPrint(available, "@@{s}{}{}", .{
+        end = std.fmt.bufPrint(available, "@@{s}{f}{f}", .{
             scope.url.hostname,
             CacheVersion.Formatter{ .version_number = CacheVersion.current },
             PatchHashFmt{ .hash = patch_hash },
@@ -271,7 +271,7 @@ pub fn cachedNPMPackageFolderNamePrint(this: *const PackageManager, buf: []u8, n
 fn cachedGitHubFolderNamePrintGuess(buf: []u8, string_buf: []const u8, repository: *const Repository, patch_hash: ?u64) stringZ {
     return std.fmt.bufPrintZ(
         buf,
-        "@GH@{any}-{any}-{any}{}{}",
+        "@GH@{any}-{any}-{any}{f}{f}",
         .{
             repository.owner.fmt(string_buf),
             repository.repo.fmt(string_buf),
@@ -339,7 +339,7 @@ pub fn cachedNPMPackageFolderPrintBasename(
             },
         ) catch unreachable;
     }
-    return std.fmt.bufPrintZ(buf, "{s}@{d}.{d}.{d}{}{}", .{
+    return std.fmt.bufPrintZ(buf, "{s}@{d}.{d}.{d}{f}{f}", .{
         name,
         version.major,
         version.minor,
@@ -387,7 +387,7 @@ pub fn globalLinkDir(this: *PackageManager) std.fs.Dir {
         };
         this.global_dir = global_dir;
         this.global_link_dir = global_dir.makeOpenPath("node_modules", .{}) catch |err| {
-            Output.err(err, "failed to open global link dir node_modules at '{}'", .{FD.fromStdDir(global_dir)});
+            Output.err(err, "failed to open global link dir node_modules at '{f}'", .{FD.fromStdDir(global_dir)});
             Global.exit(1);
         };
         var buf: bun.PathBuffer = undefined;

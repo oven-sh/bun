@@ -979,7 +979,7 @@ pub const PublishCommand = struct {
             .value = Expr.init(
                 E.String,
                 .{
-                    .data = try std.fmt.allocPrint(allocator, "http://{s}/{s}/-/{}", .{
+                    .data = try std.fmt.allocPrint(allocator, "http://{s}/{s}/-/{f}", .{
                         // always use replace https with http
                         // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
                         strings.withoutTrailingSlash(strings.withoutPrefixComptime(registry.url.href, "https://")),
@@ -1420,7 +1420,7 @@ pub const PublishCommand = struct {
 
         // "_attachments"
         {
-            try writer.print(",\"_attachments\":{{\"{}\":{{\"content_type\":\"{s}\",\"data\":\"", .{
+            try writer.print(",\"_attachments\":{{\"{f}\":{{\"content_type\":\"{s}\",\"data\":\"", .{
                 Pack.fmtTarballFilename(ctx.package_name, ctx.package_version, .raw),
                 "application/octet-stream",
             });

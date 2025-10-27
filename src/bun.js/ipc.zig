@@ -779,7 +779,7 @@ pub const SendQueue = struct {
             if (item.data.list.items.len > 100) {
                 log(" {d}|{d}", .{ item.data.cursor, item.data.list.items.len - item.data.cursor });
             } else {
-                log("  '{'}'|'{'}'", .{ std.zig.fmtString(item.data.list.items[0..item.data.cursor]), std.zig.fmtString(item.data.list.items[item.data.cursor..]) });
+                log("  \"{f}\"|\"{f}\"", .{ std.zig.fmtString(item.data.list.items[0..item.data.cursor]), std.zig.fmtString(item.data.list.items[item.data.cursor..]) });
             }
         }
     }

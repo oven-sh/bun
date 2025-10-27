@@ -282,10 +282,10 @@ pub const Repository = extern struct {
         string_buf: string,
 
         pub fn format(this: StorePathFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            try writer.print("{}", .{Install.fmtStorePath(this.label)});
+            try writer.print("{f}", .{Install.fmtStorePath(this.label)});
 
             if (!this.repo.owner.isEmpty()) {
-                try writer.print("{}", .{this.repo.owner.fmtStorePath(this.string_buf)});
+                try writer.print("{f}", .{this.repo.owner.fmtStorePath(this.string_buf)});
                 // try writer.writeByte(if (this.opts.replace_slashes) '+' else '/');
                 try writer.writeByte('+');
             } else if (Dependency.isSCPLikePath(this.repo.repo.slice(this.string_buf))) {
@@ -293,7 +293,7 @@ pub const Repository = extern struct {
                 try writer.writeAll("ssh++");
             }
 
-            try writer.print("{}", .{this.repo.repo.fmtStorePath(this.string_buf)});
+            try writer.print("{f}", .{this.repo.repo.fmtStorePath(this.string_buf)});
 
             if (!this.repo.resolved.isEmpty()) {
                 try writer.writeByte('+'); // this would be '#' but it's not valid on windows
@@ -301,10 +301,10 @@ pub const Repository = extern struct {
                 if (strings.lastIndexOfChar(resolved, '-')) |i| {
                     resolved = resolved[i + 1 ..];
                 }
-                try writer.print("{}", .{Install.fmtStorePath(resolved)});
+                try writer.print("{f}", .{Install.fmtStorePath(resolved)});
             } else if (!this.repo.committish.isEmpty()) {
                 try writer.writeByte('+'); // this would be '#' but it's not valid on windows
-                try writer.print("{}", .{this.repo.committish.fmtStorePath(this.string_buf)});
+                try writer.print("{f}", .{this.repo.committish.fmtStorePath(this.string_buf)});
             }
         }
     };

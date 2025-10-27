@@ -347,7 +347,7 @@ pub const Version = struct {
             },
             .npm => {
                 object.put(globalThis, "name", try dep.value.npm.name.toJS(buf, globalThis));
-                var version_str = try bun.String.createFormat("{}", .{dep.value.npm.version.fmt(buf)});
+                var version_str = try bun.String.createFormat("{f}", .{dep.value.npm.version.fmt(buf)});
                 object.put(globalThis, "version", version_str.transferToJS(globalThis));
                 object.put(globalThis, "alias", jsc.JSValue.jsBoolean(dep.value.npm.is_alias));
             },

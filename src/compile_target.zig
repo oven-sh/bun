@@ -116,7 +116,7 @@ pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
     try writer.print(
         // bun-darwin-x64-baseline-v1.0.0
         // This doesn't match up 100% with npm, but that's okay.
-        "bun-{s}-{s}{}{}-v{d}.{d}.{d}",
+        "bun-{s}-{s}{f}{f}-v{d}.{d}.{d}",
         .{
             this.os.npmName(),
             this.arch.npmName(),

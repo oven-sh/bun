@@ -28,7 +28,7 @@ fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: Dependency
             try w.write(info.name.slice(sb));
 
             try w.objectField("version");
-            try w.print("\"{}\"", .{info.version.fmt(sb)});
+            try w.print("\"{f}\"", .{info.version.fmt(sb)});
         },
         .dist_tag => {
             try w.beginObject();
@@ -315,7 +315,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
 
             try w.objectField("integrity");
             if (pkg.meta.integrity.tag != .unknown) {
-                try w.print("\"{}\"", .{pkg.meta.integrity});
+                try w.print("\"{f}\"", .{pkg.meta.integrity});
             } else {
                 try w.write(null);
             }
@@ -400,7 +400,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
         for (this.workspace_versions.keys(), this.workspace_versions.values()) |k, v| {
             const len = std.fmt.printInt(&buf, k, 10, .lower, .{});
             try w.objectField(buf[0..len]);
-            try w.print("\"{}\"", .{v.fmt(sb)});
+            try w.print("\"{f}\"", .{v.fmt(sb)});
         }
     }
 }

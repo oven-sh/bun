@@ -59,7 +59,7 @@ pub const HTMLRewriter = struct {
         callFrame: *jsc.CallFrame,
         listener: JSValue,
     ) bun.JSError!JSValue {
-        const selector_slice = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{}", .{selector_name}));
+        const selector_slice = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{f}", .{selector_name}));
         defer bun.default_allocator.free(selector_slice);
 
         var selector = LOLHTML.HTMLSelector.parse(selector_slice) catch

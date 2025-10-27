@@ -31,7 +31,7 @@ pub const ZigStackFrame = extern struct {
         }
 
         if (!this.source_url.isEmpty()) {
-            frame.file = try std.fmt.allocPrint(allocator, "{}", .{this.sourceURLFormatter(root_path, origin, true, false)});
+            frame.file = try std.fmt.allocPrint(allocator, "{f}", .{this.sourceURLFormatter(root_path, origin, true, false)});
         }
 
         frame.position = this.position;
@@ -156,9 +156,9 @@ pub const ZigStackFrame = extern struct {
                     }
                     if (!name.isEmpty()) {
                         if (this.enable_color) {
-                            try writer.print(comptime Output.prettyFmt(" <r><b><i>{}<r>", true), .{name});
+                            try writer.print(comptime Output.prettyFmt(" <r><b><i>{f}<r>", true), .{name});
                         } else {
-                            try writer.print(" {}", .{name});
+                            try writer.print(" {f}", .{name});
                         }
                     }
                 },
@@ -166,15 +166,15 @@ pub const ZigStackFrame = extern struct {
                     if (!name.isEmpty()) {
                         if (this.enable_color) {
                             if (this.is_async) {
-                                try writer.print(comptime Output.prettyFmt("<r><b><i>async {}<r>", true), .{name});
+                                try writer.print(comptime Output.prettyFmt("<r><b><i>async {f}<r>", true), .{name});
                             } else {
-                                try writer.print(comptime Output.prettyFmt("<r><b><i>{}<r>", true), .{name});
+                                try writer.print(comptime Output.prettyFmt("<r><b><i>{f}<r>", true), .{name});
                             }
                         } else {
                             if (this.is_async) {
-                                try writer.print("async {}", .{name});
+                                try writer.print("async {f}", .{name});
                             } else {
-                                try writer.print("{}", .{name});
+                                try writer.print("{f}", .{name});
                             }
                         }
                     } else {
@@ -195,17 +195,17 @@ pub const ZigStackFrame = extern struct {
                 .Global => {},
                 .Wasm => {
                     if (!name.isEmpty()) {
-                        try writer.print("{}", .{name});
+                        try writer.print("{f}", .{name});
                     } else {
                         try writer.writeAll("WASM");
                     }
                 },
                 .Constructor => {
-                    try writer.print("new {}", .{name});
+                    try writer.print("new {f}", .{name});
                 },
                 else => {
                     if (!name.isEmpty()) {
-                        try writer.print("{}", .{name});
+                        try writer.print("{f}", .{name});
                     }
                 },
             }

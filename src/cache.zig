@@ -163,7 +163,7 @@ pub const Fs = struct {
                         error.ENOENT => {
                             const handle = try bun.openFile(path, .{ .mode = .read_only });
                             Output.prettyErrorln(
-                                "<r><d>Internal error: directory mismatch for directory \"{s}\", fd {}<r>. You don't need to do anything, but this indicates a bug.",
+                                "<r><d>Internal error: directory mismatch for directory \"{s}\", fd {f}<r>. You don't need to do anything, but this indicates a bug.",
                                 .{ path, dirname_fd },
                             );
                             break :brk bun.FD.fromStdFile(handle);

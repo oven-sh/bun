@@ -844,7 +844,7 @@ pub const FetchTasklet = struct {
                 error.NAME_CONSTRAINTS_WITHOUT_SANS => bun.String.static("Issuer has name constraints but leaf has no SANs"),
                 error.UNKNOWN_CERTIFICATE_VERIFICATION_ERROR => bun.String.static("unknown certificate verification error"),
 
-                else => |e| bun.String.createFormat("{s} fetching \"{}\". For more information, pass `verbose: true` in the second argument to fetch()", .{
+                else => |e| bun.String.createFormat("{s} fetching \"{f}\". For more information, pass `verbose: true` in the second argument to fetch()", .{
                     @errorName(e),
                     path,
                 }) catch |err| bun.handleOom(err),
@@ -2002,7 +2002,7 @@ pub fn Bun__fetch_(
                             return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
                         }
                         defer href.deref();
-                        const buffer = try std.fmt.allocPrint(allocator, "{s}{}", .{ url_proxy_buffer, href });
+                        const buffer = try std.fmt.allocPrint(allocator, "{s}{f}", .{ url_proxy_buffer, href });
                         url = ZigURL.parse(buffer[0..url.href.len]);
                         if (url.isFile()) {
                             url_type = URLType.file;

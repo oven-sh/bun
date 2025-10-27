@@ -438,7 +438,7 @@ pub const LifecycleScriptSubprocess = struct {
                 this.printOutput();
                 const signal_code = bun.SignalCode.from(signal);
 
-                Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" terminated by {}<r>", .{
+                Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" terminated by {f}<r>", .{
                     this.scriptName(),
                     this.package_name,
                     signal_code.fmt(Output.enable_ansi_colors_stderr),
@@ -457,7 +457,7 @@ pub const LifecycleScriptSubprocess = struct {
                     return;
                 }
 
-                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to\n{}", .{
+                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to\n{f}", .{
                     this.scriptName(),
                     this.package_name,
                     err,

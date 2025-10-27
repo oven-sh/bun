@@ -89,7 +89,7 @@ pub const Config = struct {
                     if (val.len == 0) {
                         val = jsc.ZigString.init("\"\"");
                     }
-                    values[define_iter.i] = std.fmt.allocPrint(allocator, "{}", .{val}) catch unreachable;
+                    values[define_iter.i] = std.fmt.allocPrint(allocator, "{f}", .{val}) catch unreachable;
                 }
 
                 this.transform.define = api.StringMap{
@@ -109,7 +109,7 @@ pub const Config = struct {
                     try external.toZigString(&zig_str, globalThis);
                     if (zig_str.len == 0) break :external;
                     var single_external = allocator.alloc(string, 1) catch unreachable;
-                    single_external[0] = std.fmt.allocPrint(allocator, "{}", .{zig_str}) catch unreachable;
+                    single_external[0] = std.fmt.allocPrint(allocator, "{f}", .{zig_str}) catch unreachable;
                     this.transform.external = single_external;
                 } else if (toplevel_type.isArray()) {
                     const count = try external.getLength(globalThis);
@@ -126,7 +126,7 @@ pub const Config = struct {
                         var zig_str = jsc.ZigString.init("");
                         try entry.toZigString(&zig_str, globalThis);
                         if (zig_str.len == 0) continue;
-                        externals[i] = std.fmt.allocPrint(allocator, "{}", .{zig_str}) catch unreachable;
+                        externals[i] = std.fmt.allocPrint(allocator, "{f}", .{zig_str}) catch unreachable;
                         i += 1;
                     }
 
@@ -330,7 +330,7 @@ pub const Config = struct {
                             if (!value.isString()) continue;
                             const str = try value.getZigString(globalThis);
                             if (str.len == 0) continue;
-                            const name = std.fmt.bufPrint(buf.items.ptr[buf.items.len..buf.capacity], "{}", .{str}) catch {
+                            const name = std.fmt.bufPrint(buf.items.ptr[buf.items.len..buf.capacity], "{f}", .{str}) catch {
                                 return globalThis.throwInvalidArguments("Error reading exports.eliminate. TODO: utf-16", .{});
                             };
                             const name_slice = buf.items.ptr[buf.items.len..][0..name.len];
@@ -624,7 +624,7 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject, allocator
 
     if (value.isString()) {
         const str = JSAst.E.String{
-            .data = try std.fmt.allocPrint(allocator, "{}", .{try value.getZigString(globalThis)}),
+            .data = try std.fmt.allocPrint(allocator, "{f}", .{try value.getZigString(globalThis)}),
         };
         const out = try allocator.create(JSAst.E.String);
         out.* = str;

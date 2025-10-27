@@ -50,7 +50,7 @@ pub const PackageManagerCommand = struct {
 
         Output.flush();
         Output.disableBuffering();
-        try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
+        try Output.writer().print("{f}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
         Output.enableBuffering();
         Global.exit(0);
     }
@@ -224,7 +224,7 @@ pub const PackageManagerCommand = struct {
 
             Output.flush();
             Output.disableBuffering();
-            try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
+            try Output.writer().print("{f}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-print")) {
@@ -233,7 +233,7 @@ pub const PackageManagerCommand = struct {
 
             Output.flush();
             Output.disableBuffering();
-            try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
+            try Output.writer().print("{f}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-string")) {
@@ -490,7 +490,7 @@ fn printNodeModulesFolderStructure(
                     }
                 }
             }
-            const directory_version = try std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[id].fmt(string_bytes, .auto)});
+            const directory_version = try std.fmt.bufPrint(&resolution_buf, "{f}", .{resolutions[id].fmt(string_bytes, .auto)});
             if (std.mem.indexOf(u8, path, "node_modules")) |j| {
                 Output.prettyln("{s}<d>@{s}<r>", .{ path[0 .. j - 1], directory_version });
             } else {
@@ -565,7 +565,7 @@ fn printNodeModulesFolderStructure(
         }
 
         var resolution_buf: [512]u8 = undefined;
-        const package_version = try std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[package_id].fmt(string_bytes, .auto)});
+        const package_version = try std.fmt.bufPrint(&resolution_buf, "{f}", .{resolutions[package_id].fmt(string_bytes, .auto)});
         Output.prettyln("{s}<d>@{s}<r>", .{ package_name, package_version });
     }
 }

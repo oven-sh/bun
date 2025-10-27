@@ -263,7 +263,7 @@ pub fn writeFormat(this: *Response, comptime Formatter: type, formatter: *Format
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>url<d>:<r> \"", enable_ansi_colors));
-        try writer.print(comptime Output.prettyFmt("<r><b>{}<r>", enable_ansi_colors), .{this.#url});
+        try writer.print(comptime Output.prettyFmt("<r><b>{f}<r>", enable_ansi_colors), .{this.#url});
         try writer.writeAll("\"");
         try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
@@ -276,7 +276,7 @@ pub fn writeFormat(this: *Response, comptime Formatter: type, formatter: *Format
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>statusText<d>:<r> ", enable_ansi_colors));
-        try writer.print(comptime Output.prettyFmt("<r>\"<b>{}<r>\"", enable_ansi_colors), .{this.#init.status_text});
+        try writer.print(comptime Output.prettyFmt("<r>\"<b>{f}<r>\"", enable_ansi_colors), .{this.#init.status_text});
         try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
 

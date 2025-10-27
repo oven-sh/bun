@@ -84,7 +84,7 @@ pub fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, t
     } else {
         // in non-file namespaces, standard filesystem rules do not apply.
         var path_clone = path;
-        path_clone.pretty = std.fmt.bufPrint(buf, "{s}{}:{s}", .{
+        path_clone.pretty = std.fmt.bufPrint(buf, "{s}{f}:{s}", .{
             if (target == .bake_server_components_ssr) "ssr:" else "",
             // make sure that a namespace including a colon wont collide with anything
             std.fmt.Alt([]const u8, fmtEscapedNamespace){ .data = path.namespace },
@@ -1667,7 +1667,7 @@ pub const BundleV2 = struct {
                         if (template.needs(.target)) {
                             template.placeholder.target = @tagName(target);
                         }
-                        break :brk bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{}", .{template}));
+                        break :brk bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{f}", .{template}));
                     };
 
                     const loader = loaders[index];

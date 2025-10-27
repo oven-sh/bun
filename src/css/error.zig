@@ -131,7 +131,7 @@ pub const BasicParseErrorKind = union(enum) {
     pub fn format(this: BasicParseErrorKind, writer: *std.Io.Writer) !void {
         return switch (this) {
             .unexpected_token => |token| {
-                try writer.print("unexpected token: {}", .{token});
+                try writer.print("unexpected token: {f}", .{token});
             },
             .end_of_input => {
                 try writer.print("unexpected end of input", .{});
@@ -266,7 +266,7 @@ pub const ParserError = union(enum) {
             .selector_error => |err| writer.print("Invalid selector. {f}", .{err}),
             .unexpected_import_rule => writer.writeAll("@import rules must come before any other rules except @charset and @layer"),
             .unexpected_namespace_rule => writer.writeAll("@namespace rules must come before any other rules except @charset, @import, and @layer"),
-            .unexpected_token => |token| writer.print("Unexpected token: {}", .{token}),
+            .unexpected_token => |token| writer.print("Unexpected token: {f}", .{token}),
             .maximum_nesting_depth => writer.writeAll("Maximum CSS nesting depth exceeded"),
             .unexpected_value => |v| writer.print("Expected {s}, received {s}", .{ v.expected, v.received }),
         };
@@ -358,15 +358,15 @@ pub const SelectorError = union(enum) {
             .unexpected_ident => |str| try writer.print("Unexpected identifier '{s}'", .{str}),
             .unsupported_pseudo_class_or_element => |str| try writer.print("Unsupported pseudo-class or pseudo-element '{s}'", .{str}),
 
-            .bad_value_in_attr => |tok| try writer.print("Invalid value in attribute selector: {}", .{tok}),
-            .class_needs_ident => |tok| try writer.print("Expected identifier after '.' in class selector, found: {}", .{tok}),
-            .expected_bar_in_attr => |tok| try writer.print("Expected '|' in attribute selector, found: {}", .{tok}),
-            .explicit_namespace_unexpected_token => |tok| try writer.print("Unexpected token in namespace: {}", .{tok}),
-            .invalid_qual_name_in_attr => |tok| try writer.print("Invalid qualified name in attribute selector: {}", .{tok}),
-            .no_qualified_name_in_attribute_selector => |tok| try writer.print("Missing qualified name in attribute selector: {}", .{tok}),
-            .pseudo_element_expected_ident => |tok| try writer.print("Expected identifier in pseudo-element, found: {}", .{tok}),
-            .unexpected_token_in_attribute_selector => |tok| try writer.print("Unexpected token in attribute selector: {}", .{tok}),
-            .unexpected_selector_after_pseudo_element => |tok| try writer.print("Unexpected selector after pseudo-element: {}", .{tok}),
+            .bad_value_in_attr => |tok| try writer.print("Invalid value in attribute selector: {f}", .{tok}),
+            .class_needs_ident => |tok| try writer.print("Expected identifier after '.' in class selector, found: {f}", .{tok}),
+            .expected_bar_in_attr => |tok| try writer.print("Expected '|' in attribute selector, found: {f}", .{tok}),
+            .explicit_namespace_unexpected_token => |tok| try writer.print("Unexpected token in namespace: {f}", .{tok}),
+            .invalid_qual_name_in_attr => |tok| try writer.print("Invalid qualified name in attribute selector: {f}", .{tok}),
+            .no_qualified_name_in_attribute_selector => |tok| try writer.print("Missing qualified name in attribute selector: {f}", .{tok}),
+            .pseudo_element_expected_ident => |tok| try writer.print("Expected identifier in pseudo-element, found: {f}", .{tok}),
+            .unexpected_token_in_attribute_selector => |tok| try writer.print("Unexpected token in attribute selector: {f}", .{tok}),
+            .unexpected_selector_after_pseudo_element => |tok| try writer.print("Unexpected selector after pseudo-element: {f}", .{tok}),
             .ambiguous_css_module_class => |name| try writer.print("CSS module class: '{s}' is currently not supported.", .{name}),
         };
     }

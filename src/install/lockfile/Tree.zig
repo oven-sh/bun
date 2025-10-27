@@ -615,7 +615,7 @@ fn hoistDependency(
         }
 
         if (as_defined and !dep.behavior.isPeer()) {
-            builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
+            builder.maybeReportError("Package \"{f}@{f}\" has a dependency loop\n  Resolution: \"{f}@{f}\"\n  Dependency: \"{f}@{f}\"", .{
                 builder.packageName(package_id),
                 builder.packageVersion(package_id),
                 builder.packageName(builder.resolutions[dep_id]),

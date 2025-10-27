@@ -252,7 +252,7 @@ pub const Parser = struct {
                     return "[Object object]";
                 },
                 else => {
-                    const str = try std.fmt.allocPrint(arena_allocator, "{}", .{ToStringFormatter{ .d = json_val.data }});
+                    const str = try std.fmt.allocPrint(arena_allocator, "{f}", .{ToStringFormatter{ .d = json_val.data }});
                     if (comptime usage == .section) return singleStrRope(ropealloc, str);
                     return str;
                 },
@@ -620,7 +620,7 @@ pub const ToStringFormatter = struct {
                 const last = this.d.e_array.items.len -| 1;
                 for (this.d.e_array.items.slice(), 0..) |*e, i| {
                     const is_last = i == last;
-                    try writer.print("{}{s}", .{ ToStringFormatter{ .d = e.data }, if (is_last) "" else "," });
+                    try writer.print("{f}{s}", .{ ToStringFormatter{ .d = e.data }, if (is_last) "" else "," });
                 }
             },
             .e_object => try writer.print("[Object object]", .{}),

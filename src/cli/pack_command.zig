@@ -1469,7 +1469,7 @@ pub const PackCommand = struct {
 
             if (comptime !for_publish) {
                 if (manager.options.pack_destination.len == 0 and manager.options.pack_filename.len == 0) {
-                    Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
+                    Output.pretty("\n{f}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
                 } else {
                     var dest_buf: PathBuffer = undefined;
                     const abs_tarball_dest, _ = tarballDestination(
@@ -1697,7 +1697,7 @@ pub const PackCommand = struct {
                 };
                 defer file.close();
                 const stat = file.stat().unwrap() catch |err| {
-                    Output.err(err, "failed to stat file: \"{}\"", .{file.handle});
+                    Output.err(err, "failed to stat file: \"{f}\"", .{file.handle});
                     Global.crash();
                 };
 
@@ -1814,7 +1814,7 @@ pub const PackCommand = struct {
 
         if (comptime !for_publish) {
             if (manager.options.pack_destination.len == 0 and manager.options.pack_filename.len == 0) {
-                Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
+                Output.pretty("\n{f}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
             } else {
                 Output.pretty("\n{s}\n", .{abs_tarball_dest});
             }
@@ -1906,10 +1906,10 @@ pub const PackCommand = struct {
                 .auto,
             );
 
-            const tarball_name = std.fmt.bufPrint(dest_buf[strings.withoutTrailingSlash(tarball_destination_dir).len..], "/{}\x00", .{
+            const tarball_name = std.fmt.bufPrint(dest_buf[strings.withoutTrailingSlash(tarball_destination_dir).len..], "/{f}\x00", .{
                 fmtTarballFilename(package_name, package_version, .normalize),
             }) catch {
-                Output.errGeneric("archive destination name too long: \"{s}/{}\"", .{
+                Output.errGeneric("archive destination name too long: \"{s}/{f}\"", .{
                     strings.withoutTrailingSlash(tarball_destination_dir),
                     fmtTarballFilename(package_name, package_version, .normalize),
                 });
@@ -2125,7 +2125,7 @@ pub const PackCommand = struct {
                                                 allocator,
                                                 E.String,
                                                 .{
-                                                    .data = try std.fmt.allocPrint(allocator, "{s}{}", .{
+                                                    .data = try std.fmt.allocPrint(allocator, "{s}{f}", .{
                                                         switch (c) {
                                                             '^' => "^",
                                                             '~' => "~",

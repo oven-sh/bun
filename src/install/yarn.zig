@@ -1368,7 +1368,7 @@ pub fn migrateYarnLockfile(
             const version_str = switch (this.packages.get(package_id).resolution.tag) {
                 .npm => brk: {
                     var version_buf: [64]u8 = undefined;
-                    const formatted = std.fmt.bufPrint(&version_buf, "{}", .{this.packages.get(package_id).resolution.value.npm.version.fmt(this.buffers.string_bytes.items)}) catch "";
+                    const formatted = std.fmt.bufPrint(&version_buf, "{f}", .{this.packages.get(package_id).resolution.value.npm.version.fmt(this.buffers.string_bytes.items)}) catch "";
                     break :brk formatted;
                 },
                 else => "unknown",

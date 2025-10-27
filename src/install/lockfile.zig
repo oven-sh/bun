@@ -466,7 +466,7 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                             // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
 
                             const len = switch (exact_versions) {
-                                else => |exact| std.fmt.count("{s}{}", .{
+                                else => |exact| std.fmt.count("{s}{f}", .{
                                     if (exact) "" else "^",
                                     res.value.npm.version.fmt(old.buffers.string_bytes.items),
                                 }),
@@ -504,7 +504,7 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                             // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
 
                             const buf = switch (exact_versions) {
-                                else => |exact| std.fmt.bufPrint(&temp_buf, "{s}{}", .{
+                                else => |exact| std.fmt.bufPrint(&temp_buf, "{s}{f}", .{
                                     if (exact) "" else "^",
                                     res.value.npm.version.fmt(old.buffers.string_bytes.items),
                                 }) catch break,
@@ -1923,14 +1923,14 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
             inline while (j < 16) : (j += 1) {
                 alphabetized_names[(i + j) - 1] = @as(PackageID, @truncate((i + j)));
                 // posix path separators because we only use posix in the lockfile
-                string_builder.fmtCount("{s}@{}\n", .{ names[i + j].slice(bytes), resolutions[i + j].fmt(bytes, .posix) });
+                string_builder.fmtCount("{s}@{f}\n", .{ names[i + j].slice(bytes), resolutions[i + j].fmt(bytes, .posix) });
             }
         }
 
         while (i < packages_len) : (i += 1) {
             alphabetized_names[i - 1] = @as(PackageID, @truncate(i));
             // posix path separators because we only use posix in the lockfile
-            string_builder.fmtCount("{s}@{}\n", .{ names[i].slice(bytes), resolutions[i].fmt(bytes, .posix) });
+            string_builder.fmtCount("{s}@{f}\n", .{ names[i].slice(bytes), resolutions[i].fmt(bytes, .posix) });
         }
     }
 
@@ -1969,7 +1969,7 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
     string_builder.len += hash_prefix.len;
 
     for (alphabetized_names) |i| {
-        _ = string_builder.fmt("{s}@{}\n", .{ names[i].slice(bytes), resolutions[i].fmt(bytes, .any) });
+        _ = string_builder.fmt("{s}@{f}\n", .{ names[i].slice(bytes), resolutions[i].fmt(bytes, .any) });
     }
 
     if (has_scripts) {

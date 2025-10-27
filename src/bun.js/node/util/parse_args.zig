@@ -100,7 +100,7 @@ const OptionToken = struct {
         if (this.optgroup_idx) |optgroup_idx| {
             const raw = this.raw.asBunString(globalThis);
             var buf: [8]u8 = undefined;
-            const str = std.fmt.bufPrint(&buf, "-{}", .{raw.substringWithLen(optgroup_idx, optgroup_idx + 1)}) catch unreachable;
+            const str = std.fmt.bufPrint(&buf, "-{f}", .{raw.substringWithLen(optgroup_idx, optgroup_idx + 1)}) catch unreachable;
             return String.borrowUTF8(str).toJS(globalThis);
         } else {
             switch (this.parse_type) {

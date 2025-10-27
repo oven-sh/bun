@@ -702,7 +702,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn sliceZBuf(this: ZigString, buf: *bun.PathBuffer) ![:0]const u8 {
-        return try std.fmt.bufPrintZ(buf, "{}", .{this});
+        return try std.fmt.bufPrintZ(buf, "{f}", .{this});
     }
 
     pub inline fn full(this: *const ZigString) []const u8 {

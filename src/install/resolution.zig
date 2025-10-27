@@ -290,15 +290,15 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                 const res = this.res.value;
                 switch (this.res.tag) {
                     .root => try writer.writeAll("root"),
-                    .npm => try writer.print("{}", .{res.npm.version.fmt(string_buf)}),
-                    .local_tarball => try writer.print("{}", .{res.local_tarball.fmtStorePath(string_buf)}),
-                    .remote_tarball => try writer.print("{}", .{res.remote_tarball.fmtStorePath(string_buf)}),
-                    .folder => try writer.print("{}", .{res.folder.fmtStorePath(string_buf)}),
-                    .git => try writer.print("{}", .{res.git.fmtStorePath("git+", string_buf)}),
-                    .github => try writer.print("{}", .{res.github.fmtStorePath("github+", string_buf)}),
-                    .workspace => try writer.print("{}", .{res.workspace.fmtStorePath(string_buf)}),
-                    .symlink => try writer.print("{}", .{res.symlink.fmtStorePath(string_buf)}),
-                    .single_file_module => try writer.print("{}", .{res.single_file_module.fmtStorePath(string_buf)}),
+                    .npm => try writer.print("{f}", .{res.npm.version.fmt(string_buf)}),
+                    .local_tarball => try writer.print("{f}", .{res.local_tarball.fmtStorePath(string_buf)}),
+                    .remote_tarball => try writer.print("{f}", .{res.remote_tarball.fmtStorePath(string_buf)}),
+                    .folder => try writer.print("{f}", .{res.folder.fmtStorePath(string_buf)}),
+                    .git => try writer.print("{f}", .{res.git.fmtStorePath("git+", string_buf)}),
+                    .github => try writer.print("{f}", .{res.github.fmtStorePath("github+", string_buf)}),
+                    .workspace => try writer.print("{f}", .{res.workspace.fmtStorePath(string_buf)}),
+                    .symlink => try writer.print("{f}", .{res.symlink.fmtStorePath(string_buf)}),
+                    .single_file_module => try writer.print("{f}", .{res.single_file_module.fmtStorePath(string_buf)}),
                     else => {},
                 }
             }

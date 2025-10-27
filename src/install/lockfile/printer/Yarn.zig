@@ -30,7 +30,7 @@ pub fn print(
         \\# bun ./bun.lockb --hash:
     );
     try writer.print(
-        " {}\n\n",
+        " {f}\n\n",
         .{this.lockfile.fmtMetaHash()},
     );
 

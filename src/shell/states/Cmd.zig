@@ -366,7 +366,7 @@ pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: ExitCode) Yield {
             defer err.deinit(bun.default_allocator);
 
             this.state.expanding_assigns.deinit();
-            return this.writeFailingError("{}\n", .{err});
+            return this.writeFailingError("{f}\n", .{err});
         }
 
         this.state.expanding_assigns.deinit();
@@ -387,7 +387,7 @@ pub fn childDone(this: *Cmd, child: ChildPtr, exit_code: ExitCode) Yield {
                 else => @panic("Invalid state"),
             };
             defer err.deinit(this.base.allocator());
-            return this.writeFailingError("{}\n", .{err});
+            return this.writeFailingError("{f}\n", .{err});
         }
         // Handling this case from the shell spec:
         // "If there is no command name, but the command contained a
@@ -586,7 +586,7 @@ fn initRedirections(this: *Cmd, spawn_args: *Subprocess.SpawnArgs) bun.JSError!?
                     }
                 } else {
                     const jsval = this.base.interpreter.jsobjs[val.idx];
-                    return global.throw("Unknown JS value used in shell: {}", .{jsval.fmtString(global)});
+                    return global.throw("Unknown JS value used in shell: {f}", .{jsval.fmtString(global)});
                 }
             },
             .atom => {

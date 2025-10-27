@@ -883,7 +883,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
         if (this.opts.check_for_unhighlighted_write) {
             if (!this.opts.enable_colors or text.len > 2048 or text.len == 0 or !strings.isAllASCII(text)) {
                 if (this.opts.redact_sensitive_information) {
-                    try writer.print("{}", .{redactedSource(text)});
+                    try writer.print("{f}", .{redactedSource(text)});
                 } else {
                     try writer.writeAll(text);
                 }
@@ -1151,7 +1151,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                             }
 
                             if (this.opts.redact_sensitive_information) {
-                                try writer.print(Output.prettyFmt("<r><d>{}<r>", true), .{redactedSource(remain_to_print)});
+                                try writer.print(Output.prettyFmt("<r><d>{f}<r>", true), .{redactedSource(remain_to_print)});
                             } else {
                                 try writer.print(Output.prettyFmt("<r><d>{s}<r>", true), .{remain_to_print});
                             }
@@ -1175,7 +1175,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                                 }
 
                                 if (this.opts.redact_sensitive_information) {
-                                    try writer.print(Output.prettyFmt("<r><d>{}<r>", true), .{redactedSource(text[0..i])});
+                                    try writer.print(Output.prettyFmt("<r><d>{f}<r>", true), .{redactedSource(text[0..i])});
                                 } else {
                                     try writer.print(Output.prettyFmt("<r><d>{s}<r>", true), .{text[0..i]});
                                 }

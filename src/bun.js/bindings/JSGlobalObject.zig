@@ -91,7 +91,7 @@ pub const JSGlobalObject = opaque {
     ) bun.JSError {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
-        return this.ERR(.INVALID_ARG_VALUE, "The \"{s}\" argument is invalid. Received {}", .{ argname, actual_string_value }).throw();
+        return this.ERR(.INVALID_ARG_VALUE, "The \"{s}\" argument is invalid. Received {f}", .{ argname, actual_string_value }).throw();
     }
 
     pub fn throwInvalidArgumentValueCustom(
@@ -102,7 +102,7 @@ pub const JSGlobalObject = opaque {
     ) bun.JSError {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
-        return this.ERR(.INVALID_ARG_VALUE, "The \"{s}\" argument {s}. Received {}", .{ argname, message, actual_string_value }).throw();
+        return this.ERR(.INVALID_ARG_VALUE, "The \"{s}\" argument {s}. Received {f}", .{ argname, message, actual_string_value }).throw();
     }
 
     /// Throw an `ERR_INVALID_ARG_VALUE` when the invalid value is a property of an object.
@@ -118,9 +118,9 @@ pub const JSGlobalObject = opaque {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
         if (comptime expected) |_expected| {
-            return this.ERR(.INVALID_ARG_VALUE, "The property \"{s}\" is invalid. Expected {s}, received {}", .{ argname, _expected, actual_string_value }).throw();
+            return this.ERR(.INVALID_ARG_VALUE, "The property \"{s}\" is invalid. Expected {s}, received {f}", .{ argname, _expected, actual_string_value }).throw();
         } else {
-            return this.ERR(.INVALID_ARG_VALUE, "The property \"{s}\" is invalid. Received {}", .{ argname, actual_string_value }).throw();
+            return this.ERR(.INVALID_ARG_VALUE, "The property \"{s}\" is invalid. Received {f}", .{ argname, actual_string_value }).throw();
         }
     }
 
@@ -165,7 +165,7 @@ pub const JSGlobalObject = opaque {
     ) bun.JSError {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
-        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
+        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be of type {s}. Received {f}", .{ argname, typename, actual_string_value }).throw();
     }
 
     pub fn throwInvalidArgumentTypeValue2(
@@ -176,7 +176,7 @@ pub const JSGlobalObject = opaque {
     ) JSError {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
-        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
+        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be {s}. Received {f}", .{ argname, typename, actual_string_value }).throw();
     }
 
     /// "The <argname> argument must be one of type <typename>. Received <value>"
@@ -188,7 +188,7 @@ pub const JSGlobalObject = opaque {
     ) bun.JSError {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
-        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be one of type {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
+        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be one of type {s}. Received {f}", .{ argname, typename, actual_string_value }).throw();
     }
 
     pub fn throwInvalidArgumentRangeValue(
@@ -197,7 +197,7 @@ pub const JSGlobalObject = opaque {
         typename: []const u8,
         value: i64,
     ) bun.JSError {
-        return this.ERR(.OUT_OF_RANGE, "The \"{s}\" is out of range. {s}. Received {}", .{ argname, typename, value }).throw();
+        return this.ERR(.OUT_OF_RANGE, "The \"{s}\" is out of range. {s}. Received {f}", .{ argname, typename, value }).throw();
     }
 
     pub fn throwInvalidPropertyTypeValue(
@@ -884,7 +884,7 @@ pub const JSGlobalObject = opaque {
             ZigString.static("null").*;
 
         if (!content_type.eqlComptime("application/wasm")) {
-            return this.ERR(.WEBASSEMBLY_RESPONSE, "WebAssembly response has unsupported MIME type '{}'", .{content_type}).throw();
+            return this.ERR(.WEBASSEMBLY_RESPONSE, "WebAssembly response has unsupported MIME type '{f}'", .{content_type}).throw();
         }
 
         if (!response.isOK()) {

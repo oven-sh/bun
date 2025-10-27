@@ -306,7 +306,7 @@ pub const RunCommand = struct {
         })) {
             .err => |err| {
                 if (!silent) {
-                    Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error:\n{}", .{ name, err });
+                    Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error:\n{f}", .{ name, err });
                 }
 
                 Output.flush();
@@ -318,7 +318,7 @@ pub const RunCommand = struct {
         switch (spawn_result.status) {
             .exited => |exit_code| {
                 if (exit_code.signal.valid() and exit_code.signal != .SIGINT and !silent) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, exit_code.signal.fmt(Output.enable_ansi_colors_stderr) });
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {f}<r>", .{ name, exit_code.signal.fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
 
                     if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()) {
@@ -340,7 +340,7 @@ pub const RunCommand = struct {
 
             .signaled => |signal| {
                 if (signal.valid() and signal != .SIGINT and !silent) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {}<r>", .{ name, signal.fmt(Output.enable_ansi_colors_stderr) });
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> was terminated by signal {f}<r>", .{ name, signal.fmt(Output.enable_ansi_colors_stderr) });
                     Output.flush();
                 }
 
@@ -353,7 +353,7 @@ pub const RunCommand = struct {
 
             .err => |err| {
                 if (!silent) {
-                    Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error:\n{}", .{ name, err });
+                    Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error:\n{f}", .{ name, err });
                 }
 
                 Output.flush();
@@ -426,7 +426,7 @@ pub const RunCommand = struct {
 
     fn runBinaryGenericError(executable: []const u8, silent: bool, err: bun.sys.Error) noreturn {
         if (!silent) {
-            Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to:\n{}", .{ basenameOrBun(executable), err.withPath(executable) });
+            Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to:\n{f}", .{ basenameOrBun(executable), err.withPath(executable) });
         }
 
         Global.exit(1);
@@ -486,7 +486,7 @@ pub const RunCommand = struct {
                             .err => |err2| {
                                 switch (err2.getErrno()) {
                                     .NOENT, .PERM, .NOTDIR => {
-                                        Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error:\n{}", .{ basenameOrBun(executable), err2 });
+                                        Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error:\n{f}", .{ basenameOrBun(executable), err2 });
                                         break :print_error;
                                     },
                                     else => {},

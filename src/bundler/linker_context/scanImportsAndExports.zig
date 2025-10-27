@@ -431,7 +431,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                 const ident_fmt_len: usize = if (source.identifier_name.len > 0)
                     source.identifier_name.len
                 else
-                    std.fmt.count("{}", .{source.fmtIdentifier()});
+                    std.fmt.count("{f}", .{source.fmtIdentifier()});
 
                 if (wrap == .esm and wrapper_refs[id].isValid()) {
                     count += "init_".len + ident_fmt_len;
@@ -472,7 +472,7 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                 const ref = wrapper_refs[id];
                 if (ref.isValid()) {
                     const original_name = builder.fmt(
-                        "init_{}",
+                        "init_{f}",
                         .{source.fmtIdentifier()},
                     );
 
@@ -486,8 +486,8 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
             // aesthetics and is not about correctness. This is done here because by
             // this point, we know the CommonJS status will not change further.
             if (wrap != .cjs and export_kind != .cjs and output_format != .internal_bake_dev) {
-                const exports_name = builder.fmt("exports_{}", .{source.fmtIdentifier()});
-                const module_name = builder.fmt("module_{}", .{source.fmtIdentifier()});
+                const exports_name = builder.fmt("exports_{f}", .{source.fmtIdentifier()});
+                const module_name = builder.fmt("module_{f}", .{source.fmtIdentifier()});
 
                 // Note: it's possible for the symbols table to be resized
                 // so we cannot call .get() above this scope.

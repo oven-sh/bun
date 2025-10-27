@@ -23,12 +23,12 @@ const Formatter = struct {
 
         if (this.next) |ptr| {
             if (ptr.range.hasLeft() or ptr.range.hasRight()) {
-                try writer.print("{} && {}", .{ this.range.fmt(formatter.buffer), ptr.range.fmt(formatter.buffer) });
+                try writer.print("{f} && {f}", .{ this.range.fmt(formatter.buffer), ptr.range.fmt(formatter.buffer) });
                 return;
             }
         }
 
-        try writer.print("{}", .{this.range.fmt(formatter.buffer)});
+        try writer.print("{f}", .{this.range.fmt(formatter.buffer)});
     }
 };
 

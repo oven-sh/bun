@@ -721,7 +721,7 @@ pub const Transpiler = struct {
                     },
                 };
                 if (sheet.minify(alloc, bun.css.MinifyOptions.default(), &extra).asErr()) |e| {
-                    bun.handleOom(transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while minifying", .{e.kind}));
+                    bun.handleOom(transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{f} while minifying", .{e.kind}));
                     return null;
                 }
                 const symbols = bun.ast.Symbol.Map{};

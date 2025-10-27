@@ -49,12 +49,12 @@ pub const Bunfig = struct {
             // Token
             if (url.username.len == 0 and url.password.len > 0) {
                 registry.token = url.password;
-                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{f}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
             } else if (url.username.len > 0 and url.password.len > 0) {
                 registry.username = url.username;
                 registry.password = url.password;
 
-                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{f}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
             } else {
                 // Do not include a trailing slash. There might be parameters at the end.
                 registry.url = url.href;
@@ -1125,7 +1125,7 @@ pub const Bunfig = struct {
                 else => {
                     this.log.addErrorFmtOpts(
                         this.allocator,
-                        "expected string but received {}",
+                        "expected string but received {f}",
                         .{
                             @as(js_ast.Expr.Tag, expr.data),
                         },
@@ -1144,7 +1144,7 @@ pub const Bunfig = struct {
             if (@as(js_ast.Expr.Tag, expr.data) != token) {
                 this.log.addErrorFmtOpts(
                     this.allocator,
-                    "expected {} but received {}",
+                    "expected {f} but received {f}",
                     .{
                         token,
                         @as(js_ast.Expr.Tag, expr.data),

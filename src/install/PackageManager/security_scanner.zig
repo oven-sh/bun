@@ -789,7 +789,7 @@ pub const SecurityScanSubprocess = struct {
     }
 
     pub fn onReaderError(this: *SecurityScanSubprocess, err: bun.sys.Error) void {
-        Output.errGeneric("Failed to read security scanner IPC: {}", .{err});
+        Output.errGeneric("Failed to read security scanner IPC: {f}", .{err});
         this.has_received_ipc = true;
         this.remaining_fds -= 1;
     }

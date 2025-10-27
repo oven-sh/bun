@@ -222,18 +222,18 @@ pub const Bin = extern struct {
             switch (this.tag) {
                 .none => {},
                 .file => {
-                    try writer.print("{}", .{this.value.file.fmtJson(buf, .{})});
+                    try writer.print("{f}", .{this.value.file.fmtJson(buf, .{})});
                 },
                 .named_file => {
                     try writer.writeByte('{');
-                    try writer.print(" {}: {} ", .{
+                    try writer.print(" {f}: {f} ", .{
                         this.value.named_file[0].fmtJson(buf, .{}),
                         this.value.named_file[1].fmtJson(buf, .{}),
                     });
                     try writer.writeByte('}');
                 },
                 .dir => {
-                    try writer.print("{}", .{this.value.dir.fmtJson(buf, .{})});
+                    try writer.print("{f}", .{this.value.dir.fmtJson(buf, .{})});
                 },
                 .map => {
                     try writer.writeByte('{');
@@ -245,7 +245,7 @@ pub const Bin = extern struct {
                             try writer.writeByte(',');
                         }
                         first = false;
-                        try writer.print(" {}: {}", .{
+                        try writer.print(" {f}: {f}", .{
                             list[i].value.fmtJson(buf, .{}),
                             list[i + 1].value.fmtJson(buf, .{}),
                         });
@@ -260,13 +260,13 @@ pub const Bin = extern struct {
         switch (this.tag) {
             .none => {},
             .file => {
-                try writer.print("{}", .{this.value.file.fmtJson(buf, .{})});
+                try writer.print("{f}", .{this.value.file.fmtJson(buf, .{})});
             },
             .named_file => {
                 try writer.writeAll("{\n");
                 indent.* += 1;
                 try writeIndent(writer, indent);
-                try writer.print("{}: {},\n", .{
+                try writer.print("{f}: {f},\n", .{
                     this.value.named_file[0].fmtJson(buf, .{}),
                     this.value.named_file[1].fmtJson(buf, .{}),
                 });
@@ -275,7 +275,7 @@ pub const Bin = extern struct {
                 try writer.writeByte('}');
             },
             .dir => {
-                try writer.print("{}", .{this.value.dir.fmtJson(buf, .{})});
+                try writer.print("{f}", .{this.value.dir.fmtJson(buf, .{})});
             },
             .map => {
                 try writer.writeByte('{');
@@ -290,7 +290,7 @@ pub const Bin = extern struct {
                         try writer.writeByte('\n');
                     }
                     try writeIndent(writer, indent);
-                    try writer.print("{}: {},\n", .{
+                    try writer.print("{f}: {f},\n", .{
                         list[i].value.fmtJson(buf, .{}),
                         list[i + 1].value.fmtJson(buf, .{}),
                     });

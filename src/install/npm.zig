@@ -361,7 +361,7 @@ pub const Registry = struct {
 
             if (needs_normalize) {
                 url = URL.parse(
-                    try std.fmt.allocPrint(allocator, "{s}://{}/{s}/", .{
+                    try std.fmt.allocPrint(allocator, "{s}://{f}/{s}/", .{
                         url.displayProtocol(),
                         url.displayHost(),
                         strings.trim(url.pathname, "/"),
@@ -1399,9 +1399,9 @@ pub const PackageManifest = struct {
 
             for (package_manifest.versions, 0..) |version, i| {
                 if (i == package_manifest.versions.len - 1)
-                    try writer.print("\"{}\"]}}", .{version.fmt(package_manifest.string_buf)})
+                    try writer.print("\"{f}\"]}}", .{version.fmt(package_manifest.string_buf)})
                 else
-                    try writer.print("\"{}\",", .{version.fmt(package_manifest.string_buf)});
+                    try writer.print("\"{f}\",", .{version.fmt(package_manifest.string_buf)});
             }
 
             var result = bun.String.borrowUTF8(buf.items);

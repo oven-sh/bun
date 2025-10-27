@@ -43,7 +43,7 @@ rl.on("line", line => {
     console.log("\x1b[36m" + line + "\x1b[0m");
   } else if (line.includes('@compileError("')) {
     skipNext = true;
-  } else if (ignore.some(q => line.includes(q))) {
+  } else if (ignore.some(q => line.includes(q) && !line.includes(" format:"))) {
     console.log("\x1b[2m" + line + "\x1b[0m");
   } else {
     console.log(line);

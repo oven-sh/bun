@@ -282,7 +282,7 @@ fn collectPackagesForAudit(allocator: std.mem.Allocator, pm: *PackageManager, pr
             continue;
         }
 
-        const ver_str = try std.fmt.allocPrint(allocator, "{}", .{res.value.npm.version.fmt(buf)});
+        const ver_str = try std.fmt.allocPrint(allocator, "{f}", .{res.value.npm.version.fmt(buf)});
 
         var found_package: ?*@TypeOf(packages_list.items[0]) = null;
         for (packages_list.items) |*item| {

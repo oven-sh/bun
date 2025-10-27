@@ -643,7 +643,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                             if (PackageManager.verbose_install) {
                                 const label: string = this.lockfile.str(&version.literal);
 
-                                Output.prettyErrorln("   -> \"{s}\": \"{s}\" -> {s}@{}", .{
+                                Output.prettyErrorln("   -> \"{s}\": \"{s}\" -> {s}@{f}", .{
                                     this.lockfile.str(&result.package.name),
                                     label,
                                     this.lockfile.str(&result.package.name),
@@ -728,7 +728,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                                     if (!loaded_manifest.?.shouldExcludeFromAgeFilter(this.options.minimum_release_age_excludes) and Npm.PackageManifest.isPackageVersionTooRecent(find_result.package, min_age_ms)) {
                                                         const package_name = this.lockfile.str(&name);
                                                         const min_age_seconds = min_age_ms / std.time.ms_per_s;
-                                                        this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, "Version \"{s}@{}\" was published within minimum release age of {d} seconds", .{ package_name, find_result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_seconds }) catch {};
+                                                        this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, "Version \"{s}@{f}\" was published within minimum release age of {d} seconds", .{ package_name, find_result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_seconds }) catch {};
                                                         return;
                                                     }
                                                 }
@@ -973,7 +973,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
             const workspace_not_found_fmt =
                 \\Workspace dependency "{[name]s}" not found
                 \\
-                \\Searched in <b>{[search_path]}<r>
+                \\Searched in <b>{[search_path]f}<r>
                 \\
                 \\Workspace documentation: https://bun.com/docs/install/workspaces
                 \\
@@ -993,7 +993,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                     if (PackageManager.verbose_install) {
                         const label: string = this.lockfile.str(&version.literal);
 
-                        Output.prettyErrorln("   -> \"{s}\": \"{s}\" -> {s}@{}", .{
+                        Output.prettyErrorln("   -> \"{s}\": \"{s}\" -> {s}@{f}", .{
                             this.lockfile.str(&result.package.name),
                             label,
                             this.lockfile.str(&result.package.name),
@@ -1523,7 +1523,7 @@ fn getOrPutResolvedPackage(
                                 null,
                                 logger.Loc.Empty,
                                 this.allocator,
-                                "incorrect peer dependency \"{}@{}\"",
+                                "incorrect peer dependency \"{f}@{f}\"",
                                 .{
                                     existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
                                     existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),
@@ -1560,7 +1560,7 @@ fn getOrPutResolvedPackage(
                                 null,
                                 logger.Loc.Empty,
                                 this.allocator,
-                                "incorrect peer dependency \"{}@{}\"",
+                                "incorrect peer dependency \"{f}@{f}\"",
                                 .{
                                     existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
                                     existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),

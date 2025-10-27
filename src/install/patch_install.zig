@@ -289,7 +289,7 @@ pub const PatchTask = struct {
         const resolution_label, const resolution_tag = brk: {
             // TODO: fix this threadsafety issue.
             const resolution = &this.manager.lockfile.packages.items(.resolution)[patch.pkg_id];
-            break :brk .{ bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{}", .{resolution.fmt(this.manager.lockfile.buffers.string_bytes.items, .posix)})), resolution.tag };
+            break :brk .{ bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{f}", .{resolution.fmt(this.manager.lockfile.buffers.string_bytes.items, .posix)})), resolution.tag };
         };
         defer this.manager.allocator.free(resolution_label);
 
@@ -342,7 +342,7 @@ pub const PatchTask = struct {
             if (patchfile.apply(this.manager.allocator, patch_pkg_dir)) |e| {
                 return try log.addErrorFmtOpts(
                     this.manager.allocator,
-                    "failed applying patch file: {}",
+                    "failed applying patch file: {f}",
                     .{e},
                     .{},
                 );
@@ -364,7 +364,7 @@ pub const PatchTask = struct {
                 .err => |e| {
                     return try log.addErrorFmtOpts(
                         this.manager.allocator,
-                        "failed adding bun tag: {}",
+                        "failed adding bun tag: {f}",
                         .{e.withPath(buntagbuf[0 .. bun_tag_prefix.len + hashlen :0])},
                         .{},
                     );
@@ -392,7 +392,7 @@ pub const PatchTask = struct {
             .{ .move_fallback = true },
         ).asErr()) |e| return try log.addErrorFmtOpts(
             this.manager.allocator,
-            "renaming changes to cache dir: {}",
+            "renaming changes to cache dir: {f}",
             .{e.withPath(this.callback.apply.cache_dir_subpath)},
             .{},
         );
@@ -454,7 +454,7 @@ pub const PatchTask = struct {
                     null,
                     Loc.Empty,
                     this.manager.allocator,
-                    "failed to open patch file: {}",
+                    "failed to open patch file: {f}",
                     .{e},
                 ) catch |err| bun.handleOom(err);
                 return null;
@@ -479,7 +479,7 @@ pub const PatchTask = struct {
                         null,
                         Loc.Empty,
                         this.manager.allocator,
-                        "failed to read from patch file: {} ({s})",
+                        "failed to read from patch file: {f} ({s})",
                         .{ e, absolute_patchfile_path },
                     ) catch |err| bun.handleOom(err);
                     return null;

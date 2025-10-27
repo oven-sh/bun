@@ -744,7 +744,7 @@ pub fn writeFormat(this: *Blob, comptime Formatter: type, formatter: *Formatter,
                 try formatter.writeIndent(Writer, writer);
 
                 try writer.print(
-                    comptime Output.prettyFmt("name<d>:<r> <green>\"{}\"<r>", enable_ansi_colors),
+                    comptime Output.prettyFmt("name<d>:<r> <green>\"{f}\"<r>", enable_ansi_colors),
                     .{
                         this.getNameString() orelse bun.String.empty,
                     },

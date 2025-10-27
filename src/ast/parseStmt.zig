@@ -372,7 +372,7 @@ pub fn ParseStmt(
                         const namespace_ref = p.storeNameInRef(
                             std.fmt.allocPrint(
                                 p.allocator,
-                                "import_{}",
+                                "import_{f}",
                                 .{
                                     path_name.fmtIdentifier(),
                                 },

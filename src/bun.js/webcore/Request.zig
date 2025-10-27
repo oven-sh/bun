@@ -263,7 +263,7 @@ pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>url<d>:<r> ", enable_ansi_colors));
         try this.ensureURL();
-        try writer.print(comptime Output.prettyFmt("\"<b>{}<r>\"", enable_ansi_colors), .{this.url});
+        try writer.print(comptime Output.prettyFmt("\"<b>{f}<r>\"", enable_ansi_colors), .{this.url});
         formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
         try writer.writeAll("\n");
 
@@ -813,7 +813,7 @@ pub fn constructInto(globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSV
         if (!globalThis.hasException()) {
             // globalThis.throw can cause GC, which could cause the above string to be freed.
             // so we must increment the reference count before calling it.
-            return globalThis.ERR(.INVALID_URL, "Failed to construct 'Request': Invalid URL \"{}\"", .{req.url}).throw();
+            return globalThis.ERR(.INVALID_URL, "Failed to construct 'Request': Invalid URL \"{f}\"", .{req.url}).throw();
         }
         return error.JSError;
     }

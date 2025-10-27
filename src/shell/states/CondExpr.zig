@@ -226,7 +226,7 @@ pub fn childDone(this: *CondExpr, child: ChildPtr, exit_code: ExitCode) Yield {
             const err = this.state.expanding_args.expansion.state.err;
             defer err.deinit(bun.default_allocator);
             this.state.expanding_args.expansion.deinit();
-            return this.writeFailingError("{}\n", .{err});
+            return this.writeFailingError("{f}\n", .{err});
         }
         child.deinit();
         return this.next();

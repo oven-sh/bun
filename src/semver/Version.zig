@@ -152,7 +152,7 @@ pub fn VersionType(comptime IntType: type) type {
                             try writer.writeByte(c);
                         }
                     } else {
-                        try writer.print(Output.prettyFmt("<r><b><red>-{}", true), .{this.version.tag.pre.fmt(this.buf)});
+                        try writer.print(Output.prettyFmt("<r><b><red>-{f}", true), .{this.version.tag.pre.fmt(this.buf)});
                         set_color = true;
                     }
                 }
@@ -176,9 +176,9 @@ pub fn VersionType(comptime IntType: type) type {
                         }
                     } else {
                         if (!set_color) {
-                            try writer.print(Output.prettyFmt("<r><b><red>+{}", true), .{this.version.tag.build.fmt(this.buf)});
+                            try writer.print(Output.prettyFmt("<r><b><red>+{f}", true), .{this.version.tag.build.fmt(this.buf)});
                         } else {
-                            try writer.print("+{}", .{this.version.tag.build.fmt(this.other_buf)});
+                            try writer.print("+{f}", .{this.version.tag.build.fmt(this.other_buf)});
                         }
                     }
                 }

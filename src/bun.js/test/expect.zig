@@ -374,7 +374,7 @@ pub const Expect = struct {
         if (this.custom_label.isEmpty()) {
             return globalThis.throwPretty(signature ++ fmt, args);
         } else {
-            return globalThis.throwPretty("{}" ++ fmt, .{this.custom_label} ++ args);
+            return globalThis.throwPretty("{f}" ++ fmt, .{this.custom_label} ++ args);
         }
     }
 
@@ -1745,7 +1745,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
                 }
 
                 const result = matcher_fn.call(globalThis, thisValue, args.items) catch |e| return maybeClear(dontThrow, globalThis, e);
-                try writer.print("{}", .{result.toBunString(globalThis) catch |e| return maybeClear(dontThrow, globalThis, e)});
+                try writer.print("{f}", .{result.toBunString(globalThis) catch |e| return maybeClear(dontThrow, globalThis, e)});
             }
         }
         return false;

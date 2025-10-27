@@ -307,7 +307,7 @@ pub const UDPSocket = struct {
                 const sys_err = jsc.SystemError{
                     .errno = err,
                     .code = bun.String.static(code),
-                    .message = bun.handleOom(bun.String.createFormat("bind {s} {}", .{ code, this.config.hostname })),
+                    .message = bun.handleOom(bun.String.createFormat("bind {s} {f}", .{ code, this.config.hostname })),
                 };
                 const error_value = sys_err.toErrorInstance(globalThis);
                 error_value.put(globalThis, "address", this.config.hostname.toJS(globalThis));

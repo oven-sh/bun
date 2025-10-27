@@ -216,7 +216,7 @@ pub const Chunk = struct {
                                     .chunk => chunks[index].final_rel_path,
                                     .scb => chunks[entry_point_chunks_for_scb[index]].final_rel_path,
                                     .html_import => {
-                                        count += std.fmt.count("{}", .{HTMLImportManifest.formatEscapedJSON(.{
+                                        count += std.fmt.count("{f}", .{HTMLImportManifest.formatEscapedJSON(.{
                                             .index = index,
                                             .graph = graph,
                                             .chunks = chunks,
@@ -245,7 +245,7 @@ pub const Chunk = struct {
                     }
 
                     const debug_id_len = if (enable_source_map_shifts and FeatureFlags.source_map_debug_id)
-                        std.fmt.count("\n//# debugId={}\n", .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }})
+                        std.fmt.count("\n//# debugId={f}\n", .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }})
                     else
                         0;
 
@@ -352,7 +352,7 @@ pub const Chunk = struct {
                         // This comment must go before the //# sourceMappingURL comment
                         remain = remain[(std.fmt.bufPrint(
                             remain,
-                            "\n//# debugId={}\n",
+                            "\n//# debugId={f}\n",
                             .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
                         ) catch |err| switch (err) {
                             error.NoSpaceLeft => std.debug.panic(
@@ -385,7 +385,7 @@ pub const Chunk = struct {
                             // This comment must go before the //# sourceMappingURL comment
                             const debug_id_fmt = std.fmt.allocPrint(
                                 graph.heap.allocator(),
-                                "\n//# debugId={}\n",
+                                "\n//# debugId={f}\n",
                                 .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
                             ) catch |err| bun.handleOom(err);
 

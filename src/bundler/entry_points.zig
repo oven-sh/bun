@@ -163,7 +163,7 @@ pub const ServerEntryPoint = struct {
                 break :brk try std.fmt.allocPrint(
                     allocator,
                     \\// @bun
-                    \\import * as start from '{}';
+                    \\import * as start from '{f}';
                     \\var hmrSymbol = Symbol("BunServerHMR");
                     \\var entryNamespace = start;
                     \\if (typeof entryNamespace?.then === 'function') {{
@@ -200,7 +200,7 @@ pub const ServerEntryPoint = struct {
             break :brk try std.fmt.allocPrint(
                 allocator,
                 \\// @bun
-                \\import * as start from "{}";
+                \\import * as start from "{f}";
                 \\var entryNamespace = start;
                 \\if (typeof entryNamespace?.then === 'function') {{
                 \\   entryNamespace = entryNamespace.then((entryNamespace) => {{

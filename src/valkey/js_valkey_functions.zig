@@ -1199,7 +1199,7 @@ pub fn unsubscribe(
             listener_cb,
         ) catch {
             return globalObject.throw(
-                "Failed to remove handler for channel {}",
+                "Failed to remove handler for channel {f}",
                 .{channel.asString().getZigString(globalObject)},
             );
         } orelse {

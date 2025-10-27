@@ -227,7 +227,7 @@ pub const PackageFilterIterator = struct {
         while (true) {
             switch (try self.iter.next()) {
                 .err => |err| {
-                    Output.prettyErrorln("Error: {}", .{err});
+                    Output.prettyErrorln("Error: {f}", .{err});
                     continue;
                 },
                 .result => |path| {

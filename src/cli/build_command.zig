@@ -470,7 +470,7 @@ pub const BuildCommand = struct {
                 });
 
                 if (is_cross_compile) {
-                    Output.pretty(" <r><d>{s}<r>\n", .{compile_target});
+                    Output.pretty(" <r><d>{f}<r>\n", .{compile_target});
                 } else {
                     Output.pretty("\n", .{});
                 }

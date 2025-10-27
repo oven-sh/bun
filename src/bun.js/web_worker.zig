@@ -245,7 +245,7 @@ pub fn create(
         .store_fd = parent.transpiler.resolver.store_fd,
         .name = brk: {
             if (!name_str.isEmpty()) {
-                break :brk bun.handleOom(std.fmt.allocPrintSentinel(bun.default_allocator, "{}", .{name_str}, 0));
+                break :brk bun.handleOom(std.fmt.allocPrintSentinel(bun.default_allocator, "{f}", .{name_str}, 0));
             }
             break :brk "";
         },

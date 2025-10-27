@@ -83,7 +83,7 @@ pub fn processExtractedTarballPackage(
                     ) catch |err| {
                         if (log_level != .silent) {
                             const string_buf = manager.lockfile.buffers.string_bytes.items;
-                            Output.err(err, "failed to parse package.json for <b>{}<r>", .{
+                            Output.err(err, "failed to parse package.json for <b>{f}<r>", .{
                                 resolution.fmtURL(string_buf),
                             });
                         }

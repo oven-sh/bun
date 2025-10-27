@@ -267,7 +267,7 @@ pub const Snapshots = struct {
                 if (ils.line == last_line and ils.col == last_col) {
                     if (!bun.strings.eql(ils.value, last_value)) {
                         const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
-                        try log.addErrorFmt(source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value:\n{}", .{DiffFormatter{
+                        try log.addErrorFmt(source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value:\n{f}", .{DiffFormatter{
                             .received_string = ils.value,
                             .expected_string = last_value,
                             .globalThis = vm.global,

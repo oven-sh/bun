@@ -782,15 +782,15 @@ pub const UpdateInteractiveCommand = struct {
                 }
 
                 version_buf.clearRetainingCapacity();
-                try version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)});
+                try version_writer.print("{f}", .{resolution.value.npm.version.fmt(string_buf)});
                 const current_version_buf = try allocator.dupe(u8, version_buf.items);
 
                 version_buf.clearRetainingCapacity();
-                try version_writer.print("{}", .{update_version.version.fmt(manifest.string_buf)});
+                try version_writer.print("{f}", .{update_version.version.fmt(manifest.string_buf)});
                 const update_version_buf = try allocator.dupe(u8, version_buf.items);
 
                 version_buf.clearRetainingCapacity();
-                try version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)});
+                try version_writer.print("{f}", .{latest.version.fmt(manifest.string_buf)});
                 const latest_version_buf = try allocator.dupe(u8, version_buf.items);
 
                 // Already filtered by version.order check above
@@ -1447,14 +1447,14 @@ pub const UpdateInteractiveCommand = struct {
 
                     if (selected) {
                         if (strings.eqlComptime(checkbox_color, "red")) {
-                            Output.pretty("<r><red>{}<r>", .{hyperlink});
+                            Output.pretty("<r><red>{f}<r>", .{hyperlink});
                         } else if (strings.eqlComptime(checkbox_color, "yellow")) {
-                            Output.pretty("<r><yellow>{}<r>", .{hyperlink});
+                            Output.pretty("<r><yellow>{f}<r>", .{hyperlink});
                         } else {
-                            Output.pretty("<r><green>{}<r>", .{hyperlink});
+                            Output.pretty("<r><green>{f}<r>", .{hyperlink});
                         }
                     } else {
-                        Output.pretty("<r>{}<r>", .{hyperlink});
+                        Output.pretty("<r>{f}<r>", .{hyperlink});
                     }
 
                     // Print dev/peer/optional tag if applicable
@@ -1517,7 +1517,7 @@ pub const UpdateInteractiveCommand = struct {
                             Output.pretty("<r>{s}<r>", .{truncated_target});
                         } else {
                             // Use diffFmt for full versions
-                            Output.pretty("{}", .{target_full.diffFmt(
+                            Output.pretty("{f}", .{target_full.diffFmt(
                                 current_full,
                                 pkg.update_version,
                                 pkg.current_version,
@@ -1577,7 +1577,7 @@ pub const UpdateInteractiveCommand = struct {
                             Output.pretty("<r>{s}<r>", .{truncated_latest});
                         } else {
                             // Use diffFmt for full versions
-                            Output.pretty("{}", .{latest_full.diffFmt(
+                            Output.pretty("{f}", .{latest_full.diffFmt(
                                 current_full,
                                 pkg.latest_version,
                                 pkg.current_version,

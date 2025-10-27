@@ -249,7 +249,7 @@ pub const FD = packed struct(backing_int) {
         // Format the file descriptor for logging BEFORE closing it.
         // Otherwise the file descriptor is always invalid after closing it.
         var buf: if (Environment.isDebug) [1050]u8 else void = undefined;
-        const fd_fmt = if (Environment.isDebug) std.fmt.bufPrint(&buf, "{}", .{fd}) catch buf[0..];
+        const fd_fmt = if (Environment.isDebug) std.fmt.bufPrint(&buf, "{f}", .{fd}) catch buf[0..];
 
         const result: ?bun.sys.Error = switch (os) {
             .linux => result: {
@@ -703,11 +703,11 @@ pub const MovableIfWindowsFd = union(enum) {
 
     pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
         if (comptime bun.Environment.isPosix) {
-            try writer.print("{}", .{self.get().?});
+            try writer.print("{f}", .{self.get().?});
             return;
         }
         if (self._inner) |fd| {
-            try writer.print("{}", .{fd});
+            try writer.print("{f}", .{fd});
             return;
         }
         try writer.print("[moved]", .{});

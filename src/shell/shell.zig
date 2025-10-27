@@ -91,7 +91,7 @@ pub const ShellErr = union(enum) {
         defer this.deinit(bun.default_allocator);
         switch (this) {
             .sys => |err| {
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>bunsh: {f}: {}<r>", .{ err.message, err.path });
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>bunsh: {f}: {f}<r>", .{ err.message, err.path });
             },
             .custom => |custom| {
                 bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>{s}<r>", .{custom});
@@ -4004,7 +4004,7 @@ pub fn handleTemplateValue(
             return;
         }
 
-        return globalThis.throw("Invalid JS object used in shell: {}, you might need to call `.toString()` on it", .{template_value.fmtString(globalThis)});
+        return globalThis.throw("Invalid JS object used in shell: {f}, you might need to call `.toString()` on it", .{template_value.fmtString(globalThis)});
     }
 
     return;

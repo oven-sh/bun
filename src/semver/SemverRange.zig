@@ -124,9 +124,9 @@ pub const Formatter = struct {
         }
 
         if (this.range.right.op == .unset) {
-            try writer.print("{}", .{this.range.left.fmt(this.buffer)});
+            try writer.print("{f}", .{this.range.left.fmt(this.buffer)});
         } else {
-            try writer.print("{} {}", .{ this.range.left.fmt(this.buffer), this.range.right.fmt(this.buffer) });
+            try writer.print("{f} {f}", .{ this.range.left.fmt(this.buffer), this.range.right.fmt(this.buffer) });
         }
     }
 };
@@ -161,7 +161,7 @@ pub const Comparator = struct {
                 .gte => try writer.writeAll(">="),
             }
 
-            try writer.print("{}", .{this.comparator.version.fmt(this.buffer)});
+            try writer.print("{f}", .{this.comparator.version.fmt(this.buffer)});
         }
     };
 

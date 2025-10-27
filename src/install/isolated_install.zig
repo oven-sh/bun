@@ -499,7 +499,7 @@ pub fn installIsolatedPackages(
                     hasher.update(pkg_name.slice(string_buf));
                     const pkg_res = pkg_resolutions[peer_ids.pkg_id];
                     res_fmt_buf.clearRetainingCapacity();
-                    try res_fmt_buf.writer().print("{}", .{pkg_res.fmt(string_buf, .posix)});
+                    try res_fmt_buf.writer().print("{f}", .{pkg_res.fmt(string_buf, .posix)});
                     hasher.update(res_fmt_buf.items);
                 }
                 break :peer_hash .from(hasher.final());
@@ -1028,7 +1028,7 @@ pub fn installIsolatedPackages(
                             ) catch |err| switch (err) {
                                 error.OutOfMemory => |oom| return oom,
                                 error.InvalidURL => {
-                                    Output.err(err, "failed to enqueue package for download: {s}@{}", .{
+                                    Output.err(err, "failed to enqueue package for download: {s}@{f}", .{
                                         pkg_name.slice(string_buf),
                                         pkg_res.fmt(string_buf, .auto),
                                     });
@@ -1065,7 +1065,7 @@ pub fn installIsolatedPackages(
                             ) catch |err| switch (err) {
                                 error.OutOfMemory => bun.outOfMemory(),
                                 error.InvalidURL => {
-                                    Output.err(err, "failed to enqueue github package for download: {s}@{}", .{
+                                    Output.err(err, "failed to enqueue github package for download: {s}@{f}", .{
                                         pkg_name.slice(string_buf),
                                         pkg_res.fmt(string_buf, .auto),
                                     });
@@ -1099,7 +1099,7 @@ pub fn installIsolatedPackages(
                             ) catch |err| switch (err) {
                                 error.OutOfMemory => bun.outOfMemory(),
                                 error.InvalidURL => {
-                                    Output.err(err, "failed to enqueue tarball for download: {s}@{}", .{
+                                    Output.err(err, "failed to enqueue tarball for download: {s}@{f}", .{
                                         pkg_name.slice(string_buf),
                                         pkg_res.fmt(string_buf, .auto),
                                     });

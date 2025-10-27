@@ -1870,13 +1870,13 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                         .data = logger.rangeData(
                             null,
                             logger.Range.None,
-                            std.fmt.allocPrint(globalThis.allocator(), "Unexpected pending import in \"{}\". To automatically install npm packages with Bun, please use an import statement instead of require() or dynamic import().\nThis error can also happen if dependencies import packages which are not referenced anywhere. Worst case, run `bun install` and opt-out of the node_modules folder until we come up with a better way to handle this error.", .{specifier}) catch unreachable,
+                            std.fmt.allocPrint(globalThis.allocator(), "Unexpected pending import in \"{f}\". To automatically install npm packages with Bun, please use an import statement instead of require() or dynamic import().\nThis error can also happen if dependencies import packages which are not referenced anywhere. Worst case, run `bun install` and opt-out of the node_modules folder until we come up with a better way to handle this error.", .{specifier}) catch unreachable,
                         ),
                     };
                 }
 
                 break :brk logger.Msg{
-                    .data = logger.rangeData(null, logger.Range.None, std.fmt.allocPrint(globalThis.allocator(), "{s} while building {}", .{ @errorName(err), specifier }) catch unreachable),
+                    .data = logger.rangeData(null, logger.Range.None, std.fmt.allocPrint(globalThis.allocator(), "{s} while building {f}", .{ @errorName(err), specifier }) catch unreachable),
                 };
             };
             {
@@ -1922,7 +1922,7 @@ pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: bun.String, refer
                 globalThis.createAggregateError(
                     errors,
                     &ZigString.init(
-                        std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{}\"", .{
+                        std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{f}\"", .{
                             errors.len,
                             specifier,
                         }) catch unreachable,
@@ -2525,12 +2525,12 @@ pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTra
 
             if (file.len == 0 and func.len == 0) continue;
 
-            const has_name = std.fmt.count("{}", .{frame.nameFormatter(false)}) > 0;
+            const has_name = std.fmt.count("{f}", .{frame.nameFormatter(false)}) > 0;
 
             if (has_name and !frame.position.isInvalid()) {
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>\n",
+                        "<r>      <d>at <r>{f}<d> (<r>{f}<d>)<r>\n",
                         allow_ansi_colors,
                     ),
                     .{
@@ -2548,7 +2548,7 @@ pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTra
             } else if (!frame.position.isInvalid()) {
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r>      <d>at <r>{}\n",
+                        "<r>      <d>at <r>{f}\n",
                         allow_ansi_colors,
                     ),
                     .{
@@ -2563,7 +2563,7 @@ pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTra
             } else if (has_name) {
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r>      <d>at <r>{}<d>\n",
+                        "<r>      <d>at <r>{f}<d>\n",
                         allow_ansi_colors,
                     ),
                     .{
@@ -2575,7 +2575,7 @@ pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTra
             } else {
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r>      <d>at <r>{}<d>\n",
+                        "<r>      <d>at <r>{f}<d>\n",
                         allow_ansi_colors,
                     ),
                     .{
@@ -3164,7 +3164,7 @@ fn printErrorInstance(
                 is_first_property = false;
                 try writer.splatByteAll(' ', pad_left);
 
-                try writer.print(comptime Output.prettyFmt(" {}<r><d>:<r> ", allow_ansi_color), .{field});
+                try writer.print(comptime Output.prettyFmt(" {f}<r><d>:<r> ", allow_ansi_color), .{field});
 
                 // When we're printing errors for a top-level uncaught exception / rejection, suppress further errors here.
                 if (allow_side_effects) {
@@ -3249,7 +3249,7 @@ fn printErrorInstance(
     if (!exception.browser_url.isEmpty()) {
         try writer.print(
             comptime Output.prettyFmt(
-                "    <d>from <r>browser tab <magenta>{}<r>\n",
+                "    <d>from <r>browser tab <magenta>{f}<r>\n",
                 allow_ansi_color,
             ),
             .{exception.browser_url},
@@ -3322,16 +3322,16 @@ fn printErrorNameAndMessage(
 
             break :brk .{ String.empty, message };
         } else .{ name, message };
-        try writer.print(comptime Output.prettyFmt("{}<b>{}<r>\n", allow_ansi_color), .{
+        try writer.print(comptime Output.prettyFmt("{f}<b>{f}<r>\n", allow_ansi_color), .{
             error_display_level.formatter(display_name, allow_ansi_color, .include_colon),
             display_message,
         });
     } else if (!name.isEmpty()) {
-        try writer.print("{}\n", .{error_display_level.formatter(name, allow_ansi_color, .include_colon)});
+        try writer.print("{f}\n", .{error_display_level.formatter(name, allow_ansi_color, .include_colon)});
     } else if (!message.isEmpty()) {
-        try writer.print(comptime Output.prettyFmt("{}<b>{}<r>\n", allow_ansi_color), .{ error_display_level.formatter(bun.String.empty, allow_ansi_color, .include_colon), message });
+        try writer.print(comptime Output.prettyFmt("{f}<b>{f}<r>\n", allow_ansi_color), .{ error_display_level.formatter(bun.String.empty, allow_ansi_color, .include_colon), message });
     } else {
-        try writer.print(comptime Output.prettyFmt("{}\n", allow_ansi_color), .{error_display_level.formatter(bun.String.empty, allow_ansi_color, .exclude_colon)});
+        try writer.print(comptime Output.prettyFmt("{f}\n", allow_ansi_color), .{error_display_level.formatter(bun.String.empty, allow_ansi_color, .exclude_colon)});
     }
 }
 

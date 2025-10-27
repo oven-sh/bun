@@ -1308,7 +1308,7 @@ pub inline fn errGeneric(comptime fmt: []const u8, args: anytype) void {
 
 /// Print a red error message with "error: " as the prefix and a formatted message.
 pub inline fn errFmt(formatter: anytype) void {
-    return errGeneric("{}", .{formatter});
+    return errGeneric("{f}", .{formatter});
 }
 
 pub var buffered_stdin = bun.deprecated.BufferedReader(4096, File.Reader){

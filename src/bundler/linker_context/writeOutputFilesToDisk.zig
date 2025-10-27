@@ -228,7 +228,7 @@ pub fn writeOutputFilesToDisk(
                         )) {
                             .result => {},
                             .err => |err| {
-                                c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{} writing bytecode for chunk {f}", .{
+                                c.log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "{f} writing bytecode for chunk {f}", .{
                                     err,
                                     bun.fmt.quote(chunk.final_rel_path),
                                 }) catch unreachable;

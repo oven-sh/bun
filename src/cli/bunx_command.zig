@@ -791,7 +791,7 @@ pub const BunxCommand = struct {
                 Global.raiseIgnoringPanicHandler(signal);
             },
             .err => |err| {
-                Output.prettyErrorln("<r><red>error<r>: bunx failed to install <b>{s}<r> due to error:\n{}", .{ install_param, err });
+                Output.prettyErrorln("<r><red>error<r>: bunx failed to install <b>{s}<r> due to error:\n{f}", .{ install_param, err });
                 Global.exit(1);
             },
             else => {},

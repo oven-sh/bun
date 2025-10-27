@@ -211,11 +211,11 @@ pub const Stringifier = struct {
                         switch (res.tag) {
                             .workspace => {
                                 if (lockfile.workspace_versions.get(pkg_name_hash)) |workspace_version| {
-                                    try temp_writer.print("{}", .{workspace_version.fmt(buf)});
+                                    try temp_writer.print("{f}", .{workspace_version.fmt(buf)});
                                 }
                             },
                             else => {
-                                try temp_writer.print("{}", .{res.fmt(buf, .posix)});
+                                try temp_writer.print("{f}", .{res.fmt(buf, .posix)});
                             },
                         }
                         defer temp_buf.clearRetainingCapacity();
@@ -308,7 +308,7 @@ pub const Stringifier = struct {
                 for (lockfile.overrides.map.values()) |override_dep| {
                     try writeIndent(writer, indent);
                     try writer.print(
-                        \\{}: {},
+                        \\{f}: {f},
                         \\
                     , .{ override_dep.name.fmtJson(buf, .{}), override_dep.version.literal.fmtJson(buf, .{}) });
                 }
@@ -333,7 +333,7 @@ pub const Stringifier = struct {
                 for (lockfile.catalogs.default.values()) |catalog_dep| {
                     try writeIndent(writer, indent);
                     try writer.print(
-                        \\{}: {},
+                        \\{f}: {f},
                         \\
                     , .{ catalog_dep.name.fmtJson(buf, .{}), catalog_dep.version.literal.fmtJson(buf, .{}) });
                 }
@@ -356,13 +356,13 @@ pub const Stringifier = struct {
                     const catalog_deps = entry.value_ptr;
 
                     try writeIndent(writer, indent);
-                    try writer.print("{}: {{\n", .{catalog_name.fmtJson(buf, .{})});
+                    try writer.print("{f}: {{\n", .{catalog_name.fmtJson(buf, .{})});
                     indent.* += 1;
 
                     for (catalog_deps.values()) |catalog_dep| {
                         try writeIndent(writer, indent);
                         try writer.print(
-                            \\{}: {},
+                            \\{f}: {f},
                             \\
                         , .{ catalog_dep.name.fmtJson(buf, .{}), catalog_dep.version.literal.fmtJson(buf, .{}) });
                     }
@@ -470,7 +470,7 @@ pub const Stringifier = struct {
 
                     switch (res.tag) {
                         .root => {
-                            try writer.print("[\"{}@root:\", ", .{
+                            try writer.print("[\"{f}@root:\", ", .{
                                 pkg_name.fmtJson(buf, .{ .quote = false }),
                                 // we don't read the root package version into the binary lockfile
                             });
@@ -488,7 +488,7 @@ pub const Stringifier = struct {
                             }
                         },
                         .folder => {
-                            try writer.print("[\"{}@file:{}\", ", .{
+                            try writer.print("[\"{f}@file:{f}\", ", .{
                                 pkg_name.fmtJson(buf, .{ .quote = false }),
                                 res.value.folder.fmtJson(buf, .{ .quote = false }),
                             });
@@ -511,7 +511,7 @@ pub const Stringifier = struct {
                             try writer.writeByte(']');
                         },
                         .local_tarball => {
-                            try writer.print("[\"{}@{}\", ", .{
+                            try writer.print("[\"{f}@{f}\", ", .{
                                 pkg_name.fmtJson(buf, .{ .quote = false }),
                                 res.value.local_tarball.fmtJson(buf, .{ .quote = false }),
                             });
@@ -534,7 +534,7 @@ pub const Stringifier = struct {
                             try writer.writeByte(']');
                         },
                         .remote_tarball => {
-                            try writer.print("[\"{}@{}\", ", .{
+                            try writer.print("[\"{f}@{f}\", ", .{
                                 pkg_name.fmtJson(buf, .{ .quote = false }),
                                 res.value.remote_tarball.fmtJson(buf, .{ .quote = false }),
                             });
@@ -557,7 +557,7 @@ pub const Stringifier = struct {
                             try writer.writeByte(']');
                         },
                         .symlink => {
-                            try writer.print("[\"{}@link:{}\", ", .{
+                            try writer.print("[\"{f}@link:{f}\", ", .{
                                 pkg_name.fmtJson(buf, .{ .quote = false }),
                                 res.value.symlink.fmtJson(buf, .{ .quote = false }),
                             });
@@ -580,7 +580,7 @@ pub const Stringifier = struct {
                             try writer.writeByte(']');
                         },
                         .npm => {
-                            try writer.print("[\"{}@{}\", ", .{
+                            try writer.print("[\"{f}@{f}\", ", .{
                                 pkg_name.fmtJson(buf, .{ .quote = false }),
                                 res.value.npm.version.fmt(buf),
                             });
@@ -608,19 +608,19 @@ pub const Stringifier = struct {
                                 &path_buf,
                             );
 
-                            try writer.print(", \"{}\"]", .{
+                            try writer.print(", \"{f}\"]", .{
                                 pkg_meta.integrity,
                             });
                         },
                         .workspace => {
-                            try writer.print("[\"{}@workspace:{}\"]", .{
+                            try writer.print("[\"{f}@workspace:{f}\"]", .{
                                 pkg_name.fmtJson(buf, .{ .quote = false }),
                                 res.value.workspace.fmtJson(buf, .{ .quote = false }),
                             });
                         },
                         inline .git, .github => |tag| {
                             const repo: Repository = @field(res.value, @tagName(tag));
-                            try writer.print("[\"{}@{}\", ", .{
+                            try writer.print("[\"{f}@{f}\", ", .{
                                 pkg_name.fmtJson(buf, .{ .quote = false }),
                                 repo.fmt(if (comptime tag == .git) "git+" else "github:", buf),
                             });
@@ -640,7 +640,7 @@ pub const Stringifier = struct {
                                 &path_buf,
                             );
 
-                            try writer.print(", {}]", .{
+                            try writer.print(", {f}]", .{
                                 repo.resolved.fmtJson(buf, .{}),
                             });
                         },

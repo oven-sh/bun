@@ -365,7 +365,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                     module_ref,
                     try std.fmt.allocPrint(
                         this.allocator(),
-                        "{}_default",
+                        "{f}_default",
                         .{this.parse_graph.input_files.items(.source)[source_index].fmtIdentifier()},
                     ),
                     "default",

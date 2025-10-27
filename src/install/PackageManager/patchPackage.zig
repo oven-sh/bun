@@ -74,7 +74,7 @@ pub fn doPatchCommit(
         .result => |fd| std.fs.Dir{ .fd = fd.cast() },
         .err => |e| {
             Output.prettyError(
-                "<r><red>error<r>: failed to open root <b>node_modules<r> folder: {}<r>\n",
+                "<r><red>error<r>: failed to open root <b>node_modules<r> folder: {f}<r>\n",
                 .{e},
             );
             Global.crash();
@@ -133,7 +133,7 @@ pub fn doPatchCommit(
                 .ids => |ids| brk: {
                     for (ids.items) |id| {
                         const pkg = lockfile.packages.get(id);
-                        const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
+                        const resolution_label = std.fmt.bufPrint(&resolution_buf, "{f}", .{pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
                         if (std.mem.eql(u8, resolution_label, version)) {
                             break :brk pkg;
                         }
@@ -187,7 +187,7 @@ pub fn doPatchCommit(
     const pkg: Package = _pkg;
 
     const name = pkg.name.slice(lockfile.buffers.string_bytes.items);
-    const resolution_label = std.fmt.bufPrint(&resolution_buf, "{s}@{}", .{ name, pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix) }) catch unreachable;
+    const resolution_label = std.fmt.bufPrint(&resolution_buf, "{s}@{f}", .{ name, pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix) }) catch unreachable;
 
     const patchfile_contents = brk: {
         const new_folder = changes_dir;
@@ -266,7 +266,7 @@ pub fn doPatchCommit(
                 patch_tag_tmpname,
                 .{ .move_fallback = true },
             ).asErr()) |e| {
-                Output.warn("failed renaming the bun patch tag, this may cause issues: {}", .{e});
+                Output.warn("failed renaming the bun patch tag, this may cause issues: {f}", .{e});
                 break :has_bun_patch_tag null;
             }
             break :has_bun_patch_tag patch_tag;
@@ -290,7 +290,7 @@ pub fn doPatchCommit(
                         "node_modules",
                         .{ .move_fallback = true },
                     ).asErr()) |e| {
-                        Output.warn("failed renaming nested node_modules folder, this may cause issues: {}", .{e});
+                        Output.warn("failed renaming nested node_modules folder, this may cause issues: {f}", .{e});
                     }
                 }
 
@@ -302,7 +302,7 @@ pub fn doPatchCommit(
                         patch_tag,
                         .{ .move_fallback = true },
                     ).asErr()) |e| {
-                        Output.warn("failed renaming the bun patch tag, this may cause issues: {}", .{e});
+                        Output.warn("failed renaming the bun patch tag, this may cause issues: {f}", .{e});
                     }
                 }
             }
@@ -313,7 +313,7 @@ pub fn doPatchCommit(
             .result => |fd| fd,
             .err => |e| {
                 Output.prettyError(
-                    "<r><red>error<r>: failed to get cwd path {}<r>\n",
+                    "<r><red>error<r>: failed to get cwd path {f}<r>\n",
                     .{e},
                 );
                 Global.crash();
@@ -340,7 +340,7 @@ pub fn doPatchCommit(
             .result => |r| r,
             .err => |e| {
                 Output.prettyError(
-                    "<r><red>error<r>: failed to make diff {}<r>\n",
+                    "<r><red>error<r>: failed to make diff {f}<r>\n",
                     .{e},
                 );
                 Global.crash();
@@ -371,7 +371,7 @@ pub fn doPatchCommit(
                     }
                 };
                 Output.prettyError(
-                    "<r><red>error<r>: failed to make diff {}<r>\n",
+                    "<r><red>error<r>: failed to make diff {f}<r>\n",
                     .{
                         Truncate{ .stderr = stderr },
                     },
@@ -618,7 +618,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
                 .ids => |ids| id: {
                     for (ids.items) |id| {
                         const pkg = lockfile.packages.get(id);
-                        const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
+                        const resolution_label = std.fmt.bufPrint(&resolution_buf, "{f}", .{pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
                         if (std.mem.eql(u8, resolution_label, version)) {
                             break :id pkg;
                         }
@@ -633,7 +633,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
             const existing_patchfile_hash = existing_patchfile_hash: {
                 var __sfb = std.heap.stackFallback(1024, manager.allocator);
                 const allocator = __sfb.get();
-                const name_and_version = std.fmt.allocPrint(allocator, "{s}@{}", .{ name, actual_package.resolution.fmt(strbuf, .posix) }) catch unreachable;
+                const name_and_version = std.fmt.allocPrint(allocator, "{s}@{f}", .{ name, actual_package.resolution.fmt(strbuf, .posix) }) catch unreachable;
                 defer allocator.free(name_and_version);
                 const name_and_version_hash = String.Builder.stringHash(name_and_version);
                 if (lockfile.patched_dependencies.get(name_and_version_hash)) |patched_dep| {
@@ -671,7 +671,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
             const existing_patchfile_hash = existing_patchfile_hash: {
                 var __sfb = std.heap.stackFallback(1024, manager.allocator);
                 const sfballoc = __sfb.get();
-                const name_and_version = std.fmt.allocPrint(sfballoc, "{s}@{}", .{ name, pkg.resolution.fmt(strbuf, .posix) }) catch unreachable;
+                const name_and_version = std.fmt.allocPrint(sfballoc, "{s}@{f}", .{ name, pkg.resolution.fmt(strbuf, .posix) }) catch unreachable;
                 defer sfballoc.free(name_and_version);
                 const name_and_version_hash = String.Builder.stringHash(name_and_version);
                 if (manager.lockfile.patched_dependencies.get(name_and_version_hash)) |patched_dep| {
@@ -817,7 +817,7 @@ fn pkgInfoForNameAndVersion(
         if (pkg_id == invalid_package_id) continue;
         const pkg = lockfile.packages.get(pkg_id);
         if (version) |v| {
-            const label = std.fmt.bufPrint(buf[0..], "{}", .{pkg.resolution.fmt(strbuf, .posix)}) catch @panic("Resolution name too long");
+            const label = std.fmt.bufPrint(buf[0..], "{f}", .{pkg.resolution.fmt(strbuf, .posix)}) catch @panic("Resolution name too long");
             if (std.mem.eql(u8, label, v)) {
                 bun.handleOom(pairs.append(.{ @intCast(dep_id), pkg_id }));
             }
@@ -928,7 +928,7 @@ fn pkgInfoForNameAndVersion(
 
         const pkg = lockfile.packages.get(pkgid);
 
-        Output.prettyError("  {s}@<blue>{}<r>\n", .{ pkg.name.slice(strbuf), pkg.resolution.fmt(strbuf, .posix) });
+        Output.prettyError("  {s}@<blue>{f}<r>\n", .{ pkg.name.slice(strbuf), pkg.resolution.fmt(strbuf, .posix) });
 
         if (i + 1 < pairs.items.len) {
             for (pairs.items[i + 1 ..]) |*p| {

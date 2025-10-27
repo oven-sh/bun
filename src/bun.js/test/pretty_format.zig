@@ -621,7 +621,7 @@ pub const JestPrettyFormat = struct {
                 }
 
                 pub inline fn writeString(self: *@This(), str: ZigString) void {
-                    self.print("{}", .{str});
+                    self.print("{f}", .{str});
                 }
 
                 pub inline fn write16Bit(self: *@This(), input: []const u16) void {
@@ -729,11 +729,11 @@ pub const JestPrettyFormat = struct {
 
                         try value.getNameProperty(globalThis, &name_str);
                         if (name_str.len > 0 and !name_str.eqlComptime("Object")) {
-                            writer.print("{} ", .{name_str});
+                            writer.print("{f} ", .{name_str});
                         } else {
                             try value.getPrototype(globalThis).getNameProperty(globalThis, &name_str);
                             if (name_str.len > 0 and !name_str.eqlComptime("Object")) {
-                                writer.print("{} ", .{name_str});
+                                writer.print("{f} ", .{name_str});
                             }
                         }
                     }
@@ -745,7 +745,7 @@ pub const JestPrettyFormat = struct {
                     var classname = ZigString.Empty;
                     try value.getClassName(globalThis, &classname);
                     if (!classname.isEmpty() and !classname.eqlComptime("Object")) {
-                        this.writer.print("{} ", .{classname}) catch {};
+                        this.writer.print("{f} ", .{classname}) catch {};
                     }
 
                     this.writer.writeAll("{\n") catch {};
@@ -804,14 +804,14 @@ pub const JestPrettyFormat = struct {
                             this.addForNewLine(key.len + 2);
 
                             writer.print(
-                                comptime Output.prettyFmt("<r>\"{}\"<d>:<r> ", enable_ansi_colors),
+                                comptime Output.prettyFmt("<r>\"{f}\"<d>:<r> ", enable_ansi_colors),
                                 .{key},
                             );
                         } else if (key.is16Bit() and JSLexer.isLatin1Identifier(@TypeOf(key.utf16SliceAligned()), key.utf16SliceAligned())) {
                             this.addForNewLine(key.len + 2);
 
                             writer.print(
-                                comptime Output.prettyFmt("<r>\"{}\"<d>:<r> ", enable_ansi_colors),
+                                comptime Output.prettyFmt("<r>\"{f}\"<d>:<r> ", enable_ansi_colors),
                                 .{key},
                             );
                         } else if (key.is16Bit()) {
@@ -962,14 +962,14 @@ pub const JestPrettyFormat = struct {
                         while (remaining.indexOfAny("\\\r")) |i| {
                             switch (remaining.charAt(i)) {
                                 '\\' => {
-                                    writer.print("{}\\", .{remaining.substringWithLen(0, i)});
+                                    writer.print("{f}\\", .{remaining.substringWithLen(0, i)});
                                     remaining = remaining.substring(i + 1);
                                 },
                                 '\r' => {
                                     if (i + 1 < remaining.len and remaining.charAt(i + 1) == '\n') {
-                                        writer.print("{}", .{remaining.substringWithLen(0, i)});
+                                        writer.print("{f}", .{remaining.substringWithLen(0, i)});
                                     } else {
-                                        writer.print("{}\n", .{remaining.substringWithLen(0, i)});
+                                        writer.print("{f}\n", .{remaining.substringWithLen(0, i)});
                                     }
 
                                     remaining = remaining.substring(i + 1);
@@ -990,7 +990,7 @@ pub const JestPrettyFormat = struct {
 
                     if (str.is16Bit()) {
                         // streaming print
-                        writer.print("{}", .{str});
+                        writer.print("{f}", .{str});
                     } else if (strings.isAllASCII(str.slice())) {
                         // fast path
                         writer.writeAll(str.slice());
@@ -1097,7 +1097,7 @@ pub const JestPrettyFormat = struct {
                     if (printable.len == 0) {
                         writer.print(comptime Output.prettyFmt("<cyan>[class]<r>", enable_ansi_colors), .{});
                     } else {
-                        writer.print(comptime Output.prettyFmt("<cyan>[class {}]<r>", enable_ansi_colors), .{printable});
+                        writer.print(comptime Output.prettyFmt("<cyan>[class {f}]<r>", enable_ansi_colors), .{printable});
                     }
                 },
                 .Function => {
@@ -1107,7 +1107,7 @@ pub const JestPrettyFormat = struct {
                     if (printable.len == 0) {
                         writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
                     } else {
-                        writer.print(comptime Output.prettyFmt("<cyan>[Function: {}]<r>", enable_ansi_colors), .{printable});
+                        writer.print(comptime Output.prettyFmt("<cyan>[Function: {f}]<r>", enable_ansi_colors), .{printable});
                     }
                 },
                 .Array => {
@@ -1381,7 +1381,7 @@ pub const JestPrettyFormat = struct {
                     if (jsType == .JSDate) {
                         // in the code for printing dates, it never exceeds this amount
                         var iso_string_buf: [36]u8 = undefined;
-                        var out_buf: []const u8 = std.fmt.bufPrint(&iso_string_buf, "{}", .{str}) catch "";
+                        var out_buf: []const u8 = std.fmt.bufPrint(&iso_string_buf, "{f}", .{str}) catch "";
                         if (out_buf.len > 2) {
                             // trim the quotes
                             out_buf = out_buf[1 .. out_buf.len - 1];
@@ -1391,7 +1391,7 @@ pub const JestPrettyFormat = struct {
                         return;
                     }
 
-                    writer.print("{}", .{str});
+                    writer.print("{f}", .{str});
                 },
                 .Event => {
                     const event_type_value: JSValue = brk: {
@@ -2049,7 +2049,7 @@ pub const JestPrettyFormat = struct {
             var class_name = ZigString.init(&name_buf);
             try constructor_value.getClassName(this.globalThis, &class_name);
             this.addForNewLine(class_name.len);
-            writer.print(comptime Output.prettyFmt("<cyan>{}<r>", enable_ansi_colors), .{class_name});
+            writer.print(comptime Output.prettyFmt("<cyan>{f}<r>", enable_ansi_colors), .{class_name});
             this.addForNewLine(1);
             writer.writeAll(">");
         } else if (value.as(expect.ExpectCloseTo)) |matcher| {

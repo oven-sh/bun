@@ -455,7 +455,7 @@ pub const TablePrinter = struct {
             // Right-align the number column
             try writer.splatByteAll(' ', needed + PADDING);
             switch (row_key) {
-                .str => |value| try writer.print("{}", .{value}),
+                .str => |value| try writer.print("{f}", .{value}),
                 .num => |value| try writer.print("{d}", .{value}),
             }
             try writer.splatByteAll(' ', PADDING);
@@ -615,7 +615,7 @@ pub const TablePrinter = struct {
                 if (comptime enable_ansi_colors) {
                     try writer.writeAll(Output.prettyFmt("<r><b>", true));
                 }
-                try writer.print("{}", .{col.name});
+                try writer.print("{f}", .{col.name});
                 if (comptime enable_ansi_colors) {
                     try writer.writeAll(Output.prettyFmt("<r>", true));
                 }
@@ -1737,7 +1737,7 @@ pub const Formatter = struct {
             }
 
             pub inline fn writeString(self: *@This(), str: ZigString) void {
-                self.print("{}", .{str});
+                self.print("{f}", .{str});
             }
 
             pub inline fn write16Bit(self: *@This(), input: []const u16) void {
@@ -1897,7 +1897,7 @@ pub const Formatter = struct {
                     };
 
                     if (try getObjectName(globalThis, value)) |name_str| {
-                        writer.print("{} ", .{name_str});
+                        writer.print("{f} ", .{name_str});
                     }
                 }
 
@@ -1972,7 +1972,7 @@ pub const Formatter = struct {
                         this.addForNewLine(key.len + 1);
 
                         writer.print(
-                            comptime Output.prettyFmt("<r>{}<d>:<r> ", enable_ansi_colors),
+                            comptime Output.prettyFmt("<r>{f}<d>:<r> ", enable_ansi_colors),
                             .{key},
                         );
                     } else if (key.is16Bit()) {
@@ -2009,7 +2009,7 @@ pub const Formatter = struct {
                 } else if (Environment.isDebug and is_private_symbol) {
                     this.addForNewLine(1 + "$:".len + key.len);
                     writer.print(
-                        comptime Output.prettyFmt("<r><magenta>{s}{any}<r><d>:<r> ", enable_ansi_colors),
+                        comptime Output.prettyFmt("<r><magenta>{s}{f}<r><d>:<r> ", enable_ansi_colors),
                         .{
                             if (key.len > 0 and key.charAt(0) == '#') "" else "$",
                             key,
@@ -2018,7 +2018,7 @@ pub const Formatter = struct {
                 } else {
                     this.addForNewLine(1 + "[Symbol()]:".len + key.len);
                     writer.print(
-                        comptime Output.prettyFmt("<r><d>[<r><blue>Symbol({any})<r><d>]:<r> ", enable_ansi_colors),
+                        comptime Output.prettyFmt("<r><d>[<r><blue>Symbol({f})<r><d>]:<r> ", enable_ansi_colors),
                         .{key},
                     );
                 }
@@ -2181,7 +2181,7 @@ pub const Formatter = struct {
 
                 if (str.isUTF16()) {
                     // streaming print
-                    writer.print("{}", .{str});
+                    writer.print("{f}", .{str});
                 } else if (str.asUTF8()) |slice| {
                     // fast path
                     writer.writeAll(slice);
@@ -2335,13 +2335,13 @@ pub const Formatter = struct {
                     if (printable_proto.isEmpty()) {
                         writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous)]<r>", enable_ansi_colors), .{});
                     } else {
-                        writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous) extends {}]<r>", enable_ansi_colors), .{printable_proto});
+                        writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous) extends {f}]<r>", enable_ansi_colors), .{printable_proto});
                     }
                 } else {
                     if (printable_proto.isEmpty()) {
-                        writer.print(comptime Output.prettyFmt("<cyan>[class {}]<r>", enable_ansi_colors), .{printable});
+                        writer.print(comptime Output.prettyFmt("<cyan>[class {f}]<r>", enable_ansi_colors), .{printable});
                     } else {
-                        writer.print(comptime Output.prettyFmt("<cyan>[class {} extends {}]<r>", enable_ansi_colors), .{ printable, printable_proto });
+                        writer.print(comptime Output.prettyFmt("<cyan>[class {f} extends {f}]<r>", enable_ansi_colors), .{ printable, printable_proto });
                     }
                 }
             },
@@ -2357,13 +2357,13 @@ pub const Formatter = struct {
                     if (func_name.isEmpty()) {
                         writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
                     } else {
-                        writer.print(comptime Output.prettyFmt("<cyan>[{}]<r>", enable_ansi_colors), .{func_name});
+                        writer.print(comptime Output.prettyFmt("<cyan>[{f}]<r>", enable_ansi_colors), .{func_name});
                     }
                 } else {
                     if (func_name.isEmpty()) {
-                        writer.print(comptime Output.prettyFmt("<cyan>[Function: {}]<r>", enable_ansi_colors), .{printable});
+                        writer.print(comptime Output.prettyFmt("<cyan>[Function: {f}]<r>", enable_ansi_colors), .{printable});
                     } else {
-                        writer.print(comptime Output.prettyFmt("<cyan>[{}: {}]<r>", enable_ansi_colors), .{ func_name, printable });
+                        writer.print(comptime Output.prettyFmt("<cyan>[{f}: {f}]<r>", enable_ansi_colors), .{ func_name, printable });
                     }
                 }
             },
@@ -2914,7 +2914,7 @@ pub const Formatter = struct {
                 if (jsType == JSValue.JSType.JSDate) {
                     // in the code for printing dates, it never exceeds this amount
                     var iso_string_buf: [36]u8 = undefined;
-                    var out_buf: []const u8 = std.fmt.bufPrint(&iso_string_buf, "{}", .{str}) catch "";
+                    var out_buf: []const u8 = std.fmt.bufPrint(&iso_string_buf, "{f}", .{str}) catch "";
 
                     if (strings.eql(out_buf, "null")) {
                         out_buf = "Invalid Date";
@@ -2927,7 +2927,7 @@ pub const Formatter = struct {
                     return;
                 }
 
-                writer.print("{}", .{str});
+                writer.print("{f}", .{str});
             },
             .Event => {
                 const event_type_value: JSValue = brk: {
@@ -3340,7 +3340,7 @@ pub const Formatter = struct {
                     if (display_name.isEmpty()) {
                         display_name = String.static("Object");
                     }
-                    writer.print(comptime Output.prettyFmt("<r><cyan>[{} ...]<r>", enable_ansi_colors), .{
+                    writer.print(comptime Output.prettyFmt("<r><cyan>[{f} ...]<r>", enable_ansi_colors), .{
                         display_name,
                     });
                     return;
@@ -3359,7 +3359,7 @@ pub const Formatter = struct {
                         try this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors)
                     else {
                         if (try getObjectName(this.globalThis, value)) |name_str| {
-                            writer.print("{} ", .{name_str});
+                            writer.print("{f} ", .{name_str});
                         }
                         writer.writeAll("{}");
                     }

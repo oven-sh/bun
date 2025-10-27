@@ -219,7 +219,7 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
         .result => |s| s,
         .err => |err| {
             if (auto_loaded) return;
-            Output.prettyErrorln("{}\nwhile reading config \"{s}\"", .{
+            Output.prettyErrorln("{f}\nwhile reading config \"{s}\"", .{
                 err,
                 config_path,
             });

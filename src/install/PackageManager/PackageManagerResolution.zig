@@ -199,11 +199,11 @@ pub fn verifyResolutions(this: *PackageManager, log_level: PackageManager.Option
 
             if (log_level != .silent) {
                 if (failed_dep.name.isEmpty() or strings.eqlLong(failed_dep.name.slice(string_buf), failed_dep.version.literal.slice(string_buf), true)) {
-                    Output.errGeneric("<b>{}<r><d> failed to resolve<r>", .{
+                    Output.errGeneric("<b>{f}<r><d> failed to resolve<r>", .{
                         failed_dep.version.literal.fmt(string_buf),
                     });
                 } else {
-                    Output.errGeneric("<b>{s}<r><d>@<b>{}<r><d> failed to resolve<r>", .{
+                    Output.errGeneric("<b>{s}<r><d>@<b>{f}<r><d> failed to resolve<r>", .{
                         failed_dep.name.slice(string_buf),
                         failed_dep.version.literal.fmt(string_buf),
                     });

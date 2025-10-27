@@ -235,7 +235,7 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
                 bun.debugAssert(rem.buf.len == 0);
 
                 const str = bun.String.fromBytes(bunTest.collection.filter_buffer.items);
-                groupLog.log("matches_filter \"{}\"", .{std.zig.fmtString(bunTest.collection.filter_buffer.items)});
+                groupLog.log("matches_filter \"{f}\"", .{std.zig.fmtString(bunTest.collection.filter_buffer.items)});
                 matches_filter = filter_regex.matches(str);
             };
 

@@ -551,14 +551,14 @@ pub const JunitReporter = struct {
 
         switch (bun.sys.File.openat(.cwd(), junit_path_buf[0..path.len :0], bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
             .err => |err| {
-                Output.err(error.JUnitReportFailed, "Failed to write JUnit report to {s}\n{}", .{ path, err });
+                Output.err(error.JUnitReportFailed, "Failed to write JUnit report to {s}\n{f}", .{ path, err });
             },
             .result => |fd| {
                 defer _ = fd.close();
                 switch (bun.sys.File.writeAll(fd, this.contents.items)) {
                     .result => {},
                     .err => |err| {
-                        Output.err(error.JUnitReportFailed, "Failed to write JUnit report to {s}\n{}", .{ path, err });
+                        Output.err(error.JUnitReportFailed, "Failed to write JUnit report to {s}\n{f}", .{ path, err });
                     },
                 }
             },
@@ -1665,23 +1665,23 @@ pub const TestCommand = struct {
 
                 // Display the random seed if tests were randomized
                 if (random != null) {
-                    Output.prettyError("{}<r>--seed={d}<r>\n", .{ indenter, seed });
+                    Output.prettyError("{f}<r>--seed={d}<r>\n", .{ indenter, seed });
                 }
 
                 if (summary.pass > 0) {
                     Output.prettyError("<r><green>", .{});
                 }
 
-                Output.prettyError("{}{d:5>} pass<r>\n", .{ indenter, summary.pass });
+                Output.prettyError("{f}{d:5>} pass<r>\n", .{ indenter, summary.pass });
 
                 if (summary.skip > 0) {
-                    Output.prettyError("{}<r><yellow>{d:5>} skip<r>\n", .{ indenter, summary.skip });
+                    Output.prettyError("{f}<r><yellow>{d:5>} skip<r>\n", .{ indenter, summary.skip });
                 } else if (summary.skipped_because_label > 0) {
-                    Output.prettyError("{}<r><d>{d:5>} filtered out<r>\n", .{ indenter, summary.skipped_because_label });
+                    Output.prettyError("{f}<r><d>{d:5>} filtered out<r>\n", .{ indenter, summary.skipped_because_label });
                 }
 
                 if (summary.todo > 0) {
-                    Output.prettyError("{}<r><magenta>{d:5>} todo<r>\n", .{ indenter, summary.todo });
+                    Output.prettyError("{f}<r><magenta>{d:5>} todo<r>\n", .{ indenter, summary.todo });
                 }
 
                 if (summary.fail > 0) {
@@ -1690,9 +1690,9 @@ pub const TestCommand = struct {
                     Output.prettyError("<r><d>", .{});
                 }
 
-                Output.prettyError("{}{d:5>} fail<r>\n", .{ indenter, summary.fail });
+                Output.prettyError("{f}{d:5>} fail<r>\n", .{ indenter, summary.fail });
                 if (reporter.jest.unhandled_errors_between_tests > 0) {
-                    Output.prettyError("{}<r><red>{d:5>} error{s}<r>\n", .{ indenter, reporter.jest.unhandled_errors_between_tests, if (reporter.jest.unhandled_errors_between_tests > 1) "s" else "" });
+                    Output.prettyError("{f}<r><red>{d:5>} error{s}<r>\n", .{ indenter, reporter.jest.unhandled_errors_between_tests, if (reporter.jest.unhandled_errors_between_tests > 1) "s" else "" });
                 }
 
                 var print_expect_calls = reporter.summary().expectations > 0;
@@ -1704,7 +1704,7 @@ pub const TestCommand = struct {
                     var first = true;
                     if (print_expect_calls and added == 0 and failed == 0) {
                         print_expect_calls = false;
-                        Output.prettyError("{}{d:5>} snapshots, {d:5>} expect() calls", .{ indenter, reporter.jest.snapshots.total, reporter.summary().expectations });
+                        Output.prettyError("{f}{d:5>} snapshots, {d:5>} expect() calls", .{ indenter, reporter.jest.snapshots.total, reporter.summary().expectations });
                     } else {
                         Output.prettyError("<d>snapshots:<r> ", .{});
 
@@ -1736,7 +1736,7 @@ pub const TestCommand = struct {
                 }
 
                 if (print_expect_calls) {
-                    Output.prettyError("{}{d:5>} expect() calls\n", .{ indenter, reporter.summary().expectations });
+                    Output.prettyError("{f}{d:5>} expect() calls\n", .{ indenter, reporter.summary().expectations });
                 }
 
                 reporter.printSummary();
@@ -1885,7 +1885,7 @@ pub const TestCommand = struct {
 
             reporter.jest.current_file.set(file_title, file_prefix, repeat_count, repeat_index, reporter);
 
-            bun.jsc.Jest.bun_test.debug.group.log("loadEntryPointForTestRunner(\"{}\")", .{std.zig.fmtString(file_path)});
+            bun.jsc.Jest.bun_test.debug.group.log("loadEntryPointForTestRunner(\"{f}\")", .{std.zig.fmtString(file_path)});
 
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();

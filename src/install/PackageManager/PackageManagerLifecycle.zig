@@ -93,7 +93,7 @@ pub fn determinePreinstallState(
                 var sfb = std.heap.stackFallback(1024, manager.lockfile.allocator);
                 const name_and_version = std.fmt.allocPrint(
                     sfb.get(),
-                    "{s}@{}",
+                    "{s}@{f}",
                     .{
                         pkg.name.slice(manager.lockfile.buffers.string_bytes.items),
                         pkg.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .posix),

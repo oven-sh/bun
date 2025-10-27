@@ -413,7 +413,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                 null,
                 logger.Loc.Empty,
                 bun.default_allocator,
-                "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
+                "moving \"{s}\" to cache dir failed: {f}\n  From: {s}\n    To: {s}",
                 .{ name, err, tmpname, folder_name },
             ) catch unreachable;
             return error.InstallFailed;

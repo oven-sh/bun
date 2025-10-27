@@ -44,7 +44,7 @@ pub noinline fn computeChunks(
                 break :brk try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len));
             } else {
                 // Force HTML chunks to always be generated, even if there's an identical JS file.
-                break :brk try std.fmt.allocPrint(temp_allocator, "{}", .{JSChunkKeyFormatter{
+                break :brk try std.fmt.allocPrint(temp_allocator, "{f}", .{JSChunkKeyFormatter{
                     .has_html = has_html_chunk,
                     .entry_bits = entry_bits.bytes(this.graph.entry_points.len),
                 }});

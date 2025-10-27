@@ -548,10 +548,12 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* sourceProv
         return;
     }
 
+    OrdinalNumber line = OrdinalNumber::fromOneBasedInt(lineColumn.line);
+    OrdinalNumber column = OrdinalNumber::fromOneBasedInt(lineColumn.column);
+
     ZigStackFrame frame = {};
-    // Convert to zero-based safely (avoid underflow if line/column is 0)
-    frame.position.line_zero_based = lineColumn.line > 0 ? lineColumn.line - 1 : 0;
-    frame.position.column_zero_based = lineColumn.column > 0 ? lineColumn.column - 1 : 0;
+    frame.position.line_zero_based = line.zeroBasedInt();
+    frame.position.column_zero_based = column.zeroBasedInt();
     frame.source_url = Bun::toStringRef(sourceURL);
 
     Bun__remapStackFramePositions(Bun::vm(vm), &frame, 1);

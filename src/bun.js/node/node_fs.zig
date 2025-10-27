@@ -3389,10 +3389,14 @@ pub const NodeFS = struct {
     }
 
     pub fn close(_: *NodeFS, args: Arguments.Close, _: Flavor) Maybe(Return.Close) {
-        return if (args.fd.closeAllowingBadFileDescriptor(null)) |err|
-            .{ .err = err }
-        else
-            .success;
+        const result = args.fd.closeAllowingBadFileDescriptor(null);
+        if (result) |err| {
+            traceFS(.{ .call = "close", .fd = args.fd.cast(), .errno = err.errno });
+            return .{ .err = err };
+        } else {
+            traceFS(.{ .call = "close", .fd = args.fd.cast() });
+            return .success;
+        }
     }
 
     pub fn uv_close(_: *NodeFS, args: Arguments.Close, rc: i64) Maybe(Return.Close) {
@@ -4182,12 +4186,18 @@ pub const NodeFS = struct {
         else
             args.path.sliceZ(&this.sync_error_buf);
 
-        return switch (Syscall.open(path, args.flags.asInt(), args.mode)) {
-            .err => |err| .{
-                .err = err.withPath(args.path.slice()),
+        const result = Syscall.open(path, args.flags.asInt(), args.mode);
+
+        switch (result) {
+            .result => |fd| {
+                traceFS(.{ .call = "open", .path = args.path.slice(), .flags = args.flags.asInt(), .mode = args.mode, .fd = fd.cast() });
+                return .{ .result = fd };
             },
-            .result => |fd| .{ .result = fd },
-        };
+            .err => |err| {
+                traceFS(.{ .call = "open", .path = args.path.slice(), .flags = args.flags.asInt(), .mode = args.mode, .errno = err.errno });
+                return .{ .err = err.withPath(args.path.slice()) };
+            },
+        }
     }
 
     pub fn uv_open(this: *NodeFS, args: Arguments.Open, rc: i64) Maybe(Return.Open) {
@@ -4226,12 +4236,19 @@ pub const NodeFS = struct {
         buf = buf[@min(args.offset, buf.len)..];
         buf = buf[0..@min(buf.len, args.length)];
 
-        return switch (Syscall.read(args.fd, buf)) {
-            .err => |err| .{ .err = err },
-            .result => |amt| .{ .result = .{
-                .bytes_read = @as(u52, @truncate(amt)),
-            } },
-        };
+        const result = Syscall.read(args.fd, buf);
+
+        switch (result) {
+            .result => |amt| {
+                const bytes_read = @as(u52, @truncate(amt));
+                traceFS(.{ .call = "read", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .bytes_read = bytes_read });
+                return .{ .result = .{ .bytes_read = bytes_read } };
+            },
+            .err => |err| {
+                traceFS(.{ .call = "read", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .errno = err.errno });
+                return .{ .err = err };
+            },
+        }
     }
 
     fn preadInner(_: *NodeFS, args: Arguments.Read) Maybe(Return.Read) {
@@ -4338,16 +4355,19 @@ pub const NodeFS = struct {
         buf = buf[@min(args.offset, buf.len)..];
         buf = buf[0..@min(buf.len, args.length)];
 
-        return switch (Syscall.write(args.fd, buf)) {
-            .err => |err| .{
-                .err = err,
+        const result = Syscall.write(args.fd, buf);
+
+        switch (result) {
+            .result => |amt| {
+                const bytes_written = @as(u52, @truncate(amt));
+                traceFS(.{ .call = "write", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .bytes_written = bytes_written });
+                return .{ .result = .{ .bytes_written = bytes_written } };
             },
-            .result => |amt| .{
-                .result = .{
-                    .bytes_written = @as(u52, @truncate(amt)),
-                },
+            .err => |err| {
+                traceFS(.{ .call = "write", .fd = args.fd.cast(), .offset = args.offset, .length = args.length, .errno = err.errno });
+                return .{ .err = err };
             },
-        };
+        }
     }
 
     fn pwriteInner(_: *NodeFS, args: Arguments.Write) Maybe(Return.Write) {
@@ -6972,6 +6992,14 @@ const strings = bun.strings;
 const AbortSignal = bun.webcore.AbortSignal;
 const Buffer = bun.api.node.Buffer;
 const Output = bun.Output;
+
+// Tracing helper
+inline fn traceFS(args: anytype) void {
+    if (Output.trace_enabled) {
+        const tracer = Output.tracer("fs");
+        tracer.trace(args);
+    }
+}
 
 const jsc = bun.jsc;
 const ArrayBuffer = jsc.MarkedArrayBuffer;

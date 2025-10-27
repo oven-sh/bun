@@ -1,8 +1,9 @@
 // https://github.com/oven-sh/bun/issues/19111
 // stream.Readable's `readable` event not firing in Bun 1.2.6+
-import { expect, test } from "bun:test";
-import { IncomingMessage, ServerResponse } from "http";
-import { PassThrough, Readable } from "stream";
+import assert from "node:assert";
+import { IncomingMessage, ServerResponse } from "node:http";
+import { PassThrough, Readable } from "node:stream";
+import { test } from "node:test";
 
 // Focused regression test: Standalone ServerResponse.writableNeedDrain should be false
 test("Standalone ServerResponse.writableNeedDrain is false", () => {
@@ -14,7 +15,7 @@ test("Standalone ServerResponse.writableNeedDrain is false", () => {
   const res = new ServerResponse(mockReq);
 
   // Regression for #19111: previously true due to defaulting bufferedAmount to 1
-  expect(res.writableNeedDrain).toBe(false);
+  assert.strictEqual(res.writableNeedDrain, false);
 });
 
 // Helper function for connect-to-web pattern
@@ -93,6 +94,6 @@ test("Readable.pipe(ServerResponse) flows without stalling (regression for #1911
   src.pipe(res);
 
   const out = await onReadable;
-  expect(out.statusCode).toBe(200);
-  expect(out.headers["content-type"]).toBe("text/plain");
+  assert.strictEqual(out.statusCode, 200);
+  assert.strictEqual(out.headers["content-type"], "text/plain");
 });

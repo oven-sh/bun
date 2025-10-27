@@ -13,6 +13,8 @@
 #include <wtf/text/StringBuilder.h>
 #include <wtf/JSONValues.h>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
+#include <algorithm>
 
 extern "C" void Bun__startCPUProfiler(JSC::VM* vm);
 extern "C" BunString Bun__stopCPUProfilerAndGetJSON(JSC::VM* vm);
@@ -168,7 +170,8 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
                 }
             }
 
-            // Create a unique key for this frame
+            // Create a unique key for this frame based on callFrame only
+            // This deduplicates nodes across different call paths
             WTF::StringBuilder keyBuilder;
             keyBuilder.append(functionName);
             keyBuilder.append(':');
@@ -177,8 +180,6 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
             keyBuilder.append(lineNumber);
             keyBuilder.append(':');
             keyBuilder.append(columnNumber);
-            keyBuilder.append(':');
-            keyBuilder.append(currentParentId);
 
             WTF::String key = keyBuilder.toString();
 
@@ -262,9 +263,9 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
     }
     json->setValue("nodes"_s, nodesArray);
 
-    // Add timing info
-    json->setDouble("startTime"_s, startTime);
-    json->setDouble("endTime"_s, endTime);
+    // Add timing info as integer microseconds
+    json->setInteger("startTime"_s, static_cast<long long>(startTime));
+    json->setInteger("endTime"_s, static_cast<long long>(endTime));
 
     // Add samples array
     auto samplesArray = JSON::Array::create();

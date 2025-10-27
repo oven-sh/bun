@@ -639,18 +639,29 @@ class Database {
           readonly?: boolean;
           create?: boolean;
           readwrite?: boolean;
+          safeIntegers?: boolean;
+          strict?: boolean;
         },
   );
 
-  query<Params, ReturnType>(sql: string): Statement<Params, ReturnType>;
+  prepare<ReturnType, Params>(sql: string): Statement<ReturnType, Params>;
+  query<ReturnType, Params>(sql: string): Statement<ReturnType, Params>;
   run(
     sql: string,
     params?: SQLQueryBindings,
   ): { lastInsertRowid: number; changes: number };
   exec = this.run;
+
+  transaction(insideTransaction: (...args: any) => void): CallableFunction & {
+    deferred: (...args: any) => void;
+    immediate: (...args: any) => void;
+    exclusive: (...args: any) => void;
+  };
+
+  close(throwOnError?: boolean): void;
 }
 
-class Statement<Params, ReturnType> {
+class Statement<ReturnType, Params> {
   all(params: Params): ReturnType[];
   get(params: Params): ReturnType | undefined;
   run(params: Params): {

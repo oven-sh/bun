@@ -42,6 +42,11 @@ This creates a trace file with line-delimited JSON (JSONL) format, where each li
 
 - `write` - File write operations via Bun.write()
 
+### Subprocess Operations (`ns: "subprocess"`)
+
+- `spawn` - Process spawned (Bun.spawn or child_process)
+- `exit` - Process exited
+
 ## Trace Event Format
 
 Each trace event is a JSON object with:
@@ -148,6 +153,25 @@ $ cat trace.jsonl
 - `call` - Consumption method (text, json, arrayBuffer, blob)
 - `status` - Consumption status (immediate, streaming, already_used)
 
+### Subprocess Operations
+
+**Spawn trace:**
+
+- `call: "spawn"`
+- `cmd` - Command being executed
+- `args` - Number of arguments (including command)
+- `cwd` - Working directory
+- `env_count` - Number of environment variables
+- `pid` - Process ID
+
+**Exit trace:**
+
+- `call: "exit"`
+- `pid` - Process ID
+- `exit_code` - Exit code (on normal exit)
+- `signal` - Signal number (if killed by signal)
+- `errno` - Error number (on spawn failure)
+
 ## Use Cases
 
 ### Debugging I/O Performance
@@ -239,5 +263,6 @@ The trace implementation is integrated into Bun's core I/O layer:
 - `src/bun.js/webcore/fetch.zig` - HTTP request/response tracing
 - `src/bun.js/webcore/Body.zig` - Response body tracing
 - `src/bun.js/webcore/blob/write_file.zig` - Bun.write tracing
+- `src/bun.js/api/bun/subprocess.zig` - Subprocess spawn/exit tracing
 
 Each instrumentation point checks `Output.trace_enabled` before tracing, ensuring zero overhead when disabled.

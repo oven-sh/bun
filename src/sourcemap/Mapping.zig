@@ -108,7 +108,13 @@ pub const List = struct {
             const a = ctx.generated[a_index];
             const b = ctx.generated[b_index];
 
-            return a.lines.zeroBased() < b.lines.zeroBased() or (a.lines.zeroBased() == b.lines.zeroBased() and a.columns.zeroBased() <= b.columns.zeroBased());
+            if (a.lines.zeroBased() != b.lines.zeroBased()) {
+                return a.lines.zeroBased() < b.lines.zeroBased();
+            }
+            if (a.columns.zeroBased() != b.columns.zeroBased()) {
+                return a.columns.zeroBased() < b.columns.zeroBased();
+            }
+            return a_index < b_index;
         }
     };
 

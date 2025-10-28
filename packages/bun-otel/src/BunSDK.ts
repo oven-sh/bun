@@ -32,11 +32,11 @@ import { BatchSpanProcessor, SimpleSpanProcessor } from "@opentelemetry/sdk-trac
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { AsyncLocalStorage } from "async_hooks";
 import "../types";
-import { BunGenericInstrumentation } from "./instruments/BunGenericInstrumentation";
-import { BunNodeHttpCreateServerAdapter } from "./instruments/BunNodeHttpCreateServerAdapter";
 import type { NodeSDKConfig } from "./config-mappers";
 import { mapNodeSDKConfig } from "./config-mappers";
 import { BunAsyncLocalStorageContextManager } from "./context/BunAsyncLocalStorageContextManager";
+import { BunGenericInstrumentation } from "./instruments/BunGenericInstrumentation";
+import { BunNodeHttpCreateServerAdapter } from "./instruments/BunNodeHttpCreateServerAdapter";
 export type SupportedInstruments = "http" | "fetch" | "node";
 const DEFAULT_INSTRUMENTS: SupportedInstruments[] = ["http", "fetch", "node"];
 
@@ -240,13 +240,15 @@ export class BunSDK implements Disposable {
         diag.info(`${signal} received but shutdown already in progress, ignoring`);
         return;
       }
+      // Set flag immediately to prevent concurrent shutdown attempts
+      this._shutdownOnce = true;
       diag.debug(`\n${signal} received, shutting down gracefully...`);
       try {
         // Run user callback before SDK shutdown
         if (beforeShutdown) {
           await beforeShutdown();
         }
-        // Shutdown SDK (will set _shutdownOnce = true)
+        // Shutdown SDK
         await this.stop();
         diag.debug("✓ Shutdown complete");
       } catch (error) {

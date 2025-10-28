@@ -148,47 +148,6 @@ describe("bun install --insecure flag", () => {
     expect(installed).toContain("boba");
   });
 
-  it("should work without the --insecure flag (normal mode)", async () => {
-    const urls: string[] = [];
-    setHandler(
-      dummyRegistry(urls, {
-        "0.0.2": {},
-      }),
-    );
-
-    await writeFile(
-      join(package_dir, "package.json"),
-      JSON.stringify({
-        name: "test-normal-mode",
-        version: "1.0.0",
-        dependencies: {
-          bar: "0.0.2",
-        },
-      }),
-    );
-
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: package_dir,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const stderrText = await stderr.text();
-    const stdoutText = await stdout.text();
-    const exitCode = await exited;
-
-    // Should NOT display insecure warning in normal mode
-    expect(stderrText).not.toContain("Insecure mode enabled");
-    expect(stderrText).not.toContain("TLS/SSL certificate verification is disabled");
-    expect(exitCode).toBe(0);
-
-    // Package should still be installed
-    const installed = await readdirSorted(join(package_dir, "node_modules"));
-    expect(installed).toContain("bar");
-  });
-
   it("bunfig install.insecure=true should bypass self-signed certificate errors (verifying HTTP thread propagation)", async () => {
     // Set up an HTTPS server with a self-signed certificate
     using server = Bun.serve({

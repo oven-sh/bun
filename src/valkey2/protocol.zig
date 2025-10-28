@@ -667,16 +667,22 @@ pub const Attribute = struct {
     }
 };
 
-pub const SubscriptionPushMessage = enum(u2) {
+pub const SubscriptionPushMessageKind = enum(u2) {
+    const Self = @This();
+
     message,
     subscribe,
     unsubscribe,
 
-    pub const map = bun.ComptimeStringMap(SubscriptionPushMessage, .{
+    const String = bun.ComptimeStringMap(SubscriptionPushMessageKind, .{
         .{ "message", .message },
         .{ "subscribe", .subscribe },
         .{ "unsubscribe", .unsubscribe },
     });
+
+    pub fn fromString(str: []const u8) ?Self {
+        return Self.String.get(str);
+    }
 };
 
 const std = @import("std");

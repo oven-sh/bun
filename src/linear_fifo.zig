@@ -152,7 +152,7 @@ pub fn LinearFifo(
         }
 
         /// Returns a writable slice from the 'read' end of the fifo
-        fn readableSliceMut(self: SliceSelfArg, offset: usize) []T {
+        pub fn readableSliceMut(self: SliceSelfArg, offset: usize) []T {
             if (offset > self.count) return &[_]T{};
 
             var start = self.head + offset;

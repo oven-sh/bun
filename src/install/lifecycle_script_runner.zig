@@ -467,7 +467,7 @@ pub const LifecycleScriptSubprocess = struct {
                 Global.exit(1);
             },
             else => {
-                Output.panic("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to unexpected status\n{any}", .{
+                Output.panic("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to unexpected status\n{f}", .{
                     this.scriptName(),
                     this.package_name,
                     status,

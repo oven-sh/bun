@@ -5,6 +5,7 @@ TODO:
 - [ ] windows
 - [ ] remove format_mode (after completing the revertrevert step ^)
 - [ ] remove deprecated.BufferedWriter and BufferedReader
+- [ ] try the native backend on linux x86_64 (will probably crash)
 
 Follow-up:
 

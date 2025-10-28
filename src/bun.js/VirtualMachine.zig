@@ -3425,7 +3425,7 @@ pub noinline fn printGithubAnnotation(exception: *ZigException) void {
 
             if (file.len == 0 and func.len == 0) continue;
 
-            const has_name = std.fmt.count("{any}", .{frame.nameFormatter(
+            const has_name = std.fmt.count("{f}", .{frame.nameFormatter(
                 false,
             )}) > 0;
 

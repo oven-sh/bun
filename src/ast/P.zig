@@ -6496,7 +6496,7 @@ pub fn NewParser_(
                         .other,
                         std.fmt.allocPrint(
                             p.allocator,
-                            "require_{any}",
+                            "require_{f}",
                             .{p.source.fmtIdentifier()},
                         ) catch |err| bun.handleOom(err),
                     ) catch |err| bun.handleOom(err);

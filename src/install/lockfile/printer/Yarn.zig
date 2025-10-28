@@ -139,7 +139,7 @@ fn packages(
                 try writer.writeAll(name);
                 try writer.writeByte('@');
                 if (version_name.len == 0) {
-                    try writer.print("^{any}", .{version_formatter});
+                    try writer.print("^{f}", .{version_formatter});
                 } else {
                     try writer.writeAll(version_name);
                 }
@@ -169,7 +169,7 @@ fn packages(
 
             if (meta.integrity.tag != .unknown) {
                 // Integrity is...never quoted?
-                try writer.print("  integrity {any}\n", .{&meta.integrity});
+                try writer.print("  integrity {f}\n", .{&meta.integrity});
             }
 
             if (dependencies.len > 0) {

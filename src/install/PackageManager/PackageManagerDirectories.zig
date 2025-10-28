@@ -196,7 +196,7 @@ pub fn cachedGitFolderNamePrintAuto(this: *const PackageManager, repository: *co
         const string_buf = this.lockfile.buffers.string_bytes.items;
         return std.fmt.bufPrintZ(
             &PackageManager.cached_package_folder_name_buf,
-            "@G@{any}{f}{f}",
+            "@G@{f}{f}{f}",
             .{
                 repository.committish.fmt(string_buf),
                 CacheVersion.Formatter{ .version_number = CacheVersion.current },
@@ -271,7 +271,7 @@ pub fn cachedNPMPackageFolderNamePrint(this: *const PackageManager, buf: []u8, n
 fn cachedGitHubFolderNamePrintGuess(buf: []u8, string_buf: []const u8, repository: *const Repository, patch_hash: ?u64) stringZ {
     return std.fmt.bufPrintZ(
         buf,
-        "@GH@{any}-{any}-{any}{f}{f}",
+        "@GH@{f}-{f}-{f}{f}{f}",
         .{
             repository.owner.fmt(string_buf),
             repository.repo.fmt(string_buf),

@@ -21,17 +21,14 @@ pub fn Err(comptime T: type) type {
         /// The location where the error occurred.
         loc: ?ErrorLocation,
 
-        pub fn fmt(
+        pub fn format(
             this: @This(),
-            comptime _: []const u8,
-            _: std.fmt.FormatOptions,
-            writer: anytype,
+            writer: *std.Io.Writer,
         ) !void {
-            if (@hasDecl(T, "fmt")) {
-                try writer.print("{}", .{this.kind});
-                return;
+            if (@hasDecl(T, "format")) {
+                return this.kind.format(writer);
             }
-            @compileError("fmt not implemented for " ++ @typeName(T));
+            @compileError("format not implemented for " ++ @typeName(T));
         }
 
         pub fn toErrorInstance(this: *const @This(), globalThis: *bun.jsc.JSGlobalObject) !bun.jsc.JSValue {

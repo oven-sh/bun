@@ -490,7 +490,7 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
 
                 if (url_bytelength < 128) {
                     var buffer: [128]u8 = undefined;
-                    const url = std.fmt.bufPrint(&buffer, "{s}{any}{s}", .{
+                    const url = std.fmt.bufPrint(&buffer, "{s}{f}{s}", .{
                         this.getProtocol(),
                         fmt,
                         req_url,
@@ -518,7 +518,7 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
 
                 if (strings.isAllASCII(host) and strings.isAllASCII(req_url)) {
                     this.url, const bytes = bun.String.createUninitialized(.latin1, url_bytelength);
-                    _ = std.fmt.bufPrint(bytes, "{s}{any}{s}", .{
+                    _ = std.fmt.bufPrint(bytes, "{s}{f}{s}", .{
                         this.getProtocol(),
                         fmt,
                         req_url,
@@ -527,7 +527,7 @@ pub fn ensureURL(this: *Request) bun.OOM!void {
                     };
                 } else {
                     // slow path
-                    const temp_url = try std.fmt.allocPrint(bun.default_allocator, "{s}{any}{s}", .{
+                    const temp_url = try std.fmt.allocPrint(bun.default_allocator, "{s}{f}{s}", .{
                         this.getProtocol(),
                         fmt,
                         req_url,

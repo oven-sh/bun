@@ -19,7 +19,7 @@ pub const Version = struct {
 
                 return std.fmt.allocPrint(
                     bun.default_allocator,
-                    "bun-canary-timestamp-{any}",
+                    "bun-canary-timestamp-{f}",
                     .{
                         bun.fmt.hexIntLower(
                             bun.hash(

@@ -71,7 +71,7 @@ pub fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written
             defer bun.default_allocator.free(source_file);
 
             var bufw_buffer: [4096]u8 = undefined;
-            var bufw = file.writer(&bufw_buffer);
+            var bufw = file.writerStreaming(&bufw_buffer);
             const w = &bufw.interface;
             try w.print(
                 \\{{

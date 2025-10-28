@@ -124,7 +124,7 @@ pub fn enqueueSelf(this: *Async) void {
 }
 
 pub fn childDone(this: *Async, child_ptr: ChildPtr, exit_code: ExitCode) Yield {
-    log("{} childDone", .{this});
+    log("{f} childDone", .{this});
     child_ptr.deinit();
     this.state = .{ .done = exit_code };
     this.enqueueSelf();

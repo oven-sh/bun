@@ -580,7 +580,7 @@ pub const Chunk = struct {
                         const l = layers.inner();
                         for (l.sliceConst(), 0..) |*layer, i| {
                             if (i > 0) try writer.print(", ", .{});
-                            try writer.print("\"{}\"", .{layer});
+                            try writer.print("\"{f}\"", .{layer});
                         }
 
                         try writer.print("]", .{});

@@ -451,7 +451,7 @@ pub fn onError(this: *IOWriter, err__: bun.sys.Error) void {
     this.setWriting(false);
     const ee = err__.toShellSystemError();
     this.err = ee;
-    log("IOWriter(0x{x}, fd={}) onError errno={s} errmsg={} errsyscall={}", .{ @intFromPtr(this), this.fd, @tagName(ee.getErrno()), ee.message, ee.syscall });
+    log("IOWriter(0x{x}, fd={}) onError errno={s} errmsg={f} errsyscall={}", .{ @intFromPtr(this), this.fd, @tagName(ee.getErrno()), ee.message, ee.syscall });
     var seen_alloc = std.heap.stackFallback(@sizeOf(usize) * 64, bun.default_allocator);
     var seen = bun.handleOom(std.array_list.Managed(usize).initCapacity(seen_alloc.get(), 64));
     defer seen.deinit();
@@ -618,7 +618,7 @@ pub fn enqueue(this: *IOWriter, ptr: anytype, bytelist: ?*bun.ByteList, buf: []c
         .len = buf.len,
         .bytelist = bytelist,
     };
-    log("IOWriter(0x{x}, fd={}) enqueue(0x{x} {s}, buf_len={d}, buf={s}, writer_len={d})", .{ @intFromPtr(this), this.fd, @intFromPtr(writer.rawPtr()), @tagName(writer.ptr.ptr.tag()), buf.len, buf[0..@min(128, buf.len)], this.writers.len() + 1 });
+    log("IOWriter(0x{x}, fd={f}) enqueue(0x{x} {s}, buf_len={d}, buf={s}, writer_len={d})", .{ @intFromPtr(this), this.fd, @intFromPtr(writer.rawPtr()), @tagName(writer.ptr.ptr.tag()), buf.len, buf[0..@min(128, buf.len)], this.writers.len() + 1 });
     bun.handleOom(this.buf.appendSlice(bun.default_allocator, buf));
     this.writers.append(writer);
     return this.enqueueInternal();
@@ -663,7 +663,7 @@ pub fn enqueueFmt(
 }
 
 fn asyncDeinit(this: *@This()) void {
-    debug("IOWriter(0x{x}, fd={}) asyncDeinit", .{ @intFromPtr(this), this.fd });
+    debug("IOWriter(0x{x}, fd={f}) asyncDeinit", .{ @intFromPtr(this), this.fd });
     bun.assert(!this.is_writing);
     this.async_deinit.enqueue();
 }

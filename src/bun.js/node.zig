@@ -332,6 +332,13 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                 },
             };
         }
+
+        pub fn format(this: @This(), writer: *std.Io.Writer) !void {
+            return switch (this) {
+                .result => |v| try writer.print("Result(" ++ bun.deprecated.autoFormatLabelFallback(ReturnType, "{any}") ++ ")", .{v}),
+                .err => |e| try writer.print("Error(" ++ bun.deprecated.autoFormatLabelFallback(ErrorType, "{any}") ++ ")", .{e}),
+            };
+        }
     };
 }
 

@@ -130,7 +130,7 @@ pub fn next(this: *Subshell) Yield {
 }
 
 pub fn transitionToExec(this: *Subshell) Yield {
-    log("{} transitionToExec", .{this});
+    log("{f} transitionToExec", .{this});
     const script = Script.init(this.base.interpreter, this.base.shell, &this.node.script, Script.ParentPtr.init(this), this.io.copy());
     this.state = .exec;
     return script.start();

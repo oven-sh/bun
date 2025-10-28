@@ -1528,7 +1528,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
         // https://opensource.apple.com/source/xnu/xnu-7195.81.3/libsyscall/wrappers/open-base.c
         const rc = darwin_nocancel.@"openat$NOCANCEL"(dirfd.cast(), file_path.ptr, @bitCast(bun.O.toPacked(flags)), perm);
         if (comptime Environment.allow_assert)
-            log("openat({}, {s}, {d}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), flags, rc });
+            log("openat({f}, {s}, {d}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), flags, rc });
 
         return Maybe(bun.FileDescriptor).errnoSysFP(rc, .open, dirfd, file_path) orelse .{ .result = .fromNative(rc) };
     } else if (comptime Environment.isWindows) {
@@ -1653,7 +1653,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
     defer {
         if (Environment.isDebug) {
             if (debug_timer.timer.read() > std.time.ns_per_ms) {
-                log("write({}, {d}) blocked for {}", .{ fd, bytes.len, debug_timer });
+                log("write({}, {d}) blocked for {f}", .{ fd, bytes.len, debug_timer });
             }
         }
     }
@@ -3549,7 +3549,7 @@ pub fn pipe() Maybe([2]bun.FileDescriptor) {
     var fds: [2]i32 = undefined;
     const rc = syscall.pipe(&fds);
     if (Maybe([2]bun.FileDescriptor).errnoSys(rc, .pipe)) |err| {
-        log("pipe() = {}", .{err});
+        log("pipe() = {f}", .{err});
         return err;
     }
     log("pipe() = [{d}, {d}]", .{ fds[0], fds[1] });
@@ -3592,7 +3592,7 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, _: i32) Maybe(bun.FileDescriptor) {
     const out = switch (fcntl(fd, @as(i32, bun.c.F_DUPFD_CLOEXEC), @as(ArgType, 0))) {
         .result => |result| result,
         .err => |err| {
-            log("dup({}) = {}", .{ fd, err });
+            log("dup({}) = {f}", .{ fd, err });
             return .{ .err = err };
         },
     };

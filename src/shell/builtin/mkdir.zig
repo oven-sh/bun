@@ -189,9 +189,7 @@ pub const ShellMkdirTask = struct {
         return out;
     }
 
-    pub fn format(this: *const ShellMkdirTask, comptime fmt_: []const u8, options_: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt_; // autofix
-        _ = options_; // autofix
+    pub fn format(this: *const ShellMkdirTask, writer: *std.Io.Writer) !void {
         try writer.print("ShellMkdirTask(0x{x}, filepath={s})", .{ @intFromPtr(this), this.filepath });
     }
 

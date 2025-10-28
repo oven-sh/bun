@@ -428,17 +428,17 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
             resolution: *const This,
             buf: []const u8,
 
-            pub fn format(formatter: DebugFormatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(formatter: DebugFormatter, writer: *std.Io.Writer) !void {
                 try writer.writeAll("Resolution{ .");
                 try writer.writeAll(bun.tagName(Tag, formatter.resolution.tag) orelse "invalid");
                 try writer.writeAll(" = ");
                 switch (formatter.resolution.tag) {
-                    .npm => try formatter.resolution.value.npm.version.fmt(formatter.buf).format(layout, opts, writer),
+                    .npm => try formatter.resolution.value.npm.version.fmt(formatter.buf).format(writer),
                     .local_tarball => try writer.writeAll(formatter.resolution.value.local_tarball.slice(formatter.buf)),
                     .folder => try writer.writeAll(formatter.resolution.value.folder.slice(formatter.buf)),
                     .remote_tarball => try writer.writeAll(formatter.resolution.value.remote_tarball.slice(formatter.buf)),
-                    .git => try formatter.resolution.value.git.formatAs("git+", formatter.buf, layout, opts, writer),
-                    .github => try formatter.resolution.value.github.formatAs("github:", formatter.buf, layout, opts, writer),
+                    .git => try formatter.resolution.value.git.formatAs("git+", formatter.buf, writer),
+                    .github => try formatter.resolution.value.github.formatAs("github:", formatter.buf, writer),
                     .workspace => try writer.print("workspace:{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
                     .symlink => try writer.print("link:{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
                     .single_file_module => try writer.print("module:{s}", .{formatter.resolution.value.single_file_module.slice(formatter.buf)}),

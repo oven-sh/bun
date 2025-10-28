@@ -176,9 +176,7 @@ pub const ShellTouchTask = struct {
     event_loop: jsc.EventLoopHandle,
     concurrent_task: jsc.EventLoopTask,
 
-    pub fn format(this: *const ShellTouchTask, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt; // autofix
-        _ = opts; // autofix
+    pub fn format(this: *const ShellTouchTask, writer: *std.Io.Writer) !void {
         try writer.print("ShellTouchTask(0x{x}, filepath={s})", .{ @intFromPtr(this), this.filepath });
     }
 

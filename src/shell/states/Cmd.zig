@@ -82,13 +82,13 @@ pub const ShellAsyncSubprocessDone = struct {
     }
 
     pub fn runFromMainThread(this: *ShellAsyncSubprocessDone) void {
-        log("{} runFromMainThread", .{this});
+        log("{f} runFromMainThread", .{this});
         defer this.deinit();
         this.cmd.parent.childDone(this.cmd, this.cmd.exit_code orelse 0).run();
     }
 
     pub fn deinit(this: *ShellAsyncSubprocessDone) void {
-        log("{} deinit", .{this});
+        log("{f} deinit", .{this});
         bun.destroy(this);
     }
 };

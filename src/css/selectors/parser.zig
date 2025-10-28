@@ -1384,10 +1384,8 @@ pub fn GenericSelectorList(comptime Impl: type) type {
         const DebugFmt = struct {
             this: *const This,
 
-            pub fn format(this: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(this: @This(), writer: *std.Io.Writer) !void {
                 if (comptime !bun.Environment.isDebug) return;
-                _ = fmt; // autofix
-                _ = options; // autofix
                 try writer.print("SelectorList[\n", .{});
                 const last = this.this.v.len() -| 1;
                 for (this.this.v.slice(), 0..) |*sel, i| {

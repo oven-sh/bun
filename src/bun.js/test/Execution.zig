@@ -373,7 +373,7 @@ fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGloba
                 },
             },
         };
-        groupLog.log("runSequence queued callback: {}", .{callback_data});
+        groupLog.log("runSequence queued callback: {f}", .{callback_data});
 
         if (BunTest.runTestCallback(buntest_strong, globalThis, cb.get(), next_item.has_done_parameter, callback_data, &next_item.timespec) != null) {
             now.* = bun.timespec.now();

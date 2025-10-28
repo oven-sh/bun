@@ -387,7 +387,7 @@ pub const BunTest = struct {
     pub fn ref(this_strong: BunTestPtr, phase: RefDataValue) *RefData {
         group.begin(@src());
         defer group.end();
-        group.log("ref: {}", .{phase});
+        group.log("ref: {f}", .{phase});
 
         return bun.new(RefData, .{
             .buntest_weak = this_strong.cloneWeak(),
@@ -631,7 +631,7 @@ pub const BunTest = struct {
         var done_callback: jsc.JSValue = .zero;
 
         if (cfg_done_parameter) {
-            group.log("callTestCallback -> appending done callback param: data {}", .{cfg_data});
+            group.log("callTestCallback -> appending done callback param: data {f}", .{cfg_data});
             done_callback = DoneCallback.createUnbound(globalThis);
             done_arg = DoneCallback.bind(done_callback, globalThis) catch |e| blk: {
                 this.onUncaughtException(globalThis, globalThis.takeException(e), false, cfg_data);
@@ -679,7 +679,7 @@ pub const BunTest = struct {
             if (result.asPromise()) |promise| {
                 defer result.ensureStillAlive(); // because sometimes we use promise without result
 
-                group.log("callTestCallback -> promise: data {}", .{cfg_data});
+                group.log("callTestCallback -> promise: data {f}", .{cfg_data});
 
                 switch (promise.status(globalThis.vm())) {
                     .pending => {

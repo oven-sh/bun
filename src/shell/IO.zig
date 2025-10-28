@@ -6,7 +6,7 @@ stdout: OutKind,
 stderr: OutKind,
 
 pub fn format(this: IO, writer: *std.Io.Writer) !void {
-    try writer.print("stdin: {}\nstdout: {}\nstderr: {}", .{ this.stdin, this.stdout, this.stderr });
+    try writer.print("stdin: {f}\nstdout: {f}\nstderr: {f}", .{ this.stdin, this.stdout, this.stderr });
 }
 
 pub fn memoryCost(this: *const IO) usize {

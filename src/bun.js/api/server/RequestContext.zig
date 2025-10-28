@@ -1675,7 +1675,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return;
             }
 
-            streamLog("onResolve({f})", .{wrote_anything});
+            streamLog("onResolve({})", .{wrote_anything});
             if (!req.flags.has_written_status) {
                 req.renderMetadata();
             }

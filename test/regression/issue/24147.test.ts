@@ -73,8 +73,8 @@ describe("EventEmitter - issue 24147", () => {
       emitter.emit("test");
     }).not.toThrow();
 
-    // All listeners except removeListener should be removed
-    expect(emitter.eventNames()).toEqual(["removeListener"]);
+    // All listeners should be removed (including removeListener)
+    expect(emitter.eventNames()).toEqual([]);
   });
 
   test("multiple nested removeAllListeners calls should work", () => {

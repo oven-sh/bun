@@ -392,7 +392,12 @@ EventEmitterPrototype.removeAllListeners = function removeAllListeners(type) {
 
   // emit in LIFO order
   const listeners = events[type];
-  for (let i = listeners.length - 1; i >= 0; i--) this.removeListener(type, listeners[i]);
+  // Clone the listeners array to avoid issues if removeListener triggers
+  // another removeAllListeners call that modifies this._events
+  if (listeners) {
+    const listenersCopy = listeners.slice();
+    for (let i = listenersCopy.length - 1; i >= 0; i--) this.removeListener(type, listenersCopy[i]);
+  }
   return this;
 };
 

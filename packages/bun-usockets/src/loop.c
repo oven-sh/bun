@@ -42,7 +42,8 @@ extern void __attribute((__noreturn__)) Bun__panic(const char* message, size_t l
 extern void Bun__internal_ensureDateHeaderTimerIsEnabled(struct us_loop_t *loop);
 
 void sweep_timer_cb(struct us_internal_callback_t *cb);
-
+void sweep_timer_cb_noop(struct us_internal_callback_t *cb) {
+}
 void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_timer_count++;
     if (loop->data.sweep_timer_count == 1) {
@@ -54,7 +55,7 @@ void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
 void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_timer_count--;
     if (loop->data.sweep_timer_count == 0) {
-        us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_cb, 0, 0);
+        us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_cb_noop, 0, 0);
     }
 }
 
@@ -560,11 +561,16 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
                     } else if (!length) {
                         // lets handle EOF in the same place
                         has_received_eof = true;
+                        #ifdef LIBUS_USE_KQUEUE
                         s->flags.is_readable = false;
+                        #endif
+                        
                         break;
                     } else if (length == LIBUS_SOCKET_ERROR) {
                         if(bsd_would_block()) {
+                            #ifdef LIBUS_USE_KQUEUE
                             s->flags.is_readable = false;
+                            #endif
                             break;
                         }
                         /* Todo: decide also here what kind of reason we should give */

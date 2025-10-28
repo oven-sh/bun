@@ -633,7 +633,7 @@ const NonUTF8Headers = struct {
         const count = self.names.len;
         var i: usize = 0;
         while (i < count) : (i += 1) {
-            try writer.print("{any}: {any}\r\n", .{ self.names[i], self.values[i] });
+            try writer.print("{f}: {f}\r\n", .{ self.names[i], self.values[i] });
         }
     }
 

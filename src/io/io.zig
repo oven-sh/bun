@@ -125,7 +125,7 @@ pub const Loop = struct {
                             }
                         },
                         .close => |close| {
-                            log("close({}, registered={any})", .{ close.fd, close.poll.flags.contains(.registered) });
+                            log("close({}, registered={f})", .{ close.fd, close.poll.flags.contains(.registered) });
                             // Only remove from the interest list if it was previously registered.
                             // Otherwise, epoll gets confused.
                             // This state can happen if polling for readable/writable previously failed.

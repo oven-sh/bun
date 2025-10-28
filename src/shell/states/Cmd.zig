@@ -139,7 +139,7 @@ const BufferedIoClosed = struct {
         const ret = (if (this.stdin) |stdin| stdin else true) and
             (if (this.stdout) |*stdout| stdout.closed() else true) and
             (if (this.stderr) |*stderr| stderr.closed() else true);
-        log("BufferedIOClosed(0x{x}) all_closed={any} stdin={any} stdout={any} stderr={any}", .{ @intFromPtr(this), ret, if (this.stdin) |stdin| stdin else true, if (this.stdout) |*stdout| stdout.closed() else true, if (this.stderr) |*stderr| stderr.closed() else true });
+        log("BufferedIOClosed(0x{x}) all_closed={f} stdin={f} stdout={f} stderr={f}", .{ @intFromPtr(this), ret, if (this.stdin) |stdin| stdin else true, if (this.stdout) |*stdout| stdout.closed() else true, if (this.stderr) |*stderr| stderr.closed() else true });
         return ret;
     }
 
@@ -510,7 +510,7 @@ fn initSubproc(this: *Cmd) Yield {
     if (this.initRedirections(&spawn_args) catch .failed) |yield| return yield;
 
     const buffered_closed = BufferedIoClosed.fromStdio(&spawn_args.stdio);
-    log("cmd ({x}) set buffered closed => {any}", .{ @intFromPtr(this), buffered_closed });
+    log("cmd ({x}) set buffered closed => {f}", .{ @intFromPtr(this), buffered_closed });
 
     this.exec = .{ .subproc = .{
         .child = undefined,
@@ -661,7 +661,7 @@ pub fn stdoutSlice(this: *Cmd) ?[]const u8 {
 }
 
 pub fn hasFinished(this: *Cmd) bool {
-    log("Cmd(0x{x}) exit_code={any}", .{ @intFromPtr(this), this.exit_code });
+    log("Cmd(0x{x}) exit_code={f}", .{ @intFromPtr(this), this.exit_code });
     if (this.exit_code == null) return false;
     if (this.exec != .none) {
         if (this.exec == .subproc) {
@@ -677,7 +677,7 @@ pub fn onExit(this: *Cmd, exit_code: ExitCode) void {
     this.exit_code = exit_code;
 
     const has_finished = this.hasFinished();
-    log("cmd exit code={d} has_finished={any} ({x})", .{ exit_code, has_finished, @intFromPtr(this) });
+    log("cmd exit code={d} has_finished={f} ({x})", .{ exit_code, has_finished, @intFromPtr(this) });
     if (has_finished) {
         this.state = .done;
         this.next().run();

@@ -104,7 +104,7 @@ pub fn init(fd: bun.FileDescriptor, flags: Flags, evtloop: jsc.EventLoopHandle) 
     this.writer.parent = this;
     this.flags = flags;
 
-    debug("IOWriter(0x{x}, fd={}) init flags={any}", .{ @intFromPtr(this), fd, flags });
+    debug("IOWriter(0x{x}, fd={}) init flags={f}", .{ @intFromPtr(this), fd, flags });
 
     return this;
 }
@@ -215,7 +215,7 @@ fn write(this: *IOWriter) enum {
     }
 
     if (bun.Environment.isWindows) {
-        log("IOWriter(0x{x}, fd={}) write() is_writing={any}", .{ @intFromPtr(this), this.fd, this.is_writing });
+        log("IOWriter(0x{x}, fd={}) write() is_writing={f}", .{ @intFromPtr(this), this.fd, this.is_writing });
         if (this.is_writing) return .suspended;
         this.is_writing = true;
         if (this.writer.startWithCurrentPipe().asErr()) |e| {
@@ -692,7 +692,7 @@ pub fn isLastIdx(this: *IOWriter, idx: usize) bool {
 /// Only does things on windows
 pub inline fn setWriting(this: *IOWriter, writing: bool) void {
     if (bun.Environment.isWindows) {
-        log("IOWriter(0x{x}, fd={}) setWriting({any})", .{ @intFromPtr(this), this.fd, writing });
+        log("IOWriter(0x{x}, fd={}) setWriting({f})", .{ @intFromPtr(this), this.fd, writing });
         this.is_writing = writing;
     }
 }

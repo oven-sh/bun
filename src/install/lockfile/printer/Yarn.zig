@@ -158,14 +158,14 @@ fn packages(
             try writer.writeAll("  version ");
 
             // Version is always quoted
-            try writer.print("\"{any}\"\n", .{version_formatter});
+            try writer.print("\"{f}\"\n", .{version_formatter});
 
             try writer.writeAll("  resolved ");
 
             const url_formatter = resolution.fmtURL(string_buf);
 
             // Resolved URL is always quoted
-            try writer.print("\"{any}\"\n", .{url_formatter});
+            try writer.print("\"{f}\"\n", .{url_formatter});
 
             if (meta.integrity.tag != .unknown) {
                 // Integrity is...never quoted?

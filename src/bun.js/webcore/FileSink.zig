@@ -141,7 +141,7 @@ fn runPending(this: *FileSink) void {
 }
 
 pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void {
-    log("onWrite({d}, {any})", .{ amount, status });
+    log("onWrite({d}, {f})", .{ amount, status });
 
     this.written += amount;
 
@@ -201,7 +201,7 @@ pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void 
 }
 
 pub fn onError(this: *FileSink, err: bun.sys.Error) void {
-    log("onError({any})", .{err});
+    log("onError({f})", .{err});
     if (this.pending.state == .pending) {
         this.pending.result = .{ .err = err };
         if (this.eventLoop().bunVM()) |vm| {

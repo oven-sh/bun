@@ -780,7 +780,7 @@ fn libraryInit() void {
         bun.mimalloc.mi_realloc,
     );
     if (rc != ARES_SUCCESS) {
-        std.debug.panic("ares_library_init_mem failed: {any}", .{rc});
+        std.debug.panic("ares_library_init_mem failed: {d}", .{rc});
         unreachable;
     }
 }

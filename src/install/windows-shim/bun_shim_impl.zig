@@ -377,7 +377,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             .Buffer = buf1_u16,
         };
         if (dbg) debug("NtCreateFile({s})", .{fmt16(unicodeStringToU16(nt_name))});
-        if (dbg) debug("NtCreateFile({any})", .{(unicodeStringToU16(nt_name))});
+        if (dbg) debug("NtCreateFile({f})", .{(unicodeStringToU16(nt_name))});
         var attr = w.OBJECT_ATTRIBUTES{
             .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
             .RootDirectory = null,

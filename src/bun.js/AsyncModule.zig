@@ -451,7 +451,7 @@ pub const AsyncModule = struct {
         }
         log.deinit();
 
-        debug("fulfill: {any}", .{specifier});
+        debug("fulfill: {f}", .{specifier});
 
         try bun.jsc.fromJSHostCallGeneric(globalThis, @src(), Bun__onFulfillAsyncModule, .{
             globalThis,

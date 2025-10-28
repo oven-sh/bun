@@ -834,7 +834,7 @@ pub const JestPrettyFormat = struct {
                     } else {
                         this.addForNewLine(1 + "[Symbol()]:".len + key.len);
                         writer.print(
-                            comptime Output.prettyFmt("<r><d>[<r><blue>Symbol({any})<r><d>]:<r> ", enable_ansi_colors),
+                            comptime Output.prettyFmt("<r><d>[<r><blue>Symbol({f})<r><d>]:<r> ", enable_ansi_colors),
                             .{
                                 key,
                             },
@@ -1061,7 +1061,7 @@ pub const JestPrettyFormat = struct {
 
                     if (description.len > 0) {
                         this.addForNewLine(description.len + "()".len);
-                        writer.print(comptime Output.prettyFmt("<r><blue>Symbol({any})<r>", enable_ansi_colors), .{description});
+                        writer.print(comptime Output.prettyFmt("<r><blue>Symbol({f})<r>", enable_ansi_colors), .{description});
                     } else {
                         writer.print(comptime Output.prettyFmt("<r><blue>Symbol<r>", enable_ansi_colors), .{});
                     }

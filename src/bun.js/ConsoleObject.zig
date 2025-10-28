@@ -2289,7 +2289,7 @@ pub const Formatter = struct {
 
                 if (description.len > 0) {
                     this.addForNewLine(description.len + "()".len);
-                    writer.print(comptime Output.prettyFmt("<r><blue>Symbol({any})<r>", enable_ansi_colors), .{description});
+                    writer.print(comptime Output.prettyFmt("<r><blue>Symbol({f})<r>", enable_ansi_colors), .{description});
                 } else {
                     writer.print(comptime Output.prettyFmt("<r><blue>Symbol()<r>", enable_ansi_colors), .{});
                 }

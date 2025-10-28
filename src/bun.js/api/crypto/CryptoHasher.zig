@@ -215,7 +215,7 @@ pub const CryptoHasher = union(enum) {
         output: ?jsc.Node.StringOrBuffer,
     ) bun.JSError!jsc.JSValue {
         var evp = EVP.byName(algorithm, globalThis) orelse return try CryptoHasherZig.hashByName(globalThis, algorithm, input, output) orelse {
-            return globalThis.throwInvalidArguments("Unsupported algorithm \"{any}\"", .{algorithm});
+            return globalThis.throwInvalidArguments("Unsupported algorithm \"{f}\"", .{algorithm});
         };
         defer evp.deinit();
 
@@ -297,7 +297,7 @@ pub const CryptoHasher = union(enum) {
 
             break :brk .{
                 .evp = EVP.byName(algorithm, globalThis) orelse return CryptoHasherZig.constructor(algorithm) orelse {
-                    return globalThis.throwInvalidArguments("Unsupported algorithm {any}", .{algorithm});
+                    return globalThis.throwInvalidArguments("Unsupported algorithm {f}", .{algorithm});
                 },
             };
         });

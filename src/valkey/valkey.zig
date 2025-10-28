@@ -661,7 +661,7 @@ pub const ValkeyClient = struct {
         const globalThis = this.globalObject();
         const loop = this.vm.eventLoop();
 
-        debug("Handling a subscribe response: {any}", .{value.*});
+        debug("Handling a subscribe response: {f}", .{value.*});
         loop.enter();
         defer loop.exit();
 

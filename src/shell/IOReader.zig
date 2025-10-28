@@ -96,7 +96,7 @@ pub fn start(this: *IOReader) Yield {
 /// Only does things on windows
 pub inline fn setReading(this: *IOReader, reading: bool) void {
     if (bun.Environment.isWindows) {
-        log("IOReader(0x{x}) setReading({any})", .{ @intFromPtr(this), reading });
+        log("IOReader(0x{x}) setReading({f})", .{ @intFromPtr(this), reading });
         this.is_reading = reading;
     }
 }

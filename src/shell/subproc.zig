@@ -919,7 +919,7 @@ pub const ShellSubprocess = struct {
     }
 
     pub fn onProcessExit(this: *@This(), _: *Process, status: bun.spawn.Status, _: *const bun.spawn.Rusage) void {
-        log("onProcessExit({x}, {any})", .{ @intFromPtr(this), status });
+        log("onProcessExit({x}, {f})", .{ @intFromPtr(this), status });
         const exit_code: ?u8 = brk: {
             if (status == .exited) {
                 break :brk status.exited.code;
@@ -1048,7 +1048,7 @@ pub const PipeReader = struct {
         }
 
         pub fn isDone(this: *CapturedWriter, just_written: usize) bool {
-            log("CapturedWriter(0x{x}, {s}) isDone(has_err={any}, parent_state={s}, written={d}, parent_amount={d})", .{ @intFromPtr(this), @tagName(this.parent().out_type), this.err != null, @tagName(this.parent().state), this.written, this.parent().buffered_output.len() });
+            log("CapturedWriter(0x{x}, {s}) isDone(has_err={f}, parent_state={s}, written={d}, parent_amount={d})", .{ @intFromPtr(this), @tagName(this.parent().out_type), this.err != null, @tagName(this.parent().state), this.written, this.parent().buffered_output.len() });
             if (this.dead or this.err != null) return true;
             const p = this.parent();
             if (p.state == .pending) return false;
@@ -1056,7 +1056,7 @@ pub const PipeReader = struct {
         }
 
         pub fn onIOWriterChunk(this: *CapturedWriter, amount: usize, err: ?jsc.SystemError) Yield {
-            log("CapturedWriter({x}, {s}) onWrite({d}, has_err={any}) total_written={d} total_to_write={d}", .{ @intFromPtr(this), @tagName(this.parent().out_type), amount, err != null, this.written + amount, this.parent().buffered_output.len() });
+            log("CapturedWriter({x}, {s}) onWrite({d}, has_err={f}) total_written={d} total_to_write={d}", .{ @intFromPtr(this), @tagName(this.parent().out_type), amount, err != null, this.written + amount, this.parent().buffered_output.len() });
             this.written += amount;
             if (err) |e| {
                 log("CapturedWriter(0x{x}, {s}) onWrite errno={d} errmsg={} errfd={} syscall={}", .{ @intFromPtr(this), @tagName(this.parent().out_type), e.errno, e.message, e.fd, e.syscall });
@@ -1096,7 +1096,7 @@ pub const PipeReader = struct {
     }
 
     pub fn isDone(this: *PipeReader) bool {
-        log("PipeReader(0x{x}, {s}) isDone() state={s} captured_writer_done={any}", .{ @intFromPtr(this), @tagName(this.out_type), @tagName(this.state), this.captured_writer.isDone(0) });
+        log("PipeReader(0x{x}, {s}) isDone() state={s} captured_writer_done={f}", .{ @intFromPtr(this), @tagName(this.out_type), @tagName(this.state), this.captured_writer.isDone(0) });
         if (this.state == .pending) return false;
         return this.captured_writer.isDone(0);
     }
@@ -1208,7 +1208,7 @@ pub const PipeReader = struct {
         this: *PipeReader,
     ) Yield {
         if (!this.isDone()) return .suspended;
-        log("signalDoneToCmd ({x}: {s}) isDone={any}", .{ @intFromPtr(this), @tagName(this.out_type), this.isDone() });
+        log("signalDoneToCmd ({x}: {s}) isDone={f}", .{ @intFromPtr(this), @tagName(this.out_type), this.isDone() });
         if (bun.Environment.allow_assert) assert(this.process != null);
         if (this.process) |proc| {
             const cmd = proc.cmd_parent;

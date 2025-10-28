@@ -4339,7 +4339,7 @@ pub const ContentHasher = struct {
     }
 
     pub fn writeInts(self: *ContentHasher, i: []const u32) void {
-        log("HASH_UPDATE: {any}\n", .{i});
+        log("HASH_UPDATE: {f}\n", .{i});
         self.hasher.update(std.mem.sliceAsBytes(i));
     }
 

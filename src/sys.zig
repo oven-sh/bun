@@ -2496,7 +2496,7 @@ pub fn symlinkW(dest: [:0]const u16, target: [:0]const u16, options: WindowsSyml
 
         if (windows.CreateSymbolicLinkW(dest, target, flags) == 0) {
             const errno = bun.windows.Win32Error.get();
-            log("CreateSymbolicLinkW({f}, {f}, {any}) = {s}", .{
+            log("CreateSymbolicLinkW({f}, {f}, {f}) = {s}", .{
                 bun.fmt.fmtPath(u16, dest, .{}),
                 bun.fmt.fmtPath(u16, target, .{}),
                 flags,
@@ -2537,7 +2537,7 @@ pub fn symlinkW(dest: [:0]const u16, target: [:0]const u16, options: WindowsSyml
             }
         }
 
-        log("CreateSymbolicLinkW({f}, {f}, {any}) = 0", .{
+        log("CreateSymbolicLinkW({f}, {f}, {f}) = 0", .{
             bun.fmt.fmtPath(u16, dest, .{}),
             bun.fmt.fmtPath(u16, target, .{}),
             flags,

@@ -536,7 +536,7 @@ pub fn BabyList(comptime Type: type) type {
             writer: *std.Io.Writer,
         ) !void {
             return writer.print(
-                "BabyList({s}){{{any}}}",
+                "BabyList({s}){{{f}}}",
                 .{ @typeName(Type), this.list() },
             );
         }

@@ -46,7 +46,7 @@ fn link(ctx: Command.Context) !void {
                 Global.crash();
             } else if (!strings.isNPMPackageName(name)) {
                 if (manager.options.log_level != .silent) {
-                    Output.prettyErrorln("<r><red>error:<r> invalid package.json name \"{s}\" <d>in \"{any}\"<r>", .{
+                    Output.prettyErrorln("<r><red>error:<r> invalid package.json name \"{s}\" <d>in \"{s}\"<r>", .{
                         name,
                         package_json_source.path.text,
                     });

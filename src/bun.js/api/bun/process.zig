@@ -619,7 +619,7 @@ pub const Status = union(enum) {
                 try writer.print("signal: {d}", .{@intFromEnum(signal)});
             },
             .err => |err| {
-                try writer.print("{}", .{err});
+                try writer.print("{f}", .{err});
             },
             else => {},
         }

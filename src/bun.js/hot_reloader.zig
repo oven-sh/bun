@@ -535,7 +535,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         }
 
                         if (this.verbose) {
-                            debug("Dir change: {s} (affecting {d}, {f})", .{ fs.relativeTo(file_path), affected.len, event });
+                            debug("Dir change: {s} (affecting {d})", .{ fs.relativeTo(file_path), affected.len });
                         }
                     },
                 }

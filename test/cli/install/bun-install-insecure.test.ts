@@ -7,7 +7,7 @@ import { join } from "path";
 function createRegistryHandler(urls: string[], info: any, rootUrl: string) {
   return async (request: Request) => {
     urls.push(request.url);
-    const url = request.url.replaceAll("%2f", "/");
+    const url = request.url.replaceAll(/%2f/gi, "/");
     
     if (url.endsWith(".tgz")) {
       return new Response(file(join(import.meta.dir, new URL(url).pathname.split("/").pop()!.toLowerCase())));

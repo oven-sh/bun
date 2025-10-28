@@ -826,6 +826,10 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
         /* This properly updates the iterator if in on_timeout */
         us_internal_socket_context_unlink_socket(ssl, old_context, s);
     } else {
+       /* Unlink this socket from the low-priority queue */
+       loop->data.low_prio_head = s->next;
+       if (s->next) s->next->prev = 0;
+       s->next = 0;
        /* We manually ref/unref context to handle context life cycle with low-priority queue */
         us_socket_context_unref(ssl, old_context);
     }
@@ -845,20 +849,17 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
     new_s->context = context;
     new_s->timeout = 255;
     new_s->long_timeout = 255;
-
-    if (new_s->flags.low_prio_state == 1) {
-        /* update pointers in low-priority queue */
-        if (!new_s->prev) loop->data.low_prio_head = new_s;
-        else new_s->prev->next = new_s;
-
-        if (new_s->next) new_s->next->prev = new_s;
-        /* We manually ref/unref context to handle context life cycle with low-priority queue */
-        us_socket_context_ref(ssl, context);
-    } else {
-        us_internal_socket_context_link_socket(ssl, context, new_s);
+    us_internal_socket_context_link_socket(ssl, context, new_s);
+    if(new_s->flags.low_prio_state == 1) {
+        // if it was in the low-priority queue, we move it to the normal queue and update the pointers
+        new_s->flags.low_prio_state = 2;
+        if(new_s == s) {
+            //ptr did not changed so we need to call us_poll_change to re-add the socket to the pending ready poll list
+            us_poll_change(&new_s->p, loop, us_poll_events(&new_s->p));
+        }
     }
-    /* We can safely unref the old context here with can potentially be freed */
-    us_socket_context_unref(ssl, old_context);
+    
+
     return new_s;
 }
 

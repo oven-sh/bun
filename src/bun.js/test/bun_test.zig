@@ -336,7 +336,7 @@ pub const BunTest = struct {
         fn #destroy(this: *RefData) void {
             group.begin(@src());
             defer group.end();
-            group.log("refData: {}", .{this.phase});
+            group.log("refData: {f}", .{this.phase});
 
             var buntest_weak = this.buntest_weak;
             bun.destroy(this);

@@ -51,13 +51,13 @@ pub fn init(
 }
 
 pub fn start(this: *Async) Yield {
-    log("{} start", .{this});
+    log("{f} start", .{this});
     this.enqueueSelf();
     return this.parent.childDone(this, 0);
 }
 
 pub fn next(this: *Async) Yield {
-    log("{} next {s}", .{ this, @tagName(this.state) });
+    log("{f} next {s}", .{ this, @tagName(this.state) });
     switch (this.state) {
         .idle => {
             this.state = .{ .exec = .{} };

@@ -202,7 +202,7 @@ pub const FilePoll = struct {
     }
 
     pub fn format(poll: *const FilePoll, writer: *std.Io.Writer) !void {
-        try writer.print("FilePoll(fd={}, generation_number={d}) = {}", .{ poll.fd, poll.generation_number, Flags.Formatter{ .data = poll.flags } });
+        try writer.print("FilePoll(fd={f}, generation_number={d}) = {f}", .{ poll.fd, poll.generation_number, Flags.Formatter{ .data = poll.flags } });
     }
 
     pub fn fileType(poll: *const FilePoll) bun.io.FileType {
@@ -221,7 +221,7 @@ pub const FilePoll = struct {
 
     pub fn onKQueueEvent(poll: *FilePoll, _: *Loop, kqueue_event: *const std.posix.system.kevent64_s) void {
         poll.updateFlags(Flags.fromKQueueEvent(kqueue_event.*));
-        log("onKQueueEvent: {}", .{poll});
+        log("onKQueueEvent: {f}", .{poll});
 
         if (KQueueGenerationNumber != u0)
             bun.assert(poll.generation_number == kqueue_event.ext[0]);

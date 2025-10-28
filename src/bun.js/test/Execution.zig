@@ -412,7 +412,7 @@ pub fn getCurrentAndValidExecutionSequence(this: *Execution, data: bun_test.BunT
     groupLog.begin(@src());
     defer groupLog.end();
 
-    groupLog.log("runOneCompleted: data: {}", .{data});
+    groupLog.log("runOneCompleted: data: {f}", .{data});
 
     if (data != .execution) {
         groupLog.log("runOneCompleted: the data is not execution", .{});

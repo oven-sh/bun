@@ -1542,7 +1542,7 @@ pub fn MaybeChild(comptime T: type) type {
 
 pub fn closefd(fd: bun.FileDescriptor) void {
     if (fd.closeAllowingBadFileDescriptor(null)) |err| {
-        log("ERR closefd: {}\n", .{err});
+        log("ERR closefd: {f}\n", .{err});
     }
 }
 

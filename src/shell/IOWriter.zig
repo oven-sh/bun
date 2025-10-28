@@ -104,7 +104,7 @@ pub fn init(fd: bun.FileDescriptor, flags: Flags, evtloop: jsc.EventLoopHandle) 
     this.writer.parent = this;
     this.flags = flags;
 
-    debug("IOWriter(0x{x}, fd={}) init flags={f}", .{ @intFromPtr(this), fd, flags });
+    debug("IOWriter(0x{x}, fd={}) init flags={any}", .{ @intFromPtr(this), fd, flags });
 
     return this;
 }
@@ -610,7 +610,7 @@ pub fn enqueue(this: *IOWriter, ptr: anytype, bytelist: ?*bun.ByteList, buf: []c
     if (this.handleBrokenPipe(childptr)) |yield| return yield;
 
     if (buf.len == 0) {
-        log("IOWriter(0x{x}, fd={}) enqueue EMPTY", .{ @intFromPtr(this), this.fd });
+        log("IOWriter(0x{x}, fd={f}) enqueue EMPTY", .{ @intFromPtr(this), this.fd });
         return .{ .on_io_writer_chunk = .{ .child = childptr.asAnyOpaque(), .written = 0, .err = null } };
     }
     const writer: Writer = .{

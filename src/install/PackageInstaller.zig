@@ -784,7 +784,7 @@ pub const PackageInstaller = struct {
             .node_modules = &this.node_modules,
             .lockfile = this.lockfile,
         };
-        debug("Installing {s}@{s}", .{
+        debug("Installing {s}@{f}", .{
             pkg_name.slice(this.lockfile.buffers.string_bytes.items),
             resolution.fmt(this.lockfile.buffers.string_bytes.items, .posix),
         });

@@ -231,7 +231,7 @@ pub const ShellMkdirTask = struct {
 
     fn runFromThreadPool(task: *jsc.WorkPoolTask) void {
         var this: *ShellMkdirTask = @fieldParentPtr("task", task);
-        debug("{} runFromThreadPool", .{this});
+        debug("{f} runFromThreadPool", .{this});
 
         // We have to give an absolute path to our mkdir
         // implementation for it to work with cwd

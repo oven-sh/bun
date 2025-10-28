@@ -4,7 +4,7 @@ messages: std.ArrayListUnmanaged(FieldMessage) = .{},
 
 pub fn format(formatter: ErrorResponse, writer: *std.Io.Writer) !void {
     for (formatter.messages.items) |message| {
-        try writer.print("{}\n", .{message});
+        try writer.print("{f}\n", .{message});
     }
 }
 

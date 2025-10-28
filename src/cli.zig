@@ -712,7 +712,7 @@ pub const Command = struct {
             }
         }
 
-        debug("argv: [{s}]", .{bun.fmt.fmtSlice(bun.argv, ", ")});
+        debug("argv: [{f}]", .{bun.fmt.fmtSlice(bun.argv, ", ")});
 
         const tag = which();
 

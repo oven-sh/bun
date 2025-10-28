@@ -47,7 +47,7 @@ pub fn init(
         .parent = parent_ptr,
         .io = io,
     };
-    log("{} init", .{script});
+    log("{f} init", .{script});
     return script;
 }
 

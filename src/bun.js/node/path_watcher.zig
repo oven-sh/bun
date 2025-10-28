@@ -166,7 +166,7 @@ pub const PathWatcherManager = struct {
             const kind = kinds[event.index];
 
             if (comptime Environment.isDebug) {
-                log("[watch] {s} ({s}, {})", .{ file_path, @tagName(kind), event.op });
+                log("[watch] {s} ({s}, {f})", .{ file_path, @tagName(kind), event.op });
             }
 
             switch (kind) {
@@ -497,7 +497,7 @@ pub const PathWatcherManager = struct {
                 defer watcher.unrefPendingDirectory();
                 switch (this.processWatcher(watcher, &buf)) {
                     .err => |err| {
-                        log("[watch] error registering directory: {s}", .{err});
+                        log("[watch] error registering directory: {f}", .{err});
                         watcher.emit(.{ .@"error" = err }, 0, std.time.milliTimestamp(), false);
                         watcher.flush();
                     },

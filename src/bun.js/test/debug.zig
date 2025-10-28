@@ -18,7 +18,7 @@ pub fn dumpDescribe(describe: *DescribeScope) bun.JSError!void {
 }
 pub fn dumpTest(current: *ExecutionEntry, label: []const u8) bun.JSError!void {
     if (!group.getLogEnabled()) return;
-    group.beginMsg("{s} \"{}\" (concurrent={}, only={})", .{ label, std.zig.fmtString(current.base.name orelse "(unnamed)"), current.base.concurrent, current.base.only });
+    group.beginMsg("{s} \"{f}\" (concurrent={}, only={})", .{ label, std.zig.fmtString(current.base.name orelse "(unnamed)"), current.base.concurrent, current.base.only });
     defer group.end();
 }
 pub fn dumpOrder(this: *Execution) bun.JSError!void {

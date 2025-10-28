@@ -1661,7 +1661,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
     return switch (Environment.os) {
         .mac => {
             const rc = darwin_nocancel.@"write$NOCANCEL"(fd.cast(), bytes.ptr, adjusted_len);
-            log("write({}, {d}) = {d} ({})", .{ fd, adjusted_len, rc, debug_timer });
+            log("write({}, {d}) = {d} ({f})", .{ fd, adjusted_len, rc, debug_timer });
 
             if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
                 return err;

@@ -4058,7 +4058,7 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
         counts[event.index] = update_count;
         const kind = kinds[event.index];
 
-        debug.log("{s} change: {s} {}", .{ @tagName(kind), file_path, event.op });
+        debug.log("{s} change: {s} {f}", .{ @tagName(kind), file_path, event.op });
 
         switch (kind) {
             .file => {

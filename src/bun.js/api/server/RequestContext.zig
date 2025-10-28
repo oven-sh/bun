@@ -696,7 +696,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             const globalThis = this.server.?.globalThis;
 
             if (comptime Environment.isDebug) {
-                ctxLog("finalizeWithoutDeinit: has_finalized {f}", .{this.flags.has_finalized});
+                ctxLog("finalizeWithoutDeinit: has_finalized {}", .{this.flags.has_finalized});
                 this.flags.has_finalized = true;
             }
 

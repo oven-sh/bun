@@ -155,7 +155,7 @@ const CrossChunkDependencies = struct {
                     };
 
                     if (comptime Environment.allow_assert)
-                        debug("Cross-chunk import: {s} {}", .{ deps.symbols.get(ref_to_use).?.original_name, ref_to_use });
+                        debug("Cross-chunk import: {s} {f}", .{ deps.symbols.get(ref_to_use).?.original_name, ref_to_use });
 
                     // We must record this relationship even for symbols that are not
                     // imports. Due to code splitting, the definition of a symbol may

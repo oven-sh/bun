@@ -84,7 +84,7 @@ pub fn format(this: *const CondExpr, writer: *std.Io.Writer) !void {
 }
 
 pub fn start(this: *CondExpr) Yield {
-    log("{} start", .{this});
+    log("{f} start", .{this});
     return .{ .cond_expr = this };
 }
 

@@ -388,7 +388,7 @@ pub const S3UploadStreamWrapper = struct {
     }
 
     pub fn resolve(result: S3UploadResult, self: *@This()) bun.JSTerminated!void {
-        log("resolve {f}", .{result});
+        log("resolve {any}", .{result});
         defer self.deref();
         switch (result) {
             .success => {

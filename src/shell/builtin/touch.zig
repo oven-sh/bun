@@ -17,14 +17,12 @@ state: union(enum) {
     done,
 } = .idle,
 
-pub fn format(this: *const Touch, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-    _ = fmt; // autofix
-    _ = opts; // autofix
+pub fn format(this: *const Touch, writer: *std.Io.Writer) !void {
     try writer.print("Touch(0x{x}, state={s})", .{ @intFromPtr(this), @tagName(this.state) });
 }
 
 pub fn deinit(this: *Touch) void {
-    log("{} deinit", .{this});
+    log("{f} deinit", .{this});
 }
 
 pub fn start(this: *Touch) Yield {
@@ -103,7 +101,7 @@ pub fn writeFailingError(this: *Touch, buf: []const u8, exit_code: ExitCode) Yie
 }
 
 pub fn onShellTouchTaskDone(this: *Touch, task: *ShellTouchTask) void {
-    log("{} onShellTouchTaskDone {} tasks_done={d} tasks_count={d}", .{ this, task, this.state.exec.tasks_done, this.state.exec.tasks_count });
+    log("{f} onShellTouchTaskDone {f} tasks_done={d} tasks_count={d}", .{ this, task, this.state.exec.tasks_done, this.state.exec.tasks_count });
 
     defer bun.default_allocator.destroy(task);
     this.state.exec.tasks_done += 1;
@@ -220,7 +218,7 @@ pub const ShellTouchTask = struct {
 
     fn runFromThreadPool(task: *jsc.WorkPoolTask) void {
         var this: *ShellTouchTask = @fieldParentPtr("task", task);
-        debug("{} runFromThreadPool", .{this});
+        debug("{f} runFromThreadPool", .{this});
 
         // We have to give an absolute path
         const filepath: [:0]const u8 = brk: {

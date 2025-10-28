@@ -325,7 +325,7 @@ pub const LifecycleScriptSubprocess = struct {
     }
 
     fn handleExit(this: *LifecycleScriptSubprocess, status: bun.spawn.Status) void {
-        log("{s} - {s} finished {}", .{ this.package_name, this.scriptName(), status });
+        log("{s} - {s} finished {f}", .{ this.package_name, this.scriptName(), status });
 
         if (this.has_incremented_alive_count) {
             this.has_incremented_alive_count = false;

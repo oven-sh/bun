@@ -141,7 +141,7 @@ fn runPending(this: *FileSink) void {
 }
 
 pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void {
-    log("onWrite({d}, {f})", .{ amount, status });
+    log("onWrite({d}, {any})", .{ amount, status });
 
     this.written += amount;
 

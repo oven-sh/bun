@@ -149,7 +149,7 @@ pub fn next(this: *If) Yield {
 }
 
 pub fn deinit(this: *If) void {
-    log("{} deinit", .{this});
+    log("{f} deinit", .{this});
     this.io.deref();
     this.base.endScope();
     this.parent.destroy(this);

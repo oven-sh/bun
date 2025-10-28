@@ -189,7 +189,7 @@ pub fn updateHasPendingActivity(this: *Subprocess) void {
 
     const has_pending = this.computeHasPendingActivity();
     if (comptime Environment.isDebug) {
-        log("updateHasPendingActivity() -> {f}", .{has_pending});
+        log("updateHasPendingActivity() -> {}", .{has_pending});
     }
 
     // Upgrade or downgrade the reference based on pending activity

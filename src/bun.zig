@@ -570,7 +570,7 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
         PollFlag.ready
     else
         PollFlag.not_ready;
-    global_scope_log("poll({}, .readable): {f} ({s}{s})", .{
+    global_scope_log("poll({}, .readable): {} ({s}{s})", .{
         fd,
         result,
         @tagName(rc),
@@ -618,7 +618,7 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
         PollFlag.ready
     else
         PollFlag.not_ready;
-    global_scope_log("poll({}, .writable): {f} ({s}{s})", .{
+    global_scope_log("poll({}, .writable): {} ({s}{s})", .{
         fd,
         result,
         @tagName(rc),

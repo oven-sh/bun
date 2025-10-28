@@ -523,7 +523,7 @@ pub fn childDone(this: *Expansion, child: ChildPtr, exit_code: ExitCode) Yield {
 }
 
 fn onGlobWalkDone(this: *Expansion, task: *ShellGlobTask) Yield {
-    log("{} onGlobWalkDone", .{this});
+    log("{f} onGlobWalkDone", .{this});
     if (comptime bun.Environment.allow_assert) {
         assert(this.child_state == .glob);
     }

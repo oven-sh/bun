@@ -649,7 +649,7 @@ fn debugCssOrderImpl(this: *LinkerContext, order: *const BabyList(Chunk.CssImpor
                 break :conditions_str arrlist.written();
             } else "[]";
 
-            debug("  {d}: {} {s}\n", .{ i, entry.fmt(this), conditions_str });
+            debug("  {d}: {f} {s}\n", .{ i, entry.fmt(this), conditions_str });
         }
     }
 }

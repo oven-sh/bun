@@ -40,7 +40,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
         bun.Futex.waitForever(&futex_atomic, 1);
     }
     if (comptime Environment.enable_logs)
-        Debugger.log("waitForDebugger: {}", .{Output.ElapsedFormatter{
+        Debugger.log("waitForDebugger: {f}", .{Output.ElapsedFormatter{
             .colors = Output.enable_ansi_colors_stderr,
             .duration_ns = @truncate(@as(u128, @intCast(std.time.nanoTimestamp() - bun.cli.start_time))),
         }});

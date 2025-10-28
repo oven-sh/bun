@@ -171,7 +171,7 @@ pub const SubscriptionCtx = struct {
         args: []const JSValue,
     ) bun.JSError!void {
         const callbacks = try this.getCallbacks(globalObject, channelName) orelse {
-            debug("No callbacks found for channel {s}", .{channelName.asString().getZigString(globalObject)});
+            debug("No callbacks found for channel {f}", .{channelName.asString().getZigString(globalObject)});
             return;
         };
 

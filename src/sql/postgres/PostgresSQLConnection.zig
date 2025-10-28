@@ -1736,7 +1736,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             }
 
             var request = this.current() orelse {
-                debug("ErrorResponse: {}", .{err});
+                debug("ErrorResponse: {f}", .{err});
                 return error.ExpectedRequest;
             };
             var is_error_owned = true;

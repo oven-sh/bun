@@ -78,7 +78,7 @@ pub fn initDupeShellState(
 }
 
 pub fn start(this: *Subshell) Yield {
-    log("{} start", .{this});
+    log("{f} start", .{this});
     const script = Script.init(this.base.interpreter, this.base.shell, &this.node.script, Script.ParentPtr.init(this), this.io.copy());
     return script.start();
 }

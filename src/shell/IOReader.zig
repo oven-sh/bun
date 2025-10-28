@@ -166,7 +166,7 @@ pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadStat
 }
 
 pub fn onReaderError(this: *IOReader, err: bun.sys.Error) void {
-    log("IOReader(0x{x}.onReaderError({err}) ", .{ @intFromPtr(this), err });
+    log("IOReader(0x{x}.onReaderError({f}) ", .{ @intFromPtr(this), err });
     this.setReading(false);
     this.err = err.toShellSystemError();
     for (this.readers.slice()) |r| {

@@ -425,7 +425,7 @@ pub fn onShellRmTaskDone(this: *Rm, task: *ShellRmTask) void {
         },
     };
 
-    log("ShellRmTask(0x{x}, task={s})", .{ @intFromPtr(task), task.root_path });
+    log("ShellRmTask(0x{x}, task={f})", .{ @intFromPtr(task), task.root_path });
     // Wait until all tasks done and all output is written
     if (tasks_done >= this.state.exec.total_tasks and
         exec.getOutputCount(.output_done) >= exec.getOutputCount(.output_count))

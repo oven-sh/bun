@@ -21,7 +21,7 @@ pub const FieldMessage = union(FieldType) {
     pub fn format(this: FieldMessage, writer: *std.Io.Writer) !void {
         switch (this) {
             inline else => |str| {
-                try writer.print("{}", .{str});
+                try writer.print("{f}", .{str});
             },
         }
     }

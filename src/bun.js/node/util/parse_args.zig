@@ -368,7 +368,7 @@ fn tokenizeArgs(
         const arg = arg_ref.asBunString(globalThis);
 
         const token_rawtype = classifyToken(arg, options);
-        log(" [Arg #{d}] {s} ({s})", .{ index, @tagName(token_rawtype), arg });
+        log(" [Arg #{d}] {s} ({f})", .{ index, @tagName(token_rawtype), arg });
 
         switch (token_rawtype) {
             // Check if `arg` is an options terminator.

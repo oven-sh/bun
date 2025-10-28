@@ -289,7 +289,8 @@ declare module "bun" {
      * All registered instruments receive lifecycle callbacks in registration order.
      *
      * Validation:
-     * - type must be a valid InstrumentKind value ("custom" | "http" | "fetch" | "sql" | "redis" | "s3" | "node")
+     * - type should be a known InstrumentKind value (e.g. "http" | "fetch" | "sql" ... etc.)
+     *   Unknown string values are accepted and treated as "custom" for forward compatibility
      * - name must be a non-empty string (max 256 chars)
      * - version must be a non-empty string (semver format)
      * - At least one hook function (onOperationStart/End/Error/Progress/Inject) must be provided
@@ -309,7 +310,7 @@ declare module "bun" {
      *
      * @param instrument - Instrumentation object implementing NativeInstrument
      * @returns InstrumentRef with disposable cleanup (use with `using` statement)
-     * @throws {TypeError} If validation fails (invalid type, missing required fields, async hooks, etc.)
+     * @throws {TypeError} If validation fails (non-string/non-number type, out-of-range number, missing required fields, async hooks, etc.)
      *
      * @example
      * ```typescript

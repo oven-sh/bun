@@ -1,6 +1,9 @@
-- [ ] something is wrong in the diff for napi.zig. how come it adds a `pub fn enqueue(this: *Finalizer)` and a `pub fn deinit(this: *Finalizer)`. did I mess up a merge
-- [ ] how come it adds code in b/test/js/bun/css/css.test.ts
-- [ ] migrate {} to {f} by adding a compileError
+TODO:
+
+- [ ] identify and fix ISSUE1.js
+- [ ] revert commit 'revertrevert' 43009bb1f297789596c4d9b424f1c22647891986 and get building again
+- [ ] windows
+- [ ] remove format_mode (after completing the revertrevert step ^)
 - [ ] remove deprecated.BufferedWriter and BufferedReader
 
 Follow-up:

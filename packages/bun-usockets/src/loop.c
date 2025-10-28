@@ -192,14 +192,10 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
         if (s->next) s->next->prev = 0;
         s->next = 0;
 
-        s->flags.low_prio_state = 2;
-        if(us_socket_is_closed(0, s)) {
-            continue;
-        }
-
+        
         us_internal_socket_context_link_socket(0, s->context, s);
         us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
-
+        s->flags.low_prio_state = 2;
     }
 }
 

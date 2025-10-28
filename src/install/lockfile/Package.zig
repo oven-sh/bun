@@ -1154,7 +1154,7 @@ pub fn Package(comptime SemverIntType: type) type {
                         }
 
                         dependency_version.value.workspace = path;
-                    } else {
+                    } else if (workspace_range == null) {
                         const workspace = dependency_version.value.workspace.slice(buf);
                         const path = string_builder.append(String, if (strings.eqlComptime(workspace, "*")) "*" else brk: {
                             var buf2: bun.PathBuffer = undefined;

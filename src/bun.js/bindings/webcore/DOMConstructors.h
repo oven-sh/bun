@@ -435,6 +435,8 @@ enum class DOMConstructorID : uint16_t {
     TextEncoder,
     TextEncoderStream,
     TextEncoderStreamEncoder,
+    CompressionStream,
+    DecompressionStream,
     TextEvent,
     TransitionEvent,
     TreeWalker,

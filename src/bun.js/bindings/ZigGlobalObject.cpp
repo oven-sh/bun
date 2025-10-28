@@ -126,6 +126,8 @@
 #include "JSTextEncoder.h"
 #include "JSTextEncoderStream.h"
 #include "JSTextDecoderStream.h"
+#include "JSCompressionStream.h"
+#include "JSDecompressionStream.h"
 #include "JSTransformStream.h"
 #include "JSTransformStreamDefaultController.h"
 #include "JSURLSearchParams.h"
@@ -993,6 +995,8 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(SubtleCrypto);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TextEncoder);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TextEncoderStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TextDecoderStream);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CompressionStream);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(DecompressionStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TransformStream)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TransformStreamDefaultController)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(URLSearchParams);

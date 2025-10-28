@@ -390,8 +390,19 @@ extern "C" void bun_restore_stdio()
 
 #if !OS(WINDOWS)
 
-    // restore stdio
-    for (int32_t fd = 0; fd < 3; fd++) {
+    // Only restore stdin (fd 0), not stdout/stderr.
+    //
+    // When stdout or stderr are piped to another process (like `bun script.js | less`),
+    // but the other FD is still connected to the terminal, we must not interfere with
+    // the terminal state that the downstream process (less) is managing.
+    //
+    // Restoring stdout/stderr terminal state on exit can race with the downstream
+    // process trying to set raw mode, causing input to be line-buffered instead of
+    // character-buffered.
+    //
+    // We only need to restore stdin's state since that's the FD where user input
+    // typically comes from and where Bun might have modified terminal settings.
+    for (int32_t fd = 0; fd < 1; fd++) {
         if (!bun_stdio_tty[fd])
             continue;
 

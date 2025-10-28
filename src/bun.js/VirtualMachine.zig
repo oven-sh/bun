@@ -838,7 +838,7 @@ pub fn onExit(this: *VirtualMachine) void {
     if (this.cpu_profiler_config) |config| {
         this.cpu_profiler_config = null;
         CPUProfiler.stopAndWriteProfile(this.jsc_vm, config) catch |err| {
-            Output.errGeneric("Failed to write CPU profile: {s}", .{@errorName(err)});
+            Output.err(err, "Failed to write CPU profile", .{});
         };
     }
 

@@ -23,16 +23,18 @@ pub fn stopAndWriteProfile(vm: *jsc.VM, config: CPUProfilerConfig) !void {
     const json_slice = json_string.toUTF8(bun.default_allocator);
     defer json_slice.deinit();
 
-    // Determine the output path
-    var path_buf: bun.PathBuffer = undefined;
-    const output_path = try getOutputPath(&path_buf, config);
+    // Determine the output path using AutoAbsPath
+    var path_buf: bun.AutoAbsPath = .initTopLevelDir();
+    defer path_buf.deinit();
+
+    try buildOutputPath(&path_buf, config);
 
     // Convert to OS-specific path (UTF-16 on Windows, UTF-8 elsewhere)
     var path_buf_os: bun.OSPathBuffer = undefined;
     const output_path_os: bun.OSPathSliceZ = if (bun.Environment.isWindows)
-        bun.strings.convertUTF8toUTF16InBufferZ(&path_buf_os, output_path)
+        bun.strings.convertUTF8toUTF16InBufferZ(&path_buf_os, path_buf.sliceZ())
     else
-        output_path;
+        path_buf.sliceZ();
 
     // Write the profile to disk using bun.sys.File.writeFile
     const result = bun.sys.File.writeFile(bun.FD.cwd(), output_path_os, json_slice.slice());
@@ -56,7 +58,7 @@ pub fn stopAndWriteProfile(vm: *jsc.VM, config: CPUProfilerConfig) !void {
     }
 }
 
-fn getOutputPath(buf: *bun.PathBuffer, config: CPUProfilerConfig) ![:0]const u8 {
+fn buildOutputPath(path: *bun.AutoAbsPath, config: CPUProfilerConfig) !void {
     // Generate filename
     var filename_buf: bun.PathBuffer = undefined;
     const filename = if (config.name.len > 0)
@@ -64,27 +66,20 @@ fn getOutputPath(buf: *bun.PathBuffer, config: CPUProfilerConfig) ![:0]const u8 
     else
         try generateDefaultFilename(&filename_buf);
 
-    // Get the current working directory
-    const cwd = bun.fs.FileSystem.instance.top_level_dir;
-
-    // Join directory and filename if directory is specified
+    // Append directory if specified
     if (config.dir.len > 0) {
-        // Use bun.path.joinAbsStringBufZ to join cwd, dir, and filename
-        return bun.path.joinAbsStringBufZ(cwd, buf, &.{ config.dir, filename }, .auto);
-    } else {
-        // Just join cwd and filename
-        return bun.path.joinAbsStringBufZ(cwd, buf, &.{filename}, .auto);
+        path.append(config.dir);
     }
-}
 
-// Cross-platform way to get process ID
-extern "c" fn getpid() c_int;
+    // Append filename
+    path.append(filename);
+}
 
 fn generateDefaultFilename(buf: *bun.PathBuffer) ![]const u8 {
     // Generate filename like: CPU.{timestamp}.{pid}.cpuprofile
     // Use microsecond timestamp for uniqueness
     const timespec = bun.timespec.now();
-    const pid = getpid();
+    const pid = bun.c.getpid();
 
     const epoch_microseconds: u64 = @intCast(timespec.sec *% 1_000_000 +% @divTrunc(timespec.nsec, 1000));
 

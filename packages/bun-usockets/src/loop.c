@@ -192,10 +192,14 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
         if (s->next) s->next->prev = 0;
         s->next = 0;
 
+        s->flags.low_prio_state = 2;
+        if(us_socket_is_closed(0, s)) {
+            continue;
+        }
+
         us_internal_socket_context_link_socket(0, s->context, s);
         us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
 
-        s->flags.low_prio_state = 2;
     }
 }
 
@@ -240,13 +244,17 @@ int us_internal_handle_dns_results(struct us_loop_t *loop) {
 void us_internal_free_closed_sockets(struct us_loop_t *loop) {
     /* Free all closed sockets (maybe it is better to reverse order?) */
     for (struct us_socket_t *s = loop->data.closed_head; s; ) {
+        us_internal_loop_update_pending_ready_polls(loop, &s->p, 0, us_poll_events(&s->p), 0);
+
         struct us_socket_t *next = s->next;
+
         us_poll_free((struct us_poll_t *) s, loop);
         s = next;
     }
     loop->data.closed_head = NULL;
 
     for (struct us_udp_socket_t *s = loop->data.closed_udp_head; s; ) {
+        us_internal_loop_update_pending_ready_polls(loop, &s->p, 0, us_poll_events(&s->p), 0);
         struct us_udp_socket_t *next = s->next;
         us_poll_free((struct us_poll_t *) s, loop);
         s = next;
@@ -281,15 +289,15 @@ long long us_loop_iteration_number(struct us_loop_t *loop) {
 /* These may have somewhat different meaning depending on the underlying event library */
 void us_internal_loop_pre(struct us_loop_t *loop) {
     loop->data.iteration_nr++;
-    us_internal_handle_dns_results(loop);
     us_internal_handle_low_priority_sockets(loop);
+
+    us_internal_free_closed_contexts(loop);
+    us_internal_free_closed_sockets(loop);
     loop->data.pre_cb(loop);
 }
 
 void us_internal_loop_post(struct us_loop_t *loop) {
     us_internal_handle_dns_results(loop);
-    us_internal_free_closed_sockets(loop);
-    us_internal_free_closed_contexts(loop);
     loop->data.post_cb(loop);
 }
 

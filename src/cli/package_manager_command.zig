@@ -103,7 +103,7 @@ pub const PackageManagerCommand = struct {
             \\  <d>└<r> <cyan>--quiet<r>                   only output the tarball filename
             \\  <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder
             \\  <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder
-            \\  <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile
+            \\  <b><green>bun<r> <blue>list<r>, <b><green>bun pm<r> <blue>ls<r>        list the dependency tree according to the current lockfile
             \\  <d>└<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
             \\  <b><green>bun pm<r> <blue>why<r> <d>\<pkg\><r>            show dependency tree explaining why a package is installed
             \\  <b><green>bun pm<r> <blue>whoami<r>               print the current npm username
@@ -158,7 +158,14 @@ pub const PackageManagerCommand = struct {
         };
         defer ctx.allocator.free(cwd);
 
-        const subcommand = if (is_direct_whoami) "whoami" else getSubcommand(&pm.options.positionals);
+        var subcommand = if (is_direct_whoami) "whoami" else getSubcommand(&pm.options.positionals);
+
+        // Check if we're being invoked directly as "bun list" instead of "bun pm list"
+        const is_direct_list = if (bun.argv.len > 1) strings.eqlComptime(bun.argv[1], "list") else false;
+        if (is_direct_list) {
+            subcommand = "ls";
+        }
+
         if (pm.options.global) {
             try pm.setupGlobalDir(ctx);
         }

@@ -367,7 +367,7 @@ pub const NpaSpec = struct {
                 const raw_slice = arena.copyRawField(raw_arg, name, raw_spec);
                 const name_slice = arena.maybeCopy(name);
                 const raw_spec_slice = arena.copyString(raw_spec);
-                const save_spec_slice = arena.copyString(raw_spec_mut);
+                const save_spec_slice = arena.copyString(raw_spec);
 
                 return .{
                     .raw = raw_slice,
@@ -438,7 +438,7 @@ pub const NpaSpec = struct {
                 const name_slice = arena.maybeCopy(name);
                 const raw_spec_slice = arena.copyString(raw_spec);
                 const fetch_spec_slice = arena.copyString(fetch_spec_stripped);
-                const save_spec_slice = arena.copyString(raw_spec_mut);
+                const save_spec_slice = arena.copyString(raw_spec);
 
                 var git_attrs = try GitAttrs.fromUrl(allocator, parsed_url);
                 errdefer if (git_attrs) |*a| a.deinit();

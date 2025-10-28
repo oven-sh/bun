@@ -161,9 +161,12 @@ pub fn Printer(comptime Writer: type) type {
         inline fn getWrittenAmt(writer: Writer) usize {
             return switch (Writer) {
                 *bun.js_printer.BufferWriter => writer.written.len,
-                *std.Io.Writer => switch (writer.vtable) {
-                    std.Io.Writer.Allocating.init(undefined).writer.vtable => return @as(*std.Io.Writer.Allocating, @fieldParentPtr("writer", writer)).written().len,
-                    else => @panic("css: got bad writer type"),
+                *std.Io.Writer => {
+                    if (writer.vtable == std.Io.Writer.Allocating.init(undefined).writer.vtable) {
+                        return @as(*std.Io.Writer.Allocating, @fieldParentPtr("writer", writer)).written().len;
+                    } else {
+                        @panic("css: got bad writer type");
+                    }
                 },
                 else => @compileError("css: got bad writer type: " ++ @typeName(Writer)),
             };

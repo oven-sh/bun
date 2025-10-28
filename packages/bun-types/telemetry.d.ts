@@ -8,7 +8,7 @@
  * ```typescript
  * // Register an HTTP server instrumentation
  * const instrumentId = Bun.telemetry.attach({
- *   type: "http",
+ *   kind: "http",
  *   name: "@opentelemetry/instrumentation-http",
  *   version: "0.1.0",
  *
@@ -76,7 +76,7 @@ declare module "bun" {
    * Categorizes operation types for routing telemetry data to appropriate handlers.
    *
    * Use string literals to specify which operations your instrumentation handles.
-   * For example: `type: "http"` instruments HTTP server operations.
+   * For example: `kind: "http"` instruments HTTP server operations.
    *
    * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/bun-telemetry-api.md#instrumentkind-enum
    */
@@ -316,7 +316,7 @@ declare module "bun" {
      * ```typescript
      * // Automatic cleanup with using statement (recommended)
      * using instrument = Bun.telemetry.attach({
-     *   type: "http",
+     *   kind: "http",
      *   name: "@opentelemetry/instrumentation-http",
      *   version: "0.1.0",
      *   onOperationStart(id, attributes) {

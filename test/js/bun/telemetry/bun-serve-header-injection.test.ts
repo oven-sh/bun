@@ -1,11 +1,10 @@
 import { expect, test } from "bun:test";
-import { InstrumentKinds } from "./types";
 
 test("Bun.serve injects headers from instruments", async () => {
   let injectCalled = false;
 
   using ref = Bun.telemetry.attach({
-    kind: InstrumentKinds.HTTP,
+    kind: "http",
     name: "test-bun-serve-inject",
     version: "1.0.0",
     injectHeaders: {
@@ -48,7 +47,7 @@ test("Bun.serve injects headers from instruments", async () => {
 
 test("Bun.serve handles multiple instruments", async () => {
   using ref1 = Bun.telemetry.attach({
-    kind: InstrumentKinds.HTTP,
+    kind: "http",
     name: "test-inject-1",
     version: "1.0.0",
     injectHeaders: {
@@ -66,7 +65,7 @@ test("Bun.serve handles multiple instruments", async () => {
   });
 
   using ref2 = Bun.telemetry.attach({
-    kind: InstrumentKinds.HTTP,
+    kind: "http",
     name: "test-inject-2",
     version: "1.0.0",
     injectHeaders: {
@@ -111,7 +110,7 @@ test("Bun.serve skips injection when no headers configured", async () => {
   let injectCalled = false;
 
   using ref = Bun.telemetry.attach({
-    kind: InstrumentKinds.HTTP,
+    kind: "http",
     name: "test-no-inject",
     version: "1.0.0",
     // No injectHeaders specified
@@ -145,7 +144,7 @@ test("Bun.serve skips injection when no headers configured", async () => {
 
 test("Bun.serve only injects configured headers", async () => {
   using ref = Bun.telemetry.attach({
-    kind: InstrumentKinds.HTTP,
+    kind: "http",
     name: "test-selective",
     version: "1.0.0",
     injectHeaders: {
@@ -184,7 +183,7 @@ test("Bun.serve only injects configured headers", async () => {
 
 test("Bun.serve works with Response objects that have existing headers", async () => {
   using ref = Bun.telemetry.attach({
-    kind: InstrumentKinds.HTTP,
+    kind: "http",
     name: "test-existing-headers",
     version: "1.0.0",
     injectHeaders: {

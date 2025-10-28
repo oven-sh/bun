@@ -283,14 +283,15 @@ long long us_loop_iteration_number(struct us_loop_t *loop) {
 /* These may have somewhat different meaning depending on the underlying event library */
 void us_internal_loop_pre(struct us_loop_t *loop) {
     loop->data.iteration_nr++;
+    us_internal_handle_dns_results(loop);
     us_internal_handle_low_priority_sockets(loop);
-    us_internal_free_closed_sockets(loop);
-    us_internal_free_closed_contexts(loop);
     loop->data.pre_cb(loop);
 }
 
 void us_internal_loop_post(struct us_loop_t *loop) {
     us_internal_handle_dns_results(loop);
+    us_internal_free_closed_sockets(loop);
+    us_internal_free_closed_contexts(loop);
     loop->data.post_cb(loop);
 }
 

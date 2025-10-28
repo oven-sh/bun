@@ -84,31 +84,34 @@ export function getInstrumentKindValue(type: string): InstrumentKind {
 }
 
 /**
- * Module augmentation to extend Bun.telemetry namespace with internal nativeHooks API.
+ * Module augmentation: extend Bun's exported `telemetry` namespace with internal nativeHooks API.
  *
- * This adds the low-level bridge APIs used by TypeScript instrumentation handlers
- * (src/js/internal/telemetry_*.ts) to communicate with the Zig runtime.
+ * IMPORTANT: We use `declare module "bun"` instead of `declare global { namespace Bun { ... } }`
+ * because Bun's global identifier is introduced via an `export import Bun = BunModule;` alias in
+ * `bun.ns.d.ts`. Re-declaring `namespace Bun` at global scope causes a duplicate identifier error.
  *
- * These APIs are NOT intended for direct end-user consumption.
+ * By augmenting the "bun" module, we safely merge with the existing exported `telemetry` namespace
+ * defined in `packages/bun-types/telemetry.d.ts` without colliding with the global alias.
+ *
+ * These APIs are intentionally marked `@internal`; they are for bridge code in Bun itself and
+ * not part of the user-facing public API surface.
  */
 declare module "bun" {
-  namespace Bun {
-    namespace telemetry {
-      /**
-       * Returns the nativeHooks object if telemetry is enabled, undefined otherwise.
-       *
-       * This provides zero-cost abstraction - when telemetry is disabled, the optional
-       * chain short-circuits immediately without allocating hook parameters.
-       *
-       * Usage: `Bun.telemetry.nativeHooks()?.notifyStart(kind, id, attributes)`
-       *
-       * This mirrors the Zig pattern: `if (telemetry.enabled()) |otel| { ... }`
-       *
-       * @returns NativeHooks object if telemetry enabled, undefined if disabled
-       * @internal
-       */
-      function nativeHooks(): NativeHooks | undefined;
-    }
+  export namespace telemetry {
+    /**
+     * Returns the nativeHooks object if telemetry is enabled, undefined otherwise.
+     *
+     * This provides zero-cost abstraction - when telemetry is disabled, the optional
+     * chain short-circuits immediately without allocating hook parameters.
+     *
+     * Usage: `Bun.telemetry.nativeHooks()?.notifyStart(kind, id, attributes)`
+     *
+     * Mirrors Zig pattern: `if (telemetry.enabled()) |otel| { ... }`
+     *
+     * @returns NativeHooks object if telemetry enabled, undefined if disabled
+     * @internal
+     */
+    function nativeHooks(): NativeHooks | undefined;
   }
 }
 /**

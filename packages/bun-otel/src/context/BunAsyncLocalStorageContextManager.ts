@@ -64,4 +64,9 @@ export class BunAsyncLocalStorageContextManager extends AsyncHooksContextManager
     this._asyncLocalStorage.disable();
     return this;
   }
+
+  enterWith(context: Context): this {
+    this._asyncLocalStorage.enterWith(context);
+    return this;
+  }
 }

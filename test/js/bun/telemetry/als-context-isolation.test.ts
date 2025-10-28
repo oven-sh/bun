@@ -111,8 +111,6 @@ describe("AsyncLocalStorage context isolation with concurrent requests", () => {
         const requestLog = contextLog.filter(entry => entry.requestId === i);
         const contexts = new Set(requestLog.map(entry => entry.context));
 
-        console.log(`Request ${i} contexts:`, Array.from(contexts));
-
         // If context leaks, we'll see different span IDs
         // If Bun's AsyncContextFrame works, we'll only see span-${i}
         expect(contexts.size).toBe(1);

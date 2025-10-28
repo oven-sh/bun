@@ -9,14 +9,7 @@
  * - Multiple endpoints tracked separately
  */
 
-import {
-  AggregationTemporality,
-  InMemoryMetricExporter,
-  MeterProvider,
-  PeriodicExportingMetricReader,
-} from "@opentelemetry/sdk-metrics";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { BunHttpInstrumentation } from "../src/instruments/BunHttpInstrumentation";
 import { TestSDK } from "./test-utils";
 
 // Helper to normalize histogram/counter data point values across OTEL versions
@@ -29,31 +22,10 @@ function getDataPointValue(dp: any): number {
 }
 
 describe("BunHttpInstrumentation - Metrics", () => {
-  let metricExporter: InMemoryMetricExporter;
-  let meterProvider: MeterProvider;
-  let tsdk: TestSDK;
-  let instrumentation: BunHttpInstrumentation;
   let server: ReturnType<typeof Bun.serve> | null = null;
   let serverUrl: string;
 
   beforeAll(async () => {
-    // Setup metric provider with in-memory exporter
-    metricExporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE as any);
-    const metricReader = new PeriodicExportingMetricReader({
-      exporter: metricExporter,
-      exportIntervalMillis: 100,
-    });
-    meterProvider = new MeterProvider({ readers: [metricReader] });
-
-    // Setup tracer provider using TestSDK (metrics can work with or without tracing)
-    tsdk = new TestSDK();
-
-    // Create and enable instrumentation
-    instrumentation = new BunHttpInstrumentation();
-    instrumentation.setTracerProvider(tsdk.getTracerProvider());
-    instrumentation.setMeterProvider(meterProvider);
-    instrumentation.enable();
-
     // Start test server
     server = Bun.serve({
       port: 0,
@@ -93,24 +65,18 @@ describe("BunHttpInstrumentation - Metrics", () => {
   });
 
   afterAll(async () => {
-    instrumentation.disable();
     server?.stop();
     server = null;
-    await meterProvider.shutdown();
-    await tsdk[Symbol.asyncDispose]();
   });
 
   test("records http.server.request.duration histogram metric", async () => {
-    metricExporter.reset();
+    await using tsdk = new TestSDK();
 
     const response = await fetch(`${serverUrl}/hello`);
     expect(response.ok).toBe(true);
     await response.text();
 
-    // Force flush metrics
-    await meterProvider.forceFlush();
-
-    const resourceMetrics = metricExporter.getMetrics();
+    const resourceMetrics = await tsdk.waitForMetrics();
     expect(resourceMetrics.length).toBeGreaterThan(0);
 
     // Find the duration metric
@@ -139,16 +105,14 @@ describe("BunHttpInstrumentation - Metrics", () => {
   });
 
   test("records http.server.requests.total counter metric", async () => {
-    metricExporter.reset();
+    await using tsdk = new TestSDK();
 
     // Make multiple requests
     for (let i = 0; i < 3; i++) {
       await fetch(`${serverUrl}/json`);
     }
 
-    await meterProvider.forceFlush();
-
-    const resourceMetrics = metricExporter.getMetrics();
+    const resourceMetrics = await tsdk.waitForMetrics();
     const scopeMetrics = resourceMetrics[0].scopeMetrics;
     const counterMetric = scopeMetrics
       .flatMap(sm => sm.metrics)
@@ -167,51 +131,34 @@ describe("BunHttpInstrumentation - Metrics", () => {
   });
 
   test("metrics work without tracing (metrics-only mode)", async () => {
-    // Disable instrumentation briefly
-    instrumentation.disable();
+    // TestSDK automatically provides both spans and metrics
+    await using tsdk = new TestSDK();
 
-    // Create new instrumentation with ONLY metrics (no tracer provider)
-    const metricsOnlyInst = new BunHttpInstrumentation();
-    metricsOnlyInst.setMeterProvider(meterProvider);
-    metricsOnlyInst.enable();
+    const response = await fetch(`${serverUrl}/hello`);
+    await response.text();
 
-    metricExporter.reset();
+    const resourceMetrics = await tsdk.waitForMetrics();
+    expect(resourceMetrics.length).toBeGreaterThan(0);
 
-    try {
-      const response = await fetch(`${serverUrl}/hello`);
-      await response.text();
+    // Metrics should still be recorded
+    const scopeMetrics = resourceMetrics[0].scopeMetrics;
+    const durationMetric = scopeMetrics
+      .flatMap(sm => sm.metrics)
+      .find(m => m.descriptor.name === "http.server.request.duration");
 
-      await meterProvider.forceFlush();
-
-      const resourceMetrics = metricExporter.getMetrics();
-      expect(resourceMetrics.length).toBeGreaterThan(0);
-
-      // Metrics should still be recorded
-      const scopeMetrics = resourceMetrics[0].scopeMetrics;
-      const durationMetric = scopeMetrics
-        .flatMap(sm => sm.metrics)
-        .find(m => m.descriptor.name === "http.server.request.duration");
-
-      expect(durationMetric).toBeDefined();
-      expect(durationMetric!.dataPoints.length).toBeGreaterThan(0);
-    } finally {
-      metricsOnlyInst.disable();
-      // Re-enable original instrumentation
-      instrumentation.enable();
-    }
+    expect(durationMetric).toBeDefined();
+    expect(durationMetric!.dataPoints.length).toBeGreaterThan(0);
   });
 
   test("tracks multiple endpoints separately with correct attributes", async () => {
-    metricExporter.reset();
+    await using tsdk = new TestSDK();
 
     // Make requests to different endpoints
     await fetch(`${serverUrl}/hello`);
     await fetch(`${serverUrl}/json`);
     await fetch(`${serverUrl}/error`);
 
-    await meterProvider.forceFlush();
-
-    const resourceMetrics = metricExporter.getMetrics();
+    const resourceMetrics = await tsdk.waitForMetrics();
     const scopeMetrics = resourceMetrics[0].scopeMetrics;
     const counterMetric = scopeMetrics
       .flatMap(sm => sm.metrics)
@@ -234,36 +181,27 @@ describe("BunHttpInstrumentation - Metrics", () => {
   });
 
   test("duration increases with slow handlers", async () => {
-    metricExporter.reset();
+    await using tsdk = new TestSDK();
 
     // Make fast request
     const fastResponse = await fetch(`${serverUrl}/hello`);
     await fastResponse.text();
 
-    await meterProvider.forceFlush();
-    const metrics1 = metricExporter.getMetrics();
-    const durationMetric1 = metrics1[0].scopeMetrics
-      .flatMap(sm => sm.metrics)
-      .find(m => m.descriptor.name === "http.server.request.duration");
-
-    // Find the data point for /hello endpoint
-    const fastDataPoint = durationMetric1!.dataPoints.find((dp: any) => dp.attributes["url.path"] === "/hello");
-    const fastDuration = getDataPointValue(fastDataPoint);
-
-    metricExporter.reset();
-
     // Make slow request
     const slowResponse = await fetch(`${serverUrl}/slow`);
     await slowResponse.text();
 
-    await meterProvider.forceFlush();
-    const metrics2 = metricExporter.getMetrics();
-    const durationMetric2 = metrics2[0].scopeMetrics
+    const resourceMetrics = await tsdk.waitForMetrics();
+    const scopeMetrics = resourceMetrics[0].scopeMetrics;
+    const durationMetric = scopeMetrics
       .flatMap(sm => sm.metrics)
       .find(m => m.descriptor.name === "http.server.request.duration");
 
-    // Find the data point for /slow endpoint
-    const slowDataPoint = durationMetric2!.dataPoints.find((dp: any) => dp.attributes["url.path"] === "/slow");
+    // Find the data points for both endpoints
+    const fastDataPoint = durationMetric!.dataPoints.find((dp: any) => dp.attributes["url.path"] === "/hello");
+    const slowDataPoint = durationMetric!.dataPoints.find((dp: any) => dp.attributes["url.path"] === "/slow");
+
+    const fastDuration = getDataPointValue(fastDataPoint);
     const slowDuration = getDataPointValue(slowDataPoint);
 
     // Slow request should take longer (at least 45ms = 0.045s, allowing for timing variance)
@@ -272,12 +210,11 @@ describe("BunHttpInstrumentation - Metrics", () => {
   });
 
   test("metrics include server.address and server.port attributes", async () => {
-    metricExporter.reset();
+    await using tsdk = new TestSDK();
 
     await fetch(`${serverUrl}/hello`);
-    await meterProvider.forceFlush();
 
-    const resourceMetrics = metricExporter.getMetrics();
+    const resourceMetrics = await tsdk.waitForMetrics();
     const scopeMetrics = resourceMetrics[0].scopeMetrics;
     const durationMetric = scopeMetrics
       .flatMap(sm => sm.metrics)

@@ -19,15 +19,4 @@
 
 // Re-export BunSDK (main entry point)
 export { BunSDK } from "./src/BunSDK";
-export type { BunSDKConfiguration } from "./src/BunSDK";
-
-// Re-export instrumentations
-export { BunFetchInstrumentation, BunHttpInstrumentation, BunNodeInstrumentation } from "./src/instruments";
-export type {
-  BunFetchInstrumentationConfig,
-  BunHttpInstrumentationConfig,
-  BunNodeInstrumentationConfig,
-} from "./src/instruments";
-
-// Re-export validation utilities
-export { validateCaptureAttributes, validateHeaderName } from "./src/validation";
+export type { BunSDK2Config as BunSDKConfig } from "./src/BunSDK";

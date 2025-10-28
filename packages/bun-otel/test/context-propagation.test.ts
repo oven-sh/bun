@@ -19,12 +19,6 @@ describe("W3C trace context propagation", () => {
     await makeUninstrumentedRequest(`http://localhost:${server.port}/`, {
       traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
     });
-    await tsdk.waitForSpans(1, 1000, { traceId: "4bf92f3577b34da6a3ce929d0e0e4736" });
-    await fetch(`http://localhost:${server.port}/`, {
-      headers: {
-        traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-      },
-    });
 
     const spans = await tsdk.waitForSpans(1, 1000, s => s.withTraceId("4bf92f3577b34da6a3ce929d0e0e4736"));
     expect(spans).toHaveLength(1);

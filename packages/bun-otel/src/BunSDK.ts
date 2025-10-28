@@ -1,487 +1,195 @@
 /**
- * OpenTelemetry SDK for Bun
+ * BunSDK2 - Clean, autowired OpenTelemetry SDK for Bun
  *
- * Provides a NodeSDK-like API for configuring OpenTelemetry tracing, metrics, and logging
- * in Bun applications. Automatically instruments Bun's native HTTP server and fetch client
- * via Bun.telemetry hooks.
- *
- * Key Features:
- * - Drop-in replacement for @opentelemetry/sdk-node
- * - Auto-registers BunHttpInstrumentation and BunFetchInstrumentation
- * - Full OTEL_* environment variable support
- * - Built on stable @opentelemetry packages (1.x)
- *
- * @example Basic usage
- * ```typescript
- * import { BunSDK } from "bun-otel";
- * import { ConsoleSpanExporter } from "@opentelemetry/sdk-trace-base";
- *
- * const sdk = new BunSDK({
- *   traceExporter: new ConsoleSpanExporter(),
- *   serviceName: 'my-service',
- * });
- * sdk.start();
- * ```
- *
- * @example Using with automatic cleanup
- * ```typescript
- * await using sdk = new BunSDK({
- *   traceExporter: new ConsoleSpanExporter(),
- *   serviceName: 'my-service',
- * });
- * sdk.start();
- * // await sdk.shutdown() called automatically when scope exits
- * ```
- *
- * @module bun-otel/BunSDK
+ * Key improvements:
+ * - Uses BunGenericInstrumentation (no more class hierarchy!)
+ * - Pure config mapping (testable in isolation)
+ * - Autowires context manager, propagation, providers
+ * - Works with InMemory exporters for testing
  */
-
-import { context, type Context, diag, metrics, propagation, type TextMapPropagator } from "@opentelemetry/api";
+import {
+  context,
+  diag,
+  metrics,
+  propagation,
+  trace,
+  type MeterProvider as IMeterProvider,
+  type TracerProvider as ITracerProvider,
+} from "@opentelemetry/api";
 import { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator } from "@opentelemetry/core";
-import { type Instrumentation, registerInstrumentations } from "@opentelemetry/instrumentation";
 import {
   detectResources,
   emptyResource,
   envDetector,
   hostDetector,
   processDetector,
-  Resource,
-  type ResourceDetector,
   resourceFromAttributes,
+  type Resource,
 } from "@opentelemetry/resources";
 import { MeterProvider, type MetricReader } from "@opentelemetry/sdk-metrics";
-import {
-  BatchSpanProcessor,
-  type IdGenerator,
-  type Sampler,
-  type SpanExporter,
-  type SpanLimits,
-  type SpanProcessor,
-} from "@opentelemetry/sdk-trace-base";
+import type { SpanExporter, SpanProcessor } from "@opentelemetry/sdk-trace-base";
+import { BatchSpanProcessor, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { AsyncLocalStorage } from "async_hooks";
+import "../types";
+import { BunGenericInstrumentation } from "./instruments/BunGenericInstrumentation";
+import { BunNodeHttpCreateServerAdapter } from "./instruments/BunNodeHttpCreateServerAdapter";
+import type { NodeSDKConfig } from "./config-mappers";
+import { mapNodeSDKConfig } from "./config-mappers";
 import { BunAsyncLocalStorageContextManager } from "./context/BunAsyncLocalStorageContextManager";
-import { BunFetchInstrumentation } from "./instruments/BunFetchInstrumentation";
-import { BunHttpInstrumentation } from "./instruments/BunHttpInstrumentation";
-import { BunNodeInstrumentation } from "./instruments/BunNodeInstrumentation";
-
-// Enable debug logging for SDK lifecycle (useful for troubleshooting test isolation issues)
-const ENABLE_DEBUG_LOGGING = false;
-
-function debugLog(...args: unknown[]) {
-  if (ENABLE_DEBUG_LOGGING) {
-    console.log("[BunSDK]", ...args);
-  }
-}
+export type SupportedInstruments = "http" | "fetch" | "node";
+const DEFAULT_INSTRUMENTS: SupportedInstruments[] = ["http", "fetch", "node"];
 
 /**
- * Configuration options for BunSDK
- *
- * Extends the standard OpenTelemetry SDK configuration with Bun-specific options.
- * Compatible with NodeSDK configuration for easy migration.
+ * Configuration for BunSDK2
  */
-export interface BunSDKConfiguration {
-  // ============================================================================
-  // Resource Configuration
-  // ============================================================================
+export interface BunSDK2Config extends NodeSDKConfig {
+  /**
+   * Service name for resource attributes
+   */
+  serviceName?: string;
 
   /**
-   * Resource to associate with all telemetry.
-   * Will be merged with auto-detected resources.
+   * Custom resource to merge with auto-detected resources
    */
   resource?: Resource;
 
   /**
-   * Resource detectors to use for auto-detecting resource attributes.
-   * @default [envDetector, processDetector, hostDetector]
-   */
-  resourceDetectors?: ResourceDetector[];
-  /** @deprecated Use resourceDetectors instead */
-  resourceDetector?: ResourceDetector; // deprecated singular form
-  /**
-   * Whether to automatically detect resources using resourceDetectors.
+   * Enable auto-detection of resources (host, process, env)
    * @default true
    */
   autoDetectResources?: boolean;
 
   /**
-   * Service name to use in traces.
-   * Convenience shorthand for setting SEMRESATTRS_SERVICE_NAME in resource.
+   * Tracer provider (optional - will be created if not provided)
    */
-  serviceName?: string;
-
-  // ============================================================================
-  // Context & Propagation
-  // ============================================================================
+  tracerProvider?: ITracerProvider;
 
   /**
-   * Text map propagator to use for context propagation.
-   * Set to null to disable propagation.
-   * @default W3CTraceContextPropagator + W3CBaggagePropagator
+   * Meter provider (optional - will be created if not provided)
    */
-  textMapPropagator?: TextMapPropagator | null;
-
-  // ============================================================================
-  // Tracing Configuration
-  // ============================================================================
+  meterProvider?: IMeterProvider;
 
   /**
-   * Sampler to use for determining which spans to record.
-   * @default ParentBasedSampler with AlwaysOnSampler root
+   * Span exporter for traces
+   * If provided, a SimpleSpanProcessor will be created
    */
-  sampler?: Sampler;
+  spanExporter?: SpanExporter;
 
   /**
-   * Span limits (max attributes, events, links per span)
-   */
-  spanLimits?: SpanLimits;
-
-  /**
-   * Custom ID generator for span and trace IDs
-   */
-  idGenerator?: IdGenerator;
-
-  /**
-   * Span exporter to use for sending traces.
-   * If provided, a BatchSpanProcessor will be created automatically.
-   * @deprecated Use spanProcessors instead
-   */
-  traceExporter?: SpanExporter;
-
-  /**
-   * Multiple span processors to use.
-   * Use this to send spans to multiple destinations or customize processing.
+   * Span processors (alternative to spanExporter)
    */
   spanProcessors?: SpanProcessor[];
-  /** @deprecated Use spanProcessors instead */
-  spanProcessor?: SpanProcessor; // deprecated singular form
-  // ============================================================================
-  // Metrics Configuration
-  // ============================================================================
 
   /**
-   * Metric readers to use for collecting and exporting metrics.
-   * When provided, BunMetricsInstrumentation will be automatically registered.
+   * Metric readers for metrics
    */
   metricReaders?: MetricReader[];
-  /** @deprecated Use metricReaders instead */
-  metricReader?: MetricReader; // deprecated singular form
-  // ============================================================================
-  // Instrumentation
-  // ============================================================================
 
   /**
-   * Instrumentations to register with the SDK.
-   * Accepts individual instrumentations or nested arrays (will be flattened).
-   *
-   * If not provided, BunHttpInstrumentation and BunFetchInstrumentation are
-   * automatically registered with default configuration.
-   *
-   * @example Manual configuration
-   * ```typescript
-   * import { BunSDK, BunHttpInstrumentation, BunFetchInstrumentation } from 'bun-otel';
-   *
-   * const sdk = new BunSDK({
-   *   instrumentations: [
-   *     new BunHttpInstrumentation({
-   *       captureAttributes: {
-   *         requestHeaders: ['x-request-id'],
-   *       },
-   *     }),
-   *     new BunFetchInstrumentation(),
-   *   ],
-   * });
-   * ```
+   * Disable auto-start on construction
+   * @default false
    */
-  instrumentations?: (Instrumentation | Instrumentation[])[];
+  autoStart?: boolean;
+
+  /**
+   * Instruments to enable
+   * @default ["http", "fetch", "node"]
+   */
+  bunInstruments?: SupportedInstruments[];
 }
 
 /**
- * OpenTelemetry SDK for Bun
- *
- * A NodeSDK-compatible API for configuring OpenTelemetry tracing in Bun applications.
- * Automatically instruments Bun's native HTTP server and fetch client via Bun.telemetry hooks.
- *
- * Built on stable @opentelemetry packages (1.x) instead of experimental @opentelemetry/sdk-node (0.x).
- *
- * Per contract: specs/001-opentelemetry-support/contracts/BunSDK.md
+ * Clean, autowired OpenTelemetry SDK for Bun
  *
  * @example Basic usage
  * ```typescript
- * import { BunSDK } from "bun-otel";
- * import { ConsoleSpanExporter } from "@opentelemetry/sdk-trace-base";
- *
- * const sdk = new BunSDK({
- *   traceExporter: new ConsoleSpanExporter(),
- *   serviceName: 'my-service',
+ * using sdk = new BunSDK2({
+ *   serviceName: "my-service",
+ *   spanExporter: new ConsoleSpanExporter(),
  * });
- * sdk.start();
+ * // Automatically started, automatically cleaned up
  * ```
  *
- * @example Advanced usage with resource detection
+ * @example Testing with InMemory exporters
  * ```typescript
- * import { BunSDK } from "bun-otel";
- * import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
- * import { Resource } from "@opentelemetry/resources";
+ * const spanExporter = new InMemorySpanExporter();
+ * const metricReader = new InMemoryMetricReader();
  *
- * const sdk = new BunSDK({
- *   traceExporter: new OTLPTraceExporter(),
- *   resource: new Resource({ 'deployment.environment': 'production' }),
- *   autoDetectResources: true, // Detects host, process info
- *   serviceName: 'my-service',
+ * using sdk = new BunSDK2({
+ *   spanExporter,
+ *   metricReaders: [metricReader],
  * });
- * sdk.start();
+ *
+ * // Make requests...
+ *
+ * const spans = spanExporter.getFinishedSpans();
+ * expect(spans).toHaveLength(1);
+ * ```
+ *
+ * @example Custom instrumentation config
+ * ```typescript
+ * using sdk = new BunSDK2({
+ *   http: {
+ *     captureAttributes: {
+ *       requestHeaders: ["x-custom"],
+ *     },
+ *   },
+ *   fetch: {
+ *     enabled: false, // Disable fetch instrumentation
+ *   },
+ * });
  * ```
  */
-export class BunSDK implements AsyncDisposable {
-  private _config: BunSDKConfiguration;
-  private _tracerProvider?: NodeTracerProvider;
-  private _meterProvider?: MeterProvider;
-  private _resource: Resource;
-  private _spanProcessors: SpanProcessor[] = [];
-  private _metricReaders: MetricReader[] = [];
-  private _serviceName?: string;
-  private _instrumentations: Instrumentation[];
-  private _instrumentationCleanup?: () => void;
+export class BunSDK implements Disposable {
+  private readonly _config: BunSDK2Config;
+
+  // Providers
+  protected _tracerProvider?: NodeTracerProvider;
+  protected _meterProvider?: MeterProvider;
+
+  // Context management
+  protected _contextManager?: BunAsyncLocalStorageContextManager;
+  private _contextStorage?: AsyncLocalStorage<any>;
+
+  // Instrumentations
+  private readonly _instruments: BunGenericInstrumentation[] = [];
+  // shutdown/cleanup
   private _shutdownOnce = false;
   private _signalHandlersRegistered = false;
-  private _contextStorage?: AsyncLocalStorage<Context>;
-  private _contextManager?: BunAsyncLocalStorageContextManager;
+  // State
+  private _started = false;
 
-  constructor(config: BunSDKConfiguration = {}) {
-    if (!Bun?.telemetry) {
-      throw new Error("Bun.telemetry not detected. Try running 'bun update' to get the latest version of Bun.");
-    }
+  constructor(config: BunSDK2Config = {}) {
     this._config = config;
-    this._serviceName = config.serviceName;
 
-    // Initialize resource
-    this._resource = config.resource ?? emptyResource();
-
-    // handle deprecated singular resourceDetector
-    const resourceDetectors =
-      config.resourceDetectors ??
-      (config.resourceDetector ? [config.resourceDetector] : [envDetector, processDetector, hostDetector]);
-
-    // Setup resource detectors
-    if (config.autoDetectResources !== false) {
-      if (resourceDetectors.length > 0) {
-        const detected = detectResources({ detectors: resourceDetectors });
-        this._resource = this._resource.merge(detected);
-      }
-    }
-
-    this._spanProcessors =
-      config.spanProcessors ??
-      (config.spanProcessor
-        ? [config.spanProcessor]
-        : config.traceExporter
-          ? [new BatchSpanProcessor(config.traceExporter)]
-          : []);
-
-    // Setup metric readers
-    this._metricReaders = config.metricReaders ?? (config.metricReader ? [config.metricReader] : []);
-
-    // Create shared AsyncLocalStorage for context propagation
-    // This must be created BEFORE instrumentations so we can pass it to them
-    this._contextStorage = new AsyncLocalStorage<Context>();
-    debugLog("Created shared AsyncLocalStorage for context propagation");
-
-    // Setup instrumentations (auto-register Bun instrumentations if not provided)
-    // Per spec lines 86-87: "If `instrumentations` not provided or empty: BunSDK auto-registers
-    // BunHttpInstrumentation and BunFetchInstrumentation"
-    if (config.instrumentations && config.instrumentations.length > 0) {
-      // User provided instrumentations - flatten and use as-is
-      this._instrumentations = config.instrumentations.flat();
-    } else {
-      // Auto-register Bun instrumentations with default configuration
-      // Pass shared contextStorage to enable trace propagation between instrumentations
-      this._instrumentations = [
-        new BunHttpInstrumentation({
-          headersToSpanAttributes: {
-            server: {
-              requestHeaders: ["content-type", "content-length", "user-agent", "accept"],
-              responseHeaders: ["content-type", "content-length"],
-            },
-          },
-          contextStorage: this._contextStorage,
-        }),
-        new BunFetchInstrumentation({
-          captureAttributes: {
-            requestHeaders: ["content-type"],
-            responseHeaders: ["content-type"],
-          },
-          contextStorage: this._contextStorage,
-        }),
-        new BunNodeInstrumentation({
-          captureAttributes: {
-            requestHeaders: ["content-type", "content-length", "user-agent", "accept"],
-            responseHeaders: ["content-type", "content-length"],
-          },
-          contextStorage: this._contextStorage,
-        }),
-      ];
-
-      debugLog("Auto-registered Bun instrumentations with shared contextStorage");
+    // Auto-start unless explicitly disabled
+    if (config.autoStart !== false) {
+      this.start();
     }
   }
 
   /**
-   * Start the SDK: configure context manager, propagator, create providers,
-   * and register instrumentations.
-   *
-   * Per Node.js SDK: Supports tracing-only, metrics-only, or both modes.
-   * Per spec lines 151-193
+   * Start the SDK - setup providers, context, and instrumentations
    */
   start(): void {
-    if (this._tracerProvider || this._meterProvider) {
-      diag.warn("BunSDK already started");
-      return;
-    }
+    if (this._started) return;
+    this._started = true;
 
-    // 1. Setup context manager using shared AsyncLocalStorage created in constructor
-    // This allows Bun's native telemetry hooks and OTel instrumentations to share async context
-    if (this._contextStorage) {
-      this._contextManager = new BunAsyncLocalStorageContextManager(this._contextStorage);
-      context.setGlobalContextManager(this._contextManager);
-      debugLog("Shared AsyncLocalStorage context manager installed globally");
+    // 1. Setup context manager (shared AsyncLocalStorage)
+    this._setupContext();
 
-      // Share AsyncLocalStorage with Bun's native telemetry for enterWith() calls
-      const ConfigurationProperty = { _context_storage: 7 };
-      Bun.telemetry
-        .nativeHooks()
-        ?.setConfigurationProperty(ConfigurationProperty._context_storage, this._contextStorage);
-      debugLog("Context storage shared with native telemetry via configuration property");
-    }
+    // 2. Setup propagator
+    this._setupPropagation();
 
-    // 2. Setup propagator (default to W3C Trace Context + Baggage)
-    // Per spec lines 352-367
-    if (this._config.textMapPropagator !== null) {
-      const propagator =
-        this._config.textMapPropagator ??
-        new CompositePropagator({
-          propagators: [new W3CTraceContextPropagator(), new W3CBaggagePropagator()],
-        });
-      propagation.setGlobalPropagator(propagator);
-    }
+    // 3. Setup tracer provider
+    this._setupTracing();
 
-    // 3. Merge serviceName into resource
-    let resource = this._resource;
-    if (this._serviceName) {
-      const serviceResource = resourceFromAttributes({ "service.name": this._serviceName });
-      resource = resource.merge(serviceResource);
-    }
+    // 4. Setup meter provider
+    this._setupMetrics();
 
-    // 4. Create TracerProvider if tracing is configured
-    // Per Node.js SDK: Optional - gracefully degrades to noop if not provided
-    if (this._spanProcessors.length > 0 || this._config.traceExporter) {
-      this._tracerProvider = new NodeTracerProvider({
-        sampler: this._config.sampler,
-        spanLimits: this._config.spanLimits,
-        idGenerator: this._config.idGenerator,
-        spanProcessors: this._spanProcessors,
-        resource,
-      });
-
-      // Register as global tracer provider
-      // This MUST happen before registerInstrumentations() so instrumentations
-      // can access the global provider
-      this._tracerProvider.register();
-      debugLog("TracerProvider created and registered globally");
-    }
-
-    // 4. Create MeterProvider if metrics is configured
-    // Per Node.js SDK: Optional - gracefully degrades to noop if not provided
-    if (this._metricReaders.length > 0) {
-      this._meterProvider = new MeterProvider({
-        resource,
-        readers: this._metricReaders,
-      });
-
-      // Register as global meter provider
-      metrics.setGlobalMeterProvider(this._meterProvider);
-      debugLog("MeterProvider created and registered globally");
-    }
-
-    // 5. Register instrumentations
-    // Per spec lines 157-161: "If instrumentations not provided in constructor:
-    //   - Create BunHttpInstrumentation with default configuration
-    //   - Create BunFetchInstrumentation with default configuration"
-    // Per Node.js SDK: Pass both providers (will use global APIs if not provided)
-    debugLog(
-      "Registering instrumentations:",
-      this._instrumentations.map(i => i.instrumentationName),
-    );
-    this._instrumentationCleanup = registerInstrumentations({
-      instrumentations: this._instrumentations,
-      tracerProvider: this._tracerProvider,
-      meterProvider: this._meterProvider,
-    });
-    debugLog("Instrumentations registered, cleanup function:", typeof this._instrumentationCleanup);
-
-    // Note: Context manager setup is handled internally by instrumentations
-    // via Bun.telemetry.attach() in current branch architecture
-  }
-
-  /**
-   * Shutdown the SDK: disable instrumentations and shutdown providers.
-   * Flushes any pending spans/metrics and cleans up resources.
-   *
-   * Safe to call multiple times - only shuts down once.
-   *
-   * Per spec lines 197-226
-   */
-  async shutdown(): Promise<void> {
-    // Guard against multiple shutdown calls
-    if (this._shutdownOnce) {
-      debugLog("shutdown() already called, skipping");
-      return;
-    }
-    this._shutdownOnce = true;
-
-    debugLog("shutdown() called, cleaning up instrumentations...");
-
-    // 1. Disable instrumentations (unpatch and detach from Bun.telemetry)
-    debugLog(
-      "Instrumentations before cleanup:",
-      this._instrumentations.map(i => `${i.instrumentationName} (enabled: ${(i as any)._config?.enabled})`),
-    );
-
-    // Manually disable each instrumentation to ensure proper cleanup
-    // This calls Bun.telemetry.detach() for Bun instrumentations
-    for (const instrumentation of this._instrumentations) {
-      debugLog(`Explicitly calling disable() on ${instrumentation.instrumentationName}...`);
-      instrumentation.disable();
-    }
-
-    if (this._instrumentationCleanup) {
-      debugLog("Calling _instrumentationCleanup()...");
-      this._instrumentationCleanup();
-      this._instrumentationCleanup = undefined;
-      debugLog("_instrumentationCleanup() complete");
-    } else {
-      debugLog("⚠️ No _instrumentationCleanup function!");
-    }
-
-    debugLog(
-      "Instrumentations after cleanup:",
-      this._instrumentations.map(i => `${i.instrumentationName} (enabled: ${(i as any)._config?.enabled})`),
-    );
-
-    // 2. Disable global context manager to prevent test isolation issues
-    context.disable();
-
-    // 3. Shutdown tracer provider (flushes pending spans to exporters)
-    if (this._tracerProvider) {
-      await this._tracerProvider.shutdown();
-      this._tracerProvider = undefined;
-    }
-
-    // 4. Shutdown meter provider (flushes pending metrics to exporters)
-    if (this._meterProvider) {
-      await this._meterProvider.shutdown();
-      this._meterProvider = undefined;
-    }
+    // 5. Create and enable instrumentations
+    this._setupInstrumentations();
   }
 
   /**
@@ -520,7 +228,7 @@ export class BunSDK implements AsyncDisposable {
 
     // Only register signal handlers once
     if (this._signalHandlersRegistered) {
-      debugLog("Signal handlers already registered, skipping");
+      diag.verbose("Signal handlers already registered, skipping");
       return;
     }
     this._signalHandlersRegistered = true;
@@ -529,11 +237,11 @@ export class BunSDK implements AsyncDisposable {
     const shutdownHandler = async (signal: string) => {
       // Check if already shutting down
       if (this._shutdownOnce) {
-        debugLog(`${signal} received but shutdown already in progress, ignoring`);
+        diag.info(`${signal} received but shutdown already in progress, ignoring`);
         return;
       }
 
-      console.log(`\n${signal} received, shutting down gracefully...`);
+      diag.debug(`\n${signal} received, shutting down gracefully...`);
 
       try {
         // Run user callback before SDK shutdown
@@ -542,12 +250,12 @@ export class BunSDK implements AsyncDisposable {
         }
 
         // Shutdown SDK (will set _shutdownOnce = true)
-        await this.shutdown();
+        await this.stop();
 
-        console.log("✓ Shutdown complete");
+        diag.debug("✓ Shutdown complete");
         process.exit(0);
       } catch (error) {
-        console.error("Error during shutdown:", error);
+        diag.debug("Error during shutdown:", error);
         process.exit(1);
       }
     };
@@ -557,31 +265,187 @@ export class BunSDK implements AsyncDisposable {
     process.on("SIGINT", () => shutdownHandler("SIGINT"));
     process.on("SIGTERM", () => shutdownHandler("SIGTERM"));
 
-    debugLog("System shutdown hooks registered (SIGINT, SIGTERM)");
+    diag.verbose("System shutdown hooks registered (SIGINT, SIGTERM)");
   }
 
   /**
-   * Get the tracer provider instance.
-   * Only available after start() has been called.
+   * Stop the SDK - disable instrumentations and shutdown providers
    */
-  getTracerProvider(): NodeTracerProvider | undefined {
-    return this._tracerProvider;
+  async stop(): Promise<void> {
+    if (!this._started) return;
+
+    // 1. Disable instrumentations
+    for (const instr of this._instruments) {
+      instr.disable();
+    }
+    this._instruments.length = 0;
+
+    // 2. Disable context manager
+    context.disable();
+
+    // 3. Shutdown providers
+    if (this._tracerProvider) {
+      await this._tracerProvider.shutdown();
+      this._tracerProvider = undefined;
+    }
+
+    if (this._meterProvider) {
+      await this._meterProvider.shutdown();
+      this._meterProvider = undefined;
+    }
+
+    this._started = false;
   }
 
   /**
-   * Async dispose method for 'await using' statement support.
-   * Automatically shuts down the SDK and waits for all spans to flush.
-   *
-   * @example
-   * ```typescript
-   * await using sdk = new BunSDK({ ... });
-   * sdk.start();
-   * // await sdk.shutdown() called automatically when scope exits
-   * ```
+   * Symbol.dispose for 'using' statement
    */
-  async [Symbol.asyncDispose](): Promise<void> {
-    debugLog("Symbol.asyncDispose called - shutting down...");
-    await this.shutdown();
-    debugLog("Symbol.asyncDispose complete");
+  [Symbol.dispose](): void {
+    // Synchronous dispose - start async shutdown but don't await
+    this.stop().catch(err => {
+      console.error("Error during BunSDK2 disposal:", err);
+    });
+  }
+
+  /**
+   * Setup shared AsyncLocalStorage context
+   */
+  private _setupContext(): void {
+    this._contextStorage = new AsyncLocalStorage();
+    this._contextManager = new BunAsyncLocalStorageContextManager(this._contextStorage);
+
+    context.setGlobalContextManager(this._contextManager);
+
+    // Share with native telemetry
+    const ConfigProperty = { _context_storage: 7 };
+    Bun.telemetry.nativeHooks()?.setConfigurationProperty(ConfigProperty._context_storage, this._contextStorage);
+  }
+
+  /**
+   * Setup W3C trace context propagation
+   */
+  private _setupPropagation(): void {
+    const propagator = new CompositePropagator({
+      propagators: [new W3CTraceContextPropagator(), new W3CBaggagePropagator()],
+    });
+
+    propagation.setGlobalPropagator(propagator);
+  }
+
+  /**
+   * Build resource by merging auto-detected resources with custom resources
+   */
+  private _buildResource(): Resource {
+    let resource = emptyResource();
+
+    // Auto-detect resources (enabled by default)
+    if (this._config.autoDetectResources !== false) {
+      resource = resource.merge(
+        detectResources({
+          detectors: [envDetector, processDetector, hostDetector],
+        }),
+      );
+    }
+
+    // Merge custom resource if provided
+    if (this._config.resource) {
+      resource = resource.merge(this._config.resource);
+    }
+
+    // Add service name (overrides any previous service.name)
+    if (this._config.serviceName) {
+      resource = resource.merge(
+        resourceFromAttributes({
+          "service.name": this._config.serviceName,
+        }),
+      );
+    }
+
+    return resource;
+  }
+
+  /**
+   * Setup tracing (provider + processors)
+   */
+  private _setupTracing(): void {
+    // Use provided tracer provider or create one
+    if (this._config.tracerProvider) {
+      this._tracerProvider = this._config.tracerProvider as NodeTracerProvider;
+    } else {
+      // Determine span processors
+      let spanProcessors: SpanProcessor[] = [];
+
+      if (this._config.spanProcessors) {
+        spanProcessors = this._config.spanProcessors;
+      } else if (this._config.spanExporter) {
+        // Use SimpleSpanProcessor for testing (synchronous)
+        // Use BatchSpanProcessor for production (async batching)
+        const isInMemory = this._config.spanExporter.constructor.name.includes("InMemory");
+        spanProcessors = [
+          isInMemory
+            ? new SimpleSpanProcessor(this._config.spanExporter)
+            : new BatchSpanProcessor(this._config.spanExporter),
+        ];
+      }
+
+      if (spanProcessors.length > 0) {
+        this._tracerProvider = new NodeTracerProvider({
+          spanProcessors,
+          resource: this._buildResource(),
+        });
+      }
+    }
+
+    // Register globally
+    if (this._tracerProvider) {
+      trace.setGlobalTracerProvider(this._tracerProvider);
+    }
+  }
+
+  /**
+   * Setup metrics (provider + readers)
+   */
+  private _setupMetrics(): void {
+    // Use provided meter provider or create one
+    if (this._config.meterProvider) {
+      this._meterProvider = this._config.meterProvider as MeterProvider;
+    } else if (this._config.metricReaders && this._config.metricReaders.length > 0) {
+      this._meterProvider = new MeterProvider({
+        readers: this._config.metricReaders,
+        resource: this._buildResource(),
+      });
+    }
+
+    // Register globally
+    if (this._meterProvider) {
+      metrics.setGlobalMeterProvider(this._meterProvider);
+    }
+  }
+
+  /**
+   * Setup instrumentations using config mappers
+   */
+  private _setupInstrumentations(): void {
+    // Map NodeSDK config to generic instrument configs
+    const configs = mapNodeSDKConfig(this._config);
+    const enabled = this._config.bunInstruments || DEFAULT_INSTRUMENTS;
+    // Prepare providers to pass to all instrumentations
+    const providers = {
+      tracerProvider: this._tracerProvider,
+      meterProvider: this._meterProvider,
+      contextManager: this._contextManager,
+    };
+    if (configs.http.enabled && enabled.includes("http"))
+      this._instruments.push(new BunGenericInstrumentation(configs.http, providers));
+    if (configs.fetch.enabled && enabled.includes("fetch"))
+      this._instruments.push(new BunGenericInstrumentation(configs.fetch, providers));
+    if (configs.node.enabled && enabled.includes("node"))
+      this._instruments.push(new BunNodeHttpCreateServerAdapter(configs.node, providers));
+
+    // Enable all and store
+    for (const instrument of this._instruments) {
+      diag.debug(`Enabling instrumentation: ${instrument.instrumentationName}`);
+      instrument.enable();
+    }
   }
 }

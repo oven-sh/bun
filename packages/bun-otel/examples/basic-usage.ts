@@ -9,37 +9,33 @@
  * - fetch() client (creates CLIENT spans)
  */
 
-import { ConsoleSpanExporter } from "@opentelemetry/sdk-trace-base";
+import { ConsoleSpanExporter, BasicTracerProvider, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { BunSDK } from "bun-otel";
 
 // 1. Create and configure BunSDK using `using` for automatic cleanup
 using sdk = new BunSDK({
   // Exporter for sending traces (ConsoleSpanExporter prints to console)
-  traceExporter: new ConsoleSpanExporter(),
-
+  tracerProvider: new BasicTracerProvider({
+    spanProcessors: [new SimpleSpanProcessor(new ConsoleSpanExporter())],
+  }),
+}),
   // Service name identifies your application in distributed traces
   serviceName: "bun-example-service",
 
   // Optional: Customize instrumentation behavior
-  // Uncomment to override defaults:
-  // instrumentations: [
-  //   new BunHttpInstrumentation({
-  //     headersToSpanAttributes: {
-  //       server: {
-  //         requestHeaders: ["user-agent", "content-type", "x-request-id"],
-  //         responseHeaders: ["content-type", "x-trace-id"],
-  //       },
-  //     },
-  //   }),
-  //   new BunFetchInstrumentation({
-  //     headersToSpanAttributes: {
-  //       client: {
-  //         requestHeaders: ["content-type"],
-  //         responseHeaders: ["content-type", "cache-control"],
-  //       },
-  //     },
-  //   }),
-  // ],
+  // Uncomment to capture additional headers:
+  // http: {
+  //   captureAttributes: {
+  //     requestHeaders: ["user-agent", "content-type", "x-request-id"],
+  //     responseHeaders: ["content-type", "x-trace-id"],
+  //   },
+  // },
+  // fetch: {
+  //   captureAttributes: {
+  //     requestHeaders: ["content-type"],
+  //     responseHeaders: ["content-type", "cache-control"],
+  //   },
+  // },
 });
 
 // 2. Start the SDK and register graceful shutdown handlers

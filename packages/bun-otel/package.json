@@ -11,11 +11,10 @@
   ],
   "license": "MIT",
   "main": "./index.ts",
+  "module": "./index.ts",
   "types": "./index.ts",
   "exports": {
-    ".": "./index.ts",
-    "./instrumentations": "./src/instruments/index.ts",
-    "./logging": "./src/instruments/logging/index.ts"
+    ".": "./index.ts"
   },
   "files": [
     "index.ts",

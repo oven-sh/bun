@@ -2,9 +2,15 @@
  * Test utilities for bun-otel tests
  */
 import { SpanKind, SpanStatusCode } from "@opentelemetry/api";
-import { InMemorySpanExporter, ReadableSpan, SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import {
+  AggregationTemporality,
+  InMemoryMetricExporter,
+  PeriodicExportingMetricReader,
+  type ResourceMetrics,
+} from "@opentelemetry/sdk-metrics";
+import { InMemorySpanExporter, ReadableSpan } from "@opentelemetry/sdk-trace-base";
 import { expect } from "bun:test";
-import { BunSDK, type BunSDKConfiguration } from "../src/BunSDK";
+import { BunSDK, type BunSDK2Config } from "../src/BunSDK";
 import { NativeHooks } from "../types";
 import { EchoServer } from "./echo-server";
 
@@ -122,34 +128,88 @@ function refCountDown(): void {
 }
 
 /**
- * TestSDK extends BunSDK with helper methods for tests
+ * TestSDK extends BunSDK2 with helper methods for tests
  * Autostarts, is Disposable, and includes waitForSpans()
  */
 export class TestSDK extends BunSDK implements AsyncDisposable, Disposable {
-  private exporter: InMemorySpanExporter;
-  constructor(config: BunSDKConfiguration = {}, exporter = new InMemorySpanExporter()) {
+  readonly spanExporter: InMemorySpanExporter;
+  readonly metricExporter: InMemoryMetricExporter;
+
+  constructor(config: BunSDK2Config = {}) {
+    // Create exporters automatically
+    const spanExporter = new InMemorySpanExporter();
+    const metricExporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
+
     super({
       ...config,
-      spanProcessor: new SimpleSpanProcessor(exporter),
+      spanExporter,
+      metricReaders: [
+        ...(config.metricReaders || []),
+        new PeriodicExportingMetricReader({
+          exporter: metricExporter,
+          exportIntervalMillis: 100,
+        }),
+      ],
+      autoStart: true,
     });
-    this.exporter = exporter;
-    this.start();
+
+    this.spanExporter = spanExporter;
+    this.metricExporter = metricExporter;
   }
+
+  // /**
+  //  * Get spans from InMemory exporter (testing only)
+  //  */
+  // getSpans(): ReadableSpan[] {
+  //   // Try to extract spans from span processor
+  //   if (this._tracerProvider) {
+  //     const activeProcessor = (this._tracerProvider as any)._activeSpanProcessor;
+  //     if (activeProcessor && typeof activeProcessor.forceFlush === "function") {
+  //       // Check if it's a SimpleSpanProcessor with InMemorySpanExporter
+  //       const exporter = (activeProcessor as InMemorySpanExporter)._exporter;
+  //       if (exporter && typeof exporter.getFinishedSpans === "function") {
+  //         return exporter.getFinishedSpans();
+  //       }
+  //     }
+  //   }
+  //   return [];
+  // }
+
   waitForSpans(
     expectedCount: number,
     timeout: number | { timeoutMs: number; pollIntervalMs?: number } = 500,
     options?: { traceId?: string } | ((spans: SpanAssertHelper) => ReadableSpan[]),
   ): Promise<SpanAssertHelper> {
-    return waitForSpans(this.exporter, expectedCount, timeout, options);
+    return waitForSpans(this.spanExporter, expectedCount, timeout, options);
   }
+
+  /**
+   * Wait for metrics to be exported and return them
+   *
+   * @param clear - Clear metrics after retrieving (default: false)
+   * @returns ResourceMetrics array
+   */
+  async waitForMetrics(clear = false): Promise<ResourceMetrics[]> {
+    // Force flush all metric readers
+    await this._meterProvider?.forceFlush();
+
+    const metrics = this.metricExporter.getMetrics();
+
+    if (clear) {
+      this.metricExporter.reset();
+    }
+
+    return metrics;
+  }
+
   shutdown(): Promise<void> {
     throw new Error("TestSDK should not be shutdown manually; use 'using' or 'await using' to auto-manage lifecycle");
   }
   [Symbol.dispose](): void | Promise<void> {
-    return super.shutdown();
+    return super.stop();
   }
   [Symbol.asyncDispose](): Promise<void> {
-    return super.shutdown();
+    return super.stop();
   }
 }
 
@@ -189,7 +249,7 @@ export async function waitForSpans(
   options?: { traceId?: string } | ((spans: SpanAssertHelper) => ReadableSpan[]),
 ): Promise<SpanAssertHelper> {
   const startTime = Date.now();
-  const timeoutMs = typeof timeout === "number" ? timeout : timeout.timeoutMs;
+  const timeoutMs = Math.min(typeof timeout === "number" ? timeout : timeout.timeoutMs, 500);
   const pollInterval = (typeof timeout === "object" ? timeout.pollIntervalMs : undefined) ?? 5;
   const filterFn =
     typeof options === "function"

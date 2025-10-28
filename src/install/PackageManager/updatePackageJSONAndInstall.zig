@@ -634,6 +634,8 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
                             // Remove if marked for removal
                             if (should_remove) {
+                                // Increment counter before attempting deletion for consistent dry-run preview
+                                self.manager.summary.remove += 1;
                                 if (!self.is_dry_run) {
                                     scope_dir.deleteTree(scoped_entry.name) catch |err| {
                                         if (self.manager.options.log_level != .silent) {
@@ -641,9 +643,6 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                                         }
                                         continue;
                                     };
-                                    self.manager.summary.remove += 1;
-                                } else {
-                                    self.manager.summary.remove += 1;
                                 }
                             } else {
                                 // Package is kept, check for nested node_modules
@@ -670,6 +669,8 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
 
                     // Remove if marked for removal
                     if (should_remove) {
+                        // Increment counter before attempting deletion for consistent dry-run preview
+                        self.manager.summary.remove += 1;
                         if (!self.is_dry_run) {
                             dir.deleteTree(entry.name) catch |err| {
                                 if (self.manager.options.log_level != .silent) {
@@ -677,9 +678,6 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                                 }
                                 continue;
                             };
-                            self.manager.summary.remove += 1;
-                        } else {
-                            self.manager.summary.remove += 1;
                         }
                     } else {
                         // Package is kept, check for nested node_modules
@@ -851,6 +849,16 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
         };
 
         prune_ctx.pruneNodeModulesRecursive(node_modules_dir, 0);
+
+        // Print removal summary after prune operation completes
+        if (manager.summary.remove > 0 and manager.options.log_level != .silent) {
+            if (manager.options.dry_run) {
+                Output.pretty("<r><b>{d}<r> package{s} would be removed ", .{ manager.summary.remove, if (manager.summary.remove == 1) "" else "s" });
+            } else {
+                Output.pretty("<r><b>{d}<r> package{s} removed ", .{ manager.summary.remove, if (manager.summary.remove == 1) "" else "s" });
+            }
+            Output.prettyln("", .{});
+        }
     }
 }
 

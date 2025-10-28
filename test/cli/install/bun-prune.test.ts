@@ -666,6 +666,106 @@ linkWorkspacePackages = true
     const lodashExistsAfter = await file(join(String(dir), "node_modules", "lodash", "package.json")).exists();
     expect(lodashExistsAfter).toBe(true);
   });
+
+  it("should report consistent counts between dry-run and actual execution", async () => {
+    using dir = tempDir("prune-count-consistency", {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        dependencies: {
+          "is-number": "^7.0.0",
+        },
+      }),
+    });
+
+    // Install dependencies
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await installProc.exited).toBe(0);
+
+    // Manually create multiple stray packages that aren't in lockfile
+    const strayPackages = ["lodash", "axios", "express"];
+    for (const pkg of strayPackages) {
+      const strayPkgPath = join(String(dir), `node_modules/${pkg}`);
+      mkdirSync(strayPkgPath, { recursive: true });
+      writeFileSync(join(strayPkgPath, "package.json"), JSON.stringify({ name: pkg, version: "1.0.0" }));
+      writeFileSync(join(strayPkgPath, "index.js"), "module.exports = {};");
+    }
+
+    // Verify stray packages exist before prune
+    for (const pkg of strayPackages) {
+      expect(existsSync(join(String(dir), `node_modules/${pkg}`))).toBe(true);
+    }
+
+    // Run prune with --dry-run
+    await using dryRunProc = Bun.spawn({
+      cmd: [bunExe(), "prune", "--dry-run"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [dryRunStdout, dryRunExitCode] = await Promise.all([dryRunProc.stdout.text(), dryRunProc.exited]);
+
+    expect(dryRunExitCode).toBe(0);
+
+    // Verify dry-run output shows packages would be removed
+    expect(dryRunStdout).toContain("would be removed");
+
+    // Extract count from dry-run output (e.g., "3 packages would be removed")
+    const dryRunMatch = dryRunStdout.match(/(\d+) package.*would be removed/);
+    if (!dryRunMatch) {
+      console.log("Dry-run stdout:", dryRunStdout);
+      throw new Error("Could not find package count in dry-run output");
+    }
+    const dryRunCount = parseInt(dryRunMatch[1]);
+    expect(dryRunCount).toBe(strayPackages.length);
+
+    // Verify nothing was removed during dry-run
+    for (const pkg of strayPackages) {
+      expect(existsSync(join(String(dir), `node_modules/${pkg}`))).toBe(true);
+    }
+
+    // Run actual prune (without --dry-run)
+    await using actualProc = Bun.spawn({
+      cmd: [bunExe(), "prune"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [actualStdout, actualStderr, actualExitCode] = await Promise.all([
+      actualProc.stdout.text(),
+      actualProc.stderr.text(),
+      actualProc.exited,
+    ]);
+
+    expect(actualExitCode).toBe(0);
+
+    // Extract count from actual output (e.g., "3 packages removed")
+    const actualMatch = actualStdout.match(/(\d+) package.*removed/);
+    expect(actualMatch).not.toBeNull();
+    const actualCount = parseInt(actualMatch![1]);
+
+    // CRITICAL: Counts must match between dry-run and actual execution
+    expect(actualCount).toBe(dryRunCount);
+    expect(actualCount).toBe(strayPackages.length);
+
+    // Verify packages were actually removed
+    for (const pkg of strayPackages) {
+      expect(existsSync(join(String(dir), `node_modules/${pkg}`))).toBe(false);
+    }
+
+    // Verify is-number (legitimate package) was preserved
+    expect(existsSync(join(String(dir), "node_modules/is-number"))).toBe(true);
+  });
 });
 
 // Isolated linker tests run sequentially (not concurrently) to avoid handler conflicts

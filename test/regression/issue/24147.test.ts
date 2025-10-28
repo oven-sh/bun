@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import assert from "node:assert";
 import { EventEmitter } from "node:events";
+import { describe, test } from "node:test";
 
 describe("EventEmitter - issue 24147", () => {
   test("removeAllListeners() called from event handler with removeListener meta-listener should not crash", () => {
@@ -12,31 +13,28 @@ describe("EventEmitter - issue 24147", () => {
     emitter.on("removeListener", () => {});
 
     // Should not throw TypeError: undefined is not an object
-    expect(() => {
+    assert.doesNotThrow(() => {
       emitter.emit("test");
-    }).not.toThrow();
+    });
   });
 
   test("removeAllListeners() should work correctly with removeListener meta-listener", () => {
     const emitter = new EventEmitter();
     let testCalled = false;
-    let removeListenerCalled = false;
 
     emitter.on("test", () => {
       testCalled = true;
       emitter.removeAllListeners("foo");
     });
 
-    emitter.on("removeListener", () => {
-      removeListenerCalled = true;
-    });
+    emitter.on("removeListener", () => {});
 
     emitter.on("foo", () => {});
 
     emitter.emit("test");
 
-    expect(testCalled).toBe(true);
-    expect(emitter.listenerCount("foo")).toBe(0);
+    assert.strictEqual(testCalled, true);
+    assert.strictEqual(emitter.listenerCount("foo"), 0);
   });
 
   test("_events should remain intact after removeAllListeners in nested call", () => {
@@ -45,7 +43,7 @@ describe("EventEmitter - issue 24147", () => {
     emitter.on("test", () => {
       emitter.removeAllListeners("foo");
       // _events should still be accessible
-      expect(emitter.eventNames()).toBeDefined();
+      assert.ok(emitter.eventNames());
     });
 
     emitter.on("removeListener", () => {});
@@ -54,7 +52,7 @@ describe("EventEmitter - issue 24147", () => {
 
     // Should still be able to add listeners after
     emitter.on("bar", () => {});
-    expect(emitter.listenerCount("bar")).toBe(1);
+    assert.strictEqual(emitter.listenerCount("bar"), 1);
   });
 
   test("removeAllListeners() without event name should work with removeListener meta-listener", () => {
@@ -69,12 +67,12 @@ describe("EventEmitter - issue 24147", () => {
     emitter.on("foo", () => {});
     emitter.on("bar", () => {});
 
-    expect(() => {
+    assert.doesNotThrow(() => {
       emitter.emit("test");
-    }).not.toThrow();
+    });
 
     // All listeners should be removed (including removeListener)
-    expect(emitter.eventNames()).toEqual([]);
+    assert.deepStrictEqual(emitter.eventNames(), []);
   });
 
   test("multiple nested removeAllListeners calls should work", () => {
@@ -92,12 +90,12 @@ describe("EventEmitter - issue 24147", () => {
     emitter.on("bar", () => {});
     emitter.on("baz", () => {});
 
-    expect(() => {
+    assert.doesNotThrow(() => {
       emitter.emit("test");
-    }).not.toThrow();
+    });
 
-    expect(emitter.listenerCount("foo")).toBe(0);
-    expect(emitter.listenerCount("bar")).toBe(0);
-    expect(emitter.listenerCount("baz")).toBe(0);
+    assert.strictEqual(emitter.listenerCount("foo"), 0);
+    assert.strictEqual(emitter.listenerCount("bar"), 0);
+    assert.strictEqual(emitter.listenerCount("baz"), 0);
   });
 });

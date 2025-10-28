@@ -374,4 +374,39 @@ describe("server.routes getter", () => {
     expect(JSON.parse(lines[2])).toEqual(["/duplicate"]);
     expect(exitCode).toBe(0);
   });
+
+  test("should include wildcard routes", async () => {
+    using dir = tempDir("serve-routes-test", {
+      "server.js": `
+        const server = Bun.serve({
+          port: 0,
+          routes: {
+            "/*": () => new Response("wildcard"),
+            "/specific": () => new Response("specific"),
+          },
+          fetch(req) {
+            return new Response("fallback");
+          }
+        });
+        console.log(JSON.stringify(server.routes.sort()));
+        server.stop();
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const routes = JSON.parse(stdout.trim());
+    expect(routes).toContain("/*");
+    expect(routes).toContain("/specific");
+    expect(routes.length).toBe(2);
+    expect(exitCode).toBe(0);
+  });
 });

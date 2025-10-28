@@ -1501,10 +1501,8 @@ pub const Behavior = packed struct(u8) {
 
 const string = []const u8;
 
-const npm_package_arg = @import("npm_package_arg.zig");
-const hosted_git_info = @import("hosted_git_info.zig");
-
 const Environment = @import("../env.zig");
+const hosted_git_info = @import("./hosted_git_info.zig");
 const std = @import("std");
 const Repository = @import("./repository.zig").Repository;
 

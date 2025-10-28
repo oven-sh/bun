@@ -449,7 +449,7 @@ pub fn parse(
         }
         source_index += source_index_delta.value;
 
-        if (source_index < 0 or source_index > sources_count) {
+        if (source_index < 0 or source_index >= sources_count) {
             return .{
                 .fail = .{
                     .msg = "Invalid source index value",

@@ -1,15 +1,5 @@
 const Mapping = @This();
 
-const std = @import("std");
-const bun = @import("bun");
-const SourceMap = @import("./sourcemap.zig");
-const LineColumnOffset = SourceMap.LineColumnOffset;
-const Logger = bun.logger;
-const strings = bun.strings;
-const ParsedSourceMap = SourceMap.ParsedSourceMap;
-const decodeVLQ = SourceMap.VLQ.decode;
-const assert = bun.assert;
-const ParseResult = SourceMap.ParseResult;
 const debug = bun.Output.scoped(.SourceMap, .visible);
 
 generated: LineColumnOffset,
@@ -595,3 +585,15 @@ pub fn parse(
         .input_line_count = input_line_count,
     } };
 }
+
+const std = @import("std");
+
+const SourceMap = @import("./sourcemap.zig");
+const LineColumnOffset = SourceMap.LineColumnOffset;
+const ParseResult = SourceMap.ParseResult;
+const ParsedSourceMap = SourceMap.ParsedSourceMap;
+const decodeVLQ = SourceMap.VLQ.decode;
+
+const bun = @import("bun");
+const assert = bun.assert;
+const strings = bun.strings;

@@ -1,17 +1,5 @@
 const ParsedSourceMap = @This();
 
-const std = @import("std");
-const bun = @import("bun");
-const SourceMap = @import("./sourcemap.zig");
-const Mapping = SourceMap.Mapping;
-const SourceMapLoadHint = SourceMap.SourceMapLoadHint;
-const ParseUrlResultHint = SourceMap.ParseUrlResultHint;
-const SourceProviderMap = SourceMap.SourceProviderMap;
-const BakeSourceProvider = SourceMap.BakeSourceProvider;
-const DevServerSourceProvider = SourceMap.DevServerSourceProvider;
-const VLQ = SourceMap.VLQ;
-const assert = bun.assert;
-
 const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
@@ -162,3 +150,17 @@ pub fn formatVLQs(map: *const ParsedSourceMap) std.fmt.Formatter(formatVLQsImpl)
 fn formatVLQsImpl(map: *const ParsedSourceMap, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
     try map.writeVLQs(w);
 }
+
+const std = @import("std");
+
+const SourceMap = @import("./sourcemap.zig");
+const BakeSourceProvider = SourceMap.BakeSourceProvider;
+const DevServerSourceProvider = SourceMap.DevServerSourceProvider;
+const Mapping = SourceMap.Mapping;
+const ParseUrlResultHint = SourceMap.ParseUrlResultHint;
+const SourceMapLoadHint = SourceMap.SourceMapLoadHint;
+const SourceProviderMap = SourceMap.SourceProviderMap;
+const VLQ = SourceMap.VLQ;
+
+const bun = @import("bun");
+const assert = bun.assert;

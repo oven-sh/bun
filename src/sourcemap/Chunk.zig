@@ -1,17 +1,5 @@
 const Chunk = @This();
 
-const std = @import("std");
-const bun = @import("bun");
-const SourceMap = @import("./sourcemap.zig");
-const SourceMapState = SourceMap.SourceMapState;
-const MutableString = bun.MutableString;
-const Logger = bun.logger;
-const JSPrinter = bun.js_printer;
-const strings = bun.strings;
-const FileSystem = bun.fs.FileSystem;
-const LineOffsetTable = SourceMap.LineOffsetTable;
-const appendMappingToBuffer = SourceMap.appendMappingToBuffer;
-
 buffer: MutableString,
 
 mappings_count: usize = 0,
@@ -369,3 +357,17 @@ pub fn NewBuilder(comptime SourceMapFormatType: type) type {
 }
 
 pub const Builder = NewBuilder(VLQSourceMap);
+
+const std = @import("std");
+
+const SourceMap = @import("./sourcemap.zig");
+const LineOffsetTable = SourceMap.LineOffsetTable;
+const SourceMapState = SourceMap.SourceMapState;
+const appendMappingToBuffer = SourceMap.appendMappingToBuffer;
+
+const bun = @import("bun");
+const JSPrinter = bun.js_printer;
+const Logger = bun.logger;
+const MutableString = bun.MutableString;
+const strings = bun.strings;
+const FileSystem = bun.fs.FileSystem;

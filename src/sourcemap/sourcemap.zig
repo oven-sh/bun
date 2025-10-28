@@ -250,7 +250,6 @@ pub fn parseJSON(
 }
 
 /// Corresponds to a segment in the "mappings" field of a sourcemap
-
 pub const Mapping = @import("./Mapping.zig");
 
 pub const ParseResult = union(enum) {
@@ -966,11 +965,9 @@ const string = []const u8;
 const std = @import("std");
 
 const bun = @import("bun");
-const JSPrinter = bun.js_printer;
 const Logger = bun.logger;
 const MutableString = bun.MutableString;
 const StringJoiner = bun.StringJoiner;
 const URL = bun.URL;
 const assert = bun.assert;
 const strings = bun.strings;
-const FileSystem = bun.fs.FileSystem;

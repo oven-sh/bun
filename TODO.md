@@ -8,6 +8,10 @@ TODO:
 
 Follow-up:
 
+- [ ] search `comptime Writer: type` and `comptime W: type` and remove
+
+Follow-up:
+
 - [ ] remove override_no_export_cpp_apis as it is no longer needed
 - [ ] css Parser(W) -> Parser, and remove all the comptime writer: type params
 - [ ] remove old writers fully

@@ -553,8 +553,6 @@ pub const JSValue = enum(i64) {
             globalObject,
             @as([*]const JSValue, @ptrCast(&this)),
             1,
-            *std.Io.Writer,
-            *std.Io.Writer,
             out,
             fmt_options,
         );

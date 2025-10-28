@@ -233,8 +233,6 @@ fn messageWithTypeAndLevel_(
             global,
             vals,
             print_length,
-            Writer,
-            Writer,
             writer,
             print_options,
         )
@@ -831,8 +829,6 @@ pub fn format2(
     global: *JSGlobalObject,
     vals: [*]const JSValue,
     len: usize,
-    comptime RawWriter: type,
-    comptime Writer: type,
     writer: *std.Io.Writer,
     options: FormatOptions,
 ) bun.JSError!void {
@@ -852,7 +848,7 @@ pub fn format2(
         };
         defer fmt.deinit();
         const tag = try ConsoleObject.Formatter.Tag.get(vals[0], global);
-        fmt.writeIndent(Writer, writer) catch return;
+        fmt.writeIndent(*std.Io.Writer, writer) catch return;
 
         if (tag.tag == .String) {
             if (options.enable_colors) {
@@ -861,7 +857,7 @@ pub fn format2(
                 }
                 try fmt.format(
                     tag,
-                    Writer,
+                    *std.Io.Writer,
                     writer,
                     vals[0],
                     global,
@@ -873,7 +869,7 @@ pub fn format2(
             } else {
                 try fmt.format(
                     tag,
-                    Writer,
+                    *std.Io.Writer,
                     writer,
                     vals[0],
                     global,
@@ -887,14 +883,12 @@ pub fn format2(
             writer.flush() catch {};
         } else {
             defer {
-                if (comptime Writer != RawWriter) {
-                    if (options.flush) writer.context.flush() catch {};
-                }
+                if (options.flush) writer.flush() catch {};
             }
             if (options.enable_colors) {
                 try fmt.format(
                     tag,
-                    Writer,
+                    *std.Io.Writer,
                     writer,
                     vals[0],
                     global,
@@ -903,7 +897,7 @@ pub fn format2(
             } else {
                 try fmt.format(
                     tag,
-                    Writer,
+                    *std.Io.Writer,
                     writer,
                     vals[0],
                     global,
@@ -917,9 +911,7 @@ pub fn format2(
     }
 
     defer {
-        if (comptime Writer != RawWriter) {
-            if (options.flush) writer.context.flush() catch {};
-        }
+        if (options.flush) writer.flush() catch {};
     }
 
     var this_value: JSValue = vals[0];
@@ -938,7 +930,7 @@ pub fn format2(
     defer fmt.deinit();
     var tag: ConsoleObject.Formatter.Tag.Result = undefined;
 
-    fmt.writeIndent(Writer, writer) catch return;
+    fmt.writeIndent(*std.Io.Writer, writer) catch return;
 
     var any = false;
     if (options.enable_colors) {
@@ -956,7 +948,7 @@ pub fn format2(
                 tag.tag = .{ .StringPossiblyFormatted = {} };
             }
 
-            try fmt.format(tag, Writer, writer, this_value, global, true);
+            try fmt.format(tag, *std.Io.Writer, writer, this_value, global, true);
             if (fmt.remaining_values.len == 0) {
                 break;
             }
@@ -978,7 +970,7 @@ pub fn format2(
                 tag.tag = .{ .StringPossiblyFormatted = {} };
             }
 
-            try fmt.format(tag, Writer, writer, this_value, global, false);
+            try fmt.format(tag, *std.Io.Writer, writer, this_value, global, false);
             if (fmt.remaining_values.len == 0)
                 break;
 

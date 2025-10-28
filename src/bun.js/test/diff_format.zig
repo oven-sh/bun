@@ -41,8 +41,6 @@ pub const DiffFormatter = struct {
                 this.globalThis,
                 @as([*]const JSValue, @ptrCast(&received)),
                 1,
-                *std.Io.Writer,
-                *std.Io.Writer,
                 &received_buf.writer,
                 fmt_options,
             ) catch {}; // TODO:
@@ -52,8 +50,6 @@ pub const DiffFormatter = struct {
                 this.globalThis,
                 @as([*]const JSValue, @ptrCast(&this.expected)),
                 1,
-                *std.Io.Writer,
-                *std.Io.Writer,
                 &expected_buf.writer,
                 fmt_options,
             ) catch {}; // TODO:

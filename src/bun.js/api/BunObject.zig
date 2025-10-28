@@ -455,7 +455,6 @@ pub fn inspect(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
     var array = std.Io.Writer.Allocating.init(bun.default_allocator);
     defer array.deinit();
     const writer = &array.writer;
-    const Writer = @TypeOf(writer);
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
     try ConsoleObject.format2(
@@ -463,8 +462,6 @@ pub fn inspect(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
         globalThis,
         arguments.ptr,
         1,
-        Writer,
-        Writer,
         writer,
         formatOptions,
     );
@@ -496,8 +493,7 @@ export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) b
     var array = std.Io.Writer.Allocating.init(bun.default_allocator);
     defer array.deinit();
     const writer = &array.writer;
-    const Writer = @TypeOf(writer);
-    ConsoleObject.format2(.Debug, globalThis, (&value)[0..1].ptr, 1, Writer, Writer, writer, .{
+    ConsoleObject.format2(.Debug, globalThis, (&value)[0..1].ptr, 1, writer, .{
         .enable_colors = false,
         .add_newline = false,
         .flush = false,

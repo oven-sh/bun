@@ -409,7 +409,6 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
     var worker = vm.worker orelse @panic("Assertion failure: no worker");
 
     const writer = &array.writer;
-    const Writer = @TypeOf(writer);
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
     jsc.ConsoleObject.format2(
@@ -417,8 +416,6 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         globalObject,
         &[_]jsc.JSValue{error_instance},
         1,
-        Writer,
-        Writer,
         writer,
         .{
             .enable_colors = false,

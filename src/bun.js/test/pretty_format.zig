@@ -72,8 +72,6 @@ pub const JestPrettyFormat = struct {
         global: *JSGlobalObject,
         vals: [*]const JSValue,
         len: usize,
-        comptime RawWriter: type,
-        comptime Writer: type,
         writer: *std.Io.Writer,
         options: FormatOptions,
     ) bun.JSError!void {
@@ -123,14 +121,12 @@ pub const JestPrettyFormat = struct {
                 if (options.add_newline) writer.writeAll("\n") catch {};
             } else {
                 defer {
-                    if (comptime Writer != RawWriter) {
-                        if (options.flush) writer.context.flush() catch {};
-                    }
+                    if (options.flush) writer.flush() catch {};
                 }
                 if (options.enable_colors) {
                     try fmt.format(
                         tag,
-                        Writer,
+                        *std.Io.Writer,
                         writer,
                         vals[0],
                         global,
@@ -139,7 +135,7 @@ pub const JestPrettyFormat = struct {
                 } else {
                     try fmt.format(
                         tag,
-                        Writer,
+                        *std.Io.Writer,
                         writer,
                         vals[0],
                         global,
@@ -155,9 +151,7 @@ pub const JestPrettyFormat = struct {
         }
 
         defer {
-            if (comptime Writer != RawWriter) {
-                if (options.flush) writer.context.flush() catch {};
-            }
+            if (options.flush) writer.flush() catch {};
         }
 
         var this_value: JSValue = vals[0];
@@ -184,7 +178,7 @@ pub const JestPrettyFormat = struct {
                     tag.tag = .StringPossiblyFormatted;
                 }
 
-                try fmt.format(tag, Writer, writer, this_value, global, true);
+                try fmt.format(tag, *std.Io.Writer, writer, this_value, global, true);
                 if (fmt.remaining_values.len == 0) {
                     break;
                 }
@@ -206,7 +200,7 @@ pub const JestPrettyFormat = struct {
                     tag.tag = .StringPossiblyFormatted;
                 }
 
-                try fmt.format(tag, Writer, writer, this_value, global, false);
+                try fmt.format(tag, *std.Io.Writer, writer, this_value, global, false);
                 if (fmt.remaining_values.len == 0)
                     break;
 

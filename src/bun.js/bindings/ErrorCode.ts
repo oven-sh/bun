@@ -20,7 +20,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_ASSERTION", Error],
   ["ERR_ASYNC_CALLBACK", TypeError],
   ["ERR_ASYNC_TYPE", TypeError],
-  ["ERR_BODY_ALREADY_USED", Error],
+  ["ERR_BODY_ALREADY_USED", TypeError],
   ["ERR_BORINGSSL", Error],
   ["ERR_ZSTD", Error],
   ["ERR_BROTLI_INVALID_PARAM", RangeError],

@@ -1,49 +1,74 @@
 import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { writeFile } from "fs/promises";
+import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, readdirSorted, tempDir, tls } from "harness";
 import { join } from "path";
-import {
-  dummyAfterAll,
-  dummyAfterEach,
-  dummyBeforeAll,
-  dummyBeforeEach,
-  dummyRegistry,
-  getPort,
-  package_dir,
-  setHandler,
-} from "./dummy.registry";
 
-beforeAll(dummyBeforeAll);
-afterAll(dummyAfterAll);
-beforeEach(async () => {
-  await dummyBeforeEach();
-});
-afterEach(dummyAfterEach);
-
-describe("bun install --insecure flag", () => {
-  it("should accept the --insecure flag and display warning", async () => {
-    const urls: string[] = [];
-    setHandler(
-      dummyRegistry(urls, {
-        "0.0.2": {},
+// Helper to create a registry handler with proper URL context
+function createRegistryHandler(urls: string[], info: any, rootUrl: string) {
+  return async (request: Request) => {
+    urls.push(request.url);
+    const url = request.url.replaceAll("%2f", "/");
+    
+    if (url.endsWith(".tgz")) {
+      return new Response(file(join(import.meta.dir, new URL(url).pathname.split("/").pop()!.toLowerCase())));
+    }
+    
+    const name = url.slice(url.indexOf("/", rootUrl.length) + 1);
+    const versions: Record<string, any> = {};
+    let version;
+    for (version in info) {
+      if (!/^[0-9]/.test(version)) continue;
+      versions[version] = {
+        name,
+        version,
+        dist: {
+          tarball: `${url}-${info[version].as ?? version}.tgz`,
+        },
+        ...info[version],
+      };
+    }
+    
+    return new Response(
+      JSON.stringify({
+        name,
+        versions,
+        "dist-tags": {
+          latest: info.latest ?? version,
+        },
       }),
     );
+  };
+}
 
-    await writeFile(
-      join(package_dir, "package.json"),
-      JSON.stringify({
+describe.concurrent("bun install --insecure flag", () => {
+  it("should accept the --insecure flag and display warning", async () => {
+    const urls: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const rootUrl = `http://localhost:${server.port}`;
+        return await createRegistryHandler(urls, { "0.0.2": {} }, rootUrl)(request);
+      },
+    });
+
+    using testDir = tempDir("test-insecure-flag", {
+      "package.json": JSON.stringify({
         name: "test-insecure-flag",
         version: "1.0.0",
         dependencies: {
           bar: "0.0.2",
         },
       }),
-    );
+      "bunfig.toml": `
+[install]
+cache = false
+registry = "http://localhost:${server.port}/"
+`,
+    });
 
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--insecure"],
-      cwd: package_dir,
+      cwd: testDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -62,22 +87,22 @@ describe("bun install --insecure flag", () => {
     expect(exitCode).toBe(0);
 
     // Package should still be installed
-    const installed = await readdirSorted(join(package_dir, "node_modules"));
+    const installed = await readdirSorted(join(testDir, "node_modules"));
     expect(installed).toContain("bar");
   });
 
   it("should work with other install flags", async () => {
     const urls: string[] = [];
-    setHandler(
-      dummyRegistry(urls, {
-        "0.0.2": {},
-        "0.0.3": {},
-      }),
-    );
+    using server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const rootUrl = `http://localhost:${server.port}`;
+        return await createRegistryHandler(urls, { "0.0.2": {}, "0.0.3": {} }, rootUrl)(request);
+      },
+    });
 
-    await writeFile(
-      join(package_dir, "package.json"),
-      JSON.stringify({
+    using testDir = tempDir("test-insecure-with-flags", {
+      "package.json": JSON.stringify({
         name: "test-insecure-with-flags",
         version: "1.0.0",
         dependencies: {
@@ -87,12 +112,17 @@ describe("bun install --insecure flag", () => {
           baz: "0.0.3",
         },
       }),
-    );
+      "bunfig.toml": `
+[install]
+cache = false
+registry = "http://localhost:${server.port}/"
+`,
+    });
 
     // Test --insecure with --production
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--insecure", "--production"],
-      cwd: package_dir,
+      cwd: testDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -106,31 +136,37 @@ describe("bun install --insecure flag", () => {
     expect(exitCode).toBe(0);
 
     // Should install production dependencies only
-    const installed = await readdirSorted(join(package_dir, "node_modules"));
+    const installed = await readdirSorted(join(testDir, "node_modules"));
     expect(installed).toContain("bar");
     expect(installed).not.toContain("baz");
   });
 
   it("should work with bun add --insecure", async () => {
     const urls: string[] = [];
-    setHandler(
-      dummyRegistry(urls, {
-        "0.0.2": {},
-      }),
-    );
+    using server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const rootUrl = `http://localhost:${server.port}`;
+        return await createRegistryHandler(urls, { "0.0.2": {} }, rootUrl)(request);
+      },
+    });
 
-    await writeFile(
-      join(package_dir, "package.json"),
-      JSON.stringify({
+    using testDir = tempDir("test-add-insecure", {
+      "package.json": JSON.stringify({
         name: "test-add-insecure",
         version: "1.0.0",
         dependencies: {},
       }),
-    );
+      "bunfig.toml": `
+[install]
+cache = false
+registry = "http://localhost:${server.port}/"
+`,
+    });
 
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "add", "boba@0.0.2", "--insecure"],
-      cwd: package_dir,
+      cwd: testDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -144,7 +180,7 @@ describe("bun install --insecure flag", () => {
     expect(exitCode).toBe(0);
 
     // Package should be added
-    const installed = await readdirSorted(join(package_dir, "node_modules"));
+    const installed = await readdirSorted(join(testDir, "node_modules"));
     expect(installed).toContain("boba");
   });
 
@@ -288,36 +324,33 @@ insecure = true
 
   it("CLI --insecure flag should override bunfig install.insecure=false", async () => {
     const urls: string[] = [];
-    setHandler(
-      dummyRegistry(urls, {
-        "0.0.2": {},
-      }),
-    );
+    using server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const rootUrl = `http://localhost:${server.port}`;
+        return await createRegistryHandler(urls, { "0.0.2": {} }, rootUrl)(request);
+      },
+    });
 
-    await writeFile(
-      join(package_dir, "package.json"),
-      JSON.stringify({
+    using testDir = tempDir("test-cli-override-bunfig", {
+      "package.json": JSON.stringify({
         name: "test-cli-override-bunfig",
         version: "1.0.0",
         dependencies: {
           bar: "0.0.2",
         },
       }),
-    );
-
-    // Create bunfig.toml with install.insecure = false and registry pointing to dummy
-    await writeFile(
-      join(package_dir, "bunfig.toml"),
-      `[install]
+      "bunfig.toml": `
+[install]
 cache = false
-registry = "http://localhost:${getPort()}/"
+registry = "http://localhost:${server.port}/"
 insecure = false
 `,
-    );
+    });
 
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--insecure"], // CLI flag should override
-      cwd: package_dir,
+      cwd: testDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -336,7 +369,7 @@ insecure = false
     expect(exitCode).toBe(0);
 
     // Package should be installed
-    const installed = await readdirSorted(join(package_dir, "node_modules"));
+    const installed = await readdirSorted(join(testDir, "node_modules"));
     expect(installed).toContain("bar");
   });
 });

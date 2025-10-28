@@ -245,9 +245,6 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
     
     /* Free all closed sockets (maybe it is better to reverse order?) */
     for (struct us_socket_t *s = loop->data.closed_head; s; ) {
-        #ifdef LIBUS_USE_KQUEUE
-        us_internal_loop_update_pending_ready_polls(loop, &s->p, 0, us_poll_events(&s->p), 0);
-        #endif
         struct us_socket_t *next = s->next;
 
         us_poll_free((struct us_poll_t *) s, loop);
@@ -256,9 +253,6 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
     loop->data.closed_head = NULL;
 
     for (struct us_udp_socket_t *s = loop->data.closed_udp_head; s; ) {
-        #ifdef LIBUS_USE_KQUEUE
-        us_internal_loop_update_pending_ready_polls(loop, &s->p, 0, us_poll_events(&s->p), 0);
-        #endif
         struct us_udp_socket_t *next = s->next;
         us_poll_free((struct us_poll_t *) s, loop);
         s = next;

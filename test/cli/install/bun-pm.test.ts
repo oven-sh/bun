@@ -444,3 +444,178 @@ test("bun pm whoami still works", async () => {
   // Exit code will be non-zero due to missing auth
   expect(exitCode).toBe(1);
 });
+
+test("bun list executes pm ls", async () => {
+  // Test that "bun list" works as an alias for "bun pm ls"
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "test-list",
+      version: "1.0.0",
+      dependencies: {
+        bar: "latest",
+      },
+    }),
+  );
+
+  // Install dependencies first
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+
+  // Test "bun list"
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "list"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const [stderrText, stdoutText, exitCode] = await Promise.all([
+    new Response(stderr).text(),
+    new Response(stdout).text(),
+    exited,
+  ]);
+
+  // Should not show reservation message
+  expect(stderrText).not.toContain("reserved for future use");
+  expect(stdoutText).not.toContain("reserved for future use");
+
+  // Should show package list
+  expect(stdoutText).toContain("node_modules");
+  expect(stdoutText).toContain("bar@");
+  expect(exitCode).toBe(0);
+});
+
+test("bun pm list works as alias for bun pm ls", async () => {
+  // Test that "bun pm list" works as an alias for "bun pm ls"
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "test-pm-list",
+      version: "1.0.0",
+      dependencies: {
+        bar: "latest",
+      },
+    }),
+  );
+
+  // Install dependencies first
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+
+  // Test "bun pm list"
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "list"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const [stderrText, stdoutText, exitCode] = await Promise.all([
+    new Response(stderr).text(),
+    new Response(stdout).text(),
+    exited,
+  ]);
+
+  expect(stderrText).toBe("");
+  expect(stdoutText).toContain("node_modules");
+  expect(stdoutText).toContain("bar@");
+  expect(exitCode).toBe(0);
+});
+
+test("bun list --all shows full dependency tree", async () => {
+  // Test that "bun list --all" works correctly
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "test-list-all",
+      version: "1.0.0",
+      dependencies: {
+        moo: "./moo",
+      },
+    }),
+  );
+  await mkdir(join(package_dir, "moo"));
+  await writeFile(
+    join(package_dir, "moo", "package.json"),
+    JSON.stringify({
+      name: "moo",
+      version: "0.1.0",
+      dependencies: {
+        bar: "latest",
+      },
+    }),
+  );
+
+  // Install dependencies first
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+
+  // Test "bun list --all"
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "list", "--all"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const [stderrText, stdoutText, exitCode] = await Promise.all([
+    new Response(stderr).text(),
+    new Response(stdout).text(),
+    exited,
+  ]);
+
+  expect(stderrText).toBe("");
+  expect(stdoutText).toContain("node_modules");
+  expect(stdoutText).toContain("bar@");
+  expect(stdoutText).toContain("moo@");
+  expect(exitCode).toBe(0);
+});

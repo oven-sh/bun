@@ -1423,6 +1423,19 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             return jsc.JSValue.jsBoolean(debug_mode);
         }
 
+        pub fn getRoutes(this: *ThisServer, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+            const routes = this.user_routes.items;
+            const array = try jsc.JSValue.createEmptyArray(globalThis, routes.len);
+
+            for (routes, 0..) |route, i| {
+                const path = route.route.path;
+                const path_str = try bun.String.createUTF8ForJS(globalThis, path);
+                try array.putIndex(globalThis, @intCast(i), path_str);
+            }
+
+            return array;
+        }
+
         pub fn onStaticRequestComplete(this: *ThisServer) void {
             this.pending_requests -= 1;
             this.deinitIfWeCan();

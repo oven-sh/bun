@@ -82,6 +82,9 @@ function generate(name) {
       development: {
         getter: "getDevelopment",
       },
+      routes: {
+        getter: "getRoutes",
+      },
     },
     klass: {},
     finalize: true,

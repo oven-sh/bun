@@ -45,7 +45,7 @@ describe("server.routes getter", () => {
           }
         });
         const routes = server.routes;
-        console.log(JSON.stringify(routes.sort()));
+        console.log(JSON.stringify([...routes].sort()));
         server.stop();
       `,
     });
@@ -79,7 +79,7 @@ describe("server.routes getter", () => {
           }
         });
         const routes = server.routes;
-        console.log(JSON.stringify(routes.sort()));
+        console.log(JSON.stringify([...routes].sort()));
         server.stop();
       `,
     });
@@ -120,7 +120,7 @@ describe("server.routes getter", () => {
           }
         });
         const routes = server.routes;
-        console.log(JSON.stringify(routes.sort()));
+        console.log(JSON.stringify([...routes].sort()));
         server.stop();
       `,
     });
@@ -157,7 +157,7 @@ describe("server.routes getter", () => {
           }
         });
         const routes = server.routes;
-        console.log(JSON.stringify(routes.sort()));
+        console.log(JSON.stringify([...routes].sort()));
         server.stop();
       `,
     });
@@ -228,7 +228,7 @@ describe("server.routes getter", () => {
             return new Response("fallback");
           }
         });
-        console.log(JSON.stringify(server.routes.sort()));
+        console.log(JSON.stringify([...server.routes].sort()));
 
         server.reload({
           routes: {
@@ -238,7 +238,7 @@ describe("server.routes getter", () => {
             return new Response("fallback");
           }
         });
-        console.log(JSON.stringify(server.routes.sort()));
+        console.log(JSON.stringify([...server.routes].sort()));
         server.stop();
       `,
     });
@@ -273,7 +273,7 @@ describe("server.routes getter", () => {
           }
         });
         // Check routes immediately without making any requests
-        console.log(JSON.stringify(server.routes.sort()));
+        console.log(JSON.stringify([...server.routes].sort()));
         server.stop();
       `,
     });
@@ -308,9 +308,7 @@ describe("server.routes getter", () => {
           }
         });
         const routes = server.routes;
-        console.log(routes.length);
-        console.log(routes.some(r => r.length > 400));
-        console.log(routes.includes("/short"));
+        console.log(JSON.stringify(routes.sort()));
         server.stop();
       `,
     });
@@ -325,10 +323,12 @@ describe("server.routes getter", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const lines = stdout.trim().split("\n");
-    expect(lines[0]).toBe("2"); // 2 routes
-    expect(lines[1]).toBe("true"); // long path exists
-    expect(lines[2]).toBe("true"); // short path exists
+    const routes = JSON.parse(stdout.trim());
+    const expectedLongPath = "/" + "segment/".repeat(50) + "end";
+    expect(routes.length).toBe(2);
+    expect(routes).toContain("/short");
+    expect(routes).toContain(expectedLongPath);
+    expect(routes.find(r => r.length > 400)).toBe(expectedLongPath);
     expect(exitCode).toBe(0);
   });
 
@@ -388,7 +388,7 @@ describe("server.routes getter", () => {
             return new Response("fallback");
           }
         });
-        console.log(JSON.stringify(server.routes.sort()));
+        console.log(JSON.stringify([...server.routes].sort()));
         server.stop();
       `,
     });

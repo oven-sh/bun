@@ -2,8 +2,9 @@
 // EventEmitter: this._events becomes undefined when removeAllListeners()
 // called from event handler with removeListener meta-listener
 
-import { expect, test } from "bun:test";
 import { EventEmitter } from "events";
+import assert from "node:assert";
+import { test } from "node:test";
 
 test("removeAllListeners() from event handler with removeListener meta-listener", () => {
   const emitter = new EventEmitter();
@@ -17,7 +18,7 @@ test("removeAllListeners() from event handler with removeListener meta-listener"
   emitter.on("removeListener", () => {});
 
   // This should not throw
-  expect(() => emitter.emit("test")).not.toThrow();
+  assert.doesNotThrow(() => emitter.emit("test"));
 });
 
 test("removeAllListeners() with actual listeners to remove", () => {
@@ -42,13 +43,13 @@ test("removeAllListeners() with actual listeners to remove", () => {
   emitter.emit("test");
 
   // Verify listeners were removed
-  expect(emitter.listenerCount("foo")).toBe(0);
+  assert.strictEqual(emitter.listenerCount("foo"), 0);
 
   // Verify removeListener was called twice (once for each foo listener)
-  expect(removeListenerCallCount).toBe(2);
+  assert.strictEqual(removeListenerCallCount, 2);
 
   // Verify foo listeners were never called
-  expect(fooCallCount).toBe(0);
+  assert.strictEqual(fooCallCount, 0);
 });
 
 test("nested removeAllListeners() calls", () => {
@@ -70,11 +71,11 @@ test("nested removeAllListeners() calls", () => {
   });
 
   // This should not crash
-  expect(() => emitter.emit("outer")).not.toThrow();
+  assert.doesNotThrow(() => emitter.emit("outer"));
 
   // Verify correct execution order
-  expect(events).toEqual(["outer-start", "removeListener:inner", "outer-end"]);
+  assert.deepStrictEqual(events, ["outer-start", "removeListener:inner", "outer-end"]);
 
   // Verify inner listeners were removed
-  expect(emitter.listenerCount("inner")).toBe(0);
+  assert.strictEqual(emitter.listenerCount("inner"), 0);
 });

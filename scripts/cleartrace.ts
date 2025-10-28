@@ -32,7 +32,9 @@ async function doNow() {
   }
   enqueue();
 }
+let ceaseTimeout = false;
 function enqueue() {
+  if (ceaseTimeout) return;
   timeout = setTimeout(() => {
     timeout = null;
     doNow();
@@ -41,5 +43,5 @@ function enqueue() {
 enqueue();
 
 rl.on("close", () => {
-  process.exit(0);
+  ceaseTimeout = true;
 });

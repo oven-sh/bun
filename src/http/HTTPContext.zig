@@ -135,12 +135,13 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             const reject_unauthorized: i32 = if (init_opts.insecure) 0 else 1;
             
             // Guard against overflow when casting ca.len to ca_count field type
-            const ca_count_max = std.math.maxInt(@TypeOf(@as(uws.SocketContext.BunSocketContextOptions, undefined).ca_count));
-            const ca_count_value: u32 = if (!init_opts.insecure) value: {
+            const CaCountT = @TypeOf(@as(uws.SocketContext.BunSocketContextOptions, undefined).ca_count);
+            const ca_count_max = std.math.maxInt(CaCountT);
+            const ca_count_value: CaCountT = if (!init_opts.insecure) value: {
                 if (bun.Environment.isDebug) {
                     bun.assert(init_opts.ca.len <= ca_count_max);
                 }
-                break :value @intCast(@min(init_opts.ca.len, ca_count_max));
+                break :value @as(CaCountT, @intCast(@min(init_opts.ca.len, ca_count_max)));
             } else 0;
             
             var opts: uws.SocketContext.BunSocketContextOptions = .{

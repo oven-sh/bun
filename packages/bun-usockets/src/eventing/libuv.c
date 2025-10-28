@@ -139,7 +139,6 @@ LIBUS_SOCKET_DESCRIPTOR us_poll_fd(struct us_poll_t *p) { return p->fd; }
 void us_loop_pump(struct us_loop_t *loop) {
   uv_run(loop->uv_loop, UV_RUN_NOWAIT);
 }
-
 struct us_loop_t *us_create_loop(void *hint,
                                  void (*wakeup_cb)(struct us_loop_t *loop),
                                  void (*pre_cb)(struct us_loop_t *loop),

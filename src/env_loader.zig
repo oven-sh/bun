@@ -380,20 +380,23 @@ pub const Loader = struct {
             if (key_buf_len > 0) {
                 iter.reset();
                 key_buf = try allocator.alloc(u8, key_buf_len + key_count * "process.env.".len);
+                var key_writer = std.Io.Writer.fixed(key_buf);
                 const js_ast = bun.ast;
 
                 var e_strings = try allocator.alloc(js_ast.E.String, e_strings_to_allocate * 2);
                 errdefer allocator.free(e_strings);
                 errdefer allocator.free(key_buf);
-                var key_fixed_allocator = std.heap.FixedBufferAllocator.init(key_buf);
-                const key_allocator = key_fixed_allocator.allocator();
 
                 if (behavior == .prefix) {
                     while (iter.next()) |entry| {
                         const value: string = entry.value_ptr.value;
 
                         if (strings.startsWith(entry.key_ptr.*, prefix)) {
-                            const key_str = try std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*});
+                            key_writer.print("process.env.{s}", .{entry.key_ptr.*}) catch |err| switch (err) {
+                                error.WriteFailed => unreachable, // miscalculated length of key_buf above
+                            };
+                            const key_str = key_writer.buffered();
+                            key_writer = std.Io.Writer.fixed(key_writer.unusedCapacitySlice());
 
                             e_strings[0] = js_ast.E.String{
                                 .data = if (value.len > 0)
@@ -442,7 +445,12 @@ pub const Loader = struct {
                 } else {
                     while (iter.next()) |entry| {
                         const value: string = entry.value_ptr.value;
-                        const key = try std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*});
+
+                        key_writer.print("process.env.{s}", .{entry.key_ptr.*}) catch |err| switch (err) {
+                            error.WriteFailed => unreachable, // miscalculated length of key_buf above
+                        };
+                        const key_str = key_writer.buffered();
+                        key_writer = std.Io.Writer.fixed(key_writer.unusedCapacitySlice());
 
                         e_strings[0] = js_ast.E.String{
                             .data = if (entry.value_ptr.value.len > 0)
@@ -454,7 +462,7 @@ pub const Loader = struct {
                         const expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
 
                         _ = try to_string.getOrPutValue(
-                            key,
+                            key_str,
                             .init(.{
                                 .can_be_removed_if_unused = true,
                                 .call_can_be_unwrapped_if_unused = .if_unused,

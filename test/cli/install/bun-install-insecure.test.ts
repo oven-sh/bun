@@ -368,5 +368,62 @@ insecure = false
     const installed = await readdirSorted(join(testDir, "node_modules"));
     expect(installed).toContain("bar");
   });
+
+  it("should warn when both insecure and CA settings are configured", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const rootUrl = `http://localhost:${server.port}`;
+        return await createRegistryHandler([], { "0.0.2": {} }, rootUrl)(request);
+      },
+    });
+
+    // Create a dummy CA file
+    using testDir = tempDir("test-insecure-with-ca", {
+      "package.json": JSON.stringify({
+        name: "test-insecure-with-ca",
+        version: "1.0.0",
+        dependencies: {
+          bar: "0.0.2",
+        },
+      }),
+      "ca-cert.pem": `-----BEGIN CERTIFICATE-----
+MIIBkTCB+wIJAKHHCgVZU7ZOMA0GCSqGSIb3DQEBCwUAMBExDzANBgNVBAMMBnRl
+c3RjYTAeFw0yMDAxMDEwMDAwMDBaFw0zMDAxMDEwMDAwMDBaMBExDzANBgNVBAMM
+BnRlc3RjYTCBnzANBgkqhkiG9w0BAQEFAAOBjQAwgYkCgYEA1234567890abcdef
+ghijklmnopqrstuvwxyz1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890
+-----END CERTIFICATE-----`,
+      "bunfig.toml": `
+[install]
+cache = false
+registry = "http://localhost:${server.port}/"
+insecure = true
+cafile = "./ca-cert.pem"
+`,
+    });
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: testDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stderrText = await stderr.text();
+    const stdoutText = await stdout.text();
+    const exitCode = await exited;
+
+    // Should warn that CA settings are ignored when insecure is enabled
+    expect(stderrText.toLowerCase()).toContain("cafile");
+    expect(stderrText.toLowerCase()).toContain("ignore");
+
+    // Should succeed
+    expect(exitCode).toBe(0);
+
+    // Package should be installed
+    const installed = await readdirSorted(join(testDir, "node_modules"));
+    expect(installed).toContain("bar");
+  });
 });
 

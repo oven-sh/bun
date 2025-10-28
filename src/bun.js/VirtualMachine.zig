@@ -48,6 +48,7 @@ unhandled_pending_rejection_to_capture: ?*JSValue = null,
 standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
 smol: bool = false,
 dns_result_order: DNSResolver.Order = .verbatim,
+source_code_preview: bool = true,
 counters: Counters = .{},
 
 hot_reload: bun.cli.Command.HotReload = .none,
@@ -1086,6 +1087,7 @@ pub const Options = struct {
     /// Worker VMs are always destroyed on exit, regardless of this setting. Setting this to
     /// true may expose bugs that would otherwise only occur using Workers.
     destruct_main_thread_on_exit: bool = false,
+    source_code_preview: bool = true,
 };
 
 pub var is_smol_mode = false;
@@ -1180,6 +1182,7 @@ pub fn init(opts: Options) !*VirtualMachine {
     uws.Loop.get().internal_loop_data.jsc_vm = vm.jsc_vm;
     vm.smol = opts.smol;
     vm.dns_result_order = opts.dns_result_order;
+    vm.source_code_preview = opts.source_code_preview;
 
     if (opts.smol)
         is_smol_mode = opts.smol;
@@ -1330,6 +1333,7 @@ pub fn initWorker(
     }
 
     vm.smol = opts.smol;
+    vm.source_code_preview = opts.source_code_preview;
     vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
 
     vm.global = JSGlobalObject.create(
@@ -1430,6 +1434,7 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
     vm.transpiler.macro_context = js_ast.Macro.MacroContext.init(&vm.transpiler);
 
     vm.smol = opts.smol;
+    vm.source_code_preview = opts.source_code_preview;
 
     if (opts.smol)
         is_smol_mode = opts.smol;
@@ -2923,7 +2928,7 @@ fn printErrorInstance(
             exception_list,
             &exception_holder.need_to_clear_parser_arena_on_deinit,
             &source_code_slice,
-            formatter.error_display_level != .warn,
+            formatter.error_display_level != .warn and this.source_code_preview,
         );
     }
     const prev_had_errors = this.had_errors;

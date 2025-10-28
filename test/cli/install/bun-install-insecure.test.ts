@@ -4,9 +4,8 @@ import { bunEnv, bunExe, readdirSorted, tempDir, tls } from "harness";
 import { join } from "path";
 
 // Helper to create a registry handler with proper URL context
-function createRegistryHandler(urls: string[], info: any, rootUrl: string) {
+function createRegistryHandler(info: any, rootUrl: string) {
   return async (request: Request) => {
-    urls.push(request.url);
     const url = request.url.replaceAll(/%2f/gi, "/");
     
     if (url.endsWith(".tgz")) {
@@ -46,7 +45,7 @@ describe.concurrent("bun install --insecure flag", () => {
       port: 0,
       async fetch(request) {
         const rootUrl = `http://localhost:${server.port}`;
-        return await createRegistryHandler([], { "0.0.2": {} }, rootUrl)(request);
+        return await createRegistryHandler({ "0.0.2": {} }, rootUrl)(request);
       },
     });
 
@@ -95,7 +94,7 @@ registry = "http://localhost:${server.port}/"
       port: 0,
       async fetch(request) {
         const rootUrl = `http://localhost:${server.port}`;
-        return await createRegistryHandler([], { "0.0.2": {}, "0.0.3": {} }, rootUrl)(request);
+        return await createRegistryHandler({ "0.0.2": {}, "0.0.3": {} }, rootUrl)(request);
       },
     });
 
@@ -144,7 +143,7 @@ registry = "http://localhost:${server.port}/"
       port: 0,
       async fetch(request) {
         const rootUrl = `http://localhost:${server.port}`;
-        return await createRegistryHandler([], { "0.0.2": {} }, rootUrl)(request);
+        return await createRegistryHandler({ "0.0.2": {} }, rootUrl)(request);
       },
     });
 
@@ -324,7 +323,7 @@ insecure = true
       port: 0,
       async fetch(request) {
         const rootUrl = `http://localhost:${server.port}`;
-        return await createRegistryHandler([], { "0.0.2": {} }, rootUrl)(request);
+        return await createRegistryHandler({ "0.0.2": {} }, rootUrl)(request);
       },
     });
 
@@ -374,7 +373,7 @@ insecure = false
       port: 0,
       async fetch(request) {
         const rootUrl = `http://localhost:${server.port}`;
-        return await createRegistryHandler([], { "0.0.2": {} }, rootUrl)(request);
+        return await createRegistryHandler({ "0.0.2": {} }, rootUrl)(request);
       },
     });
 

@@ -298,6 +298,7 @@ int us_socket_write2(int ssl, struct us_socket_t *s, const char *header, int hea
     int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
     if (written != header_length + payload_length) {
         s->flags.is_writable = false;
+        s->flags.writable_emitted = false;
         s->context->loop->data.last_write_failed = 1;
         us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     }

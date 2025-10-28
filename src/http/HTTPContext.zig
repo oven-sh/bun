@@ -134,9 +134,18 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             // When insecure mode is enabled, disable all certificate verification
             const reject_unauthorized: i32 = if (init_opts.insecure) 0 else 1;
             
+            // Guard against overflow when casting ca.len to ca_count field type
+            const ca_count_max = std.math.maxInt(@TypeOf(@as(uws.SocketContext.BunSocketContextOptions, undefined).ca_count));
+            const ca_count_value: u32 = if (!init_opts.insecure) value: {
+                if (bun.Environment.isDebug) {
+                    bun.assert(init_opts.ca.len <= ca_count_max);
+                }
+                break :value @intCast(@min(init_opts.ca.len, ca_count_max));
+            } else 0;
+            
             var opts: uws.SocketContext.BunSocketContextOptions = .{
                 .ca = if (init_opts.ca.len > 0 and !init_opts.insecure) @ptrCast(init_opts.ca) else null,
-                .ca_count = if (!init_opts.insecure) @intCast(init_opts.ca.len) else 0,
+                .ca_count = ca_count_value,
                 .ca_file_name = if (init_opts.abs_ca_file_name.len > 0 and !init_opts.insecure) init_opts.abs_ca_file_name else null,
                 .request_cert = 1,
                 .reject_unauthorized = reject_unauthorized,
@@ -512,6 +521,7 @@ const HTTPThread = @import("./HTTPThread.zig");
 const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
 
 const bun = @import("bun");
+const std = @import("std");
 const Environment = bun.Environment;
 const FeatureFlags = bun.FeatureFlags;
 const assert = bun.assert;

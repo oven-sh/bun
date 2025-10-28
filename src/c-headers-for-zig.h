@@ -33,6 +33,8 @@
 
 #if DARWIN
 #include <copyfile.h>
+#include <libproc.h>
+#include <sys/proc_info.h>
 #include <mach/mach_host.h>
 #include <mach/processor_info.h>
 #include <net/if.h>

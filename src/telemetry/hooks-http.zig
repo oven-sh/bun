@@ -471,6 +471,16 @@ pub inline fn notifyHttpRequestError(
     var error_message: []const u8 = "Request handler rejected";
     var stack_trace: ?[]const u8 = null;
 
+    // Track allocated slices for cleanup
+    var msg_slice = ZigString.Slice.empty;
+    var class_name_slice = ZigString.Slice.empty;
+    var stack_slice = ZigString.Slice.empty;
+    defer {
+        msg_slice.deinit();
+        class_name_slice.deinit();
+        stack_slice.deinit();
+    }
+
     if (!error_value.isEmptyOrUndefinedOrNull()) {
         // Try to get error message
         if (error_value.get(globalObject, "message") catch null) |msg_val| {
@@ -478,7 +488,7 @@ pub inline fn notifyHttpRequestError(
                 var msg_str: ZigString = undefined;
                 msg_val.toZigString(&msg_str, globalObject) catch {};
                 if (msg_str.len > 0) {
-                    const msg_slice = msg_str.toSlice(bun.default_allocator);
+                    msg_slice = msg_str.toSlice(bun.default_allocator);
                     error_message = msg_slice.slice();
                 }
             }
@@ -488,7 +498,7 @@ pub inline fn notifyHttpRequestError(
         var class_name_str: ZigString = undefined;
         error_value.getClassName(globalObject, &class_name_str) catch {};
         if (class_name_str.len > 0) {
-            const class_name_slice = class_name_str.toSlice(bun.default_allocator);
+            class_name_slice = class_name_str.toSlice(bun.default_allocator);
             error_type = class_name_slice.slice();
         }
 
@@ -498,16 +508,17 @@ pub inline fn notifyHttpRequestError(
                 var stack_str: ZigString = undefined;
                 stack_val.toZigString(&stack_str, globalObject) catch {};
                 if (stack_str.len > 0) {
-                    const stack_slice = stack_str.toSlice(bun.default_allocator);
+                    stack_slice = stack_str.toSlice(bun.default_allocator);
                     stack_trace = stack_slice.slice();
                 }
             }
         }
     }
 
-    // Build and send error attributes
+    // Build and send error attributes (copies strings into JS heap)
     var error_attrs = buildHttpErrorAttributes(globalObject, ctx.start_time_ns, error_type, error_message, stack_trace, null);
     telemetry_inst.notifyOperationError(.http, ctx.request_id, &error_attrs);
+    // Slices are cleaned up by defer block
 }
 
 /// Notify response headers available - call this in renderMetadata when headers are being written

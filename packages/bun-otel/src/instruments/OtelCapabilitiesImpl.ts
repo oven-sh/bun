@@ -170,8 +170,10 @@ export class OtelCapabilitiesImpl implements OtelCapabilities {
         ? this._config.extractSpanName(attributes)
         : `${this._name} operation`;
 
-      // Determine span kind
-      const spanKind = this._config.extractSpanKind ? this._config.extractSpanKind(attributes) : SpanKind.INTERNAL;
+      // Determine span kind (cast to SpanKind for type safety at implementation boundary)
+      const spanKind = (
+        this._config.extractSpanKind ? this._config.extractSpanKind(attributes) : SpanKind.INTERNAL
+      ) as SpanKind;
 
       // Create span
       const span = this._tracer!.startSpan(

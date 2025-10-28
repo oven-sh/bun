@@ -340,7 +340,7 @@ pub const MachoFile = struct {
         }
     }
 
-    pub fn buildAndSign(self: *MachoFile, writer: anytype) !void {
+    pub fn buildAndSign(self: *MachoFile, writer: *std.Io.Writer) !void {
         if (self.header.cputype == macho.CPU_TYPE_ARM64 and !bun.feature_flag.BUN_NO_CODESIGN_MACHO_BINARY.get()) {
             var data = std.array_list.Managed(u8).init(self.allocator);
             defer data.deinit();

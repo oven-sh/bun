@@ -423,7 +423,7 @@ pub fn LinearFifo(
         /// Pump data from a reader into a writer
         /// stops when reader returns 0 bytes (EOF)
         /// Buffer size must be set before calling; a buffer length of 0 is invalid.
-        pub fn pump(self: *Self, src_reader: anytype, dest_writer: anytype) !void {
+        pub fn pump(self: *Self, src_reader: anytype, dest_writer: *std.Io.Writer) !void {
             assert(self.buf.len > 0);
             while (true) {
                 if (self.writableLength() > 0) {

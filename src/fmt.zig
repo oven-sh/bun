@@ -254,7 +254,7 @@ fn getSharedBuffer() []u8 {
 }
 threadlocal var shared_temp_buffer_ptr: ?*SharedTempBuffer = null;
 
-pub fn formatUTF16Type(slice_: []const u16, writer: anytype) !void {
+pub fn formatUTF16Type(slice_: []const u16, writer: *std.Io.Writer) !void {
     var chunk = getSharedBuffer();
 
     // Defensively ensure recursion doesn't cause the buffer to be overwritten in-place
@@ -280,7 +280,7 @@ pub fn formatUTF16Type(slice_: []const u16, writer: anytype) !void {
     }
 }
 
-pub fn formatUTF16TypeWithPathOptions(slice_: []const u16, writer: anytype, opts: PathFormatOptions) !void {
+pub fn formatUTF16TypeWithPathOptions(slice_: []const u16, writer: *std.Io.Writer, opts: PathFormatOptions) !void {
     var chunk = getSharedBuffer();
 
     // Defensively ensure recursion doesn't cause the buffer to be overwritten in-place
@@ -339,7 +339,7 @@ pub inline fn debugUtf32PathFormatter(path: []const u32) DebugUTF32PathFormatter
 
 pub const DebugUTF32PathFormatter = struct {
     path: []const u32,
-    pub fn format(this: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) !void {
         var path_buf: bun.PathBuffer = undefined;
         const result = bun.simdutf.convert.utf32.to.utf8.with_errors.le(this.path, &path_buf);
         const converted = if (result.isSuccessful())
@@ -444,7 +444,7 @@ pub fn fmtPath(
     };
 }
 
-pub fn formatLatin1(slice_: []const u8, writer: anytype) !void {
+pub fn formatLatin1(slice_: []const u8, writer: *std.Io.Writer) !void {
     var chunk = getSharedBuffer();
     var slice = slice_;
 
@@ -619,7 +619,7 @@ pub const FormatValidIdentifier = struct {
 // - Encodes "\n" as "%0A" to support multi-line strings.
 //   https://github.com/actions/toolkit/issues/193#issuecomment-605394935
 // - Strips ANSI output as it will appear malformed.
-pub fn githubActionWriter(writer: anytype, self: string) !void {
+pub fn githubActionWriter(writer: *std.Io.Writer, self: string) !void {
     var offset: usize = 0;
     const end = @as(u32, @truncate(self.len));
     while (offset < end) {
@@ -672,7 +672,7 @@ pub fn githubAction(self: string) strings.GithubActionFormatter {
     };
 }
 
-pub fn quotedWriter(writer: anytype, self: string) !void {
+pub fn quotedWriter(writer: *std.Io.Writer, self: string) !void {
     const remain = self;
     if (strings.containsNewlineOrNonASCIIOrQuote(remain)) {
         try bun.js_printer.writeJSONString(self, @TypeOf(writer), writer, strings.Encoding.utf8);

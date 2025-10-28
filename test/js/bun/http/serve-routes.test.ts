@@ -136,8 +136,10 @@ describe("server.routes getter", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     const routes = JSON.parse(stdout.trim());
-    expect(routes).toContain("/api");
-    expect(routes).toContain("/users/:id");
+    // Should deduplicate paths - each path should appear only once
+    expect(routes.length).toBe(2);
+    expect(new Set(routes).size).toBe(2);
+    expect(routes).toEqual(["/api", "/users/:id"]);
     expect(exitCode).toBe(0);
   });
 
@@ -254,6 +256,122 @@ describe("server.routes getter", () => {
     const lines = stdout.trim().split("\n");
     expect(JSON.parse(lines[0])).toEqual(["/before"]);
     expect(JSON.parse(lines[1])).toEqual(["/after"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("should return routes immediately after creation", async () => {
+    using dir = tempDir("serve-routes-test", {
+      "server.js": `
+        const server = Bun.serve({
+          port: 0,
+          routes: {
+            "/immediate": () => new Response("test"),
+            "/another": () => new Response("test2"),
+          },
+          fetch(req) {
+            return new Response("fallback");
+          }
+        });
+        // Check routes immediately without making any requests
+        console.log(JSON.stringify(server.routes.sort()));
+        server.stop();
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const routes = JSON.parse(stdout.trim());
+    expect(routes).toEqual(["/another", "/immediate"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("should handle very long route paths", async () => {
+    using dir = tempDir("serve-routes-test", {
+      "server.js": `
+        const longPath = "/" + "segment/".repeat(50) + "end";
+        const server = Bun.serve({
+          port: 0,
+          routes: {
+            [longPath]: () => new Response("long"),
+            "/short": () => new Response("short"),
+          },
+          fetch(req) {
+            return new Response("fallback");
+          }
+        });
+        const routes = server.routes;
+        console.log(routes.length);
+        console.log(routes.some(r => r.length > 400));
+        console.log(routes.includes("/short"));
+        server.stop();
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const lines = stdout.trim().split("\n");
+    expect(lines[0]).toBe("2"); // 2 routes
+    expect(lines[1]).toBe("true"); // long path exists
+    expect(lines[2]).toBe("true"); // short path exists
+    expect(exitCode).toBe(0);
+  });
+
+  test("should handle duplicate deduplication correctly", async () => {
+    using dir = tempDir("serve-routes-test", {
+      "server.js": `
+        const server = Bun.serve({
+          port: 0,
+          routes: {
+            "/duplicate": {
+              GET: () => new Response("GET"),
+              POST: () => new Response("POST"),
+              PUT: () => new Response("PUT"),
+              DELETE: () => new Response("DELETE"),
+              PATCH: () => new Response("PATCH"),
+            }
+          },
+          fetch(req) {
+            return new Response("fallback");
+          }
+        });
+        const routes = server.routes;
+        console.log(routes.length);
+        console.log(new Set(routes).size);
+        console.log(JSON.stringify(routes));
+        server.stop();
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const lines = stdout.trim().split("\n");
+    expect(lines[0]).toBe("1"); // Only 1 unique route
+    expect(lines[1]).toBe("1"); // Set size confirms uniqueness
+    expect(JSON.parse(lines[2])).toEqual(["/duplicate"]);
     expect(exitCode).toBe(0);
   });
 });

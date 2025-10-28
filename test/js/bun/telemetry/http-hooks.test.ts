@@ -3,7 +3,7 @@
  * NO @opentelemetry/* imports - testing ONLY Bun.telemetry.attach() API
  */
 import { describe, expect, test } from "bun:test";
-import { InstrumentKind } from "./types";
+import { InstrumentKinds } from "./types";
 
 describe("Bun.serve() telemetry hooks", () => {
   test("calls onOperationStart with correct attributes for GET request", async () => {
@@ -11,7 +11,7 @@ describe("Bun.serve() telemetry hooks", () => {
     const startAttrs: any = {};
 
     const instrument = {
-      type: InstrumentKind.HTTP,
+      kind: InstrumentKinds.HTTP,
       name: "test-http-start",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -49,7 +49,7 @@ describe("Bun.serve() telemetry hooks", () => {
     const endAttrs: any = {};
 
     const instrument = {
-      type: InstrumentKind.HTTP,
+      kind: InstrumentKinds.HTTP,
       name: "test-http-end",
       version: "1.0.0",
       onOperationStart() {},
@@ -88,7 +88,7 @@ describe("Bun.serve() telemetry hooks", () => {
     const startAttrs: any = {};
 
     const instrument = {
-      type: InstrumentKind.HTTP,
+      kind: InstrumentKinds.HTTP,
       name: "test-query-params",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -122,7 +122,7 @@ describe("Bun.serve() telemetry hooks", () => {
     const startAttrs: any = {};
 
     const instrument = {
-      type: InstrumentKind.HTTP,
+      kind: InstrumentKinds.HTTP,
       name: "test-post-method",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -161,7 +161,7 @@ describe("Bun.serve() telemetry hooks", () => {
     const errorAttrs: any = {};
 
     const instrument = {
-      type: InstrumentKind.HTTP,
+      kind: InstrumentKinds.HTTP,
       name: "test-error-handling",
       version: "1.0.0",
       onOperationStart() {},
@@ -203,7 +203,7 @@ describe("Bun.serve() telemetry hooks", () => {
     const statusCodes: number[] = [];
 
     const instrument = {
-      type: InstrumentKind.HTTP,
+      kind: InstrumentKinds.HTTP,
       name: "test-status-codes",
       version: "1.0.0",
       onOperationStart() {},
@@ -243,7 +243,7 @@ describe("Bun.serve() telemetry hooks", () => {
     const operationIds = new Set<number>();
 
     const instrument = {
-      type: InstrumentKind.HTTP,
+      kind: InstrumentKinds.HTTP,
       name: "test-concurrent-ids",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -279,7 +279,7 @@ describe("Bun.serve() telemetry hooks", () => {
     const endIds: number[] = [];
 
     const instrument = {
-      type: InstrumentKind.HTTP,
+      kind: InstrumentKinds.HTTP,
       name: "test-matching-ids",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -316,7 +316,7 @@ describe("Bun.serve() telemetry hooks", () => {
     const startAttrs: any = {};
 
     const instrument = {
-      type: InstrumentKind.HTTP,
+      kind: InstrumentKinds.HTTP,
       name: "test-full-url",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -348,7 +348,7 @@ describe("Bun.serve() telemetry hooks", () => {
     const startAttrs: any = {};
 
     const instrument = {
-      type: InstrumentKind.HTTP,
+      kind: InstrumentKinds.HTTP,
       name: "test-no-query",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {

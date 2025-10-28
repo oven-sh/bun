@@ -3,7 +3,7 @@
  * NO @opentelemetry/* imports allowed - testing ONLY native hooks
  */
 import { describe, expect, test } from "bun:test";
-import { InstrumentKind, InstrumentRef } from "./types";
+import { InstrumentRef } from "./types";
 
 describe("Bun.telemetry.attach() validation", () => {
   test("throws when called with no arguments", () => {
@@ -35,53 +35,55 @@ describe("Bun.telemetry.attach() validation", () => {
     }).toThrow(/must be an object/i);
   });
 
-  test("throws when 'type' property is missing", () => {
+  test("throws when 'kind' property is missing", () => {
     expect(() => {
-      // @ts-expect-error - testing error case (missing type)
+      // @ts-expect-error - testing error case (missing kind)
       Bun.telemetry.attach({
         name: "test",
         version: "1.0.0",
         onOperationStart: () => {},
       });
-    }).toThrow(/type/i);
+    }).toThrow(/kind/i);
   });
 
-  test("throws when 'type' property is invalid (non-string, non-number, or out of range number)", () => {
+  test("throws when 'kind' property is invalid (non-string)", () => {
     expect(() => {
+      // @ts-expect-error - numeric kinds not supported
       Bun.telemetry.attach({
-        type: -1, // Invalid negative
+        kind: 1,
         name: "test",
         version: "1.0.0",
         onOperationStart: () => {},
       });
-    }).toThrow(/type/i);
+    }).toThrow(/kind/i);
 
     expect(() => {
+      // @ts-expect-error - numeric kinds not supported
       Bun.telemetry.attach({
-        type: 999, // Out of range
+        kind: 999,
         name: "test",
         version: "1.0.0",
         onOperationStart: () => {},
       });
-    }).toThrow(/type/i);
+    }).toThrow(/kind/i);
 
     expect(() => {
       Bun.telemetry.attach({
         // @ts-expect-error - testing error case
-        type: [], // Wrong type (should be string or number)
+        kind: [], // Wrong type
         name: "test",
         version: "1.0.0",
         onOperationStart: () => {},
       });
-    }).toThrow(/type/i);
+    }).toThrow(/kind/i);
   });
 
-  test("accepts unknown string types and defaults them to 'custom' for forward compatibility", () => {
-    // Invalid string types should NOT throw - they default to "custom"
+  test("accepts unknown string kinds and defaults them to 'custom' for forward compatibility", () => {
+    // Invalid string kinds should NOT throw - they default to "custom"
     // This allows newer instrumentations to work with older Bun versions
     using instrument1 = new InstrumentRef({
-      // @ts-expect-error - testing forward compatibility with unknown type
-      type: "invalid-kind",
+      // @ts-expect-error - testing forward compatibility with unknown kind
+      kind: "invalid-kind",
       name: "test-1",
       version: "1.0.0",
       onOperationStart: () => {},
@@ -91,8 +93,8 @@ describe("Bun.telemetry.attach() validation", () => {
     expect(instrument1.id).toBeGreaterThan(0);
 
     using instrument2 = new InstrumentRef({
-      // @ts-expect-error - testing forward compatibility with unknown type
-      type: "future-feature",
+      // @ts-expect-error - testing forward compatibility with unknown kind
+      kind: "future-feature",
       name: "test-2",
       version: "1.0.0",
       onOperationStart: () => {},
@@ -105,7 +107,7 @@ describe("Bun.telemetry.attach() validation", () => {
   test("throws when no hook functions are provided", () => {
     expect(() => {
       Bun.telemetry.attach({
-        type: InstrumentKind.HTTP,
+        kind: "http",
         name: "test",
         version: "1.0.0",
         // No hook functions!
@@ -116,7 +118,7 @@ describe("Bun.telemetry.attach() validation", () => {
   test("throws when hook functions are not callable", () => {
     expect(() => {
       Bun.telemetry.attach({
-        type: InstrumentKind.HTTP,
+        kind: "http",
         name: "test",
         version: "1.0.0",
         // @ts-expect-error - testing error case
@@ -126,7 +128,7 @@ describe("Bun.telemetry.attach() validation", () => {
 
     expect(() => {
       Bun.telemetry.attach({
-        type: InstrumentKind.HTTP,
+        kind: "http",
         name: "test",
         version: "1.0.0",
         // @ts-expect-error - testing error case
@@ -136,7 +138,7 @@ describe("Bun.telemetry.attach() validation", () => {
 
     expect(() => {
       Bun.telemetry.attach({
-        type: InstrumentKind.HTTP,
+        kind: "http",
         name: "test",
         version: "1.0.0",
         // @ts-expect-error - testing error case
@@ -145,19 +147,19 @@ describe("Bun.telemetry.attach() validation", () => {
     }).toThrow(/hook/i);
   });
 
-  test("accepts valid InstrumentKind values", () => {
+  test("accepts valid instrument kind strings", () => {
     const validKinds = [
-      { kind: InstrumentKind.Custom, name: "Custom" },
-      { kind: InstrumentKind.HTTP, name: "HTTP" },
-      { kind: InstrumentKind.Fetch, name: "Fetch" },
-      { kind: InstrumentKind.SQL, name: "SQL" },
-      { kind: InstrumentKind.Redis, name: "Redis" },
-      { kind: InstrumentKind.S3, name: "S3" },
+      { kind: "custom", name: "Custom" },
+      { kind: "http", name: "HTTP" },
+      { kind: "fetch", name: "Fetch" },
+      { kind: "sql", name: "SQL" },
+      { kind: "redis", name: "Redis" },
+      { kind: "s3", name: "S3" },
     ];
 
     validKinds.forEach(({ kind, name }) => {
       using instrument = new InstrumentRef({
-        type: kind,
+        kind: kind,
         name: `test-${name}`,
         version: "1.0.0",
         onOperationStart: () => {},
@@ -170,9 +172,9 @@ describe("Bun.telemetry.attach() validation", () => {
 
   test("optional properties can be omitted", () => {
     // Only name and version might be optional in some implementations
-    // But type and at least one hook are required
+    // But kind and at least one hook are required
     using instrument = new InstrumentRef({
-      type: InstrumentKind.HTTP,
+      kind: "http",
       name: "minimal",
       version: "1.0.0",
       onOperationStart: () => {},

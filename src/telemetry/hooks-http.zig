@@ -564,7 +564,7 @@ pub inline fn notifyHttpRequestEnd(
 /// 1. Get configured header names from config (array of strings)
 /// 2. Call hooks to get values (returns flat array of strings)
 pub inline fn addPropagationHeaders(
-    comptime kind: telemetry.InstrumentKind,
+    comptime kind: telemetry.InstrumentType,
     request_id: u64,
     headers: *bun.webcore.FetchHeaders,
     globalObject: *JSGlobalObject,
@@ -612,7 +612,7 @@ pub inline fn addPropagationHeaders(
 /// Render injected trace headers to uWebSockets Response using stack-allocated buffers
 /// MUST be called at the end of renderMetadata, after all other headers
 pub inline fn renderInjectedTraceHeadersToUWSResponse(
-    comptime kind: telemetry.InstrumentKind,
+    comptime kind: telemetry.InstrumentType,
     request_id: u64,
     resp: anytype, // uws Response
     globalObject: *JSGlobalObject,

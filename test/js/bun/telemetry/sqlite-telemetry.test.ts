@@ -69,7 +69,7 @@ describe("SQLite Telemetry", () => {
 
     // @ts-ignore - Internal telemetry API
     const attached = Bun.telemetry.attach({
-      type: "sql",
+      kind: "sql",
       name: "test-sql-instrumentation",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -126,7 +126,7 @@ describe("SQLite Telemetry", () => {
 
     // @ts-ignore - Internal telemetry API
     Bun.telemetry.attach({
-      type: "sql",
+      kind: "sql",
       name: "test-sql-error-instrumentation",
       version: "1.0.0",
       onOperationError(id: number, attributes: any) {
@@ -164,7 +164,7 @@ describe("SQLite Telemetry", () => {
 
     // @ts-ignore - Internal telemetry API
     Bun.telemetry.attach({
-      type: "sql",
+      kind: "sql",
       name: "test-sql-summary",
       version: "1.0.0",
       onOperationProgress(id: number, attributes: any) {
@@ -199,7 +199,7 @@ describe("SQLite Telemetry", () => {
 
     // @ts-ignore - Internal telemetry API
     Bun.telemetry.attach({
-      type: "sql",
+      kind: "sql",
       name: "test-multi-db",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {

@@ -10,24 +10,6 @@
  */
 
 /**
- * Numeric enum mapping to Zig InstrumentKind enum values.
- *
- * Used internally for type-safe mapping between string literals (public API)
- * and numeric values (Zig FFI). DO NOT export from package.
- *
- * Maps 1:1 with src/bun.js/telemetry.zig InstrumentKind enum.
- */
-export enum InstrumentKind {
-  Custom = 0,
-  HTTP = 1,
-  Fetch = 2,
-  SQL = 3,
-  Redis = 4,
-  S3 = 5,
-  Node = 6,
-}
-
-/**
  * Numeric enum for configuration property identifiers.
  *
  * Used to access header capture/propagation configuration via nativeHooks.
@@ -50,37 +32,6 @@ export enum ConfigurationProperty {
   http_capture_headers_fetch_response = 5,
   /** Fetch client request headers to inject/propagate */
   http_propagate_headers_fetch_request = 6,
-}
-
-/**
- * Helper function to map public API string literals to internal numeric enum values.
- *
- * @param type - Public API instrument kind string
- * @returns Numeric enum value for Zig FFI
- * @throws {Error} If type string is invalid
- *
- * @example
- * ```typescript
- * const kind = getInstrumentKindValue("http"); // InstrumentKind.HTTP (1)
- * ```
- */
-export function getInstrumentKindValue(type: string): InstrumentKind {
-  const map: Record<string, InstrumentKind> = {
-    custom: InstrumentKind.Custom,
-    http: InstrumentKind.HTTP,
-    fetch: InstrumentKind.Fetch,
-    sql: InstrumentKind.SQL,
-    redis: InstrumentKind.Redis,
-    s3: InstrumentKind.S3,
-    node: InstrumentKind.Node,
-  };
-
-  const value = map[type];
-  if (value === undefined) {
-    throw new Error(`Unknown instrument type: ${type}. Valid types: custom, http, fetch, sql, redis, s3, node`);
-  }
-
-  return value;
 }
 
 /**
@@ -155,7 +106,7 @@ export type NativeHooks = {
    * // src/js/internal/telemetry_http.ts
    * export function handleIncomingRequest(req, res) {
    *   // Early return if no HTTP instruments registered
-   *   if (!Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentKind.HTTP)) {
+   *   if (!Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentType.HTTP)) {
    *     return;
    *   }
    *
@@ -189,7 +140,7 @@ export type NativeHooks = {
    *   "url.path": "/api/users",
    *   // ... additional semantic convention attributes
    * };
-   * Bun.telemetry.nativeHooks()?.notifyStart(InstrumentKind.HTTP, operationId, attributes);
+   * Bun.telemetry.nativeHooks()?.notifyStart(InstrumentKinds.HTTP, operationId, attributes);
    * ```
    *
    * @internal
@@ -217,7 +168,7 @@ export type NativeHooks = {
    *     "http.response.body.size": 1024,
    *     // ... additional response attributes
    *   };
-   *   Bun.telemetry.nativeHooks()?.notifyEnd(InstrumentKind.HTTP, operationId, attributes);
+   *   Bun.telemetry.nativeHooks()?.notifyEnd(InstrumentKinds.HTTP, operationId, attributes);
    * });
    * ```
    *
@@ -247,7 +198,7 @@ export type NativeHooks = {
    *     "error.stack": String(err?.stack || ""),
    *     // ... additional error context
    *   };
-   *   Bun.telemetry.nativeHooks()?.notifyError(InstrumentKind.HTTP, operationId, attributes);
+   *   Bun.telemetry.nativeHooks()?.notifyError(InstrumentKinds.HTTP, operationId, attributes);
    * });
    * ```
    *
@@ -271,7 +222,7 @@ export type NativeHooks = {
    *
    * req.on("data", (chunk: Buffer) => {
    *   bytesReceived += chunk.length;
-   *   Bun.telemetry.nativeHooks()?.notifyProgress(InstrumentKind.HTTP, operationId, {
+   *   Bun.telemetry.nativeHooks()?.notifyProgress(InstrumentKinds.HTTP, operationId, {
    *     "operation.id": operationId,
    *     "http.request.body.bytes_received": bytesReceived,
    *   });
@@ -299,7 +250,7 @@ export type NativeHooks = {
    * ```typescript
    * import { InstrumentKind } from "./types";
    *
-   * const injections = Bun.telemetry.nativeHooks()?.notifyInject(InstrumentKind.Fetch, operationId, {
+   * const injections = Bun.telemetry.nativeHooks()?.notifyInject(InstrumentKinds.Fetch, operationId, {
    *   "operation.id": operationId,
    *   "url.full": url.href,
    *   "http.request.method": method,
@@ -396,7 +347,7 @@ export type NativeHooks = {
    * ```typescript
    * import { InstrumentKind } from "./types";
    *
-   * const config = Bun.telemetry.nativeHooks()?.getInjectHeaders(InstrumentKind.HTTP);
+   * const config = Bun.telemetry.nativeHooks()?.getInjectHeaders(InstrumentKinds.HTTP);
    * if (config) {
    *   console.log("Response headers:", config.response); // ["traceparent", "tracestate"]
    *   console.log("Request headers:", config.request);   // []

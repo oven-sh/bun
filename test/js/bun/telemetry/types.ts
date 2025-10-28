@@ -8,7 +8,7 @@
  *   import { InstrumentKind } from "./shared";
  *
  *   const id = Bun.telemetry.attach({
- *     type: InstrumentKind.HTTP,
+ *     kind: InstrumentKinds.HTTP,
  *     name: "test",
  *     version: "1.0.0",
  *     onOperationStart: () => {},
@@ -29,7 +29,7 @@ import { NativeInstrument } from "bun";
  *
  * Maps 1:1 with src/bun.js/telemetry.zig InstrumentKind enum.
  */
-export enum InstrumentKind {
+export enum InstrumentType {
   Custom = 0,
   HTTP = 1,
   Fetch = 2,
@@ -38,7 +38,15 @@ export enum InstrumentKind {
   S3 = 5,
   NODE_HTTP = 6,
 }
-
+export const InstrumentKinds = {
+  Custom: "custom",
+  HTTP: "http",
+  Fetch: "fetch",
+  SQL: "sql",
+  Redis: "redis",
+  S3: "s3",
+  NODE_HTTP: "node",
+} as const;
 /**
  * Numeric enum for configuration property identifiers.
  *
@@ -63,44 +71,78 @@ export enum ConfigurationProperty {
   /** Fetch client request headers to inject/propagate */
   http_propagate_headers_fetch_request = 6,
 }
-
-// Compact local copy of Bun.telemetry.internal (mirrors bun-otel/types.ts) for tests.
-declare global {
-  namespace Bun {
-    namespace telemetry {
-      export function listInstruments(kind?: InstrumentKind | number): Array<{
-        id: number;
-        name: string;
-        version: string;
-        kind: InstrumentKind;
-      }>;
-
-      export type NativeInstrumentInternal = Omit<NativeInstrument, "type"> & {
-        type: number | string;
-      };
-
-      export function attach(instrument: NativeInstrumentInternal): {
-        id: number;
-        [Symbol.dispose](): void;
-        dispose(): void;
-      };
-
-      export function nativeHooks(): {
-        isEnabledFor(kind: number): boolean;
-        notifyStart(kind: number, id: number, attributes: Record<string, any>): void;
-        notifyEnd(kind: number, id: number, attributes: Record<string, any>): void;
-        notifyError(kind: number, id: number, attributes: Record<string, any>): void;
-        notifyProgress(kind: number, id: number, attributes: Record<string, any>): void;
-        notifyInject(kind: number, id: number, data?: Record<string, any>): any[];
-        getConfigurationProperty(propertyId: number): any;
-        setConfigurationProperty(propertyId: number, value: any): void;
-        getInjectHeaders(kind: number): { request: string[]; response: string[] } | null;
-      };
-    }
+type NativeHooks = {
+  isEnabledFor(kind: number): boolean;
+  notifyStart(kind: number, id: number, attributes: Record<string, any>): void;
+  notifyEnd(kind: number, id: number, attributes: Record<string, any>): void;
+  notifyError(kind: number, id: number, attributes: Record<string, any>): void;
+  notifyProgress(kind: number, id: number, attributes: Record<string, any>): void;
+  notifyInject(kind: number, id: number, data?: Record<string, any>): any[];
+  getConfigurationProperty(propertyId: number): any;
+  setConfigurationProperty(propertyId: number, value: any): void;
+  getInjectHeaders(kind: number): { request: string[]; response: string[] } | null;
+};
+declare module "bun" {
+  export namespace telemetry {
+    // export function attach(instrument: NativeInstrument): {
+    //   id: number;
+    //   [Symbol.dispose](): void;
+    //   dispose(): void;
+    // };
+    /**
+     * Returns the nativeHooks object if telemetry is enabled, undefined otherwise.
+     *
+     * This provides zero-cost abstraction - when telemetry is disabled, the optional
+     * chain short-circuits immediately without allocating hook parameters.
+     *
+     * Usage: `Bun.telemetry.nativeHooks()?.notifyStart(kind, id, attributes)`
+     *
+     * Mirrors Zig pattern: `if (telemetry.enabled()) |otel| { ... }`
+     *
+     * @returns NativeHooks object if telemetry enabled, undefined if disabled
+     * @internal
+     */
+    export function nativeHooks(): NativeHooks | undefined;
   }
 }
-type NII = Bun.telemetry.NativeInstrumentInternal;
-export type { NII as NativeInstrumentInternal };
+// // Compact local copy of Bun.telemetry.internal (mirrors bun-otel/types.ts) for tests.
+// declare global {
+//   namespace Bun {
+//     namespace telemetry {
+//       export function listInstruments(kind?: string): Array<{
+//         id: number;
+//         kind: string;
+//         type: number;
+//         name: string;
+//         version: string;
+//       }>;
+
+//       export type NativeInstrumentInternal = Omit<NativeInstrument, "kind"> & {
+//         kind: string;
+//       };
+
+//       export function attach(instrument: NativeInstrumentInternal): {
+//         id: number;
+//         [Symbol.dispose](): void;
+//         dispose(): void;
+//       };
+
+//       export function nativeHooks(): {
+//         isEnabledFor(kind: number): boolean;
+//         notifyStart(kind: number, id: number, attributes: Record<string, any>): void;
+//         notifyEnd(kind: number, id: number, attributes: Record<string, any>): void;
+//         notifyError(kind: number, id: number, attributes: Record<string, any>): void;
+//         notifyProgress(kind: number, id: number, attributes: Record<string, any>): void;
+//         notifyInject(kind: number, id: number, data?: Record<string, any>): any[];
+//         getConfigurationProperty(propertyId: number): any;
+//         setConfigurationProperty(propertyId: number, value: any): void;
+//         getInjectHeaders(kind: number): { request: string[]; response: string[] } | null;
+//       };
+//     }
+//   }
+// }
+// type NII = Bun.telemetry.NativeInstrumentInternal;
+export type { NativeInstrument as NativeInstrumentInternal };
 /**
  * Helper class for automatic cleanup of attached instruments using `using` statement.
  *
@@ -108,7 +150,7 @@ export type { NII as NativeInstrumentInternal };
  * ```typescript
  * test("example", () => {
  *   using instrument = new InstrumentRef({
- *     type: InstrumentKind.HTTP,
+ *     kind: InstrumentKinds.HTTP,
  *     name: "test",
  *     version: "1.0.0",
  *     onOperationStart: () => {},
@@ -137,17 +179,7 @@ export class InstrumentRef implements Disposable {
   }
 }
 
-export function getNativeHooks(): {
-  isEnabledFor(kind: number): boolean;
-  notifyStart(kind: number, id: number, attributes: Record<string, any>): void;
-  notifyEnd(kind: number, id: number, attributes: Record<string, any>): void;
-  notifyError(kind: number, id: number, attributes: Record<string, any>): void;
-  notifyProgress(kind: number, id: number, attributes: Record<string, any>): void;
-  notifyInject(kind: number, id: number, data?: Record<string, any>): any[];
-  getConfigurationProperty(propertyId: number): any;
-  setConfigurationProperty(propertyId: number, value: any): void;
-  getInjectHeaders(kind: number): { request: string[]; response: string[] } | null;
-} {
+export function getNativeHooks(): NativeHooks | undefined {
   const hooks = Bun.telemetry.nativeHooks();
   return hooks;
 }

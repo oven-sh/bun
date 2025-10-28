@@ -558,7 +558,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // Notify telemetry of request start - this sets ALS context via enterWith()
         // which is captured by AsyncContextFrame for async operations
         try {
-          Bun.telemetry?.nativeHooks()?.notifyStart(6, 0, { http_req, http_res }); // InstrumentKind.Node = 6
+          Bun.telemetry?.nativeHooks()?.notifyStart(6, 0, { http_req, http_res }); // InstrumentType.Node = 6
         } catch {}
 
         setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);

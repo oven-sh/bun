@@ -92,12 +92,12 @@ declare module "bun" {
    */
   export interface NativeInstrument {
     /**
-     * Operation category this instrument handles.
+     * Instrumentation operation category.
      *
-     * Determines which operations will invoke this instrument's hooks.
-     * For example, "http" instruments only receive HTTP server events.
+     * Determines which internal instrumentation points will be connected to
+     * the provided lifecycle callbacks.
      */
-    type: InstrumentKind;
+    kind: InstrumentKind;
 
     /**
      * Human-readable name for this instrumentation.
@@ -289,7 +289,7 @@ declare module "bun" {
      * All registered instruments receive lifecycle callbacks in registration order.
      *
      * Validation:
-     * - type should be a known InstrumentKind value (e.g. "http" | "fetch" | "sql" ... etc.)
+     * - kind must be a valid InstrumentKind string value (e.g. "http" | "fetch" | "sql" ... etc.)
      *   Unknown string values are accepted and treated as "custom" for forward compatibility
      * - name must be a non-empty string (max 256 chars)
      * - version must be a non-empty string (semver format)

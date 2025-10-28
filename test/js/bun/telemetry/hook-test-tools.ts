@@ -13,15 +13,15 @@ type MockedInstrument = {
   [Symbol.dispose](): void;
 };
 export function mockInstrument(
-  base: Pick<NativeInstrumentInternal, "name" | "type"> &
-    Partial<Omit<NativeInstrumentInternal, "name" | "type">> & {
+  base: Pick<NativeInstrumentInternal, "name" | "kind"> &
+    Partial<Omit<NativeInstrumentInternal, "name" | "kind">> & {
       log?: typeof console.log;
     },
   autoRegister: boolean = true,
 ): MockedInstrument & NativeInstrumentInternal {
   const payload = {
     name: base.name || "mock-instrument",
-    type: base.type,
+    kind: base.kind,
     version: "1.0.0",
     onOperationStart(a, b, ...args: any[]) {
       try {

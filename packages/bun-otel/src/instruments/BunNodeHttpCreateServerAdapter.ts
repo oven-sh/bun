@@ -69,7 +69,7 @@ function extractContentLength(response: ServerResponse): number {
  * const adapter = new BunNodeHttpCreateServerAdapter({
  *   name: "bun-node-http",
  *   version: "0.1.0",
- *   type: "node",
+ *   kind: "node",
  *   trace: {
  *     start: ["http.request.method", "url.path"],
  *     end: ["http.response.status_code"],

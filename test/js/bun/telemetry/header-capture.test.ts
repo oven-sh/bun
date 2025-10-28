@@ -4,7 +4,7 @@
  * NO @opentelemetry/* imports - testing ONLY Bun.telemetry API
  */
 import { describe, expect, test } from "bun:test";
-import { InstrumentKind } from "./types";
+import { InstrumentKinds } from "./types";
 
 // Helper to wait for async telemetry events without unconditional sleep
 function waitForCondition(checkFn: () => boolean, timeoutMs = 100): Promise<void> {
@@ -28,7 +28,7 @@ describe("HTTP Server Header Capture (Bun.serve)", () => {
     const capturedAttrs: any = {};
 
     const instrument = {
-      type: InstrumentKind.HTTP,
+      kind: InstrumentKinds.HTTP,
       name: "test-server-request-headers",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -71,7 +71,7 @@ describe("HTTP Server Header Capture (Bun.serve)", () => {
   test("captures configured response headers from Bun.serve", async () => {
     const capturedAttrs: any = {};
     const instrument = {
-      type: InstrumentKind.HTTP,
+      kind: InstrumentKinds.HTTP,
       name: "test-server-response-headers",
       version: "1.0.0",
       captureAttributes: {
@@ -117,7 +117,7 @@ describe("HTTP Server Header Capture (Bun.serve)", () => {
   test("captures non-standard custom headers from Bun.serve", async () => {
     const capturedAttrs: any = {};
     const instrument = {
-      type: InstrumentKind.HTTP,
+      kind: InstrumentKinds.HTTP,
       name: "test-custom-headers",
       version: "1.0.0",
       captureAttributes: {
@@ -162,7 +162,7 @@ describe("HTTP Server Header Capture (Bun.serve)", () => {
   test("handles case-insensitive header names", async () => {
     const capturedAttrs: any = {};
     const instrument = {
-      type: InstrumentKind.HTTP,
+      kind: InstrumentKinds.HTTP,
       name: "test-case-insensitive",
       version: "1.0.0",
       captureAttributes: {
@@ -200,7 +200,7 @@ describe("Fetch Client Header Capture", () => {
     const capturedAttrs: any = {};
 
     const instrument = {
-      type: InstrumentKind.Fetch,
+      kind: InstrumentKinds.Fetch,
       name: "test-fetch-request-headers",
       version: "1.0.0",
       captureAttributes: {
@@ -247,7 +247,7 @@ describe("Fetch Client Header Capture", () => {
     const capturedAttrs: any = {};
 
     const instrument = {
-      type: InstrumentKind.Fetch,
+      kind: InstrumentKinds.Fetch,
       name: "test-fetch-response-headers",
       version: "1.0.0",
       captureAttributes: {
@@ -293,7 +293,7 @@ describe("Fetch Client Header Capture", () => {
     const fetchResponseAttrs: any = {};
 
     const instrument = {
-      type: InstrumentKind.Fetch,
+      kind: InstrumentKinds.Fetch,
       name: "test-content-length-fetch",
       version: "1.0.0",
       captureAttributes: {
@@ -349,7 +349,7 @@ describe("AttributeKey Pointer Optimization Validation", () => {
   test("efficiently handles multiple headers without string conversion", async () => {
     const capturedCount: Record<string, number> = {};
     const instrument = {
-      type: InstrumentKind.HTTP,
+      kind: InstrumentKinds.HTTP,
       name: "test-optimization",
       version: "1.0.0",
       captureAttributes: {
@@ -400,7 +400,7 @@ describe("AttributeKey Pointer Optimization Validation", () => {
   test("handles empty configuration gracefully", async () => {
     const capturedAttrs: any = {};
     const instrument = {
-      type: InstrumentKind.HTTP,
+      kind: InstrumentKinds.HTTP,
       name: "test-empty-config",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -436,7 +436,7 @@ describe("AttributeKey Pointer Optimization Validation", () => {
     const serverEndAttrs: any = {};
 
     const instrument = {
-      type: InstrumentKind.HTTP,
+      kind: InstrumentKinds.HTTP,
       name: "test-content-length-server",
       version: "1.0.0",
       captureAttributes: {

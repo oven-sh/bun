@@ -266,7 +266,7 @@ export function mapHttpServerConfig(config: LegacyHttpConfig = {}): BunGenericIn
   return {
     name: "http.server",
     version: "0.1.0",
-    type: "http",
+    kind: "http",
     enabled: config.enabled ?? true,
 
     // SERVER spans update AsyncLocalStorage
@@ -341,7 +341,7 @@ export function mapNodeHttpServerConfig(config: LegacyHttpConfig = {}): BunGener
   return {
     name: "http.server",
     version: "0.1.0",
-    type: "node",
+    kind: "node",
     enabled: config.enabled ?? true,
 
     setsAsyncStorageContext: true,
@@ -429,7 +429,7 @@ export function mapFetchClientConfig(config: LegacyHttpConfig = {}): BunGenericI
   return {
     name: "http.client",
     version: "0.1.0",
-    type: "fetch",
+    kind: "fetch",
     enabled: config.enabled ?? true,
 
     // CLIENT spans don't update context (would overwrite server span)

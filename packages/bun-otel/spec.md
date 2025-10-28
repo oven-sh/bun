@@ -392,7 +392,7 @@ The telemetry system implements defense-in-depth security measures:
 
 1. **Type Definitions Split Across Two Packages**: Public API types live in `packages/bun-types/telemetry.d.ts` (available to all Bun users), while internal SDK types live in `packages/bun-otel/types.ts` (not exported). This enables custom instrumentation implementations without forcing dependency on bun-otel, while keeping internal APIs encapsulated.
 
-2. **String Literals vs Numeric Enums**: Public API uses ergonomic string literals (`type: "http"`), while internal API uses numeric enums for type-safe Zig FFI mapping (`InstrumentKind.HTTP = 1`). Provides better developer experience for users while maintaining compile-time validation in SDK implementation.
+2. **String-Based Public API**: Public API uses ergonomic string literals (`kind: "http"`) for better developer experience. The Zig runtime handles conversion to internal numeric representation as an implementation detail, keeping the public API clean and self-documenting.
 
 3. **Encapsulation of Internal APIs**: The `nativeHooks` namespace is excluded from public types - it's an implementation detail only needed by bun-otel TypeScript bridges. Users don't see confusing internal APIs in autocomplete, and the team has freedom to refactor internal bridge architecture without affecting public API stability.
 

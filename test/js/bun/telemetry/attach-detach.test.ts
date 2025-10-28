@@ -5,21 +5,21 @@
  * NOTE: Currently attach() returns a raw InstrumentRef object with { id: number }.
  * Future implementation will add Symbol.dispose for automatic cleanup.
  */
-import { describe, expect, test } from "bun:test";
-import { InstrumentKind } from "./types";
 import { InstrumentRef } from "bun";
+import { describe, expect, test } from "bun:test";
+import { InstrumentKinds } from "./types";
 
 describe("Bun.telemetry.attach()", () => {
   test("returns InstrumentRef with unique ID for each attached instrument", () => {
     const instrument1 = {
-      type: InstrumentKind.HTTP,
+      kind: "http",
       name: "test-instrument-1",
       version: "1.0.0",
       onOperationStart: () => {},
     };
 
     const instrument2 = {
-      type: InstrumentKind.HTTP,
+      kind: "http",
       name: "test-instrument-2",
       version: "1.0.0",
       onOperationStart: () => {},
@@ -44,14 +44,14 @@ describe("Bun.telemetry.attach()", () => {
 
   test("accepts instruments with different operation kinds", () => {
     const httpInstrument = {
-      type: InstrumentKind.HTTP,
+      kind: InstrumentKinds.HTTP,
       name: "http-instrument",
       version: "1.0.0",
       onOperationStart: () => {},
     };
 
     const fetchInstrument = {
-      type: InstrumentKind.Fetch,
+      kind: InstrumentKinds.Fetch,
       name: "fetch-instrument",
       version: "1.0.0",
       onOperationEnd: () => {},
@@ -72,25 +72,25 @@ describe("Bun.telemetry.attach()", () => {
   test("accepts instruments with only one hook function", () => {
     const instruments = [
       {
-        type: InstrumentKind.HTTP,
+        kind: "http",
         name: "only-start",
         version: "1.0.0",
         onOperationStart: () => {},
       },
       {
-        type: InstrumentKind.HTTP,
+        kind: "http",
         name: "only-end",
         version: "1.0.0",
         onOperationEnd: () => {},
       },
       {
-        type: InstrumentKind.HTTP,
+        kind: "http",
         name: "only-error",
         version: "1.0.0",
         onOperationError: () => {},
       },
       {
-        type: InstrumentKind.HTTP,
+        kind: "http",
         name: "only-inject",
         version: "1.0.0",
         onOperationInject: () => ({}),
@@ -111,7 +111,7 @@ describe("Bun.telemetry.attach()", () => {
 describe("Bun.telemetry.detach()", () => {
   test("removes attached instrument and returns true", () => {
     const instrument = {
-      type: InstrumentKind.HTTP,
+      kind: "http",
       name: "test-instrument",
       version: "1.0.0",
       onOperationStart: () => {},
@@ -133,7 +133,7 @@ describe("Bun.telemetry.detach()", () => {
 
   test("returns false for already-detached ref", () => {
     const instrument = {
-      type: InstrumentKind.HTTP,
+      kind: "http",
       name: "test",
       version: "1.0.0",
       onOperationStart: () => {},
@@ -150,7 +150,7 @@ describe("Bun.telemetry.detach()", () => {
     const refs: InstrumentRef[] = [];
     for (let i = 0; i < 5; i++) {
       const ref = Bun.telemetry.attach({
-        type: InstrumentKind.HTTP,
+        kind: "http",
         name: `instrument-${i}`,
         version: "1.0.0",
         onOperationStart: () => {},
@@ -168,7 +168,7 @@ describe("Bun.telemetry.detach()", () => {
 
   test("can detach via ref.id for backwards compatibility", () => {
     const instrument = {
-      type: InstrumentKind.HTTP,
+      kind: "http",
       name: "test-backward-compat",
       version: "1.0.0",
       onOperationStart: () => {},
@@ -202,14 +202,14 @@ describe("Bun.telemetry.listInstruments()", () => {
 
   test("lists all attached instruments", () => {
     const instrument1 = {
-      type: InstrumentKind.HTTP,
+      kind: "http",
       name: "http-instrument",
       version: "1.0.0",
       onOperationStart: () => {},
     };
 
     const instrument2 = {
-      type: InstrumentKind.Fetch,
+      kind: "fetch",
       name: "fetch-instrument",
       version: "2.0.0",
       onOperationEnd: () => {},
@@ -231,48 +231,48 @@ describe("Bun.telemetry.listInstruments()", () => {
     }
     expect(info1.name).toBe(instrument1.name);
     expect(info1.version).toBe(instrument1.version);
-    expect(info1.kind).toBe(instrument1.type);
+    expect(info1.kind).toBe(instrument1.kind);
 
     expect(info2.name).toBe(instrument2.name);
     expect(info2.version).toBe(instrument2.version);
-    expect(info2.kind).toBe(instrument2.type);
+    expect(info2.kind).toBe(instrument2.kind);
   });
 
   test("filters instruments by kind", () => {
     using httpRef1 = Bun.telemetry.attach({
-      type: InstrumentKind.HTTP,
+      kind: "http",
       name: "http-1",
       version: "1.0.0",
       onOperationStart: () => {},
     });
 
     using httpRef2 = Bun.telemetry.attach({
-      type: InstrumentKind.HTTP,
+      kind: "http",
       name: "http-2",
       version: "1.0.0",
       onOperationStart: () => {},
     });
 
     using fetchRef = Bun.telemetry.attach({
-      type: InstrumentKind.Fetch,
+      kind: "fetch",
       name: "fetch-1",
       version: "1.0.0",
       onOperationStart: () => {},
     });
 
-    const httpList = Bun.telemetry.listInstruments(InstrumentKind.HTTP);
-    const fetchList = Bun.telemetry.listInstruments(InstrumentKind.Fetch);
+    const httpList = Bun.telemetry.listInstruments("http");
+    const fetchList = Bun.telemetry.listInstruments("fetch");
 
     expect(httpList.length).toBe(2);
     expect(fetchList.length).toBe(1);
 
-    expect(httpList.every((i: any) => i.kind === InstrumentKind.HTTP)).toBe(true);
-    expect(fetchList.every((i: any) => i.kind === InstrumentKind.Fetch)).toBe(true);
+    expect(httpList.every((i: any) => i.kind === "http")).toBe(true);
+    expect(fetchList.every((i: any) => i.kind === "fetch")).toBe(true);
   });
 
   test("updates list after detachment", () => {
     const ref = Bun.telemetry.attach({
-      type: InstrumentKind.HTTP,
+      kind: "http",
       name: "test",
       version: "1.0.0",
       onOperationStart: () => {},

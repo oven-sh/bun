@@ -16,7 +16,7 @@ describe("mapHttpServerConfig", () => {
     const config = mapHttpServerConfig();
 
     expect(config.name).toBe("http.server");
-    expect(config.type).toBe("http");
+    expect(config.kind).toBe("http");
     expect(config.enabled).toBe(true);
     expect(config.setsAsyncStorageContext).toBe(true);
 
@@ -133,7 +133,7 @@ describe("mapFetchClientConfig", () => {
     const config = mapFetchClientConfig();
 
     expect(config.name).toBe("http.client");
-    expect(config.type).toBe("fetch");
+    expect(config.kind).toBe("fetch");
     expect(config.setsAsyncStorageContext).toBe(false); // CLIENT!
 
     // Should have default headers
@@ -206,7 +206,7 @@ describe("mapNodeHttpServerConfig", () => {
     const config = mapNodeHttpServerConfig();
 
     expect(config.name).toBe("http.server");
-    expect(config.type).toBe("node");
+    expect(config.kind).toBe("node");
     expect(config.setsAsyncStorageContext).toBe(true);
   });
 

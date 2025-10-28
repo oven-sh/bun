@@ -447,7 +447,7 @@ pub const TelemetryConfig = struct {
     /// the global header propagation configuration.
     pub fn rebuildInjectConfig(
         self: *TelemetryConfig,
-        kind: telemetry.InstrumentKind,
+        kind: telemetry.InstrumentType,
         instrument_records: []const telemetry.InstrumentRecord,
     ) !void {
         // Determine which configuration properties to update based on kind
@@ -537,7 +537,7 @@ pub const TelemetryConfig = struct {
     /// the global header capture configuration.
     pub fn rebuildCaptureConfig(
         self: *TelemetryConfig,
-        kind: telemetry.InstrumentKind,
+        kind: telemetry.InstrumentType,
         instrument_records: []const telemetry.InstrumentRecord,
     ) !void {
         // Determine which configuration properties to update based on kind

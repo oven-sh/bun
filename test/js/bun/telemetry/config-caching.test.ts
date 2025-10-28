@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { ConfigurationProperty, InstrumentKind, InstrumentRef } from "./types";
+import { ConfigurationProperty, InstrumentKinds, InstrumentRef } from "./types";
 
 test("attach rebuilds inject config for fetch kind", () => {
   using instrument = new InstrumentRef({
-    type: InstrumentKind.Fetch,
+    kind: InstrumentKinds.Fetch,
     name: "test-fetch-inject",
     version: "1.0.0",
     injectHeaders: {
@@ -25,7 +25,7 @@ test("attach rebuilds inject config for fetch kind", () => {
 
 test("attach rebuilds inject config for http kind", () => {
   using instrument = new InstrumentRef({
-    type: InstrumentKind.HTTP,
+    kind: InstrumentKinds.HTTP,
     name: "test-http-inject",
     version: "1.0.0",
     injectHeaders: {
@@ -46,7 +46,7 @@ test("attach rebuilds inject config for http kind", () => {
 
 test("multiple instruments merge headers linearly", () => {
   using instrument1 = new InstrumentRef({
-    type: InstrumentKind.Fetch,
+    kind: InstrumentKinds.Fetch,
     name: "test-fetch-1",
     version: "1.0.0",
     injectHeaders: {
@@ -56,7 +56,7 @@ test("multiple instruments merge headers linearly", () => {
   });
 
   using instrument2 = new InstrumentRef({
-    type: InstrumentKind.Fetch,
+    kind: InstrumentKinds.Fetch,
     name: "test-fetch-2",
     version: "1.0.0",
     injectHeaders: {
@@ -79,7 +79,7 @@ test("multiple instruments merge headers linearly", () => {
 
 test("detach rebuilds inject config without detached instrument", () => {
   using instrument1 = new InstrumentRef({
-    type: InstrumentKind.Fetch,
+    kind: InstrumentKinds.Fetch,
     name: "test-fetch-1",
     version: "1.0.0",
     injectHeaders: {
@@ -89,7 +89,7 @@ test("detach rebuilds inject config without detached instrument", () => {
   });
 
   using instrument2 = new InstrumentRef({
-    type: InstrumentKind.Fetch,
+    kind: InstrumentKinds.Fetch,
     name: "test-fetch-2",
     version: "1.0.0",
     injectHeaders: {
@@ -119,7 +119,7 @@ test("detach rebuilds inject config without detached instrument", () => {
 test("detaching last instrument clears config", () => {
   {
     using instrument = new InstrumentRef({
-      type: InstrumentKind.Fetch,
+      kind: InstrumentKinds.Fetch,
       name: "test-fetch",
       version: "1.0.0",
       injectHeaders: {
@@ -145,7 +145,7 @@ test("detaching last instrument clears config", () => {
 
 test("instruments without injectHeaders don't affect config", () => {
   using instrument1 = new InstrumentRef({
-    type: InstrumentKind.Fetch,
+    kind: InstrumentKinds.Fetch,
     name: "test-fetch-1",
     version: "1.0.0",
     injectHeaders: {
@@ -155,7 +155,7 @@ test("instruments without injectHeaders don't affect config", () => {
   });
 
   using instrument2 = new InstrumentRef({
-    type: InstrumentKind.Fetch,
+    kind: InstrumentKinds.Fetch,
     name: "test-fetch-2",
     version: "1.0.0",
     // No injectHeaders
@@ -173,7 +173,7 @@ test("instruments without injectHeaders don't affect config", () => {
 
 test("http and fetch configs are independent", () => {
   using fetchInstrument = new InstrumentRef({
-    type: InstrumentKind.Fetch,
+    kind: InstrumentKinds.Fetch,
     name: "test-fetch",
     version: "1.0.0",
     injectHeaders: {
@@ -183,7 +183,7 @@ test("http and fetch configs are independent", () => {
   });
 
   using httpInstrument = new InstrumentRef({
-    type: InstrumentKind.HTTP,
+    kind: InstrumentKinds.HTTP,
     name: "test-http",
     version: "1.0.0",
     injectHeaders: {

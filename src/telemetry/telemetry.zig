@@ -59,8 +59,8 @@ pub const fetch = @import("hooks-fetch.zig");
 pub const sql = @import("hooks-sql.zig");
 
 /// Categorizes operation types for routing telemetry data to appropriate handlers.
-/// This enum maps 1:1 with the TypeScript InstrumentKind in packages/bun-otel/types.ts
-pub const InstrumentKind = enum(u8) {
+/// Internal numeric enum - public API uses string kind values ("http", "fetch", etc.)
+pub const InstrumentType = enum(u8) {
     custom = 0,
     http = 1,
     fetch = 2,
@@ -69,7 +69,7 @@ pub const InstrumentKind = enum(u8) {
     s3 = 5,
     node = 6,
 
-    pub const COUNT = @typeInfo(InstrumentKind).@"enum".fields.len;
+    pub const COUNT = @typeInfo(InstrumentType).@"enum".fields.len;
 };
 
 /// Operation lifecycle event types
@@ -87,11 +87,11 @@ pub const OperationStep = enum(u8) {
 /// Parse an instrument kind from a string JSValue.
 /// Accepts exact (case-sensitive) enum names: "custom", "http", "fetch", "sql", "redis", "s3", "node".
 /// Returns .custom (0) if the value is not a string or does not match a known kind.
-pub fn parseStringInstrumentType(globalObject: *JSGlobalObject, val: JSValue) InstrumentKind {
+pub fn parseStringInstrumentType(globalObject: *JSGlobalObject, val: JSValue) InstrumentType {
     if (!val.isString()) return .custom;
     const zstr = val.getZigString(globalObject) catch return .custom;
     const slice = zstr.slice();
-    return std.meta.stringToEnum(InstrumentKind, slice) orelse .custom;
+    return std.meta.stringToEnum(InstrumentType, slice) orelse .custom;
 }
 
 /// Stores registered instrumentation with cached function pointers for performance.
@@ -100,8 +100,8 @@ pub const InstrumentRecord = struct {
     /// Unique instrument ID (monotonic, never reused)
     id: u32,
 
-    /// Operation category this instrument handles
-    kind: InstrumentKind,
+    /// Operation category this instrument handles (internal numeric type)
+    type: InstrumentType,
 
     /// Full JavaScript instrument object (protected from GC)
     native_instrument_object: JSValue,
@@ -118,7 +118,7 @@ pub const InstrumentRecord = struct {
     /// Initialize a new instrument record from a JavaScript instrument object
     pub fn init(
         id: u32,
-        kind: InstrumentKind,
+        kind: InstrumentType,
         instrument_obj: JSValue,
         globalObject: *JSGlobalObject,
         allocator: std.mem.Allocator,
@@ -222,7 +222,7 @@ pub const InstrumentRecord = struct {
 
         return InstrumentRecord{
             .id = id,
-            .kind = kind,
+            .type = kind,
             .native_instrument_object = instrument_obj,
             .on_op_fns = op_fns,
             .instrument_config = instrument_config,
@@ -269,11 +269,11 @@ pub const InstrumentRecord = struct {
 /// Global telemetry registry managing all registered instrumentations.
 /// Singleton instance accessed via Bun.telemetry.* APIs.
 pub const TelemetryContext = struct {
-    /// Fixed-size array indexed by InstrumentKind, each containing a list of instruments
-    instrument_table: [InstrumentKind.COUNT]std.ArrayList(InstrumentRecord),
+    /// Fixed-size array indexed by InstrumentType, each containing a list of instruments
+    instrument_table: [InstrumentType.COUNT]std.ArrayList(InstrumentRecord),
 
     /// Fixed-size array of instruments with the corresponding callback registered (minimizes nullchecks)
-    operations_table: [InstrumentKind.COUNT][OperationStep.COUNT]std.ArrayList(*InstrumentRecord),
+    operations_table: [InstrumentType.COUNT][OperationStep.COUNT]std.ArrayList(*InstrumentRecord),
 
     /// Semantic conventions attribute keys (shared singleton)
     semconv: *AttributeKeys,
@@ -295,13 +295,13 @@ pub const TelemetryContext = struct {
         const self = try allocator.create(TelemetryContext);
 
         // Initialize all instrument lists
-        var instrument_table: [InstrumentKind.COUNT]std.ArrayList(InstrumentRecord) = undefined;
+        var instrument_table: [InstrumentType.COUNT]std.ArrayList(InstrumentRecord) = undefined;
         for (&instrument_table) |*list| {
             list.* = std.ArrayList(InstrumentRecord).init(allocator);
         }
 
         // Initialize all operation lists (2D: [kind][step])
-        var operations_table: [InstrumentKind.COUNT][OperationStep.COUNT]std.ArrayList(*InstrumentRecord) = undefined;
+        var operations_table: [InstrumentType.COUNT][OperationStep.COUNT]std.ArrayList(*InstrumentRecord) = undefined;
         for (&operations_table) |*kind_table| {
             for (kind_table) |*step_list| {
                 step_list.* = std.ArrayList(*InstrumentRecord).init(allocator);
@@ -401,7 +401,7 @@ pub const TelemetryContext = struct {
     }
 
     /// Get the list of instruments registered for a given operation step and kind
-    pub inline fn getOnOperations(self: *TelemetryContext, op: OperationStep, kind: InstrumentKind) *std.ArrayList(*InstrumentRecord) {
+    pub inline fn getOnOperations(self: *TelemetryContext, op: OperationStep, kind: InstrumentType) *std.ArrayList(*InstrumentRecord) {
         return &self.operations_table[@intFromEnum(kind)][@intFromEnum(op)];
     }
 
@@ -420,34 +420,29 @@ pub const TelemetryContext = struct {
             return error.InvalidInstrument;
         }
 
-        // Extract and validate 'type' field
-        const type_value = try instrument_obj.get(globalObject, "type") orelse return error.MissingType;
-        var kind: InstrumentKind = .custom;
-        if (type_value.isNumber()) {
-            const type_num = type_value.asInt32();
-            if (type_num < 0 or type_num >= InstrumentKind.COUNT) {
-                return error.InvalidType;
-            }
-            kind = @enumFromInt(@as(u8, @intCast(type_num)));
-        } else if (type_value.isString()) {
-            kind = parseStringInstrumentType(globalObject, type_value);
-            // parseStringInstrumentType always returns a valid InstrumentKind (defaults to .custom)
-        } else {
-            return error.InvalidType;
+        // Extract and validate 'kind' field (must be string)
+        const kind_value = try instrument_obj.get(globalObject, "kind") orelse return error.MissingKind;
+
+        // Only accept strings (no numeric values)
+        if (!kind_value.isString()) {
+            return error.InvalidKind;
         }
+
+        // Parse string to internal enum (defaults to .custom for unknown strings)
+        const instrument_type = parseStringInstrumentType(globalObject, kind_value);
 
         // Generate ID and create record
         const id = self.generateInstrumentId();
-        const record = try InstrumentRecord.init(id, kind, instrument_obj, globalObject, self.allocator, self);
+        const record = try InstrumentRecord.init(id, instrument_type, instrument_obj, globalObject, self.allocator, self);
 
         // Add to appropriate instrument list
-        const kind_index = @intFromEnum(kind);
-        try self.instrument_table[kind_index].append(record);
+        const type_index = @intFromEnum(instrument_type);
+        try self.instrument_table[type_index].append(record);
 
-        // Rebuild inject and capture config for this kind if it's HTTP or Fetch
-        if (kind == .http or kind == .fetch) {
-            try self.config.rebuildInjectConfig(kind, self.instrument_table[kind_index].items);
-            try self.config.rebuildCaptureConfig(kind, self.instrument_table[kind_index].items);
+        // Rebuild inject and capture config for this type if it's HTTP or Fetch
+        if (instrument_type == .http or instrument_type == .fetch) {
+            try self.config.rebuildInjectConfig(instrument_type, self.instrument_table[type_index].items);
+            try self.config.rebuildCaptureConfig(instrument_type, self.instrument_table[type_index].items);
         }
         // Rebuild operations table
         self.rebuildOperationTable();
@@ -478,7 +473,7 @@ pub const TelemetryContext = struct {
                     const step: OperationStep = @enumFromInt(step_idx);
                     const op_fn = record.on_op_fns[step_idx];
                     if (op_fn.isCallable()) {
-                        self.getOnOperations(step, record.kind).append(record) catch {
+                        self.getOnOperations(step, record.type).append(record) catch {
                             // This should never fail in practice since we pre-allocate
                             std.debug.print("Telemetry: Failed to append to operations table\n", .{});
                         };
@@ -495,7 +490,7 @@ pub const TelemetryContext = struct {
         for (&self.instrument_table, 0..) |*list, kind_idx| {
             for (list.items, 0..) |*record, i| {
                 if (record.id == id) {
-                    const kind: InstrumentKind = @enumFromInt(@as(u8, @intCast(kind_idx)));
+                    const kind: InstrumentType = @enumFromInt(@as(u8, @intCast(kind_idx)));
                     record.dispose();
                     _ = list.swapRemove(i);
 
@@ -519,13 +514,13 @@ pub const TelemetryContext = struct {
 
     /// Check if telemetry is enabled for a given operation kind
     /// O(1) check - just checks if the instrument list for this kind is non-empty
-    pub fn isEnabledFor(self: *TelemetryContext, kind: InstrumentKind) bool {
+    pub fn isEnabledFor(self: *TelemetryContext, kind: InstrumentType) bool {
         const kind_index = @intFromEnum(kind);
         return self.instrument_table[kind_index].items.len > 0;
     }
 
     /// List all registered instruments, optionally filtered by kind
-    pub fn listInstruments(self: *TelemetryContext, maybe_kind: ?InstrumentKind, globalObject: *JSGlobalObject) !JSValue {
+    pub fn listInstruments(self: *TelemetryContext, maybe_kind: ?InstrumentType, globalObject: *JSGlobalObject) !JSValue {
         const array = try JSValue.createEmptyArray(globalObject, 0);
         var index: u32 = 0;
 
@@ -554,10 +549,16 @@ pub const TelemetryContext = struct {
     /// Create an InstrumentInfo object from an InstrumentRecord
     fn createInstrumentInfo(self: *TelemetryContext, record: *const InstrumentRecord, globalObject: *JSGlobalObject) JSValue {
         _ = self;
-        const info = JSValue.createEmptyObject(globalObject, 4);
+        const info = JSValue.createEmptyObject(globalObject, 5);
 
         info.put(globalObject, "id", JSValue.jsNumber(@as(f64, @floatFromInt(record.id))));
-        info.put(globalObject, "kind", JSValue.jsNumber(@as(f64, @floatFromInt(@intFromEnum(record.kind)))));
+
+        // Get string kind from instrument object (already protected, no need to re-protect)
+        const kind_str = (record.native_instrument_object.get(globalObject, "kind") catch null) orelse .js_undefined;
+        info.put(globalObject, "kind", kind_str);
+
+        // Add numeric type (internal)
+        info.put(globalObject, "type", JSValue.jsNumber(@as(f64, @floatFromInt(@intFromEnum(record.type)))));
 
         const name = (record.native_instrument_object.get(globalObject, "name") catch null) orelse .js_undefined;
         info.put(globalObject, "name", name);
@@ -583,7 +584,7 @@ pub const TelemetryContext = struct {
     pub inline fn notifyOperation(
         self: *TelemetryContext,
         comptime op: OperationStep,
-        comptime kind: InstrumentKind,
+        comptime kind: InstrumentType,
         id: OpId,
         attrs: *AttributeMap,
     ) JSValue {
@@ -607,7 +608,7 @@ pub const TelemetryContext = struct {
     /// Invoke onOperationStart for all instruments registered for this kind
     pub inline fn notifyOperationStart(
         self: *TelemetryContext,
-        comptime kind: InstrumentKind,
+        comptime kind: InstrumentType,
         id: OpId,
         attrs: *AttributeMap,
     ) void {
@@ -617,7 +618,7 @@ pub const TelemetryContext = struct {
     /// Invoke onOperationProgress for all instruments registered for this kind
     pub inline fn notifyOperationProgress(
         self: *TelemetryContext,
-        comptime kind: InstrumentKind,
+        comptime kind: InstrumentType,
         id: OpId,
         attrs: *AttributeMap,
     ) void {
@@ -627,7 +628,7 @@ pub const TelemetryContext = struct {
     /// Invoke onOperationEnd for all instruments registered for this kind
     pub inline fn notifyOperationEnd(
         self: *TelemetryContext,
-        comptime kind: InstrumentKind,
+        comptime kind: InstrumentType,
         id: OpId,
         attrs: *AttributeMap,
     ) void {
@@ -637,7 +638,7 @@ pub const TelemetryContext = struct {
     /// Invoke onOperationError for all instruments registered for this kind
     pub inline fn notifyOperationError(
         self: *TelemetryContext,
-        comptime kind: InstrumentKind,
+        comptime kind: InstrumentType,
         id: OpId,
         attrs: *AttributeMap,
     ) void {
@@ -648,7 +649,7 @@ pub const TelemetryContext = struct {
     /// Returns a flat array of property values from all instruments
     pub inline fn notifyOperationInject(
         self: *TelemetryContext,
-        comptime kind: InstrumentKind,
+        comptime kind: InstrumentType,
         id: OpId,
         attrs: *AttributeMap,
     ) JSValue {
@@ -796,8 +797,8 @@ pub fn jsAttach(
     const id = telemetry.attach(instrument_obj, globalObject) catch |err| {
         switch (err) {
             error.InvalidInstrument => globalObject.throw("Instrument must be an object", .{}) catch {},
-            error.MissingType => globalObject.throw("Instrument must have a 'type' property", .{}) catch {},
-            error.InvalidType => globalObject.throw("Instrument 'type' must be a valid InstrumentKind", .{}) catch {},
+            error.MissingKind => globalObject.throw("Instrument must have a 'kind' property", .{}) catch {},
+            error.InvalidKind => globalObject.throw("Instrument 'kind' must be a string", .{}) catch {},
             error.NoHooksProvided => globalObject.throw("Instrument must provide at least one hook function", .{}) catch {},
             else => globalObject.throw("Failed to attach instrument", .{}) catch {},
         }
@@ -877,7 +878,7 @@ pub fn jsDetach(
     return JSValue.jsBoolean(removed);
 }
 
-/// Bun.telemetry.isEnabledFor(kind: InstrumentKind): boolean
+/// Bun.telemetry.isEnabledFor(kind: InstrumentType): boolean
 pub fn jsIsEnabledFor(
     _: *JSGlobalObject,
     callframe: *CallFrame,
@@ -895,17 +896,17 @@ pub fn jsIsEnabledFor(
     }
 
     const kind_num = kind_value.asInt32();
-    if (kind_num < 0 or kind_num >= InstrumentKind.COUNT) {
+    if (kind_num < 0 or kind_num >= InstrumentType.COUNT) {
         return JSValue.jsBoolean(false);
     }
 
-    const kind: InstrumentKind = @enumFromInt(@as(u8, @intCast(kind_num)));
+    const kind: InstrumentType = @enumFromInt(@as(u8, @intCast(kind_num)));
     const is_enabled = telemetry.isEnabledFor(kind);
 
     return JSValue.jsBoolean(is_enabled);
 }
 
-/// Bun.telemetry.listInstruments(kind?: InstrumentKind): InstrumentInfo[]
+/// Bun.telemetry.listInstruments(kind?: string): InstrumentInfo[]
 pub fn jsListInstruments(
     globalObject: *JSGlobalObject,
     callframe: *CallFrame,
@@ -915,13 +916,11 @@ pub fn jsListInstruments(
         return JSValue.createEmptyArray(globalObject, 0) catch .js_undefined;
     };
 
-    var maybe_kind: ?InstrumentKind = null;
+    var maybe_kind: ?InstrumentType = null;
 
-    if (arguments.len >= 1 and arguments.ptr[0].isNumber()) {
-        const kind_num = arguments.ptr[0].asInt32();
-        if (kind_num >= 0 and kind_num < InstrumentKind.COUNT) {
-            maybe_kind = @enumFromInt(@as(u8, @intCast(kind_num)));
-        }
+    // Only accept string kind parameter
+    if (arguments.len >= 1 and arguments.ptr[0].isString()) {
+        maybe_kind = parseStringInstrumentType(globalObject, arguments.ptr[0]);
     }
 
     return telemetry.listInstruments(maybe_kind, globalObject) catch .js_undefined;
@@ -950,9 +949,9 @@ inline fn jsNotifyOperationGeneric(
     if (!kind_value.isNumber() or !id_value.isNumber()) return .js_undefined;
 
     const kind_num = kind_value.asInt32();
-    if (kind_num < 0 or kind_num >= InstrumentKind.COUNT) return .js_undefined;
+    if (kind_num < 0 or kind_num >= InstrumentType.COUNT) return .js_undefined;
 
-    const kind: InstrumentKind = @enumFromInt(@as(u8, @intCast(kind_num)));
+    const kind: InstrumentType = @enumFromInt(@as(u8, @intCast(kind_num)));
     var id = @as(u64, @intFromFloat(id_value.asNumber()));
 
     // Auto-generate OpId if 0 is provided (starts at 1)

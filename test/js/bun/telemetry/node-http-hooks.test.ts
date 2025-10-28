@@ -6,12 +6,11 @@
 import { describe, expect, test } from "bun:test";
 import http from "node:http";
 import { mockInstrument } from "./hook-test-tools";
-import { InstrumentKind } from "./types";
 
 describe("http.createServer() telemetry insertion points", () => {
   test("calls onOperationStart when request arrives", async () => {
     using instrument = mockInstrument({
-      type: InstrumentKind.NODE_HTTP,
+      kind: "node",
       name: "calls onOperationStart when request arrives",
     });
 

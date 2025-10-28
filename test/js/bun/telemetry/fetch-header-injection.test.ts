@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { InstrumentKind } from "./types";
+import { InstrumentKinds } from "./types";
 
 test("fetch injects headers into outgoing requests", async () => {
   let injectCalled = false;
@@ -15,7 +15,7 @@ test("fetch injects headers into outgoing requests", async () => {
   });
 
   using ref = Bun.telemetry.attach({
-    type: InstrumentKind.Fetch,
+    kind: InstrumentKinds.Fetch,
     name: "test-fetch-inject",
     version: "1.0.0",
     injectHeaders: {
@@ -59,7 +59,7 @@ test("fetch handles multiple instruments injecting headers", async () => {
   });
 
   using ref1 = Bun.telemetry.attach({
-    type: InstrumentKind.Fetch,
+    kind: InstrumentKinds.Fetch,
     name: "test-inject-1",
     version: "1.0.0",
     injectHeaders: {
@@ -77,7 +77,7 @@ test("fetch handles multiple instruments injecting headers", async () => {
   });
 
   using ref2 = Bun.telemetry.attach({
-    type: InstrumentKind.Fetch,
+    kind: InstrumentKinds.Fetch,
     name: "test-inject-2",
     version: "1.0.0",
     injectHeaders: {
@@ -122,7 +122,7 @@ test("fetch skips injection when no headers configured", async () => {
   });
 
   using ref = Bun.telemetry.attach({
-    type: InstrumentKind.Fetch,
+    kind: InstrumentKinds.Fetch,
     name: "test-no-inject",
     version: "1.0.0",
     // No injectHeaders specified
@@ -158,7 +158,7 @@ test("fetch only injects configured headers", async () => {
   });
 
   using ref = Bun.telemetry.attach({
-    type: InstrumentKind.Fetch,
+    kind: InstrumentKinds.Fetch,
     name: "test-selective",
     version: "1.0.0",
     injectHeaders: {
@@ -199,7 +199,7 @@ test("fetch preserves user-provided headers", async () => {
   });
 
   using ref = Bun.telemetry.attach({
-    type: InstrumentKind.Fetch,
+    kind: InstrumentKinds.Fetch,
     name: "test-preserve",
     version: "1.0.0",
     injectHeaders: {
@@ -244,7 +244,7 @@ test("fetch handles inject returning undefined gracefully", async () => {
   });
 
   using ref = Bun.telemetry.attach({
-    type: InstrumentKind.Fetch,
+    kind: InstrumentKinds.Fetch,
     name: "test-undefined",
     version: "1.0.0",
     injectHeaders: {

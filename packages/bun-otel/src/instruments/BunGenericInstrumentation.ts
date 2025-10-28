@@ -22,8 +22,8 @@ export interface BunGenericInstrumentationConfig extends CapabilitiesConfig, Ins
   /** Instrumentation version */
   version: string;
 
-  /** Native instrument type */
-  type: "http" | "fetch" | "node" | "custom";
+  /** Native instrument kind */
+  kind: "http" | "fetch" | "node" | "custom";
 
   /** Is this instrumentation enabled? */
   enabled?: boolean;
@@ -47,7 +47,7 @@ export interface InstrumentationProviders {
  *   {
  *     name: "bun-http",
  *     version: "0.1.0",
- *     type: "http",
+ *     kind: "http",
  *     setsAsyncStorageContext: true,
  *     trace: {
  *       start: ["http.request.method", "url.path"],
@@ -174,7 +174,7 @@ export class BunGenericInstrumentation implements Disposable, Instrumentation<Bu
     const injectHeaders = this._extractInjectHeaders();
 
     return {
-      type: this._config.type,
+      kind: this._config.kind,
       name: this._config.name,
       version: this._config.version,
       captureAttributes:
@@ -242,7 +242,7 @@ export class BunGenericInstrumentation implements Disposable, Instrumentation<Bu
 
     // CLIENT spans (fetch) inject into outgoing requests
     // SERVER spans (http, node) inject into responses
-    if (this._config.type === "fetch") {
+    if (this._config.kind === "fetch") {
       return { request: headers };
     } else {
       return { response: headers };

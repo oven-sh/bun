@@ -426,7 +426,7 @@ export function getNativeHooks(): NativeHooks {
   if (!installedDummyInstrument) {
     // Install a dummy instrumentation to ensure native hooks are available
     Bun.telemetry.attach({
-      type: "custom",
+      kind: "custom",
       name: "dummy-instrumentation",
       version: "1.0.0",
       onOperationStart() {},

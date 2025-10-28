@@ -240,23 +240,17 @@ export class BunSDK implements Disposable {
         diag.info(`${signal} received but shutdown already in progress, ignoring`);
         return;
       }
-
       diag.debug(`\n${signal} received, shutting down gracefully...`);
-
       try {
         // Run user callback before SDK shutdown
         if (beforeShutdown) {
           await beforeShutdown();
         }
-
         // Shutdown SDK (will set _shutdownOnce = true)
         await this.stop();
-
         diag.debug("✓ Shutdown complete");
-        process.exit(0);
       } catch (error) {
         diag.debug("Error during shutdown:", error);
-        process.exit(1);
       }
     };
 

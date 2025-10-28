@@ -535,9 +535,8 @@ pub const PathLike = union(enum) {
         switch (this.*) {
             .slice_with_underlying_string => {
                 this.slice_with_underlying_string.toThreadSafe();
-                this.* = .{
-                    .threadsafe_string = this.slice_with_underlying_string,
-                };
+                const slice_with_underlying_string = this.slice_with_underlying_string;
+                this.* = .{ .threadsafe_string = slice_with_underlying_string };
             },
             .buffer => {
                 this.buffer.buffer.value.protect();

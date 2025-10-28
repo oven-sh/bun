@@ -107,8 +107,6 @@ export class BunNodeHttpCreateServerAdapter extends BunGenericInstrumentation {
         // Without this, _http_server.ts falls back to 0, which auto-increments!
         (nodeResponse as any)._telemetry_op_id = id;
 
-        // Capture start time for duration calculation
-        const startTime = process.hrtime.bigint();
         // Extract attributes from IncomingMessage
 
         const method = nodeRequest.method ?? "UNKNOWN";
@@ -185,13 +183,10 @@ export class BunNodeHttpCreateServerAdapter extends BunGenericInstrumentation {
         nodeResponse.once("finish", () => {
           const statusCode = nodeResponse.statusCode ?? 500;
           const contentLength = extractContentLength(nodeResponse);
-          const endTime = process.hrtime.bigint();
-          const durationNs = Number(endTime - startTime);
 
           // Extract final attributes
           const endAttrs: Record<string, any> = {
             "http.response.status_code": statusCode,
-            "_operation.duration": durationNs,
           };
 
           if (contentLength > 0) {

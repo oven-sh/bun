@@ -42,12 +42,11 @@ function createRegistryHandler(urls: string[], info: any, rootUrl: string) {
 
 describe.concurrent("bun install --insecure flag", () => {
   it("should accept the --insecure flag and display warning", async () => {
-    const urls: string[] = [];
     using server = Bun.serve({
       port: 0,
       async fetch(request) {
         const rootUrl = `http://localhost:${server.port}`;
-        return await createRegistryHandler(urls, { "0.0.2": {} }, rootUrl)(request);
+        return await createRegistryHandler([], { "0.0.2": {} }, rootUrl)(request);
       },
     });
 
@@ -92,12 +91,11 @@ registry = "http://localhost:${server.port}/"
   });
 
   it("should work with other install flags", async () => {
-    const urls: string[] = [];
     using server = Bun.serve({
       port: 0,
       async fetch(request) {
         const rootUrl = `http://localhost:${server.port}`;
-        return await createRegistryHandler(urls, { "0.0.2": {}, "0.0.3": {} }, rootUrl)(request);
+        return await createRegistryHandler([], { "0.0.2": {}, "0.0.3": {} }, rootUrl)(request);
       },
     });
 
@@ -142,12 +140,11 @@ registry = "http://localhost:${server.port}/"
   });
 
   it("should work with bun add --insecure", async () => {
-    const urls: string[] = [];
     using server = Bun.serve({
       port: 0,
       async fetch(request) {
         const rootUrl = `http://localhost:${server.port}`;
-        return await createRegistryHandler(urls, { "0.0.2": {} }, rootUrl)(request);
+        return await createRegistryHandler([], { "0.0.2": {} }, rootUrl)(request);
       },
     });
 
@@ -323,12 +320,11 @@ insecure = true
   });
 
   it("CLI --insecure flag should override bunfig install.insecure=false", async () => {
-    const urls: string[] = [];
     using server = Bun.serve({
       port: 0,
       async fetch(request) {
         const rootUrl = `http://localhost:${server.port}`;
-        return await createRegistryHandler(urls, { "0.0.2": {} }, rootUrl)(request);
+        return await createRegistryHandler([], { "0.0.2": {} }, rootUrl)(request);
       },
     });
 

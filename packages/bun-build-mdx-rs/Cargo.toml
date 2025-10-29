@@ -15,6 +15,8 @@ bun-native-plugin = { path = "../bun-native-plugin-rs" }
 # Force serde version that still has __private API (before 1.0.210)
 serde = { version = "=1.0.209", features = ["derive"] }
 serde_json = "1.0"
+# Need markdown with serde support for AST serialization
+markdown = { version = "1.0.0", features = ["serde"] }
 
 [build-dependencies]
 napi-build = "2.0.1"

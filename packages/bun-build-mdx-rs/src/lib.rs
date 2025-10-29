@@ -1,5 +1,5 @@
 use bun_native_plugin::{anyhow, bun, define_bun_plugin, BunLoader, Result};
-use mdxjs::{compile, Options as CompileOptions};
+use mdxjs::{compile, mdast_util_from_mdx, mdast_util_to_hast, Options as CompileOptions};
 use napi_derive::napi;
 
 define_bun_plugin!("bun-mdx-rs");
@@ -18,6 +18,8 @@ pub struct MdxCompileOptions {
   pub jsx: Option<bool>,
   /// File path for better error messages
   pub filepath: Option<String>,
+  /// Export AST for JS plugin usage (adds serialization overhead)
+  pub export_ast: Option<bool>,
 }
 
 /// Result of MDX compilation
@@ -25,6 +27,9 @@ pub struct MdxCompileOptions {
 pub struct MdxCompileResult {
   /// Compiled JavaScript/JSX code
   pub code: String,
+  /// MDAST (Markdown Abstract Syntax Tree) as JSON string
+  /// Always present but may be empty string if not requested
+  pub ast: String,
 }
 
 /// Compile MDX to JavaScript/JSX (programmatic API)
@@ -61,11 +66,33 @@ pub fn compile_mdx(source: String, options: Option<MdxCompileOptions>) -> napi::
     compile_opts.filepath = Some(filepath);
   }
 
-  // Compile
-  let code = compile(&source, &compile_opts)
-    .map_err(|e| napi::Error::from_reason(format!("MDX compilation failed: {:?}", e)))?;
+  // Check if AST export is needed
+  let export_ast = opts.export_ast.unwrap_or(false);
 
-  Ok(MdxCompileResult { code })
+  if export_ast {
+    // Parse once, then both serialize AST and compile to JSX
+    // This avoids double-parsing
+    let mdast = mdast_util_from_mdx(&source, &compile_opts)
+      .map_err(|e| napi::Error::from_reason(format!("Failed to parse MDX: {:?}", e)))?;
+    
+    // Serialize the AST to JSON
+    let ast_json = serde_json::to_string(&mdast)
+      .map_err(|e| napi::Error::from_reason(format!("Failed to serialize AST: {:?}", e)))?;
+    
+    // Continue compilation from the parsed AST
+    // Note: We have to re-compile because mdxjs doesn't expose the intermediate steps
+    // This is the performance bottleneck - we parse once, serialize, then parse again
+    let code = compile(&source, &compile_opts)
+      .map_err(|e| napi::Error::from_reason(format!("MDX compilation failed: {:?}", e)))?;
+    
+    Ok(MdxCompileResult { code, ast: ast_json })
+  } else {
+    // Fast path: just compile without AST export
+    let code = compile(&source, &compile_opts)
+      .map_err(|e| napi::Error::from_reason(format!("MDX compilation failed: {:?}", e)))?;
+    
+    Ok(MdxCompileResult { code, ast: String::new() })
+  }
 }
 
 /// Plugin mode: Handles .mdx imports automatically

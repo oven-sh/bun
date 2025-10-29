@@ -19,25 +19,6 @@ import { NativeInstrument } from "bun";
 
 // export { ConfigurationProperty, InstrumentKind } from "bun-otel";
 
-// TODO - codegen or figure out a better way to share these!
-
-/**
- * Numeric enum mapping to Zig InstrumentKind enum values.
- *
- * Used internally for type-safe mapping between string literals (public API)
- * and numeric values (Zig FFI). DO NOT export from package.
- *
- * Maps 1:1 with src/bun.js/telemetry.zig InstrumentKind enum.
- */
-export enum InstrumentType {
-  Custom = 0,
-  HTTP = 1,
-  Fetch = 2,
-  SQL = 3,
-  Redis = 4,
-  S3 = 5,
-  NODE_HTTP = 6,
-}
 export const InstrumentKinds = {
   Custom: "custom",
   HTTP: "http",

@@ -214,7 +214,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
                 , .{});
             };
 
-            break :config try bake.UserOptions.fromJS(app, vm.global);
+            break :config try bake.UserOptions.fromJS(app, vm.global, &vm.global.bunVM().transpiler.resolver);
         },
         .rejected => |err| {
             return global.throwValue(err.toError() orelse err);
@@ -257,8 +257,6 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
     bun.assert(server_transpiler.env == client_transpiler.env);
 
     framework.* = framework.resolve(&server_transpiler.resolver, &client_transpiler.resolver, allocator) catch {
-        if (framework.is_built_in_react)
-            try bake.Framework.addReactInstallCommandNote(server_transpiler.log);
         Output.errGeneric("Failed to resolve all imports required by the framework", .{});
         Output.flush();
         server_transpiler.log.print(Output.errorWriter()) catch {};
@@ -447,6 +445,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         const runtime_file_index = maybe_runtime_file_index orelse {
             bun.Output.panic("Runtime file not found. This is an unexpected bug in Bun. Please file a bug report on GitHub.", .{});
         };
+
         const any_client_chunks = any_client_chunks: {
             for (bundled_outputs) |file| {
                 if (file.side) |s| {
@@ -457,6 +456,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
             }
             break :any_client_chunks false;
         };
+
         if (any_client_chunks) {
             const runtime_file: *const OutputFile = &bundled_outputs[runtime_file_index];
             _ = runtime_file.writeToDisk(root_dir, ".") catch |err| {

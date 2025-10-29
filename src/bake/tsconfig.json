@@ -4,12 +4,11 @@
     "lib": ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"],
     "baseUrl": ".",
     "paths": {
-      "bun-framework-react/*": ["./bun-framework-react/*"],
+      "bun-framework-react/*": ["../../packages/bun-framework-react/*"],
       "bindgen": ["../codegen/bindgen-lib"]
     },
-    "jsx": "react-jsx",
-    "types": ["react/experimental"]
+    "jsx": "react-jsx"
   },
-  "include": ["**/*.ts", "**/*.tsx", "../runtime.js", "../runtime.bun.js"],
+  "include": ["**/*.ts", "**/*.tsx", "../runtime.js", "../runtime.bun.js", "bake.private.d.ts"],
   "references": [{ "path": "../../packages/bun-types" }]
 }

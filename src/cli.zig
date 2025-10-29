@@ -387,6 +387,8 @@ pub const Command = struct {
         expose_gc: bool = false,
         preserve_symlinks_main: bool = false,
         console_depth: ?u16 = null,
+        /// `--app` runs bun.app.ts/bun.app.js for Bun Bake
+        app: bool = false,
     };
 
     var global_cli_ctx: Context = undefined;
@@ -546,6 +548,7 @@ pub const Command = struct {
         }
 
         var next_arg = ((args_iter.next()) orelse return .AutoCommand);
+
         while (next_arg.len > 0 and next_arg[0] == '-' and !(next_arg.len > 1 and next_arg[1] == 'e')) {
             next_arg = ((args_iter.next()) orelse return .AutoCommand);
         }
@@ -847,6 +850,10 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .RunCommand);
                 ctx.args.target = .bun;
 
+                if (ctx.runtime_options.app and ctx.positionals.len == 0) {
+                    @"bun --app"(ctx);
+                }
+
                 if (ctx.filters.len > 0 or ctx.workspaces) {
                     FilterRun.runScriptsWithFilter(ctx) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
@@ -895,6 +902,10 @@ pub const Command = struct {
 
                 if (ctx.runtime_options.eval.script.len > 0) {
                     return try @"bun --eval --print"(ctx);
+                }
+
+                if (ctx.runtime_options.app and ctx.positionals.len == 0) {
+                    @"bun --app"(ctx);
                 }
 
                 const extension: []const u8 = if (ctx.args.entry_points.len > 0)
@@ -1420,6 +1431,21 @@ pub const Command = struct {
         @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
         ctx.passthrough = try std.mem.concat(ctx.allocator, []const u8, &.{ ctx.positionals, ctx.passthrough });
         try bun_js.Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len], null);
+    }
+
+    fn @"bun --app"(ctx: Context) noreturn {
+        bun.bake.printWarning();
+        Output.flush();
+
+        // Set the entry point to ./bun.app and let the resolver find .ts or .js
+        // This matches the logic in production.zig
+        var positionals_buf: [1][]const u8 = .{"./bun.app"};
+        ctx.positionals = &positionals_buf;
+
+        if (RunCommand.exec(ctx, .{ .bin_dirs_only = false, .log_errors = true, .allow_fast_run_for_extensions = false }) catch false) {
+            Global.exit(0);
+        }
+        Global.exit(1);
     }
 
     fn @"bun ./bun.lockb"(ctx: Context) !void {

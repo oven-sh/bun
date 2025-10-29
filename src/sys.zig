@@ -3753,7 +3753,7 @@ pub fn readNonblocking(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
                 log("preadv2({f}, {d}) = {d} ({f})", .{ fd, buf.len, rc, debug_timer });
 
                 if (debug_timer.timer.read() > std.time.ns_per_ms) {
-                    bun.Output.debugWarn("preadv2({}, {d}) blocked for {}", .{ fd, buf.len, debug_timer });
+                    bun.Output.debugWarn("preadv2({f}, {d}) blocked for {f}", .{ fd, buf.len, debug_timer });
                 }
             }
 
@@ -3806,7 +3806,7 @@ pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
                 log("pwritev2({f}, {d}) = {d} ({f})", .{ fd, buf.len, rc, debug_timer });
 
                 if (debug_timer.timer.read() > std.time.ns_per_ms) {
-                    bun.Output.debugWarn("pwritev2({}, {d}) blocked for {}", .{ fd, buf.len, debug_timer });
+                    bun.Output.debugWarn("pwritev2({f}, {d}) blocked for {f}", .{ fd, buf.len, debug_timer });
                 }
             }
 

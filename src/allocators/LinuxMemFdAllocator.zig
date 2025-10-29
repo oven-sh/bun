@@ -152,7 +152,7 @@ pub fn create(bytes: []const u8) bun.sys.Maybe(bun.webcore.Blob.Store.Bytes) {
                     continue;
                 }
 
-                bun.Output.debugWarn("Failed to write to memfd: {}", .{err});
+                bun.Output.debugWarn("Failed to write to memfd: {f}", .{err});
                 fd.close();
                 return .{ .err = err };
             },

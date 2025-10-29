@@ -170,7 +170,7 @@ pub fn read(this: *INotifyWatcher) bun.sys.Maybe([]const *align(1) Event) {
             .AGAIN, .INTR => continue :outer,
             .INVAL => {
                 if (Environment.isDebug) {
-                    bun.Output.err("EINVAL", "inotify read({}, {d})", .{ this.fd, this.eventlist_bytes.len });
+                    bun.Output.err("EINVAL", "inotify read({f}, {d})", .{ this.fd, this.eventlist_bytes.len });
                 }
                 return .{ .err = .{
                     .errno = @truncate(@intFromEnum(errno)),

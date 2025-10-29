@@ -925,7 +925,7 @@ const WaiterThreadPosix = struct {
 
         if (comptime Environment.isLinux) {
             var current_mask = std.posix.sigemptyset();
-            std.os.linux.sigaddset(&current_mask, std.posix.SIG.CHLD);
+            std.os.linux.sigaddset(current_mask[0..1], std.posix.SIG.CHLD);
             const act = std.posix.Sigaction{
                 .handler = .{ .handler = &wakeup },
                 .mask = current_mask,

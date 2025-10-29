@@ -1752,7 +1752,8 @@ fn spawnSymbolizer(program: [:0]const u8, alloc: std.mem.Allocator, trace: *cons
     child.expand_arg0 = .expand;
     child.progress_node = std.Progress.Node.none;
 
-    const stderr = std.fs.File.stderr().writer();
+    var stderr_writer = std.fs.File.stderr().writerStreaming(&.{});
+    const stderr = &stderr_writer.interface;
     const result = child.spawnAndWait() catch |err| {
         stderr.print("Failed to invoke command: {f}\n", .{bun.fmt.fmtSlice(argv.items, " ")}) catch {};
         if (bun.Environment.isWindows) {

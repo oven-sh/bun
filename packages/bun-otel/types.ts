@@ -13,7 +13,7 @@
  * Numeric enum for configuration property identifiers.
  *
  * Used to access header capture/propagation configuration via nativeHooks.
- * Maps 1:1 with src/bun.js/telemetry.zig ConfigurationProperty enum.
+ * Maps 1:1 with src/telemetry/config.zig ConfigurationProperty enum.
  *
  * @internal
  */
@@ -32,6 +32,8 @@ export enum ConfigurationProperty {
   http_capture_headers_fetch_response = 5,
   /** Fetch client request headers to inject/propagate */
   http_propagate_headers_fetch_request = 6,
+  /** AsyncLocalStorage instance for context propagation */
+  _context_storage = 7,
 }
 
 /**

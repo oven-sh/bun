@@ -2085,21 +2085,18 @@ void WebCore__FetchHeaders__fastGet_(WebCore::FetchHeaders* headers, unsigned ch
 }
 
 // Telemetry: Fast HTTP header name lookup using existing gperf perfect hash
-// Maps lowercase header string to HTTPHeaderName enum (0-92)
-// Returns 255 if header not found (sentinel value)
+// Precondition: header name MUST be lowercase ASCII. Returns 255 if not found.
 extern "C" uint8_t Bun__HTTPHeaderName__fromString(const char* str, size_t len)
 {
     WebCore::HTTPHeaderName name;
+    if (!str) return 255;
 
-    // Use existing gperf-generated perfect hash function
-    // This is case-insensitive and highly optimized
+    // Use existing gperf-generated perfect hash function (case-sensitive)
     if (WebCore::findHTTPHeaderName(
-        WTF::StringView(std::span { reinterpret_cast<const Latin1Character*>(str), len }),
-        name))
-    {
+            WTF::StringView(std::span{ reinterpret_cast<const Latin1Character*>(str), len }),
+            name)) {
         return static_cast<uint8_t>(name);
     }
-
     return 255; // Sentinel: header not in HTTPHeaderName enum
 }
 

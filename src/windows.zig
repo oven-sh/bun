@@ -3869,7 +3869,7 @@ pub fn spawnWatcherChild(
         return error.Win32Error;
     }
 
-    const flags: DWORD = c.CREATE_UNICODE_ENVIRONMENT | c.EXTENDED_STARTUPINFO_PRESENT;
+    const flags: std.os.windows.CreateProcessFlags = .{ .create_unicode_environment = true, .extended_startupinfo_present = true };
 
     const image_path = exePathW();
     var wbuf: WPathBuffer = undefined;

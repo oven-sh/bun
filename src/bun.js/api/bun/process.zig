@@ -2008,7 +2008,7 @@ pub const sync = struct {
                 switch (reader.start()) {
                     .err => |err| {
                         _ = this.process.kill(1);
-                        Output.panic("Unexpected error starting {s} pipe reader\n{}", .{ @tagName(tag), err });
+                        Output.panic("Unexpected error starting {s} pipe reader\n{f}", .{ @tagName(tag), err });
                     },
                     .result => {},
                 }

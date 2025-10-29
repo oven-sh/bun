@@ -156,7 +156,7 @@ pub const FD = packed struct(backing_int) {
                     if (isStdioHandle(std.os.windows.STD_OUTPUT_HANDLE, handle)) return 1;
                     if (isStdioHandle(std.os.windows.STD_ERROR_HANDLE, handle)) return 2;
                     std.debug.panic(
-                        \\Cast bun.FD.uv({}) makes closing impossible!
+                        \\Cast bun.FD.uv({f}) makes closing impossible!
                         \\
                         \\The supplier of fd FD should call 'FD.makeLibUVOwned',
                         \\probably where open() was called.

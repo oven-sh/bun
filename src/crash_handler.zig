@@ -983,7 +983,7 @@ pub fn printMetadata(writer: anytype) !void {
         } else if (bun.Environment.isMac) {
             try writer.print("macOS v{s}\n", .{platform.version});
         } else if (bun.Environment.isWindows) {
-            try writer.print("Windows v{s}\n", .{std.zig.system.windows.detectRuntimeVersion()});
+            try writer.print("Windows v{f}\n", .{std.zig.system.windows.detectRuntimeVersion()});
         }
 
         if (bun.Environment.isX64) {
@@ -1494,7 +1494,7 @@ fn report(url: []const u8) void {
                 null,
                 null,
                 1, // true
-                0,
+                .{},
                 null,
                 null,
                 &startup_info,

@@ -3629,7 +3629,7 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
             instance.data.windowsConfigureClient(opts.info) catch {
                 instance.deinit();
                 this.ipc = null;
-                Output.warn("Unable to start IPC pipe '{}'", .{opts.info});
+                Output.warn("Unable to start IPC pipe '{f}'", .{opts.info});
                 return null;
             };
 

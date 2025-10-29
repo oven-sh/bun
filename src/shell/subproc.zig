@@ -1178,7 +1178,7 @@ pub const PipeReader = struct {
         if (should_continue) {
             if (bun.Environment.isPosix) this.reader.registerPoll() else switch (this.reader.startWithCurrentPipe()) {
                 .err => |e| {
-                    Output.panic("TODO: implement error handling in Bun Shell PipeReader.onReadChunk\n{}", .{e});
+                    Output.panic("TODO: implement error handling in Bun Shell PipeReader.onReadChunk\n{f}", .{e});
                 },
                 else => {},
             }

@@ -108,7 +108,7 @@ fn link(ctx: Command.Context) !void {
                     bun.windows.libuv.UV_FS_SYMLINK_JUNCTION,
                 )) {
                     .err => |err| {
-                        Output.prettyErrorln("<r><red>error:<r> failed to create junction to node_modules in global dir due to error {}", .{err});
+                        Output.prettyErrorln("<r><red>error:<r> failed to create junction to node_modules in global dir due to error {f}", .{err});
                         Global.crash();
                     },
                     .result => {},

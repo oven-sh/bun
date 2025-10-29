@@ -352,7 +352,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
     // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.!!!!!!!!!!!!!!!!!!!!!!!!!!'
     const suffix = comptime (if (is_standalone) wliteral("exe") else wliteral("bunx"));
     if (dbg) if (!std.mem.endsWith(u16, image_path_u16, suffix)) {
-        std.debug.panic("assert failed: image path expected to end with {}, got {}", .{
+        std.debug.panic("assert failed: image path expected to end with {f}, got {f}", .{
             std.unicode.fmtUtf16Le(suffix),
             std.unicode.fmtUtf16Le(image_path_u16),
         });

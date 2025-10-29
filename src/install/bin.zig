@@ -726,8 +726,9 @@ pub const Bin = extern struct {
 
             const shebang = shebang: {
                 const first_content_chunk = contents: {
-                    const reader = target.stdFile().reader();
-                    const read = reader.read(&read_in_buf) catch break :contents null;
+                    var reader = target.stdFile().readerStreaming(&.{});
+                    var readvec_buf: []u8 = &read_in_buf;
+                    const read = reader.interface.readVec((&readvec_buf)[0..1]) catch break :contents null;
                     if (read == 0) break :contents null;
                     break :contents read_in_buf[0..read];
                 };

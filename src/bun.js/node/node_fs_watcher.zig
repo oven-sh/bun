@@ -208,7 +208,7 @@ pub const FSWatcher = struct {
 
             pub fn format(this: *const StringOrBytesToDecode, writer: *std.Io.Writer) !void {
                 switch (this.*) {
-                    .string => |str| try writer.print("{}", .{str}),
+                    .string => |str| try writer.print("{f}", .{str}),
                     .bytes_to_free => |utf8| try writer.print("{s}", .{utf8}),
                 }
             }
@@ -286,9 +286,9 @@ pub const FSWatcher = struct {
             switch (event) {
                 .rename, .change => |value| {
                     if (is_file) {
-                        Output.prettyErrorln("<r> <d>File changed: {}<r>", .{value});
+                        Output.prettyErrorln("<r> <d>File changed: {f}<r>", .{value});
                     } else {
-                        Output.prettyErrorln("<r> <d>Dir changed: {}<r>", .{value});
+                        Output.prettyErrorln("<r> <d>Dir changed: {f}<r>", .{value});
                     }
                 },
                 else => {},

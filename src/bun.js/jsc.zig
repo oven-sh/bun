@@ -6,10 +6,10 @@
 //! TODO: Remove remaining aliases to `webcore` and `api`
 
 /// The calling convention used for JavaScript functions <> Native
-pub const conv = if (bun.Environment.isWindows and bun.Environment.isX64)
-    std.builtin.CallingConvention.SysV
+pub const conv: std.builtin.CallingConvention = if (bun.Environment.isWindows and bun.Environment.isX64)
+    .{ .x86_64_sysv = .{} }
 else
-    std.builtin.CallingConvention.c;
+    .c;
 
 /// Web Template Framework
 pub const wtf = @import("./bindings/WTF.zig").WTF;

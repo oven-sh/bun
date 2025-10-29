@@ -44,6 +44,16 @@ export const GuidesList = () => {
     ],
     categories: [
       {
+        key: "deployment",
+        title: "Deployment",
+        icon: "rocket",
+        items: [
+          { title: "Deploy Bun on Vercel", href: "/guides/deployment/vercel" },
+          { title: "Deploy Bun on Railway", href: "/guides/deployment/railway" },
+          { title: "Deploy Bun on Render", href: "/guides/deployment/render" },
+        ],
+      },
+      {
         key: "binary",
         title: "Binary data",
         icon: "binary",
@@ -109,18 +119,13 @@ export const GuidesList = () => {
         ],
       },
       {
-        key: "deployment",
-        title: "Deployment",
-        icon: "server",
-        items: [{ title: "Deploy a Bun application on Railway", href: "/guides/deployment/railway" }],
-      },
-      {
         key: "ecosystem",
         title: "Ecosystem",
         icon: "puzzle",
         items: [
           { title: "Use EdgeDB with Bun", href: "/guides/ecosystem/edgedb" },
-          { title: "Use Prisma with Bun", href: "/guides/ecosystem/prisma" },
+          { title: "Use Prisma ORM with Bun", href: "/guides/ecosystem/prisma" },
+          { title: "Use Prisma Postgres with Bun", href: "/guides/ecosystem/prisma-postgres" },
           { title: "Create a Discord bot", href: "/guides/ecosystem/discordjs" },
           { title: "Add Sentry to a Bun app", href: "/guides/ecosystem/sentry" },
           { title: "Use Drizzle ORM with Bun", href: "/guides/ecosystem/drizzle" },
@@ -132,7 +137,6 @@ export const GuidesList = () => {
           { title: "Build an app with Remix and Bun", href: "/guides/ecosystem/remix" },
           { title: "Run Bun as a daemon with systemd", href: "/guides/ecosystem/systemd" },
           { title: "Build an app with Next.js and Bun", href: "/guides/ecosystem/nextjs" },
-          { title: "Deploy a Bun application on Render", href: "/guides/ecosystem/render" },
           { title: "Build an app with SvelteKit and Bun", href: "/guides/ecosystem/sveltekit" },
           { title: "Build a frontend using Vite and Bun", href: "/guides/ecosystem/vite" },
           { title: "Build an app with SolidStart and Bun", href: "/guides/ecosystem/solidstart" },
@@ -497,7 +501,34 @@ export const GuidesList = () => {
           ))}
         </Columns>
       </div>
+  return (
+    <div id="guides-list">
+      {/* Featured cards */}
+      <div className="mb-12">
+        <h2 className="text-2xl font-bold mb-6">Featured</h2>
+        <Columns cols={3}>
+          {guidesData.featured.map(g => (
+            <Card key={g.href} title={g.title} href={g.href} cta={g.cta} />
+          ))}
+        </Columns>
+      </div>
 
+      {/* All guides organized by category */}
+      <div className="mb-8">
+        <h2 className="text-2xl font-bold mb-6">All Guides</h2>
+        {guidesData.categories.map(category => (
+          <div key={category.key} className="mb-8">
+            <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">{category.title}</h3>
+            <Columns cols={3}>
+              {category.items.map(guide => (
+                <Card key={guide.href} title={guide.title} description=" " href={guide.href} cta="" />
+              ))}
+            </Columns>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
       {/* All guides organized by category */}
       <div className="mb-8">
         <h2 className="text-2xl font-bold mb-6">All Guides</h2>

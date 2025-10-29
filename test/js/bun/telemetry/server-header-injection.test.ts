@@ -1,9 +1,8 @@
 import { expect, test } from "bun:test";
-import { InstrumentKinds } from "./types";
 
 test("HTTP server injects headers from instruments", async () => {
   using ref = Bun.telemetry.attach({
-    kind: InstrumentKinds.HTTP,
+    kind: "http",
     name: "test-server-inject",
     version: "1.0.0",
     injectHeaders: {
@@ -36,7 +35,7 @@ test("HTTP server injects headers from instruments", async () => {
 
 test("HTTP server merges headers from multiple instruments", async () => {
   using ref1 = Bun.telemetry.attach({
-    kind: InstrumentKinds.HTTP,
+    kind: "http",
     name: "test-server-1",
     version: "1.0.0",
     injectHeaders: {
@@ -50,7 +49,7 @@ test("HTTP server merges headers from multiple instruments", async () => {
   });
 
   using ref2 = Bun.telemetry.attach({
-    kind: InstrumentKinds.HTTP,
+    kind: "http",
     name: "test-server-2",
     version: "1.0.0",
     injectHeaders: {
@@ -79,7 +78,7 @@ test("HTTP server merges headers from multiple instruments", async () => {
 
 test("HTTP server handles missing header values gracefully", async () => {
   using ref = Bun.telemetry.attach({
-    kind: InstrumentKinds.HTTP,
+    kind: "http",
     name: "test-server-missing",
     version: "1.0.0",
     injectHeaders: {
@@ -126,7 +125,7 @@ test("HTTP server without instrumentation doesn't inject headers", async () => {
 
 test("HTTP server allows duplicate header values (linear concatenation)", async () => {
   using ref1 = Bun.telemetry.attach({
-    kind: InstrumentKinds.HTTP,
+    kind: "http",
     name: "test-server-dup1",
     version: "1.0.0",
     injectHeaders: {
@@ -140,7 +139,7 @@ test("HTTP server allows duplicate header values (linear concatenation)", async 
   });
 
   using ref2 = Bun.telemetry.attach({
-    kind: InstrumentKinds.HTTP,
+    kind: "http",
     name: "test-server-dup2",
     version: "1.0.0",
     injectHeaders: {

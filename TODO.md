@@ -1,21 +1,20 @@
 TODO:
 
-- [ ] identify and fix ISSUE1.js
-- [ ] revert commit 'revertrevert' 43009bb1f297789596c4d9b424f1c22647891986 and get building again
+- [x] identify and fix ISSUE1.js
+- [x] revert commit 'revertrevert' 43009bb1f297789596c4d9b424f1c22647891986 and get building again
 - [ ] linux: no_link_obj
-- [ ] windows
-- [ ] remove format_mode (after completing the revertrevert step ^)
+- [x] windows
 - [ ] remove deprecated.BufferedWriter and BufferedReader
-- [ ] try the native backend on linux x86_64 (will probably crash)
+- [x] try the native backend on linux x86_64 (will probably crash)
 - [ ] remove:
   - [ ] deprecated.zig autoFormatLabelFallback
   - [ ] deprecated.zig autoFormatLabel
   - [ ] bun.zig maybeAdaptWriter
-- [ ] remove format_mode and remove it in our zig compiler fork too
 
 Follow-up:
 
 - [ ] search `comptime Writer: type` and `comptime W: type` and remove
+- [ ] remove format_mode in main.zig and in our zig fork
 
 Follow-up:
 

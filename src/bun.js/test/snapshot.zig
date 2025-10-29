@@ -15,7 +15,7 @@ pub const Snapshots = struct {
     counts: *bun.StringHashMap(usize),
     _current_file: ?File = null,
     snapshot_dir_path: ?string = null,
-    inline_snapshots_to_write: *std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(InlineSnapshotToWrite)),
+    inline_snapshots_to_write: *std.AutoArrayHashMap(TestRunner.File.ID, std.array_list.Managed(InlineSnapshotToWrite)),
     last_error_snapshot_name: ?[]const u8 = null,
 
     pub const InlineSnapshotToWrite = struct {

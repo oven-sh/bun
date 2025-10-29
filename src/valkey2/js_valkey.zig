@@ -716,7 +716,11 @@ pub const JsValkey = struct {
         return hsetImpl(this, globalObject, callframe, .HMSET);
     }
 
-    pub fn hmget(this: *JsValkey, go: *bun.jsc.JSGlobalObject, cf: *bun.jsc.CallFrame) bun.JSError!bun.jsc.JSValue {
+    pub fn hmget(
+        this: *JsValkey,
+        go: *bun.jsc.JSGlobalObject,
+        cf: *bun.jsc.CallFrame,
+    ) bun.JSError!bun.jsc.JSValue {
         // TODO(markovejnovic): Implementation taken straight from the legacy code.
         const args_view = cf.arguments();
         if (args_view.len < 2) {
@@ -898,6 +902,97 @@ pub const JsValkey = struct {
         return promise.toJS();
     }
 
+    pub fn unsubscribe(
+        self: *Self,
+        go: *bun.jsc.JSGlobalObject,
+        cf: *bun.jsc.CallFrame,
+    ) bun.JSError!bun.jsc.JSValue {
+        if (!self._client.isSubscriber()) {
+            return go.ERR(
+                .REDIS_INVALID_STATE,
+                "RedisClient.prototype.unsubscribe can only be called while in subscriber mode.",
+                .{},
+            ).throw();
+        }
+
+        const args_view = cf.arguments();
+        if (args_view.len == 0) {
+            var ctx: RequestContext = .{ .user_request = .init(go, false) };
+            self._client.unsubscribeAll(ctx);
+            return ctx.user_request.promise().toJS();
+        }
+
+        var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+
+        // Two arguments means .unsubscribe(channel, listener) is invoked.
+        if (cf.arguments().len == 2) {
+            // In this case, the first argument is a channel string and the second argument is the
+            // handler to remove.
+            const channel = (try jsValueToJsArgument(go, cf.argument(0))) orelse {
+                return go.throwInvalidArgumentType("channel", "unsubscribe", "string or buffer");
+            };
+
+            const listener_cb = cf.argument(1);
+
+            if (!listener_cb.isCallable()) {
+                return go.throwInvalidArgumentType("unsubscribe", "listener", "function");
+            }
+
+            var ctx: RequestContext = .{ .user_request = .init(go, false) };
+            self._client.unsubscribeHandler(channel.slice(), listener_cb.asPtrAddress(), ctx);
+            return ctx.user_request.promise().toJS();
+        }
+
+        if (cf.argument(0).isArray()) {
+            const channels = cf.argument(0);
+            const channel_count = try channels.getLength(go);
+            if (channel_count == 0) {
+                return bun.jsc.JSPromise.resolvedPromiseValue(go, .js_undefined);
+            }
+
+            var redis_channels = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), channel_count);
+            defer {
+                for (redis_channels.items) |*item| {
+                    item.deinit();
+                }
+                redis_channels.deinit();
+            }
+            var array_iter = try channels.arrayIterator(go);
+            while (try array_iter.next()) |channel_arg| {
+                const channel = (try jsValueToJsArgument(go, channel_arg)) orelse {
+                    return go.throwInvalidArgumentType("unsubscribe", "channel", "string");
+                };
+
+                redis_channels.appendAssumeCapacity(channel);
+            }
+
+            // What a long way to spell
+            //   const auto channel_slices = redis_channels
+            //     | std::views::transform([](const auto& ch) { return ch.slice(); })
+            //     | std::views::to<std::vector<std::string_view>>();
+            var channel_slices = try std.ArrayList([]const u8).initCapacity(
+                stack_fallback.get(),
+                redis_channels.items.len,
+            );
+            defer channel_slices.deinit();
+            for (redis_channels.items) |*channel_arg| {
+                channel_slices.appendAssumeCapacity(channel_arg.slice());
+            }
+
+            var ctx: RequestContext = .{ .user_request = .init(go, false) };
+            self._client.unsubscribeChannels(channel_slices.items, ctx);
+            return ctx.user_request.promise().toJS();
+        }
+
+        const channel = (try jsValueToJsArgument(go, cf.argument(0))) orelse {
+            return go.throwInvalidArgumentType("channel", "unsubscribe", "string or buffer");
+        };
+        var ctx: RequestContext = .{ .user_request = .init(go, false) };
+        const channels = [_][]const u8{channel.slice()};
+        self._client.unsubscribeChannels(&channels, ctx);
+        return ctx.user_request.promise().toJS();
+    }
+
     pub const getBuffer = MetFactory.@"(key: RedisKey, options)"("getBuffer", .GET, "key", .{ .return_as_buffer = true }).fxn;
     pub const @"type" = MetFactory.@"(key: RedisKey)"("type", .TYPE, "key").fxn;
     pub const append = MetFactory.@"(key: RedisKey, value: RedisValue)"("append", .APPEND, "key", "value").fxn;
@@ -974,10 +1069,11 @@ pub const JsValkey = struct {
     pub const pexpiretime = MetFactory.@"(key: RedisKey)"("pexpiretime", .PEXPIRETIME, "key").fxn;
     pub const pfadd = MetFactory.@"(key: RedisKey, value: RedisValue)"("pfadd", .PFADD, "key", "value").fxn;
     pub const psetex = MetFactory.@"(key: RedisKey, value: RedisValue, value2: RedisValue)"("psetex", .PSETEX, "key", "milliseconds", "value").fxn;
-    pub const psubscribe = MetFactory.@"(...strings: string[])"("psubscribe", .PSUBSCRIBE, .dont_care).fxn;
+    pub const psubscribe = MetFactory.@"(...strings: string[])"("psubscribe", .PSUBSCRIBE).fxn;
     pub const pttl = MetFactory.@"(key: RedisKey)"("pttl", .PTTL, "key").fxn;
-    pub const pubsub = MetFactory.@"(...strings: string[])"("pubsub", .PUBSUB, .dont_care).fxn;
-    pub const punsubscribe = MetFactory.@"(...strings: string[])"("punsubscribe", .PUNSUBSCRIBE, .dont_care).fxn;
+    pub const publish = MetFactory.@"(key: RedisKey, value: RedisValue)"("publish", .PUBLISH, "channel", "message").fxn;
+    pub const pubsub = MetFactory.@"(...strings: string[])"("pubsub", .PUBSUB).fxn;
+    pub const punsubscribe = MetFactory.@"(...strings: string[])"("punsubscribe", .PUNSUBSCRIBE).fxn;
     pub const randomkey = MetFactory.@"()"(.RANDOMKEY).fxn;
     pub const rename = MetFactory.@"(key: RedisKey, value: RedisValue)"("rename", .RENAME, "key", "newkey").fxn;
     pub const renamenx = MetFactory.@"(key: RedisKey, value: RedisValue)"("renamenx", .RENAMENX, "key", "newkey").fxn;
@@ -989,6 +1085,7 @@ pub const JsValkey = struct {
     pub const scard = MetFactory.@"(key: RedisKey)"("scard", .SCARD, "key").fxn;
     pub const script = MetFactory.@"(...strings: string[])"("script", .SCRIPT).fxn;
     pub const sdiff = MetFactory.@"(...strings: string[])"("sdiff", .SDIFF).fxn;
+    pub const subscribe = MetFactory.@"(...strings: string[])"("subscribe", .SUBSCRIBE).fxn;
     pub const sdiffstore = MetFactory.@"(...strings: string[])"("sdiffstore", .SDIFFSTORE).fxn;
     pub const select = MetFactory.@"(...strings: string[])"("select", .SELECT).fxn;
     pub const setbit = MetFactory.@"(key: RedisKey, value: RedisValue, value2: RedisValue)"("setbit", .SETBIT, "key", "offset", "value").fxn;

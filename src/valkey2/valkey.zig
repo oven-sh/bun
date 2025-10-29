@@ -127,7 +127,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             map_entry.active.append(listener);
         }
 
-        pub fn removeActiveHandler(
+        fn removeActiveHandler(
             self: *Self,
             channel: []const u8,
             handler_id: u64,
@@ -175,6 +175,13 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             }
         }
 
+        pub fn removeHandler(self: *Self, channel: []const u8, handler_id: u64) !void {
+            // TODO(markovejnovic): Implement
+            _ = self;
+            _ = channel;
+            _ = handler_id;
+        }
+
         pub fn receiveMessage(
             self: *Self,
             msg: protocol.Push,
@@ -216,10 +223,16 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
 
         /// Estimate the total number of bytes used by this client. This includes @sizeof(Self).
         fn memoryUsage(self: *const Self) usize {
-            const map_key_size = 32;
+            // TODO(markovejnovic): Implement
+            _ = self;
+            return 0;
+        }
 
-            return @sizeOf(Self) +
-                (self.map.capacity() * (@sizeOf(SubscriptionMapEntry) + map_key_size));
+        /// Test if there are any pending or active listeners.
+        pub fn hasAnyListeners(self: *const Self) bool {
+            // Since we erase channels from the channel map if they have no listeners, it is safe
+            // ot only check the channel map.
+            return self.channel_map.count() > 0;
         }
     };
 
@@ -781,22 +794,35 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
 
         /// Unsubscribe a previously registered handler.
         /// If the subscription is in-flight, it will be cancelled.
-        pub fn unsubscribeHandler(self: *Self, handler_id: u64) !void {
-            _ = self;
-            _ = handler_id;
-        }
-
-        /// Unsubscribe from a channel.
-        /// If any subscriptions are in-flight, they will be cancelled.
-        pub fn unsubscribeChannel(self: *Self, channel: []const u8) void {
+        pub fn unsubscribeHandler(
+            self: *Self,
+            channel: []const u8,
+            handler_id: u64,
+            user_ctx: UserRequestContext,
+        ) void {
             _ = self;
             _ = channel;
+            _ = handler_id;
+            _ = user_ctx;
+        }
+
+        /// Unsubscribe from multiple channels.
+        /// If any subscriptions are in-flight, they will be cancelled.
+        pub fn unsubscribeChannels(
+            self: *Self,
+            channels: []const []const u8,
+            user_ctx: UserRequestContext,
+        ) void {
+            _ = self;
+            _ = channels;
+            _ = user_ctx;
         }
 
         /// Unsubscribe from all current subscriptions.
         /// If any subscriptions are in-flight, they will be cancelled.
-        pub fn unsubscribeAll(self: *Self) void {
+        pub fn unsubscribeAll(self: *Self, user_ctx: UserRequestContext) void {
             _ = self;
+            _ = user_ctx;
         }
 
         /// Invoked whenever a write action went through. The nominal use-case is to push more
@@ -1214,11 +1240,14 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             }
         }
 
+        /// Test whether the client has any subscription listeners. Note that this returns true if
+        /// a subscription has been requested, but not confirmed (so the handler callback is not
+        /// invoked).
+        pub fn isSubscriber(self: *const Self) bool {
+            return self._subscriptions.hasAnyListeners();
+        }
+
         /// Make a request to the Valkey server.
-        ///
-        /// Errors:
-        /// - `.SubscriptionCompatibility` if the given command is not available in the current
-        /// subscription mode.
         pub fn request(self: *Self, req: *const Self.RequestType) !void {
             Self.debug("{*}.request({s}, argc={})", .{
                 self,

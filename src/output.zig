@@ -27,14 +27,6 @@ pub const Source = struct {
             // return @TypeOf(bun.deprecated.bufferedWriter(stdout.writer()));
         }
     };
-    pub const BufferedStream: type = struct {
-        fn getBufferedStream() type {
-            if (comptime Environment.isWasm)
-                return StreamType;
-
-            return bun.deprecated.BufferedWriter(4096, @TypeOf(StreamType.quietWriter(undefined)));
-        }
-    }.getBufferedStream();
 
     stdout_buffer: [4096]u8,
     stderr_buffer: [4096]u8,

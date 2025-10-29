@@ -603,7 +603,7 @@ async function runTests() {
               // prettier-ignore
               env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
             }
-            return runTest(title, async () => {
+            return runTest(title, async index => {
               const { ok, error, stdout, crashes } = await spawnBun(execPath, {
                 cwd: cwd,
                 args: [
@@ -612,7 +612,7 @@ async function runTests() {
                   absoluteTestPath,
                 ],
                 timeout: getNodeParallelTestTimeout(title),
-                env,
+                env: { ...env, TEST_SERIAL_ID: index },
                 stdout: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
                 stderr: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
               });
@@ -631,9 +631,10 @@ async function runTests() {
               };
             });
           } else {
-            return runTest(title, async () =>
+            return runTest(title, async index =>
               spawnBunTest(execPath, join("test", testPath), {
                 cwd,
+                env: { ...env, TEST_SERIAL_ID: index },
                 stdout: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
                 stderr: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
               }),
@@ -1904,7 +1905,7 @@ function getExecPath(bunExe) {
   try {
     const { error, stdout } = spawnSync(bunExe, ["--print", "process.argv[0]"], {
       encoding: "utf-8",
-      timeout: spawnTimeout,
+      timeout: spawnBunTimeout,
       env: {
         PATH: process.env.PATH,
         BUN_DEBUG_QUIET_LOGS: 1,

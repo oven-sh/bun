@@ -234,6 +234,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
     }
 
     const hostname = bun.handleOom(hostname_or_unix.intoOwnedSlice(bun.default_allocator));
+    errdefer bun.default_allocator.free(hostname);
     var connection: Listener.UnixOrHost = if (port) |port_| .{
         .host = .{
             .host = hostname,

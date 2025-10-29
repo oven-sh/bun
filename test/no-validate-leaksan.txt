@@ -62,6 +62,10 @@ test/js/node/test/parallel/test-worker.js
 test/js/node/test/parallel/test-worker.mjs
 test/js/node/worker_threads/worker_destruction.test.ts
 test/js/web/broadcastchannel/broadcast-channel.test.ts
+test/js/node/test/parallel/test-crypto-worker-thread.js
+test/js/node/test/parallel/test-no-addons-resolution-condition.js
+test/js/node/test/parallel/test-require-symlink.js
+test/js/node/test/parallel/test-webcrypto-cryptokey-workers.js
 
 
 # error exit root cause unclear
@@ -195,6 +199,7 @@ test/js/third_party/comlink/comlink.test.ts
 test/regression/issue/22635/22635.test.ts
 test/js/node/test/parallel/test-child-process-silent.js
 test/regression/issue/02499/02499.test.ts
+test/js/node/test/parallel/test-child-process-silent.js
 
 
 # Bun::JSNodeHTTPServerSocket::clearSocketData

@@ -220,3 +220,6 @@ leak:cli.publish_command
 leak:WTF::StringImpl::tryCreateUninitialized
 leak:cli.pm_view_command
 leak:JSBundlerPlugin__addError
+leak:bun.js.webcore.FileSink.init__anon
+leak:bun.js.webcore.ReadableStream.fromPipe__anon
+leak:http.HTTPThread.drainEvents

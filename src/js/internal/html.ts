@@ -169,6 +169,10 @@ yourself with Bun.serve().
       if (!relative.startsWith("..")) {
         servePath = relative;
       }
+      // On Windows, path.relative() returns a path string using backslashes as separators
+      if (process.platform === "win32") {
+        servePath = servePath.replaceAll("\\", "/");
+      }
     }
 
     if (isIndexHtml && servePath.length === 0) {

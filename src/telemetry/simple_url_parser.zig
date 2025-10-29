@@ -31,12 +31,20 @@ fn parseFullURL(url: []const u8, scheme_end: usize) URLParts {
     var parts: URLParts = .{};
 
     parts.scheme = url[0..scheme_end];
-    var remainder = url[scheme_end + 3 ..];
+    const remainder = url[scheme_end + 3 ..];
 
-    // Find the start of the path (first /)
-    const path_start = std.mem.indexOf(u8, remainder, "/") orelse remainder.len;
-    const host_and_port = remainder[0..path_start];
-    const path_and_query = if (path_start < remainder.len) remainder[path_start..] else "/";
+    // Delimiter can be "/" (path) or "?" (query without explicit path)
+    const slash_idx = std.mem.indexOf(u8, remainder, "/");
+    const q_idx = std.mem.indexOf(u8, remainder, "?");
+    const delim = blk: {
+        if (slash_idx) |s| {
+            if (q_idx) |q| break :blk if (q < s) q else s;
+            break :blk s;
+        }
+        break :blk (q_idx orelse remainder.len);
+    };
+    const host_and_port = remainder[0..delim];
+    const tail = if (delim < remainder.len) remainder[delim..] else "";
 
     // Parse host and port (handle IPv6 bracketed forms)
     if (host_and_port.len > 0 and host_and_port[0] == '[') {
@@ -69,11 +77,16 @@ fn parseFullURL(url: []const u8, scheme_end: usize) URLParts {
     }
 
     // Parse path and query
-    if (std.mem.indexOf(u8, path_and_query, "?")) |query_start| {
-        parts.path = path_and_query[0..query_start];
-        parts.query = path_and_query[query_start + 1 ..];
+    if (tail.len == 0) {
+        parts.path = "/";
+    } else if (tail[0] == '?') {
+        parts.path = "/";
+        parts.query = tail[1..];
+    } else if (std.mem.indexOf(u8, tail, "?")) |qs| {
+        parts.path = tail[0..qs];
+        parts.query = tail[qs + 1 ..];
     } else {
-        parts.path = path_and_query;
+        parts.path = tail;
     }
 
     return parts;
@@ -260,6 +273,26 @@ test "parseURL: IPv6 with port" {
     try std.testing.expectEqualStrings("::1", parts.host);
     try std.testing.expectEqual(@as(u16, 8443), parts.port.?);
     try std.testing.expectEqualStrings("/path", parts.path);
+}
+
+test "parseURL: query-only URL without path" {
+    const url = "http://example.com?x=1&y=2";
+    const parts = parseURL(url);
+    try std.testing.expectEqualStrings("http", parts.scheme);
+    try std.testing.expectEqualStrings("example.com", parts.host);
+    try std.testing.expectEqual(@as(u16, 80), parts.port.?);
+    try std.testing.expectEqualStrings("/", parts.path);
+    try std.testing.expectEqualStrings("x=1&y=2", parts.query);
+}
+
+test "parseURL: query-only URL with port" {
+    const url = "https://localhost:3000?foo=bar";
+    const parts = parseURL(url);
+    try std.testing.expectEqualStrings("https", parts.scheme);
+    try std.testing.expectEqualStrings("localhost", parts.host);
+    try std.testing.expectEqual(@as(u16, 3000), parts.port.?);
+    try std.testing.expectEqualStrings("/", parts.path);
+    try std.testing.expectEqualStrings("foo=bar", parts.query);
 }
 
 test "parseHostHeader: empty string" {

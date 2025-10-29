@@ -342,6 +342,11 @@ pub export fn Bun__NODE_NO_WARNINGS() bool {
     return bun.feature_flag.NODE_NO_WARNINGS.get();
 }
 
+extern var Bun__Node__ProcessTraceWarnings: bool;
+pub export fn Bun__NODE_TRACE_WARNINGS() bool {
+    return Bun__Node__ProcessTraceWarnings;
+}
+
 pub export fn Bun__suppressCrashOnProcessKillSelfIfDesired() void {
     if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF.get()) {
         bun.crash_handler.suppressReporting();

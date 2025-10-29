@@ -102,6 +102,7 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc().") catch unreachable,
     clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
     clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
+    clap.parseParam("--trace-warnings                  Show stack traces on process warnings") catch unreachable,
     clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
     clap.parseParam("--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
     clap.parseParam("--use-system-ca                   Use the system's trusted certificate authorities") catch unreachable,
@@ -784,6 +785,9 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         if (args.flag("--throw-deprecation")) {
             Bun__Node__ProcessThrowDeprecation = true;
         }
+        if (args.flag("--trace-warnings")) {
+            Bun__Node__ProcessTraceWarnings = true;
+        }
         if (args.option("--title")) |title| {
             CLI.Bun__Node__ProcessTitle = title;
         }
@@ -1319,6 +1323,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 export var Bun__Node__ZeroFillBuffers = false;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
+export var Bun__Node__ProcessTraceWarnings = false;
 
 pub const BunCAStore = enum(u8) { bundled, openssl, system };
 pub export var Bun__Node__CAStore: BunCAStore = .bundled;

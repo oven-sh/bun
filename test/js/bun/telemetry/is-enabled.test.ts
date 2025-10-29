@@ -3,7 +3,22 @@
  * NO @opentelemetry/* imports allowed - testing ONLY native hooks
  */
 import { describe, expect, test } from "bun:test";
-import { InstrumentRef, InstrumentType } from "./types";
+import { InstrumentRef } from "./types";
+
+/**
+ * Maps 1:1 with src/bun.js/telemetry.zig InstrumentType enum.
+ */
+enum InstrumentType {
+  Custom = 0,
+  HTTP = 1,
+  Fetch = 2,
+  SQL = 3,
+  Redis = 4,
+  S3 = 5,
+  Node = 6,
+  // Back-compat alias for older tests
+  NODE_HTTP = Node,
+}
 const EXPECTED_INSTRUMENTS = [
   { value: "custom", name: "Custom", type: InstrumentType.Custom },
   { value: "http", name: "HTTP", type: InstrumentType.HTTP },
@@ -11,6 +26,7 @@ const EXPECTED_INSTRUMENTS = [
   { value: "sql", name: "SQL", type: InstrumentType.SQL },
   { value: "redis", name: "Redis", type: InstrumentType.Redis },
   { value: "s3", name: "S3", type: InstrumentType.S3 },
+  { value: "node", name: "Node", type: InstrumentType.Node },
 ];
 describe("Bun.telemetry.nativeHooks()?.isEnabledFor()", () => {
   test("returns false when no instruments are attached", () => {
@@ -77,7 +93,7 @@ describe("Bun.telemetry.nativeHooks()?.isEnabledFor()", () => {
     expect(Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentType.HTTP)).toBe(true);
 
     // Detach one, should still be true
-    Bun.telemetry.detach(instrument1);
+    instrument1[Symbol.dispose]();
     expect(Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentType.HTTP)).toBe(true);
   });
 
@@ -109,7 +125,7 @@ describe("Bun.telemetry.nativeHooks()?.isEnabledFor()", () => {
     expect(Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentType.SQL)).toBe(true);
 
     // Detach HTTP
-    Bun.telemetry.detach(httpInstrument);
+    httpInstrument[Symbol.dispose]();
 
     // Fetch and SQL should still be enabled
     expect(Bun.telemetry.nativeHooks()?.isEnabledFor(InstrumentType.Fetch)).toBe(true);

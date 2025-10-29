@@ -10,12 +10,11 @@ crate-type = ["cdylib"]
 # Default enable napi4 feature, see https://nodejs.org/api/n-api.html#node-api-version-matrix
 napi = { version = "2.12.2", default-features = false, features = ["napi4"] }
 napi-derive = "2.12.2"
-mdxjs = "0.2.11"
+mdxjs = "1.0.4"
 bun-native-plugin = { path = "../bun-native-plugin-rs" }
-# Disabled for now due to dependency conflicts
-# serde = { version = "1.0", features = ["derive"] }
-# serde_json = "1.0"
-# markdown = "=1.0.0-alpha.21"
+# Force serde version that still has __private API (before 1.0.210)
+serde = { version = "=1.0.209", features = ["derive"] }
+serde_json = "1.0"
 
 [build-dependencies]
 napi-build = "2.0.1"

@@ -10,13 +10,13 @@ Bun's test runner supports setting the system time programmatically with the `se
 import { test, expect, setSystemTime } from "bun:test";
 
 test("party like it's 1999", () => {
-	const date = new Date("1999-01-01T00:00:00.000Z");
-	setSystemTime(date); // it's now January 1, 1999
+  const date = new Date("1999-01-01T00:00:00.000Z");
+  setSystemTime(date); // it's now January 1, 1999
 
-	const now = new Date();
-	expect(now.getFullYear()).toBe(1999);
-	expect(now.getMonth()).toBe(0);
-	expect(now.getDate()).toBe(1);
+  const now = new Date();
+  expect(now.getFullYear()).toBe(1999);
+  expect(now.getMonth()).toBe(0);
+  expect(now.getDate()).toBe(1);
 });
 ```
 
@@ -28,8 +28,8 @@ The `setSystemTime` function is commonly used on conjunction with [Lifecycle Hoo
 import { test, expect, beforeAll, setSystemTime } from "bun:test";
 
 beforeAll(() => {
-	const date = new Date("1999-01-01T00:00:00.000Z");
-	setSystemTime(date); // it's now January 1, 1999
+  const date = new Date("1999-01-01T00:00:00.000Z");
+  setSystemTime(date); // it's now January 1, 1999
 });
 
 // tests...

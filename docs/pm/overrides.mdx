@@ -7,14 +7,14 @@ Bun supports npm's `"overrides"` and Yarn's `"resolutions"` in `package.json`. T
 
 ```json package.json icon="file-json"
 {
-	"name": "my-app",
-	"dependencies": {
-		"foo": "^2.0.0"
-	},
-	"overrides": {
-		// [!code ++]
-		"bar": "~4.4.0" // [!code ++]
-	} // [!code ++]
+  "name": "my-app",
+  "dependencies": {
+    "foo": "^2.0.0"
+  },
+  "overrides": {
+    // [!code ++]
+    "bar": "~4.4.0" // [!code ++]
+  } // [!code ++]
 }
 ```
 
@@ -22,10 +22,10 @@ By default, Bun will install the latest version of all dependencies and metadepe
 
 ```json package.json icon="file-json"
 {
-	"name": "my-app",
-	"dependencies": {
-		"foo": "^2.0.0"
-	}
+  "name": "my-app",
+  "dependencies": {
+    "foo": "^2.0.0"
+  }
 }
 ```
 
@@ -46,21 +46,20 @@ But what if a security vulnerability was introduced in `bar@4.5.6`? We may want 
 Add `bar` to the `"overrides"` field in `package.json`. Bun will defer to the specified version range when determining which version of `bar` to install, whether it's a dependency or a metadependency.
 
 <Note>
-	Bun currently only supports top-level `"overrides"`. [Nested
-	overrides](https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides) are not
-	supported.
+  Bun currently only supports top-level `"overrides"`. [Nested
+  overrides](https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides) are not supported.
 </Note>
 
 ```json package.json icon="file-json"
 {
-	"name": "my-app",
-	"dependencies": {
-		"foo": "^2.0.0"
-	},
-	"overrides": {
-		// [!code ++]
-		"bar": "~4.4.0" // [!code ++]
-	} // [!code ++]
+  "name": "my-app",
+  "dependencies": {
+    "foo": "^2.0.0"
+  },
+  "overrides": {
+    // [!code ++]
+    "bar": "~4.4.0" // [!code ++]
+  } // [!code ++]
 }
 ```
 
@@ -72,13 +71,13 @@ As with `"overrides"`, _nested resolutions_ are not currently supported.
 
 ```json package.json icon="file-json"
 {
-	"name": "my-app",
-	"dependencies": {
-		"foo": "^2.0.0"
-	},
-	"resolutions": {
-		// [!code ++]
-		"bar": "~4.4.0" // [!code ++]
-	} // [!code ++]
+  "name": "my-app",
+  "dependencies": {
+    "foo": "^2.0.0"
+  },
+  "resolutions": {
+    // [!code ++]
+    "bar": "~4.4.0" // [!code ++]
+  } // [!code ++]
 }
 ```

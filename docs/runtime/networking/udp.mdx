@@ -16,7 +16,7 @@ Specify a port:
 
 ```ts
 const socket = await Bun.udpSocket({
-	port: 41234, // [!code ++]
+  port: 41234, // [!code ++]
 });
 
 console.log(socket.port); // 41234
@@ -39,12 +39,12 @@ When creating your socket, add a callback to specify what should be done when pa
 
 ```ts server.ts icon="/icons/typescript.svg"
 const server = await Bun.udpSocket({
-	socket: {
-		data(socket, buf, port, addr) {
-			console.log(`message from ${addr}:${port}:`);
-			console.log(buf.toString());
-		},
-	},
+  socket: {
+    data(socket, buf, port, addr) {
+      console.log(`message from ${addr}:${port}:`);
+      console.log(buf.toString());
+    },
+  },
 });
 
 const client = await Bun.udpSocket({});
@@ -59,19 +59,19 @@ and restricts incoming packets to that peer only.
 
 ```ts server.ts icon="/icons/typescript.svg"
 const server = await Bun.udpSocket({
-	socket: {
-		data(socket, buf, port, addr) {
-			console.log(`message from ${addr}:${port}:`);
-			console.log(buf.toString());
-		},
-	},
+  socket: {
+    data(socket, buf, port, addr) {
+      console.log(`message from ${addr}:${port}:`);
+      console.log(buf.toString());
+    },
+  },
 });
 
 const client = await Bun.udpSocket({
-	connect: {
-		port: server.port,
-		hostname: "127.0.0.1",
-	},
+  connect: {
+    port: server.port,
+    hostname: "127.0.0.1",
+  },
 });
 
 client.send("Hello");
@@ -98,10 +98,10 @@ With a connected socket, `sendMany` simply takes an array, where each element re
 
 ```ts server.ts icon="/icons/typescript.svg"
 const socket = await Bun.udpSocket({
-	connect: {
-		port: 41234,
-		hostname: "localhost",
-	},
+  connect: {
+    port: 41234,
+    hostname: "localhost",
+  },
 });
 
 socket.sendMany(["foo", "bar", "baz"]);
@@ -120,10 +120,10 @@ has happened when:
 
 ```ts
 const socket = await Bun.udpSocket({
-	socket: {
-		drain(socket) {
-			// continue sending data
-		},
-	},
+  socket: {
+    drain(socket) {
+      // continue sending data
+    },
+  },
 });
 ```

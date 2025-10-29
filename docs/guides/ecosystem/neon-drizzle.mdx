@@ -76,10 +76,10 @@ We can define a schema for our database using Drizzle ORM primitives. Create a `
 import { pgTable, integer, serial, text, timestamp } from "drizzle-orm/pg-core";
 
 export const authors = pgTable("authors", {
-	id: serial("id").primaryKey(),
-	title: text("name").notNull(),
-	bio: text("bio"),
-	createdAt: timestamp("created_at").notNull().defaultNow(),
+  id: serial("id").primaryKey(),
+  title: text("name").notNull(),
+  bio: text("bio"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 ```
 
@@ -112,13 +112,13 @@ import { db } from "./db";
 import { migrate } from "drizzle-orm/neon-http/migrator";
 
 const main = async () => {
-	try {
-		await migrate(db, { migrationsFolder: "drizzle" });
-		console.log("Migration completed");
-	} catch (error) {
-		console.error("Error during migration:", error);
-		process.exit(1);
-	}
+  try {
+    await migrate(db, { migrationsFolder: "drizzle" });
+    console.log("Migration completed");
+  } catch (error) {
+    console.error("Error during migration:", error);
+    process.exit(1);
+  }
 };
 
 main();
@@ -145,30 +145,30 @@ import { db } from "./db";
 import * as schema from "./schema";
 
 async function seed() {
-	await db.insert(schema.authors).values([
-		{
-			title: "J.R.R. Tolkien",
-			bio: "The creator of Middle-earth and author of The Lord of the Rings.",
-		},
-		{
-			title: "George R.R. Martin",
-			bio: "The author of the epic fantasy series A Song of Ice and Fire.",
-		},
-		{
-			title: "J.K. Rowling",
-			bio: "The creator of the Harry Potter series.",
-		},
-	]);
+  await db.insert(schema.authors).values([
+    {
+      title: "J.R.R. Tolkien",
+      bio: "The creator of Middle-earth and author of The Lord of the Rings.",
+    },
+    {
+      title: "George R.R. Martin",
+      bio: "The author of the epic fantasy series A Song of Ice and Fire.",
+    },
+    {
+      title: "J.K. Rowling",
+      bio: "The creator of the Harry Potter series.",
+    },
+  ]);
 }
 
 async function main() {
-	try {
-		await seed();
-		console.log("Seeding completed");
-	} catch (error) {
-		console.error("Error during seeding:", error);
-		process.exit(1);
-	}
+  try {
+    await seed();
+    console.log("Seeding completed");
+  } catch (error) {
+    console.error("Error during seeding:", error);
+    process.exit(1);
+  }
 }
 
 main();

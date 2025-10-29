@@ -36,9 +36,9 @@ This will execute `happydom.ts` when you run `bun test`. Now you can write tests
 import { test, expect } from "bun:test";
 
 test("dom test", () => {
-	document.body.innerHTML = `<button>My button</button>`;
-	const button = document.querySelector("button");
-	expect(button?.innerText).toEqual("My button");
+  document.body.innerHTML = `<button>My button</button>`;
+  const button = document.querySelector("button");
+  expect(button?.innerText).toEqual("My button");
 });
 ```
 
@@ -52,9 +52,9 @@ Depending on your `tsconfig.json` setup, you may see a "Cannot find name 'docume
 import { test, expect } from "bun:test";
 
 test("dom test", () => {
-	document.body.innerHTML = `<button>My button</button>`;
-	const button = document.querySelector("button");
-	expect(button?.innerText).toEqual("My button");
+  document.body.innerHTML = `<button>My button</button>`;
+  const button = document.querySelector("button");
+  expect(button?.innerText).toEqual("My button");
 });
 ```
 
@@ -113,20 +113,20 @@ You can test custom elements and web components using the same setup:
 import { test, expect } from "bun:test";
 
 test("custom element", () => {
-	// Define a custom element
-	class MyElement extends HTMLElement {
-		constructor() {
-			super();
-			this.innerHTML = "<p>Custom element content</p>";
-		}
-	}
+  // Define a custom element
+  class MyElement extends HTMLElement {
+    constructor() {
+      super();
+      this.innerHTML = "<p>Custom element content</p>";
+    }
+  }
 
-	customElements.define("my-element", MyElement);
+  customElements.define("my-element", MyElement);
 
-	// Use it in tests
-	document.body.innerHTML = "<my-element></my-element>";
-	const element = document.querySelector("my-element");
-	expect(element?.innerHTML).toBe("<p>Custom element content</p>");
+  // Use it in tests
+  document.body.innerHTML = "<my-element></my-element>";
+  const element = document.querySelector("my-element");
+  expect(element?.innerHTML).toBe("<p>Custom element content</p>");
 });
 ```
 
@@ -140,17 +140,17 @@ Test DOM events and user interactions:
 import { test, expect } from "bun:test";
 
 test("button click event", () => {
-	let clicked = false;
+  let clicked = false;
 
-	document.body.innerHTML = '<button id="test-btn">Click me</button>';
-	const button = document.getElementById("test-btn");
+  document.body.innerHTML = '<button id="test-btn">Click me</button>';
+  const button = document.getElementById("test-btn");
 
-	button?.addEventListener("click", () => {
-		clicked = true;
-	});
+  button?.addEventListener("click", () => {
+    clicked = true;
+  });
 
-	button?.click();
-	expect(clicked).toBe(true);
+  button?.click();
+  expect(clicked).toBe(true);
 });
 ```
 
@@ -169,24 +169,24 @@ GlobalRegistrator.register();
 
 // Add any global test configuration here
 global.ResizeObserver = class ResizeObserver {
-	observe() {}
-	unobserve() {}
-	disconnect() {}
+  observe() {}
+  unobserve() {}
+  disconnect() {}
 };
 
 // Mock other APIs as needed
 Object.defineProperty(window, "matchMedia", {
-	writable: true,
-	value: jest.fn().mockImplementation(query => ({
-		matches: false,
-		media: query,
-		onchange: null,
-		addListener: jest.fn(),
-		removeListener: jest.fn(),
-		addEventListener: jest.fn(),
-		removeEventListener: jest.fn(),
-		dispatchEvent: jest.fn(),
-	})),
+  writable: true,
+  value: jest.fn().mockImplementation(query => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: jest.fn(),
+    removeListener: jest.fn(),
+    addEventListener: jest.fn(),
+    removeEventListener: jest.fn(),
+    dispatchEvent: jest.fn(),
+  })),
 });
 ```
 
@@ -220,7 +220,7 @@ import { afterEach } from "bun:test";
 import { cleanup } from "@testing-library/react";
 
 afterEach(() => {
-	cleanup();
-	document.body.innerHTML = "";
+  cleanup();
+  document.body.innerHTML = "";
 });
 ```

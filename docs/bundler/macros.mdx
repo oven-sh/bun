@@ -9,7 +9,7 @@ As a toy example, consider this simple function that returns a random number.
 
 ```ts title="random.ts" icon="/icons/typescript.svg"
 export function random() {
-	return Math.random();
+  return Math.random();
 }
 ```
 
@@ -22,8 +22,8 @@ console.log(`Your random number is ${random()}`);
 ```
 
 <Note>
-	Macros are indicated using import attribute syntax. If you haven't seen this syntax before, it's a
-	Stage 3 TC39 proposal that lets you attach additional metadata to import statements.
+  Macros are indicated using import attribute syntax. If you haven't seen this syntax before, it's a Stage 3 TC39
+  proposal that lets you attach additional metadata to import statements.
 </Note>
 
 Now we'll bundle this file with `bun build`. The bundled file will be printed to stdout.
@@ -89,13 +89,13 @@ When shipping a library containing a macro to npm or another package registry, u
 
 ```json title="package.json" icon="file-code"
 {
-	"name": "my-package",
-	"exports": {
-		"import": "./index.js",
-		"require": "./index.js",
-		"default": "./index.js",
-		"macro": "./index.macro.js"
-	}
+  "name": "my-package",
+  "exports": {
+    "import": "./index.js",
+    "require": "./index.js",
+    "default": "./index.js",
+    "macro": "./index.macro.js"
+  }
 }
 ```
 
@@ -122,7 +122,7 @@ The bundler performs dead code elimination after running and inlining macros. So
 
 ```ts title="returnFalse.ts" icon="/icons/typescript.svg"
 export function returnFalse() {
-	return false;
+  return false;
 }
 ```
 
@@ -132,7 +132,7 @@ export function returnFalse() {
 import { returnFalse } from "./returnFalse.ts" with { type: "macro" };
 
 if (returnFalse()) {
-	console.log("This code is eliminated");
+  console.log("This code is eliminated");
 }
 ```
 
@@ -142,11 +142,11 @@ Bun's transpiler needs to be able to serialize the result of the macro so it can
 
 ```ts title="macro.ts" icon="/icons/typescript.svg"
 export function getObject() {
-	return {
-		foo: "bar",
-		baz: 123,
-		array: [1, 2, { nested: "value" }],
-	};
+  return {
+    foo: "bar",
+    baz: 123,
+    array: [1, 2, { nested: "value" }],
+  };
 }
 ```
 
@@ -154,7 +154,7 @@ Macros can be async, or return Promise instances. Bun's transpiler will automati
 
 ```ts title="macro.ts" icon="/icons/typescript.svg"
 export async function getText() {
-	return "async value";
+  return "async value";
 }
 ```
 
@@ -168,7 +168,7 @@ The result of `fetch` is `Promise<Response>`, so it can be directly returned.
 
 ```ts title="macro.ts" icon="/icons/typescript.svg"
 export function getObject() {
-	return fetch("https://bun.com");
+  return fetch("https://bun.com");
 }
 ```
 
@@ -176,8 +176,8 @@ Functions and instances of most classes (except those mentioned above) are not s
 
 ```ts title="macro.ts" icon="/icons/typescript.svg"
 export function getText(url: string) {
-	// this doesn't work!
-	return () => {};
+  // this doesn't work!
+  return () => {};
 }
 ```
 
@@ -189,11 +189,11 @@ Macros can accept inputs, but only in limited cases. The value must be staticall
 import { getText } from "./getText.ts" with { type: "macro" };
 
 export function howLong() {
-	// the value of `foo` cannot be statically known
-	const foo = Math.random() ? "foo" : "bar";
+  // the value of `foo` cannot be statically known
+  const foo = Math.random() ? "foo" : "bar";
 
-	const text = getText(`https://example.com/${foo}`);
-	console.log("The page is ", text.length, " characters long");
+  const text = getText(`https://example.com/${foo}`);
+  console.log("The page is ", text.length, " characters long");
 }
 ```
 
@@ -204,10 +204,10 @@ import { getText } from "./getText.ts" with { type: "macro" };
 import { getFoo } from "./getFoo.ts" with { type: "macro" };
 
 export function howLong() {
-	// this works because getFoo() is statically known
-	const foo = getFoo();
-	const text = getText(`https://example.com/${foo}`);
-	console.log("The page is", text.length, "characters long");
+  // this works because getFoo() is statically known
+  const foo = getFoo();
+  const text = getText(`https://example.com/${foo}`);
+  console.log("The page is", text.length, "characters long");
 }
 ```
 
@@ -215,7 +215,7 @@ This outputs:
 
 ```js
 function howLong() {
-	console.log("The page is", 1322, "characters long");
+  console.log("The page is", 1322, "characters long");
 }
 export { howLong };
 ```
@@ -226,12 +226,12 @@ export { howLong };
 
 ```ts title="getGitCommitHash.ts" icon="/icons/typescript.svg"
 export function getGitCommitHash() {
-	const { stdout } = Bun.spawnSync({
-		cmd: ["git", "rev-parse", "HEAD"],
-		stdout: "pipe",
-	});
+  const { stdout } = Bun.spawnSync({
+    cmd: ["git", "rev-parse", "HEAD"],
+    stdout: "pipe",
+  });
 
-	return stdout.toString();
+  return stdout.toString();
 }
 ```
 
@@ -252,8 +252,8 @@ console.log(`The current Git commit hash is 3ee3259104e4507cf62c160f0ff5357ec4c7
 </CodeGroup>
 
 <Info>
-	You're probably thinking "Why not just use `process.env.GIT_COMMIT_HASH`?" Well, you can do that
-	too. But can you do this with an environment variable?
+  You're probably thinking "Why not just use `process.env.GIT_COMMIT_HASH`?" Well, you can do that too. But can you do
+  this with an environment variable?
 </Info>
 
 ### Make fetch() requests at bundle-time
@@ -262,29 +262,27 @@ In this example, we make an outgoing HTTP request using `fetch()`, parse the HTM
 
 ```ts title="meta.ts" icon="/icons/typescript.svg"
 export async function extractMetaTags(url: string) {
-	const response = await fetch(url);
-	const meta = {
-		title: "",
-	};
-	new HTMLRewriter()
-		.on("title", {
-			text(element) {
-				meta.title += element.text;
-			},
-		})
-		.on("meta", {
-			element(element) {
-				const name =
-					element.getAttribute("name") ||
-					element.getAttribute("property") ||
-					element.getAttribute("itemprop");
+  const response = await fetch(url);
+  const meta = {
+    title: "",
+  };
+  new HTMLRewriter()
+    .on("title", {
+      text(element) {
+        meta.title += element.text;
+      },
+    })
+    .on("meta", {
+      element(element) {
+        const name =
+          element.getAttribute("name") || element.getAttribute("property") || element.getAttribute("itemprop");
 
-				if (name) meta[name] = element.getAttribute("content");
-			},
-		})
-		.transform(response);
+        if (name) meta[name] = element.getAttribute("content");
+      },
+    })
+    .transform(response);
 
-	return meta;
+  return meta;
 }
 ```
 
@@ -296,34 +294,34 @@ The `extractMetaTags` function is erased at bundle-time and replaced with the re
 import { extractMetaTags } from "./meta.ts" with { type: "macro" };
 
 export const Head = () => {
-	const headTags = extractMetaTags("https://example.com");
+  const headTags = extractMetaTags("https://example.com");
 
-	if (headTags.title !== "Example Domain") {
-		throw new Error("Expected title to be 'Example Domain'");
-	}
+  if (headTags.title !== "Example Domain") {
+    throw new Error("Expected title to be 'Example Domain'");
+  }
 
-	return (
-		<head>
-			<title>{headTags.title}</title>
-			<meta name="viewport" content={headTags.viewport} />
-		</head>
-	);
+  return (
+    <head>
+      <title>{headTags.title}</title>
+      <meta name="viewport" content={headTags.viewport} />
+    </head>
+  );
 };
 ```
 
 ```jsx output
 export const Head = () => {
-	const headTags = {
-		title: "Example Domain",
-		viewport: "width=device-width, initial-scale=1",
-	};
+  const headTags = {
+    title: "Example Domain",
+    viewport: "width=device-width, initial-scale=1",
+  };
 
-	return (
-		<head>
-			<title>{headTags.title}</title>
-			<meta name="viewport" content={headTags.viewport} />
-		</head>
-	);
+  return (
+    <head>
+      <title>{headTags.title}</title>
+      <meta name="viewport" content={headTags.viewport} />
+    </head>
+  );
 };
 ```
 

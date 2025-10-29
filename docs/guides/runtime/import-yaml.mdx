@@ -81,19 +81,19 @@ To add TypeScript support for your YAML imports, create a declaration file with 
 
 ```ts config.yaml.d.ts icon="/icons/typescript.svg"
 const contents: {
-	database: {
-		host: string;
-		port: number;
-		name: string;
-	};
-	server: {
-		port: number;
-		timeout: number;
-	};
-	features: {
-		auth: boolean;
-		rateLimit: boolean;
-	};
+  database: {
+    host: string;
+    port: number;
+    name: string;
+  };
+  server: {
+    port: number;
+    timeout: number;
+  };
+  features: {
+    auth: boolean;
+    rateLimit: boolean;
+  };
 };
 
 export = contents;

@@ -14,19 +14,19 @@ A common usecase is rewriting URLs in HTML content. Here's an example that rewri
 ```ts
 // Replace all images with a rickroll
 const rewriter = new HTMLRewriter().on("img", {
-	element(img) {
-		// Famous rickroll video thumbnail
-		img.setAttribute("src", "https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg");
+  element(img) {
+    // Famous rickroll video thumbnail
+    img.setAttribute("src", "https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg");
 
-		// Wrap the image in a link to the video
-		img.before('<a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" target="_blank">', {
-			html: true,
-		});
-		img.after("</a>", { html: true });
+    // Wrap the image in a link to the video
+    img.before('<a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" target="_blank">', {
+      html: true,
+    });
+    img.after("</a>", { html: true });
 
-		// Add some fun alt text
-		img.setAttribute("alt", "Definitely not a rickroll");
-	},
+    // Add some fun alt text
+    img.setAttribute("alt", "Definitely not a rickroll");
+  },
 });
 
 // An example HTML document
@@ -48,37 +48,28 @@ This replaces all images with a thumbnail of Rick Astley and wraps each `<img>` 
 
 ```html
 <html>
-	<body>
-		<img src="/cat.jpg" /> // [!code --] <img src="dog.png" /> // [!code --]
-		<img src="https://example.com/bird.webp" /> // [!code --]
-		<a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" target="_blank">
-			// [!code ++]
-			<img
-				src="https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg"
-				alt="Definitely not a rickroll"
-			/>
-			// [!code ++]
-		</a>
-		// [!code ++]
-		<a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" target="_blank">
-			// [!code ++]
-			<img
-				src="https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg"
-				alt="Definitely not a rickroll"
-			/>
-			// [!code ++]
-		</a>
-		// [!code ++]
-		<a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" target="_blank">
-			// [!code ++]
-			<img
-				src="https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg"
-				alt="Definitely not a rickroll"
-			/>
-			// [!code ++]
-		</a>
-		// [!code ++]
-	</body>
+  <body>
+    <img src="/cat.jpg" /> // [!code --] <img src="dog.png" /> // [!code --]
+    <img src="https://example.com/bird.webp" /> // [!code --]
+    <a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" target="_blank">
+      // [!code ++]
+      <img src="https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg" alt="Definitely not a rickroll" />
+      // [!code ++]
+    </a>
+    // [!code ++]
+    <a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" target="_blank">
+      // [!code ++]
+      <img src="https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg" alt="Definitely not a rickroll" />
+      // [!code ++]
+    </a>
+    // [!code ++]
+    <a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" target="_blank">
+      // [!code ++]
+      <img src="https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg" alt="Definitely not a rickroll" />
+      // [!code ++]
+    </a>
+    // [!code ++]
+  </body>
 </html>
 ```
 
@@ -113,19 +104,19 @@ The `on(selector, handlers)` method allows you to register handlers for HTML ele
 
 ```ts
 rewriter.on("div.content", {
-	// Handle elements
-	element(element) {
-		element.setAttribute("class", "new-content");
-		element.append("<p>New content</p>", { html: true });
-	},
-	// Handle text nodes
-	text(text) {
-		text.replace("new text");
-	},
-	// Handle comments
-	comments(comment) {
-		comment.remove();
-	},
+  // Handle elements
+  element(element) {
+    element.setAttribute("class", "new-content");
+    element.append("<p>New content</p>", { html: true });
+  },
+  // Handle text nodes
+  text(text) {
+    text.replace("new text");
+  },
+  // Handle comments
+  comments(comment) {
+    comment.remove();
+  },
 });
 ```
 
@@ -133,10 +124,10 @@ The handlers can be asynchronous and return a Promise. Note that async operation
 
 ```ts
 rewriter.on("div", {
-	async element(element) {
-		await Bun.sleep(1000);
-		element.setInnerContent("<span>replace</span>", { html: true });
-	},
+  async element(element) {
+    await Bun.sleep(1000);
+    element.setInnerContent("<span>replace</span>", { html: true });
+  },
 });
 ```
 
@@ -186,52 +177,52 @@ Elements provide various methods for manipulation. All modification methods retu
 
 ```ts
 rewriter.on("div", {
-	element(el) {
-		// Attributes
-		el.setAttribute("class", "new-class").setAttribute("data-id", "123");
+  element(el) {
+    // Attributes
+    el.setAttribute("class", "new-class").setAttribute("data-id", "123");
 
-		const classAttr = el.getAttribute("class"); // "new-class"
-		const hasId = el.hasAttribute("id"); // boolean
-		el.removeAttribute("class");
+    const classAttr = el.getAttribute("class"); // "new-class"
+    const hasId = el.hasAttribute("id"); // boolean
+    el.removeAttribute("class");
 
-		// Content manipulation
-		el.setInnerContent("New content"); // Escapes HTML by default
-		el.setInnerContent("<p>HTML content</p>", { html: true }); // Parses HTML
-		el.setInnerContent(""); // Clear content
+    // Content manipulation
+    el.setInnerContent("New content"); // Escapes HTML by default
+    el.setInnerContent("<p>HTML content</p>", { html: true }); // Parses HTML
+    el.setInnerContent(""); // Clear content
 
-		// Position manipulation
-		el.before("Content before").after("Content after").prepend("First child").append("Last child");
+    // Position manipulation
+    el.before("Content before").after("Content after").prepend("First child").append("Last child");
 
-		// HTML content insertion
-		el.before("<span>before</span>", { html: true })
-			.after("<span>after</span>", { html: true })
-			.prepend("<span>first</span>", { html: true })
-			.append("<span>last</span>", { html: true });
+    // HTML content insertion
+    el.before("<span>before</span>", { html: true })
+      .after("<span>after</span>", { html: true })
+      .prepend("<span>first</span>", { html: true })
+      .append("<span>last</span>", { html: true });
 
-		// Removal
-		el.remove(); // Remove element and contents
-		el.removeAndKeepContent(); // Remove only the element tags
+    // Removal
+    el.remove(); // Remove element and contents
+    el.removeAndKeepContent(); // Remove only the element tags
 
-		// Properties
-		console.log(el.tagName); // Lowercase tag name
-		console.log(el.namespaceURI); // Element's namespace URI
-		console.log(el.selfClosing); // Whether element is self-closing (e.g. <div />)
-		console.log(el.canHaveContent); // Whether element can contain content (false for void elements like <br>)
-		console.log(el.removed); // Whether element was removed
+    // Properties
+    console.log(el.tagName); // Lowercase tag name
+    console.log(el.namespaceURI); // Element's namespace URI
+    console.log(el.selfClosing); // Whether element is self-closing (e.g. <div />)
+    console.log(el.canHaveContent); // Whether element can contain content (false for void elements like <br>)
+    console.log(el.removed); // Whether element was removed
 
-		// Attributes iteration
-		for (const [name, value] of el.attributes) {
-			console.log(name, value);
-		}
+    // Attributes iteration
+    for (const [name, value] of el.attributes) {
+      console.log(name, value);
+    }
 
-		// End tag handling
-		el.onEndTag(endTag => {
-			endTag.before("Before end tag");
-			endTag.after("After end tag");
-			endTag.remove(); // Remove the end tag
-			console.log(endTag.name); // Tag name in lowercase
-		});
-	},
+    // End tag handling
+    el.onEndTag(endTag => {
+      endTag.before("Before end tag");
+      endTag.after("After end tag");
+      endTag.remove(); // Remove the end tag
+      console.log(endTag.name); // Tag name in lowercase
+    });
+  },
 });
 ```
 
@@ -241,21 +232,21 @@ Text handlers provide methods for text manipulation. Text chunks represent porti
 
 ```ts
 rewriter.on("p", {
-	text(text) {
-		// Content
-		console.log(text.text); // Text content
-		console.log(text.lastInTextNode); // Whether this is the last chunk
-		console.log(text.removed); // Whether text was removed
+  text(text) {
+    // Content
+    console.log(text.text); // Text content
+    console.log(text.lastInTextNode); // Whether this is the last chunk
+    console.log(text.removed); // Whether text was removed
 
-		// Manipulation
-		text.before("Before text").after("After text").replace("New text").remove();
+    // Manipulation
+    text.before("Before text").after("After text").replace("New text").remove();
 
-		// HTML content insertion
-		text
-			.before("<span>before</span>", { html: true })
-			.after("<span>after</span>", { html: true })
-			.replace("<span>replace</span>", { html: true });
-	},
+    // HTML content insertion
+    text
+      .before("<span>before</span>", { html: true })
+      .after("<span>after</span>", { html: true })
+      .replace("<span>replace</span>", { html: true });
+  },
 });
 ```
 
@@ -265,21 +256,21 @@ Comment handlers allow comment manipulation with similar methods to text nodes:
 
 ```ts
 rewriter.on("*", {
-	comments(comment) {
-		// Content
-		console.log(comment.text); // Comment text
-		comment.text = "New comment text"; // Set comment text
-		console.log(comment.removed); // Whether comment was removed
+  comments(comment) {
+    // Content
+    console.log(comment.text); // Comment text
+    comment.text = "New comment text"; // Set comment text
+    console.log(comment.removed); // Whether comment was removed
 
-		// Manipulation
-		comment.before("Before comment").after("After comment").replace("New comment").remove();
+    // Manipulation
+    comment.before("Before comment").after("After comment").replace("New comment").remove();
 
-		// HTML content insertion
-		comment
-			.before("<span>before</span>", { html: true })
-			.after("<span>after</span>", { html: true })
-			.replace("<span>replace</span>", { html: true });
-	},
+    // HTML content insertion
+    comment
+      .before("<span>before</span>", { html: true })
+      .after("<span>after</span>", { html: true })
+      .replace("<span>replace</span>", { html: true });
+  },
 });
 ```
 
@@ -289,24 +280,24 @@ The `onDocument(handlers)` method allows you to handle document-level events. Th
 
 ```ts
 rewriter.onDocument({
-	// Handle doctype
-	doctype(doctype) {
-		console.log(doctype.name); // "html"
-		console.log(doctype.publicId); // public identifier if present
-		console.log(doctype.systemId); // system identifier if present
-	},
-	// Handle text nodes
-	text(text) {
-		console.log(text.text);
-	},
-	// Handle comments
-	comments(comment) {
-		console.log(comment.text);
-	},
-	// Handle document end
-	end(end) {
-		end.append("<!-- Footer -->", { html: true });
-	},
+  // Handle doctype
+  doctype(doctype) {
+    console.log(doctype.name); // "html"
+    console.log(doctype.publicId); // public identifier if present
+    console.log(doctype.systemId); // system identifier if present
+  },
+  // Handle text nodes
+  text(text) {
+    console.log(text.text);
+  },
+  // Handle comments
+  comments(comment) {
+    console.log(comment.text);
+  },
+  // Handle document end
+  end(end) {
+    end.append("<!-- Footer -->", { html: true });
+  },
 });
 ```
 
@@ -335,10 +326,10 @@ Errors should be caught and handled appropriately:
 
 ```ts
 try {
-	const result = rewriter.transform(input);
-	// Process result
+  const result = rewriter.transform(input);
+  // Process result
 } catch (error) {
-	console.error("HTMLRewriter error:", error);
+  console.error("HTMLRewriter error:", error);
 }
 ```
 

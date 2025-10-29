@@ -10,7 +10,7 @@ This is similar to how you'd check for the existence of the `window` variable to
 
 ```ts
 if (typeof Bun !== "undefined") {
-	// this code will only run when the file is run with Bun
+  // this code will only run when the file is run with Bun
 }
 ```
 
@@ -20,6 +20,6 @@ In TypeScript environments, the previous approach will result in a type error un
 
 ```ts
 if (process.versions.bun) {
-	// this code will only run when the file is run with Bun
+  // this code will only run when the file is run with Bun
 }
 ```

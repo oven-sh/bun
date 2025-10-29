@@ -45,7 +45,7 @@ expect.extend(matchers);
 
 // Optional: cleans up `render` after each test
 afterEach(() => {
-	cleanup();
+  cleanup();
 });
 ```
 
@@ -67,8 +67,8 @@ import { TestingLibraryMatchers } from "@testing-library/jest-dom/matchers";
 import { Matchers, AsymmetricMatchers } from "bun:test";
 
 declare module "bun:test" {
-	interface Matchers<T> extends TestingLibraryMatchers<typeof expect.stringContaining, T> {}
-	interface AsymmetricMatchers extends TestingLibraryMatchers {}
+  interface Matchers<T> extends TestingLibraryMatchers<typeof expect.stringContaining, T> {}
+  interface AsymmetricMatchers extends TestingLibraryMatchers {}
 }
 ```
 
@@ -82,9 +82,9 @@ import { screen, render } from "@testing-library/react";
 import { MyComponent } from "./myComponent";
 
 test("Can use Testing Library", () => {
-	render(MyComponent);
-	const myComponent = screen.getByTestId("my-component");
-	expect(myComponent).toBeInTheDocument();
+  render(MyComponent);
+  const myComponent = screen.getByTestId("my-component");
+  expect(myComponent).toBeInTheDocument();
 });
 ```
 

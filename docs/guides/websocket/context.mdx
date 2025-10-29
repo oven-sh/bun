@@ -10,25 +10,25 @@ With [Bun.serve()](https://bun.com/docs/api/websockets contextual-data), this "c
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.serve<{ socketId: number }>({
-	fetch(req, server) {
-		const success = server.upgrade(req, {
-			data: {
-				socketId: Math.random(),
-			},
-		});
-		if (success) return undefined;
+  fetch(req, server) {
+    const success = server.upgrade(req, {
+      data: {
+        socketId: Math.random(),
+      },
+    });
+    if (success) return undefined;
 
-		// handle HTTP request normally
-		// ...
-	},
-	websocket: {
-		// define websocket handlers
-		async message(ws, message) {
-			// the contextual data is available as the `data` property
-			// on the WebSocket instance
-			console.log(`Received ${message} from ${ws.data.socketId}}`);
-		},
-	},
+    // handle HTTP request normally
+    // ...
+  },
+  websocket: {
+    // define websocket handlers
+    async message(ws, message) {
+      // the contextual data is available as the `data` property
+      // on the WebSocket instance
+      console.log(`Received ${message} from ${ws.data.socketId}}`);
+    },
+  },
 });
 ```
 
@@ -38,37 +38,37 @@ It's common to read cookies/headers from the incoming request to identify the co
 
 ```ts server.ts icon="/icons/typescript.svg"
 type WebSocketData = {
-	createdAt: number;
-	token: string;
-	userId: string;
+  createdAt: number;
+  token: string;
+  userId: string;
 };
 
 // TypeScript: specify the type of `data`
 Bun.serve<WebSocketData>({
-	async fetch(req, server) {
-		// use a library to parse cookies
-		const cookies = parseCookies(req.headers.get("Cookie"));
-		const token = cookies["X-Token"];
-		const user = await getUserFromToken(token);
+  async fetch(req, server) {
+    // use a library to parse cookies
+    const cookies = parseCookies(req.headers.get("Cookie"));
+    const token = cookies["X-Token"];
+    const user = await getUserFromToken(token);
 
-		const upgraded = server.upgrade(req, {
-			data: {
-				createdAt: Date.now(),
-				token: cookies["X-Token"],
-				userId: user.id,
-			},
-		});
+    const upgraded = server.upgrade(req, {
+      data: {
+        createdAt: Date.now(),
+        token: cookies["X-Token"],
+        userId: user.id,
+      },
+    });
 
-		if (upgraded) return undefined;
-	},
-	websocket: {
-		async message(ws, message) {
-			// save the message to a database
-			await saveMessageToDatabase({
-				message: String(message),
-				userId: ws.data.userId,
-			});
-		},
-	},
+    if (upgraded) return undefined;
+  },
+  websocket: {
+    async message(ws, message) {
+      // save the message to a database
+      await saveMessageToDatabase({
+        message: String(message),
+        userId: ws.data.userId,
+      });
+    },
+  },
 });
 ```

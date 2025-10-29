@@ -48,18 +48,17 @@ import { serve } from "bun";
 console.log("I restarted at:", Date.now());
 
 serve({
-	port: 4003,
-	fetch(request) {
-		return new Response("Sup");
-	},
+  port: 4003,
+  fetch(request) {
+    return new Response("Sup");
+  },
 });
 ```
 
 In this example, Bun is
 
 <Frame>
-	![bun watch
-	gif](https://user-images.githubusercontent.com/709451/228439002-7b9fad11-0db2-4e48-b82d-2b88c8625625.gif)
+  ![bun watch gif](https://user-images.githubusercontent.com/709451/228439002-7b9fad11-0db2-4e48-b82d-2b88c8625625.gif)
 </Frame>
 
 Running `bun test` in watch mode and `save-on-keypress` enabled:
@@ -69,17 +68,15 @@ bun --watch test
 ```
 
 <Frame>
-	![bun test
-	gif](https://user-images.githubusercontent.com/709451/228396976-38a23864-4a1d-4c96-87cc-04e5181bf459.gif)
+  ![bun test gif](https://user-images.githubusercontent.com/709451/228396976-38a23864-4a1d-4c96-87cc-04e5181bf459.gif)
 </Frame>
 
 <Note>
-	The **`--no-clear-screen`** flag is useful in scenarios where you don't want the terminal to
-	clear, such as when running multiple `bun build --watch` commands simultaneously using tools like
-	`concurrently`. Without this flag, the output of one instance could clear the output of others,
-	potentially hiding errors from one instance beneath the output of another. The `--no-clear-screen`
-	flag, similar to TypeScript's `--preserveWatchOutput`, prevents this issue. It can be used in
-	combination with `--watch`, for example: `bun build --watch --no-clear-screen`.
+  The **`--no-clear-screen`** flag is useful in scenarios where you don't want the terminal to clear, such as when
+  running multiple `bun build --watch` commands simultaneously using tools like `concurrently`. Without this flag, the
+  output of one instance could clear the output of others, potentially hiding errors from one instance beneath the
+  output of another. The `--no-clear-screen` flag, similar to TypeScript's `--preserveWatchOutput`, prevents this issue.
+  It can be used in combination with `--watch`, for example: `bun build --watch --no-clear-screen`.
 </Note>
 
 ---
@@ -89,11 +86,10 @@ bun --watch test
 Use `bun --hot` to enable hot reloading when executing code with Bun. This is distinct from `--watch` mode in that Bun does not hard-restart the entire process. Instead, it detects code changes and updates its internal module cache with the new code.
 
 <Note>
-	This is not the same as hot reloading in the browser! Many frameworks provide a "hot reloading"
-	experience, where you can edit & save your frontend code (say, a React component) and see the
-	changes reflected in the browser without refreshing the page. Bun's `--hot` is the server-side
-	equivalent of this experience. To get hot reloading in the browser, use a framework like
-	[Vite](https://vitejs.dev).
+  This is not the same as hot reloading in the browser! Many frameworks provide a "hot reloading" experience, where you
+  can edit & save your frontend code (say, a React component) and see the changes reflected in the browser without
+  refreshing the page. Bun's `--hot` is the server-side equivalent of this experience. To get hot reloading in the
+  browser, use a framework like [Vite](https://vitejs.dev).
 </Note>
 
 ```bash terminal icon="terminal"
@@ -105,7 +101,7 @@ Starting from the entrypoint (`server.ts` in the example above), Bun builds a re
 ```ts title="server.ts" icon="/icons/typescript.svg"
 // make TypeScript happy
 declare global {
-	var count: number;
+  var count: number;
 }
 
 globalThis.count ??= 0;
@@ -139,10 +135,10 @@ globalThis.count ??= 0;
 globalThis.count++;
 
 Bun.serve({
-	fetch(req: Request) {
-		return new Response(`Reloaded ${globalThis.count} times`);
-	},
-	port: 3000,
+  fetch(req: Request) {
+    return new Response(`Reloaded ${globalThis.count} times`);
+  },
+  port: 3000,
 });
 ```
 

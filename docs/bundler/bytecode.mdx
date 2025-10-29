@@ -110,8 +110,8 @@ export default data;
 
 ```js
 async function init() {
-	const data = await fetch("https://api.example.com");
-	return data;
+  const data = await fetch("https://api.example.com");
+  return data;
 }
 export default init;
 ```
@@ -255,13 +255,13 @@ Modern JavaScript engines use a clever optimization called **lazy parsing**. The
 ```js
 // Without bytecode caching:
 function rarely_used() {
-	// This 500-line function is only parsed
-	// when it's actually called
+  // This 500-line function is only parsed
+  // when it's actually called
 }
 
 function main() {
-	console.log("Starting app");
-	// rarely_used() is never called, so it's never parsed
+  console.log("Starting app");
+  // rarely_used() is never called, so it's never parsed
 }
 ```
 

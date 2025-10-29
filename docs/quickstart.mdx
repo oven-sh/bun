@@ -7,10 +7,7 @@ description: Build your first app with Bun
 
 Build a minimal HTTP server with `Bun.serve`, run it locally, then evolve it by installing a package.
 
-<Info>
-	Prerequisites: Bun installed and available on your `PATH`. See [installation](/installation) for
-	setup.
-</Info>
+<Info>Prerequisites: Bun installed and available on your `PATH`. See [installation](/installation) for setup.</Info>
 
 ---
 
@@ -36,7 +33,8 @@ Build a minimal HTTP server with `Bun.serve`, run it locally, then evolve it by 
 - index.ts
 - tsconfig.json (for editor autocomplete)
 - README.md
-  ```
+
+  ````
 
       	This automatically creates a `my-app` directory with a basic Bun app.
       </Step>
@@ -205,6 +203,7 @@ Build a minimal HTTP server with `Bun.serve`, run it locally, then evolve it by 
       </Step>
 
   </Steps>
+  ````
 
 🎉 Congratulations! You've built a simple HTTP server with Bun and installed a package.
 
@@ -216,15 +215,15 @@ Bun can also execute `"scripts"` from your `package.json`. Add the following scr
 
 ```json package.json icon="file-code"
 {
-	"name": "quickstart",
-	"module": "index.ts",
-	"type": "module",
-	"scripts": {
-		"start": "bun run index.ts"
-	},
-	"devDependencies": {
-		"@types/bun": "latest"
-	}
+  "name": "quickstart",
+  "module": "index.ts",
+  "type": "module",
+  "scripts": {
+    "start": "bun run index.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
 }
 ```
 
@@ -238,6 +237,4 @@ bun run start
  Listening on http://localhost:3000
 ```
 
-<Note>
-	⚡️ **Performance** — `bun run` is roughly 28x faster than `npm run` (6ms vs 170ms of overhead).
-</Note>
+<Note>⚡️ **Performance** — `bun run` is roughly 28x faster than `npm run` (6ms vs 170ms of overhead).</Note>

@@ -4,9 +4,8 @@ description: Use Bun's FFI module to efficiently call native libraries from Java
 ---
 
 <Warning>
-	`bun:ffi` is **experimental**, with known bugs and limitations, and should not be relied on in
-	production. The most stable way to interact with native code from Bun is to write a [Node-API
-	module](/runtime/node-api).
+  `bun:ffi` is **experimental**, with known bugs and limitations, and should not be relied on in production. The most
+  stable way to interact with native code from Bun is to write a [Node-API module](/runtime/node-api).
 </Warning>
 
 Use the built-in `bun:ffi` module to efficiently call native libraries from JavaScript. It works with languages that support the C ABI (Zig, Rust, C/C++, C#, Nim, Kotlin, etc).
@@ -25,18 +24,18 @@ import { dlopen, FFIType, suffix } from "bun:ffi";
 const path = `libsqlite3.${suffix}`;
 
 const {
-	symbols: {
-		sqlite3_libversion, // the function to call
-	},
+  symbols: {
+    sqlite3_libversion, // the function to call
+  },
 } = dlopen(
-	path, // a library name or file path
-	{
-		sqlite3_libversion: {
-			// no arguments, returns a string
-			args: [],
-			returns: FFIType.cstring,
-		},
-	},
+  path, // a library name or file path
+  {
+    sqlite3_libversion: {
+      // no arguments, returns a string
+      args: [],
+      returns: FFIType.cstring,
+    },
+  },
 );
 
 console.log(`SQLite 3 version: ${sqlite3_libversion()}`);
@@ -79,10 +78,10 @@ const { i32 } = FFIType;
 const path = `libadd.${suffix}`;
 
 const lib = dlopen(path, {
-	add: {
-		args: [i32, i32],
-		returns: i32,
-	},
+  add: {
+    args: [i32, i32],
+    returns: i32,
+  },
 });
 
 console.log(lib.symbols.add(1, 2));
@@ -176,21 +175,21 @@ To solve this, `bun:ffi` exports `CString` which extends JavaScript's built-in `
 
 ```ts
 class CString extends String {
-	/**
-	 * Given a `ptr`, this will automatically search for the closing `\0` character and transcode from UTF-8 to UTF-16 if necessary.
-	 */
-	constructor(ptr: number, byteOffset?: number, byteLength?: number): string;
+  /**
+   * Given a `ptr`, this will automatically search for the closing `\0` character and transcode from UTF-8 to UTF-16 if necessary.
+   */
+  constructor(ptr: number, byteOffset?: number, byteLength?: number): string;
 
-	/**
-	 * The ptr to the C string
-	 *
-	 * This `CString` instance is a clone of the string, so it
-	 * is safe to continue using this instance after the `ptr` has been
-	 * freed.
-	 */
-	ptr: number;
-	byteOffset?: number;
-	byteLength?: number;
+  /**
+   * The ptr to the C string
+   *
+   * This `CString` instance is a clone of the string, so it
+   * is safe to continue using this instance after the `ptr` has been
+   * freed.
+   */
+  ptr: number;
+  byteOffset?: number;
+  byteLength?: number;
 }
 ```
 
@@ -247,33 +246,29 @@ import { linkSymbols } from "bun:ffi";
 const [majorPtr, minorPtr, patchPtr] = getVersionPtrs();
 
 const lib = linkSymbols({
-	// Unlike with dlopen(), the names here can be whatever you want
-	getMajor: {
-		returns: "cstring",
-		args: [],
+  // Unlike with dlopen(), the names here can be whatever you want
+  getMajor: {
+    returns: "cstring",
+    args: [],
 
-		// Since this doesn't use dlsym(), you have to provide a valid ptr
-		// That ptr could be a number or a bigint
-		// An invalid pointer will crash your program.
-		ptr: majorPtr,
-	},
-	getMinor: {
-		returns: "cstring",
-		args: [],
-		ptr: minorPtr,
-	},
-	getPatch: {
-		returns: "cstring",
-		args: [],
-		ptr: patchPtr,
-	},
+    // Since this doesn't use dlsym(), you have to provide a valid ptr
+    // That ptr could be a number or a bigint
+    // An invalid pointer will crash your program.
+    ptr: majorPtr,
+  },
+  getMinor: {
+    returns: "cstring",
+    args: [],
+    ptr: minorPtr,
+  },
+  getPatch: {
+    returns: "cstring",
+    args: [],
+    ptr: patchPtr,
+  },
 });
 
-const [major, minor, patch] = [
-	lib.symbols.getMajor(),
-	lib.symbols.getMinor(),
-	lib.symbols.getPatch(),
-];
+const [major, minor, patch] = [lib.symbols.getMajor(), lib.symbols.getMinor(), lib.symbols.getPatch()];
 ```
 
 ---
@@ -286,29 +281,29 @@ Use `JSCallback` to create JavaScript callback functions that can be passed to C
 import { dlopen, JSCallback, ptr, CString } from "bun:ffi";
 
 const {
-	symbols: { search },
-	close,
+  symbols: { search },
+  close,
 } = dlopen("libmylib", {
-	search: {
-		returns: "usize",
-		args: ["cstring", "callback"],
-	},
+  search: {
+    returns: "usize",
+    args: ["cstring", "callback"],
+  },
 });
 
 const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, length)), {
-	returns: "bool",
-	args: ["ptr", "usize"],
+  returns: "bool",
+  args: ["ptr", "usize"],
 });
 
 const str = Buffer.from("wwutwutwutwutwutwutwutwutwutwutut\0", "utf8");
 if (search(ptr(str), searchIterator)) {
-	// found a match!
+  // found a match!
 }
 
 // Sometime later:
 setTimeout(() => {
-	searchIterator.close();
-	close();
+  searchIterator.close();
+  close();
 }, 5000);
 ```
 
@@ -322,9 +317,9 @@ Currently, thread-safe callbacks work best when run from another thread that is 
 
 ```ts
 const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, length)), {
-	returns: "bool",
-	args: ["ptr", "usize"],
-	threadsafe: true, // Optional. Defaults to `false`
+  returns: "bool",
+  args: ["ptr", "usize"],
+  threadsafe: true, // Optional. Defaults to `false`
 });
 ```
 
@@ -333,13 +328,13 @@ const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(
 
 ```ts
 const onResolve = new JSCallback(arg => arg === 42, {
-	returns: "bool",
-	args: ["i32"],
+  returns: "bool",
+  args: ["i32"],
 });
 const setOnResolve = new CFunction({
-	returns: "bool",
-	args: ["function"],
-	ptr: myNativeLibrarySetOnResolve,
+  returns: "bool",
+  args: ["function"],
+  ptr: myNativeLibrarySetOnResolve,
 });
 
 // This code runs slightly faster:
@@ -392,10 +387,10 @@ import { toArrayBuffer } from "bun:ffi";
 let myDataView = new DataView(toArrayBuffer(myPtr, 0, 32));
 
 console.log(
-	myDataView.getUint8(0, true),
-	myDataView.getUint8(1, true),
-	myDataView.getUint8(2, true),
-	myDataView.getUint8(3, true),
+  myDataView.getUint8(0, true),
+  myDataView.getUint8(1, true),
+  myDataView.getUint8(2, true),
+  myDataView.getUint8(3, true),
 );
 ```
 
@@ -405,11 +400,11 @@ For short-lived pointers, use `read`:
 import { read } from "bun:ffi";
 
 console.log(
-	// ptr, byteOffset
-	read.u8(myPtr, 0),
-	read.u8(myPtr, 1),
-	read.u8(myPtr, 2),
-	read.u8(myPtr, 3),
+  // ptr, byteOffset
+  read.u8(myPtr, 0),
+  read.u8(myPtr, 1),
+  read.u8(myPtr, 2),
+  read.u8(myPtr, 3),
 );
 ```
 
@@ -452,27 +447,27 @@ import { toArrayBuffer } from "bun:ffi";
 
 // with a deallocatorContext:
 toArrayBuffer(
-	bytes,
-	byteOffset,
+  bytes,
+  byteOffset,
 
-	byteLength,
+  byteLength,
 
-	// this is an optional pointer to a callback
-	deallocatorContext,
+  // this is an optional pointer to a callback
+  deallocatorContext,
 
-	// this is a pointer to a function
-	jsTypedArrayBytesDeallocator,
+  // this is a pointer to a function
+  jsTypedArrayBytesDeallocator,
 );
 
 // without a deallocatorContext:
 toArrayBuffer(
-	bytes,
-	byteOffset,
+  bytes,
+  byteOffset,
 
-	byteLength,
+  byteLength,
 
-	// this is a pointer to a function
-	jsTypedArrayBytesDeallocator,
+  // this is a pointer to a function
+  jsTypedArrayBytesDeallocator,
 );
 ```
 
@@ -492,13 +487,13 @@ Where FFI functions expect a pointer, pass a `TypedArray` of equivalent size:
 import { dlopen, FFIType } from "bun:ffi";
 
 const {
-	symbols: { encode_png },
+  symbols: { encode_png },
 } = dlopen(myLibraryPath, {
-	encode_png: {
-		// FFIType's can be specified as strings too
-		args: ["ptr", "u32", "u32"],
-		returns: FFIType.ptr,
-	},
+  encode_png: {
+    // FFIType's can be specified as strings too
+    args: ["ptr", "u32", "u32"],
+    returns: FFIType.ptr,
+  },
 });
 
 const pixels = new Uint8ClampedArray(128 * 128 * 4);
@@ -506,11 +501,11 @@ pixels.fill(254);
 pixels.subarray(0, 32 * 32 * 2).fill(0);
 
 const out = encode_png(
-	// pixels will be passed as a pointer
-	pixels,
+  // pixels will be passed as a pointer
+  pixels,
 
-	128,
-	128,
+  128,
+  128,
 );
 ```
 
@@ -524,13 +519,13 @@ If you don't want the automatic conversion or you want a pointer to a specific b
 import { dlopen, FFIType, ptr } from "bun:ffi";
 
 const {
-	symbols: { encode_png },
+  symbols: { encode_png },
 } = dlopen(myLibraryPath, {
-	encode_png: {
-		// FFIType's can be specified as strings too
-		args: ["ptr", "u32", "u32"],
-		returns: FFIType.ptr,
-	},
+  encode_png: {
+    // FFIType's can be specified as strings too
+    args: ["ptr", "u32", "u32"],
+    returns: FFIType.ptr,
+  },
 });
 
 const pixels = new Uint8ClampedArray(128 * 128 * 4);
@@ -540,11 +535,11 @@ pixels.fill(254);
 const myPtr = ptr(pixels);
 
 const out = encode_png(
-	myPtr,
+  myPtr,
 
-	// dimensions:
-	128,
-	128,
+  // dimensions:
+  128,
+  128,
 );
 ```
 
@@ -554,12 +549,12 @@ const out = encode_png(
 
 ```ts
 const out = encode_png(
-	// pixels will be passed as a pointer
-	pixels,
+  // pixels will be passed as a pointer
+  pixels,
 
-	// dimensions:
-	128,
-	128,
+  // dimensions:
+  128,
+  128,
 );
 
 // assuming it is 0-terminated, it can be read like this:

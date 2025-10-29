@@ -10,10 +10,10 @@ Use the `spyOn` utility to track method calls with Bun's test runner.
 import { test, expect, spyOn } from "bun:test";
 
 const leo = {
-	name: "Leonardo",
-	sayHi(thing: string) {
-		console.log(`Sup I'm ${this.name} and I like ${thing}`);
-	},
+  name: "Leonardo",
+  sayHi(thing: string) {
+    console.log(`Sup I'm ${this.name} and I like ${thing}`);
+  },
 };
 
 const spy = spyOn(leo, "sayHi");
@@ -27,20 +27,20 @@ Once the spy is created, it can be used to write `expect` assertions relating to
 import { test, expect, spyOn } from "bun:test";
 
 const leo = {
-	name: "Leonardo",
-	sayHi(thing: string) {
-		console.log(`Sup I'm ${this.name} and I like ${thing}`);
-	},
+  name: "Leonardo",
+  sayHi(thing: string) {
+    console.log(`Sup I'm ${this.name} and I like ${thing}`);
+  },
 };
 
 const spy = spyOn(leo, "sayHi");
 
 test("turtles", () => {
-	// [!code ++]
-	expect(spy).toHaveBeenCalledTimes(0); // [!code ++]
-	leo.sayHi("pizza"); // [!code ++]
-	expect(spy).toHaveBeenCalledTimes(1); // [!code ++]
-	expect(spy.mock.calls).toEqual([["pizza"]]); // [!code ++]
+  // [!code ++]
+  expect(spy).toHaveBeenCalledTimes(0); // [!code ++]
+  leo.sayHi("pizza"); // [!code ++]
+  expect(spy).toHaveBeenCalledTimes(1); // [!code ++]
+  expect(spy.mock.calls).toEqual([["pizza"]]); // [!code ++]
 }); // [!code ++]
 ```
 

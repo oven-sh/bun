@@ -4,9 +4,8 @@ description: Bun provides a set of utility functions for hashing and verifying p
 ---
 
 <Note>
-	Bun implements the `createHash` and `createHmac` functions from
-	[`node:crypto`](https://nodejs.org/api/crypto.html) in addition to the Bun-native APIs documented
-	below.
+  Bun implements the `createHash` and `createHmac` functions from [`node:crypto`](https://nodejs.org/api/crypto.html) in
+  addition to the Bun-native APIs documented below.
 </Note>
 
 ---
@@ -32,15 +31,15 @@ const password = "super-secure-pa$$word";
 
 // use argon2 (default)
 const argonHash = await Bun.password.hash(password, {
-	algorithm: "argon2id", // "argon2id" | "argon2i" | "argon2d"
-	memoryCost: 4, // memory usage in kibibytes
-	timeCost: 3, // the number of iterations
+  algorithm: "argon2id", // "argon2id" | "argon2i" | "argon2d"
+  memoryCost: 4, // memory usage in kibibytes
+  timeCost: 3, // the number of iterations
 });
 
 // use bcrypt
 const bcryptHash = await Bun.password.hash(password, {
-	algorithm: "bcrypt",
-	cost: 4, // number between 4-31
+  algorithm: "bcrypt",
+  cost: 4, // number between 4-31
 });
 ```
 
@@ -52,7 +51,7 @@ The `verify` function automatically detects the algorithm based on the input has
 const password = "super-secure-pa$$word";
 
 const hash = await Bun.password.hash(password, {
-	/* config */
+  /* config */
 });
 
 const isMatch = await Bun.password.verify(password, hash);
@@ -65,7 +64,7 @@ Synchronous versions of all functions are also available. Keep in mind that thes
 const password = "super-secure-pa$$word";
 
 const hash = Bun.password.hashSync(password, {
-	/* config */
+  /* config */
 });
 
 const isMatch = Bun.password.verifySync(password, hash);
@@ -84,7 +83,7 @@ Input:
 
 ```ts
 await Bun.password.hash("hello", {
-	algorithm: "bcrypt",
+  algorithm: "bcrypt",
 });
 ```
 
@@ -105,7 +104,7 @@ By default, the bcrypt library truncates passwords longer than 72 bytes. In Bun,
 
 ```ts
 await Bun.password.hash("hello".repeat(100), {
-	algorithm: "bcrypt",
+  algorithm: "bcrypt",
 });
 ```
 
@@ -119,7 +118,7 @@ Input:
 
 ```ts
 await Bun.password.hash("hello", {
-	algorithm: "argon2id",
+  algorithm: "argon2id",
 });
 ```
 

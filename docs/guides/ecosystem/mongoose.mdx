@@ -32,17 +32,17 @@ In `schema.ts` we'll declare and export a simple `Animal` model.
 import * as mongoose from "mongoose";
 
 const animalSchema = new mongoose.Schema(
-	{
-		title: { type: String, required: true },
-		sound: { type: String, required: true },
-	},
-	{
-		methods: {
-			speak() {
-				console.log(`${this.sound}!`);
-			},
-		},
-	},
+  {
+    title: { type: String, required: true },
+    sound: { type: String, required: true },
+  },
+  {
+    methods: {
+      speak() {
+        console.log(`${this.sound}!`);
+      },
+    },
+  },
 );
 
 export type Animal = mongoose.InferSchemaType<typeof animalSchema>;
@@ -62,8 +62,8 @@ await mongoose.connect("mongodb://127.0.0.1:27017/mongoose-app");
 
 // create new Animal
 const cow = new Animal({
-	title: "Cow",
-	sound: "Moo",
+  title: "Cow",
+  sound: "Moo",
 });
 await cow.save(); // saves to the database
 

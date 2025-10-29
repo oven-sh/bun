@@ -4,8 +4,8 @@ description: Use Bun's Workers API to create and communicate with a new JavaScri
 ---
 
 <Warning>
-	The `Worker` API is still experimental (particularly for terminating workers). We are actively
-	working on improving this.
+  The `Worker` API is still experimental (particularly for terminating workers). We are actively working on improving
+  this.
 </Warning>
 
 [`Worker`](https://developer.mozilla.org/en-US/docs/Web/API/Worker) lets you start and communicate with a new JavaScript instance running on a separate thread while sharing I/O resources with the main thread.
@@ -23,7 +23,7 @@ const worker = new Worker("./worker.ts");
 
 worker.postMessage("hello");
 worker.onmessage = event => {
-	console.log(event.data);
+  console.log(event.data);
 };
 ```
 
@@ -34,8 +34,8 @@ worker.onmessage = event => {
 declare var self: Worker;
 
 self.onmessage = (event: MessageEvent) => {
-	console.log(event.data);
-	postMessage("world");
+  console.log(event.data);
+  postMessage("world");
 };
 ```
 
@@ -62,7 +62,7 @@ You can pass an array of module specifiers to the `preload` option to load modul
 
 ```ts index.ts icon="/icons/typescript.svg"
 const worker = new Worker("./worker.ts", {
-	preload: ["./load-sentry.js"],
+  preload: ["./load-sentry.js"],
 });
 ```
 
@@ -72,7 +72,7 @@ You can also pass a single string to the `preload` option:
 
 ```ts index.ts icon="/icons/typescript.svg"
 const worker = new Worker("./worker.ts", {
-	preload: "./load-sentry.js",
+  preload: "./load-sentry.js",
 });
 ```
 
@@ -84,13 +84,13 @@ As of Bun v1.1.13, you can also pass a `blob:` URL to `Worker`. This is useful f
 
 ```js
 const blob = new Blob(
-	[
-		`
+  [
+    `
   self.onmessage = (event: MessageEvent) => postMessage(event.data)`,
-	],
-	{
-		type: "application/typescript",
-	},
+  ],
+  {
+    type: "application/typescript",
+  },
 );
 const url = URL.createObjectURL(blob);
 const worker = new Worker(url);
@@ -100,11 +100,11 @@ Like the rest of Bun, workers created from `blob:` URLs support TypeScript, JSX,
 
 ```ts
 const file = new File(
-	[
-		`
+  [
+    `
   self.onmessage = (event: MessageEvent) => postMessage(event.data)`,
-	],
-	"worker.ts",
+  ],
+  "worker.ts",
 );
 const url = URL.createObjectURL(file);
 const worker = new Worker(url);
@@ -118,7 +118,7 @@ The `"open"` event is emitted when a worker is created and ready to receive mess
 const worker = new Worker(new URL("worker.ts", import.meta.url).href);
 
 worker.addEventListener("open", () => {
-	console.log("worker is ready");
+  console.log("worker is ready");
 });
 ```
 
@@ -167,17 +167,17 @@ postMessage("Hello, worker!");
 
 // Simple object fast path - optimized
 postMessage({
-	message: "Hello",
-	count: 42,
-	enabled: true,
-	data: null,
+  message: "Hello",
+  count: 42,
+  enabled: true,
+  data: null,
 });
 
 // Complex objects still work but use standard structured clone
 postMessage({
-	nested: { deep: { object: true } },
-	date: new Date(),
-	buffer: new ArrayBuffer(8),
+  nested: { deep: { object: true } },
+  date: new Date(),
+  buffer: new ArrayBuffer(8),
 });
 ```
 
@@ -194,14 +194,14 @@ To receive messages, use the [`message` event handler](https://developer.mozilla
 ```js
 // Worker thread:
 self.addEventListener("message", event => {
-	console.log(event.data);
+  console.log(event.data);
 });
 // or use the setter:
 // self.onmessage = fn
 
 // if on the main thread
 worker.addEventListener("message", event => {
-	console.log(event.data);
+  console.log(event.data);
 });
 // or use the setter:
 // worker.onmessage = fn
@@ -232,7 +232,7 @@ The `"close"` event is emitted when a worker has been terminated. It can take so
 const worker = new Worker(new URL("worker.ts", import.meta.url).href);
 
 worker.addEventListener("close", event => {
-	console.log("worker is being closed");
+  console.log("worker is being closed");
 });
 ```
 
@@ -268,7 +268,7 @@ Alternatively, you can also pass an `options` object to `Worker`:
 
 ```ts index.ts icon="/icons/typescript.svg"
 const worker = new Worker(new URL("worker.ts", import.meta.url).href, {
-	ref: false,
+  ref: false,
 });
 ```
 
@@ -280,12 +280,12 @@ JavaScript instances can use a lot of memory. Bun's `Worker` supports a `smol` m
 
 ```ts index.ts icon="/icons/typescript.svg"
 const worker = new Worker("./i-am-smol.ts", {
-	smol: true,
+  smol: true,
 });
 ```
 
 <Accordion title="What does `smol` mode actually do?">
-	Setting `smol: true` sets `JSC::HeapSize` to be `Small` instead of the default `Large`.
+  Setting `smol: true` sets `JSC::HeapSize` to be `Small` instead of the default `Large`.
 </Accordion>
 
 ## Environment Data
@@ -309,7 +309,7 @@ Listen for worker creation events using `process.emit()`:
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
 process.on("worker", worker => {
-	console.log("New worker created:", worker.threadId);
+  console.log("New worker created:", worker.threadId);
 });
 ```
 
@@ -319,9 +319,9 @@ You can check if you're in the main thread by checking `Bun.isMainThread`.
 
 ```ts
 if (Bun.isMainThread) {
-	console.log("I'm the main thread");
+  console.log("I'm the main thread");
 } else {
-	console.log("I'm in a worker");
+  console.log("I'm in a worker");
 }
 ```
 

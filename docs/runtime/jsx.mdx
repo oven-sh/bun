@@ -88,19 +88,16 @@ Bun implements special logging for JSX to make debugging easier. Given the follo
 import { Stack, UserCard } from "./components";
 
 console.log(
-	<Stack>
-		<UserCard name="Dom" bio="Street racer and Corona lover" />
-		<UserCard name="Jakob" bio="Super spy and Dom's secret brother" />
-	</Stack>,
+  <Stack>
+    <UserCard name="Dom" bio="Street racer and Corona lover" />
+    <UserCard name="Jakob" bio="Super spy and Dom's secret brother" />
+  </Stack>,
 );
 ```
 
 Bun will pretty-print the component tree when logged:
 
-<Frame>
-	![JSX logging
-	output](https://github.com/oven-sh/bun/assets/3084745/d29db51d-6837-44e2-b8be-84fc1b9e9d97)
-</Frame>
+<Frame>![JSX logging output](https://github.com/oven-sh/bun/assets/3084745/d29db51d-6837-44e2-b8be-84fc1b9e9d97)</Frame>
 
 ## Prop punning
 

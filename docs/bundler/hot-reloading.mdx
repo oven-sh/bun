@@ -13,7 +13,7 @@ Bun implements a client-side HMR API modeled after [Vite's `import.meta.hot` API
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
 if (import.meta.hot) {
-	// HMR APIs are available.
+  // HMR APIs are available.
 }
 ```
 
@@ -22,7 +22,7 @@ However, this check is often not needed as Bun will dead-code-eliminate calls to
 ```ts title="index.ts" icon="/icons/typescript.svg"
 // This entire function call will be removed in production!
 import.meta.hot.dispose(() => {
-	console.log("dispose");
+  console.log("dispose");
 });
 ```
 
@@ -82,7 +82,7 @@ console.log("count is ", getCount());
 import.meta.hot.accept();
 
 export function getNegativeCount() {
-	return -getCount();
+  return -getCount();
 }
 ```
 
@@ -91,10 +91,9 @@ This creates a hot-reloading boundary for all of the files that `index.ts` impor
 This may be used in combination with `import.meta.hot.data` to transfer state from the previous module to the new one.
 
 <Info>
-	When no modules call `import.meta.hot.accept()` (and there isn't React Fast Refresh or a plugin
-	calling it for you), the page will reload when the file updates, and a console warning shows which
-	files were invalidated. This warning is safe to ignore if it makes more sense to rely on full page
-	reloads.
+  When no modules call `import.meta.hot.accept()` (and there isn't React Fast Refresh or a plugin calling it for you),
+  the page will reload when the file updates, and a console warning shows which files were invalidated. This warning is
+  safe to ignore if it makes more sense to rely on full page reloads.
 </Info>
 
 ### With callback
@@ -105,16 +104,15 @@ When provided one callback, `import.meta.hot.accept` will function how it does i
 export const count = 0;
 
 import.meta.hot.accept(newModule => {
-	if (newModule) {
-		// newModule is undefined when SyntaxError happened
-		console.log("updated: count is now ", newModule.count);
-	}
+  if (newModule) {
+    // newModule is undefined when SyntaxError happened
+    console.log("updated: count is now ", newModule.count);
+  }
 });
 ```
 
 <Tip>
-	Prefer using `import.meta.hot.accept()` without an argument as it usually makes your code easier
-	to understand.
+  Prefer using `import.meta.hot.accept()` without an argument as it usually makes your code easier to understand.
 </Tip>
 
 ### Accepting other modules
@@ -123,9 +121,9 @@ import.meta.hot.accept(newModule => {
 import { count } from "./foo";
 
 import.meta.hot.accept("./foo", () => {
-	if (!newModule) return;
+  if (!newModule) return;
 
-	console.log("updated: count is now ", count);
+  console.log("updated: count is now ", count);
 });
 ```
 
@@ -135,8 +133,8 @@ Indicates that a dependency's module can be accepted. When the dependency is upd
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
 import.meta.hot.accept(["./foo", "./bar"], newModules => {
-	// newModules is an array where each item corresponds to the updated module
-	// or undefined if that module had a syntax error
+  // newModules is an array where each item corresponds to the updated module
+  // or undefined if that module had a syntax error
 });
 ```
 
@@ -157,8 +155,8 @@ root.render(<App />); // re-use an existing root
 In production, `data` is inlined to be `{}`, meaning it cannot be used as a state holder.
 
 <Tip>
-	The above pattern is recommended for stateful modules because Bun knows it can minify `{}.prop ??=
-	value` into `value` in production.
+  The above pattern is recommended for stateful modules because Bun knows it can minify `{}.prop ??= value` into `value`
+  in production.
 </Tip>
 
 ## import.meta.hot.dispose()
@@ -172,7 +170,7 @@ Attaches an on-dispose callback. This is called:
 const sideEffect = setupSideEffect();
 
 import.meta.hot.dispose(() => {
-	sideEffect.cleanup();
+  sideEffect.cleanup();
 });
 ```
 
@@ -194,13 +192,13 @@ export const ws = (import.meta.hot.data.ws ??= new WebSocket(location.origin));
 
 // If the module's import is removed, clean up the WebSocket connection.
 import.meta.hot.prune(() => {
-	ws.close();
+  ws.close();
 });
 ```
 
 <Info>
-	If `dispose` was used instead, the WebSocket would close and re-open on every hot update. Both
-	versions of the code will prevent page reloads when imported files are updated.
+  If `dispose` was used instead, the WebSocket would close and re-open on every hot update. Both versions of the code
+  will prevent page reloads when imported files are updated.
 </Info>
 
 ## import.meta.hot.on() and off()
@@ -209,7 +207,7 @@ import.meta.hot.prune(() => {
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
 import.meta.hot.on("bun:beforeUpdate", () => {
-	console.log("before a hot update");
+  console.log("before a hot update");
 });
 ```
 
@@ -228,7 +226,4 @@ When a file is replaced, all of its event listeners are automatically removed.
 | `bun:ws:disconnect`    | when the HMR WebSocket connection is lost. This can indicate the development server is offline. |
 | `bun:ws:connect`       | when the HMR WebSocket connects or re-connects.                                                 |
 
-<Note>
-	For compatibility with Vite, the above events are also available via `vite:*` prefix instead of
-	`bun:*`.
-</Note>
+<Note>For compatibility with Vite, the above events are also available via `vite:*` prefix instead of `bun:*`.</Note>

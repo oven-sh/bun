@@ -81,12 +81,12 @@ By default, non-zero exit codes will throw an error. This `ShellError` contains 
 import { $ } from "bun";
 
 try {
-	const output = await $`something-that-may-fail`.text();
-	console.log(output);
+  const output = await $`something-that-may-fail`.text();
+  console.log(output);
 } catch (err) {
-	console.log(`Failed with code ${err.exitCode}`);
-	console.log(err.stdout.toString());
-	console.log(err.stderr.toString());
+  console.log(`Failed with code ${err.exitCode}`);
+  console.log(err.stdout.toString());
+  console.log(err.stderr.toString());
 }
 ```
 
@@ -98,7 +98,7 @@ import { $ } from "bun";
 const { stdout, stderr, exitCode } = await $`something-that-may-fail`.nothrow().quiet();
 
 if (exitCode !== 0) {
-	console.log(`Non-zero exit code ${exitCode}`);
+  console.log(`Non-zero exit code ${exitCode}`);
 }
 
 console.log(stdout);
@@ -425,7 +425,7 @@ To read the output of a command line-by-line, use `.lines()`:
 import { $ } from "bun";
 
 for await (let line of $`echo "Hello World!"`.lines()) {
-	console.log(line); // Hello World!
+  console.log(line); // Hello World!
 }
 ```
 
@@ -437,7 +437,7 @@ import { $ } from "bun";
 const search = "bun";
 
 for await (let line of $`cat list.txt | grep ${search}`.lines()) {
-	console.log(line);
+  console.log(line);
 }
 ```
 
@@ -626,9 +626,8 @@ await $`git ls-remote origin ${branch}`;
 ```
 
 <Note>
-	**Recommendation** — As is best practice in every language, always sanitize user-provided input
-	before passing it as an argument to an external command. The responsibility for validating
-	arguments rests with your application code.
+  **Recommendation** — As is best practice in every language, always sanitize user-provided input before passing it as
+  an argument to an external command. The responsibility for validating arguments rests with your application code.
 </Note>
 
 ---

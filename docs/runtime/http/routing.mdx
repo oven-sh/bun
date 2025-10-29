@@ -11,14 +11,14 @@ You can add routes to `Bun.serve()` by using the `routes` property (for static p
 
 ```ts title="server.ts" icon="/icons/typescript.svg"
 Bun.serve({
-	routes: {
-		"/": () => new Response("Home"),
-		"/api": () => Response.json({ success: true }),
-		"/users": async () => Response.json({ users: [] }),
-	},
-	fetch() {
-		return new Response("Unmatched route");
-	},
+  routes: {
+    "/": () => new Response("Home"),
+    "/api": () => Response.json({ success: true }),
+    "/users": async () => Response.json({ users: [] }),
+  },
+  fetch() {
+    return new Response("Unmatched route");
+  },
 });
 ```
 
@@ -27,8 +27,8 @@ Routes in `Bun.serve()` receive a `BunRequest` (which extends [`Request`](https:
 ```ts
 // Simplified for brevity
 interface BunRequest<T extends string> extends Request {
-	params: Record<T, string>;
-	readonly cookies: CookieMap;
+  params: Record<T, string>;
+  readonly cookies: CookieMap;
 }
 ```
 
@@ -42,13 +42,13 @@ You can use async/await in route handlers to return a `Promise<Response>`.
 import { sql, serve } from "bun";
 
 serve({
-	port: 3001,
-	routes: {
-		"/api/version": async () => {
-			const [version] = await sql`SELECT version()`;
-			return Response.json(version);
-		},
-	},
+  port: 3001,
+  routes: {
+    "/api/version": async () => {
+      const [version] = await sql`SELECT version()`;
+      return Response.json(version);
+    },
+  },
 });
 ```
 
@@ -60,16 +60,16 @@ You can also return a `Promise<Response>` from a route handler.
 import { sql, serve } from "bun";
 
 serve({
-	routes: {
-		"/api/version": () => {
-			return new Promise(resolve => {
-				setTimeout(async () => {
-					const [version] = await sql`SELECT version()`;
-					resolve(Response.json(version));
-				}, 100);
-			});
-		},
-	},
+  routes: {
+    "/api/version": () => {
+      return new Promise(resolve => {
+        setTimeout(async () => {
+          const [version] = await sql`SELECT version()`;
+          resolve(Response.json(version));
+        }, 100);
+      });
+    },
+  },
 });
 ```
 
@@ -86,13 +86,13 @@ Routes are matched in order of specificity:
 
 ```ts
 Bun.serve({
-	routes: {
-		// Most specific first
-		"/api/users/me": () => new Response("Current user"),
-		"/api/users/:id": req => new Response(`User ${req.params.id}`),
-		"/api/*": () => new Response("API catch-all"),
-		"/*": () => new Response("Global catch-all"),
-	},
+  routes: {
+    // Most specific first
+    "/api/users/me": () => new Response("Current user"),
+    "/api/users/:id": req => new Response(`User ${req.params.id}`),
+    "/api/*": () => new Response("API catch-all"),
+    "/*": () => new Response("Global catch-all"),
+  },
 });
 ```
 
@@ -106,21 +106,21 @@ TypeScript parses route parameters when passed as a string literal, so that your
 import type { BunRequest } from "bun";
 
 Bun.serve({
-	routes: {
-		// TypeScript knows the shape of params when passed as a string literal
-		"/orgs/:orgId/repos/:repoId": req => {
-			const { orgId, repoId } = req.params;
-			return Response.json({ orgId, repoId });
-		},
+  routes: {
+    // TypeScript knows the shape of params when passed as a string literal
+    "/orgs/:orgId/repos/:repoId": req => {
+      const { orgId, repoId } = req.params;
+      return Response.json({ orgId, repoId });
+    },
 
-		"/orgs/:orgId/repos/:repoId/settings": (
-			// optional: you can explicitly pass a type to BunRequest:
-			req: BunRequest<"/orgs/:orgId/repos/:repoId/settings">,
-		) => {
-			const { orgId, repoId } = req.params;
-			return Response.json({ orgId, repoId });
-		},
-	},
+    "/orgs/:orgId/repos/:repoId/settings": (
+      // optional: you can explicitly pass a type to BunRequest:
+      req: BunRequest<"/orgs/:orgId/repos/:repoId/settings">,
+    ) => {
+      const { orgId, repoId } = req.params;
+      return Response.json({ orgId, repoId });
+    },
+  },
 });
 ```
 
@@ -132,25 +132,25 @@ Routes can also be `Response` objects (without the handler function). Bun.serve(
 
 ```ts
 Bun.serve({
-	routes: {
-		// Health checks
-		"/health": new Response("OK"),
-		"/ready": new Response("Ready", {
-			headers: {
-				// Pass custom headers
-				"X-Ready": "1",
-			},
-		}),
+  routes: {
+    // Health checks
+    "/health": new Response("OK"),
+    "/ready": new Response("Ready", {
+      headers: {
+        // Pass custom headers
+        "X-Ready": "1",
+      },
+    }),
 
-		// Redirects
-		"/blog": Response.redirect("https://bun.com/blog"),
+    // Redirects
+    "/blog": Response.redirect("https://bun.com/blog"),
 
-		// API responses
-		"/api/config": Response.json({
-			version: "1.0.0",
-			env: "production",
-		}),
-	},
+    // API responses
+    "/api/config": Response.json({
+      version: "1.0.0",
+      env: "production",
+    }),
+  },
 });
 ```
 
@@ -164,13 +164,13 @@ When serving files in routes, there are two distinct behaviors depending on whet
 
 ```ts
 Bun.serve({
-	routes: {
-		// Static route - content is buffered in memory at startup
-		"/logo.png": new Response(await Bun.file("./logo.png").bytes()),
+  routes: {
+    // Static route - content is buffered in memory at startup
+    "/logo.png": new Response(await Bun.file("./logo.png").bytes()),
 
-		// File route - content is read from filesystem on each request
-		"/download.zip": new Response(Bun.file("./download.zip")),
-	},
+    // File route - content is read from filesystem on each request
+    "/download.zip": new Response(Bun.file("./download.zip")),
+  },
 });
 ```
 
@@ -202,35 +202,34 @@ To stream a file, return a `Response` object with a `BunFile` object as the body
 
 ```ts
 Bun.serve({
-	fetch(req) {
-		return new Response(Bun.file("./hello.txt"));
-	},
+  fetch(req) {
+    return new Response(Bun.file("./hello.txt"));
+  },
 });
 ```
 
 <Info>
-	⚡️ **Speed** — Bun automatically uses the
-	[`sendfile(2)`](https://man7.org/linux/man-pages/man2/sendfile.2.html) system call when possible,
-	enabling zero-copy file transfers in the kernel—the fastest way to send files.
+  ⚡️ **Speed** — Bun automatically uses the [`sendfile(2)`](https://man7.org/linux/man-pages/man2/sendfile.2.html)
+  system call when possible, enabling zero-copy file transfers in the kernel—the fastest way to send files.
 </Info>
 
 You can send part of a file using the [`slice(start, end)`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/slice) method on the `Bun.file` object. This automatically sets the `Content-Range` and `Content-Length` headers on the `Response` object.
 
 ```ts
 Bun.serve({
-	fetch(req) {
-		// parse `Range` header
-		const [start = 0, end = Infinity] = req.headers
-			.get("Range") // Range: bytes=0-100
-			.split("=") // ["Range: bytes", "0-100"]
-			.at(-1) // "0-100"
-			.split("-") // ["0", "100"]
-			.map(Number); // [0, 100]
+  fetch(req) {
+    // parse `Range` header
+    const [start = 0, end = Infinity] = req.headers
+      .get("Range") // Range: bytes=0-100
+      .split("=") // ["Range: bytes", "0-100"]
+      .at(-1) // "0-100"
+      .split("-") // ["0", "100"]
+      .map(Number); // [0, 100]
 
-		// return a slice of the file
-		const bigFile = Bun.file("./big-video.mp4");
-		return new Response(bigFile.slice(start, end));
-	},
+    // return a slice of the file
+    const bigFile = Bun.file("./big-video.mp4");
+    return new Response(bigFile.slice(start, end));
+  },
 });
 ```
 
@@ -242,12 +241,12 @@ The `fetch` handler handles incoming requests that weren't matched by any route.
 
 ```ts
 Bun.serve({
-	fetch(req) {
-		const url = new URL(req.url);
-		if (url.pathname === "/") return new Response("Home page!");
-		if (url.pathname === "/blog") return new Response("Blog!");
-		return new Response("404!");
-	},
+  fetch(req) {
+    const url = new URL(req.url);
+    if (url.pathname === "/") return new Response("Home page!");
+    if (url.pathname === "/blog") return new Response("Blog!");
+    return new Response("404!");
+  },
 });
 ```
 
@@ -257,12 +256,12 @@ The `fetch` handler supports async/await:
 import { sleep, serve } from "bun";
 
 serve({
-	async fetch(req) {
-		const start = performance.now();
-		await sleep(10);
-		const end = performance.now();
-		return new Response(`Slept for ${end - start}ms`);
-	},
+  async fetch(req) {
+    const start = performance.now();
+    await sleep(10);
+    const end = performance.now();
+    return new Response(`Slept for ${end - start}ms`);
+  },
 });
 ```
 
@@ -270,10 +269,10 @@ Promise-based responses are also supported:
 
 ```ts
 Bun.serve({
-	fetch(req) {
-		// Forward the request to another server.
-		return fetch("https://example.com");
-	},
+  fetch(req) {
+    // Forward the request to another server.
+    return fetch("https://example.com");
+  },
 });
 ```
 
@@ -282,9 +281,9 @@ You can also access the `Server` object from the `fetch` handler. It's the secon
 ```ts
 // `server` is passed in as the second argument to `fetch`.
 const server = Bun.serve({
-	fetch(req, server) {
-		const ip = server.requestIP(req);
-		return new Response(`Your IP is ${ip}`);
-	},
+  fetch(req, server) {
+    const ip = server.requestIP(req);
+    return new Response(`Your IP is ${ip}`);
+  },
 });
 ```

@@ -8,22 +8,22 @@ Streams are an important abstraction for working with binary data without loadin
 Bun implements the Web APIs [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream) and [`WritableStream`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStream).
 
 <Note>
-	Bun also implements the `node:stream` module, including
-	[`Readable`](https://nodejs.org/api/stream.html#stream_readable_streams),
-	[`Writable`](https://nodejs.org/api/stream.html#stream_writable_streams), and
-	[`Duplex`](https://nodejs.org/api/stream.html#stream_duplex_and_transform_streams). For complete
-	documentation, refer to the [Node.js docs](https://nodejs.org/api/stream.html).
+  Bun also implements the `node:stream` module, including
+  [`Readable`](https://nodejs.org/api/stream.html#stream_readable_streams),
+  [`Writable`](https://nodejs.org/api/stream.html#stream_writable_streams), and
+  [`Duplex`](https://nodejs.org/api/stream.html#stream_duplex_and_transform_streams). For complete documentation, refer
+  to the [Node.js docs](https://nodejs.org/api/stream.html).
 </Note>
 
 To create a simple `ReadableStream`:
 
 ```ts
 const stream = new ReadableStream({
-	start(controller) {
-		controller.enqueue("hello");
-		controller.enqueue("world");
-		controller.close();
-	},
+  start(controller) {
+    controller.enqueue("hello");
+    controller.enqueue("world");
+    controller.close();
+  },
 });
 ```
 
@@ -31,7 +31,7 @@ The contents of a `ReadableStream` can be read chunk-by-chunk with `for await` s
 
 ```ts
 for await (const chunk of stream) {
-	console.log(chunk);
+  console.log(chunk);
 }
 
 // hello
@@ -48,11 +48,11 @@ With a traditional `ReadableStream`, chunks of data are _enqueued_. Each chunk i
 
 ```ts
 const stream = new ReadableStream({
-	start(controller) {
-		controller.enqueue("hello");
-		controller.enqueue("world");
-		controller.close();
-	},
+  start(controller) {
+    controller.enqueue("hello");
+    controller.enqueue("world");
+    controller.close();
+  },
 });
 ```
 
@@ -60,11 +60,11 @@ With a direct `ReadableStream`, chunks of data are written directly to the strea
 
 ```ts
 const stream = new ReadableStream({
-	type: "direct", // [!code ++]
-	pull(controller) {
-		controller.write("hello");
-		controller.write("world");
-	},
+  type: "direct", // [!code ++]
+  pull(controller) {
+    controller.write("hello");
+    controller.write("world");
+  },
 });
 ```
 
@@ -78,10 +78,10 @@ Bun also supports async generator functions as a source for `Response` and `Requ
 
 ```ts
 const response = new Response(
-	(async function* () {
-		yield "hello";
-		yield "world";
-	})(),
+  (async function* () {
+    yield "hello";
+    yield "world";
+  })(),
 );
 
 await response.text(); // "helloworld"
@@ -91,10 +91,10 @@ You can also use `[Symbol.asyncIterator]` directly.
 
 ```ts
 const response = new Response({
-	[Symbol.asyncIterator]: async function* () {
-		yield "hello";
-		yield "world";
-	},
+  [Symbol.asyncIterator]: async function* () {
+    yield "hello";
+    yield "world";
+  },
 });
 
 await response.text(); // "helloworld"
@@ -104,10 +104,10 @@ If you need more granular control over the stream, `yield` will return the direc
 
 ```ts
 const response = new Response({
-	[Symbol.asyncIterator]: async function* () {
-		const controller = yield "hello";
-		await controller.end();
-	},
+  [Symbol.asyncIterator]: async function* () {
+    const controller = yield "hello";
+    await controller.end();
+  },
 });
 
 await response.text(); // "hello"
@@ -137,7 +137,7 @@ To instead retrieve the data as a `Uint8Array`, pass the `asUint8Array` option t
 ```ts
 const sink = new Bun.ArrayBufferSink();
 sink.start({
-	asUint8Array: true, // [!code ++]
+  asUint8Array: true, // [!code ++]
 });
 
 sink.write("h");
@@ -165,7 +165,7 @@ Once `.end()` is called, no more data can be written to the `ArrayBufferSink`. H
 ```ts
 const sink = new Bun.ArrayBufferSink();
 sink.start({
-	stream: true, // [!code ++]
+  stream: true, // [!code ++]
 });
 
 sink.write("h");
@@ -187,7 +187,7 @@ To manually set the size of the internal buffer in bytes, pass a value for `high
 ```ts
 const sink = new Bun.ArrayBufferSink();
 sink.start({
-	highWaterMark: 1024 * 1024, // 1 MB  // [!code ++]
+  highWaterMark: 1024 * 1024, // 1 MB  // [!code ++]
 });
 ```
 
@@ -200,33 +200,33 @@ sink.start({
  * Fast incremental writer that becomes an `ArrayBuffer` on end().
  */
 export class ArrayBufferSink {
-	constructor();
+  constructor();
 
-	start(options?: {
-		asUint8Array?: boolean;
-		/**
-		 * Preallocate an internal buffer of this size
-		 * This can significantly improve performance when the chunk size is small
-		 */
-		highWaterMark?: number;
-		/**
-		 * On {@link ArrayBufferSink.flush}, return the written data as a `Uint8Array`.
-		 * Writes will restart from the beginning of the buffer.
-		 */
-		stream?: boolean;
-	}): void;
+  start(options?: {
+    asUint8Array?: boolean;
+    /**
+     * Preallocate an internal buffer of this size
+     * This can significantly improve performance when the chunk size is small
+     */
+    highWaterMark?: number;
+    /**
+     * On {@link ArrayBufferSink.flush}, return the written data as a `Uint8Array`.
+     * Writes will restart from the beginning of the buffer.
+     */
+    stream?: boolean;
+  }): void;
 
-	write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number;
-	/**
-	 * Flush the internal buffer
-	 *
-	 * If {@link ArrayBufferSink.start} was passed a `stream` option, this will return a `ArrayBuffer`
-	 * If {@link ArrayBufferSink.start} was passed a `stream` option and `asUint8Array`, this will return a `Uint8Array`
-	 * Otherwise, this will return the number of bytes written since the last flush
-	 *
-	 * This API might change later to separate Uint8ArraySink and ArrayBufferSink
-	 */
-	flush(): number | Uint8Array<ArrayBuffer> | ArrayBuffer;
-	end(): ArrayBuffer | Uint8Array<ArrayBuffer>;
+  write(chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer): number;
+  /**
+   * Flush the internal buffer
+   *
+   * If {@link ArrayBufferSink.start} was passed a `stream` option, this will return a `ArrayBuffer`
+   * If {@link ArrayBufferSink.start} was passed a `stream` option and `asUint8Array`, this will return a `Uint8Array`
+   * Otherwise, this will return the number of bytes written since the last flush
+   *
+   * This API might change later to separate Uint8ArraySink and ArrayBufferSink
+   */
+  flush(): number | Uint8Array<ArrayBuffer> | ArrayBuffer;
+  end(): ArrayBuffer | Uint8Array<ArrayBuffer>;
 }
 ```

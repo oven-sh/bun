@@ -45,13 +45,13 @@ bun build --compile --define BUILD_VERSION='"1.0.0"' --define BUILD_TIME='"2024-
 
 ```ts build.ts icon="/icons/typescript.svg"
 await Bun.build({
-	entrypoints: ["./src/index.ts"],
-	outdir: "./dist",
-	define: {
-		BUILD_VERSION: '"1.0.0"',
-		BUILD_TIME: '"2024-01-15T10:30:00Z"',
-		DEBUG: "false",
-	},
+  entrypoints: ["./src/index.ts"],
+  outdir: "./dist",
+  define: {
+    BUILD_VERSION: '"1.0.0"',
+    BUILD_TIME: '"2024-01-15T10:30:00Z"',
+    DEBUG: "false",
+  },
 });
 ```
 
@@ -72,11 +72,11 @@ declare const BUILD_TIME: string;
 declare const GIT_COMMIT: string;
 
 export function getVersion() {
-	return {
-		version: BUILD_VERSION,
-		buildTime: BUILD_TIME,
-		commit: GIT_COMMIT,
-	};
+  return {
+    version: BUILD_VERSION,
+    buildTime: BUILD_TIME,
+    commit: GIT_COMMIT,
+  };
 }
 ```
 
@@ -100,14 +100,14 @@ declare const ENABLE_ANALYTICS: boolean;
 declare const ENABLE_DEBUG: boolean;
 
 function trackEvent(event: string) {
-	if (ENABLE_ANALYTICS) {
-		// This entire block is removed if ENABLE_ANALYTICS is false
-		console.log("Tracking:", event);
-	}
+  if (ENABLE_ANALYTICS) {
+    // This entire block is removed if ENABLE_ANALYTICS is false
+    console.log("Tracking:", event);
+  }
 }
 
 if (ENABLE_DEBUG) {
-	console.log("Debug mode enabled");
+  console.log("Debug mode enabled");
 }
 ```
 
@@ -125,14 +125,14 @@ Replace configuration objects at build time:
 
 ```ts src/version.ts icon="/icons/typescript.svg"
 declare const CONFIG: {
-	apiUrl: string;
-	timeout: number;
-	retries: number;
+  apiUrl: string;
+  timeout: number;
+  retries: number;
 };
 
 // CONFIG is replaced with the actual object at build time
 const response = await fetch(CONFIG.apiUrl, {
-	timeout: CONFIG.timeout,
+  timeout: CONFIG.timeout,
 });
 ```
 
@@ -150,11 +150,11 @@ Create different executables for different environments:
 
 ```json
 {
-	"scripts": {
-		"build:dev": "bun build --compile --define NODE_ENV='\"development\"' --define API_URL='\"http://localhost:3000\"' src/app.ts --outfile app-dev",
-		"build:staging": "bun build --compile --define NODE_ENV='\"staging\"' --define API_URL='\"https://staging.example.com\"' src/app.ts --outfile app-staging",
-		"build:prod": "bun build --compile --define NODE_ENV='\"production\"' --define API_URL='\"https://api.example.com\"' src/app.ts --outfile app-prod"
-	}
+  "scripts": {
+    "build:dev": "bun build --compile --define NODE_ENV='\"development\"' --define API_URL='\"http://localhost:3000\"' src/app.ts --outfile app-dev",
+    "build:staging": "bun build --compile --define NODE_ENV='\"staging\"' --define API_URL='\"https://staging.example.com\"' src/app.ts --outfile app-staging",
+    "build:prod": "bun build --compile --define NODE_ENV='\"production\"' --define API_URL='\"https://api.example.com\"' src/app.ts --outfile app-prod"
+  }
 }
 ```
 
@@ -184,13 +184,13 @@ const buildTime = new Date().toISOString();
 const gitCommit = await $`git rev-parse HEAD`.text();
 
 await Bun.build({
-	entrypoints: ["./src/cli.ts"],
-	outdir: "./dist",
-	define: {
-		BUILD_VERSION: JSON.stringify(version.trim()),
-		BUILD_TIME: JSON.stringify(buildTime),
-		GIT_COMMIT: JSON.stringify(gitCommit.trim()),
-	},
+  entrypoints: ["./src/cli.ts"],
+  outdir: "./dist",
+  define: {
+    BUILD_VERSION: JSON.stringify(version.trim()),
+    BUILD_TIME: JSON.stringify(buildTime),
+    GIT_COMMIT: JSON.stringify(gitCommit.trim()),
+  },
 });
 
 console.log(`Built with version ${version.trim()}`);
@@ -247,12 +247,12 @@ This is particularly useful for environment variables:
 ```ts
 // Before compilation
 if (process.env.NODE_ENV === "production") {
-	console.log("Production mode");
+  console.log("Production mode");
 }
 
 // After compilation with --define 'process.env.NODE_ENV="production"'
 if ("production" === "production") {
-	console.log("Production mode");
+  console.log("Production mode");
 }
 
 // After optimization

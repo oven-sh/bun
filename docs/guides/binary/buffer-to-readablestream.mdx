@@ -9,10 +9,10 @@ The naive approach to creating a [`ReadableStream`](https://developer.mozilla.or
 ```ts
 const buf = Buffer.from("hello world");
 const stream = new ReadableStream({
-	start(controller) {
-		controller.enqueue(buf);
-		controller.close();
-	},
+  start(controller) {
+    controller.enqueue(buf);
+    controller.close();
+  },
 });
 ```
 

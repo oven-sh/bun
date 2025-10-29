@@ -7,7 +7,7 @@ Bun exposes its internal transpiler via the `Bun.Transpiler` class. To create an
 
 ```ts
 const transpiler = new Bun.Transpiler({
-	loader: "tsx", // "js | "jsx" | "ts" | "tsx"
+  loader: "tsx", // "js | "jsx" | "ts" | "tsx"
 });
 ```
 
@@ -100,7 +100,7 @@ The `Transpiler` instance can also scan some source code and return a list of it
 
 ```ts example.ts icon="/icons/typescript.svg"
 const transpiler = new Bun.Transpiler({
-	loader: "tsx",
+  loader: "tsx",
 });
 
 const code = `
@@ -117,21 +117,21 @@ const result = transpiler.scan(code);
 
 ```json output
 {
-	"exports": ["name"],
-	"imports": [
-		{
-			"kind": "import-statement",
-			"path": "react"
-		},
-		{
-			"kind": "import-statement",
-			"path": "remix"
-		},
-		{
-			"kind": "dynamic-import",
-			"path": "./loader"
-		}
-	]
+  "exports": ["name"],
+  "imports": [
+    {
+      "kind": "import-statement",
+      "path": "react"
+    },
+    {
+      "kind": "import-statement",
+      "path": "remix"
+    },
+    {
+      "kind": "dynamic-import",
+      "path": "./loader"
+    }
+  ]
 }
 ```
 
@@ -156,7 +156,7 @@ For performance-sensitive code, you can use the `.scanImports()` method to get a
 
 ```ts example.ts icon="/icons/typescript.svg"
 const transpiler = new Bun.Transpiler({
-	loader: "tsx",
+  loader: "tsx",
 });
 
 const code = `
@@ -173,18 +173,18 @@ const result = transpiler.scanImports(code);
 
 ```json results icon="file-json"
 [
-	{
-		"kind": "import-statement",
-		"path": "react"
-	},
-	{
-		"kind": "require-call",
-		"path": "./cjs.js"
-	},
-	{
-		"kind": "dynamic-import",
-		"path": "./loader"
-	}
+  {
+    "kind": "import-statement",
+    "path": "react"
+  },
+  {
+    "kind": "require-call",
+    "path": "./cjs.js"
+  },
+  {
+    "kind": "dynamic-import",
+    "path": "./loader"
+  }
 ]
 ```
 

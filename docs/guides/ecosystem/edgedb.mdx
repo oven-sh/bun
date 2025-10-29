@@ -159,9 +159,9 @@ const INSERT_MOVIE = `
 `;
 
 const movies = [
-	{ title: "The Matrix", year: 1999 },
-	{ title: "The Matrix Reloaded", year: 2003 },
-	{ title: "The Matrix Revolutions", year: 2003 },
+  { title: "The Matrix", year: 1999 },
+  { title: "The Matrix Reloaded", year: 2003 },
+  { title: "The Matrix Revolutions", year: 2003 },
 ];
 
 await client.execute(INSERT_MOVIE, { movies });
@@ -219,8 +219,8 @@ import e from "./dbschema/edgeql-js";
 const client = createClient();
 
 const query = e.select(e.Movie, () => ({
-	title: true,
-	releaseYear: true,
+  title: true,
+  releaseYear: true,
 }));
 
 const results = await query.run(client);

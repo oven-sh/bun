@@ -66,8 +66,8 @@ During bundling, the parsed JSON is inlined into the bundle as a JavaScript obje
 
 ```js
 const pkg = {
-	name: "my-package",
-	// ... other fields
+  name: "my-package",
+  // ... other fields
 };
 
 pkg.name;
@@ -79,17 +79,17 @@ If a `.json` file is passed as an entrypoint to the bundler, it will be converte
 
 ```json Input
 {
-	"name": "John Doe",
-	"age": 35,
-	"email": "johndoe@example.com"
+  "name": "John Doe",
+  "age": 35,
+  "email": "johndoe@example.com"
 }
 ```
 
 ```ts Output
 export default {
-	name: "John Doe",
-	age: 35,
-	email: "johndoe@example.com",
+  name: "John Doe",
+  age: 35,
+  email: "johndoe@example.com",
 };
 ```
 
@@ -115,8 +115,8 @@ During bundling, the parsed TOML is inlined into the bundle as a JavaScript obje
 
 ```js
 var config = {
-	logLevel: "debug",
-	// ...other fields
+  logLevel: "debug",
+  // ...other fields
 };
 config.logLevel;
 ```
@@ -133,9 +133,9 @@ email = "johndoe@example.com"
 
 ```ts Output
 export default {
-	name: "John Doe",
-	age: 35,
-	email: "johndoe@example.com",
+  name: "John Doe",
+  age: 35,
+  email: "johndoe@example.com",
 };
 ```
 
@@ -240,11 +240,11 @@ For example, given this HTML file:
 ```html title="src/index.html"
 <!DOCTYPE html>
 <html>
-	<body>
-		<img src="./image.jpg" alt="Local image" />
-		<img src="https://example.com/image.jpg" alt="External image" />
-		<script type="module" src="./script.js"></script>
-	</body>
+  <body>
+    <img src="./image.jpg" alt="Local image" />
+    <img src="https://example.com/image.jpg" alt="External image" />
+    <script type="module" src="./script.js"></script>
+  </body>
 </html>
 ```
 
@@ -253,11 +253,11 @@ It will output a new HTML file with the bundled assets:
 ```html title="dist/index.html"
 <!DOCTYPE html>
 <html>
-	<body>
-		<img src="./image-HASHED.jpg" alt="Local image" />
-		<img src="https://example.com/image.jpg" alt="External image" />
-		<script type="module" src="./output-ALSO-HASHED.js"></script>
-	</body>
+  <body>
+    <img src="./image-HASHED.jpg" alt="Local image" />
+    <img src="https://example.com/image.jpg" alt="External image" />
+    <script type="module" src="./output-ALSO-HASHED.js"></script>
+  </body>
 </html>
 ```
 

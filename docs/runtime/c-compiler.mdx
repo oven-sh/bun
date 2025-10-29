@@ -18,15 +18,15 @@ import { cc } from "bun:ffi";
 import source from "./hello.c" with { type: "file" };
 
 const {
-	symbols: { hello },
+  symbols: { hello },
 } = cc({
-	source,
-	symbols: {
-		hello: {
-			args: [],
-			returns: "int",
-		},
-	},
+  source,
+  symbols: {
+    hello: {
+      args: [],
+      returns: "int",
+    },
+  },
 });
 
 console.log("What is the answer to the universe?", hello());
@@ -92,15 +92,15 @@ import { cc } from "bun:ffi";
 import source from "./hello.c" with { type: "file" };
 
 const {
-	symbols: { hello },
+  symbols: { hello },
 } = cc({
-	source,
-	symbols: {
-		hello: {
-			args: ["napi_env"],
-			returns: "napi_value",
-		},
-	},
+  source,
+  symbols: {
+    hello: {
+      args: ["napi_env"],
+      returns: "napi_value",
+    },
+  },
 });
 
 const result = hello();
@@ -140,8 +140,8 @@ The `library` array is used to specify the libraries that should be linked with 
 type Library = string[];
 
 cc({
-	source: "hello.c",
-	library: ["sqlite3"],
+  source: "hello.c",
+  library: ["sqlite3"],
 });
 ```
 
@@ -151,10 +151,10 @@ The `symbols` object is used to specify the functions and variables that should 
 
 ```ts
 type Symbols = {
-	[key: string]: {
-		args: FFIType[];
-		returns: FFIType;
-	};
+  [key: string]: {
+    args: FFIType[];
+    returns: FFIType;
+  };
 };
 ```
 
@@ -166,13 +166,13 @@ The `source` is a file path to the C code that should be compiled and linked wit
 type Source = string | URL | BunFile;
 
 cc({
-	source: "hello.c",
-	symbols: {
-		hello: {
-			args: [],
-			returns: "int",
-		},
-	},
+  source: "hello.c",
+  symbols: {
+    hello: {
+      args: [],
+      returns: "int",
+    },
+  },
 });
 ```
 
@@ -194,10 +194,10 @@ The `define` is an optional object that should be passed to the TinyCC compiler.
 type Defines = Record<string, string>;
 
 cc({
-	source: "hello.c",
-	define: {
-		NDEBUG: "1",
-	},
+  source: "hello.c",
+  define: {
+    NDEBUG: "1",
+  },
 });
 ```
 

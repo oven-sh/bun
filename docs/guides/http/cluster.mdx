@@ -15,24 +15,24 @@ import { serve } from "bun";
 const id = Math.random().toString(36).slice(2);
 
 serve({
-	port: process.env.PORT || 8080,
-	development: false,
+  port: process.env.PORT || 8080,
+  development: false,
 
-	// Share the same port across multiple processes
-	// This is the important part!
-	reusePort: true,
+  // Share the same port across multiple processes
+  // This is the important part!
+  reusePort: true,
 
-	async fetch(request) {
-		return new Response("Hello from Bun #" + id + "!\n");
-	},
+  async fetch(request) {
+    return new Response("Hello from Bun #" + id + "!\n");
+  },
 });
 ```
 
 ---
 
 <Note>
-	**Linux only** &mdash; Windows and macOS ignore the `reusePort` option. This is an operating
-	system limitation with `SO_REUSEPORT`, unfortunately.
+  **Linux only** &mdash; Windows and macOS ignore the `reusePort` option. This is an operating system limitation with
+  `SO_REUSEPORT`, unfortunately.
 </Note>
 
 After saving the file, start your servers on the same port.
@@ -46,18 +46,18 @@ const cpus = navigator.hardwareConcurrency; // Number of CPU cores
 const buns = new Array(cpus);
 
 for (let i = 0; i < cpus; i++) {
-	buns[i] = spawn({
-		cmd: ["bun", "./server.ts"],
-		stdout: "inherit",
-		stderr: "inherit",
-		stdin: "inherit",
-	});
+  buns[i] = spawn({
+    cmd: ["bun", "./server.ts"],
+    stdout: "inherit",
+    stderr: "inherit",
+    stdin: "inherit",
+  });
 }
 
 function kill() {
-	for (const bun of buns) {
-		bun.kill();
-	}
+  for (const bun of buns) {
+    bun.kill();
+  }
 }
 
 process.on("SIGINT", kill);

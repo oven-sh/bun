@@ -20,11 +20,11 @@ The `postinstall` script is particularly important. It's widely used to build or
 
 ```json package.json icon="file-json"
 {
-	"name": "my-app",
-	"version": "1.0.0",
-	"dependencies": {
-		"node-sass": "^6.0.1"
-	}
+  "name": "my-app",
+  "version": "1.0.0",
+  "dependencies": {
+    "node-sass": "^6.0.1"
+  }
 }
 ```
 
@@ -36,9 +36,9 @@ Instead of executing arbitrary scripts, Bun uses a "default-secure" approach. Yo
 
 ```json package.json icon="file-json"
 {
-	"name": "my-app",
-	"version": "1.0.0",
-	"trustedDependencies": ["node-sass"] // [!code ++]
+  "name": "my-app",
+  "version": "1.0.0",
+  "trustedDependencies": ["node-sass"] // [!code ++]
 }
 ```
 

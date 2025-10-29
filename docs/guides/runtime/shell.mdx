@@ -33,7 +33,7 @@ To get each line of the output as an array, use the `lines` method.
 import { $ } from "bun";
 
 for await (const line of $`ls -l`.lines()) {
-	console.log(line);
+  console.log(line);
 }
 ```
 

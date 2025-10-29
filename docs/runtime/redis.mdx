@@ -181,8 +181,8 @@ Pub/Sub](https://redis.io/docs/latest/develop/pubsub/) protocol. **New in Bun
 1.2.23**
 
 <Warning>
-	The Redis Pub/Sub feature is experimental. Although we expect it to be stable, we're currently
-	actively looking for feedback and areas for improvement.
+  The Redis Pub/Sub feature is experimental. Although we expect it to be stable, we're currently actively looking for
+  feedback and areas for improvement.
 </Warning>
 
 ### Basic Usage
@@ -210,7 +210,7 @@ const listener = new RedisClient("redis://localhost:6739");
 await listener.connect();
 
 await listener.subscribe("general", (message, channel) => {
-	console.log(`Received: ${message}`);
+  console.log(`Received: ${message}`);
 });
 ```
 
@@ -278,17 +278,14 @@ The client automatically pipelines commands, improving performance by sending mu
 
 ```ts redis.ts icon="/icons/typescript.svg"
 // Commands are automatically pipelined by default
-const [infoResult, listResult] = await Promise.all([
-	redis.get("user:1:name"),
-	redis.get("user:2:email"),
-]);
+const [infoResult, listResult] = await Promise.all([redis.get("user:1:name"), redis.get("user:2:email")]);
 ```
 
 To disable automatic pipelining, you can set the `enableAutoPipelining` option to `false`:
 
 ```ts redis.ts icon="/icons/typescript.svg"
 const client = new RedisClient("redis://localhost:6379", {
-	enableAutoPipelining: false, // [!code ++]
+  enableAutoPipelining: false, // [!code ++]
 });
 ```
 
@@ -318,12 +315,12 @@ const client = new RedisClient();
 
 // Called when successfully connected to Redis server
 client.onconnect = () => {
-	console.log("Connected to Redis server");
+  console.log("Connected to Redis server");
 };
 
 // Called when disconnected from Redis server
 client.onclose = error => {
-	console.error("Disconnected from Redis server:", error);
+  console.error("Disconnected from Redis server:", error);
 };
 
 // Manually connect/disconnect
@@ -386,33 +383,33 @@ When creating a client, you can pass various options to configure the connection
 
 ```ts redis.ts icon="/icons/typescript.svg"
 const client = new RedisClient("redis://localhost:6379", {
-	// Connection timeout in milliseconds (default: 10000)
-	connectionTimeout: 5000,
+  // Connection timeout in milliseconds (default: 10000)
+  connectionTimeout: 5000,
 
-	// Idle timeout in milliseconds (default: 0 = no timeout)
-	idleTimeout: 30000,
+  // Idle timeout in milliseconds (default: 0 = no timeout)
+  idleTimeout: 30000,
 
-	// Whether to automatically reconnect on disconnection (default: true)
-	autoReconnect: true,
+  // Whether to automatically reconnect on disconnection (default: true)
+  autoReconnect: true,
 
-	// Maximum number of reconnection attempts (default: 10)
-	maxRetries: 10,
+  // Maximum number of reconnection attempts (default: 10)
+  maxRetries: 10,
 
-	// Whether to queue commands when disconnected (default: true)
-	enableOfflineQueue: true,
+  // Whether to queue commands when disconnected (default: true)
+  enableOfflineQueue: true,
 
-	// Whether to automatically pipeline commands (default: true)
-	enableAutoPipelining: true,
+  // Whether to automatically pipeline commands (default: true)
+  enableAutoPipelining: true,
 
-	// TLS options (default: false)
-	tls: true,
-	// Alternatively, provide custom TLS config:
-	// tls: {
-	//   rejectUnauthorized: true,
-	//   ca: "path/to/ca.pem",
-	//   cert: "path/to/cert.pem",
-	//   key: "path/to/key.pem",
-	// }
+  // TLS options (default: false)
+  tls: true,
+  // Alternatively, provide custom TLS config:
+  // tls: {
+  //   rejectUnauthorized: true,
+  //   ca: "path/to/ca.pem",
+  //   cert: "path/to/cert.pem",
+  //   key: "path/to/key.pem",
+  // }
 });
 ```
 
@@ -467,15 +464,15 @@ The Redis client throws typed errors for different scenarios:
 
 ```ts redis.ts icon="/icons/typescript.svg"
 try {
-	await redis.get("non-existent-key");
+  await redis.get("non-existent-key");
 } catch (error) {
-	if (error.code === "ERR_REDIS_CONNECTION_CLOSED") {
-		console.error("Connection to Redis server was closed");
-	} else if (error.code === "ERR_REDIS_AUTHENTICATION_FAILED") {
-		console.error("Authentication failed");
-	} else {
-		console.error("Unexpected error:", error);
-	}
+  if (error.code === "ERR_REDIS_CONNECTION_CLOSED") {
+    console.error("Connection to Redis server was closed");
+  } else if (error.code === "ERR_REDIS_AUTHENTICATION_FAILED") {
+    console.error("Authentication failed");
+  } else {
+    console.error("Unexpected error:", error);
+  }
 }
 ```
 
@@ -493,22 +490,22 @@ Common error codes:
 
 ```ts redis.ts icon="/icons/typescript.svg"
 async function getUserWithCache(userId) {
-	const cacheKey = `user:${userId}`;
+  const cacheKey = `user:${userId}`;
 
-	// Try to get from cache first
-	const cachedUser = await redis.get(cacheKey);
-	if (cachedUser) {
-		return JSON.parse(cachedUser);
-	}
+  // Try to get from cache first
+  const cachedUser = await redis.get(cacheKey);
+  if (cachedUser) {
+    return JSON.parse(cachedUser);
+  }
 
-	// Not in cache, fetch from database
-	const user = await database.getUser(userId);
+  // Not in cache, fetch from database
+  const user = await database.getUser(userId);
 
-	// Store in cache for 1 hour
-	await redis.set(cacheKey, JSON.stringify(user));
-	await redis.expire(cacheKey, 3600);
+  // Store in cache for 1 hour
+  await redis.set(cacheKey, JSON.stringify(user));
+  await redis.expire(cacheKey, 3600);
 
-	return user;
+  return user;
 }
 ```
 
@@ -516,21 +513,21 @@ async function getUserWithCache(userId) {
 
 ```ts redis.ts icon="/icons/typescript.svg"
 async function rateLimit(ip, limit = 100, windowSecs = 3600) {
-	const key = `ratelimit:${ip}`;
+  const key = `ratelimit:${ip}`;
 
-	// Increment counter
-	const count = await redis.incr(key);
+  // Increment counter
+  const count = await redis.incr(key);
 
-	// Set expiry if this is the first request in window
-	if (count === 1) {
-		await redis.expire(key, windowSecs);
-	}
+  // Set expiry if this is the first request in window
+  if (count === 1) {
+    await redis.expire(key, windowSecs);
+  }
 
-	// Check if limit exceeded
-	return {
-		limited: count > limit,
-		remaining: Math.max(0, limit - count),
-	};
+  // Check if limit exceeded
+  return {
+    limited: count > limit,
+    remaining: Math.max(0, limit - count),
+  };
 }
 ```
 
@@ -538,37 +535,30 @@ async function rateLimit(ip, limit = 100, windowSecs = 3600) {
 
 ```ts redis.ts icon="/icons/typescript.svg"
 async function createSession(userId, data) {
-	const sessionId = crypto.randomUUID();
-	const key = `session:${sessionId}`;
+  const sessionId = crypto.randomUUID();
+  const key = `session:${sessionId}`;
 
-	// Store session with expiration
-	await redis.hmset(key, [
-		"userId",
-		userId.toString(),
-		"created",
-		Date.now().toString(),
-		"data",
-		JSON.stringify(data),
-	]);
-	await redis.expire(key, 86400); // 24 hours
+  // Store session with expiration
+  await redis.hmset(key, ["userId", userId.toString(), "created", Date.now().toString(), "data", JSON.stringify(data)]);
+  await redis.expire(key, 86400); // 24 hours
 
-	return sessionId;
+  return sessionId;
 }
 
 async function getSession(sessionId) {
-	const key = `session:${sessionId}`;
+  const key = `session:${sessionId}`;
 
-	// Get session data
-	const exists = await redis.exists(key);
-	if (!exists) return null;
+  // Get session data
+  const exists = await redis.exists(key);
+  if (!exists) return null;
 
-	const [userId, created, data] = await redis.hmget(key, ["userId", "created", "data"]);
+  const [userId, created, data] = await redis.hmget(key, ["userId", "created", "data"]);
 
-	return {
-		userId: Number(userId),
-		created: Number(created),
-		data: JSON.parse(data),
-	};
+  return {
+    userId: Number(userId),
+    created: Number(created),
+    data: JSON.parse(data),
+  };
 }
 ```
 

@@ -12,10 +12,10 @@ This guide walks through deploying a Bun application with a PostgreSQL database 
 You can either follow this guide step-by-step or simply deploy the pre-configured template with one click:
 
 <a
-	href="https://railway.com/deploy/bun-react-postgres?referralCode=Bun&utm_medium=integration&utm_source=template&utm_campaign=bun"
-	target="_blank"
+  href="https://railway.com/deploy/bun-react-postgres?referralCode=Bun&utm_medium=integration&utm_source=template&utm_campaign=bun"
+  target="_blank"
 >
-	<img src="https://railway.com/button.svg" alt="Deploy on Railway" />
+  <img src="https://railway.com/button.svg" alt="Deploy on Railway" />
 </a>
 
 ---
@@ -59,10 +59,7 @@ railway init
 <Step title="Step 4">
 After initializing the project, add a new database and service.
 
-<Note>
-	Step 4 is only necessary if your application uses a database. If you don't need PostgreSQL, skip
-	to Step 5.
-</Note>
+<Note>Step 4 is only necessary if your application uses a database. If you don't need PostgreSQL, skip to Step 5.</Note>
 
 ```bash terminal icon="terminal"
 # Add PostgreSQL database. Make sure to add this first!
@@ -105,10 +102,7 @@ Create a new project
 <Step title="Step 2">
 Add a PostgreSQL database, and connect this database to the service
 
-<Note>
-	Step 2 is only necessary if your application uses a database. If you don't need PostgreSQL, skip
-	to Step 3.
-</Note>
+<Note>Step 2 is only necessary if your application uses a database. If you don't need PostgreSQL, skip to Step 3.</Note>
 
 1. Click **"+ New"** → **"Database"** → **"Add PostgreSQL"**
 2. After the database has been created, select your service (not the database)
@@ -141,10 +135,10 @@ To enable Railpack in a custom project, add the following to your `railway.json`
 
 ```json railway.json icon="file-json"
 {
-	"$schema": "https://railway.com/railway.schema.json",
-	"build": {
-		"builder": "RAILPACK"
-	}
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "RAILPACK"
+  }
 }
 ```
 

@@ -56,8 +56,8 @@ During bundling, the parsed JSON is inlined into the bundle as a JavaScript obje
 
 ```ts
 var pkg = {
-	name: "my-package",
-	// ... other fields
+  name: "my-package",
+  // ... other fields
 };
 pkg.name;
 ```
@@ -68,17 +68,17 @@ If a `.json` file is passed as an entrypoint to the bundler, it will be converte
 
 ```json Input
 {
-	"name": "John Doe",
-	"age": 35,
-	"email": "johndoe@example.com"
+  "name": "John Doe",
+  "age": 35,
+  "email": "johndoe@example.com"
 }
 ```
 
 ```ts Output
 export default {
-	name: "John Doe",
-	age: 35,
-	email: "johndoe@example.com",
+  name: "John Doe",
+  age: 35,
+  email: "johndoe@example.com",
 };
 ```
 
@@ -102,8 +102,8 @@ During bundling, the parsed TOML is inlined into the bundle as a JavaScript obje
 
 ```ts
 var config = {
-	logLevel: "debug",
-	// ...other fields
+  logLevel: "debug",
+  // ...other fields
 };
 config.logLevel;
 ```
@@ -120,9 +120,9 @@ email = "johndoe@example.com"
 
 ```ts Output
 export default {
-	name: "John Doe",
-	age: 35,
-	email: "johndoe@example.com",
+  name: "John Doe",
+  age: 35,
+  email: "johndoe@example.com",
 };
 ```
 
@@ -219,11 +219,11 @@ For example, given this HTML file:
 ```html src/index.html
 <!DOCTYPE html>
 <html>
-	<body>
-		<img src="./image.jpg" alt="Local image" />
-		<img src="https://example.com/image.jpg" alt="External image" />
-		<script type="module" src="./script.js"></script>
-	</body>
+  <body>
+    <img src="./image.jpg" alt="Local image" />
+    <img src="https://example.com/image.jpg" alt="External image" />
+    <script type="module" src="./script.js"></script>
+  </body>
 </html>
 ```
 
@@ -236,11 +236,11 @@ It will output a new HTML file with the bundled assets:
 ```html dist/output.html
 <!DOCTYPE html>
 <html>
-	<body>
-		<img src="./image-HASHED.jpg" alt="Local image" />
-		<img src="https://example.com/image.jpg" alt="External image" />
-		<script type="module" src="./output-ALSO-HASHED.js"></script>
-	</body>
+  <body>
+    <img src="./image-HASHED.jpg" alt="Local image" />
+    <img src="https://example.com/image.jpg" alt="External image" />
+    <script type="module" src="./output-ALSO-HASHED.js"></script>
+  </body>
 </html>
 ```
 
@@ -327,11 +327,10 @@ If a value is specified for `publicPath`, the import will use value as a prefix 
 | `"https://cdn.example.com/"` | `https://cdn.example.com/logo.svg` |
 
 <Note>
-	The location and file name of the copied file is determined by the value of
-	[`naming.asset`](/bundler#naming).
+  The location and file name of the copied file is determined by the value of [`naming.asset`](/bundler#naming).
 </Note>
-This loader is copied into the `outdir` as-is. The name of the copied file is determined using the
-value of `naming.asset`.
+This loader is copied into the `outdir` as-is. The name of the copied file is determined using the value of
+`naming.asset`.
 
 <Accordion title="Fixing TypeScript import errors">
 If you're using TypeScript, you may get an error like this:
@@ -345,8 +344,8 @@ This can be fixed by creating `*.d.ts` file anywhere in your project (any name w
 
 ```ts
 declare module "*.svg" {
-	const content: string;
-	export default content;
+  const content: string;
+  export default content;
 }
 ```
 

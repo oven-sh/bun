@@ -9,10 +9,10 @@ The naive approach to creating a [`ReadableStream`](https://developer.mozilla.or
 ```ts
 const arr = new Uint8Array(64);
 const stream = new ReadableStream({
-	start(controller) {
-		controller.enqueue(arr);
-		controller.close();
-	},
+  start(controller) {
+    controller.enqueue(arr);
+    controller.close();
+  },
 });
 ```
 

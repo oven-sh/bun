@@ -10,8 +10,8 @@ For CLI tools, it's often useful to read from `stdin`. In Bun, the `console` obj
 const prompt = "Type something: ";
 process.stdout.write(prompt);
 for await (const line of console) {
-	console.log(`You typed: ${line}`);
-	process.stdout.write(prompt);
+  console.log(`You typed: ${line}`);
+  process.stdout.write(prompt);
 }
 ```
 
@@ -38,10 +38,10 @@ There is no guarantee that the chunks will be split line-by-line.
 
 ```ts stdin.ts icon="/icons/typescript.svg"
 for await (const chunk of Bun.stdin.stream()) {
-	// chunk is Uint8Array
-	// this converts it to text (assumes ASCII encoding)
-	const chunkText = Buffer.from(chunk).toString();
-	console.log(`Chunk: ${chunkText}`);
+  // chunk is Uint8Array
+  // this converts it to text (assumes ASCII encoding)
+  const chunkText = Buffer.from(chunk).toString();
+  console.log(`Chunk: ${chunkText}`);
 }
 ```
 

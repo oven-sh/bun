@@ -14,9 +14,9 @@ The root `package.json` should not contain any `"dependencies"`, `"devDependenci
 
 ```json package.json icon="file-json"
 {
-	"name": "my-monorepo",
-	"private": true,
-	"workspaces": ["packages/*"]
+  "name": "my-monorepo",
+  "private": true,
+  "workspaces": ["packages/*"]
 }
 ```
 
@@ -41,10 +41,10 @@ To add dependencies between workspaces, use the `"workspace:*"` syntax. Here we'
 
 ```json packages/stuff-b/package.json icon="file-json"
 {
-	"name": "stuff-b",
-	"dependencies": {
-		"stuff-a": "workspace:*" // [!code ++]
-	}
+  "name": "stuff-b",
+  "dependencies": {
+    "stuff-a": "workspace:*" // [!code ++]
+  }
 }
 ```
 

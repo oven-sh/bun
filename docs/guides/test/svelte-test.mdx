@@ -22,38 +22,35 @@ import { beforeEach, afterEach } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 beforeEach(async () => {
-	await GlobalRegistrator.register();
+  await GlobalRegistrator.register();
 });
 
 afterEach(async () => {
-	await GlobalRegistrator.unregister();
+  await GlobalRegistrator.unregister();
 });
 
 plugin({
-	title: "svelte loader",
-	setup(builder) {
-		builder.onLoad({ filter: /\.svelte(\?[^.]+)?$/ }, ({ path }) => {
-			try {
-				const source = readFileSync(
-					path.substring(0, path.includes("?") ? path.indexOf("?") : path.length),
-					"utf-8",
-				);
+  title: "svelte loader",
+  setup(builder) {
+    builder.onLoad({ filter: /\.svelte(\?[^.]+)?$/ }, ({ path }) => {
+      try {
+        const source = readFileSync(path.substring(0, path.includes("?") ? path.indexOf("?") : path.length), "utf-8");
 
-				const result = compile(source, {
-					filetitle: path,
-					generate: "client",
-					dev: false,
-				});
+        const result = compile(source, {
+          filetitle: path,
+          generate: "client",
+          dev: false,
+        });
 
-				return {
-					contents: result.js.code,
-					loader: "js",
-				};
-			} catch (err) {
-				throw new Error(`Failed to compile Svelte component: ${err.message}`);
-			}
-		});
-	},
+        return {
+          contents: result.js.code,
+          loader: "js",
+        };
+      } catch (err) {
+        throw new Error(`Failed to compile Svelte component: ${err.message}`);
+      }
+    });
+  },
 });
 ```
 
@@ -76,8 +73,8 @@ Add an example `.svelte` file in your project.
 
 ```html Counter.svelte icon="file-code"
 <script>
-	export let initialCount = 0;
-	let count = initialCount;
+  export let initialCount = 0;
+  let count = initialCount;
 </script>
 
 <button on:click="{()" ="">(count += 1)}>+1</button>
@@ -93,17 +90,17 @@ import { render, fireEvent } from "@testing-library/svelte";
 import Counter from "./Counter.svelte";
 
 test("Counter increments when clicked", async () => {
-	const { getByText, component } = render(Counter);
-	const button = getByText("+1");
+  const { getByText, component } = render(Counter);
+  const button = getByText("+1");
 
-	// Initial state
-	expect(component.$$.ctx[0]).toBe(0); // initialCount is the first prop
+  // Initial state
+  expect(component.$$.ctx[0]).toBe(0); // initialCount is the first prop
 
-	// Click the increment button
-	await fireEvent.click(button);
+  // Click the increment button
+  await fireEvent.click(button);
 
-	// Check the new state
-	expect(component.$$.ctx[0]).toBe(1);
+  // Check the new state
+  expect(component.$$.ctx[0]).toBe(1);
 });
 ```
 

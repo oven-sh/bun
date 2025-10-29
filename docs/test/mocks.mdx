@@ -15,10 +15,10 @@ import { test, expect, mock } from "bun:test";
 const random = mock(() => Math.random());
 
 test("random", () => {
-	const val = random();
-	expect(val).toBeGreaterThan(0);
-	expect(random).toHaveBeenCalled();
-	expect(random).toHaveBeenCalledTimes(1);
+  const val = random();
+  expect(val).toBeGreaterThan(0);
+  expect(random).toHaveBeenCalled();
+  expect(random).toHaveBeenCalledTimes(1);
 });
 ```
 
@@ -32,10 +32,10 @@ import { test, expect, jest } from "bun:test";
 const random = jest.fn(() => Math.random());
 
 test("random", () => {
-	const val = random();
-	expect(val).toBeGreaterThan(0);
-	expect(random).toHaveBeenCalled();
-	expect(random).toHaveBeenCalledTimes(1);
+  const val = random();
+  expect(val).toBeGreaterThan(0);
+  expect(random).toHaveBeenCalled();
+  expect(random).toHaveBeenCalledTimes(1);
 });
 ```
 
@@ -96,27 +96,27 @@ The following properties and methods are implemented on mock functions:
 import { test, expect, mock } from "bun:test";
 
 test("mock function behavior", () => {
-	const mockFn = mock((x: number) => x * 2);
+  const mockFn = mock((x: number) => x * 2);
 
-	// Call the mock
-	const result1 = mockFn(5);
-	const result2 = mockFn(10);
+  // Call the mock
+  const result1 = mockFn(5);
+  const result2 = mockFn(10);
 
-	// Verify calls
-	expect(mockFn).toHaveBeenCalledTimes(2);
-	expect(mockFn).toHaveBeenCalledWith(5);
-	expect(mockFn).toHaveBeenLastCalledWith(10);
+  // Verify calls
+  expect(mockFn).toHaveBeenCalledTimes(2);
+  expect(mockFn).toHaveBeenCalledWith(5);
+  expect(mockFn).toHaveBeenLastCalledWith(10);
 
-	// Check results
-	expect(result1).toBe(10);
-	expect(result2).toBe(20);
+  // Check results
+  expect(result1).toBe(10);
+  expect(result2).toBe(20);
 
-	// Inspect call history
-	expect(mockFn.mock.calls).toEqual([[5], [10]]);
-	expect(mockFn.mock.results).toEqual([
-		{ type: "return", value: 10 },
-		{ type: "return", value: 20 },
-	]);
+  // Inspect call history
+  expect(mockFn.mock.calls).toEqual([[5], [10]]);
+  expect(mockFn.mock.results).toEqual([
+    { type: "return", value: 10 },
+    { type: "return", value: 20 },
+  ]);
 });
 ```
 
@@ -126,17 +126,17 @@ test("mock function behavior", () => {
 import { test, expect, mock } from "bun:test";
 
 test("dynamic mock implementations", () => {
-	const mockFn = mock();
+  const mockFn = mock();
 
-	// Set different implementations
-	mockFn.mockImplementationOnce(() => "first");
-	mockFn.mockImplementationOnce(() => "second");
-	mockFn.mockImplementation(() => "default");
+  // Set different implementations
+  mockFn.mockImplementationOnce(() => "first");
+  mockFn.mockImplementationOnce(() => "second");
+  mockFn.mockImplementation(() => "default");
 
-	expect(mockFn()).toBe("first");
-	expect(mockFn()).toBe("second");
-	expect(mockFn()).toBe("default");
-	expect(mockFn()).toBe("default"); // Uses default implementation
+  expect(mockFn()).toBe("first");
+  expect(mockFn()).toBe("second");
+  expect(mockFn()).toBe("default");
+  expect(mockFn()).toBe("default"); // Uses default implementation
 });
 ```
 
@@ -146,20 +146,20 @@ test("dynamic mock implementations", () => {
 import { test, expect, mock } from "bun:test";
 
 test("async mock functions", async () => {
-	const asyncMock = mock();
+  const asyncMock = mock();
 
-	// Mock resolved values
-	asyncMock.mockResolvedValueOnce("first result");
-	asyncMock.mockResolvedValue("default result");
+  // Mock resolved values
+  asyncMock.mockResolvedValueOnce("first result");
+  asyncMock.mockResolvedValue("default result");
 
-	expect(await asyncMock()).toBe("first result");
-	expect(await asyncMock()).toBe("default result");
+  expect(await asyncMock()).toBe("first result");
+  expect(await asyncMock()).toBe("default result");
 
-	// Mock rejected values
-	const rejectMock = mock();
-	rejectMock.mockRejectedValue(new Error("Mock error"));
+  // Mock rejected values
+  const rejectMock = mock();
+  rejectMock.mockRejectedValue(new Error("Mock error"));
 
-	await expect(rejectMock()).rejects.toThrow("Mock error");
+  await expect(rejectMock()).rejects.toThrow("Mock error");
 });
 ```
 
@@ -171,18 +171,18 @@ It's possible to track calls to a function without replacing it with a mock. Use
 import { test, expect, spyOn } from "bun:test";
 
 const ringo = {
-	name: "Ringo",
-	sayHi() {
-		console.log(`Hello I'm ${this.name}`);
-	},
+  name: "Ringo",
+  sayHi() {
+    console.log(`Hello I'm ${this.name}`);
+  },
 };
 
 const spy = spyOn(ringo, "sayHi");
 
 test("spyon", () => {
-	expect(spy).toHaveBeenCalledTimes(0);
-	ringo.sayHi();
-	expect(spy).toHaveBeenCalledTimes(1);
+  expect(spy).toHaveBeenCalledTimes(0);
+  ringo.sayHi();
+  expect(spy).toHaveBeenCalledTimes(1);
 });
 ```
 
@@ -192,49 +192,49 @@ test("spyon", () => {
 import { test, expect, spyOn, afterEach } from "bun:test";
 
 class UserService {
-	async getUser(id: string) {
-		// Original implementation
-		return { id, name: `User ${id}` };
-	}
+  async getUser(id: string) {
+    // Original implementation
+    return { id, name: `User ${id}` };
+  }
 
-	async saveUser(user: any) {
-		// Original implementation
-		return { ...user, saved: true };
-	}
+  async saveUser(user: any) {
+    // Original implementation
+    return { ...user, saved: true };
+  }
 }
 
 const userService = new UserService();
 
 afterEach(() => {
-	// Restore all spies after each test
-	jest.restoreAllMocks();
+  // Restore all spies after each test
+  jest.restoreAllMocks();
 });
 
 test("spy on service methods", async () => {
-	// Spy without changing implementation
-	const getUserSpy = spyOn(userService, "getUser");
-	const saveUserSpy = spyOn(userService, "saveUser");
+  // Spy without changing implementation
+  const getUserSpy = spyOn(userService, "getUser");
+  const saveUserSpy = spyOn(userService, "saveUser");
 
-	// Use the service normally
-	const user = await userService.getUser("123");
-	await userService.saveUser(user);
+  // Use the service normally
+  const user = await userService.getUser("123");
+  await userService.saveUser(user);
 
-	// Verify calls
-	expect(getUserSpy).toHaveBeenCalledWith("123");
-	expect(saveUserSpy).toHaveBeenCalledWith(user);
+  // Verify calls
+  expect(getUserSpy).toHaveBeenCalledWith("123");
+  expect(saveUserSpy).toHaveBeenCalledWith(user);
 });
 
 test("spy with mock implementation", async () => {
-	// Spy and override implementation
-	const getUserSpy = spyOn(userService, "getUser").mockResolvedValue({
-		id: "123",
-		name: "Mocked User",
-	});
+  // Spy and override implementation
+  const getUserSpy = spyOn(userService, "getUser").mockResolvedValue({
+    id: "123",
+    name: "Mocked User",
+  });
 
-	const result = await userService.getUser("123");
+  const result = await userService.getUser("123");
 
-	expect(result.name).toBe("Mocked User");
-	expect(getUserSpy).toHaveBeenCalledWith("123");
+  expect(result.name).toBe("Mocked User");
+  expect(getUserSpy).toHaveBeenCalledWith("123");
 });
 ```
 
@@ -246,17 +246,17 @@ Module mocking lets you override the behavior of a module. Use `mock.module(path
 import { test, expect, mock } from "bun:test";
 
 mock.module("./module", () => {
-	return {
-		foo: "bar",
-	};
+  return {
+    foo: "bar",
+  };
 });
 
 test("mock.module", async () => {
-	const esm = await import("./module");
-	expect(esm.foo).toBe("bar");
+  const esm = await import("./module");
+  expect(esm.foo).toBe("bar");
 
-	const cjs = require("./module");
-	expect(cjs.foo).toBe("bar");
+  const cjs = require("./module");
+  expect(cjs.foo).toBe("bar");
 });
 ```
 
@@ -273,22 +273,22 @@ import { test, expect, mock } from "bun:test";
 import { foo } from "./module";
 
 test("mock.module", async () => {
-	const cjs = require("./module");
-	expect(foo).toBe("bar");
-	expect(cjs.foo).toBe("bar");
+  const cjs = require("./module");
+  expect(foo).toBe("bar");
+  expect(cjs.foo).toBe("bar");
 
-	// We update it here:
-	mock.module("./module", () => {
-		return {
-			foo: "baz",
-		};
-	});
+  // We update it here:
+  mock.module("./module", () => {
+    return {
+      foo: "baz",
+    };
+  });
 
-	// And the live bindings are updated.
-	expect(foo).toBe("baz");
+  // And the live bindings are updated.
+  expect(foo).toBe("baz");
 
-	// The module is also updated for CJS.
-	expect(cjs.foo).toBe("baz");
+  // The module is also updated for CJS.
+  expect(cjs.foo).toBe("baz");
 });
 ```
 
@@ -300,9 +300,9 @@ If you need to ensure a module is mocked before it's imported, you should use `-
 import { mock } from "bun:test";
 
 mock.module("./module", () => {
-	return {
-		foo: "bar",
-	};
+  return {
+    foo: "bar",
+  };
 });
 ```
 
@@ -335,20 +335,20 @@ import { test, expect, mock, beforeEach } from "bun:test";
 
 // Mock the API client module
 mock.module("./api-client", () => ({
-	fetchUser: mock(async (id: string) => ({ id, name: `User ${id}` })),
-	createUser: mock(async (user: any) => ({ ...user, id: "new-id" })),
-	updateUser: mock(async (id: string, user: any) => ({ ...user, id })),
+  fetchUser: mock(async (id: string) => ({ id, name: `User ${id}` })),
+  createUser: mock(async (user: any) => ({ ...user, id: "new-id" })),
+  updateUser: mock(async (id: string, user: any) => ({ ...user, id })),
 }));
 
 test("user service with mocked API", async () => {
-	const { fetchUser } = await import("./api-client");
-	const { UserService } = await import("./user-service");
+  const { fetchUser } = await import("./api-client");
+  const { UserService } = await import("./user-service");
 
-	const userService = new UserService();
-	const user = await userService.getUser("123");
+  const userService = new UserService();
+  const user = await userService.getUser("123");
 
-	expect(fetchUser).toHaveBeenCalledWith("123");
-	expect(user.name).toBe("User 123");
+  expect(fetchUser).toHaveBeenCalledWith("123");
+  expect(user.name).toBe("User 123");
 });
 ```
 
@@ -359,24 +359,24 @@ import { test, expect, mock } from "bun:test";
 
 // Mock external database library
 mock.module("pg", () => ({
-	Client: mock(function () {
-		return {
-			connect: mock(async () => {}),
-			query: mock(async (sql: string) => ({
-				rows: [{ id: 1, name: "Test User" }],
-			})),
-			end: mock(async () => {}),
-		};
-	}),
+  Client: mock(function () {
+    return {
+      connect: mock(async () => {}),
+      query: mock(async (sql: string) => ({
+        rows: [{ id: 1, name: "Test User" }],
+      })),
+      end: mock(async () => {}),
+    };
+  }),
 }));
 
 test("database operations", async () => {
-	const { Database } = await import("./database");
-	const db = new Database();
+  const { Database } = await import("./database");
+  const db = new Database();
 
-	const users = await db.getUsers();
-	expect(users).toHaveLength(1);
-	expect(users[0].name).toBe("Test User");
+  const users = await db.getUsers();
+  expect(users).toHaveLength(1);
+  expect(users[0].name).toBe("Test User");
 });
 ```
 
@@ -393,20 +393,20 @@ const random1 = mock(() => Math.random());
 const random2 = mock(() => Math.random());
 
 test("clearing all mocks", () => {
-	random1();
-	random2();
+  random1();
+  random2();
 
-	expect(random1).toHaveBeenCalledTimes(1);
-	expect(random2).toHaveBeenCalledTimes(1);
+  expect(random1).toHaveBeenCalledTimes(1);
+  expect(random2).toHaveBeenCalledTimes(1);
 
-	mock.clearAllMocks();
+  mock.clearAllMocks();
 
-	expect(random1).toHaveBeenCalledTimes(0);
-	expect(random2).toHaveBeenCalledTimes(0);
+  expect(random1).toHaveBeenCalledTimes(0);
+  expect(random2).toHaveBeenCalledTimes(0);
 
-	// Note: implementations are preserved
-	expect(typeof random1()).toBe("number");
-	expect(typeof random2()).toBe("number");
+  // Note: implementations are preserved
+  expect(typeof random1()).toBe("number");
+  expect(typeof random2()).toBe("number");
 });
 ```
 
@@ -424,30 +424,30 @@ import * as barModule from "./bar.ts";
 import * as bazModule from "./baz.ts";
 
 test("foo, bar, baz", () => {
-	const fooSpy = spyOn(fooModule, "foo");
-	const barSpy = spyOn(barModule, "bar");
-	const bazSpy = spyOn(bazModule, "baz");
+  const fooSpy = spyOn(fooModule, "foo");
+  const barSpy = spyOn(barModule, "bar");
+  const bazSpy = spyOn(bazModule, "baz");
 
-	// Original values
-	expect(fooSpy).toBe("foo");
-	expect(barSpy).toBe("bar");
-	expect(bazSpy).toBe("baz");
+  // Original values
+  expect(fooSpy).toBe("foo");
+  expect(barSpy).toBe("bar");
+  expect(bazSpy).toBe("baz");
 
-	// Mock implementations
-	fooSpy.mockImplementation(() => 42);
-	barSpy.mockImplementation(() => 43);
-	bazSpy.mockImplementation(() => 44);
+  // Mock implementations
+  fooSpy.mockImplementation(() => 42);
+  barSpy.mockImplementation(() => 43);
+  bazSpy.mockImplementation(() => 44);
 
-	expect(fooSpy()).toBe(42);
-	expect(barSpy()).toBe(43);
-	expect(bazSpy()).toBe(44);
+  expect(fooSpy()).toBe(42);
+  expect(barSpy()).toBe(43);
+  expect(bazSpy()).toBe(44);
 
-	// Restore all
-	mock.restore();
+  // Restore all
+  mock.restore();
 
-	expect(fooSpy()).toBe("foo");
-	expect(barSpy()).toBe("bar");
-	expect(bazSpy()).toBe("baz");
+  expect(fooSpy()).toBe("foo");
+  expect(barSpy()).toBe("bar");
+  expect(bazSpy()).toBe("baz");
 });
 ```
 
@@ -462,17 +462,17 @@ import { test, expect } from "bun:test";
 
 // Using the 'vi' alias similar to Vitest
 test("vitest compatibility", () => {
-	const mockFn = vi.fn(() => 42);
+  const mockFn = vi.fn(() => 42);
 
-	mockFn();
-	expect(mockFn).toHaveBeenCalled();
+  mockFn();
+  expect(mockFn).toHaveBeenCalled();
 
-	// The following functions are available on the vi object:
-	// vi.fn
-	// vi.spyOn
-	// vi.mock
-	// vi.restoreAllMocks
-	// vi.clearAllMocks
+  // The following functions are available on the vi object:
+  // vi.fn
+  // vi.spyOn
+  // vi.mock
+  // vi.restoreAllMocks
+  // vi.clearAllMocks
 });
 ```
 
@@ -517,18 +517,18 @@ Mocked ESM modules maintain live bindings, so changing the mock will update all 
 import { mock } from "bun:test";
 
 function createMockUser(overrides = {}) {
-	return {
-		id: "mock-id",
-		name: "Mock User",
-		email: "mock@example.com",
-		...overrides,
-	};
+  return {
+    id: "mock-id",
+    name: "Mock User",
+    email: "mock@example.com",
+    ...overrides,
+  };
 }
 
 const mockUserService = {
-	getUser: mock(async (id: string) => createMockUser({ id })),
-	createUser: mock(async (data: any) => createMockUser(data)),
-	updateUser: mock(async (id: string, data: any) => createMockUser({ id, ...data })),
+  getUser: mock(async (id: string) => createMockUser({ id })),
+  createUser: mock(async (data: any) => createMockUser(data)),
+  updateUser: mock(async (id: string, data: any) => createMockUser({ id, ...data })),
 };
 ```
 
@@ -540,18 +540,18 @@ import { test, expect, mock } from "bun:test";
 const shouldUseMockApi = process.env.NODE_ENV === "test";
 
 if (shouldUseMockApi) {
-	mock.module("./api", () => ({
-		fetchData: mock(async () => ({ data: "mocked" })),
-	}));
+  mock.module("./api", () => ({
+    fetchData: mock(async () => ({ data: "mocked" })),
+  }));
 }
 
 test("conditional API usage", async () => {
-	const { fetchData } = await import("./api");
-	const result = await fetchData();
+  const { fetchData } = await import("./api");
+  const result = await fetchData();
 
-	if (shouldUseMockApi) {
-		expect(result.data).toBe("mocked");
-	}
+  if (shouldUseMockApi) {
+    expect(result.data).toBe("mocked");
+  }
 });
 ```
 
@@ -561,18 +561,18 @@ test("conditional API usage", async () => {
 import { afterEach, beforeEach } from "bun:test";
 
 beforeEach(() => {
-	// Set up common mocks
-	mock.module("./logger", () => ({
-		log: mock(() => {}),
-		error: mock(() => {}),
-		warn: mock(() => {}),
-	}));
+  // Set up common mocks
+  mock.module("./logger", () => ({
+    log: mock(() => {}),
+    error: mock(() => {}),
+    warn: mock(() => {}),
+  }));
 });
 
 afterEach(() => {
-	// Clean up all mocks
-	mock.restore();
-	mock.clearAllMocks();
+  // Clean up all mocks
+  mock.restore();
+  mock.clearAllMocks();
 });
 ```
 
@@ -583,17 +583,17 @@ afterEach(() => {
 ```ts title="test.ts" icon="/icons/typescript.svg"
 // Good: Simple, focused mock
 const mockUserApi = {
-	getUser: mock(async id => ({ id, name: "Test User" })),
+  getUser: mock(async id => ({ id, name: "Test User" })),
 };
 
 // Avoid: Overly complex mock behavior
 const complexMock = mock(input => {
-	if (input.type === "A") {
-		return processTypeA(input);
-	} else if (input.type === "B") {
-		return processTypeB(input);
-	}
-	// ... lots of complex logic
+  if (input.type === "A") {
+    return processTypeA(input);
+  } else if (input.type === "B") {
+    return processTypeB(input);
+  }
+  // ... lots of complex logic
 });
 ```
 
@@ -601,13 +601,13 @@ const complexMock = mock(input => {
 
 ```ts
 interface UserService {
-	getUser(id: string): Promise<User>;
-	createUser(data: CreateUserData): Promise<User>;
+  getUser(id: string): Promise<User>;
+  createUser(data: CreateUserData): Promise<User>;
 }
 
 const mockUserService: UserService = {
-	getUser: mock(async (id: string) => ({ id, name: "Test User" })),
-	createUser: mock(async data => ({ id: "new-id", ...data })),
+  getUser: mock(async (id: string) => ({ id, name: "Test User" })),
+  createUser: mock(async data => ({ id: "new-id", ...data })),
 };
 ```
 
@@ -615,14 +615,14 @@ const mockUserService: UserService = {
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 test("service calls API correctly", async () => {
-	const mockApi = { fetchUser: mock(async () => ({ id: "1" })) };
+  const mockApi = { fetchUser: mock(async () => ({ id: "1" })) };
 
-	const service = new UserService(mockApi);
-	await service.getUser("123");
+  const service = new UserService(mockApi);
+  await service.getUser("123");
 
-	// Verify the mock was called correctly
-	expect(mockApi.fetchUser).toHaveBeenCalledWith("123");
-	expect(mockApi.fetchUser).toHaveBeenCalledTimes(1);
+  // Verify the mock was called correctly
+  expect(mockApi.fetchUser).toHaveBeenCalledWith("123");
+  expect(mockApi.fetchUser).toHaveBeenCalledTimes(1);
 });
 ```
 

@@ -115,9 +115,9 @@ const data = Bun.YAML.parse(yaml);
 
 ```ts
 try {
-	Bun.YAML.parse("invalid: yaml: content:");
+  Bun.YAML.parse("invalid: yaml: content:");
 } catch (error) {
-	console.error("Failed to parse YAML:", error.message);
+  console.error("Failed to parse YAML:", error.message);
 }
 ```
 
@@ -176,7 +176,7 @@ console.log(config);
 
 // Or use specific parts
 if (features.rateLimit) {
-	setupRateLimiting(database);
+  setupRateLimiting(database);
 }
 ```
 
@@ -217,19 +217,19 @@ import { server, features } from "./config.yaml";
 console.log(`Starting server on ${server.host}:${server.port}`);
 
 if (features.debug) {
-	console.log("Debug mode enabled");
+  console.log("Debug mode enabled");
 }
 
 // Your server code here
 Bun.serve({
-	port: server.port,
-	hostname: server.host,
-	fetch(req) {
-		if (features.verbose) {
-			console.log(`${req.method} ${req.url}`);
-		}
-		return new Response("Hello World");
-	},
+  port: server.port,
+  hostname: server.host,
+  fetch(req) {
+    if (features.verbose) {
+      console.log(`${req.method} ${req.url}`);
+    }
+    return new Response("Hello World");
+  },
 });
 ```
 
@@ -301,15 +301,15 @@ const config = configs[env];
 
 // Environment variables in YAML values can be interpolated
 function interpolateEnvVars(obj: any): any {
-	if (typeof obj === "string") {
-		return obj.replace(/\${(\w+)}/g, (_, key) => process.env[key] || "");
-	}
-	if (typeof obj === "object") {
-		for (const key in obj) {
-			obj[key] = interpolateEnvVars(obj[key]);
-		}
-	}
-	return obj;
+  if (typeof obj === "string") {
+    return obj.replace(/\${(\w+)}/g, (_, key) => process.env[key] || "");
+  }
+  if (typeof obj === "object") {
+    for (const key in obj) {
+      obj[key] = interpolateEnvVars(obj[key]);
+    }
+  }
+  return obj;
 }
 
 export default interpolateEnvVars(config);
@@ -341,33 +341,33 @@ features:
 import { features } from "./features.yaml";
 
 export function isFeatureEnabled(featureName: string, userEmail?: string): boolean {
-	const feature = features[featureName];
+  const feature = features[featureName];
 
-	if (!feature?.enabled) {
-		return false;
-	}
+  if (!feature?.enabled) {
+    return false;
+  }
 
-	// Check rollout percentage
-	if (feature.rolloutPercentage < 100) {
-		const hash = hashCode(userEmail || "anonymous");
-		if (hash % 100 >= feature.rolloutPercentage) {
-			return false;
-		}
-	}
+  // Check rollout percentage
+  if (feature.rolloutPercentage < 100) {
+    const hash = hashCode(userEmail || "anonymous");
+    if (hash % 100 >= feature.rolloutPercentage) {
+      return false;
+    }
+  }
 
-	// Check allowed users
-	if (feature.allowedUsers && userEmail) {
-		return feature.allowedUsers.includes(userEmail);
-	}
+  // Check allowed users
+  if (feature.allowedUsers && userEmail) {
+    return feature.allowedUsers.includes(userEmail);
+  }
 
-	return true;
+  return true;
 }
 
 // Use with hot reloading to toggle features in real-time
 if (isFeatureEnabled("newDashboard", user.email)) {
-	renderNewDashboard();
+  renderNewDashboard();
 } else {
-	renderLegacyDashboard();
+  renderLegacyDashboard();
 }
 ```
 
@@ -415,12 +415,12 @@ import { createConnection } from "./database-driver";
 
 // Parse environment variables with defaults
 function parseConfig(config: any) {
-	return JSON.parse(
-		JSON.stringify(config).replace(
-			/\${([^:-]+)(?::([^}]+))?}/g,
-			(_, key, defaultValue) => process.env[key] || defaultValue || "",
-		),
-	);
+  return JSON.parse(
+    JSON.stringify(config).replace(
+      /\${([^:-]+)(?::([^}]+))?}/g,
+      (_, key, defaultValue) => process.env[key] || defaultValue || "",
+    ),
+  );
 }
 
 const dbConfig = parseConfig(connections);
@@ -431,7 +431,7 @@ export const analytics = await createConnection(dbConfig.analytics);
 
 // Auto-run migrations if configured
 if (parseConfig(migrations).autoRun === "true") {
-	await runMigrations(db, migrations.directory);
+  await runMigrations(db, migrations.directory);
 }
 ```
 
@@ -459,11 +459,11 @@ const config = await import(`./configs/${env}.yaml`);
 
 // Load user-specific settings
 async function loadUserSettings(userId: string) {
-	try {
-		const settings = await import(`./users/${userId}/settings.yaml`);
-		return settings.default;
-	} catch {
-		return await import("./users/default-settings.yaml");
-	}
+  try {
+    const settings = await import(`./users/${userId}/settings.yaml`);
+    return settings.default;
+  } catch {
+    return await import("./users/default-settings.yaml");
+  }
 }
 ```

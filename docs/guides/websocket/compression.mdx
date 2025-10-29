@@ -8,11 +8,11 @@ Per-message compression can be enabled with the `perMessageDeflate` parameter. W
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.serve({
-	// ...
-	websocket: {
-		// enable compression
-		perMessageDeflate: true,
-	},
+  // ...
+  websocket: {
+    // enable compression
+    perMessageDeflate: true,
+  },
 });
 ```
 
@@ -22,12 +22,12 @@ To enable compression for individual messages, pass `true` as the second paramet
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.serve({
-	// ...
-	websocket: {
-		async message(ws, message) {
-			// send a compressed message
-			ws.send(message, true);
-		},
-	},
+  // ...
+  websocket: {
+    async message(ws, message) {
+      // send a compressed message
+      ws.send(message, true);
+    },
+  },
 });
 ```

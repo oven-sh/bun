@@ -25,11 +25,11 @@ import * as Sentry from "@sentry/bun";
 
 // Ensure to call this before importing any other modules!
 Sentry.init({
-	dsn: "__SENTRY_DSN__",
+  dsn: "__SENTRY_DSN__",
 
-	// Add Performance Monitoring by setting tracesSampleRate
-	// We recommend adjusting this value in production
-	tracesSampleRate: 1.0,
+  // Add Performance Monitoring by setting tracesSampleRate
+  // We recommend adjusting this value in production
+  tracesSampleRate: 1.0,
 });
 ```
 
@@ -39,11 +39,11 @@ You can verify that Sentry is working by capturing a test error:
 
 ```js sentry.ts icon="/icons/typescript.svg"
 setTimeout(() => {
-	try {
-		foo();
-	} catch (e) {
-		Sentry.captureException(e);
-	}
+  try {
+    foo();
+  } catch (e) {
+    Sentry.captureException(e);
+  }
 }, 99);
 ```
 

@@ -98,10 +98,9 @@ The following methods are available on `DataView`:
 Typed arrays are a family of classes that provide an `Array`-like interface for interacting with data in an `ArrayBuffer`. Whereas a `DataView` lets you write numbers of varying size at a particular offset, a `TypedArray` interprets the underlying bytes as an array of numbers, each of a fixed size.
 
 <Note>
-	It's common to refer to this family of classes collectively by their shared superclass
-	`TypedArray`. This class as _internal_ to JavaScript; you can't directly create instances of it,
-	and `TypedArray` is not defined in the global scope. Think of it as an `interface` or an abstract
-	class.
+  It's common to refer to this family of classes collectively by their shared superclass `TypedArray`. This class as
+  _internal_ to JavaScript; you can't directly create instances of it, and `TypedArray` is not defined in the global
+  scope. Think of it as an `interface` or an abstract class.
 </Note>
 
 ```ts
@@ -282,7 +281,7 @@ It isn't common to directly create `Blob` instances. More often, you'll receive 
 
 ```ts
 const blob = new Blob(["<html>Hello</html>"], {
-	type: "text/html",
+  type: "text/html",
 });
 
 blob.type; // => text/html
@@ -293,10 +292,10 @@ These parts can be `string`, `ArrayBuffer`, `TypedArray`, `DataView`, or other `
 
 ```ts
 const blob = new Blob([
-	"<html>",
-	new Blob(["<body>"]),
-	new Uint8Array([104, 101, 108, 108, 111]), // "hello" in binary
-	"</body></html>",
+  "<html>",
+  new Blob(["<body>"]),
+  new Uint8Array([104, 101, 108, 108, 111]), // "hello" in binary
+  "</body></html>",
 ]);
 ```
 
@@ -334,7 +333,7 @@ const files = document.getElementById("file").files;
 
 ```ts
 const file = new File(["<html>Hello</html>"], "index.html", {
-	type: "text/html",
+  type: "text/html",
 });
 ```
 
@@ -349,22 +348,22 @@ Streams are an important abstraction for working with binary data without loadin
 Bun implements the Web APIs [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream) and [`WritableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream).
 
 <Note>
-	Bun also implements the `node:stream` module, including
-	[`Readable`](https://nodejs.org/api/stream.html#stream_readable_streams),
-	[`Writable`](https://nodejs.org/api/stream.html#stream_writable_streams), and
-	[`Duplex`](https://nodejs.org/api/stream.html#stream_duplex_and_transform_streams). For complete
-	documentation, refer to the Node.js docs.
+  Bun also implements the `node:stream` module, including
+  [`Readable`](https://nodejs.org/api/stream.html#stream_readable_streams),
+  [`Writable`](https://nodejs.org/api/stream.html#stream_writable_streams), and
+  [`Duplex`](https://nodejs.org/api/stream.html#stream_duplex_and_transform_streams). For complete documentation, refer
+  to the Node.js docs.
 </Note>
 
 To create a simple readable stream:
 
 ```ts
 const stream = new ReadableStream({
-	start(controller) {
-		controller.enqueue("hello");
-		controller.enqueue("world");
-		controller.close();
-	},
+  start(controller) {
+    controller.enqueue("hello");
+    controller.enqueue("world");
+    controller.close();
+  },
 });
 ```
 
@@ -372,7 +371,7 @@ The contents of this stream can be read chunk-by-chunk with `for await` syntax.
 
 ```ts
 for await (const chunk of stream) {
-	console.log(chunk);
+  console.log(chunk);
 }
 
 // => "hello"
@@ -439,10 +438,10 @@ The following snippet creates a `ReadableStream` and enqueues the entire `ArrayB
 
 ```ts
 new ReadableStream({
-	start(controller) {
-		controller.enqueue(buf);
-		controller.close();
-	},
+  start(controller) {
+    controller.enqueue(buf);
+    controller.close();
+  },
 });
 ```
 
@@ -454,12 +453,12 @@ const view = new Uint8Array(buf);
 const chunkSize = 1024;
 
 new ReadableStream({
-	start(controller) {
-		for (let i = 0; i < view.length; i += chunkSize) {
-			controller.enqueue(view.slice(i, i + chunkSize));
-		}
-		controller.close();
-	},
+  start(controller) {
+    for (let i = 0; i < view.length; i += chunkSize) {
+      controller.enqueue(view.slice(i, i + chunkSize));
+    }
+    controller.close();
+  },
 });
 ```
 
@@ -514,10 +513,10 @@ new Blob([arr.buffer], { type: "text/plain" });
 
 ```ts
 new ReadableStream({
-	start(controller) {
-		controller.enqueue(arr);
-		controller.close();
-	},
+  start(controller) {
+    controller.enqueue(arr);
+    controller.close();
+  },
 });
 ```
 
@@ -527,12 +526,12 @@ To stream the `ArrayBuffer` in chunks, split the `TypedArray` into chunks and en
 
 ```ts
 new ReadableStream({
-	start(controller) {
-		for (let i = 0; i < arr.length; i += chunkSize) {
-			controller.enqueue(arr.slice(i, i + chunkSize));
-		}
-		controller.close();
-	},
+  start(controller) {
+    for (let i = 0; i < arr.length; i += chunkSize) {
+      controller.enqueue(arr.slice(i, i + chunkSize));
+    }
+    controller.close();
+  },
 });
 ```
 
@@ -587,10 +586,10 @@ new Blob([view.buffer], { type: "text/plain" });
 
 ```ts
 new ReadableStream({
-	start(controller) {
-		controller.enqueue(view.buffer);
-		controller.close();
-	},
+  start(controller) {
+    controller.enqueue(view.buffer);
+    controller.close();
+  },
 });
 ```
 
@@ -599,12 +598,12 @@ To stream the `ArrayBuffer` in chunks, split the `DataView` into chunks and enqu
 
 ```ts
 new ReadableStream({
-	start(controller) {
-		for (let i = 0; i < view.byteLength; i += chunkSize) {
-			controller.enqueue(view.buffer.slice(i, i + chunkSize));
-		}
-		controller.close();
-	},
+  start(controller) {
+    for (let i = 0; i < view.byteLength; i += chunkSize) {
+      controller.enqueue(view.buffer.slice(i, i + chunkSize));
+    }
+    controller.close();
+  },
 });
 ```
 
@@ -666,10 +665,10 @@ new Blob([buf], { type: "text/plain" });
 
 ```ts
 new ReadableStream({
-	start(controller) {
-		controller.enqueue(buf);
-		controller.close();
-	},
+  start(controller) {
+    controller.enqueue(buf);
+    controller.close();
+  },
 });
 ```
 
@@ -678,12 +677,12 @@ To stream the `ArrayBuffer` in chunks, split the `Buffer` into chunks and enqueu
 
 ```ts
 new ReadableStream({
-	start(controller) {
-		for (let i = 0; i < buf.length; i += chunkSize) {
-			controller.enqueue(buf.slice(i, i + chunkSize));
-		}
-		controller.close();
-	},
+  start(controller) {
+    for (let i = 0; i < buf.length; i += chunkSize) {
+      controller.enqueue(buf.slice(i, i + chunkSize));
+    }
+    controller.close();
+  },
 });
 ```
 

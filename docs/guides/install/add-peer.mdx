@@ -16,9 +16,9 @@ This will add the package to `peerDependencies` in `package.json`.
 
 ```json package.json icon="file-json"
 {
-	"peerDependencies": {
-		"@types/bun": "^1.3.1" // [!code ++]
-	}
+  "peerDependencies": {
+    "@types/bun": "^1.3.1" // [!code ++]
+  }
 }
 ```
 
@@ -28,15 +28,15 @@ Running `bun install` will install peer dependencies by default, unless marked o
 
 ```json package.json icon="file-json"
 {
-	"peerDependencies": {
-		"@types/bun": "^1.3.1"
-	},
-	"peerDependenciesMeta": {
-		"@types/bun": {
-			// [!code ++]
-			"optional": true // [!code ++]
-		} // [!code ++]
-	}
+  "peerDependencies": {
+    "@types/bun": "^1.3.1"
+  },
+  "peerDependenciesMeta": {
+    "@types/bun": {
+      // [!code ++]
+      "optional": true // [!code ++]
+    } // [!code ++]
+  }
 }
 ```
 

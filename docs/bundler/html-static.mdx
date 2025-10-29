@@ -8,13 +8,13 @@ Bun's bundler has first-class support for HTML. Build static sites, landing page
 ```html title="index.html" icon="file-code"
 <!doctype html>
 <html>
-	<head>
-		<link rel="stylesheet" href="./styles.css" />
-		<script src="./app.ts" type="module"></script>
-	</head>
-	<body>
-		<img src="./logo.png" />
-	</body>
+  <head>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./app.ts" type="module"></script>
+  </head>
+  <body>
+    <img src="./logo.png" />
+  </body>
 </html>
 ```
 
@@ -62,13 +62,13 @@ Your React or other SPA will work out of the box — no configuration needed. Al
 ```html title="index.html" icon="file-code"
 <!doctype html>
 <html>
-	<head>
-		<title>My SPA</title>
-		<script src="./app.tsx" type="module"></script>
-	</head>
-	<body>
-		<div id="root"></div>
-	</body>
+  <head>
+    <title>My SPA</title>
+    <script src="./app.tsx" type="module"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
 </html>
 ```
 
@@ -160,13 +160,13 @@ For example:
 @import "./abc.css";
 
 .container {
-	background-color: blue;
+  background-color: blue;
 }
 ```
 
 ```css abc.css
 body {
-	background-color: red;
+  background-color: red;
 }
 ```
 
@@ -176,11 +176,11 @@ This outputs:
 
 ```css
 body {
-	background-color: red;
+  background-color: red;
 }
 
 .container {
-	background-color: blue;
+  background-color: blue;
 }
 ```
 
@@ -190,7 +190,7 @@ You can reference local assets in your CSS files.
 
 ```css styles.css icon="file-code"
 body {
-	background-image: url("./logo.png");
+  background-image: url("./logo.png");
 }
 ```
 
@@ -198,7 +198,7 @@ This will copy `./logo.png` to the output directory and rewrite the path in the 
 
 ```css styles.css icon="file-code"
 body {
-	background-image: url("./logo-[ABC123].png");
+  background-image: url("./logo-[ABC123].png");
 }
 ```
 
@@ -236,18 +236,14 @@ plugins = ["bun-plugin-tailwind"]
 Then, reference TailwindCSS in your HTML via `<link>` tag, `@import` in CSS, or import in JavaScript.
 
 <Tabs>
-	<Tab title="index.html">
-		```html title="index.html" icon="file-code"
-		{/* Reference TailwindCSS in your HTML */}
-		<link rel="stylesheet" href="tailwindcss" />
-		```
-	</Tab>
-	<Tab title="styles.css">
-		```css title="styles.css" icon="file-code" @import "tailwindcss"; ```
-	</Tab>
-	<Tab title="app.ts">
-		```ts title="app.ts" icon="/icons/typescript.svg" import "tailwindcss"; ```
-	</Tab>
+  <Tab title="index.html">
+    ```html title="index.html" icon="file-code"
+    {/* Reference TailwindCSS in your HTML */}
+    <link rel="stylesheet" href="tailwindcss" />
+    ```
+  </Tab>
+  <Tab title="styles.css">```css title="styles.css" icon="file-code" @import "tailwindcss"; ```</Tab>
+  <Tab title="app.ts">```ts title="app.ts" icon="/icons/typescript.svg" import "tailwindcss"; ```</Tab>
 </Tabs>
 
 <Info>Only one of those are necessary, not all three.</Info>
@@ -307,8 +303,8 @@ When you're ready to deploy, use `bun build` to create optimized production bund
 </Tabs>
 
 <Warning>
-	Currently, plugins are only supported through `Bun.build`'s API or through `bunfig.toml` with the
-	frontend dev server - not yet supported in `bun build`'s CLI.
+  Currently, plugins are only supported through `Bun.build`'s API or through `bunfig.toml` with the frontend dev server
+  - not yet supported in `bun build`'s CLI.
 </Warning>
 
 ### Watch Mode
@@ -323,37 +319,37 @@ Need more control? Configure the bundler through the JavaScript API and use Bun'
 
 ```ts title="build.ts" icon="/icons/typescript.svg"
 await Bun.build({
-	entrypoints: ["./index.html"],
-	outdir: "./dist",
-	minify: true,
+  entrypoints: ["./index.html"],
+  outdir: "./dist",
+  minify: true,
 
-	plugins: [
-		{
-			// A plugin that makes every HTML tag lowercase
-			name: "lowercase-html-plugin",
-			setup({ onLoad }) {
-				const rewriter = new HTMLRewriter().on("*", {
-					element(element) {
-						element.tagName = element.tagName.toLowerCase();
-					},
-					text(element) {
-						element.replace(element.text.toLowerCase());
-					},
-				});
+  plugins: [
+    {
+      // A plugin that makes every HTML tag lowercase
+      name: "lowercase-html-plugin",
+      setup({ onLoad }) {
+        const rewriter = new HTMLRewriter().on("*", {
+          element(element) {
+            element.tagName = element.tagName.toLowerCase();
+          },
+          text(element) {
+            element.replace(element.text.toLowerCase());
+          },
+        });
 
-				onLoad({ filter: /\.html$/ }, async args => {
-					const html = await Bun.file(args.path).text();
+        onLoad({ filter: /\.html$/ }, async args => {
+          const html = await Bun.file(args.path).text();
 
-					return {
-						// Bun's bundler will scan the HTML for <script> tags, <link rel="stylesheet"> tags, and other assets
-						// and bundle them automatically
-						contents: rewriter.transform(html),
-						loader: "html",
-					};
-				});
-			},
-		},
-	],
+          return {
+            // Bun's bundler will scan the HTML for <script> tags, <link rel="stylesheet"> tags, and other assets
+            // and bundle them automatically
+            contents: rewriter.transform(html),
+            loader: "html",
+          };
+        });
+      },
+    },
+  ],
 });
 ```
 

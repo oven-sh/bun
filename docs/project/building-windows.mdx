@@ -44,9 +44,7 @@ After Visual Studio, you need the following:
 - Node.js
 - Ccache
 
-<Note>
-	The Zig compiler is automatically downloaded, installed, and updated by the building process.
-</Note>
+<Note>The Zig compiler is automatically downloaded, installed, and updated by the building process.</Note>
 
 [Scoop](https://scoop.sh) can be used to install these remaining tools easily.
 
@@ -58,9 +56,9 @@ After Visual Studio, you need the following:
 ```
 
 <Note>
-	Please do not use WinGet/other package manager for these, as you will likely install Strawberry
-	Perl instead of a more minimal installation of Perl. Strawberry Perl includes many other utilities
-	that get installed into `$Env:PATH` that will conflict with MSVC and break the build.
+  Please do not use WinGet/other package manager for these, as you will likely install Strawberry Perl instead of a more
+  minimal installation of Perl. Strawberry Perl includes many other utilities that get installed into `$Env:PATH` that
+  will conflict with MSVC and break the build.
 </Note>
 
 If you intend on building WebKit locally (optional), you should install these packages:
@@ -82,8 +80,8 @@ To verify, you can check for an MSVC-only command line such as `mt.exe`
 ```
 
 <Note>
-	It is not recommended to install `ninja` / `cmake` into your global path, because you may run into
-	a situation where you try to build bun without .\scripts\vs-shell.ps1 sourced.
+  It is not recommended to install `ninja` / `cmake` into your global path, because you may run into a situation where
+  you try to build bun without .\scripts\vs-shell.ps1 sourced.
 </Note>
 
 ## Building

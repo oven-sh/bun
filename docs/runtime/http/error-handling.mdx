@@ -7,10 +7,10 @@ To activate development mode, set `development: true`.
 
 ```ts title="server.ts" icon="/icons/typescript.svg"
 Bun.serve({
-	development: true, // [!code ++]
-	fetch(req) {
-		throw new Error("woops!");
-	},
+  development: true, // [!code ++]
+  fetch(req) {
+    throw new Error("woops!");
+  },
 });
 ```
 
@@ -24,16 +24,16 @@ To handle server-side errors, implement an `error` handler. This function should
 
 ```ts
 Bun.serve({
-	fetch(req) {
-		throw new Error("woops!");
-	},
-	error(error) {
-		return new Response(`<pre>${error}\n${error.stack}</pre>`, {
-			headers: {
-				"Content-Type": "text/html",
-			},
-		});
-	},
+  fetch(req) {
+    throw new Error("woops!");
+  },
+  error(error) {
+    return new Response(`<pre>${error}\n${error.stack}</pre>`, {
+      headers: {
+        "Content-Type": "text/html",
+      },
+    });
+  },
 });
 ```
 

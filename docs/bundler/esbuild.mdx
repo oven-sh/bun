@@ -8,16 +8,14 @@ Bun's bundler API is inspired heavily by esbuild. Migrating to Bun's bundler fro
 There are a few behavioral differences to note.
 
 <Note>
-	**Bundling by default.** Unlike esbuild, Bun always bundles by default. This is why the `--bundle`
-	flag isn't necessary in the Bun example. To transpile each file individually, use
-	`Bun.Transpiler`.
+  **Bundling by default.** Unlike esbuild, Bun always bundles by default. This is why the `--bundle` flag isn't
+  necessary in the Bun example. To transpile each file individually, use `Bun.Transpiler`.
 </Note>
 
 <Note>
-	**It's just a bundler.** Unlike esbuild, Bun's bundler does not include a built-in development
-	server or file watcher. It's just a bundler. The bundler is intended for use in conjunction with
-	`Bun.serve` and other runtime APIs to achieve the same effect. As such, all options relating to
-	HTTP/file watching are not applicable.
+  **It's just a bundler.** Unlike esbuild, Bun's bundler does not include a built-in development server or file watcher.
+  It's just a bundler. The bundler is intended for use in conjunction with `Bun.serve` and other runtime APIs to achieve
+  the same effect. As such, all options relating to HTTP/file watching are not applicable.
 </Note>
 
 ## Performance
@@ -182,8 +180,8 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 Bun's plugin API is designed to be esbuild compatible. Bun doesn't support esbuild's entire plugin API surface, but the core functionality is implemented. Many third-party esbuild plugins will work out of the box with Bun.
 
 <Note>
-	Long term, we aim for feature parity with esbuild's API, so if something doesn't work please file
-	an issue to help us prioritize.
+  Long term, we aim for feature parity with esbuild's API, so if something doesn't work please file an issue to help us
+  prioritize.
 </Note>
 
 Plugins in Bun and esbuild are defined with a builder object.
@@ -192,10 +190,10 @@ Plugins in Bun and esbuild are defined with a builder object.
 import type { BunPlugin } from "bun";
 
 const myPlugin: BunPlugin = {
-	name: "my-plugin",
-	setup(builder) {
-		// define plugin
-	},
+  name: "my-plugin",
+  setup(builder) {
+    // define plugin
+  },
 };
 ```
 
@@ -204,52 +202,52 @@ The builder object provides some methods for hooking into parts of the bundling 
 ```ts title="myPlugin.ts" icon="/icons/typescript.svg"
 import type { BunPlugin } from "bun";
 const myPlugin: BunPlugin = {
-	name: "my-plugin",
-	setup(builder) {
-		builder.onResolve(
-			{
-				/* onResolve.options */
-			},
-			args => {
-				return {
-					/* onResolve.results */
-				};
-			},
-		);
-		builder.onLoad(
-			{
-				/* onLoad.options */
-			},
-			args => {
-				return {
-					/* onLoad.results */
-				};
-			},
-		);
-	},
+  name: "my-plugin",
+  setup(builder) {
+    builder.onResolve(
+      {
+        /* onResolve.options */
+      },
+      args => {
+        return {
+          /* onResolve.results */
+        };
+      },
+    );
+    builder.onLoad(
+      {
+        /* onLoad.options */
+      },
+      args => {
+        return {
+          /* onLoad.results */
+        };
+      },
+    );
+  },
 };
 ```
 
 ### onResolve
 
 <Tabs>
-	<Tab title="options">- 🟢 `filter` - 🟢 `namespace`</Tab>
-	<Tab title="arguments">
-		- 🟢 `path` - 🟢 `importer` - 🔴 `namespace` - 🔴 `resolveDir` - 🔴 `kind` - 🔴 `pluginData`
-	</Tab>
-	<Tab title="results">
-		- 🟢 `namespace` - 🟢 `path` - 🔴 `errors` - 🔴 `external` - 🔴 `pluginData` - 🔴 `pluginName` -
-		🔴 `sideEffects` - 🔴 `suffix` - 🔴 `warnings` - 🔴 `watchDirs` - 🔴 `watchFiles`
-	</Tab>
+  <Tab title="options">- 🟢 `filter` - 🟢 `namespace`</Tab>
+  <Tab title="arguments">
+    - 🟢 `path` - 🟢 `importer` - 🔴 `namespace` - 🔴 `resolveDir` - 🔴 `kind` - 🔴 `pluginData`
+  </Tab>
+  <Tab title="results">
+    - 🟢 `namespace` - 🟢 `path` - 🔴 `errors` - 🔴 `external` - 🔴 `pluginData` - 🔴 `pluginName` - 🔴 `sideEffects` -
+    🔴 `suffix` - 🔴 `warnings` - 🔴 `watchDirs` - 🔴 `watchFiles`
+  </Tab>
 </Tabs>
 
 ### onLoad
 
 <Tabs>
-	<Tab title="options">- 🟢 `filter` - 🟢 `namespace`</Tab>
-	<Tab title="arguments">- 🟢 `path` - 🔴 `namespace` - 🔴 `suffix` - 🔴 `pluginData`</Tab>
-	<Tab title="results">
-		- 🟢 `contents` - 🟢 `loader` - 🔴 `errors` - 🔴 `pluginData` - 🔴 `pluginName` - 🔴
-		`resolveDir` - 🔴 `warnings` - 🔴 `watchDirs` - 🔴 `watchFiles`
-	</Tab>
+  <Tab title="options">- 🟢 `filter` - 🟢 `namespace`</Tab>
+  <Tab title="arguments">- 🟢 `path` - 🔴 `namespace` - 🔴 `suffix` - 🔴 `pluginData`</Tab>
+  <Tab title="results">
+    - 🟢 `contents` - 🟢 `loader` - 🔴 `errors` - 🔴 `pluginData` - 🔴 `pluginName` - 🔴 `resolveDir` - 🔴 `warnings` -
+    🔴 `watchDirs` - 🔴 `watchFiles`
+  </Tab>
 </Tabs>

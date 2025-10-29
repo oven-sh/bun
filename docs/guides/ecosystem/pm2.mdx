@@ -33,12 +33,12 @@ Alternatively, you can create a PM2 configuration file. Create a file named `pm2
 
 ```js pm2.config.js icon="file-code"
 module.exports = {
-	title: "app", // Name of your application
-	script: "index.ts", // Entry point of your application
-	interpreter: "bun", // Bun interpreter
-	env: {
-		PATH: `${process.env.HOME}/.bun/bin:${process.env.PATH}`, // Add "~/.bun/bin/bun" to PATH
-	},
+  title: "app", // Name of your application
+  script: "index.ts", // Entry point of your application
+  interpreter: "bun", // Bun interpreter
+  env: {
+    PATH: `${process.env.HOME}/.bun/bin:${process.env.PATH}`, // Add "~/.bun/bin/bun" to PATH
+  },
 };
 ```
 

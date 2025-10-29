@@ -14,7 +14,7 @@ const glob = new Glob("**/*.ts");
 
 // Scans the current working directory and each of its sub-directories recursively
 for await (const file of glob.scan(".")) {
-	console.log(file); // => "index.ts"
+  console.log(file); // => "index.ts"
 }
 ```
 
@@ -33,52 +33,52 @@ glob.match("index.js"); // => false
 
 ```ts
 class Glob {
-	scan(root: string | ScanOptions): AsyncIterable<string>;
-	scanSync(root: string | ScanOptions): Iterable<string>;
+  scan(root: string | ScanOptions): AsyncIterable<string>;
+  scanSync(root: string | ScanOptions): Iterable<string>;
 
-	match(path: string): boolean;
+  match(path: string): boolean;
 }
 
 interface ScanOptions {
-	/**
-	 * The root directory to start matching from. Defaults to `process.cwd()`
-	 */
-	cwd?: string;
+  /**
+   * The root directory to start matching from. Defaults to `process.cwd()`
+   */
+  cwd?: string;
 
-	/**
-	 * Allow patterns to match entries that begin with a period (`.`).
-	 *
-	 * @default false
-	 */
-	dot?: boolean;
+  /**
+   * Allow patterns to match entries that begin with a period (`.`).
+   *
+   * @default false
+   */
+  dot?: boolean;
 
-	/**
-	 * Return the absolute path for entries.
-	 *
-	 * @default false
-	 */
-	absolute?: boolean;
+  /**
+   * Return the absolute path for entries.
+   *
+   * @default false
+   */
+  absolute?: boolean;
 
-	/**
-	 * Indicates whether to traverse descendants of symbolic link directories.
-	 *
-	 * @default false
-	 */
-	followSymlinks?: boolean;
+  /**
+   * Indicates whether to traverse descendants of symbolic link directories.
+   *
+   * @default false
+   */
+  followSymlinks?: boolean;
 
-	/**
-	 * Throw an error when symbolic link is broken
-	 *
-	 * @default false
-	 */
-	throwErrorOnBrokenSymlink?: boolean;
+  /**
+   * Throw an error when symbolic link is broken
+   *
+   * @default false
+   */
+  throwErrorOnBrokenSymlink?: boolean;
 
-	/**
-	 * Return only files.
-	 *
-	 * @default true
-	 */
-	onlyFiles?: boolean;
+  /**
+   * Return only files.
+   *
+   * @default true
+   */
+  onlyFiles?: boolean;
 }
 ```
 
@@ -171,7 +171,7 @@ const files = await promises.glob(["**/*.ts", "**/*.js"]);
 
 // Exclude patterns
 const filtered = await promises.glob("**/*", {
-	exclude: ["node_modules/**", "*.test.*"],
+  exclude: ["node_modules/**", "*.test.*"],
 });
 ```
 

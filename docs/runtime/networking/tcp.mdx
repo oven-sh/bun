@@ -11,15 +11,15 @@ To start a TCP server with `Bun.listen`:
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.listen({
-	hostname: "localhost",
-	port: 8080,
-	socket: {
-		data(socket, data) {}, // message received from client
-		open(socket) {}, // socket opened
-		close(socket, error) {}, // socket closed
-		drain(socket) {}, // socket ready for more data
-		error(socket, error) {}, // error handler
-	},
+  hostname: "localhost",
+  port: 8080,
+  socket: {
+    data(socket, data) {}, // message received from client
+    open(socket) {}, // socket opened
+    close(socket, error) {}, // socket closed
+    drain(socket) {}, // socket ready for more data
+    error(socket, error) {}, // error handler
+  },
 });
 ```
 
@@ -29,15 +29,15 @@ In Bun, a set of handlers are declared once per server instead of assigning call
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.listen({
-	hostname: "localhost",
-	port: 8080,
-	socket: {
-		open(socket) {},
-		data(socket, data) {},
-		drain(socket) {},
-		close(socket, error) {},
-		error(socket, error) {},
-	},
+  hostname: "localhost",
+  port: 8080,
+  socket: {
+    open(socket) {},
+    data(socket, data) {},
+    drain(socket) {},
+    close(socket, error) {},
+    error(socket, error) {},
+  },
 });
 ```
 
@@ -51,16 +51,16 @@ Contextual data can be attached to a socket in the `open` handler.
 type SocketData = { sessionId: string };
 
 Bun.listen<SocketData>({
-	hostname: "localhost",
-	port: 8080,
-	socket: {
-		data(socket, data) {
-			socket.write(`${socket.data.sessionId}: ack`); // [!code ++]
-		},
-		open(socket) {
-			socket.data = { sessionId: "abcd" }; // [!code ++]
-		},
-	},
+  hostname: "localhost",
+  port: 8080,
+  socket: {
+    data(socket, data) {
+      socket.write(`${socket.data.sessionId}: ack`); // [!code ++]
+    },
+    open(socket) {
+      socket.data = { sessionId: "abcd" }; // [!code ++]
+    },
+  },
 });
 ```
 
@@ -68,16 +68,16 @@ To enable TLS, pass a `tls` object containing `key` and `cert` fields.
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.listen({
-	hostname: "localhost",
-	port: 8080,
-	socket: {
-		data(socket, data) {},
-	},
-	tls: {
-		// can be string, BunFile, TypedArray, Buffer, or array thereof
-		key: Bun.file("./key.pem"), // [!code ++]
-		cert: Bun.file("./cert.pem"), // [!code ++]
-	},
+  hostname: "localhost",
+  port: 8080,
+  socket: {
+    data(socket, data) {},
+  },
+  tls: {
+    // can be string, BunFile, TypedArray, Buffer, or array thereof
+    key: Bun.file("./key.pem"), // [!code ++]
+    cert: Bun.file("./cert.pem"), // [!code ++]
+  },
 });
 ```
 
@@ -85,13 +85,13 @@ The `key` and `cert` fields expect the _contents_ of your TLS key and certificat
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.listen({
-	// ...
-	tls: {
-		key: Bun.file("./key.pem"), // BunFile
-		key: fs.readFileSync("./key.pem"), // Buffer
-		key: fs.readFileSync("./key.pem", "utf8"), // string
-		key: [Bun.file("./key1.pem"), Bun.file("./key2.pem")], // array of above
-	},
+  // ...
+  tls: {
+    key: Bun.file("./key.pem"), // BunFile
+    key: fs.readFileSync("./key.pem"), // Buffer
+    key: fs.readFileSync("./key.pem", "utf8"), // string
+    key: [Bun.file("./key1.pem"), Bun.file("./key2.pem")], // array of above
+  },
 });
 ```
 
@@ -99,7 +99,7 @@ The result of `Bun.listen` is a server that conforms to the `TCPSocket` interfac
 
 ```ts server.ts icon="/icons/typescript.svg"
 const server = Bun.listen({
-	/* config*/
+  /* config*/
 });
 
 // stop listening
@@ -119,21 +119,21 @@ Use `Bun.connect` to connect to a TCP server. Specify the server to connect to w
 ```ts server.ts icon="/icons/typescript.svg"
 // The client
 const socket = await Bun.connect({
-	hostname: "localhost",
-	port: 8080,
+  hostname: "localhost",
+  port: 8080,
 
-	socket: {
-		data(socket, data) {},
-		open(socket) {},
-		close(socket, error) {},
-		drain(socket) {},
-		error(socket, error) {},
+  socket: {
+    data(socket, data) {},
+    open(socket) {},
+    close(socket, error) {},
+    drain(socket) {},
+    error(socket, error) {},
 
-		// client-specific handlers
-		connectError(socket, error) {}, // connection failed
-		end(socket) {}, // connection closed by server
-		timeout(socket) {}, // connection timed out
-	},
+    // client-specific handlers
+    connectError(socket, error) {}, // connection failed
+    end(socket) {}, // connection closed by server
+    timeout(socket) {}, // connection timed out
+  },
 });
 ```
 
@@ -142,8 +142,8 @@ To require TLS, specify `tls: true`.
 ```ts
 // The client
 const socket = await Bun.connect({
-	// ... config
-	tls: true, // [!code ++]
+  // ... config
+  tls: true, // [!code ++]
 });
 ```
 
@@ -157,28 +157,28 @@ Both TCP servers and sockets can be hot reloaded with new handlers.
 
 ```ts server.ts icon="/icons/typescript.svg"
 const server = Bun.listen({
-	/* config */
+  /* config */
 });
 
 // reloads handlers for all active server-side sockets
 server.reload({
-	socket: {
-		data() {
-			// new 'data' handler
-		},
-	},
+  socket: {
+    data() {
+      // new 'data' handler
+    },
+  },
 });
 ```
 
 ```ts client.ts icon="/icons/typescript.svg"
 const socket = await Bun.connect({
-	/* config */
+  /* config */
 });
 
 socket.reload({
-	data() {
-		// new 'data' handler
-	},
+  data() {
+    // new 'data' handler
+  },
 });
 ```
 
@@ -211,8 +211,8 @@ import { ArrayBufferSink } from "bun";
 
 const sink = new ArrayBufferSink();
 sink.start({
-	stream: true, // [!code ++]
-	highWaterMark: 1024,
+  stream: true, // [!code ++]
+  highWaterMark: 1024,
 });
 
 sink.write("h");
@@ -222,12 +222,12 @@ sink.write("l");
 sink.write("o");
 
 queueMicrotask(() => {
-	const data = sink.flush();
-	const wrote = socket.write(data);
-	if (wrote < data.byteLength) {
-		// put it back in the sink if the socket is full
-		sink.write(data.subarray(wrote));
-	}
+  const data = sink.flush();
+  const wrote = socket.write(data);
+  if (wrote < data.byteLength) {
+    // put it back in the sink if the socket is full
+    sink.write(data.subarray(wrote));
+  }
 });
 ```
 

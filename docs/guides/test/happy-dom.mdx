@@ -43,9 +43,9 @@ Now running `bun test` inside our project will automatically execute `happydom.t
 import { test, expect } from "bun:test";
 
 test("set button text", () => {
-	document.body.innerHTML = `<button>My button</button>`;
-	const button = document.querySelector("button");
-	expect(button?.innerText).toEqual("My button");
+  document.body.innerHTML = `<button>My button</button>`;
+  const button = document.querySelector("button");
+  expect(button?.innerText).toEqual("My button");
 });
 ```
 

@@ -22,24 +22,24 @@ A rough overview of the types (please refer to Bun's `bun.d.ts` for the full typ
 
 ```ts Plugin Types icon="/icons/typescript.svg"
 type PluginBuilder = {
-	onStart(callback: () => void): void;
-	onResolve: (
-		args: { filter: RegExp; namespace?: string },
-		callback: (args: { path: string; importer: string }) => {
-			path: string;
-			namespace?: string;
-		} | void,
-	) => void;
-	onLoad: (
-		args: { filter: RegExp; namespace?: string },
-		defer: () => Promise<void>,
-		callback: (args: { path: string }) => {
-			loader?: Loader;
-			contents?: string;
-			exports?: Record<string, any>;
-		},
-	) => void;
-	config: BuildConfig;
+  onStart(callback: () => void): void;
+  onResolve: (
+    args: { filter: RegExp; namespace?: string },
+    callback: (args: { path: string; importer: string }) => {
+      path: string;
+      namespace?: string;
+    } | void,
+  ) => void;
+  onLoad: (
+    args: { filter: RegExp; namespace?: string },
+    defer: () => Promise<void>,
+    callback: (args: { path: string }) => {
+      loader?: Loader;
+      contents?: string;
+      exports?: Record<string, any>;
+    },
+  ) => void;
+  config: BuildConfig;
 };
 
 type Loader = "js" | "jsx" | "ts" | "tsx" | "css" | "json" | "toml";
@@ -53,10 +53,10 @@ A plugin is defined as simple JavaScript object containing a `name` property and
 import type { BunPlugin } from "bun";
 
 const myPlugin: BunPlugin = {
-	name: "Custom loader",
-	setup(build) {
-		// implementation
-	},
+  name: "Custom loader",
+  setup(build) {
+    // implementation
+  },
 };
 ```
 
@@ -64,9 +64,9 @@ This plugin can be passed into the `plugins` array when calling `Bun.build`.
 
 ```ts index.ts icon="/icons/typescript.svg"
 await Bun.build({
-	entrypoints: ["./app.ts"],
-	outdir: "./out",
-	plugins: [myPlugin],
+  entrypoints: ["./app.ts"],
+  outdir: "./out",
+  plugins: [myPlugin],
 });
 ```
 
@@ -97,13 +97,13 @@ Registers a callback to be run when the bundler starts a new bundle.
 import { plugin } from "bun";
 
 plugin({
-	name: "onStart example",
+  name: "onStart example",
 
-	setup(build) {
-		build.onStart(() => {
-			console.log("Bundle started!");
-		});
-	},
+  setup(build) {
+    build.onStart(() => {
+      console.log("Bundle started!");
+    });
+  },
 });
 ```
 
@@ -113,28 +113,28 @@ For example:
 
 ```ts index.ts icon="/icons/typescript.svg"
 const result = await Bun.build({
-	entrypoints: ["./app.ts"],
-	outdir: "./dist",
-	sourcemap: "external",
-	plugins: [
-		{
-			name: "Sleep for 10 seconds",
-			setup(build) {
-				build.onStart(async () => {
-					await Bunlog.sleep(10_000);
-				});
-			},
-		},
-		{
-			name: "Log bundle time to a file",
-			setup(build) {
-				build.onStart(async () => {
-					const now = Date.now();
-					await Bun.$`echo ${now} > bundle-time.txt`;
-				});
-			},
-		},
-	],
+  entrypoints: ["./app.ts"],
+  outdir: "./dist",
+  sourcemap: "external",
+  plugins: [
+    {
+      name: "Sleep for 10 seconds",
+      setup(build) {
+        build.onStart(async () => {
+          await Bunlog.sleep(10_000);
+        });
+      },
+    },
+    {
+      name: "Log bundle time to a file",
+      setup(build) {
+        build.onStart(async () => {
+          const now = Date.now();
+          await Bun.$`echo ${now} > bundle-time.txt`;
+        });
+      },
+    },
+  ],
 });
 ```
 
@@ -170,16 +170,16 @@ For example, redirecting all imports to `images/` to `./public/images/`:
 import { plugin } from "bun";
 
 plugin({
-	name: "onResolve example",
-	setup(build) {
-		build.onResolve({ filter: /.*/, namespace: "file" }, args => {
-			if (args.path.startsWith("images/")) {
-				return {
-					path: args.path.replace("images/", "./public/images/"),
-				};
-			}
-		});
-	},
+  name: "onResolve example",
+  setup(build) {
+    build.onResolve({ filter: /.*/, namespace: "file" }, args => {
+      if (args.path.startsWith("images/")) {
+        return {
+          path: args.path.replace("images/", "./public/images/"),
+        };
+      }
+    });
+  },
 });
 ```
 
@@ -252,39 +252,39 @@ This is useful for returning contents of a module that depends on other modules.
 import { plugin } from "bun";
 
 plugin({
-	name: "track imports",
-	setup(build) {
-		const transpiler = new Bun.Transpiler();
+  name: "track imports",
+  setup(build) {
+    const transpiler = new Bun.Transpiler();
 
-		let trackedImports: Record<string, number> = {};
+    let trackedImports: Record<string, number> = {};
 
-		// Each module that goes through this onLoad callback
-		// will record its imports in `trackedImports`
-		build.onLoad({ filter: /\.ts/ }, async ({ path }) => {
-			const contents = await Bun.file(path).arrayBuffer();
+    // Each module that goes through this onLoad callback
+    // will record its imports in `trackedImports`
+    build.onLoad({ filter: /\.ts/ }, async ({ path }) => {
+      const contents = await Bun.file(path).arrayBuffer();
 
-			const imports = transpiler.scanImports(contents);
+      const imports = transpiler.scanImports(contents);
 
-			for (const i of imports) {
-				trackedImports[i.path] = (trackedImports[i.path] || 0) + 1;
-			}
+      for (const i of imports) {
+        trackedImports[i.path] = (trackedImports[i.path] || 0) + 1;
+      }
 
-			return undefined;
-		});
+      return undefined;
+    });
 
-		build.onLoad({ filter: /stats\.json/ }, async ({ defer }) => {
-			// Wait for all files to be loaded, ensuring
-			// that every file goes through the above `onLoad()` function
-			// and their imports tracked
-			await defer();
+    build.onLoad({ filter: /stats\.json/ }, async ({ defer }) => {
+      // Wait for all files to be loaded, ensuring
+      // that every file goes through the above `onLoad()` function
+      // and their imports tracked
+      await defer();
 
-			// Emit JSON containing the stats of each import
-			return {
-				contents: `export default ${JSON.stringify(trackedImports)}`,
-				loader: "json",
-			};
-		});
-	},
+      // Emit JSON containing the stats of each import
+      return {
+        contents: `export default ${JSON.stringify(trackedImports)}`,
+        loader: "json",
+      };
+    });
+  },
 });
 ```
 
@@ -366,26 +366,26 @@ And to use it in Bun.build():
 ```typescript
 import myNativeAddon from "./my-native-addon";
 Bun.build({
-	entrypoints: ["./app.tsx"],
-	plugins: [
-		{
-			name: "my-plugin",
+  entrypoints: ["./app.tsx"],
+  plugins: [
+    {
+      name: "my-plugin",
 
-			setup(build) {
-				build.onBeforeParse(
-					{
-						namespace: "file",
-						filter: "**/*.tsx",
-					},
-					{
-						napiModule: myNativeAddon,
-						symbol: "replace_foo_with_bar",
-						// external: myNativeAddon.getSharedState()
-					},
-				);
-			},
-		},
-	],
+      setup(build) {
+        build.onBeforeParse(
+          {
+            namespace: "file",
+            filter: "**/*.tsx",
+          },
+          {
+            napiModule: myNativeAddon,
+            symbol: "replace_foo_with_bar",
+            // external: myNativeAddon.getSharedState()
+          },
+        );
+      },
+    },
+  ],
 });
 ```
 

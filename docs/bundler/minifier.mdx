@@ -58,9 +58,9 @@ When using Bun's bundler programmatically, configure minification through the `m
 
 ```ts
 await Bun.build({
-	entrypoints: ["./index.ts"],
-	outdir: "./out",
-	minify: true, // Enable all minification modes
+  entrypoints: ["./index.ts"],
+  outdir: "./out",
+  minify: true, // Enable all minification modes
 });
 ```
 
@@ -68,13 +68,13 @@ For granular control, pass an object:
 
 ```ts
 await Bun.build({
-	entrypoints: ["./index.ts"],
-	outdir: "./out",
-	minify: {
-		whitespace: true,
-		syntax: true,
-		identifiers: true,
-	},
+  entrypoints: ["./index.ts"],
+  outdir: "./out",
+  minify: {
+    whitespace: true,
+    syntax: true,
+    identifiers: true,
+  },
 });
 ```
 
@@ -553,7 +553,7 @@ Optimizes if statements with constant conditions.
 if (true) x;
 if (false) x;
 if (x) {
-	a;
+  a;
 }
 if (x) {
 } else y;
@@ -574,17 +574,17 @@ Removes unreachable code and code without side effects.
 
 ```ts Input
 if (false) {
-	unreachable();
+  unreachable();
 }
 function foo() {
-	return x;
-	deadCode();
+  return x;
+  deadCode();
 }
 ```
 
 ```ts Output
 function foo() {
-	return x;
+  return x;
 }
 ```
 
@@ -596,7 +596,7 @@ Removes branches that can never execute.
 
 ```ts Input
 while (false) {
-	neverRuns();
+  neverRuns();
 }
 ```
 
@@ -629,7 +629,7 @@ Removes unnecessary braces around single statements.
 
 ```ts Input
 if (condition) {
-	doSomething();
+  doSomething();
 }
 ```
 
@@ -645,9 +645,9 @@ Inlines TypeScript enum values at compile time.
 
 ```ts Input
 enum Color {
-	Red,
-	Green,
-	Blue,
+  Red,
+  Green,
+  Blue,
 }
 const x = Color.Red;
 ```
@@ -679,15 +679,15 @@ Renames local variables to shorter names based on usage frequency.
 
 ```ts Input
 function calculateSum(firstNumber, secondNumber) {
-	const result = firstNumber + secondNumber;
-	return result;
+  const result = firstNumber + secondNumber;
+  return result;
 }
 ```
 
 ```ts Output
 function a(b, c) {
-	const d = b + c;
-	return d;
+  const d = b + c;
+  return d;
 }
 ```
 
@@ -713,14 +713,14 @@ Removes all unnecessary whitespace.
 
 ```ts Input
 function add(a, b) {
-	return a + b;
+  return a + b;
 }
 let x = 10;
 ```
 
 ```ts Output
 function add(a, b) {
-	return a + b;
+  return a + b;
 }
 let x = 10;
 ```
@@ -772,7 +772,7 @@ Removes comments except important license comments.
 /* So is this */
 /*! But this license comment is kept */
 function test() {
-	/* inline comment */
+  /* inline comment */
 }
 ```
 
@@ -789,8 +789,8 @@ Removes whitespace in object and array literals.
 
 ```ts Input
 const obj = {
-	name: "John",
-	age: 30,
+  name: "John",
+  age: 30,
 };
 const arr = [1, 2, 3];
 ```
@@ -808,10 +808,10 @@ Removes whitespace in control structures.
 
 ```ts Input
 if (condition) {
-	doSomething();
+  doSomething();
 }
 for (let i = 0; i < 10; i++) {
-	console.log(i);
+  console.log(i);
 }
 ```
 
@@ -828,14 +828,14 @@ Removes whitespace in function declarations.
 
 ```ts Input
 function myFunction(param1, param2) {
-	return param1 + param2;
+  return param1 + param2;
 }
 const arrow = (a, b) => a + b;
 ```
 
 ```ts Output
 function myFunction(a, b) {
-	return a + b;
+  return a + b;
 }
 const arrow = (a, b) => a + b;
 ```
@@ -925,7 +925,7 @@ new Array(x, y);
 {
 }
 {
-	a: 1;
+  a: 1;
 }
 [][(x, y)];
 ```
@@ -1026,9 +1026,9 @@ const d = 4;
 
 ```ts Output
 let a = 1,
-	b = 2;
+  b = 2;
 const c = 3,
-	d = 4;
+  d = 4;
 ```
 
 ### Expression statement merging
@@ -1103,7 +1103,7 @@ Inlines enum values used as computed object properties.
 
 ```ts Input
 enum Keys {
-	FOO = "foo",
+  FOO = "foo",
 }
 const obj = { [Keys.FOO]: value };
 ```
@@ -1136,10 +1136,10 @@ Uses expression body syntax when an arrow function only returns a value.
 
 ```ts Input
 () => {
-	return x;
+  return x;
 };
 a => {
-	return a + 1;
+  return a + 1;
 };
 ```
 
@@ -1161,10 +1161,10 @@ Uses shorthand syntax when property name and value identifier match.
 
 ```ts Output
 {
-	(x, y);
+  (x, y);
 }
 {
-	(name, age);
+  (name, age);
 }
 ```
 
@@ -1196,14 +1196,14 @@ Removes `debugger` statements from code.
 
 ```ts Input
 function test() {
-	debugger;
-	return x;
+  debugger;
+  return x;
 }
 ```
 
 ```ts Output
 function test() {
-	return x;
+  return x;
 }
 ```
 
@@ -1253,12 +1253,12 @@ Or in the JavaScript API:
 
 ```ts
 await Bun.build({
-	entrypoints: ["./index.ts"],
-	outdir: "./out",
-	minify: {
-		identifiers: true,
-		keepNames: true,
-	},
+  entrypoints: ["./index.ts"],
+  outdir: "./out",
+  minify: {
+    identifiers: true,
+    keepNames: true,
+  },
 });
 ```
 

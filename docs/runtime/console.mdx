@@ -4,9 +4,8 @@ description: The console object in Bun
 ---
 
 <Note>
-	Bun provides a browser- and Node.js-compatible
-	[console](https://developer.mozilla.org/en-US/docs/Web/API/console) global. This page only
-	documents Bun-native APIs.
+  Bun provides a browser- and Node.js-compatible [console](https://developer.mozilla.org/en-US/docs/Web/API/console)
+  global. This page only documents Bun-native APIs.
 </Note>
 
 ---
@@ -36,7 +35,7 @@ In Bun, the `console` object can be used as an `AsyncIterable` to sequentially r
 
 ```ts adder.ts icon="/icons/typescript.svg"
 for await (const line of console) {
-	console.log(line);
+  console.log(line);
 }
 ```
 
@@ -48,8 +47,8 @@ console.write(`Count: 0\n> `);
 
 let count = 0;
 for await (const line of console) {
-	count += Number(line);
-	console.write(`Count: ${count}\n> `);
+  count += Number(line);
+  console.write(`Count: ${count}\n> `);
 }
 ```
 

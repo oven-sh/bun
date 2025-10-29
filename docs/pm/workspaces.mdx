@@ -33,30 +33,30 @@ In the root `package.json`, the `"workspaces"` key is used to indicate which sub
 
 ```json
 {
-	"name": "my-project",
-	"version": "1.0.0",
-	"workspaces": ["packages/*"],
-	"devDependencies": {
-		"example-package-in-monorepo": "workspace:*"
-	}
+  "name": "my-project",
+  "version": "1.0.0",
+  "workspaces": ["packages/*"],
+  "devDependencies": {
+    "example-package-in-monorepo": "workspace:*"
+  }
 }
 ```
 
 <Note>
-	**Glob support** — Bun supports full glob syntax in `"workspaces"` (see
-	[here](/runtime/glob#supported-glob-patterns) for a comprehensive list of supported syntax),
-	_except_ for exclusions (e.g. `!**/excluded/**`), which are not implemented yet.
+  **Glob support** — Bun supports full glob syntax in `"workspaces"` (see [here](/runtime/glob#supported-glob-patterns)
+  for a comprehensive list of supported syntax), _except_ for exclusions (e.g. `!**/excluded/**`), which are not
+  implemented yet.
 </Note>
 
 Each workspace has it's own `package.json`. When referencing other packages in the monorepo, semver or workspace protocols (e.g. `workspace:*`) can be used as the version field in your `package.json`.
 
 ```json
 {
-	"name": "pkg-a",
-	"version": "1.0.0",
-	"dependencies": {
-		"pkg-b": "workspace:*"
-	}
+  "name": "pkg-a",
+  "version": "1.0.0",
+  "dependencies": {
+    "pkg-b": "workspace:*"
+  }
 }
 ```
 

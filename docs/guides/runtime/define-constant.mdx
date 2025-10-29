@@ -17,9 +17,9 @@ These statically-known values are used by Bun for dead code elimination and othe
 
 ```ts
 if (process.env.NODE_ENV === "production") {
-	console.log("Production mode");
+  console.log("Production mode");
 } else {
-	console.log("Development mode");
+  console.log("Development mode");
 }
 ```
 
@@ -29,10 +29,10 @@ Before the code reaches the JavaScript engine, Bun replaces `process.env.NODE_EN
 
 ```ts
 if ("production" === "production") {
-	// [!code ++]
-	console.log("Production mode");
+  // [!code ++]
+  console.log("Production mode");
 } else {
-	console.log("Development mode");
+  console.log("Development mode");
 }
 ```
 
@@ -44,10 +44,10 @@ Since `"production" === "production"` is always `true`, Bun replaces the entire 
 
 ```ts
 if (true) {
-	// [!code ++]
-	console.log("Production mode");
+  // [!code ++]
+  console.log("Production mode");
 } else {
-	console.log("Development mode");
+  console.log("Development mode");
 }
 ```
 
@@ -77,9 +77,9 @@ This can be useful when Server-Side Rendering (SSR) or when you want to make sur
 
 ```js
 if (typeof window !== "undefined") {
-	console.log("Client-side code");
+  console.log("Client-side code");
 } else {
-	console.log("Server-side code");
+  console.log("Server-side code");
 }
 ```
 

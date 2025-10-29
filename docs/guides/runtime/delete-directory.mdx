@@ -24,13 +24,13 @@ You can also use it without `force` to ensure the directory exists:
 
 ```ts delete-directory.ts icon="/icons/typescript.svg"
 try {
-	await rm("path/to/directory", { recursive: true });
+  await rm("path/to/directory", { recursive: true });
 } catch (error) {
-	if (error.code === "ENOENT") {
-		console.log("Directory doesn't exist");
-	} else {
-		throw error;
-	}
+  if (error.code === "ENOENT") {
+    console.log("Directory doesn't exist");
+  } else {
+    throw error;
+  }
 }
 ```
 

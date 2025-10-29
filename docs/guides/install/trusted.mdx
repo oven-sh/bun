@@ -7,9 +7,8 @@ mode: center
 Unlike other npm clients, Bun does not execute arbitrary lifecycle scripts for installed dependencies, such as `postinstall` and `node-gyp` builds. These scripts represent a potential security risk, as they can execute arbitrary code on your machine.
 
 <Note>
-	Bun includes a default allowlist of popular packages containing `postinstall` scripts that are
-	known to be safe. You can see this list
-	[here](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt).
+  Bun includes a default allowlist of popular packages containing `postinstall` scripts that are known to be safe. You
+  can see this list [here](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt).
 </Note>
 
 ---
@@ -24,15 +23,15 @@ If you are seeing one of the following errors, you are probably trying to use a 
 To allow Bun to execute lifecycle scripts for a specific package, add the package to `trustedDependencies` in your package.json file. You can do this automatically by running the command `bun pm trust <pkg>`.
 
 <Note>
-	Note that this only allows lifecycle scripts for the specific package listed in
-	`trustedDependencies`, _not_ the dependencies of that dependency!
+  Note that this only allows lifecycle scripts for the specific package listed in `trustedDependencies`, _not_ the
+  dependencies of that dependency!
 </Note>
 
 ```json package.json icon="file-json"
 {
-	"name": "my-app",
-	"version": "1.0.0",
-	"trustedDependencies": ["my-trusted-package"] // [!code ++]
+  "name": "my-app",
+  "version": "1.0.0",
+  "trustedDependencies": ["my-trusted-package"] // [!code ++]
 }
 ```
 

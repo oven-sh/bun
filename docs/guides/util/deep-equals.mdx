@@ -31,7 +31,7 @@ Bun.deepEquals([, 1], [undefined, 1], true); // false
 
 // object literals vs instances w/ same properties
 class Foo {
-	a = 1;
+  a = 1;
 }
 Bun.deepEquals(new Foo(), { a: 1 }, true); // false
 ```

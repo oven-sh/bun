@@ -19,11 +19,11 @@ To render a React component to an HTML stream server-side (SSR):
 import { renderToReadableStream } from "react-dom/server";
 
 function Component(props: { message: string }) {
-	return (
-		<body>
-			<h1>{props.message}</h1>
-		</body>
-	);
+  return (
+    <body>
+      <h1>{props.message}</h1>
+    </body>
+  );
 }
 
 const stream = await renderToReadableStream(<Component message="Hello from server!" />);
@@ -35,12 +35,12 @@ Combining this with `Bun.serve()`, we get a simple SSR HTTP server:
 
 ```tsx server.ts icon="/icons/typescript.svg"
 Bun.serve({
-	async fetch() {
-		const stream = await renderToReadableStream(<Component message="Hello from server!" />);
-		return new Response(stream, {
-			headers: { "Content-Type": "text/html" },
-		});
-	},
+  async fetch() {
+    const stream = await renderToReadableStream(<Component message="Hello from server!" />);
+    return new Response(stream, {
+      headers: { "Content-Type": "text/html" },
+    });
+  },
 });
 ```
 

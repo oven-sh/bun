@@ -23,7 +23,7 @@ hello();
 
 ```ts hello.ts icon="/icons/typescript.svg"
 export function hello() {
-	console.log("Hello world!");
+  console.log("Hello world!");
 }
 ```
 
@@ -80,7 +80,7 @@ hello();
 
 ```ts hello.js icon="/icons/typescript.svg"
 function hello() {
-	console.log("Hello world!");
+  console.log("Hello world!");
 }
 
 exports.hello = hello;
@@ -187,14 +187,14 @@ Once it finds the `foo` package, Bun reads the `package.json` to determine how t
 
 ```json package.json icon="file-json"
 {
-	"name": "foo",
-	"exports": {
-		"bun": "./index.js",
-		"node": "./index.js",
-		"require": "./index.js", // if importer is CommonJS
-		"import": "./index.mjs", // if importer is ES module
-		"default": "./index.js"
-	}
+  "name": "foo",
+  "exports": {
+    "bun": "./index.js",
+    "node": "./index.js",
+    "require": "./index.js", // if importer is CommonJS
+    "import": "./index.mjs", // if importer is ES module
+    "default": "./index.js"
+  }
 }
 ```
 
@@ -204,10 +204,10 @@ Bun respects subpath [`"exports"`](https://nodejs.org/api/packages.html#subpath-
 
 ```json package.json icon="file-json"
 {
-	"name": "foo",
-	"exports": {
-		".": "./index.js"
-	}
+  "name": "foo",
+  "exports": {
+    ".": "./index.js"
+  }
 }
 ```
 
@@ -215,13 +215,13 @@ Subpath imports and conditional imports work in conjunction with each other.
 
 ```json package.json icon="file-json"
 {
-	"name": "foo",
-	"exports": {
-		".": {
-			"import": "./index.mjs",
-			"require": "./index.js"
-		}
-	}
+  "name": "foo",
+  "exports": {
+    ".": {
+      "import": "./index.mjs",
+      "require": "./index.js"
+    }
+  }
 }
 ```
 
@@ -233,19 +233,18 @@ import stuff from "foo/index.mjs"; // this doesn't
 ```
 
 <Note>
-	**Shipping TypeScript** — Note that Bun supports the special `"bun"` export condition. If your
-	library is written in TypeScript, you can publish your (un-transpiled!) TypeScript files to `npm`
-	directly. If you specify your package's `*.ts` entrypoint in the `"bun"` condition, Bun will
-	directly import and execute your TypeScript source files.
+  **Shipping TypeScript** — Note that Bun supports the special `"bun"` export condition. If your library is written in
+  TypeScript, you can publish your (un-transpiled!) TypeScript files to `npm` directly. If you specify your package's
+  `*.ts` entrypoint in the `"bun"` condition, Bun will directly import and execute your TypeScript source files.
 </Note>
 
 If `exports` is not defined, Bun falls back to `"module"` (ESM imports only) then [`"main"`](https://nodejs.org/api/packages.html#main).
 
 ```json package.json icon="file-json"
 {
-	"name": "foo",
-	"module": "./index.js",
-	"main": "./index.js"
+  "name": "foo",
+  "module": "./index.js",
+  "main": "./index.js"
 }
 ```
 
@@ -267,9 +266,9 @@ You can also use `conditions` programmatically with `Bun.build`:
 
 ```ts build.ts icon="/icons/typescript.svg"
 await Bun.build({
-	conditions: ["react-server"],
-	target: "bun",
-	entryPoints: ["./app/foo/route.js"],
+  conditions: ["react-server"],
+  target: "bun",
+  entryPoints: ["./app/foo/route.js"],
 });
 ```
 
@@ -281,12 +280,12 @@ In the spirit of treating TypeScript as a first-class citizen, the Bun runtime w
 
 ```json tsconfig.json icon="file-json"
 {
-	"compilerOptions": {
-		"paths": {
-			"config": ["./config.ts"], // map specifier to file
-			"components/*": ["components/*"] // wildcard matching
-		}
-	}
+  "compilerOptions": {
+    "paths": {
+      "config": ["./config.ts"], // map specifier to file
+      "components/*": ["components/*"] // wildcard matching
+    }
+  }
 }
 ```
 
@@ -298,7 +297,7 @@ Bun's JavaScript runtime has native support for CommonJS. When Bun's JavaScript 
 
 ```js
 (function (module, exports, require) {
-	// transpiled module
+  // transpiled module
 })(module, exports, require);
 ```
 

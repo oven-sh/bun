@@ -12,11 +12,11 @@ This works because Bun's `Response` object allows any async iterable as its body
 import { Readable } from "stream";
 import { serve } from "bun";
 serve({
-	port: 3000,
-	fetch(req) {
-		return new Response(Readable.from(["Hello, ", "world!"]), {
-			headers: { "Content-Type": "text/plain" },
-		});
-	},
+  port: 3000,
+  fetch(req) {
+    return new Response(Readable.from(["Hello, ", "world!"]), {
+      headers: { "Content-Type": "text/plain" },
+    });
+  },
 });
 ```

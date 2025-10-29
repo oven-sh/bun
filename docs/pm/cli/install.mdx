@@ -20,8 +20,8 @@ The `bun` CLI contains a Node.js-compatible package manager designed to be a dra
 **⚡️ 25x faster** — Switch from `npm install` to `bun install` in any Node.js project to make your installations up to 25x faster.
 
 <Frame>
-	![Bun installation speed
-	comparison](https://user-images.githubusercontent.com/709451/147004342-571b6123-17a9-49a2-8bfd-dcfc5204047e.png)
+  ![Bun installation speed
+  comparison](https://user-images.githubusercontent.com/709451/147004342-571b6123-17a9-49a2-8bfd-dcfc5204047e.png)
 </Frame>
 
 </Note>
@@ -74,9 +74,9 @@ To tell Bun to allow lifecycle scripts for a particular package, add the package
 
 ```json package.json icon="file-json"
 {
-	"name": "my-app",
-	"version": "1.0.0",
-	"trustedDependencies": ["my-trusted-package"] // [!code ++]
+  "name": "my-app",
+  "version": "1.0.0",
+  "trustedDependencies": ["my-trusted-package"] // [!code ++]
 }
 ```
 
@@ -96,12 +96,12 @@ Bun supports `"workspaces"` in package.json. For complete documentation refer to
 
 ```json package.json icon="file-json"
 {
-	"name": "my-app",
-	"version": "1.0.0",
-	"workspaces": ["packages/*"], // [!code ++]
-	"dependencies": {
-		"preact": "^10.5.13"
-	}
+  "name": "my-app",
+  "version": "1.0.0",
+  "workspaces": ["packages/*"], // [!code ++]
+  "dependencies": {
+    "preact": "^10.5.13"
+  }
 }
 ```
 
@@ -129,14 +129,14 @@ Bun supports npm's `"overrides"` and Yarn's `"resolutions"` in `package.json`. T
 
 ```json package.json file="file-json"
 {
-	"name": "my-app",
-	"dependencies": {
-		"foo": "^2.0.0"
-	},
-	"overrides": {
-		// [!code ++]
-		"bar": "~4.4.0" // [!code ++]
-	} // [!code ++]
+  "name": "my-app",
+  "dependencies": {
+    "foo": "^2.0.0"
+  },
+  "overrides": {
+    // [!code ++]
+    "bar": "~4.4.0" // [!code ++]
+  } // [!code ++]
 }
 ```
 
@@ -214,14 +214,14 @@ Bun supports installing dependencies from Git, GitHub, and local or remotely-hos
 
 ```json package.json icon="file-json"
 {
-	"dependencies": {
-		"dayjs": "git+https://github.com/iamkun/dayjs.git",
-		"lodash": "git+ssh://github.com/lodash/lodash.git#4.17.21",
-		"moment": "git@github.com:moment/moment.git",
-		"zod": "github:colinhacks/zod",
-		"react": "https://registry.npmjs.org/react/-/react-18.2.0.tgz",
-		"bun-types": "npm:@types/bun"
-	}
+  "dependencies": {
+    "dayjs": "git+https://github.com/iamkun/dayjs.git",
+    "lodash": "git+ssh://github.com/lodash/lodash.git#4.17.21",
+    "moment": "git@github.com:moment/moment.git",
+    "zod": "github:colinhacks/zod",
+    "react": "https://registry.npmjs.org/react/-/react-18.2.0.tgz",
+    "bun-types": "npm:@types/bun"
+  }
 }
 ```
 
@@ -421,19 +421,19 @@ The workspace packages list and catalogs are moved to the `workspaces` field in 
 
 ```json package.json icon="file-json"
 {
-	"workspaces": {
-		"packages": ["apps/*", "packages/*"],
-		"catalog": {
-			"react": "^18.0.0",
-			"typescript": "^5.0.0"
-		},
-		"catalogs": {
-			"build": {
-				"webpack": "^5.0.0",
-				"babel": "^7.0.0"
-			}
-		}
-	}
+  "workspaces": {
+    "packages": ["apps/*", "packages/*"],
+    "catalog": {
+      "react": "^18.0.0",
+      "typescript": "^5.0.0"
+    },
+    "catalogs": {
+      "build": {
+        "webpack": "^5.0.0",
+        "babel": "^7.0.0"
+      }
+    }
+  }
 }
 ```
 
@@ -443,10 +443,10 @@ Dependencies using pnpm's `catalog:` protocol are preserved:
 
 ```json package.json icon="file-json"
 {
-	"dependencies": {
-		"react": "catalog:",
-		"webpack": "catalog:build"
-	}
+  "dependencies": {
+    "react": "catalog:",
+    "webpack": "catalog:build"
+  }
 }
 ```
 

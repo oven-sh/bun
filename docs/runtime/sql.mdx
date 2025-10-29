@@ -81,12 +81,12 @@ const mysql2 = new SQL("mysql2://user:password@localhost:3306/database"); // mys
 
 // Using options object
 const mysql3 = new SQL({
-	adapter: "mysql",
-	hostname: "localhost",
-	port: 3306,
-	database: "myapp",
-	username: "dbuser",
-	password: "secretpass",
+  adapter: "mysql",
+  hostname: "localhost",
+  port: 3306,
+  database: "myapp",
+  username: "dbuser",
+  password: "secretpass",
 });
 
 // Works with parameters - automatically uses prepared statements
@@ -94,14 +94,14 @@ const users = await mysql`SELECT * FROM users WHERE id = ${userId}`;
 
 // Transactions work the same as PostgreSQL
 await mysql.begin(async tx => {
-	await tx`INSERT INTO users (name) VALUES (${"Alice"})`;
-	await tx`UPDATE accounts SET balance = balance - 100 WHERE user_id = ${userId}`;
+  await tx`INSERT INTO users (name) VALUES (${"Alice"})`;
+  await tx`UPDATE accounts SET balance = balance - 100 WHERE user_id = ${userId}`;
 });
 
 // Bulk inserts
 const newUsers = [
-	{ name: "Alice", email: "alice@example.com" },
-	{ name: "Bob", email: "bob@example.com" },
+  { name: "Alice", email: "alice@example.com" },
+  { name: "Bob", email: "bob@example.com" },
 ];
 await mysql`INSERT INTO users ${mysql(newUsers)}`;
 ```
@@ -157,8 +157,8 @@ const db = new SQL("sqlite://myapp.db");
 
 // Using options object
 const db2 = new SQL({
-	adapter: "sqlite",
-	filename: "./data/app.db",
+  adapter: "sqlite",
+  filename: "./data/app.db",
 });
 
 // For simple filenames, specify adapter explicitly
@@ -206,17 +206,17 @@ SQLite databases support additional configuration options:
 
 ```ts
 const db = new SQL({
-	adapter: "sqlite",
-	filename: "app.db",
+  adapter: "sqlite",
+  filename: "app.db",
 
-	// SQLite-specific options
-	readonly: false, // Open in read-only mode
-	create: true, // Create database if it doesn't exist
-	readwrite: true, // Open for reading and writing
+  // SQLite-specific options
+  readonly: false, // Open in read-only mode
+  create: true, // Create database if it doesn't exist
+  readwrite: true, // Open for reading and writing
 
-	// Additional Bun:sqlite options
-	strict: true, // Enable strict mode
-	safeIntegers: false, // Use JavaScript numbers for integers
+  // Additional Bun:sqlite options
+  strict: true, // Enable strict mode
+  safeIntegers: false, // Use JavaScript numbers for integers
 });
 ```
 
@@ -244,8 +244,8 @@ const [user] = await sql`
 
 // Using object helper for cleaner syntax
 const userData = {
-	name: "Alice",
-	email: "alice@example.com",
+  name: "Alice",
+  email: "alice@example.com",
 };
 
 const [newUser] = await sql`
@@ -261,9 +261,9 @@ You can also pass arrays of objects to the SQL template literal and it will be e
 
 ```ts
 const users = [
-	{ name: "Alice", email: "alice@example.com" },
-	{ name: "Bob", email: "bob@example.com" },
-	{ name: "Charlie", email: "charlie@example.com" },
+  { name: "Alice", email: "alice@example.com" },
+  { name: "Bob", email: "bob@example.com" },
+  { name: "Charlie", email: "charlie@example.com" },
 ];
 
 await sql`INSERT INTO users ${sql(users)}`;
@@ -275,9 +275,9 @@ You can use `sql(object, ...string)` to pick which columns to insert. Each of th
 
 ```ts
 const user = {
-	name: "Alice",
-	email: "alice@example.com",
-	age: 25,
+  name: "Alice",
+  email: "alice@example.com",
+  age: 25,
 };
 
 await sql`INSERT INTO users ${sql(user, "name", "email")}`;
@@ -303,8 +303,8 @@ This returns something like:
 
 ```ts
 [
-	["Alice", "alice@example.com"],
-	["Bob", "bob@example.com"],
+  ["Alice", "alice@example.com"],
+  ["Bob", "bob@example.com"],
 ];
 ```
 
@@ -371,9 +371,9 @@ Value lists can also be created dynamically, making where in queries simple too.
 await sql`SELECT * FROM users WHERE id IN ${sql([1, 2, 3])}`;
 
 const users = [
-	{ id: 1, name: "Alice" },
-	{ id: 2, name: "Bob" },
-	{ id: 3, name: "Charlie" },
+  { id: 1, name: "Alice" },
+  { id: 2, name: "Bob" },
+  { id: 3, name: "Charlie" },
 ];
 await sql`SELECT * FROM users WHERE id IN ${sql(users, "id")}`;
 ```
@@ -392,10 +392,7 @@ await sql`SELECT * FROM products WHERE ids = ANY(${sql.array([1, 2, 3])})`;
 // Generates: SELECT * FROM products WHERE ids = ANY(ARRAY[1, 2, 3])
 ```
 
-<Note>
-	`sql.array` is PostgreSQL-only. Multi-dimensional arrays and NULL elements may not be supported
-	yet.
-</Note>
+<Note>`sql.array` is PostgreSQL-only. Multi-dimensional arrays and NULL elements may not be supported yet.</Note>
 
 ---
 
@@ -605,45 +602,45 @@ You can configure your database connection manually by passing options to the SQ
 import { SQL } from "bun";
 
 const db = new SQL({
-	// Required for MySQL when using options object
-	adapter: "mysql",
+  // Required for MySQL when using options object
+  adapter: "mysql",
 
-	// Connection details
-	hostname: "localhost",
-	port: 3306,
-	database: "myapp",
-	username: "dbuser",
-	password: "secretpass",
+  // Connection details
+  hostname: "localhost",
+  port: 3306,
+  database: "myapp",
+  username: "dbuser",
+  password: "secretpass",
 
-	// Unix socket connection (alternative to hostname/port)
-	// socket: "/var/run/mysqld/mysqld.sock",
+  // Unix socket connection (alternative to hostname/port)
+  // socket: "/var/run/mysqld/mysqld.sock",
 
-	// Connection pool settings
-	max: 20, // Maximum connections in pool (default: 10)
-	idleTimeout: 30, // Close idle connections after 30s
-	maxLifetime: 0, // Connection lifetime in seconds (0 = forever)
-	connectionTimeout: 30, // Timeout when establishing new connections
+  // Connection pool settings
+  max: 20, // Maximum connections in pool (default: 10)
+  idleTimeout: 30, // Close idle connections after 30s
+  maxLifetime: 0, // Connection lifetime in seconds (0 = forever)
+  connectionTimeout: 30, // Timeout when establishing new connections
 
-	// SSL/TLS options
-	ssl: "prefer", // or "disable", "require", "verify-ca", "verify-full"
-	// tls: {
-	//   rejectUnauthorized: true,
-	//   ca: "path/to/ca.pem",
-	//   key: "path/to/key.pem",
-	//   cert: "path/to/cert.pem",
-	// },
+  // SSL/TLS options
+  ssl: "prefer", // or "disable", "require", "verify-ca", "verify-full"
+  // tls: {
+  //   rejectUnauthorized: true,
+  //   ca: "path/to/ca.pem",
+  //   key: "path/to/key.pem",
+  //   cert: "path/to/cert.pem",
+  // },
 
-	// Callbacks
-	onconnect: client => {
-		console.log("Connected to MySQL");
-	},
-	onclose: (client, err) => {
-		if (err) {
-			console.error("MySQL connection error:", err);
-		} else {
-			console.log("MySQL connection closed");
-		}
-	},
+  // Callbacks
+  onconnect: client => {
+    console.log("Connected to MySQL");
+  },
+  onclose: (client, err) => {
+    if (err) {
+      console.error("MySQL connection error:", err);
+    } else {
+      console.log("MySQL connection closed");
+    }
+  },
 });
 ```
 
@@ -653,42 +650,42 @@ const db = new SQL({
 import { SQL } from "bun";
 
 const db = new SQL({
-	// Connection details (adapter is auto-detected as PostgreSQL)
-	url: "postgres://user:pass@localhost:5432/dbname",
+  // Connection details (adapter is auto-detected as PostgreSQL)
+  url: "postgres://user:pass@localhost:5432/dbname",
 
-	// Alternative connection parameters
-	hostname: "localhost",
-	port: 5432,
-	database: "myapp",
-	username: "dbuser",
-	password: "secretpass",
+  // Alternative connection parameters
+  hostname: "localhost",
+  port: 5432,
+  database: "myapp",
+  username: "dbuser",
+  password: "secretpass",
 
-	// Connection pool settings
-	max: 20, // Maximum connections in pool
-	idleTimeout: 30, // Close idle connections after 30s
-	maxLifetime: 0, // Connection lifetime in seconds (0 = forever)
-	connectionTimeout: 30, // Timeout when establishing new connections
+  // Connection pool settings
+  max: 20, // Maximum connections in pool
+  idleTimeout: 30, // Close idle connections after 30s
+  maxLifetime: 0, // Connection lifetime in seconds (0 = forever)
+  connectionTimeout: 30, // Timeout when establishing new connections
 
-	// SSL/TLS options
-	tls: true,
-	// tls: {
-	//   rejectUnauthorized: true,
-	//   requestCert: true,
-	//   ca: "path/to/ca.pem",
-	//   key: "path/to/key.pem",
-	//   cert: "path/to/cert.pem",
-	//   checkServerIdentity(hostname, cert) {
-	//     ...
-	//   },
-	// },
+  // SSL/TLS options
+  tls: true,
+  // tls: {
+  //   rejectUnauthorized: true,
+  //   requestCert: true,
+  //   ca: "path/to/ca.pem",
+  //   key: "path/to/key.pem",
+  //   cert: "path/to/cert.pem",
+  //   checkServerIdentity(hostname, cert) {
+  //     ...
+  //   },
+  // },
 
-	// Callbacks
-	onconnect: client => {
-		console.log("Connected to PostgreSQL");
-	},
-	onclose: client => {
-		console.log("PostgreSQL connection closed");
-	},
+  // Callbacks
+  onconnect: client => {
+    console.log("Connected to PostgreSQL");
+  },
+  onclose: client => {
+    console.log("PostgreSQL connection closed");
+  },
 });
 ```
 
@@ -698,26 +695,26 @@ const db = new SQL({
 import { SQL } from "bun";
 
 const db = new SQL({
-	// Required for SQLite
-	adapter: "sqlite",
-	filename: "./data/app.db", // or ":memory:" for in-memory database
+  // Required for SQLite
+  adapter: "sqlite",
+  filename: "./data/app.db", // or ":memory:" for in-memory database
 
-	// SQLite-specific access modes
-	readonly: false, // Open in read-only mode
-	create: true, // Create database if it doesn't exist
-	readwrite: true, // Allow read and write operations
+  // SQLite-specific access modes
+  readonly: false, // Open in read-only mode
+  create: true, // Create database if it doesn't exist
+  readwrite: true, // Allow read and write operations
 
-	// SQLite data handling
-	strict: true, // Enable strict mode for better type safety
-	safeIntegers: false, // Use BigInt for integers exceeding JS number range
+  // SQLite data handling
+  strict: true, // Enable strict mode for better type safety
+  safeIntegers: false, // Use BigInt for integers exceeding JS number range
 
-	// Callbacks
-	onconnect: client => {
-		console.log("SQLite database opened");
-	},
-	onclose: client => {
-		console.log("SQLite database closed");
-	},
+  // Callbacks
+  onconnect: client => {
+    console.log("SQLite database opened");
+  },
+  onclose: client => {
+    console.log("SQLite database closed");
+  },
 });
 ```
 
@@ -816,12 +813,12 @@ The `BEGIN` command is sent automatically, including any optional configurations
 
 ```ts
 await sql.begin(async tx => {
-	// All queries in this function run in a transaction
-	await tx`INSERT INTO users (name) VALUES (${"Alice"})`;
-	await tx`UPDATE accounts SET balance = balance - 100 WHERE user_id = 1`;
+  // All queries in this function run in a transaction
+  await tx`INSERT INTO users (name) VALUES (${"Alice"})`;
+  await tx`UPDATE accounts SET balance = balance - 100 WHERE user_id = 1`;
 
-	// Transaction automatically commits if no errors are thrown
-	// Rolls back if any error occurs
+  // Transaction automatically commits if no errors are thrown
+  // Rolls back if any error occurs
 });
 ```
 
@@ -829,10 +826,10 @@ It's also possible to pipeline the requests in a transaction if needed by return
 
 ```ts
 await sql.begin(async tx => {
-	return [
-		tx`INSERT INTO users (name) VALUES (${"Alice"})`,
-		tx`UPDATE accounts SET balance = balance - 100 WHERE user_id = 1`,
-	];
+  return [
+    tx`INSERT INTO users (name) VALUES (${"Alice"})`,
+    tx`UPDATE accounts SET balance = balance - 100 WHERE user_id = 1`,
+  ];
 });
 ```
 
@@ -842,18 +839,18 @@ Savepoints in SQL create intermediate checkpoints within a transaction, enabling
 
 ```ts
 await sql.begin(async tx => {
-	await tx`INSERT INTO users (name) VALUES (${"Alice"})`;
+  await tx`INSERT INTO users (name) VALUES (${"Alice"})`;
 
-	await tx.savepoint(async sp => {
-		// This part can be rolled back separately
-		await sp`UPDATE users SET status = 'active'`;
-		if (someCondition) {
-			throw new Error("Rollback to savepoint");
-		}
-	});
+  await tx.savepoint(async sp => {
+    // This part can be rolled back separately
+    await sp`UPDATE users SET status = 'active'`;
+    if (someCondition) {
+      throw new Error("Rollback to savepoint");
+    }
+  });
 
-	// Continue with transaction even if savepoint rolled back
-	await tx`INSERT INTO audit_log (action) VALUES ('user_created')`;
+  // Continue with transaction even if savepoint rolled back
+  await tx`INSERT INTO audit_log (action) VALUES ('user_created')`;
 });
 ```
 
@@ -872,7 +869,7 @@ If any exceptions occur during the distributed transaction and aren't caught, th
 ```ts
 // Begin a distributed transaction
 await sql.beginDistributed("tx1", async tx => {
-	await tx`INSERT INTO users (name) VALUES (${"Alice"})`;
+  await tx`INSERT INTO users (name) VALUES (${"Alice"})`;
 });
 
 // Later, commit or rollback
@@ -893,10 +890,10 @@ PostgreSQL supports different SSL/TLS modes to control how secure connections ar
 
 ```ts
 const sql = new SQL({
-	hostname: "localhost",
-	username: "user",
-	password: "password",
-	ssl: "disable", // | "prefer" | "require" | "verify-ca" | "verify-full"
+  hostname: "localhost",
+  username: "user",
+  password: "password",
+  ssl: "disable", // | "prefer" | "require" | "verify-ca" | "verify-full"
 });
 ```
 
@@ -928,11 +925,11 @@ Bun's SQL client automatically manages a connection pool, which is a pool of dat
 
 ```ts
 const db = new SQL({
-	// Pool configuration
-	max: 20, // Maximum 20 concurrent connections
-	idleTimeout: 30, // Close idle connections after 30s
-	maxLifetime: 3600, // Max connection lifetime 1 hour
-	connectionTimeout: 10, // Connection timeout 10s
+  // Pool configuration
+  max: 20, // Maximum 20 concurrent connections
+  idleTimeout: 30, // Close idle connections after 30s
+  maxLifetime: 3600, // Max connection lifetime 1 hour
+  connectionTimeout: 10, // Connection timeout 10s
 });
 ```
 
@@ -946,8 +943,8 @@ await sql`...`; // previous connection is reused
 
 // two connections are used now at the same time
 await Promise.all([
-	sql`INSERT INTO users ${sql({ name: "Alice" })}`,
-	sql`UPDATE users SET name = ${user.name} WHERE id = ${user.id}`,
+  sql`INSERT INTO users ${sql({ name: "Alice" })}`,
+  sql`UPDATE users SET name = ${user.name} WHERE id = ${user.id}`,
 ]);
 
 await sql.close(); // await all queries to finish and close all connections from the pool
@@ -966,16 +963,16 @@ Bun enables you to reserve a connection from the pool, and returns a client that
 const reserved = await sql.reserve();
 
 try {
-	await reserved`INSERT INTO users (name) VALUES (${"Alice"})`;
+  await reserved`INSERT INTO users (name) VALUES (${"Alice"})`;
 } finally {
-	// Important: Release connection back to pool
-	reserved.release();
+  // Important: Release connection back to pool
+  reserved.release();
 }
 
 // Or using Symbol.dispose
 {
-	using reserved = await sql.reserve();
-	await reserved`SELECT 1`;
+  using reserved = await sql.reserve();
+  await reserved`SELECT 1`;
 } // Automatically released
 ```
 
@@ -987,8 +984,8 @@ By default, Bun's SQL client automatically creates named prepared statements for
 
 ```ts
 const sql = new SQL({
-	// ... other options ...
-	prepare: false, // Disable persisting named prepared statements on the server
+  // ... other options ...
+  prepare: false, // Disable persisting named prepared statements on the server
 });
 ```
 
@@ -1021,22 +1018,22 @@ The client provides typed errors for different failure scenarios. Errors are dat
 import { SQL } from "bun";
 
 try {
-	await sql`SELECT * FROM users`;
+  await sql`SELECT * FROM users`;
 } catch (error) {
-	if (error instanceof SQL.PostgresError) {
-		// PostgreSQL-specific error
-		console.log(error.code); // PostgreSQL error code
-		console.log(error.detail); // Detailed error message
-		console.log(error.hint); // Helpful hint from PostgreSQL
-	} else if (error instanceof SQL.SQLiteError) {
-		// SQLite-specific error
-		console.log(error.code); // SQLite error code (e.g., "SQLITE_CONSTRAINT")
-		console.log(error.errno); // SQLite error number
-		console.log(error.byteOffset); // Byte offset in SQL statement (if available)
-	} else if (error instanceof SQL.SQLError) {
-		// Generic SQL error (base class)
-		console.log(error.message);
-	}
+  if (error instanceof SQL.PostgresError) {
+    // PostgreSQL-specific error
+    console.log(error.code); // PostgreSQL error code
+    console.log(error.detail); // Detailed error message
+    console.log(error.hint); // Helpful hint from PostgreSQL
+  } else if (error instanceof SQL.SQLiteError) {
+    // SQLite-specific error
+    console.log(error.code); // SQLite error code (e.g., "SQLITE_CONSTRAINT")
+    console.log(error.errno); // SQLite error number
+    console.log(error.byteOffset); // Byte offset in SQL statement (if available)
+  } else if (error instanceof SQL.SQLError) {
+    // Generic SQL error (base class)
+    console.log(error.message);
+  }
 }
 ```
 
@@ -1138,15 +1135,15 @@ Example error handling:
 const sqlite = new SQL("sqlite://app.db");
 
 try {
-	await sqlite`INSERT INTO users (id, name) VALUES (1, 'Alice')`;
-	await sqlite`INSERT INTO users (id, name) VALUES (1, 'Bob')`; // Duplicate ID
+  await sqlite`INSERT INTO users (id, name) VALUES (1, 'Alice')`;
+  await sqlite`INSERT INTO users (id, name) VALUES (1, 'Bob')`; // Duplicate ID
 } catch (error) {
-	if (error instanceof SQL.SQLiteError) {
-		if (error.code === "SQLITE_CONSTRAINT") {
-			console.log("Constraint violation:", error.message);
-			// Handle unique constraint violation
-		}
-	}
+  if (error instanceof SQL.SQLiteError) {
+    if (error.code === "SQLITE_CONSTRAINT") {
+      console.log("Constraint violation:", error.message);
+      // Handle unique constraint violation
+    }
+  }
 }
 ```
 
@@ -1175,7 +1172,7 @@ If you need large numbers as BigInt instead of strings, you can enable this by s
 
 ```ts
 const sql = new SQL({
-	bigint: true,
+  bigint: true,
 });
 
 const [{ x }] = await sql`SELECT 9223372036854777 as x`;
@@ -1217,15 +1214,15 @@ const user = await mysql`SELECT * FROM users WHERE id = ${userId}`;
 
 // Prepared statements are cached and reused for identical queries
 for (const id of userIds) {
-	// Same prepared statement is reused
-	await mysql`SELECT * FROM users WHERE id = ${id}`;
+  // Same prepared statement is reused
+  await mysql`SELECT * FROM users WHERE id = ${id}`;
 }
 
 // Query pipelining - multiple statements sent without waiting
 const [users, orders, products] = await Promise.all([
-	mysql`SELECT * FROM users WHERE active = ${true}`,
-	mysql`SELECT * FROM orders WHERE status = ${"pending"}`,
-	mysql`SELECT * FROM products WHERE in_stock = ${true}`,
+  mysql`SELECT * FROM users WHERE active = ${true}`,
+  mysql`SELECT * FROM orders WHERE status = ${"pending"}`,
+  mysql`SELECT * FROM products WHERE in_stock = ${true}`,
 ]);
 ```
 
@@ -1330,16 +1327,16 @@ const uuid = await mysql`SELECT UUID() as id`;
 
 ```ts
 try {
-	await mysql`INSERT INTO users (email) VALUES (${"duplicate@email.com"})`;
+  await mysql`INSERT INTO users (email) VALUES (${"duplicate@email.com"})`;
 } catch (error) {
-	if (error.code === "ER_DUP_ENTRY") {
-		console.log("Duplicate entry detected");
-	} else if (error.code === "ER_ACCESS_DENIED_ERROR") {
-		console.log("Access denied");
-	} else if (error.code === "ER_BAD_DB_ERROR") {
-		console.log("Database does not exist");
-	}
-	// MySQL error codes are compatible with mysql/mysql2 packages
+  if (error.code === "ER_DUP_ENTRY") {
+    console.log("Duplicate entry detected");
+  } else if (error.code === "ER_ACCESS_DENIED_ERROR") {
+    console.log("Access denied");
+  } else if (error.code === "ER_BAD_DB_ERROR") {
+    console.log("Database does not exist");
+  }
+  // MySQL error codes are compatible with mysql/mysql2 packages
 }
 ```
 

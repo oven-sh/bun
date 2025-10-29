@@ -41,9 +41,8 @@ bun publish ./package.tgz
 ```
 
 <Note>
-	`bun publish` will not run lifecycle scripts
-	(`prepublishOnly/prepack/prepare/postpack/publish/postpublish`) if a tarball path is provided.
-	Scripts will only be run if the package is packed by `bun publish`.
+  `bun publish` will not run lifecycle scripts (`prepublishOnly/prepack/prepare/postpack/publish/postpublish`) if a
+  tarball path is provided. Scripts will only be run if the package is packed by `bun publish`.
 </Note>
 
 ### `--access`
@@ -58,9 +57,9 @@ bun publish --access public
 
 ```json package.json icon="file-json"
 {
-	"publishConfig": {
-		"access": "restricted"
-	}
+  "publishConfig": {
+    "access": "restricted"
+  }
 }
 ```
 
@@ -76,9 +75,9 @@ bun publish --tag alpha
 
 ```json package.json icon="file-json"
 {
-	"publishConfig": {
-		"tag": "next"
-	}
+  "publishConfig": {
+    "tag": "next"
+  }
 }
 ```
 
@@ -115,8 +114,8 @@ bun publish --otp 123456
 ```
 
 <Note>
-	`bun publish` respects the `NPM_CONFIG_TOKEN` environment variable which can be used when
-	publishing in github actions or automated workflows.
+  `bun publish` respects the `NPM_CONFIG_TOKEN` environment variable which can be used when publishing in github actions
+  or automated workflows.
 </Note>
 
 ---

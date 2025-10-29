@@ -40,20 +40,20 @@ In your root-level `package.json`, add a `catalog` or `catalogs` field within th
 
 ```json package.json icon="file-json"
 {
-	"name": "my-monorepo",
-	"workspaces": {
-		"packages": ["packages/*"],
-		"catalog": {
-			"react": "^19.0.0",
-			"react-dom": "^19.0.0"
-		},
-		"catalogs": {
-			"testing": {
-				"jest": "30.0.0",
-				"testing-library": "14.0.0"
-			}
-		}
-	}
+  "name": "my-monorepo",
+  "workspaces": {
+    "packages": ["packages/*"],
+    "catalog": {
+      "react": "^19.0.0",
+      "react-dom": "^19.0.0"
+    },
+    "catalogs": {
+      "testing": {
+        "jest": "30.0.0",
+        "testing-library": "14.0.0"
+      }
+    }
+  }
 }
 ```
 
@@ -65,26 +65,26 @@ In your workspace packages, use the `catalog:` protocol to reference versions:
 
 ```json packages/app/package.json icon="file-json"
 {
-	"name": "app",
-	"dependencies": {
-		"react": "catalog:",
-		"react-dom": "catalog:",
-		"jest": "catalog:testing"
-	}
+  "name": "app",
+  "dependencies": {
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "jest": "catalog:testing"
+  }
 }
 ```
 
 ```json packages/ui/package.json icon="file-json"
 {
-	"name": "ui",
-	"dependencies": {
-		"react": "catalog:",
-		"react-dom": "catalog:"
-	},
-	"devDependencies": {
-		"jest": "catalog:testing",
-		"testing-library": "catalog:testing"
-	}
+  "name": "ui",
+  "dependencies": {
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "jest": "catalog:testing",
+    "testing-library": "catalog:testing"
+  }
 }
 ```
 
@@ -150,73 +150,73 @@ Here's a more comprehensive example for a React application:
 
 ```json package.json icon="file-json"
 {
-	"name": "react-monorepo",
-	"workspaces": {
-		"packages": ["packages/*"],
-		"catalog": {
-			"react": "^19.0.0",
-			"react-dom": "^19.0.0",
-			"react-router-dom": "^6.15.0"
-		},
-		"catalogs": {
-			"build": {
-				"webpack": "5.88.2",
-				"babel": "7.22.10"
-			},
-			"testing": {
-				"jest": "29.6.2",
-				"react-testing-library": "14.0.0"
-			}
-		}
-	},
-	"devDependencies": {
-		"typescript": "5.1.6"
-	}
+  "name": "react-monorepo",
+  "workspaces": {
+    "packages": ["packages/*"],
+    "catalog": {
+      "react": "^19.0.0",
+      "react-dom": "^19.0.0",
+      "react-router-dom": "^6.15.0"
+    },
+    "catalogs": {
+      "build": {
+        "webpack": "5.88.2",
+        "babel": "7.22.10"
+      },
+      "testing": {
+        "jest": "29.6.2",
+        "react-testing-library": "14.0.0"
+      }
+    }
+  },
+  "devDependencies": {
+    "typescript": "5.1.6"
+  }
 }
 ```
 
 ```json packages/app/package.json icon="file-json"
 {
-	"name": "app",
-	"dependencies": {
-		"react": "catalog:",
-		"react-dom": "catalog:",
-		"react-router-dom": "catalog:",
-		"@monorepo/ui": "workspace:*",
-		"@monorepo/utils": "workspace:*"
-	},
-	"devDependencies": {
-		"webpack": "catalog:build",
-		"babel": "catalog:build",
-		"jest": "catalog:testing",
-		"react-testing-library": "catalog:testing"
-	}
+  "name": "app",
+  "dependencies": {
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "react-router-dom": "catalog:",
+    "@monorepo/ui": "workspace:*",
+    "@monorepo/utils": "workspace:*"
+  },
+  "devDependencies": {
+    "webpack": "catalog:build",
+    "babel": "catalog:build",
+    "jest": "catalog:testing",
+    "react-testing-library": "catalog:testing"
+  }
 }
 ```
 
 ```json packages/ui/package.json icon="file-json"
 {
-	"name": "@monorepo/ui",
-	"dependencies": {
-		"react": "catalog:",
-		"react-dom": "catalog:"
-	},
-	"devDependencies": {
-		"jest": "catalog:testing",
-		"react-testing-library": "catalog:testing"
-	}
+  "name": "@monorepo/ui",
+  "dependencies": {
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "jest": "catalog:testing",
+    "react-testing-library": "catalog:testing"
+  }
 }
 ```
 
 ```json packages/utils/package.json icon="file-json"
 {
-	"name": "@monorepo/utils",
-	"dependencies": {
-		"react": "catalog:"
-	},
-	"devDependencies": {
-		"jest": "catalog:testing"
-	}
+  "name": "@monorepo/utils",
+  "dependencies": {
+    "react": "catalog:"
+  },
+  "devDependencies": {
+    "jest": "catalog:testing"
+  }
 }
 ```
 

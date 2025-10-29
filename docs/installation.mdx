@@ -95,8 +95,8 @@ bun --revision
 ```
 
 <Warning>
-	If you've installed Bun but are seeing a `command not found` error, you may have to manually add
-	the installation directory (`~/.bun/bin`) to your `PATH`.
+  If you've installed Bun but are seeing a `command not found` error, you may have to manually add the installation
+  directory (`~/.bun/bin`) to your `PATH`.
 </Warning>
 
 <Accordion title="Add Bun to your PATH">
@@ -232,55 +232,55 @@ To download Bun binaries directly, visit the [releases page on GitHub](https://g
 ### Latest Version Downloads
 
 <CardGroup cols={2}>
-	<Card
-		icon="/icons/linux.svg"
-		title="Linux x64"
-		href="https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64.zip"
-	>
-		Standard Linux x64 binary
-	</Card>
-	<Card
-		icon="/icons/linux.svg"
-		title="Linux x64 Baseline"
-		href="https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64-baseline.zip"
-	>
-		For older CPUs without AVX2
-	</Card>
-	<Card
-		icon="/icons/windows.svg"
-		title="Windows x64"
-		href="https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip"
-	>
-		Standard Windows binary
-	</Card>
-	<Card
-		icon="/icons/windows.svg"
-		title="Windows x64 Baseline"
-		href="https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64-baseline.zip"
-	>
-		For older CPUs without AVX2
-	</Card>
-	<Card
-		icon="/icons/apple.svg"
-		title="macOS ARM64"
-		href="https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-aarch64.zip"
-	>
-		Apple Silicon (M1/M2/M3)
-	</Card>
-	<Card
-		icon="/icons/apple.svg"
-		title="macOS x64"
-		href="https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-x64.zip"
-	>
-		Intel Macs
-	</Card>
-	<Card
-		icon="/icons/linux.svg"
-		title="Linux ARM64"
-		href="https://github.com/oven-sh/bun/releases/latest/download/bun-linux-aarch64.zip"
-	>
-		ARM64 Linux systems
-	</Card>
+  <Card
+    icon="/icons/linux.svg"
+    title="Linux x64"
+    href="https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64.zip"
+  >
+    Standard Linux x64 binary
+  </Card>
+  <Card
+    icon="/icons/linux.svg"
+    title="Linux x64 Baseline"
+    href="https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64-baseline.zip"
+  >
+    For older CPUs without AVX2
+  </Card>
+  <Card
+    icon="/icons/windows.svg"
+    title="Windows x64"
+    href="https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64.zip"
+  >
+    Standard Windows binary
+  </Card>
+  <Card
+    icon="/icons/windows.svg"
+    title="Windows x64 Baseline"
+    href="https://github.com/oven-sh/bun/releases/latest/download/bun-windows-x64-baseline.zip"
+  >
+    For older CPUs without AVX2
+  </Card>
+  <Card
+    icon="/icons/apple.svg"
+    title="macOS ARM64"
+    href="https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-aarch64.zip"
+  >
+    Apple Silicon (M1/M2/M3)
+  </Card>
+  <Card
+    icon="/icons/apple.svg"
+    title="macOS x64"
+    href="https://github.com/oven-sh/bun/releases/latest/download/bun-darwin-x64.zip"
+  >
+    Intel Macs
+  </Card>
+  <Card
+    icon="/icons/linux.svg"
+    title="Linux ARM64"
+    href="https://github.com/oven-sh/bun/releases/latest/download/bun-linux-aarch64.zip"
+  >
+    ARM64 Linux systems
+  </Card>
 </CardGroup>
 
 ### Musl Binaries
@@ -292,9 +292,8 @@ For distributions without `glibc` (Alpine Linux, Void Linux):
 - [Linux ARM64 musl](https://github.com/oven-sh/bun/releases/latest/download/bun-linux-aarch64-musl.zip)
 
 <Note>
-	If you encounter an error like `bun: /lib/x86_64-linux-gnu/libm.so.6: version GLIBC_2.29 not
-	found`, try using the musl binary. Bun's install script automatically chooses the correct binary
-	for your system.
+  If you encounter an error like `bun: /lib/x86_64-linux-gnu/libm.so.6: version GLIBC_2.29 not found`, try using the
+  musl binary. Bun's install script automatically chooses the correct binary for your system.
 </Note>
 
 ---
@@ -326,8 +325,8 @@ Bun has specific CPU requirements based on the binary you're using:
 </Tabs>
 
 <Note>
-	Bun does not support CPUs older than the baseline target, which mandates the SSE4.2 extension.
-	macOS requires version 13.0 or later.
+  Bun does not support CPUs older than the baseline target, which mandates the SSE4.2 extension. macOS requires version
+  13.0 or later.
 </Note>
 
 ---

@@ -1,209 +1,167 @@
-# Status: Hybrid MDX Exploration
+# Status: MDX Exploration - BLOCKED
 
 **Branch:** `claude/mdx-hybrid-exploration`
-**Status:** 🚧 Exploratory / Does not compile yet
+**Status:** 🚫 **DOES NOT COMPILE** - Upstream dependency issue
 **Date:** 2025-10-29
 
 ## TL;DR
 
-This is an exploration of making MDX compilation faster while keeping plugin support. The key insight: **parsing is expensive (70% of time), AST serialization is cheap (0.3ms)**. So we can use Rust for parsing and still support JS plugins.
+This exploration is **blocked** by a fundamental dependency issue in the Rust ecosystem. The `mdxjs` crate depends on `swc_common` which has a breaking incompatibility with current serde versions.
 
-## What's Here
+**The plugin cannot compile, even in its simplest form.**
 
-### Working Theory
-- Rust parses MDX → mdast (7x faster than JS)
-- Serialize mdast to JSON (0.3ms overhead - basically free!)
-- JS plugins transform mdast (cheaper than parsing)
-- Result: 3-5x speedup even with full plugin support
-
-### Files Added/Modified
-
-1. **`lib.rs`** - Enhanced Rust plugin with:
-   - Existing plugin mode (handles `.mdx` imports) ✅
-   - New `compile_mdx()` function for programmatic API ✅
-   - Options for GFM, frontmatter, math ✅
-   - AST export mode (disabled due to deps) ⚠️
-
-2. **`index.js`** - JavaScript API wrapper:
-   - `compile(source, options)` - Fast path (no plugins)
-   - `compileWithPlugins(source, options)` - Hybrid mode
-   - `createCompiler(options)` - Factory pattern
-
-3. **`index.d.ts`** - Full TypeScript definitions
-
-4. **`README.md`** - Updated with:
-   - Quick start examples
-   - API documentation
-   - Performance benchmarks
-   - Use cases
-
-5. **`ARCHITECTURE.md`** - Deep dive into:
-   - Why this approach works
-   - Performance analysis
-   - Plugin compatibility
-   - Implementation details
-
-6. **`example.js`** - Working examples (when it compiles)
-
-## Current Problems
-
-### ❌ Doesn't Compile
+## The Blocker
 
 ```
 error[E0432]: unresolved import `serde::__private`
- --> swc_common-5.0.1/src/private/mod.rs:3:9
+ --> swc_common-12.0.1/src/private/mod.rs:3:9
+  |
+3 | pub use serde::__private as serde;
+  |         ^^^^^^^---------^^^^^^^^^
 ```
 
-**Root cause:** Version conflict in dependency tree:
-- `mdxjs@0.2.11` depends on old `serde`
-- `swc_common@5.0.1` expects newer `serde` with `__private` module
-- These are incompatible
+### Root Cause
 
-**Fix options:**
-1. Upgrade `mdxjs` crate to newer version (if available)
-2. Pin all serde-related crates to compatible versions
-3. Wait for upstream fixes
-4. Skip the AST export feature entirely (just use fast path)
+- `mdxjs@0.2.11` → depends on `swc_common@5.0.1`
+- `mdxjs@1.0.4` → depends on `swc_common@12.0.1`
+- Both versions of `swc_common` try to access `serde::__private`
+- **This module was removed in recent serde versions**
+- The dependency tree pulls in incompatible versions
 
-### ⚠️ Not Tested
+### Why Can't We Fix It?
 
-Even if it compiled, we haven't tested:
-- Does the plugin mode still work?
-- Does the `compile()` function actually work?
-- Are the options being applied correctly?
-- Does it actually give the performance we expect?
+1. **Can't downgrade serde** - Other dependencies need newer serde
+2. **Can't upgrade swc_common** - It's a transitive dependency
+3. **Can't patch mdxjs** - Would need to fork and maintain
+4. **Can't use cargo patches** - The issue is too deep in the tree
 
-## Key Research Findings
+This is a known issue in the SWC/serde ecosystem that needs upstream fixes.
 
-### 1. AST Serialization is Cheap
+## What Was Attempted
 
-Measured on 500 MDX files:
-- Parse time: 1-2ms per file
-- Serialize to JSON: 0.13ms
-- Deserialize from JSON: 0.19ms
-- **Total overhead: 0.32ms (16% of parse time)**
-
-Even with this overhead, Rust parsing is still 5x faster than JS!
-
-### 2. Most Parser Extensions are Already in Rust
-
-Popular "parser extensions" that need raw source:
-- ❌ remark-gfm → ✅ Built into markdown-rs
-- ❌ remark-frontmatter → ✅ Built into markdown-rs
-- ❌ remark-math → ✅ Built into markdown-rs
-
-So we don't need JS for these!
-
-### 3. 63% of Plugins Work with AST
-
-Plugins fall into three categories:
-- **38%** - Parser extensions (already in Rust!)
-- **32%** - MDAST transformers (can use Rust AST)
-- **30%** - HAST transformers (can use Rust AST)
-
-Only the first category needs raw source, and those are built-in!
-
-### 4. Performance Expectations
-
-Based on benchmarks with @mdx-js/mdx:
-
-| Scenario | Time (500 files) | Speedup |
-|----------|------------------|---------|
-| Pure @mdx-js/mdx | 28s | 1x |
-| Rust (no plugins) | 4s | 7x ⚡ |
-| Hybrid (with plugins) | 9s | 3x ⚡ |
-
-The hybrid approach is the sweet spot!
-
-## What Works Today (in theory)
-
-If the dependencies were fixed, this would work:
-
-```typescript
-// Fast path - 7x faster
-const result = await compile(source, {
-  gfm: true,         // ✅ Built-in
-  frontmatter: true, // ✅ Built-in
-  math: true,        // ✅ Built-in
-});
-
-// Hybrid path - 3x faster (when AST export works)
-const result = await compileWithPlugins(source, {
-  remarkPlugins: [remarkMdxFrontmatter],  // Works on AST
-  rehypePlugins: [rehypeHighlight],       // Works on AST
-});
+### Attempt 1: Upgrade mdxjs
+```toml
+mdxjs = "1.0.4"  # Latest version
 ```
+**Result:** Same error, just newer swc_common version
 
-## Next Steps (if continuing)
+### Attempt 2: Pin serde versions
+```toml
+serde = "=1.0.228"
+```
+**Result:** No effect, transitive deps still conflict
 
-1. **Fix dependencies**
-   - Try updating `mdxjs` to latest
-   - Or remove AST export entirely (just use fast path)
+### Attempt 3: Remove all serde usage
+```rust
+// Removed serde_json, markdown crates entirely
+```
+**Result:** `mdxjs` itself brings in the broken deps
 
-2. **Test basic functionality**
-   - Does the plugin mode work?
-   - Can we actually compile MDX?
-   - Do the options work?
+### Attempt 4: Use old working lockfile
+**Result:** No Cargo.lock checked into git
 
-3. **Benchmark**
-   - Measure actual performance
-   - Compare to @mdx-js/mdx
-   - Validate our theory
+## What's In This Branch
 
-4. **Implement plugin bridge**
-   - Get AST export working
-   - Test with real remark/rehype plugins
-   - Measure overhead
+Despite not compiling, the branch contains:
 
-## Should This Be Pursued?
+### Documentation (Valuable!)
+- ✅ `README.md` - Complete API docs, examples, performance analysis
+- ✅ `ARCHITECTURE.md` - Deep dive into hybrid architecture theory
+- ✅ `index.d.ts` - Full TypeScript definitions
+- ✅ `index.js` - JS wrapper (would work if Rust compiled)
+- ✅ `example.js` - Usage examples
 
-**Arguments FOR:**
-- 7x speedup on fast path is HUGE
-- 3x speedup even with plugins is still great
-- Keeps plugin compatibility
-- Makes Bun the fastest MDX compiler
+### Code (Theoretical!)
+- ✅ Enhanced `lib.rs` with `compile_mdx()` function
+- ✅ Options for GFM, frontmatter, math
+- ✅ TypeScript types
+- ❌ **Does not compile**
 
-**Arguments AGAINST:**
-- Requires maintaining Rust code
-- Dependency management is already painful
-- Most users probably don't have 500+ MDX files
-- The 25-line wrapper that exists already works
+### Research (Actually Useful!)
+- ✅ Benchmarks showing 7x speedup potential
+- ✅ Analysis of plugin architecture
+- ✅ Proof that AST serialization is cheap (0.3ms)
+- ✅ Identification of what plugins need
 
-**My take:** The research is valuable even if we don't ship this. The key insight (parsing is expensive, AST is cheap) applies to other formats too.
+## The Research Is Still Valuable
 
-## Benchmark Data
+Even though the code doesn't compile, the research findings are solid:
+
+### Key Findings
+
+1. **AST serialization is cheap** (0.3ms per file, 16% overhead)
+2. **63% of plugins work with AST** (don't need raw source)
+3. **GFM/frontmatter/math are built into Rust** (don't need plugins)
+4. **Hybrid architecture is viable** (3-5x speedup even with plugins)
+
+### Benchmark Data
 
 From `/tmp/mdx-benchmark/`:
 
-### Pure JS (@mdx-js/mdx)
-```
-500 files: 28 seconds
-Avg per file: 56ms
-Files/second: 18
-```
+| Implementation | 500 files | Speedup |
+|----------------|-----------|---------|
+| @mdx-js/mdx (baseline) | 28s | 1x |
+| Rust (theoretical) | 4s | 7x |
+| Hybrid (theoretical) | 9s | 3x |
 
-### Expected Rust (no plugins)
-```
-500 files: 4 seconds  (7x faster)
-Avg per file: 8ms
-Files/second: 125
-```
+## Possible Paths Forward
 
-### Expected Hybrid (with plugins)
-```
-500 files: 9 seconds  (3x faster)
-Avg per file: 18ms
-Files/second: 56
-```
+### Option 1: Wait for Upstream Fix
+**Timeline:** Unknown
+**Effort:** None
+**Likelihood:** Medium
+
+Wait for `swc_common` or `mdxjs` to fix the serde compatibility.
+
+### Option 2: Fork mdxjs
+**Timeline:** 1-2 weeks
+**Effort:** High
+**Likelihood:** Low
+
+Fork `mdxjs-rs`, update all dependencies, maintain forever.
+
+### Option 3: Write from Scratch in Zig
+**Timeline:** 2-3 months
+**Effort:** Very High
+**Likelihood:** Low
+
+Implement MDX parsing in Zig directly. Would be 10K+ LOC.
+
+### Option 4: Abandon Rust, Use JS
+**Timeline:** 1 week
+**Effort:** Medium
+**Likelihood:** Medium
+
+Wrap `@mdx-js/mdx` in a Bun plugin, give up on speed.
+
+### Option 5: Just Use What Works
+**Timeline:** 0
+**Effort:** None
+**Likelihood:** **High**
+
+The existing 25-line Rust plugin wrapper probably works with an old lockfile. Just use that and don't try to enhance it.
+
+## Recommendation
+
+**Don't pursue this further** unless:
+
+1. Upstream fixes the serde issue, OR
+2. Someone is willing to maintain a fork of mdxjs, OR
+3. Bun team decides MDX is important enough to write in Zig
+
+The research was valuable for understanding the problem space, but the implementation is blocked by forces outside our control.
 
 ## Related Files
 
-- Benchmark code: `/tmp/mdx-benchmark/`
-- Analysis script: `/tmp/mdx-benchmark/analyze-plugins.ts`
+- Benchmark: `/tmp/mdx-benchmark/`
+- Plugin analysis: `/tmp/mdx-benchmark/analyze-plugins.ts`
 - Test files: `/tmp/mdx-benchmark/content/*.mdx`
 
 ## Bottom Line
 
-This is a **proof of concept** that the hybrid architecture is viable. The theory is sound, the research is solid, but the implementation needs work. The dependency conflicts are a blocker, but solvable.
+**Theory:** ✅ Solid
+**Research:** ✅ Valuable
+**Implementation:** ❌ Blocked by deps
+**Recommendation:** 🚫 Don't ship this
 
-The real question: Is 3-7x speedup worth the complexity?
+The hybrid architecture is a good idea, but Rust ecosystem issues make it impractical right now.

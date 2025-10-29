@@ -48,11 +48,6 @@ pub fn bufferedReaderSize(comptime size: usize, reader: anytype) BufferedReader(
     return .{ .unbuffered_reader = reader };
 }
 
-const std = @import("std");
-const debug = std.debug;
-const assert = debug.assert;
-const testing = std.testing;
-
 /// A singly-linked list is headed by a single forward pointer. The elements
 /// are singly-linked for minimum space and pointer manipulation overhead at
 /// the expense of O(n) removal for arbitrary elements. New elements can be
@@ -651,3 +646,9 @@ pub fn autoFormatLabel(comptime ty: type) []const u8 {
 }
 
 const bun = @import("bun");
+
+const std = @import("std");
+const testing = std.testing;
+
+const debug = std.debug;
+const assert = debug.assert;

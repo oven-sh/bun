@@ -731,6 +731,9 @@ const Opts = packed struct(u16) {
 // --
 const log = bun.Output.scoped(.cp, .hidden);
 
+const std = @import("std");
+const ArrayList = std.array_list.Managed;
+
 const interpreter = @import("../interpreter.zig");
 const FlagParser = interpreter.FlagParser;
 const Interpreter = interpreter.Interpreter;
@@ -757,6 +760,3 @@ const Yield = shell.Yield;
 
 const Syscall = bun.sys;
 const Maybe = bun.sys.Maybe;
-
-const std = @import("std");
-const ArrayList = std.array_list.Managed;

@@ -374,6 +374,9 @@ const debug = bun.Output.scoped(.ShellMkdir, .hidden);
 
 const log = debug;
 
+const std = @import("std");
+const ArrayList = std.array_list.Managed;
+
 const interpreter = @import("../interpreter.zig");
 const FlagParser = interpreter.FlagParser;
 const Interpreter = interpreter.Interpreter;
@@ -394,6 +397,3 @@ const WorkPool = bun.jsc.WorkPool;
 const shell = bun.shell;
 const ExitCode = shell.ExitCode;
 const Yield = bun.shell.Yield;
-
-const std = @import("std");
-const ArrayList = std.array_list.Managed;

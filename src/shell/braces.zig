@@ -732,8 +732,8 @@ const bun = @import("bun");
 const assert = bun.assert;
 
 const std = @import("std");
-const ArrayList = std.array_list.Managed;
 const t = std.testing;
+const ArrayList = std.array_list.Managed;
 
 const Allocator = std.mem.Allocator;
 const BraceLexerError = Allocator.Error;

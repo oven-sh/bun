@@ -4627,6 +4627,9 @@ pub const ShellSubprocess = @import("./subproc.zig").ShellSubprocess;
 
 const Syscall = @import("../sys.zig");
 const builtin = @import("builtin");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const ArrayList = std.array_list.Managed;
 
 const bun = @import("bun");
 const assert = bun.assert;
@@ -4637,7 +4640,3 @@ const JSValue = bun.jsc.JSValue;
 
 const CodepointIterator = bun.strings.UnsignedCodepointIterator;
 const isAllAscii = bun.strings.isAllASCII;
-
-const std = @import("std");
-const ArrayList = std.array_list.Managed;
-const Allocator = std.mem.Allocator;

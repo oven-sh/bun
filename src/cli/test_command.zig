@@ -1996,7 +1996,6 @@ const which = @import("../which.zig").which;
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
-const MutableString = bun.MutableString;
 const Output = bun.Output;
 const PathString = bun.PathString;
 const default_allocator = bun.default_allocator;

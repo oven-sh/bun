@@ -23,4 +23,3 @@ const debug = bun.Output.scoped(.SocketMonitor, .visible);
 const DebugSocketMonitorReader = @import("./DebugSocketMonitorReader.zig");
 const DebugSocketMonitorWriter = @import("./DebugSocketMonitorWriter.zig");
 const bun = @import("bun");
-const std = @import("std");

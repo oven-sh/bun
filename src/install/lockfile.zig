@@ -2157,7 +2157,6 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const GlobalStringBuilder = bun.StringBuilder;
 const JSON = bun.json;
-const MutableString = bun.MutableString;
 const OOM = bun.OOM;
 const Output = bun.Output;
 const assert = bun.assert;

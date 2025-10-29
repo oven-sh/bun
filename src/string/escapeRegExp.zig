@@ -115,6 +115,8 @@ pub fn jsEscapeRegExpForPackageNameMatching(global: *JSGlobalObject, call_frame:
     return output.toJS(global);
 }
 
+const std = @import("std");
+
 const bun = @import("bun");
 const Environment = bun.Environment;
 const JSError = bun.JSError;
@@ -124,4 +126,3 @@ const strings = bun.strings;
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-const std = @import("std");

@@ -1,5 +1,3 @@
-const ArrayList = @This();
-
 array: *std.array_list.Managed(u8),
 
 pub fn offset(this: @This()) usize {

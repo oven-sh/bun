@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { relative, join, dirname } from "path";
+import { dirname, join, relative } from "path";
 
 // Check for local changes in git before proceeding
 const statusOutput = await $`git status --porcelain --untracked-files=normal`.text();

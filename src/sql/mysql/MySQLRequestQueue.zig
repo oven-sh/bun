@@ -218,7 +218,6 @@ const debug = bun.Output.scoped(.MySQLRequestQueue, .visible);
 const JSMySQLQuery = @import("./js/JSMySQLQuery.zig");
 const MySQLConnection = @import("./js/JSMySQLConnection.zig");
 const bun = @import("bun");
-const std = @import("std");
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;

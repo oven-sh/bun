@@ -76,7 +76,6 @@ const DiffConfig = printDiffFile.DiffConfig;
 const printDiffMain = printDiffFile.printDiffMain;
 
 const bun = @import("bun");
-const MutableString = bun.MutableString;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
 

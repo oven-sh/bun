@@ -412,6 +412,9 @@ pub fn ParseImportExport(
     };
 }
 
+const std = @import("std");
+const ListManaged = std.array_list.Managed;
+
 const bun = @import("bun");
 const assert = bun.assert;
 const js_lexer = bun.js_lexer;
@@ -432,6 +435,3 @@ const ImportClause = js_parser.ImportClause;
 const JSXTransformType = js_parser.JSXTransformType;
 const isEvalOrArguments = js_parser.isEvalOrArguments;
 const options = js_parser.options;
-
-const std = @import("std");
-const ListManaged = std.array_list.Managed;

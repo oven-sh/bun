@@ -2025,6 +2025,5 @@ const windows = bun.windows;
 const uv = windows.libuv;
 
 const std = @import("std");
-const ArrayList = std.array_list.Managed;
 const posix = std.posix;
 const Allocator = std.mem.Allocator;

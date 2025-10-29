@@ -1583,5 +1583,5 @@ const WrapMode = js_parser.WrapMode;
 
 const std = @import("std");
 const List = std.ArrayListUnmanaged;
-const ListManaged = std.array_list.Managed;
 const Allocator = std.mem.Allocator;
+const ListManaged = std.array_list.Managed;

@@ -1,6 +1,5 @@
 // `fish -c "bun run watch 2>&1 | bun scripts/cleartrace"`
 
-import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 
 const rl = createInterface({

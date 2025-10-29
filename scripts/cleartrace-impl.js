@@ -1,4 +1,3 @@
-import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 
 const rl = createInterface({

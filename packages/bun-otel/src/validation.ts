@@ -66,29 +66,26 @@ const BLOCKED_PATTERNS = [/^x-secret-/i, /^x-token-/i, /password/i, /secret/i, /
 /**
  * Validates that a header name does not match security constraints.
  *
- * @param headerName - The header name to validate
- * @throws {TypeError} If the header is blocked, not lowercase, or invalid per RFC 9110
+ * Per RFC 9110, HTTP header field names are case-insensitive. This function
+ * accepts any casing and normalizes to lowercase for consistent processing.
+ *
+ * @param headerName - The header name to validate (any casing accepted)
+ * @throws {TypeError} If the header is blocked or invalid per RFC 9110
  *
  * @example
  * ```typescript
  * validateHeaderName("traceparent"); // OK
+ * validateHeaderName("Content-Type"); // OK (normalized to lowercase)
  * validateHeaderName("authorization"); // Throws TypeError - blocked
  * validateHeaderName("x-secret-key"); // Throws TypeError - blocked pattern
- * validateHeaderName("Content-Type"); // Throws TypeError - not lowercase
  * validateHeaderName("invalid header"); // Throws TypeError - invalid RFC 9110 token
  * ```
  */
 export function validateHeaderName(headerName: string): void {
   const trimmed = headerName.trim();
 
-  // Enforce lowercase for security consistency
-  if (trimmed !== trimmed.toLowerCase()) {
-    throw new TypeError(
-      `Header names must be lowercase: "${headerName}". ` + `Use lowercase to comply with telemetry security policy.`,
-    );
-  }
-
-  const normalized = trimmed;
+  // Normalize to lowercase per RFC 9110 (header names are case-insensitive)
+  const normalized = trimmed.toLowerCase();
 
   // Validate RFC 9110 field-name format
   if (!FIELD_NAME_RE.test(normalized)) {
@@ -98,7 +95,7 @@ export function validateHeaderName(headerName: string): void {
     );
   }
 
-  // Check exact matches against blocked list
+  // Check exact matches against blocked list (using normalized lowercase)
   if (BLOCKED_HEADERS.has(normalized)) {
     throw new TypeError(
       `Cannot inject or capture header "${headerName}": ` +
@@ -107,7 +104,7 @@ export function validateHeaderName(headerName: string): void {
     );
   }
 
-  // Check patterns for potentially sensitive headers
+  // Check patterns for potentially sensitive headers (using normalized lowercase)
   for (const pattern of BLOCKED_PATTERNS) {
     if (pattern.test(normalized)) {
       throw new TypeError(

@@ -41,8 +41,6 @@
  * // Later: unregister the instrumentation
  * Bun.telemetry.detach(instrumentId);
  * ```
- *
- * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/bun-telemetry-api.md
  */
 declare module "bun" {
   /**
@@ -54,6 +52,42 @@ declare module "bun" {
    * @internal Used internally by hooks - users don't create these directly
    */
   export type OpId = number & { readonly __brand: unique symbol };
+
+  /**
+   * OpenTelemetry-compatible attribute value types (primitives and arrays).
+   *
+   * Matches OTel semantic conventions for span/event attributes.
+   * @see https://opentelemetry.io/docs/specs/otel/common/attribute-naming/
+   */
+  export type TelemetryAttribute = string | number | boolean;
+
+  /**
+   * Record of telemetry attributes for operation hooks.
+   *
+   * Values must be OTel-compatible primitives or arrays of primitives.
+   */
+  export type TelemetryAttributes = Record<string, TelemetryAttribute | ReadonlyArray<TelemetryAttribute>>;
+
+  /**
+   * Lowercase header name for HTTP header capture/injection.
+   *
+   * HTTP header names are case-insensitive per RFC 9110; lowercase enforces consistency.
+   */
+  export type HeaderName = Lowercase<string>;
+
+  /**
+   * Readonly list of lowercase header names.
+   *
+   * Used for header capture and injection configuration.
+   */
+  export type ReadonlyHeaderList = readonly HeaderName[];
+
+  /**
+   * Disposable-like interface for environments without lib.esnext.disposable.
+   *
+   * Provides Symbol.dispose for automatic cleanup without requiring specific lib configuration.
+   */
+  export type DisposableLike = { [Symbol.dispose](): void };
 
   /**
    * Reference to an attached instrument, returned by Bun.telemetry.attach().
@@ -70,15 +104,13 @@ declare module "bun" {
    * Bun.telemetry.detach(instrument);
    * ```
    */
-  export type InstrumentRef = { id: number } & Disposable;
+  export type InstrumentRef = { readonly id: number } & (Disposable | DisposableLike);
 
   /**
    * Categorizes operation types for routing telemetry data to appropriate handlers.
    *
    * Use string literals to specify which operations your instrumentation handles.
    * For example: `kind: "http"` instruments HTTP server operations.
-   *
-   * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/bun-telemetry-api.md#instrumentkind-enum
    */
   export type InstrumentKind = "custom" | "http" | "fetch" | "sql" | "redis" | "s3" | "node";
 
@@ -87,8 +119,6 @@ declare module "bun" {
    *
    * Instruments receive lifecycle callbacks during operations with semantic convention
    * attributes following OpenTelemetry specifications.
-   *
-   * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/bun-telemetry-api.md#api-surface
    */
   export interface NativeInstrument {
     /**
@@ -122,16 +152,17 @@ declare module "bun" {
      * Specifies which HTTP headers to capture as span attributes.
      * Only headers explicitly listed here will be captured.
      *
+     * Per RFC 9110, header names are case-insensitive and will be normalized
+     * to lowercase internally. You may provide headers in any casing.
+     *
      * Security: Sensitive headers (authorization, cookie, etc.) are blocked
      * even if listed here.
-     *
-     * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/hook-lifecycle.md#header-capture-security
      */
     captureAttributes?: {
-      /** HTTP request headers to capture (lowercase, max 50 headers) */
-      requestHeaders?: string[];
-      /** HTTP response headers to capture (lowercase, max 50 headers) */
-      responseHeaders?: string[];
+      /** HTTP request headers to capture (max 50 headers, normalized to lowercase) */
+      requestHeaders?: ReadonlyHeaderList;
+      /** HTTP response headers to capture (max 50 headers, normalized to lowercase) */
+      responseHeaders?: ReadonlyHeaderList;
     };
 
     /**
@@ -141,16 +172,17 @@ declare module "bun" {
      * Header keys must be declared here; extra keys in onOperationInject return
      * values are ignored.
      *
+     * Per RFC 9110, header names are case-insensitive and will be normalized
+     * to lowercase internally. You may provide headers in any casing.
+     *
      * Security: Sensitive headers (authorization, cookie, etc.) are blocked
      * even if listed here.
-     *
-     * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/header-injection.md
      */
     injectHeaders?: {
-      /** Headers to inject into outgoing requests (for Fetch client) */
-      request?: string[];
-      /** Headers to inject into outgoing responses (for HTTP server) */
-      response?: string[];
+      /** Headers to inject into outgoing requests (for Fetch client, max 20 headers, normalized to lowercase) */
+      request?: ReadonlyHeaderList;
+      /** Headers to inject into outgoing responses (for HTTP server, max 20 headers, normalized to lowercase) */
+      response?: ReadonlyHeaderList;
     };
 
     /**
@@ -165,10 +197,8 @@ declare module "bun" {
      *
      * @param id - Unique operation ID (for correlating with onOperationEnd/Error)
      * @param attributes - Operation-specific attributes following OpenTelemetry semantic conventions
-     *
-     * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/hook-lifecycle.md
      */
-    onOperationStart?: (id: OpId, attributes: Record<string, any>) => void;
+    onOperationStart?: (id: OpId, attributes: TelemetryAttributes) => void;
 
     /**
      * Called during long-running operations to report progress (optional).
@@ -184,7 +214,7 @@ declare module "bun" {
      * @param id - Operation ID from onOperationStart
      * @param attributes - Progress-specific attributes
      */
-    onOperationProgress?: (id: OpId, attributes: Record<string, any>) => void;
+    onOperationProgress?: (id: OpId, attributes: TelemetryAttributes) => void;
 
     /**
      * Called when an operation completes successfully.
@@ -199,7 +229,7 @@ declare module "bun" {
      * @param id - Operation ID from onOperationStart
      * @param attributes - Result attributes following OpenTelemetry semantic conventions
      */
-    onOperationEnd?: (id: OpId, attributes: Record<string, any>) => void;
+    onOperationEnd?: (id: OpId, attributes: TelemetryAttributes) => void;
 
     /**
      * Called when an operation fails.
@@ -215,7 +245,7 @@ declare module "bun" {
      * @param id - Operation ID from onOperationStart
      * @param attributes - Error attributes following OpenTelemetry semantic conventions
      */
-    onOperationError?: (id: OpId, attributes: Record<string, any>) => void;
+    onOperationError?: (id: OpId, attributes: TelemetryAttributes) => void;
 
     /**
      * Called to inject context into outgoing operations (optional).
@@ -243,7 +273,7 @@ declare module "bun" {
      * }
      * ```
      */
-    onOperationInject?: (id: OpId, data?: unknown) => any;
+    onOperationInject?: (id: OpId, data?: unknown) => Record<string, string> | void;
   }
 
   /**
@@ -251,7 +281,7 @@ declare module "bun" {
    */
   export interface InstrumentInfo {
     /** Unique instrument ID (from attach()) */
-    id: number;
+    readonly id: number;
     /** Operation kind this instrument handles */
     kind: InstrumentKind;
     /** Instrumentation name */
@@ -267,9 +297,9 @@ declare module "bun" {
    */
   export interface ActiveSpanContext {
     /** W3C Trace Context trace ID (hex string) */
-    traceId: string;
+    readonly traceId: string;
     /** W3C Trace Context span ID (hex string) */
-    spanId: string;
+    readonly spanId: string;
   }
 
   /**
@@ -278,8 +308,6 @@ declare module "bun" {
    * The telemetry API provides lightweight operation tracking with minimal overhead.
    * Instruments can be attached/detached dynamically and receive lifecycle callbacks
    * with semantic convention attributes.
-   *
-   * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/bun-telemetry-api.md
    */
   export namespace telemetry {
     /**
@@ -333,8 +361,6 @@ declare module "bun" {
      * console.log(ref.id); // Access numeric ID if needed
      * Bun.telemetry.detach(ref);
      * ```
-     *
-     * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/bun-telemetry-api.md#buntelemetryattachinstrument-nativeinstrument-number
      */
     export function attach(instrument: NativeInstrument): InstrumentRef;
 
@@ -371,8 +397,6 @@ declare module "bun" {
      * // Already detached
      * Bun.telemetry.detach(ref); // returns false
      * ```
-     *
-     * @see https://github.com/oven-sh/bun/blob/main/specs/001-opentelemetry-support/contracts/bun-telemetry-api.md#buntelemetrydetachinstrumentid-number-void
      */
     export function detach(instrumentRef: InstrumentRef): boolean;
 

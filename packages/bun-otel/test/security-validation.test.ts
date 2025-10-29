@@ -112,10 +112,13 @@ describe("validateHeaderName()", () => {
       });
     });
 
-    test("rejects non-lowercase headers for security consistency", () => {
-      expect(() => validateHeaderName("TraceParent")).toThrow("Header names must be lowercase");
-      expect(() => validateHeaderName("TRACEPARENT")).toThrow("Header names must be lowercase");
-      expect(() => validateHeaderName("X-Request-ID")).toThrow("Header names must be lowercase");
+    test("normalizes mixed-case headers per RFC 9110", () => {
+      // Per RFC 9110, header names are case-insensitive
+      // Accept any casing, normalize internally
+      expect(() => validateHeaderName("TraceParent")).not.toThrow();
+      expect(() => validateHeaderName("TRACEPARENT")).not.toThrow();
+      expect(() => validateHeaderName("X-Request-ID")).not.toThrow();
+      expect(() => validateHeaderName("Content-Type")).not.toThrow();
     });
 
     test("allows lowercase headers", () => {

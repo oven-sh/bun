@@ -4,18 +4,19 @@ TODO:
 - [x] revert commit 'revertrevert' 43009bb1f297789596c4d9b424f1c22647891986 and get building again
 - [ ] linux: no_link_obj
 - [x] windows
-- [ ] remove deprecated.BufferedWriter and BufferedReader
 - [x] try the native backend on linux x86_64 (will probably crash)
-- [ ] remove:
-  - [ ] deprecated.zig autoFormatLabelFallback
-  - [ ] deprecated.zig autoFormatLabel
-  - [x] bun.zig maybeAdaptWriter
+- [x] remove bun.zig maybeAdaptWriter
+- [ ] remove the migrate script
+- [ ] remove todo.md
 - [ ] try webui, see time report
 
 Follow-up:
 
 - [ ] search `comptime Writer: type` and `comptime W: type` and remove
 - [ ] remove format_mode in main.zig and in our zig fork
+- [ ] remove deprecated.zig autoFormatLabelFallback
+- [ ] remove deprecated.zig autoFormatLabel
+- [ ] remove deprecated.BufferedWriter and BufferedReader
 
 Follow-up:
 

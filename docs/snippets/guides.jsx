@@ -501,34 +501,34 @@ export const GuidesList = () => {
           ))}
         </Columns>
       </div>
-  return (
-    <div id="guides-list">
-      {/* Featured cards */}
-      <div className="mb-12">
-        <h2 className="text-2xl font-bold mb-6">Featured</h2>
-        <Columns cols={3}>
-          {guidesData.featured.map(g => (
-            <Card key={g.href} title={g.title} href={g.href} cta={g.cta} />
-          ))}
-        </Columns>
-      </div>
+      return (
+      <div id="guides-list">
+        {/* Featured cards */}
+        <div className="mb-12">
+          <h2 className="text-2xl font-bold mb-6">Featured</h2>
+          <Columns cols={3}>
+            {guidesData.featured.map(g => (
+              <Card key={g.href} title={g.title} href={g.href} cta={g.cta} />
+            ))}
+          </Columns>
+        </div>
 
-      {/* All guides organized by category */}
-      <div className="mb-8">
-        <h2 className="text-2xl font-bold mb-6">All Guides</h2>
-        {guidesData.categories.map(category => (
-          <div key={category.key} className="mb-8">
-            <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">{category.title}</h3>
-            <Columns cols={3}>
-              {category.items.map(guide => (
-                <Card key={guide.href} title={guide.title} description=" " href={guide.href} cta="" />
-              ))}
-            </Columns>
-          </div>
-        ))}
+        {/* All guides organized by category */}
+        <div className="mb-8">
+          <h2 className="text-2xl font-bold mb-6">All Guides</h2>
+          {guidesData.categories.map(category => (
+            <div key={category.key} className="mb-8">
+              <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">{category.title}</h3>
+              <Columns cols={3}>
+                {category.items.map(guide => (
+                  <Card key={guide.href} title={guide.title} description=" " href={guide.href} cta="" />
+                ))}
+              </Columns>
+            </div>
+          ))}
+        </div>
       </div>
-    </div>
-  );
+      );
       {/* All guides organized by category */}
       <div className="mb-8">
         <h2 className="text-2xl font-bold mb-6">All Guides</h2>

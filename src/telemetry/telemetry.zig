@@ -2,6 +2,7 @@ const std = @import("std");
 const bun = @import("bun");
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;
+const JSError = bun.JSError;
 const JSGlobalObject = jsc.JSGlobalObject;
 const CallFrame = jsc.CallFrame;
 const ZigString = jsc.ZigString;
@@ -68,8 +69,24 @@ pub const InstrumentType = enum(u8) {
     redis = 4,
     s3 = 5,
     node = 6,
-
+    /// Number of instrument types
     pub const COUNT = @typeInfo(InstrumentType).@"enum".fields.len;
+    /// Map of string instrument kinds to InstrumentType enum values (comptime length checked)
+    pub const KindMap = bun.ComptimeStringMap(InstrumentType, .{
+        .{ "s3", .s3 },
+        .{ "sql", .sql },
+        .{ "node", .node },
+        .{ "http", .http },
+        .{ "fetch", .fetch },
+        .{ "redis", .redis },
+        .{ "custom", .custom },
+    });
+    pub fn fromJS(globalObject: *JSGlobalObject, val: JSValue) ?InstrumentType {
+        if (!val.isString()) {
+            return null;
+        }
+        return InstrumentType.KindMap.fromJS(globalObject, val) catch return .custom;
+    }
 };
 
 /// Operation lifecycle event types
@@ -83,16 +100,6 @@ pub const OperationStep = enum(u8) {
 
     pub const COUNT = @typeInfo(OperationStep).@"enum".fields.len;
 };
-
-/// Parse an instrument kind from a string JSValue.
-/// Accepts exact (case-sensitive) enum names: "custom", "http", "fetch", "sql", "redis", "s3", "node".
-/// Returns .custom (0) if the value is not a string or does not match a known kind.
-pub fn parseStringInstrumentType(globalObject: *JSGlobalObject, val: JSValue) InstrumentType {
-    if (!val.isString()) return .custom;
-    const zstr = val.getZigString(globalObject) catch return .custom;
-    const slice = zstr.slice();
-    return std.meta.stringToEnum(InstrumentType, slice) orelse .custom;
-}
 
 /// Stores registered instrumentation with cached function pointers for performance.
 /// Lifecycle: Created during attach(), disposed during detach()
@@ -428,16 +435,18 @@ pub const TelemetryContext = struct {
             return error.InvalidKind;
         }
 
-        // Parse string to internal enum (defaults to .custom for unknown strings)
-        const instrument_type = parseStringInstrumentType(globalObject, kind_value);
+        // Parse string to internal enum (returns null for unknown strings)
+        const instrument_type = InstrumentType.fromJS(globalObject, kind_value) orelse .custom;
 
         // Generate ID and create record
         const id = self.generateInstrumentId();
-        const record = try InstrumentRecord.init(id, instrument_type, instrument_obj, globalObject, self.allocator, self);
-
+        // must be var to call dispose in errdefer
+        var record = try InstrumentRecord.init(id, instrument_type, instrument_obj, globalObject, self.allocator, self);
+        errdefer record.dispose();
         // Add to appropriate instrument list
         const type_index = @intFromEnum(instrument_type);
         try self.instrument_table[type_index].append(record);
+        errdefer _ = self.instrument_table[type_index].pop();
 
         // Rebuild inject and capture config for this type if it's HTTP or Fetch
         if (instrument_type == .http or instrument_type == .fetch) {
@@ -549,16 +558,13 @@ pub const TelemetryContext = struct {
     /// Create an InstrumentInfo object from an InstrumentRecord
     fn createInstrumentInfo(self: *TelemetryContext, record: *const InstrumentRecord, globalObject: *JSGlobalObject) JSValue {
         _ = self;
-        const info = JSValue.createEmptyObject(globalObject, 5);
+        const info = JSValue.createEmptyObject(globalObject, 4);
 
         info.put(globalObject, "id", JSValue.jsNumber(@as(f64, @floatFromInt(record.id))));
 
         // Get string kind from instrument object (already protected, no need to re-protect)
         const kind_str = (record.native_instrument_object.get(globalObject, "kind") catch null) orelse .js_undefined;
         info.put(globalObject, "kind", kind_str);
-
-        // Add numeric type (internal)
-        info.put(globalObject, "type", JSValue.jsNumber(@as(f64, @floatFromInt(@intFromEnum(record.type)))));
 
         const name = (record.native_instrument_object.get(globalObject, "name") catch null) orelse .js_undefined;
         info.put(globalObject, "name", name);
@@ -916,14 +922,17 @@ pub fn jsListInstruments(
         return JSValue.createEmptyArray(globalObject, 0) catch .js_undefined;
     };
 
-    var maybe_kind: ?InstrumentType = null;
+    const maybe_kind: JSValue = switch (arguments.len) {
+        0 => return telemetry.listInstruments(null, globalObject) catch .js_undefined,
+        1 => if (arguments.ptr[0].isUndefinedOrNull()) .js_undefined else arguments.ptr[0],
+        else => .js_undefined,
+    };
 
-    // Only accept string kind parameter
-    if (arguments.len >= 1 and arguments.ptr[0].isString()) {
-        maybe_kind = parseStringInstrumentType(globalObject, arguments.ptr[0]);
-    }
+    const maybe_type: ?InstrumentType = InstrumentType.fromJS(globalObject, maybe_kind) orelse {
+        return JSValue.createEmptyArray(globalObject, 0) catch .js_undefined;
+    };
 
-    return telemetry.listInstruments(maybe_kind, globalObject) catch .js_undefined;
+    return telemetry.listInstruments(maybe_type, globalObject) catch .js_undefined;
 }
 
 // ============================================================================

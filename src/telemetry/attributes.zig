@@ -23,8 +23,22 @@ const semconv = @import("semconv.zig");
 
 /// Header direction for HTTP header attributes
 /// Used to distinguish between request and response headers in both
-/// AttributeKey.httpDirection() and HeaderNameList.fromJS()
+/// AttributeKey.httpDirection() and AttributeKeys.createHeaderNameList()
 pub const HeaderDirection = enum { request, response };
+
+// ============================================================================
+// Context Kind - Semantic role of header collection
+// ============================================================================
+
+/// Context kind describes the semantic role of a header collection.
+/// Used by HeaderNameList to determine header direction (.request or .response).
+pub const ContextKind = enum(u8) {
+    base,
+    server_request,
+    server_response,
+    fetch_request,
+    fetch_response,
+};
 
 // ============================================================================
 // External C Function - HTTP Header Name Lookup
@@ -55,6 +69,7 @@ pub const AttributeKey = struct {
     semconv_name: []const u8, // e.g. "http.request.header.content-type"
     fast_header: ?u8, // HTTPHeaderNames enum (0-92) if applicable
     http_header: ?[]const u8, // Naked header string e.g. "content-type"
+    owns_name: bool, // true if semconv_name was allocated and must be freed
 
     pub fn isHttpHeader(self: *const AttributeKey) bool {
         return self.http_header != null;
@@ -124,6 +139,7 @@ pub const AttributeKeys = struct {
     // Global list of all AttributeKeys (well-known + dynamically allocated)
     all: [1024]*AttributeKey,
     len: u16,
+    list_count: std.atomic.Value(u32), // Number of outstanding HeaderNameLists referencing this registry
     allocator: std.mem.Allocator,
 
     /// Initialize the singleton with well-known attributes
@@ -131,63 +147,85 @@ pub const AttributeKeys = struct {
         var keys: AttributeKeys = undefined;
         keys.allocator = allocator;
         keys.len = 0;
+        keys.list_count = std.atomic.Value(u32).init(0);
 
-        // Allocate well-known semconv attributes using allocateAttribute helper
-        keys.http_request_method = try keys.allocateAttribute(semconv.ATTR_HTTP_REQUEST_METHOD);
-        keys.http_response_status_code = try keys.allocateAttribute(semconv.ATTR_HTTP_RESPONSE_STATUS_CODE);
-        keys.http_response_body_size = try keys.allocateAttribute("http.response.body.size");
-        keys.http_route = try keys.allocateAttribute(semconv.ATTR_HTTP_ROUTE);
-        keys.url_path = try keys.allocateAttribute(semconv.ATTR_URL_PATH);
-        keys.url_query = try keys.allocateAttribute(semconv.ATTR_URL_QUERY);
-        keys.url_scheme = try keys.allocateAttribute(semconv.ATTR_URL_SCHEME);
-        keys.url_full = try keys.allocateAttribute(semconv.ATTR_URL_FULL);
-        keys.server_address = try keys.allocateAttribute(semconv.ATTR_SERVER_ADDRESS);
-        keys.server_port = try keys.allocateAttribute(semconv.ATTR_SERVER_PORT);
-        keys.client_address = try keys.allocateAttribute(semconv.ATTR_CLIENT_ADDRESS);
-        keys.client_port = try keys.allocateAttribute(semconv.ATTR_CLIENT_PORT);
-        keys.network_peer_address = try keys.allocateAttribute(semconv.ATTR_NETWORK_PEER_ADDRESS);
-        keys.network_peer_port = try keys.allocateAttribute(semconv.ATTR_NETWORK_PEER_PORT);
-        keys.network_protocol_name = try keys.allocateAttribute(semconv.ATTR_NETWORK_PROTOCOL_NAME);
-        keys.network_protocol_version = try keys.allocateAttribute(semconv.ATTR_NETWORK_PROTOCOL_VERSION);
-        keys.user_agent_original = try keys.allocateAttribute(semconv.ATTR_USER_AGENT_ORIGINAL);
-        keys.error_type = try keys.allocateAttribute(semconv.ATTR_ERROR_TYPE);
-        keys.error_message = try keys.allocateAttribute("error.message");
-        keys.exception_type = try keys.allocateAttribute(semconv.ATTR_EXCEPTION_TYPE);
-        keys.exception_message = try keys.allocateAttribute(semconv.ATTR_EXCEPTION_MESSAGE);
-        keys.exception_stacktrace = try keys.allocateAttribute(semconv.ATTR_EXCEPTION_STACKTRACE);
+        // Define well-known semconv attributes using compile-time string literals
+        keys.http_request_method = try keys.defineComptimeAttribute(semconv.ATTR_HTTP_REQUEST_METHOD);
+        keys.http_response_status_code = try keys.defineComptimeAttribute(semconv.ATTR_HTTP_RESPONSE_STATUS_CODE);
+        keys.http_response_body_size = try keys.defineComptimeAttribute("http.response.body.size");
+        keys.http_route = try keys.defineComptimeAttribute(semconv.ATTR_HTTP_ROUTE);
+        keys.url_path = try keys.defineComptimeAttribute(semconv.ATTR_URL_PATH);
+        keys.url_query = try keys.defineComptimeAttribute(semconv.ATTR_URL_QUERY);
+        keys.url_scheme = try keys.defineComptimeAttribute(semconv.ATTR_URL_SCHEME);
+        keys.url_full = try keys.defineComptimeAttribute(semconv.ATTR_URL_FULL);
+        keys.server_address = try keys.defineComptimeAttribute(semconv.ATTR_SERVER_ADDRESS);
+        keys.server_port = try keys.defineComptimeAttribute(semconv.ATTR_SERVER_PORT);
+        keys.client_address = try keys.defineComptimeAttribute(semconv.ATTR_CLIENT_ADDRESS);
+        keys.client_port = try keys.defineComptimeAttribute(semconv.ATTR_CLIENT_PORT);
+        keys.network_peer_address = try keys.defineComptimeAttribute(semconv.ATTR_NETWORK_PEER_ADDRESS);
+        keys.network_peer_port = try keys.defineComptimeAttribute(semconv.ATTR_NETWORK_PEER_PORT);
+        keys.network_protocol_name = try keys.defineComptimeAttribute(semconv.ATTR_NETWORK_PROTOCOL_NAME);
+        keys.network_protocol_version = try keys.defineComptimeAttribute(semconv.ATTR_NETWORK_PROTOCOL_VERSION);
+        keys.user_agent_original = try keys.defineComptimeAttribute(semconv.ATTR_USER_AGENT_ORIGINAL);
+        keys.error_type = try keys.defineComptimeAttribute(semconv.ATTR_ERROR_TYPE);
+        keys.error_message = try keys.defineComptimeAttribute("error.message");
+        keys.exception_type = try keys.defineComptimeAttribute(semconv.ATTR_EXCEPTION_TYPE);
+        keys.exception_message = try keys.defineComptimeAttribute(semconv.ATTR_EXCEPTION_MESSAGE);
+        keys.exception_stacktrace = try keys.defineComptimeAttribute(semconv.ATTR_EXCEPTION_STACKTRACE);
 
         // Operation-level attributes (internal, not in OTel semconv)
-        keys.operation_id = try keys.allocateAttribute("operation.id");
-        keys.operation_timestamp = try keys.allocateAttribute("operation.timestamp");
-        keys.operation_duration = try keys.allocateAttribute("operation.duration");
+        keys.operation_id = try keys.defineComptimeAttribute("operation.id");
+        keys.operation_timestamp = try keys.defineComptimeAttribute("operation.timestamp");
+        keys.operation_duration = try keys.defineComptimeAttribute("operation.duration");
 
         // Database/SQL attributes
-        keys.db_system_name = try keys.allocateAttribute(semconv.ATTR_DB_SYSTEM_NAME);
-        keys.db_namespace = try keys.allocateAttribute(semconv.ATTR_DB_NAMESPACE);
-        keys.db_collection_name = try keys.allocateAttribute(semconv.ATTR_DB_COLLECTION_NAME);
-        keys.db_operation_name = try keys.allocateAttribute(semconv.ATTR_DB_OPERATION_NAME);
-        keys.db_query_summary = try keys.allocateAttribute(semconv.ATTR_DB_QUERY_SUMMARY);
-        keys.db_query_text = try keys.allocateAttribute(semconv.ATTR_DB_QUERY_TEXT);
-        keys.db_response_status_code = try keys.allocateAttribute(semconv.ATTR_DB_RESPONSE_STATUS_CODE);
-        keys.db_response_returned_rows = try keys.allocateAttribute("db.response.returned_rows");
+        keys.db_system_name = try keys.defineComptimeAttribute(semconv.ATTR_DB_SYSTEM_NAME);
+        keys.db_namespace = try keys.defineComptimeAttribute(semconv.ATTR_DB_NAMESPACE);
+        keys.db_collection_name = try keys.defineComptimeAttribute(semconv.ATTR_DB_COLLECTION_NAME);
+        keys.db_operation_name = try keys.defineComptimeAttribute(semconv.ATTR_DB_OPERATION_NAME);
+        keys.db_query_summary = try keys.defineComptimeAttribute(semconv.ATTR_DB_QUERY_SUMMARY);
+        keys.db_query_text = try keys.defineComptimeAttribute(semconv.ATTR_DB_QUERY_TEXT);
+        keys.db_response_status_code = try keys.defineComptimeAttribute(semconv.ATTR_DB_RESPONSE_STATUS_CODE);
+        keys.db_response_returned_rows = try keys.defineComptimeAttribute("db.response.returned_rows");
 
         // Distributed tracing attributes (W3C Trace Context)
-        keys.http_request_header_traceparent = try keys.allocateAttribute("http.request.header.traceparent");
-        keys.http_request_header_tracestate = try keys.allocateAttribute("http.request.header.tracestate");
-        keys.http_response_header_traceid = try keys.allocateAttribute("http.response.header.traceid");
-        keys.trace_parent_trace_id = try keys.allocateAttribute("trace.parent.trace_id");
-        keys.trace_parent_span_id = try keys.allocateAttribute("trace.parent.span_id");
-        keys.trace_parent_trace_flags = try keys.allocateAttribute("trace.parent.trace_flags");
+        keys.http_request_header_traceparent = try keys.defineComptimeAttribute("http.request.header.traceparent");
+        keys.http_request_header_tracestate = try keys.defineComptimeAttribute("http.request.header.tracestate");
+        keys.http_response_header_traceid = try keys.defineComptimeAttribute("http.response.header.traceid");
+        keys.trace_parent_trace_id = try keys.defineComptimeAttribute("trace.parent.trace_id");
+        keys.trace_parent_span_id = try keys.defineComptimeAttribute("trace.parent.span_id");
+        keys.trace_parent_trace_flags = try keys.defineComptimeAttribute("trace.parent.trace_flags");
 
         // Error attributes
-        keys.error_stack_trace = try keys.allocateAttribute("error.stack_trace");
+        keys.error_stack_trace = try keys.defineComptimeAttribute("error.stack_trace");
 
         return keys;
     }
 
     /// Clean up all allocated AttributeKeys
+    ///
+    /// SAFETY: This should ONLY be called during full TelemetryContext teardown
+    /// when all structures holding *AttributeKey references (HeaderNameLists,
+    /// SpanData, etc.) have already been deinitialized. Calling this with live
+    /// references will create dangling pointers.
+    ///
+    /// In practice, this is called by TelemetryContext.deinit() and never called
+    /// in normal operation (AttributeKeys is process-lifetime).
     pub fn deinit(self: *AttributeKeys) void {
+        // Safety check: ensure all HeaderNameLists have been deinitialized
+        if (comptime bun.Environment.isDebug) {
+            const current_ref_count = self.list_count.load(.seq_cst);
+            if (current_ref_count != 0) {
+                std.debug.panic("AttributeKeys.deinit() called with {d} outstanding HeaderNameLists!", .{current_ref_count});
+            }
+        }
+
         for (self.all[0..self.len]) |key| {
+            // Free dynamically allocated strings (from fromJS/getOrCreateHeaderKey)
+            if (key.owns_name) {
+                self.allocator.free(key.semconv_name);
+            }
+            // Free the AttributeKey struct itself
             self.allocator.destroy(key);
         }
     }
@@ -222,11 +260,31 @@ pub const AttributeKeys = struct {
         return null;
     }
 
-    /// Allocate a new uncommon AttributeKey (internal helper)
+    /// Define a compile-time AttributeKey for static string literals (semconv constants)
+    /// The string is NOT allocated - it references the string literal in the binary's data segment
     /// Auto-detects HTTP headers and populates fast_header/http_header from semconv_name
-    fn allocateAttribute(
+    fn defineComptimeAttribute(
         self: *AttributeKeys,
         semconv_name: []const u8,
+    ) !*AttributeKey {
+        return try self.allocateAttributeInternal(semconv_name, false);
+    }
+
+    /// Allocate a runtime AttributeKey for dynamically allocated strings
+    /// The string was allocated via allocator.dupe() and MUST be freed on deinit
+    /// Auto-detects HTTP headers and populates fast_header/http_header from semconv_name
+    fn allocateRuntimeAttribute(
+        self: *AttributeKeys,
+        semconv_name: []const u8,
+    ) !*AttributeKey {
+        return try self.allocateAttributeInternal(semconv_name, true);
+    }
+
+    /// Internal helper for allocating AttributeKeys with ownership tracking
+    fn allocateAttributeInternal(
+        self: *AttributeKeys,
+        semconv_name: []const u8,
+        owns_name: bool,
     ) !*AttributeKey {
         if (self.len >= 1024) return error.AttributePoolExhausted;
 
@@ -249,7 +307,7 @@ pub const AttributeKeys = struct {
                 fast_header_opt = header_id;
             }
 
-            // Store naked header name
+            // Store naked header name (slice into semconv_name, no extra allocation)
             http_header_opt = header_name;
         }
 
@@ -259,6 +317,7 @@ pub const AttributeKeys = struct {
             .semconv_name = semconv_name,
             .fast_header = fast_header_opt,
             .http_header = http_header_opt,
+            .owns_name = owns_name,
         };
         self.all[self.len] = key;
         self.len += 1;
@@ -306,8 +365,8 @@ pub const AttributeKeys = struct {
         const name_copy = self.allocator.dupe(u8, name) catch return null;
         errdefer self.allocator.free(name_copy);
 
-        // Allocate the new attribute (allocateAttribute auto-detects HTTP headers)
-        const new_key = self.allocateAttribute(name_copy) catch return null;
+        // Allocate the new attribute with owned string (auto-detects HTTP headers)
+        const new_key = self.allocateRuntimeAttribute(name_copy) catch return null;
 
         return new_key;
     }
@@ -342,7 +401,100 @@ pub const AttributeKeys = struct {
 
         // Allocate new - need to copy string to allocator memory
         const name_copy = try self.allocator.dupe(u8, semconv_name);
-        return try self.allocateAttribute(name_copy);
+        return try self.allocateRuntimeAttribute(name_copy);
+    }
+
+    /// Create a new HeaderNameList from a JavaScript array of header names
+    /// This increments the parent AttributeKeys refcount - caller must call HeaderNameList.deinit()
+    pub fn createHeaderNameList(
+        self: *AttributeKeys,
+        global: *JSGlobalObject,
+        js_array: JSValue,
+        context: ContextKind,
+    ) !HeaderNameList {
+        _ = self.list_count.fetchAdd(1, .monotonic);
+        var list = HeaderNameList.init(self, context);
+        errdefer {
+            list.deinit();
+        }
+
+        // Determine header direction from context
+        const direction: HeaderDirection = switch (context) {
+            .server_request, .fetch_request => .request,
+            .server_response, .fetch_response => .response,
+            else => .request,
+        };
+
+        const len = try js_array.getLength(global);
+        var i: u32 = 0;
+        while (i < len) : (i += 1) {
+            const name_js = try js_array.getIndex(global, i);
+            if (!name_js.isString()) continue;
+
+            var name_zig: ZigString = ZigString.Empty;
+            try name_js.toZigString(&name_zig, global);
+            const name_slice = name_zig.toSlice(self.allocator);
+            defer name_slice.deinit();
+            const header_name = name_slice.slice();
+
+            // Get or create AttributeKey for this header
+            // This auto-detects fast_header ID and populates http_header name
+            const attr_key = try self.getOrCreateHeaderKey(direction, header_name);
+            try list.items.append(attr_key);
+        }
+
+        return list;
+    }
+};
+
+// ============================================================================
+// HeaderNameList - Pre-processed configuration for efficient header capture
+// ============================================================================
+
+/// Pre-processed header name list for efficient header capture/propagation
+/// Stores AttributeKey pointers for O(1) header lookups with fast_header optimization
+///
+/// SAFETY: This holds references to AttributeKeys - parent AttributeKeys must outlive this list.
+/// Refcounting ensures parent.deinit() panics if HeaderNameLists are still alive.
+pub const HeaderNameList = struct {
+    /// Header AttributeKey pointers (references AttributeKeys singleton)
+    /// Each AttributeKey has pre-computed fast_header ID and http_header name
+    items: std.ArrayList(*const AttributeKey),
+
+    /// Context kind for determining header direction (.request or .response)
+    context: ContextKind,
+
+    /// Parent AttributeKeys registry (for refcount tracking)
+    parent: *AttributeKeys,
+
+    fn init(parent: *AttributeKeys, context: ContextKind) HeaderNameList {
+        return .{
+            .items = std.ArrayList(*const AttributeKey).init(parent.allocator),
+            .context = context,
+            .parent = parent,
+        };
+    }
+
+    pub fn deinit(self: *HeaderNameList) void {
+        // Decrement parent refcount atomically
+        _ = self.parent.list_count.fetchSub(1, .monotonic);
+        // Don't free AttributeKeys - we don't own them (they're owned by AttributeKeys singleton)
+        self.items.deinit();
+    }
+
+    /// Convert back to JS array for debugging/serialization
+    /// Extracts naked header names from AttributeKey.http_header
+    pub fn toJS(self: *const HeaderNameList, global: *JSGlobalObject) JSValue {
+        const array = JSValue.createEmptyArray(global, @intCast(self.items.items.len));
+
+        for (self.items.items, 0..) |attr_key, i| {
+            // Extract naked header name from semconv_name or use http_header directly
+            const header_name = if (attr_key.http_header) |h| h else attr_key.semconv_name;
+            const name_js = ZigString.init(header_name).toJS(global);
+            array.putIndex(global, @intCast(i), name_js);
+        }
+
+        return array;
     }
 };
 

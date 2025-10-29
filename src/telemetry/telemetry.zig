@@ -338,25 +338,26 @@ pub const TelemetryContext = struct {
 
     /// Clean up telemetry singleton and all registered instruments
     pub fn deinit(self: *TelemetryContext) void {
-        // Clean up semantic conventions before instrument table
-        self.semconv.deinit();
-        self.allocator.destroy(self.semconv);
+        // CRITICAL: Teardown order matters!
+        // 1. Clean up config first (frees HeaderNameLists which hold *AttributeKey references)
+        self.config.deinit();
 
+        // 2. Clean up instrument and operations tables
         for (&self.instrument_table) |*list| {
             for (list.items) |*record| {
                 record.dispose();
             }
             list.deinit();
         }
-        // [kind][step] -> ArrayList(*InstrumentRecord)
         for (&self.operations_table) |*kind_table| {
             for (kind_table) |*step_list| {
                 step_list.deinit();
             }
         }
 
-        // Clean up configuration manager
-        self.config.deinit();
+        // 3. Finally clean up AttributeKeys (after all references are released)
+        self.semconv.deinit();
+        self.allocator.destroy(self.semconv);
 
         self.allocator.destroy(self);
     }

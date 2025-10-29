@@ -509,7 +509,7 @@ struct us_socket_t *us_socket_wrap_with_tls(int ssl, struct us_socket_t *s, stru
         return NULL;
     }
 
-    return(struct us_socket_t *) us_internal_ssl_socket_wrap_with_tls(s, options, events, socket_ext_size);
+    return(struct us_socket_t *) us_internal_ssl_socket_wrap_with_tls(s, options, events, socket_ext_size, socket_ext_size);
 }
 
 // if a TLS socket calls this, it will start SSL call open event and TLS handshake if required

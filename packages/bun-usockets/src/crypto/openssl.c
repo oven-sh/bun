@@ -169,6 +169,9 @@ int BIO_s_custom_read(BIO *bio, char *dst, int length) {
   return length;
 }
 
+size_t us_internal_ssl_socket_size() {
+  return sizeof(struct us_internal_ssl_socket_t);
+}
 
 struct loop_ssl_data * us_internal_set_loop_ssl_data(struct us_internal_ssl_socket_t *s) {
    // note: this context can change when we adopt the socket!
@@ -1855,15 +1858,17 @@ void us_internal_ssl_socket_shutdown(struct us_internal_ssl_socket_t *s) {
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_adopt_socket(
     struct us_internal_ssl_socket_context_t *context,
-    struct us_internal_ssl_socket_t *s, int ext_size) {
-  // todo: this is completely untested
-  int new_ext_size = ext_size;
-  if (ext_size != -1) {
-    new_ext_size = sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + ext_size;
+    struct us_internal_ssl_socket_t *s, int new_ext_size, unsigned int old_ext_size) {
+  if (new_ext_size != -1) {
+    new_ext_size = sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + new_ext_size;
   }
+
+  old_ext_size = sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + old_ext_size;
+  
   return (struct us_internal_ssl_socket_t *)us_socket_context_adopt_socket(
       0, &context->sc, &s->s,
-      new_ext_size);
+      new_ext_size,
+      old_ext_size);
 }
 
 struct us_internal_ssl_socket_t *
@@ -2037,10 +2042,11 @@ struct us_socket_t *us_socket_upgrade_to_tls(us_socket_r s, us_socket_context_r 
   // Resize to tls + ext size
   void** prev_ext_ptr = (void**)us_socket_ext(0, s);
   void* prev_ext = *prev_ext_ptr;
+
   struct us_internal_ssl_socket_t *socket =
       (struct us_internal_ssl_socket_t *)us_socket_context_adopt_socket(
           0, new_context, s,
-          (sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t)) + sizeof(void*));
+          sizeof(void*), sizeof(void*));
   socket->ssl = NULL;
   socket->ssl_write_wants_read = 0;
   socket->ssl_read_wants_write = 0;
@@ -2058,7 +2064,7 @@ struct us_socket_t *us_socket_upgrade_to_tls(us_socket_r s, us_socket_context_r 
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
     struct us_socket_t *s, struct us_bun_socket_context_options_t options,
-    struct us_socket_events_t events, int socket_ext_size) {
+    struct us_socket_events_t events, int new_socket_ext_size, unsigned int old_socket_ext_size) {
   /* Cannot wrap a closed socket */
   if (us_socket_is_closed(0, s)) {
     return NULL;
@@ -2164,7 +2170,8 @@ us_socket_context_on_socket_connect_error(
       (struct us_internal_ssl_socket_t *)us_socket_context_adopt_socket(
           0, context, s,
           sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
-              socket_ext_size);
+          new_socket_ext_size,
+              sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + old_socket_ext_size);
   socket->ssl = NULL;
   socket->ssl_write_wants_read = 0;
   socket->ssl_read_wants_write = 0;

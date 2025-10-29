@@ -1053,7 +1053,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         ) bool {
             // ext_size of -1 means we want to keep the current ext size
             // in particular, we don't want to allocate a new socket
-            const new_socket = socket_ctx.adoptSocket(comptime is_ssl, socket, -1) orelse return false;
+            const new_socket = socket_ctx.adoptSocket(comptime is_ssl, socket, -1, @sizeOf(*Context)) orelse return false;
             bun.assert(new_socket == socket);
             var adopted = ThisSocket.from(new_socket);
             if (adopted.ext(*anyopaque)) |holder| {

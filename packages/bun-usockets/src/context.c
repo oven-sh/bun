@@ -807,10 +807,10 @@ struct us_socket_context_t *us_create_child_socket_context(int ssl, struct us_so
 }
 
 /* Note: This will set timeout to 0 */
-struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_context_t *context, struct us_socket_t *s, int ext_size) {
+struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_context_t *context, struct us_socket_t *s, int new_ext_size, unsigned int old_ext_size) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
-        return (struct us_socket_t *) us_internal_ssl_socket_context_adopt_socket((struct us_internal_ssl_socket_context_t *) context, (struct us_internal_ssl_socket_t *) s, ext_size);
+        return (struct us_socket_t *) us_internal_ssl_socket_context_adopt_socket((struct us_internal_ssl_socket_context_t *) context, (struct us_internal_ssl_socket_t *) s, new_ext_size, old_ext_size);
     }
 #endif
 
@@ -832,9 +832,16 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
 
     struct us_connecting_socket_t *c = s->connect_state;
     struct us_socket_t *new_s = s;
-    if (ext_size != -1) {
+    if (new_ext_size != -1 && old_ext_size != new_ext_size) {
         struct us_poll_t *pool_ref = &s->p;
-        new_s = (struct us_socket_t *) us_poll_resize(pool_ref, loop, sizeof(struct us_socket_t) + ext_size);
+        new_s = (struct us_socket_t *) us_poll_resize(pool_ref, loop, sizeof(struct us_socket_t) + new_ext_size, sizeof(struct us_socket_t) +  old_ext_size);
+        /* Link this socket to the close-list and let it be deleted after this iteration */
+        s->next = s->context->loop->data.closed_head;
+        s->context->loop->data.closed_head = s;
+        // mark the old socket as closed
+        s->prev = (struct us_socket_t *) s->context;
+
+        
         if (c) {
             c->connecting_head = new_s;
             c->context = context;

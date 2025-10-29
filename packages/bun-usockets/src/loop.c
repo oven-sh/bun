@@ -461,6 +461,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
             }
             
             if (is_readable && !s->flags.is_paused) {
+                if (UNLIKELY(us_socket_is_closed(0, s))) {
+                    // Do not call on_end after the socket has been closed
+                    return;
+                }
                 /* Contexts may prioritize down sockets that are currently readable, e.g. when SSL handshake has to be done.
                  * SSL handshakes are CPU intensive, so we limit the number of handshakes per loop iteration, and move the rest
                  * to the low-priority queue */

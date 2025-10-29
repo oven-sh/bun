@@ -1443,9 +1443,8 @@ fn hgiToTag(info: hosted_git_info.HostedGitInfo) Version.Tag {
 
 const string = []const u8;
 
-const hosted_git_info = @import("hosted_git_info.zig");
-
 const Environment = @import("../env.zig");
+const hosted_git_info = @import("./hosted_git_info.zig");
 const std = @import("std");
 const Repository = @import("./repository.zig").Repository;
 

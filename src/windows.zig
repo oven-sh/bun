@@ -90,18 +90,18 @@ pub const HMODULE = win32.HMODULE;
 pub extern "kernel32" fn GetFileInformationByHandle(
     hFile: HANDLE,
     lpFileInformation: *windows.BY_HANDLE_FILE_INFORMATION,
-) callconv(windows.WINAPI) BOOL;
+) callconv(.winapi) BOOL;
 
 pub extern "kernel32" fn CommandLineToArgvW(
     lpCmdLine: win32.LPCWSTR,
     pNumArgs: *c_int,
-) callconv(windows.WINAPI) ?[*]win32.LPWSTR;
+) callconv(.winapi) ?[*]win32.LPWSTR;
 
 pub fn GetFileType(hFile: win32.HANDLE) win32.DWORD {
     const function = struct {
         pub extern fn GetFileType(
             hFile: win32.HANDLE,
-        ) callconv(windows.WINAPI) win32.DWORD;
+        ) callconv(.winapi) win32.DWORD;
     }.GetFileType;
 
     const rc = function(hFile);
@@ -122,7 +122,7 @@ pub const LPDWORD = *win32.DWORD;
 pub extern "kernel32" fn GetBinaryTypeW(
     lpApplicationName: win32.LPCWSTR,
     lpBinaryType: LPDWORD,
-) callconv(windows.WINAPI) win32.BOOL;
+) callconv(.winapi) win32.BOOL;
 
 /// A 32-bit Windows-based application
 pub const SCS_32BIT_BINARY = 0;
@@ -147,9 +147,9 @@ pub const SCS_POSIX_BINARY = 4;
 /// Note that the current directory for a process is locked while the process is executing. This will prevent the directory from being deleted, moved, or renamed.
 pub extern "kernel32" fn SetCurrentDirectoryW(
     lpPathName: win32.LPCWSTR,
-) callconv(windows.WINAPI) win32.BOOL;
+) callconv(.winapi) win32.BOOL;
 pub const SetCurrentDirectory = SetCurrentDirectoryW;
-pub extern "ntdll" fn RtlNtStatusToDosError(win32.NTSTATUS) callconv(windows.WINAPI) Win32Error;
+pub extern "ntdll" fn RtlNtStatusToDosError(win32.NTSTATUS) callconv(.winapi) Win32Error;
 
 // This was originally copied from Zig's standard library
 /// Codes are from https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/18d8fbe8-a967-4f1c-ae50-99ca8e491d2d
@@ -3078,7 +3078,7 @@ pub fn translateNTStatusToErrno(err: win32.NTSTATUS) bun.sys.E {
 pub extern "kernel32" fn GetHostNameW(
     lpBuffer: PWSTR,
     nSize: c_int,
-) callconv(windows.WINAPI) BOOL;
+) callconv(.winapi) BOOL;
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw
 pub extern "kernel32" fn GetTempPathW(
@@ -3089,16 +3089,16 @@ pub extern "kernel32" fn GetTempPathW(
 pub extern "kernel32" fn CreateJobObjectA(
     lpJobAttributes: ?*anyopaque, // [in, optional]
     lpName: ?LPCSTR, // [in, optional]
-) callconv(windows.WINAPI) ?HANDLE;
+) callconv(.winapi) ?HANDLE;
 
 pub extern "kernel32" fn AssignProcessToJobObject(
     hJob: HANDLE, // [in]
     hProcess: HANDLE, // [in]
-) callconv(windows.WINAPI) BOOL;
+) callconv(.winapi) BOOL;
 
 pub extern "kernel32" fn ResumeThread(
     hJob: HANDLE, // [in]
-) callconv(windows.WINAPI) DWORD;
+) callconv(.winapi) DWORD;
 
 pub const JOBOBJECT_ASSOCIATE_COMPLETION_PORT = extern struct {
     CompletionKey: windows.PVOID,
@@ -3144,7 +3144,7 @@ pub extern "kernel32" fn SetInformationJobObject(
     JobObjectInformationClass: DWORD,
     lpJobObjectInformation: LPVOID,
     cbJobObjectInformationLength: DWORD,
-) callconv(windows.WINAPI) BOOL;
+) callconv(.winapi) BOOL;
 
 // Found experimentally:
 // #include <stdio.h>
@@ -3165,7 +3165,7 @@ pub extern "kernel32" fn OpenProcess(
     dwDesiredAccess: DWORD,
     bInheritHandle: BOOL,
     dwProcessId: DWORD,
-) callconv(windows.WINAPI) ?HANDLE;
+) callconv(.winapi) ?HANDLE;
 
 // https://learn.microsoft.com/en-us/windows/win32/procthread/process-security-and-access-rights
 pub const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
@@ -3399,7 +3399,7 @@ pub extern "kernel32" fn CreateDirectoryExW(
     lpTemplateDirectory: [*:0]const u16,
     lpNewDirectory: [*:0]const u16,
     lpSecurityAttributes: ?*win32.SECURITY_ATTRIBUTES,
-) callconv(windows.WINAPI) BOOL;
+) callconv(.winapi) BOOL;
 
 pub fn GetFinalPathNameByHandle(
     hFile: HANDLE,
@@ -3478,7 +3478,7 @@ pub const ENABLE_PROCESSED_OUTPUT = 0x0001;
 
 pub extern fn SetStdHandle(nStdHandle: u32, hHandle: *anyopaque) u32;
 pub extern fn GetConsoleOutputCP() u32;
-pub extern "kernel32" fn SetConsoleCP(wCodePageID: std.os.windows.UINT) callconv(std.os.windows.WINAPI) std.os.windows.BOOL;
+pub extern "kernel32" fn SetConsoleCP(wCodePageID: std.os.windows.UINT) callconv(.winapi) std.os.windows.BOOL;
 
 pub const DeleteFileOptions = struct {
     dir: ?HANDLE,

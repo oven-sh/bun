@@ -69,7 +69,7 @@ const nt = struct {
         Length: w.ULONG, // [in]
         ByteOffset: ?*w.LARGE_INTEGER, // [in, optional]
         Key: ?*w.ULONG, // [in, optional]
-    ) callconv(w.WINAPI) Status;
+    ) callconv(.winapi) Status;
 
     /// https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntwritefile
     extern "ntdll" fn NtWriteFile(
@@ -82,7 +82,7 @@ const nt = struct {
         Length: w.ULONG, // [in]
         ByteOffset: ?*w.LARGE_INTEGER, // [in, optional]
         Key: ?*w.ULONG, // [in, optional]
-    ) callconv(w.WINAPI) Status;
+    ) callconv(.winapi) Status;
 };
 
 /// A copy of all kernel32 declarations this program uses
@@ -102,7 +102,7 @@ const k32 = struct {
     extern "kernel32" fn SetConsoleMode(
         hConsoleHandle: w.HANDLE, // [in]
         dwMode: w.DWORD, // [in]
-    ) callconv(w.WINAPI) w.BOOL;
+    ) callconv(.winapi) w.BOOL;
 };
 
 fn debug(comptime fmt: []const u8, args: anytype) void {

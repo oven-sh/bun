@@ -36,7 +36,7 @@ const IO_COUNTERS = extern struct {
     OtherTransferCount: u64 = 0,
 };
 
-extern "kernel32" fn GetProcessIoCounters(handle: std.os.windows.HANDLE, counters: *IO_COUNTERS) callconv(std.os.windows.WINAPI) c_int;
+extern "kernel32" fn GetProcessIoCounters(handle: std.os.windows.HANDLE, counters: *IO_COUNTERS) callconv(.winapi) c_int;
 
 pub fn uv_getrusage(process: *uv.uv_process_t) win_rusage {
     var usage_info: Rusage = .{ .utime = .{}, .stime = .{} };

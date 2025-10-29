@@ -926,7 +926,7 @@ pub fn resetSegfaultHandler() void {
     updatePosixSegfaultHandler(&act) catch {};
 }
 
-pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(windows.WINAPI) c_long {
+pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(.winapi) c_long {
     crashHandler(
         switch (info.ExceptionRecord.ExceptionCode) {
             windows.EXCEPTION_DATATYPE_MISALIGNMENT => .{ .datatype_misalignment = {} },

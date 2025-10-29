@@ -60,7 +60,7 @@ pub inline fn getStartTime() i128 {
     return bun.start_time;
 }
 
-extern "kernel32" fn SetThreadDescription(thread: std.os.windows.HANDLE, name: [*:0]const u16) callconv(std.os.windows.WINAPI) std.os.windows.HRESULT;
+extern "kernel32" fn SetThreadDescription(thread: std.os.windows.HANDLE, name: [*:0]const u16) callconv(.winapi) std.os.windows.HRESULT;
 
 pub fn setThreadName(name: [:0]const u8) void {
     if (Environment.isLinux) {

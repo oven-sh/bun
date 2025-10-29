@@ -377,7 +377,7 @@ const AbortHandler = struct {
         should_abort = true;
     }
 
-    fn windowsCtrlHandler(dwCtrlType: std.os.windows.DWORD) callconv(std.os.windows.WINAPI) std.os.windows.BOOL {
+    fn windowsCtrlHandler(dwCtrlType: std.os.windows.DWORD) callconv(.winapi) std.os.windows.BOOL {
         if (dwCtrlType == std.os.windows.CTRL_C_EVENT) {
             should_abort = true;
             return std.os.windows.TRUE;

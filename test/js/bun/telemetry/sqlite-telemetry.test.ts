@@ -68,7 +68,7 @@ describe("SQLite Telemetry", () => {
     let endAttrs: any = null;
 
     // @ts-ignore - Internal telemetry API
-    const attached = Bun.telemetry.attach({
+    using attached = Bun.telemetry.attach({
       kind: "sql",
       name: "test-sql-instrumentation",
       version: "1.0.0",
@@ -91,7 +91,7 @@ describe("SQLite Telemetry", () => {
 
     debugLog("Attached result:", attached);
 
-    const db = new Database(dbPath);
+    using db = new Database(dbPath);
     debugLog("Database created");
 
     // Start should be called when DB opens
@@ -111,10 +111,12 @@ describe("SQLite Telemetry", () => {
       "db.query.text": expect.stringContaining("CREATE TABLE"),
     });
 
-    db.close();
+    // Database will be auto-closed by 'using' keyword
+    // End should be called when DB closes
+    // Note: We need to manually trigger disposal to check endCalled before test ends
+    db[Symbol.dispose]();
     debugLog("Database closed, endCalled:", endCalled);
 
-    // End should be called when DB closes
     expect(endCalled).toBe(true);
   });
 
@@ -125,7 +127,7 @@ describe("SQLite Telemetry", () => {
     let errorAttrs: any = null;
 
     // @ts-ignore - Internal telemetry API
-    Bun.telemetry.attach({
+    using attached = Bun.telemetry.attach({
       kind: "sql",
       name: "test-sql-error-instrumentation",
       version: "1.0.0",
@@ -135,7 +137,7 @@ describe("SQLite Telemetry", () => {
       },
     });
 
-    const db = new Database(dbPath);
+    using db = new Database(dbPath);
     db.run("CREATE TABLE users (email TEXT UNIQUE)");
     db.run("INSERT INTO users (email) VALUES (?)", ["test@example.com"]);
 
@@ -154,7 +156,7 @@ describe("SQLite Telemetry", () => {
       "operation.duration": expect.any(Number),
     });
 
-    db.close();
+    // Database will be auto-closed by 'using' keyword
   });
 
   test("captures query summary and operation name", () => {
@@ -163,7 +165,7 @@ describe("SQLite Telemetry", () => {
     let progressAttrs: any[] = [];
 
     // @ts-ignore - Internal telemetry API
-    Bun.telemetry.attach({
+    using attached = Bun.telemetry.attach({
       kind: "sql",
       name: "test-sql-summary",
       version: "1.0.0",
@@ -172,7 +174,7 @@ describe("SQLite Telemetry", () => {
       },
     });
 
-    const db = new Database(dbPath);
+    using db = new Database(dbPath);
     db.run("CREATE TABLE orders (id INTEGER, total REAL)");
     db.run("INSERT INTO orders (id, total) VALUES (1, 99.99)");
 
@@ -187,7 +189,7 @@ describe("SQLite Telemetry", () => {
       "db.query.summary": "INSERT orders",
     });
 
-    db.close();
+    // Database will be auto-closed by 'using' keyword
   });
 
   test("handles multiple databases with separate operation IDs", () => {
@@ -198,7 +200,7 @@ describe("SQLite Telemetry", () => {
     const events: Array<{ event: string; id: number; attrs: any }> = [];
 
     // @ts-ignore - Internal telemetry API
-    Bun.telemetry.attach({
+    using attached = Bun.telemetry.attach({
       kind: "sql",
       name: "test-multi-db",
       version: "1.0.0",
@@ -214,8 +216,8 @@ describe("SQLite Telemetry", () => {
     });
 
     // Open two databases
-    const db1 = new Database(dbPath1);
-    const db2 = new Database(dbPath2);
+    using db1 = new Database(dbPath1);
+    using db2 = new Database(dbPath2);
 
     // Get the operation IDs from the start events
     const startEvents = events.filter(e => e.event === "start");
@@ -246,9 +248,9 @@ describe("SQLite Telemetry", () => {
     expect(db2Progress).toBeDefined();
     expect(db2Progress!.attrs["db.query.text"]).toContain("products");
 
-    // Close databases
-    db1.close();
-    db2.close();
+    // Manually dispose to check end events before test ends
+    db1[Symbol.dispose]();
+    db2[Symbol.dispose]();
 
     // Check that end events have the correct operation IDs
     const endEvents = events.filter(e => e.event === "end");

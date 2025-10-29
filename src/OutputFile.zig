@@ -322,7 +322,7 @@ pub fn moveTo(file: *const OutputFile, _: string, rel_path: []const u8, dir: Fil
 pub fn copyTo(file: *const OutputFile, _: string, rel_path: []const u8, dir: FileDescriptorType) !void {
     const fd_out = bun.FD.fromStdFile(try dir.stdDir().createFile(rel_path, .{}));
     var do_close = false;
-    const fd_in = bun.FD.fromStdFile(try std.fs.openFileAbsolute(file.src_path.text, .{ .mode = .read_only }));
+    const fd_in = bun.FD.fromStdFile(try std.fs.cwd().openFile(file.src_path.text, .{ .mode = .read_only }));
 
     if (Environment.isWindows) {
         do_close = Fs.FileSystem.instance.fs.needToCloseFiles();

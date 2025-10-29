@@ -916,7 +916,7 @@ pub const FileSystem = struct {
         }
 
         pub fn modKey(fs: *RealFS, path: string) anyerror!ModKey {
-            var file = try std.fs.openFileAbsolute(path, std.fs.File.OpenFlags{ .mode = .read_only });
+            var file = try std.fs.cwd().openFile(path, std.fs.File.OpenFlags{ .mode = .read_only });
             defer {
                 if (fs.needToCloseFiles()) {
                     file.close();

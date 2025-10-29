@@ -1185,7 +1185,7 @@ pub const CreateCommand = struct {
                 //         var public_index_html_parts = [_]string{ destination, "public/index.html" };
                 //         var public_index_html_path = filesystem.absBuf(&public_index_html_parts, &bun_path_buf);
 
-                //         const public_index_html_file = std.fs.openFileAbsolute(public_index_html_path, .{ .mode = .read_write }) catch break :bail;
+                //         const public_index_html_file = std.fs.cwd().openFile(public_index_html_path, .{ .mode = .read_write }) catch break :bail;
                 //         defer public_index_html_file.close();
 
                 //         const file_extensions_to_try = [_]string{ ".tsx", ".ts", ".jsx", ".js", ".mts", ".mcjs" };

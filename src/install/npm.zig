@@ -1366,7 +1366,7 @@ pub const PackageManifest = struct {
             const registry = registry_str.toUTF8(bun.default_allocator);
             defer registry.deinit();
 
-            const manifest_file = std.fs.openFileAbsolute(manifest_filename.slice(), .{}) catch |err| {
+            const manifest_file = std.fs.cwd().openFile(manifest_filename.slice(), .{}) catch |err| {
                 return global.throw("failed to open manifest file \"{s}\": {s}", .{ manifest_filename.slice(), @errorName(err) });
             };
             defer manifest_file.close();

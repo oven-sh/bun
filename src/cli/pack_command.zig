@@ -2577,7 +2577,7 @@ pub const bindings = struct {
         const tarball_path = tarball_path_str.toUTF8(bun.default_allocator);
         defer tarball_path.deinit();
 
-        const tarball_file = File.from(std.fs.openFileAbsolute(tarball_path.slice(), .{}) catch |err| {
+        const tarball_file = File.from(std.fs.cwd().openFile(tarball_path.slice(), .{}) catch |err| {
             return global.throw("failed to open tarball file \"{s}\": {s}", .{ tarball_path.slice(), @errorName(err) });
         });
         defer tarball_file.close();

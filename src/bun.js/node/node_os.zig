@@ -61,7 +61,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
 
     // Read /proc/stat to get number of CPUs and times
     {
-        const file = try std.fs.openFileAbsolute("/proc/stat", .{});
+        const file = try std.fs.cwd().openFile("/proc/stat", .{});
         defer file.close();
 
         const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf, .probably_small).unwrap();
@@ -101,7 +101,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
     }
 
     // Read /proc/cpuinfo to get model information (optional)
-    if (std.fs.openFileAbsolute("/proc/cpuinfo", .{})) |file| {
+    if (std.fs.cwd().openFile("/proc/cpuinfo", .{})) |file| {
         defer file.close();
 
         const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf, .probably_small).unwrap();
@@ -152,7 +152,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
 
         var path_buf: [128]u8 = undefined;
         const path = try std.fmt.bufPrint(&path_buf, "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", .{cpu_index});
-        if (std.fs.openFileAbsolute(path, .{})) |file| {
+        if (std.fs.cwd().openFile(path, .{})) |file| {
             defer file.close();
 
             const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf, .probably_small).unwrap();

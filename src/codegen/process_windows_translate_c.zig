@@ -22,7 +22,7 @@ pub fn main() !void {
 
     const in = brk: {
         const in_path = args.next() orelse @panic("missing argument");
-        const in = try std.fs.openFileAbsolute(in_path, .{});
+        const in = try std.fs.cwd().openFile(in_path, .{});
         defer in.close();
         break :brk try in.readToEndAllocOptions(gpa, std.math.maxInt(u32), null, .fromByteUnits(1), 0);
     };

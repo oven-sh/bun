@@ -18,7 +18,7 @@ pub const DefaultAllocator = allocators.Default;
 pub const z_allocator: std.mem.Allocator = allocators.z_allocator;
 
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
-pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .auto else .Inline;
+pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .auto else .@"inline";
 
 /// In debug builds, this will catch memory leaks. In release builds, it is mimalloc.
 pub const debug_allocator: std.mem.Allocator = if (Environment.isDebug or Environment.enable_asan)
@@ -2845,8 +2845,10 @@ pub inline fn resolveSourcePath(
         var fba = std.heap.FixedBufferAllocator.init(&buf);
         const resolved = (std.fs.path.resolve(fba.allocator(), &.{
             switch (root) {
-                .codegen => Environment.codegen_path,
-                .src => Environment.base_path ++ "/src",
+                .codegen,
+                => Environment.codegen_path,
+                .src,
+                => Environment.base_path ++ "/src",
             },
             sub_path,
         }) catch

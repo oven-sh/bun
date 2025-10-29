@@ -1,4 +1,14 @@
 /**
+ * URL attributes returned by parseUrlAndHost
+ */
+export type UrlAttrs = {
+  "url.path": string;
+  "server.address": string;
+  "url.query"?: string;
+  "server.port"?: number;
+};
+
+/**
  * Parse URL path and host information for OpenTelemetry semantic conventions.
  *
  * Custom implementation instead of standard URL class because:
@@ -10,15 +20,7 @@
  * @param host - The host header value (e.g., "localhost:3000", "[::1]:3000", "example.com")
  * @returns Object with url.path, server.address, and optionally url.query and server.port
  */
-export function parseUrlAndHost(
-  url: string,
-  host: string,
-): {
-  "url.path": string;
-  "server.address": string;
-  "url.query"?: string;
-  "server.port"?: number;
-} {
+export function parseUrlAndHost(url: string, host: string): UrlAttrs {
   const raw = url || "/";
   const qIndex = raw.indexOf("?");
   const path = qIndex === -1 ? raw : raw.slice(0, qIndex);
@@ -53,13 +55,13 @@ export function parseUrlAndHost(
     }
   }
 
-  const attrs: Record<string, any> = {
+  const attrs: UrlAttrs = {
     "url.path": path,
     "server.address": hostname,
   };
 
   if (query) attrs["url.query"] = query;
-  if (Number.isFinite(port)) attrs["server.port"] = port!;
+  if (typeof port === "number" && Number.isFinite(port)) attrs["server.port"] = port;
 
-  return attrs as any;
+  return attrs;
 }

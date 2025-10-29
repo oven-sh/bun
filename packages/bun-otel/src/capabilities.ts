@@ -121,10 +121,11 @@ export interface CapabilitiesConfig {
   /**
    * Where does native provide duration measurement?
    *
-   * - "end": Native provides "_operation.duration" in endSpan attributes (nanoseconds)
+   * - "end": Native provides "operation.duration" in endSpan attributes (nanoseconds)
+   * - "update": Native provides "operation.duration" in updateSpan attributes (for progressive operations like SQLite)
    * - undefined: Track duration internally (process.hrtime.bigint() from start to end)
    */
-  nativeDuration?: "start" | "update" | "end" | undefined;
+  nativeDuration?: "end" | "update" | undefined;
 
   /**
    * Extract parent trace context from attributes

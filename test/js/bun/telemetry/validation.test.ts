@@ -48,8 +48,8 @@ describe("Bun.telemetry.attach() validation", () => {
 
   test("throws when 'kind' property is invalid (non-string)", () => {
     expect(() => {
-      // @ts-expect-error - numeric kinds not supported
       Bun.telemetry.attach({
+        // @ts-expect-error - numeric kinds not supported
         kind: 1,
         name: "test",
         version: "1.0.0",
@@ -58,8 +58,8 @@ describe("Bun.telemetry.attach() validation", () => {
     }).toThrow(/kind/i);
 
     expect(() => {
-      // @ts-expect-error - numeric kinds not supported
       Bun.telemetry.attach({
+        // @ts-expect-error - numeric kinds not supported
         kind: 999,
         name: "test",
         version: "1.0.0",
@@ -81,8 +81,8 @@ describe("Bun.telemetry.attach() validation", () => {
   test("accepts unknown string kinds and defaults them to 'custom' for forward compatibility", () => {
     // Invalid string kinds should NOT throw - they default to "custom"
     // This allows newer instrumentations to work with older Bun versions
-    using instrument1 = new InstrumentRef({
-      // @ts-expect-error - testing forward compatibility with unknown kind
+    using instrument1 = Bun.telemetry.attach({
+      //@ts-expect-error - testing forward compatibility with unknown kind
       kind: "invalid-kind",
       name: "test-1",
       version: "1.0.0",
@@ -92,8 +92,8 @@ describe("Bun.telemetry.attach() validation", () => {
     expect(typeof instrument1.id).toBe("number");
     expect(instrument1.id).toBeGreaterThan(0);
 
-    using instrument2 = new InstrumentRef({
-      // @ts-expect-error - testing forward compatibility with unknown kind
+    using instrument2 = Bun.telemetry.attach({
+      //@ts-expect-error - testing forward compatibility with unknown kind
       kind: "future-feature",
       name: "test-2",
       version: "1.0.0",
@@ -155,10 +155,10 @@ describe("Bun.telemetry.attach() validation", () => {
       { kind: "sql", name: "SQL" },
       { kind: "redis", name: "Redis" },
       { kind: "s3", name: "S3" },
-    ];
+    ] as const;
 
     validKinds.forEach(({ kind, name }) => {
-      using instrument = new InstrumentRef({
+      using instrument = Bun.telemetry.attach({
         kind: kind,
         name: `test-${name}`,
         version: "1.0.0",
@@ -173,7 +173,7 @@ describe("Bun.telemetry.attach() validation", () => {
   test("optional properties can be omitted", () => {
     // Only name and version might be optional in some implementations
     // But kind and at least one hook are required
-    using instrument = new InstrumentRef({
+    using instrument = Bun.telemetry.attach({
       kind: "http",
       name: "minimal",
       version: "1.0.0",
@@ -250,6 +250,7 @@ describe("Bun.telemetry.listInstruments() validation", () => {
   });
 
   test("handles out-of-range kind filter gracefully", () => {
+    // @ts-expect-error - testing error case
     const result = Bun.telemetry.listInstruments(999);
     expect(Array.isArray(result)).toBe(true);
     // Out of range might return empty or all instruments depending on implementation

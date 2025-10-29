@@ -619,11 +619,7 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
             obj.llvm_codegen_threads = opts.llvm_codegen_threads orelse 0;
     }
 
-    if (@hasField(Compile, "no_link_obj")) {
-        obj.no_link_obj = true;
-    } else {
-        // TODO: port change
-    }
+    // obj.no_link_obj = true; // TODO: fix no-link-obj implementation
 
     if (opts.enable_asan and !enableFastBuild(b)) {
         if (@hasField(Build.Module, "sanitize_address")) {

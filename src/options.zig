@@ -356,6 +356,7 @@ pub const Target = enum {
     bun,
     bun_macro,
     node,
+    cloudflare,
 
     /// This is used by bake.Framework.ServerComponents.separate_ssr_graph
     bake_server_components_ssr,
@@ -366,6 +367,7 @@ pub const Target = enum {
         .{ "bun_macro", .bun_macro },
         .{ "macro", .bun_macro },
         .{ "node", .node },
+        .{ "cloudflare", .cloudflare },
     });
 
     pub fn fromJS(global: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!?Target {
@@ -381,12 +383,13 @@ pub const Target = enum {
             .browser => .browser,
             .bun, .bake_server_components_ssr => .bun,
             .bun_macro => .bun_macro,
+            .cloudflare => .cloudflare,
         };
     }
 
     pub inline fn isServerSide(this: Target) bool {
         return switch (this) {
-            .bun_macro, .node, .bun, .bake_server_components_ssr => true,
+            .bun_macro, .node, .bun, .bake_server_components_ssr, .cloudflare => true,
             else => false,
         };
     }
@@ -416,7 +419,7 @@ pub const Target = enum {
         return switch (target) {
             .browser => .client,
             .bake_server_components_ssr => .ssr,
-            .bun_macro, .bun, .node => .server,
+            .bun_macro, .bun, .node, .cloudflare => .server,
         };
     }
 
@@ -448,6 +451,7 @@ pub const Target = enum {
             .browser => .browser,
             .bun => .bun,
             .bun_macro => .bun_macro,
+            .cloudflare => .cloudflare,
             else => .browser,
         };
     }
@@ -495,6 +499,7 @@ pub const Target = enum {
         array.set(Target.bun, &listd);
         array.set(Target.bun_macro, &listd);
         array.set(Target.bake_server_components_ssr, &listd);
+        array.set(Target.cloudflare, &listd);
 
         // Original comment:
         // The neutral target is for people that don't want esbuild to try to
@@ -527,6 +532,11 @@ pub const Target = enum {
             "macro",
             "bun",
             "node",
+        });
+        array.set(Target.cloudflare, &.{
+            "workerd",
+            "worker",
+            "browser",
         });
 
         break :brk array;

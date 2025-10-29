@@ -911,7 +911,12 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             }
         }
 
-        const TargetMatcher = strings.ExactSizeMatcher(8);
+        const TargetMatcher = bun.ComptimeStringMap(Api.Target, .{
+            .{ "browser", .browser },
+            .{ "node", .node },
+            .{ "bun", .bun },
+            .{ "cloudflare", .cloudflare },
+        });
         if (args.option("--target")) |_target| brk: {
             if (comptime cmd == .BuildCommand) {
                 if (args.flag("--compile")) {
@@ -925,15 +930,13 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                         break :brk;
                     }
                 }
+                if (strings.eqlComptime(_target, "macro")) {
+                    opts.target = .bun_macro;
+                    break :brk;
+                }
             }
 
-            opts.target = opts.target orelse switch (TargetMatcher.match(_target)) {
-                TargetMatcher.case("browser") => Api.Target.browser,
-                TargetMatcher.case("node") => Api.Target.node,
-                TargetMatcher.case("macro") => if (cmd == .BuildCommand) Api.Target.bun_macro else Api.Target.bun,
-                TargetMatcher.case("bun") => Api.Target.bun,
-                else => CLI.invalidTarget(&diag, _target),
-            };
+            opts.target = opts.target orelse TargetMatcher.get(_target) orelse CLI.invalidTarget(&diag, _target);
 
             if (opts.target.? == .bun) {
                 ctx.debug.run_in_bun = opts.target.? == .bun;

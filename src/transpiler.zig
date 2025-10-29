@@ -660,7 +660,7 @@ pub const Transpiler = struct {
                 var writer = js_printer.BufferPrinter.init(buffer_writer);
 
                 output_file.size = switch (transpiler.options.target) {
-                    .browser, .node => try transpiler.print(
+                    .browser, .node, .cloudflare => try transpiler.print(
                         result,
                         *js_printer.BufferPrinter,
                         &writer,

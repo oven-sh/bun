@@ -435,8 +435,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
                 loop->data.last_write_failed = 0;
 
 
-                s = s->context->on_writable(s);
-                
+                if (!flags->writable_emitted) {
+                    flags->writable_emitted = true;
+                    s = s->context->on_writable(s);
+                }
                 if (!s || us_socket_is_closed(0, s)) {
                     return;
                 }

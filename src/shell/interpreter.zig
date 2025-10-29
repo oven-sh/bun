@@ -1167,7 +1167,7 @@ pub const Interpreter = struct {
     }
 
     pub fn asyncCmdDone(this: *ThisInterpreter, async: *Async) void {
-        log("asyncCommandDone {}", .{async});
+        log("asyncCommandDone {f}", .{async});
         async.actuallyDeinit();
         this.async_commands_executing -= 1;
         if (this.async_commands_executing == 0 and this.exit_code != null) {

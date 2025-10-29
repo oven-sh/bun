@@ -1170,7 +1170,7 @@ pub const PackageInstall = struct {
 
                         if (Environment.isDebug) {
                             _ = &debug_timer;
-                            debug("deleteTree({s}, {s}) = {}", .{ basename, dirname, debug_timer });
+                            debug("deleteTree({s}, {s}) = {f}", .{ basename, dirname, debug_timer });
                         }
                     }
 

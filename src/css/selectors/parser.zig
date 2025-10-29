@@ -1390,9 +1390,9 @@ pub fn GenericSelectorList(comptime Impl: type) type {
                 const last = this.this.v.len() -| 1;
                 for (this.this.v.slice(), 0..) |*sel, i| {
                     if (i != last) {
-                        try writer.print(" {}\n", .{sel.debug()});
+                        try writer.print(" {f}\n", .{sel.debug()});
                     } else {
-                        try writer.print(" {},\n", .{sel.debug()});
+                        try writer.print(" {f},\n", .{sel.debug()});
                     }
                 }
                 try writer.print("]\n", .{});
@@ -1621,14 +1621,12 @@ pub fn GenericSelector(comptime Impl: type) type {
         const DebugFmt = struct {
             this: *const This,
 
-            pub fn format(this: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(this: @This(), writer: *std.Io.Writer) !void {
                 if (comptime !bun.Environment.isDebug) return;
-                _ = fmt; // autofix
-                _ = options; // autofix
                 try writer.print("Selector(", .{});
-                var arraylist = ArrayList(u8){};
-                const w = arraylist.writer(bun.default_allocator);
-                defer arraylist.deinit(bun.default_allocator);
+                var arraylist = std.Io.Writer.Allocating.init(bun.default_allocator);
+                const w = &arraylist.writer;
+                defer arraylist.deinit();
                 const symbols = bun.ast.Symbol.Map{};
                 const P = css.Printer(@TypeOf(w));
                 var printer = P.new(bun.default_allocator, std.array_list.Managed(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null, null, &symbols);

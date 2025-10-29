@@ -1059,7 +1059,7 @@ pub const PipeReader = struct {
             log("CapturedWriter({x}, {s}) onWrite({d}, has_err={}) total_written={d} total_to_write={d}", .{ @intFromPtr(this), @tagName(this.parent().out_type), amount, err != null, this.written + amount, this.parent().buffered_output.len() });
             this.written += amount;
             if (err) |e| {
-                log("CapturedWriter(0x{x}, {s}) onWrite errno={d} errmsg={} errfd={} syscall={}", .{ @intFromPtr(this), @tagName(this.parent().out_type), e.errno, e.message, e.fd, e.syscall });
+                log("CapturedWriter(0x{x}, {s}) onWrite errno={d} errmsg={f} errfd={f} syscall={}", .{ @intFromPtr(this), @tagName(this.parent().out_type), e.errno, e.message, e.fd, e.syscall });
                 this.err = e;
                 return this.parent().trySignalDoneToCmd();
             } else if (this.written >= this.parent().buffered_output.len() and !(this.parent().state == .pending)) {
@@ -1310,7 +1310,7 @@ pub const PipeReader = struct {
     }
 
     pub fn onReaderError(this: *PipeReader, err: bun.sys.Error) void {
-        log("PipeReader(0x{x}) onReaderError {}", .{ @intFromPtr(this), err });
+        log("PipeReader(0x{x}) onReaderError {f}", .{ @intFromPtr(this), err });
         if (this.state == .done) {
             bun.default_allocator.free(this.state.done);
         }

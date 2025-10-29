@@ -214,12 +214,12 @@ pub const ShellMkdirTask = struct {
     }
 
     pub fn schedule(this: *@This()) void {
-        debug("{} schedule", .{this});
+        debug("{f} schedule", .{this});
         WorkPool.schedule(&this.task);
     }
 
     pub fn runFromMainThread(this: *@This()) void {
-        debug("{} runFromJS", .{this});
+        debug("{f} runFromJS", .{this});
         this.mkdir.onShellMkdirTaskDone(this);
     }
 

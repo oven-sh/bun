@@ -550,7 +550,7 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
     const rc = workaround_symbols.fstat(fd.cast(), &stat_);
 
     if (comptime Environment.allow_assert)
-        log("fstat({}) = {d}", .{ fd, rc });
+        log("fstat({f}) = {d}", .{ fd, rc });
 
     if (Maybe(bun.Stat).errnoSysFd(rc, .fstat, fd)) |err| return err;
 
@@ -737,10 +737,10 @@ pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
     var stat_buf = mem.zeroes(bun.Stat);
     const fd_valid = if (fd == bun.invalid_fd) std.posix.AT.FDCWD else fd.native();
     if (Maybe(bun.Stat).errnoSysFP(syscall.fstatat(fd_valid, path, &stat_buf, 0), .fstatat, fd, path)) |err| {
-        log("fstatat({}, {s}) = {s}", .{ fd, path, @tagName(err.getErrno()) });
+        log("fstatat({f}, {s}) = {s}", .{ fd, path, @tagName(err.getErrno()) });
         return err;
     }
-    log("fstatat({}, {s}) = 0", .{ fd, path });
+    log("fstatat({f}, {s}) = 0", .{ fd, path });
     return Maybe(bun.Stat){ .result = stat_buf };
 }
 
@@ -1949,17 +1949,17 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
             const rc = darwin_nocancel.@"read$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len);
 
             if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
-                log("read({}, {d}) = {s} ({f})", .{ fd, adjusted_len, err.err.name(), debug_timer });
+                log("read({f}, {d}) = {s} ({f})", .{ fd, adjusted_len, err.err.name(), debug_timer });
                 return err;
             }
-            log("read({}, {d}) = {d} ({f})", .{ fd, adjusted_len, rc, debug_timer });
+            log("read({f}, {d}) = {d} ({f})", .{ fd, adjusted_len, rc, debug_timer });
 
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         },
         .linux => {
             while (true) {
                 const rc = syscall.read(fd.cast(), buf.ptr, adjusted_len);
-                log("read({}, {d}) = {d} ({f})", .{ fd, adjusted_len, rc, debug_timer });
+                log("read({f}, {d}) = {d} ({f})", .{ fd, adjusted_len, rc, debug_timer });
 
                 if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
                     if (err.getErrno() == .INTR) continue;
@@ -2061,11 +2061,11 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
         const rc = darwin_nocancel.@"recvfrom$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len, flag, null, null);
 
         if (Maybe(usize).errnoSysFd(rc, .recv, fd)) |err| {
-            log("recv({}, {d}) = {s} {}", .{ fd, adjusted_len, err.err.name(), debug_timer });
+            log("recv({}, {d}) = {s} {f}", .{ fd, adjusted_len, err.err.name(), debug_timer });
             return err;
         }
 
-        log("recv({}, {d}) = {d} {}", .{ fd, adjusted_len, rc, debug_timer });
+        log("recv({}, {d}) = {d} {f}", .{ fd, adjusted_len, rc, debug_timer });
 
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {

@@ -295,7 +295,7 @@ pub const FD = packed struct(backing_int) {
                     bun.Output.debugWarn("close({s}) = EBADF. This is an indication of a file descriptor UAF", .{fd_fmt});
                     bun.crash_handler.dumpCurrentStackTrace(return_address orelse @returnAddress(), .{ .frame_count = 4, .stop_at_jsc_llint = true });
                 } else {
-                    log("close({s}) = {}", .{ fd_fmt, err });
+                    log("close({s}) = {f}", .{ fd_fmt, err });
                 }
             } else {
                 log("close({s})", .{fd_fmt});

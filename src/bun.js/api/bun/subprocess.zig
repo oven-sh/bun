@@ -1675,7 +1675,7 @@ pub fn spawnMaybeSync(
         jsc_vm.counters.mark(.spawnSync_blocking);
         const debug_timer = Output.DebugTimer.start();
         subprocess.process.wait(true);
-        log("spawnSync fast path took {}", .{debug_timer});
+        log("spawnSync fast path took {f}", .{debug_timer});
 
         // watchOrReap will handle the already exited case for us.
     }

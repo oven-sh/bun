@@ -306,7 +306,7 @@ pub const PathWatcherManager = struct {
             // stop all watchers
             for (watchers) |w| {
                 if (w) |watcher| {
-                    log("[watch] error: {}", .{err});
+                    log("[watch] error: {f}", .{err});
                     watcher.emit(.{ .@"error" = err }, 0, timestamp, false);
                     watcher.flush();
                 }

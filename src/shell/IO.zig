@@ -127,7 +127,7 @@ pub const OutKind = union(enum) {
     // fn dupeForSubshell(this: *ShellExecEnv,
     pub fn format(this: OutKind, writer: *std.Io.Writer) !void {
         switch (this) {
-            .fd => try writer.print("fd: {}", .{this.fd.writer.fd}),
+            .fd => try writer.print("fd: {f}", .{this.fd.writer.fd}),
             .pipe => try writer.print("pipe", .{}),
             .ignore => try writer.print("ignore", .{}),
         }

@@ -10,6 +10,7 @@ TODO:
   - [ ] deprecated.zig autoFormatLabelFallback
   - [ ] deprecated.zig autoFormatLabel
   - [ ] bun.zig maybeAdaptWriter
+- [ ] remove format_mode and remove it in our zig compiler fork too
 
 Follow-up:
 

@@ -6,7 +6,7 @@ import https from "node:https";
 import { join } from "node:path";
 
 // Test for pfx option of https.Agent
-describe.skip("https.Agent with pfx and ca options", () => {
+describe("https.Agent with pfx and ca options", () => {
   let testDir: string;
   let serverProcess: any;
   let serverPort: number;
@@ -14,10 +14,32 @@ describe.skip("https.Agent with pfx and ca options", () => {
   beforeAll(async () => {
     testDir = tempDirWithFiles("https-agent-pfx", {});
 
-    // Generate self-signed certificates
-    // Create private key and certificate
+    // Generate self-signed certificates with proper SAN
+    // Create OpenSSL config for SAN
+    const opensslConfig = `
+[req]
+default_bits = 2048
+prompt = no
+default_md = sha256
+distinguished_name = dn
+x509_extensions = v3_req
+
+[dn]
+CN = localhost
+
+[v3_req]
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = localhost
+IP.1 = 127.0.0.1
+IP.2 = ::1
+`;
+    writeFileSync(join(testDir, "openssl.cnf"), opensslConfig);
+
+    // Create private key and certificate with SAN
     execSync(
-      `openssl req -x509 -newkey rsa:2048 -nodes -sha256 -subj '/CN=localhost' -keyout "${join(testDir, "private-key.pem")}" -out "${join(testDir, "certificate.pem")}" 2>/dev/null`,
+      `openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 365 -config "${join(testDir, "openssl.cnf")}" -keyout "${join(testDir, "private-key.pem")}" -out "${join(testDir, "certificate.pem")}" 2>/dev/null`,
       { encoding: "utf-8" },
     );
 

@@ -35,6 +35,7 @@ void *sni_find(void *sni, const char *hostname);
 #include <openssl/bio.h>
 #include <openssl/dh.h>
 #include <openssl/err.h>
+#include <openssl/pkcs8.h>
 #include <openssl/ssl.h>
 #elif LIBUS_USE_WOLFSSL
 #include <wolfssl/openssl/bio.h>
@@ -914,6 +915,78 @@ end:
   return ret;
 }
 
+// Parse PKCS#12 (pfx) data and load certificate and private key into SSL context
+int us_ssl_ctx_use_pfx_content(SSL_CTX *ctx, const char *content, size_t content_len, const char *password) {
+  int ret = 0;
+  BIO *bio = NULL;
+  PKCS12 *p12 = NULL;
+  EVP_PKEY *pkey = NULL;
+  X509 *cert = NULL;
+  STACK_OF(X509) *ca_certs = NULL;
+
+  ERR_clear_error();
+
+  // Create BIO from buffer
+  bio = BIO_new_mem_buf(content, (int)content_len);
+  if (bio == NULL) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
+    goto end;
+  }
+
+  // Parse PKCS12 from BIO
+  p12 = d2i_PKCS12_bio(bio, NULL);
+  if (p12 == NULL) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_ASN1_LIB);
+    goto end;
+  }
+
+  // Extract key, certificate, and CA chain from PKCS12
+  // Use empty string if password is NULL
+  if (!PKCS12_parse(p12, password ? password : "", &pkey, &cert, &ca_certs)) {
+    OPENSSL_PUT_ERROR(SSL, ERR_R_INTERNAL_ERROR);
+    goto end;
+  }
+
+  // Load the private key if present
+  if (pkey != NULL) {
+    if (!SSL_CTX_use_PrivateKey(ctx, pkey)) {
+      goto end;
+    }
+  }
+
+  // Load the certificate if present
+  if (cert != NULL) {
+    if (!SSL_CTX_use_certificate(ctx, cert)) {
+      goto end;
+    }
+  }
+
+  // Load CA certificates (chain) if present
+  if (ca_certs != NULL) {
+    SSL_CTX_clear_chain_certs(ctx);
+
+    // Add each CA certificate to the chain
+    for (int i = 0; i < sk_X509_num(ca_certs); i++) {
+      X509 *ca_cert = sk_X509_value(ca_certs, i);
+      // Use add1 which increments reference count
+      if (!SSL_CTX_add1_chain_cert(ctx, ca_cert)) {
+        goto end;
+      }
+    }
+  }
+
+  ret = 1;
+
+end:
+  if (bio) BIO_free(bio);
+  if (p12) PKCS12_free(p12);
+  if (pkey) EVP_PKEY_free(pkey);
+  if (cert) X509_free(cert);
+  if (ca_certs) sk_X509_pop_free(ca_certs, X509_free);
+
+  return ret;
+}
+
 int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content,
                              X509_STORE *store) {
 
@@ -1165,6 +1238,19 @@ SSL_CTX *create_ssl_context_from_bun_options(
     #endif
   }
 
+  /* Handle PKCS#12 (pfx) format - this takes precedence over separate cert/key */
+  if (options.pfx && options.pfx_count > 0) {
+    for (unsigned int i = 0; i < options.pfx_count; i++) {
+      size_t pfx_length = options.pfx_len ? options.pfx_len[i] : strlen(options.pfx[i]);
+      if (us_ssl_ctx_use_pfx_content(ssl_context, options.pfx[i], pfx_length,
+                                     options.passphrase) != 1) {
+        free_ssl_context(ssl_context);
+        return NULL;
+      }
+    }
+  } else {
+    /* Only use cert/key if pfx is not provided */
+
   /* This one most probably do not need the cert_file_name string to be kept
    * alive */
   if (options.cert_file_name) {
@@ -1198,6 +1284,7 @@ SSL_CTX *create_ssl_context_from_bun_options(
       }
     }
   }
+  } /* end of pfx else block */
 
   if (options.ca_file_name) {
     SSL_CTX_set_cert_store(ssl_context, us_get_default_ca_store());

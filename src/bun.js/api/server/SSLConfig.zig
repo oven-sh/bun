@@ -13,6 +13,8 @@ passphrase: ?[*:0]const u8 = null,
 key: ?[][*:0]const u8 = null,
 cert: ?[][*:0]const u8 = null,
 ca: ?[][*:0]const u8 = null,
+pfx: ?[][*:0]const u8 = null,
+pfx_len: ?[]u32 = null,
 
 secure_options: u32 = 0,
 request_cert: i32 = 0,
@@ -81,6 +83,13 @@ pub fn asUSockets(this: *const SSLConfig) uws.SocketContext.BunSocketContextOpti
         ctx_opts.ca = ca.ptr;
         ctx_opts.ca_count = @intCast(ca.len);
     }
+    if (this.pfx) |pfx| {
+        ctx_opts.pfx = pfx.ptr;
+        ctx_opts.pfx_count = @intCast(pfx.len);
+        if (this.pfx_len) |pfx_len| {
+            ctx_opts.pfx_len = pfx_len.ptr;
+        }
+    }
 
     if (this.ssl_ciphers != null) {
         ctx_opts.ssl_ciphers = this.ssl_ciphers;
@@ -107,6 +116,14 @@ pub fn isSame(this: *const SSLConfig, other: *const SSLConfig) bool {
                 if (slice1.len != slice2.len) return false;
                 for (slice1, slice2) |a, b| {
                     if (!stringsEqual(a, b)) return false;
+                }
+            },
+            ?[]u32 => {
+                const slice1 = first orelse return second == null;
+                const slice2 = second orelse return false;
+                if (slice1.len != slice2.len) return false;
+                for (slice1, slice2) |a, b| {
+                    if (a != b) return false;
                 }
             },
             else => if (first != second) return false,
@@ -147,6 +164,12 @@ pub fn deinit(this: *SSLConfig) void {
         .key = freeStrings(&this.key),
         .cert = freeStrings(&this.cert),
         .ca = freeStrings(&this.ca),
+        .pfx = freeStrings(&this.pfx),
+        .pfx_len = {
+            if (this.pfx_len) |len| {
+                bun.default_allocator.free(len);
+            }
+        },
         .secure_options = {},
         .request_cert = {},
         .reject_unauthorized = {},
@@ -184,6 +207,8 @@ pub fn clone(this: *const SSLConfig) SSLConfig {
         .key = cloneStrings(this.key),
         .cert = cloneStrings(this.cert),
         .ca = cloneStrings(this.ca),
+        .pfx = cloneStrings(this.pfx),
+        .pfx_len = if (this.pfx_len) |len| bun.handleOom(bun.default_allocator.dupe(u32, len)) else null,
         .secure_options = this.secure_options,
         .request_cert = this.request_cert,
         .reject_unauthorized = this.reject_unauthorized,
@@ -246,10 +271,18 @@ pub fn fromGenerated(
     result.ca = try handleFileForField(global, "ca", &generated.ca);
     result.cert = try handleFileForField(global, "cert", &generated.cert);
     result.key = try handleFileForField(global, "key", &generated.key);
+
+    // Handle pfx (PKCS#12) format
+    if (generated.pfx != .none) {
+        const pfx_files = try handleFileForFieldWithLengths(global, "pfx", &generated.pfx, &result.pfx_len);
+        result.pfx = pfx_files;
+    }
+
     result.requires_custom_request_ctx = result.requires_custom_request_ctx or
         result.ca != null or
         result.cert != null or
-        result.key != null;
+        result.key != null or
+        result.pfx != null;
 
     if (generated.key_file.get()) |key_file| {
         result.key_file_name = try handlePath(global, "keyFile", key_file);
@@ -387,6 +420,117 @@ fn handleSingleFile(
         },
         .file => |blob| try readFromBlob(global, blob),
     };
+}
+
+const FileWithLength = struct { data: [:0]const u8, length: u32 };
+
+fn handleSingleFileWithLength(
+    global: *jsc.JSGlobalObject,
+    file: union(enum) {
+        string: bun.string.WTFStringImpl,
+        buffer: *jsc.JSCArrayBuffer,
+        file: *bun.webcore.Blob,
+    },
+) ReadFromBlobError!FileWithLength {
+    return switch (file) {
+        .string => |string| blk: {
+            const data = string.toOwnedSliceZ(bun.default_allocator);
+            break :blk .{ .data = data, .length = @intCast(data.len) };
+        },
+        .buffer => |jsc_buffer| blk: {
+            const buffer: jsc.ArrayBuffer = jsc_buffer.asArrayBuffer();
+            const byte_slice = buffer.byteSlice();
+            const data = try bun.default_allocator.dupeZ(u8, byte_slice);
+            break :blk .{ .data = data, .length = @intCast(byte_slice.len) };
+        },
+        .file => |blob| blk: {
+            const data = try readFromBlob(global, blob);
+            break :blk .{ .data = data, .length = @intCast(data.len) };
+        },
+    };
+}
+
+fn handleFileError(global: *jsc.JSGlobalObject, comptime field: []const u8, err: anyerror) bun.JSError {
+    return switch (err) {
+        error.JSError => error.JSError,
+        error.OutOfMemory => error.OutOfMemory,
+        error.JSTerminated => error.JSTerminated,
+        error.EmptyFile => global.throwInvalidArguments(
+            std.fmt.comptimePrint("TLSOptions.{s} is an empty file", .{field}),
+            .{},
+        ),
+        error.NullStore, error.NotAFile => global.throwInvalidArguments(
+            std.fmt.comptimePrint(
+                "TLSOptions.{s} is not a valid BunFile (non-BunFile `Blob`s are not supported)",
+                .{field},
+            ),
+            .{},
+        ),
+        else => error.JSError,
+    };
+}
+
+fn handleFileForFieldWithLengths(
+    global: *jsc.JSGlobalObject,
+    comptime field: []const u8,
+    file: *const jsc.generated.SSLConfigFile,
+    lengths: *?[]u32,
+) bun.JSError!?[][*:0]const u8 {
+    const files_with_lengths: []FileWithLength = switch (file.*) {
+        .none => return null,
+        .string => |*ref| blk: {
+            const result = try bun.default_allocator.alloc(FileWithLength, 1);
+            errdefer bun.default_allocator.free(result);
+            result[0] = handleSingleFileWithLength(global, .{ .string = ref.get() }) catch |err| return handleFileError(global, field, err);
+            break :blk result;
+        },
+        .buffer => |*ref| blk: {
+            const result = try bun.default_allocator.alloc(FileWithLength, 1);
+            errdefer bun.default_allocator.free(result);
+            result[0] = handleSingleFileWithLength(global, .{ .buffer = ref.get() }) catch |err| return handleFileError(global, field, err);
+            break :blk result;
+        },
+        .file => |*ref| blk: {
+            const result = try bun.default_allocator.alloc(FileWithLength, 1);
+            errdefer bun.default_allocator.free(result);
+            result[0] = handleSingleFileWithLength(global, .{ .file = ref.get() }) catch |err| return handleFileError(global, field, err);
+            break :blk result;
+        },
+        .array => |*list| blk: {
+            const elements = list.items();
+            if (elements.len == 0) return null;
+            const result = try bun.default_allocator.alloc(FileWithLength, elements.len);
+            errdefer {
+                for (result) |item| {
+                    bun.freeSensitive(bun.default_allocator, item.data);
+                }
+                bun.default_allocator.free(result);
+            }
+            for (elements, 0..) |*elem, i| {
+                result[i] = handleSingleFileWithLength(global, switch (elem.*) {
+                    .string => |*ref| .{ .string = ref.get() },
+                    .buffer => |*ref| .{ .buffer = ref.get() },
+                    .file => |*ref| .{ .file = ref.get() },
+                }) catch |err| return handleFileError(global, field, err);
+            }
+            break :blk result;
+        },
+    };
+
+    // Extract data and lengths into separate arrays
+    const data_result = try bun.default_allocator.alloc([*:0]const u8, files_with_lengths.len);
+    errdefer bun.default_allocator.free(data_result);
+    const length_result = try bun.default_allocator.alloc(u32, files_with_lengths.len);
+    errdefer bun.default_allocator.free(length_result);
+
+    for (files_with_lengths, 0..) |item, i| {
+        data_result[i] = item.data.ptr;
+        length_result[i] = item.length;
+    }
+    bun.default_allocator.free(files_with_lengths);
+
+    lengths.* = length_result;
+    return data_result;
 }
 
 pub fn takeProtos(this: *SSLConfig) ?[]const u8 {

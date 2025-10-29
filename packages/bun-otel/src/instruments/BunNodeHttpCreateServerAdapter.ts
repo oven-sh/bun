@@ -8,38 +8,8 @@
 import { ATTR_HTTP_REQUEST_METHOD, ATTR_URL_FULL, ATTR_URL_SCHEME } from "@opentelemetry/semantic-conventions";
 import type { NativeInstrument } from "bun";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { parseUrlAndHost } from "../url-utils";
 import { BunGenericInstrumentation } from "./BunGenericInstrumentation";
-
-/**
- * Parse URL and extract host/port from request
- */
-function parseUrlAndHost(
-  url: string,
-  host: string,
-): {
-  "url.path": string;
-  "url.query"?: string;
-  "server.address": string;
-  "server.port"?: number;
-} {
-  const [path, query] = url.split("?");
-  const [hostname, port] = host.split(":");
-
-  const result: any = {
-    "url.path": path || "/",
-    "server.address": hostname || "localhost",
-  };
-
-  if (query) {
-    result["url.query"] = query;
-  }
-
-  if (port) {
-    result["server.port"] = parseInt(port, 10);
-  }
-
-  return result;
-}
 
 /**
  * Extract content-length from ServerResponse

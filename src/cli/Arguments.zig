@@ -916,6 +916,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             .{ "node", .node },
             .{ "bun", .bun },
             .{ "cloudflare", .cloudflare },
+            .{ "macro", .bun_macro },
         });
         if (args.option("--target")) |_target| brk: {
             if (comptime cmd == .BuildCommand) {
@@ -929,10 +930,6 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                         opts.target = .bun;
                         break :brk;
                     }
-                }
-                if (strings.eqlComptime(_target, "macro")) {
-                    opts.target = .bun_macro;
-                    break :brk;
                 }
             }
 

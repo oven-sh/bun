@@ -125,7 +125,7 @@ pub const Loop = struct {
                             }
                         },
                         .close => |close| {
-                            log("close({}, registered={f})", .{ close.fd, close.poll.flags.contains(.registered) });
+                            log("close({f}, registered={})", .{ close.fd, close.poll.flags.contains(.registered) });
                             // Only remove from the interest list if it was previously registered.
                             // Otherwise, epoll gets confused.
                             // This state can happen if polling for readable/writable previously failed.
@@ -158,7 +158,7 @@ pub const Loop = struct {
 
             const current_events: []std.os.linux.epoll_event = events[0..rc];
             if (rc != 0) {
-                log("epoll_wait({}) = {d}", .{ this.pollfd(), rc });
+                log("epoll_wait({f}) = {d}", .{ this.pollfd(), rc });
             }
 
             for (current_events) |event| {
@@ -624,7 +624,7 @@ pub const Poll = struct {
     pub fn registerForEpoll(this: *Poll, tag: Pollable.Tag, loop: *Loop, comptime flag: Flags, one_shot: bool, fd: bun.FileDescriptor) bun.sys.Maybe(void) {
         const watcher_fd = loop.pollfd();
 
-        log("register: {s} ({})", .{ @tagName(flag), fd });
+        log("register: {s} ({f})", .{ @tagName(flag), fd });
 
         bun.assert(fd != bun.invalid_fd);
 

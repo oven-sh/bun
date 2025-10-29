@@ -2,6 +2,7 @@ TODO:
 
 - [ ] identify and fix ISSUE1.js
 - [ ] revert commit 'revertrevert' 43009bb1f297789596c4d9b424f1c22647891986 and get building again
+- [ ] linux: no_link_obj
 - [ ] windows
 - [ ] remove format_mode (after completing the revertrevert step ^)
 - [ ] remove deprecated.BufferedWriter and BufferedReader

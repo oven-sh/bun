@@ -79,7 +79,10 @@ fn generateDefaultFilename(buf: *bun.PathBuffer) ![]const u8 {
     // Generate filename like: CPU.{timestamp}.{pid}.cpuprofile
     // Use microsecond timestamp for uniqueness
     const timespec = bun.timespec.now();
-    const pid = bun.c.getpid();
+    const pid = if (bun.Environment.isWindows)
+        std.os.windows.GetCurrentProcessId()
+    else
+        std.c.getpid();
 
     const epoch_microseconds: u64 = @intCast(timespec.sec *% 1_000_000 +% @divTrunc(timespec.nsec, 1000));
 

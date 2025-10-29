@@ -8,8 +8,8 @@
 import { SpanKind } from "@opentelemetry/api";
 import type { BunGenericInstrumentationConfig } from "./instruments/BunGenericInstrumentation";
 import {
-  ATTR_ERROR_MESSAGE,
   ATTR_ERROR_TYPE,
+  ATTR_EXCEPTION_MESSAGE,
   ATTR_HTTP_REQUEST_HEADER,
   ATTR_HTTP_REQUEST_HEADER_TRACEPARENT,
   ATTR_HTTP_REQUEST_HEADER_TRACESTATE,
@@ -277,7 +277,7 @@ export function mapHttpServerConfig(config: LegacyHttpConfig = {}): BunGenericIn
       start: attrs.start,
       update: attrs.update,
       end: attrs.end,
-      err: [ATTR_ERROR_TYPE, ATTR_ERROR_MESSAGE],
+      err: [ATTR_ERROR_TYPE, ATTR_EXCEPTION_MESSAGE],
     },
 
     // Metrics config
@@ -363,7 +363,7 @@ export function mapNodeHttpServerConfig(config: LegacyHttpConfig = {}): BunGener
       ],
       err: [
         ATTR_ERROR_TYPE, // "error.type",
-        ATTR_ERROR_MESSAGE, // "error.message",
+        ATTR_EXCEPTION_MESSAGE, // "exception.message",
       ],
     },
 
@@ -439,7 +439,7 @@ export function mapFetchClientConfig(config: LegacyHttpConfig = {}): BunGenericI
     trace: {
       start: attrs.start,
       end: attrs.end,
-      err: [ATTR_ERROR_TYPE, ATTR_ERROR_MESSAGE],
+      err: [ATTR_ERROR_TYPE, ATTR_EXCEPTION_MESSAGE],
     },
 
     // Metrics config

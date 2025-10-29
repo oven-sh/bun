@@ -35,7 +35,7 @@ export interface OtelCapabilities {
   /**
    * End a span with an error
    * @param id Operation ID
-   * @param attributes Error attributes (error.type, error.message, etc.)
+   * @param attributes Error attributes (error.type, exception.message, etc.)
    */
   errorSpan(id: number, attributes: Record<string, any>): void;
 

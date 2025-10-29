@@ -9,7 +9,7 @@ import type { Counter, Histogram, Meter, MeterProvider, Span, Tracer, TracerProv
 import { context, propagation, SpanKind, SpanStatusCode, trace, ValueType } from "@opentelemetry/api";
 
 import type { CapabilitiesConfig, OtelCapabilities } from "../capabilities";
-
+import { ATTR_ERROR_TYPE, ATTR_EXCEPTION_MESSAGE } from "../semconv";
 /**
  * Simple header getter for W3C trace context propagation
  */
@@ -268,14 +268,14 @@ export class OtelCapabilitiesImpl implements OtelCapabilities {
 
     // Record exception
     state.span.recordException({
-      name: attributes["error.type"] || "Error",
-      message: attributes["error.message"] || "Unknown error",
+      name: attributes[ATTR_ERROR_TYPE] || "Error",
+      message: attributes[ATTR_EXCEPTION_MESSAGE] || "Unknown error",
     });
 
     // Set error status
     state.span.setStatus({
       code: SpanStatusCode.ERROR,
-      message: attributes["error.message"],
+      message: attributes[ATTR_EXCEPTION_MESSAGE],
     });
 
     const errKeys = this._config.trace?.err;

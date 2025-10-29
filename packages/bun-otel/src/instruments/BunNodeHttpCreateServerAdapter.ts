@@ -5,7 +5,13 @@
  * attribute-based API using .once() event listeners.
  */
 
-import { ATTR_HTTP_REQUEST_METHOD, ATTR_URL_FULL, ATTR_URL_SCHEME } from "@opentelemetry/semantic-conventions";
+import {
+  ATTR_HTTP_REQUEST_METHOD,
+  ATTR_URL_FULL,
+  ATTR_URL_SCHEME,
+  ATTR_ERROR_TYPE,
+  ATTR_EXCEPTION_MESSAGE,
+} from "../semconv";
 import type { NativeInstrument } from "bun";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { parseUrlAndHost } from "../url-utils";
@@ -125,8 +131,8 @@ export class BunNodeHttpCreateServerAdapter extends BunGenericInstrumentation {
         nodeResponse.once("error", (err: unknown) => {
           const message = err instanceof Error ? err.message : String(err ?? "Unknown error");
           api.onOperationError!(id, {
-            "error.type": "Error",
-            "error.message": message,
+            [ATTR_ERROR_TYPE]: "Error",
+            [ATTR_EXCEPTION_MESSAGE]: message,
           });
         });
 
@@ -135,8 +141,8 @@ export class BunNodeHttpCreateServerAdapter extends BunGenericInstrumentation {
           // Only fire if not already finished
           if (!nodeResponse.writableFinished) {
             api.onOperationError!(id, {
-              "error.type": "ClientAbort",
-              "error.message": "Request aborted",
+              [ATTR_ERROR_TYPE]: "ClientAbort",
+              [ATTR_EXCEPTION_MESSAGE]: "Request aborted",
             });
           }
         });
@@ -144,8 +150,8 @@ export class BunNodeHttpCreateServerAdapter extends BunGenericInstrumentation {
         // Timeout: Request timeout
         nodeResponse.once("timeout", () => {
           api.onOperationError!(id, {
-            "error.type": "Timeout",
-            "error.message": "Request timeout",
+            [ATTR_ERROR_TYPE]: "Timeout",
+            [ATTR_EXCEPTION_MESSAGE]: "Request timeout",
           });
         });
 

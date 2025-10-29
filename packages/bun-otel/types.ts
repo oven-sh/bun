@@ -194,8 +194,8 @@ export type NativeHooks = {
    *   const attributes = {
    *     "operation.id": operationId,
    *     "error.type": "Error",
-   *     "error.message": "Connection reset",
-   *     "error.stack": String(err?.stack || ""),
+   *     "exception.message": "Connection reset",
+   *     "exception.stacktrace": String(err?.stack || ""),
    *     // ... additional error context
    *   };
    *   Bun.telemetry.nativeHooks()?.notifyError(InstrumentKinds.HTTP, operationId, attributes);

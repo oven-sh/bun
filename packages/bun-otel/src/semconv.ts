@@ -17,6 +17,11 @@ export const ATTR_HTTP_RESPONSE_HEADER_TRACESTATE = ATTR_HTTP_RESPONSE_HEADER("t
 /** WARNING! INCUBATING! - Re-exported from @opentelemetry/semantic-conventions/incubating */
 export { ATTR_HTTP_RESPONSE_BODY_SIZE } from "@opentelemetry/semantic-conventions/incubating";
 
-/** Custom incubating attributes not yet in semantic-conventions */
-export const ATTR_ERROR_MESSAGE = "error.message";
-export const ATTR_ERROR_STACK = "error.stack";
+/**
+ * Exception semantic conventions are re-exported from @opentelemetry/semantic-conventions:
+ * - ATTR_EXCEPTION_TYPE = "exception.type"
+ * - ATTR_EXCEPTION_MESSAGE = "exception.message"
+ * - ATTR_EXCEPTION_STACKTRACE = "exception.stacktrace"
+ *
+ * Note: ATTR_ERROR_TYPE = "error.type" is DIFFERENT and used for error classification.
+ */

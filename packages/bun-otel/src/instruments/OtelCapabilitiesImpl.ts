@@ -32,6 +32,8 @@ interface OperationState {
   startTime?: bigint;
   /** Cached metric attributes from start event */
   metricAttributes?: Record<string, any>;
+  /** Native duration in nanoseconds (for nativeDuration: "update" mode) */
+  nativeDurationNs?: number;
 }
 
 /**
@@ -208,14 +210,24 @@ export class OtelCapabilitiesImpl implements OtelCapabilities {
   }
 
   updateSpan(id: number, attributes: Record<string, any>): void {
-    if (!this.tracingEnabled) return;
-
     const state = this._operations.get(id);
-    if (!state?.span) return;
+    if (!state) return;
 
-    const updateKeys = this._config.trace?.update;
-    if (updateKeys && updateKeys.length > 0) {
-      copyAttributesToSpan(attributes, state.span, updateKeys);
+    // Handle tracing updates
+    if (this.tracingEnabled && state.span) {
+      const updateKeys = this._config.trace?.update;
+      if (updateKeys && updateKeys.length > 0) {
+        copyAttributesToSpan(attributes, state.span, updateKeys);
+      }
+    }
+
+    // Capture native duration for metrics (progressive operations like SQLite)
+    if (this.metricsEnabled && this._config.nativeDuration === "update") {
+      const raw = attributes["operation.duration"];
+      const parsed = raw === undefined ? undefined : Number(raw);
+      if (parsed !== undefined && Number.isFinite(parsed)) {
+        state.nativeDurationNs = parsed;
+      }
     }
   }
 
@@ -318,8 +330,15 @@ export class OtelCapabilitiesImpl implements OtelCapabilities {
     let durationNs: number | undefined;
 
     if (this._config.nativeDuration === "end") {
-      // Native provides duration in attributes
-      durationNs = attributes["operation.duration"];
+      // Native provides duration in endSpan attributes
+      const raw = attributes["operation.duration"];
+      const parsed = raw === undefined ? undefined : Number(raw);
+      if (parsed !== undefined && Number.isFinite(parsed)) {
+        durationNs = parsed;
+      }
+    } else if (this._config.nativeDuration === "update") {
+      // Use progressive duration captured during updateSpan
+      durationNs = state.nativeDurationNs;
     } else if (this._config.nativeDuration === undefined && state.startTime) {
       // Calculate internally
       durationNs = Number(process.hrtime.bigint() - state.startTime);

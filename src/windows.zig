@@ -3878,9 +3878,9 @@ pub fn spawnWatcherChild(
 
     const image_pathZ = wbuf[0..image_path.len :0];
 
-    const kernelenv = kernel32.GetEnvironmentStringsW();
+    const kernelenv = kernel32_2.GetEnvironmentStringsW();
     defer if (kernelenv) |envptr| {
-        _ = kernel32.FreeEnvironmentStringsW(envptr);
+        _ = kernel32_2.FreeEnvironmentStringsW(envptr);
     };
 
     var size: usize = 0;
@@ -4142,6 +4142,49 @@ pub fn renameAtW(
     defer src_fd.close();
 
     return moveOpenedFileAt(src_fd, new_dir_fd, new_path_w, replace_if_exists);
+}
+
+const kernel32_2 = struct {
+    pub extern "kernel32" fn GetEnvironmentStringsW() callconv(.winapi) ?LPWSTR;
+
+    pub extern "kernel32" fn FreeEnvironmentStringsW(
+        penv: LPWSTR,
+    ) callconv(.winapi) BOOL;
+
+    pub extern "kernel32" fn GetEnvironmentVariableW(
+        lpName: ?LPCWSTR,
+        lpBuffer: ?[*]WCHAR,
+        nSize: DWORD,
+    ) callconv(.winapi) DWORD;
+};
+pub const GetEnvironmentStringsError = error{OutOfMemory};
+
+pub fn GetEnvironmentStringsW() GetEnvironmentStringsError![*:0]u16 {
+    return kernel32_2.GetEnvironmentStringsW() orelse return error.OutOfMemory;
+}
+
+pub fn FreeEnvironmentStringsW(penv: [*:0]u16) void {
+    std.debug.assert(kernel32_2.FreeEnvironmentStringsW(penv) != 0);
+}
+
+pub const GetEnvironmentVariableError = error{
+    EnvironmentVariableNotFound,
+
+    Unexpected,
+};
+
+pub fn GetEnvironmentVariableW(lpName: LPWSTR, lpBuffer: [*]u16, nSize: DWORD) GetEnvironmentVariableError!DWORD {
+    const rc = kernel32_2.GetEnvironmentVariableW(lpName, lpBuffer, nSize);
+
+    if (rc == 0) {
+        switch (GetLastError()) {
+            .ENVVAR_NOT_FOUND => return error.EnvironmentVariableNotFound,
+
+            else => return error.Unexpected,
+        }
+    }
+
+    return rc;
 }
 
 pub const env = @import("./windows/env.zig");

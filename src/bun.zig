@@ -2208,7 +2208,7 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         argv = try std.process.argsAlloc(allocator);
     }
 
-    if (bun.env_var.BUN_OPTIONS.get()) |opts| {
+    if (bun.env_var.BUN_OPTIONS.get() orelse bun.env_var.NODE_OPTIONS.get()) |opts| {
         var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(allocator, argv);
         try appendOptionsEnv(opts, &argv_list, allocator);
         argv = argv_list.items;

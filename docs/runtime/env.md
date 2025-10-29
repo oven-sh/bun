@@ -225,6 +225,11 @@ These environment variables are read by Bun and configure aspects of its behavio
 - `BUN_OPTIONS`
 - Prepends command-line arguments to any Bun execution. For example, `BUN_OPTIONS="--hot"` makes `bun run dev` behave like `bun --hot run dev`.
 
+---
+
+- `NODE_OPTIONS`
+- Works identically to `BUN_OPTIONS`. Prepends command-line arguments to any Bun execution. If both `BUN_OPTIONS` and `NODE_OPTIONS` are set, `BUN_OPTIONS` takes precedence. This provides compatibility with Node.js tooling.
+
 {% /table %}
 
 ## Runtime transpiler caching

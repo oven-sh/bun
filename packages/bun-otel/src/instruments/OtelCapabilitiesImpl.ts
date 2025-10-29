@@ -5,21 +5,8 @@
  * Everything else uses the clean OtelCapabilities interface
  */
 
-import {
-  context,
-  Counter,
-  Histogram,
-  Meter,
-  MeterProvider,
-  propagation,
-  Span,
-  SpanKind,
-  SpanStatusCode,
-  trace,
-  Tracer,
-  TracerProvider,
-  ValueType,
-} from "@opentelemetry/api";
+import type { Counter, Histogram, Meter, MeterProvider, Span, Tracer, TracerProvider } from "@opentelemetry/api";
+import { context, propagation, SpanKind, SpanStatusCode, trace, ValueType } from "@opentelemetry/api";
 
 import type { CapabilitiesConfig, OtelCapabilities } from "../capabilities";
 

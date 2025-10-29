@@ -388,7 +388,7 @@ const PosixBufferedReader = struct {
     pub fn onPoll(parent: *PosixBufferedReader, size_hint: isize, received_hup: bool) void {
         const resizable_buffer = parent.buffer();
         const fd = parent.getFd();
-        bun.sys.syslog("onPoll({}) = {d}", .{ fd, size_hint });
+        bun.sys.syslog("onPoll({f}) = {d}", .{ fd, size_hint });
 
         switch (parent.getFileType()) {
             .nonblocking_pipe => {

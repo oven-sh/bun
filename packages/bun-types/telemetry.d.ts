@@ -310,7 +310,7 @@ declare module "bun" {
      *
      * @param instrument - Instrumentation object implementing NativeInstrument
      * @returns InstrumentRef with disposable cleanup (use with `using` statement)
-     * @throws {TypeError} If validation fails (non-string/non-number type, out-of-range number, missing required fields, async hooks, etc.)
+     * @throws {TypeError} If validation fails (non-string/non-number attributes, out-of-range numbers, missing required fields, async hooks, invalid headers, etc.)
      *
      * @example
      * ```typescript

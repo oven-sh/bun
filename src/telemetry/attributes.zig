@@ -7,16 +7,6 @@
 //! - Memory-efficient storage (no duplicate strings)
 //! - Compatible with JSValue objects for TypeScript hooks
 
-const std = @import("std");
-const bun = @import("bun");
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const JSGlobalObject = jsc.JSGlobalObject;
-const ZigString = jsc.ZigString;
-
-/// Import generated semantic conventions (string constants only)
-const semconv = @import("semconv.zig");
-
 // ============================================================================
 // Header Direction - Shared enum for request/response classification
 // ============================================================================
@@ -642,3 +632,13 @@ pub const AttributeMap = struct {
         }
     }
 };
+
+const std = @import("std");
+const bun = @import("bun");
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+const JSGlobalObject = jsc.JSGlobalObject;
+const ZigString = jsc.ZigString;
+
+/// Import generated semantic conventions (string constants only)
+const semconv = @import("semconv.zig");

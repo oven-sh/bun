@@ -29,12 +29,12 @@ bun add mongoose
 In `schema.ts` we'll declare and export a simple `Animal` model.
 
 ```ts schema.ts icon="/icons/typescript.svg"
-import * as mongoose from 'mongoose';
+import * as mongoose from "mongoose";
 
 const animalSchema = new mongoose.Schema(
 	{
-		title: {type: String, required: true},
-		sound: {type: String, required: true},
+		title: { type: String, required: true },
+		sound: { type: String, required: true },
 	},
 	{
 		methods: {
@@ -46,7 +46,7 @@ const animalSchema = new mongoose.Schema(
 );
 
 export type Animal = mongoose.InferSchemaType<typeof animalSchema>;
-export const Animal = mongoose.model('Animal', animalSchema);
+export const Animal = mongoose.model("Animal", animalSchema);
 ```
 
 ---
@@ -54,16 +54,16 @@ export const Animal = mongoose.model('Animal', animalSchema);
 Now from `index.ts` we can import `Animal`, connect to MongoDB, and add some data to our database.
 
 ```ts index.ts icon="/icons/typescript.svg"
-import * as mongoose from 'mongoose';
-import {Animal} from './schema';
+import * as mongoose from "mongoose";
+import { Animal } from "./schema";
 
 // connect to database
-await mongoose.connect('mongodb://127.0.0.1:27017/mongoose-app');
+await mongoose.connect("mongodb://127.0.0.1:27017/mongoose-app");
 
 // create new Animal
 const cow = new Animal({
-	title: 'Cow',
-	sound: 'Moo',
+	title: "Cow",
+	sound: "Moo",
 });
 await cow.save(); // saves to the database
 

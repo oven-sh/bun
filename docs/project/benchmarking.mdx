@@ -32,7 +32,7 @@ Bun has two heaps. One heap is for the JavaScript runtime and the other heap is 
 The `bun:jsc` module exposes a few functions for measuring memory usage:
 
 ```ts
-import {heapStats} from 'bun:jsc';
+import { heapStats } from "bun:jsc";
 console.log(heapStats());
 ```
 
@@ -155,10 +155,10 @@ Bun.gc(false); // asynchronous
 Heap snapshots let you inspect what objects are not being freed. You can use the `bun:jsc` module to take a heap snapshot and then view it with Safari or WebKit GTK developer tools. To generate a heap snapshot:
 
 ```ts
-import {generateHeapSnapshot} from 'bun';
+import { generateHeapSnapshot } from "bun";
 
 const snapshot = generateHeapSnapshot();
-await Bun.write('heap.json', JSON.stringify(snapshot, null, 2));
+await Bun.write("heap.json", JSON.stringify(snapshot, null, 2));
 ```
 
 To view the snapshot, open the `heap.json` file in Safari's Developer Tools (or WebKit GTK)

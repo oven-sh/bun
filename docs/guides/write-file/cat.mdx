@@ -9,7 +9,7 @@ Bun exposes `stdout` as a `BunFile` with the `Bun.stdout` property. This can be 
 This code writes a file to `stdout` similar to the `cat` command in Unix.
 
 ```ts cat.ts icon="/icons/typescript.svg"
-const path = '/path/to/file.txt';
+const path = "/path/to/file.txt";
 const file = Bun.file(path);
 await Bun.write(Bun.stdout, file);
 ```

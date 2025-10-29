@@ -33,7 +33,7 @@ Bun.serve({
 		if (server.upgrade(req)) {
 			return; // do not return a Response
 		}
-		return new Response('Upgrade failed', {status: 500});
+		return new Response("Upgrade failed", { status: 500 });
 	},
 	websocket: {}, // handlers
 });
@@ -95,7 +95,7 @@ Bun.serve({
 	fetch(req, server) {}, // upgrade logic
 	websocket: {
 		message(ws, message) {
-			ws.send('Hello world'); // string
+			ws.send("Hello world"); // string
 			ws.send(response.arrayBuffer()); // ArrayBuffer
 			ws.send(new Uint8Array([1, 2, 3])); // TypedArray | DataView
 		},
@@ -114,7 +114,7 @@ Bun.serve({
 		server.upgrade(req, {
 			headers: {
 				// [!code ++]
-				'Set-Cookie': `SessionId=${sessionId}`, // [!code ++]
+				"Set-Cookie": `SessionId=${sessionId}`, // [!code ++]
 			}, // [!code ++]
 		});
 	},
@@ -135,14 +135,14 @@ type WebSocketData = {
 
 Bun.serve({
 	fetch(req, server) {
-		const cookies = new Bun.CookieMap(req.headers.get('cookie')!);
+		const cookies = new Bun.CookieMap(req.headers.get("cookie")!);
 
 		server.upgrade(req, {
 			// this object must conform to WebSocketData
 			data: {
 				createdAt: Date.now(),
-				channelId: new URL(req.url).searchParams.get('channelId'),
-				authToken: cookies.get('X-Token'),
+				channelId: new URL(req.url).searchParams.get("channelId"),
+				authToken: cookies.get("X-Token"),
 			},
 		});
 
@@ -169,9 +169,9 @@ Bun.serve({
 To connect to this server from the browser, create a new `WebSocket`.
 
 ```ts browser.js icon="file-code"
-const socket = new WebSocket('ws://localhost:3000/chat');
+const socket = new WebSocket("ws://localhost:3000/chat");
 
-socket.addEventListener('message', event => {
+socket.addEventListener("message", event => {
 	console.log(event.data);
 });
 ```
@@ -191,32 +191,32 @@ Bun's `ServerWebSocket` implementation implements a native publish-subscribe API
 const server = Bun.serve({
 	fetch(req, server) {
 		const url = new URL(req.url);
-		if (url.pathname === '/chat') {
+		if (url.pathname === "/chat") {
 			console.log(`upgrade!`);
 			const username = getUsernameFromReq(req);
-			const success = server.upgrade(req, {data: {username}});
-			return success ? undefined : new Response('WebSocket upgrade error', {status: 400});
+			const success = server.upgrade(req, { data: { username } });
+			return success ? undefined : new Response("WebSocket upgrade error", { status: 400 });
 		}
 
-		return new Response('Hello world');
+		return new Response("Hello world");
 	},
 	websocket: {
 		// TypeScript: specify the type of ws.data like this
-		data: {} as {username: string},
+		data: {} as { username: string },
 		open(ws) {
 			const msg = `${ws.data.username} has entered the chat`;
-			ws.subscribe('the-group-chat');
-			server.publish('the-group-chat', msg);
+			ws.subscribe("the-group-chat");
+			server.publish("the-group-chat", msg);
 		},
 		message(ws, message) {
 			// this is a group chat
 			// so the server re-broadcasts incoming message to everyone
-			server.publish('the-group-chat', `${ws.data.username}: ${message}`);
+			server.publish("the-group-chat", `${ws.data.username}: ${message}`);
 		},
 		close(ws) {
 			const msg = `${ws.data.username} has left the chat`;
-			ws.unsubscribe('the-group-chat');
-			server.publish('the-group-chat', msg);
+			ws.unsubscribe("the-group-chat");
+			server.publish("the-group-chat", msg);
 		},
 	},
 });
@@ -234,7 +234,7 @@ const server = Bun.serve({
 });
 
 // listen for some external event
-server.publish('the-group-chat', 'Hello world');
+server.publish("the-group-chat", "Hello world");
 ```
 
 ### Compression
@@ -252,7 +252,7 @@ Bun.serve({
 Compression can be enabled for individual messages by passing a `boolean` as the second argument to `.send()`.
 
 ```ts
-ws.send('Hello world', true);
+ws.send("Hello world", true);
 ```
 
 For fine-grained control over compression characteristics, refer to the [Reference](#reference).
@@ -298,10 +298,10 @@ Bun.serve({
 Bun implements the `WebSocket` class. To create a WebSocket client that connects to a `ws://` or `wss://` server, create an instance of `WebSocket`, as you would in the browser.
 
 ```ts
-const socket = new WebSocket('ws://localhost:3000');
+const socket = new WebSocket("ws://localhost:3000");
 
 // With subprotocol negotiation
-const socket2 = new WebSocket('ws://localhost:3000', ['soap', 'wamp']);
+const socket2 = new WebSocket("ws://localhost:3000", ["soap", "wamp"]);
 ```
 
 In browsers, the cookies that are currently set on the page will be sent with the WebSocket upgrade request. This is a standard feature of the `WebSocket` API.
@@ -309,7 +309,7 @@ In browsers, the cookies that are currently set on the page will be sent with th
 For convenience, Bun lets you setting custom headers directly in the constructor. This is a Bun-specific extension of the `WebSocket` standard. _This will not work in browsers._
 
 ```ts
-const socket = new WebSocket('ws://localhost:3000', {
+const socket = new WebSocket("ws://localhost:3000", {
 	headers: {
 		/* custom headers */
 	}, // [!code ++]
@@ -320,16 +320,16 @@ To add event listeners to the socket:
 
 ```ts
 // message is received
-socket.addEventListener('message', event => {});
+socket.addEventListener("message", event => {});
 
 // socket opened
-socket.addEventListener('open', event => {});
+socket.addEventListener("open", event => {});
 
 // socket closed
-socket.addEventListener('close', event => {});
+socket.addEventListener("close", event => {});
 
 // error handler
-socket.addEventListener('error', event => {});
+socket.addEventListener("error", event => {});
 ```
 
 ---

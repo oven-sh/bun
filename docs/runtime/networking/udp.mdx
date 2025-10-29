@@ -27,7 +27,7 @@ console.log(socket.port); // 41234
 Specify the data to send, as well as the destination port and address.
 
 ```ts
-socket.send('Hello, world!', 41234, '127.0.0.1');
+socket.send("Hello, world!", 41234, "127.0.0.1");
 ```
 
 Note that the address must be a valid IP address - `send` does not perform
@@ -48,7 +48,7 @@ const server = await Bun.udpSocket({
 });
 
 const client = await Bun.udpSocket({});
-client.send('Hello!', server.port, '127.0.0.1');
+client.send("Hello!", server.port, "127.0.0.1");
 ```
 
 ### Connections
@@ -70,11 +70,11 @@ const server = await Bun.udpSocket({
 const client = await Bun.udpSocket({
 	connect: {
 		port: server.port,
-		hostname: '127.0.0.1',
+		hostname: "127.0.0.1",
 	},
 });
 
-client.send('Hello');
+client.send("Hello");
 ```
 
 Because connections are implemented on the operating system level, you can potentially observe performance benefits, too.
@@ -91,7 +91,7 @@ The first item is the data to be sent, the second is the target port, and the la
 const socket = await Bun.udpSocket({});
 
 // sends 'Hello' to 127.0.0.1:41234, and 'foo' to 1.1.1.1:53 in a single operation
-socket.sendMany(['Hello', 41234, '127.0.0.1', 'foo', 53, '1.1.1.1']);
+socket.sendMany(["Hello", 41234, "127.0.0.1", "foo", 53, "1.1.1.1"]);
 ```
 
 With a connected socket, `sendMany` simply takes an array, where each element represents the data to be sent to the peer.
@@ -100,11 +100,11 @@ With a connected socket, `sendMany` simply takes an array, where each element re
 const socket = await Bun.udpSocket({
 	connect: {
 		port: 41234,
-		hostname: 'localhost',
+		hostname: "localhost",
 	},
 });
 
-socket.sendMany(['foo', 'bar', 'baz']);
+socket.sendMany(["foo", "bar", "baz"]);
 ```
 
 `sendMany` returns the number of packets that were successfully sent. As with `send`, `sendMany` only takes valid IP addresses

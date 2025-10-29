@@ -1,5 +1,5 @@
 ---
-title: 'import, require, and test Svelte components with bun test'
+title: "import, require, and test Svelte components with bun test"
 sidebarTitle: Test Svelte
 mode: center
 ---
@@ -15,11 +15,11 @@ bun add @testing-library/svelte svelte@4 @happy-dom/global-registrator
 Then, save this plugin in your project.
 
 ```ts svelte-loader.js icon="/icons/typescript.svg"
-import {plugin} from 'bun';
-import {compile} from 'svelte/compiler';
-import {readFileSync} from 'fs';
-import {beforeEach, afterEach} from 'bun:test';
-import {GlobalRegistrator} from '@happy-dom/global-registrator';
+import { plugin } from "bun";
+import { compile } from "svelte/compiler";
+import { readFileSync } from "fs";
+import { beforeEach, afterEach } from "bun:test";
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 beforeEach(async () => {
 	await GlobalRegistrator.register();
@@ -30,24 +30,24 @@ afterEach(async () => {
 });
 
 plugin({
-	title: 'svelte loader',
+	title: "svelte loader",
 	setup(builder) {
-		builder.onLoad({filter: /\.svelte(\?[^.]+)?$/}, ({path}) => {
+		builder.onLoad({ filter: /\.svelte(\?[^.]+)?$/ }, ({ path }) => {
 			try {
 				const source = readFileSync(
-					path.substring(0, path.includes('?') ? path.indexOf('?') : path.length),
-					'utf-8',
+					path.substring(0, path.includes("?") ? path.indexOf("?") : path.length),
+					"utf-8",
 				);
 
 				const result = compile(source, {
 					filetitle: path,
-					generate: 'client',
+					generate: "client",
 					dev: false,
 				});
 
 				return {
 					contents: result.js.code,
-					loader: 'js',
+					loader: "js",
 				};
 			} catch (err) {
 				throw new Error(`Failed to compile Svelte component: ${err.message}`);
@@ -88,13 +88,13 @@ Add an example `.svelte` file in your project.
 Now you can `import` or `require` `*.svelte` files in your tests, and it will load the Svelte component as a JavaScript module.
 
 ```ts hello-svelte.test.ts icon="/icons/typescript.svg"
-import {test, expect} from 'bun:test';
-import {render, fireEvent} from '@testing-library/svelte';
-import Counter from './Counter.svelte';
+import { test, expect } from "bun:test";
+import { render, fireEvent } from "@testing-library/svelte";
+import Counter from "./Counter.svelte";
 
-test('Counter increments when clicked', async () => {
-	const {getByText, component} = render(Counter);
-	const button = getByText('+1');
+test("Counter increments when clicked", async () => {
+	const { getByText, component } = render(Counter);
+	const button = getByText("+1");
 
 	// Initial state
 	expect(component.$$.ctx[0]).toBe(0); // initialCount is the first prop

@@ -238,17 +238,17 @@ In Bun, and someday in other JavaScript engines, it has methods available for co
 
 ```ts
 new Uint8Array([1, 2, 3, 4, 5]).toBase64(); // "AQIDBA=="
-Uint8Array.fromBase64('AQIDBA=='); // Uint8Array(4) [1, 2, 3, 4, 5]
+Uint8Array.fromBase64("AQIDBA=="); // Uint8Array(4) [1, 2, 3, 4, 5]
 
 new Uint8Array([255, 254, 253, 252, 251]).toHex(); // "fffefdfcfb=="
-Uint8Array.fromHex('fffefdfcfb'); // Uint8Array(5) [255, 254, 253, 252, 251]
+Uint8Array.fromHex("fffefdfcfb"); // Uint8Array(5) [255, 254, 253, 252, 251]
 ```
 
 It is the return value of [`TextEncoder#encode`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder), and the input type of [`TextDecoder#decode`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoder), two utility classes designed to translate strings and various binary encodings, most notably `"utf-8"`.
 
 ```ts
 const encoder = new TextEncoder();
-const bytes = encoder.encode('hello world');
+const bytes = encoder.encode("hello world");
 // => Uint8Array(11) [ 104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100 ]
 
 const decoder = new TextDecoder();
@@ -261,7 +261,7 @@ const text = decoder.decode(bytes);
 Bun implements `Buffer`, a Node.js API for working with binary data that pre-dates the introduction of typed arrays in the JavaScript spec. It has since been re-implemented as a subclass of `Uint8Array`. It provides a wide range of methods, including several Array-like and `DataView`-like methods.
 
 ```ts
-const buf = Buffer.from('hello world');
+const buf = Buffer.from("hello world");
 // => Buffer(11) [ 104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100 ]
 
 buf.length; // => 11
@@ -281,8 +281,8 @@ For complete documentation, refer to the [Node.js documentation](https://nodejs.
 It isn't common to directly create `Blob` instances. More often, you'll receive instances of `Blob` from an external source (like an `<input type="file">` element in the browser) or library. That said, it is possible to create a `Blob` from one or more string or binary "blob parts".
 
 ```ts
-const blob = new Blob(['<html>Hello</html>'], {
-	type: 'text/html',
+const blob = new Blob(["<html>Hello</html>"], {
+	type: "text/html",
 });
 
 blob.type; // => text/html
@@ -293,10 +293,10 @@ These parts can be `string`, `ArrayBuffer`, `TypedArray`, `DataView`, or other `
 
 ```ts
 const blob = new Blob([
-	'<html>',
-	new Blob(['<body>']),
+	"<html>",
+	new Blob(["<body>"]),
 	new Uint8Array([104, 101, 108, 108, 111]), // "hello" in binary
-	'</body></html>',
+	"</body></html>",
 ]);
 ```
 
@@ -314,7 +314,7 @@ await blob.stream(); // => ReadableStream
 `BunFile` is a subclass of `Blob` used to represent a lazily-loaded file on disk. Like `File`, it adds a `name` and `lastModified` property. Unlike `File`, it does not require the file to be loaded into memory.
 
 ```ts
-const file = Bun.file('index.txt');
+const file = Bun.file("index.txt");
 // => BunFile
 ```
 
@@ -328,13 +328,13 @@ const file = Bun.file('index.txt');
 // on browser!
 // <input type="file" id="file" />
 
-const files = document.getElementById('file').files;
+const files = document.getElementById("file").files;
 // => File[]
 ```
 
 ```ts
-const file = new File(['<html>Hello</html>'], 'index.html', {
-	type: 'text/html',
+const file = new File(["<html>Hello</html>"], "index.html", {
+	type: "text/html",
 });
 ```
 
@@ -361,8 +361,8 @@ To create a simple readable stream:
 ```ts
 const stream = new ReadableStream({
 	start(controller) {
-		controller.enqueue('hello');
-		controller.enqueue('world');
+		controller.enqueue("hello");
+		controller.enqueue("world");
 		controller.close();
 	},
 });
@@ -430,7 +430,7 @@ Array.from(new Uint8Array(buf));
 #### To `Blob`
 
 ```ts
-new Blob([buf], {type: 'text/plain'});
+new Blob([buf], { type: "text/plain" });
 ```
 
 #### To `ReadableStream`
@@ -507,7 +507,7 @@ Array.from(arr);
 
 ```ts
 // only if arr is a view of its entire backing TypedArray
-new Blob([arr.buffer], {type: 'text/plain'});
+new Blob([arr.buffer], { type: "text/plain" });
 ```
 
 #### To `ReadableStream`
@@ -580,7 +580,7 @@ Array.from(view);
 #### To `Blob`
 
 ```ts
-new Blob([view.buffer], {type: 'text/plain'});
+new Blob([view.buffer], { type: "text/plain" });
 ```
 
 #### To `ReadableStream`
@@ -641,13 +641,13 @@ buf.toString();
 As base64:
 
 ```ts
-buf.toString('base64');
+buf.toString("base64");
 ```
 
 As hex:
 
 ```ts
-buf.toString('hex');
+buf.toString("hex");
 ```
 
 #### To `number[]`
@@ -659,7 +659,7 @@ Array.from(buf);
 #### To `Blob`
 
 ```ts
-new Blob([buf], {type: 'text/plain'});
+new Blob([buf], { type: "text/plain" });
 ```
 
 #### To `ReadableStream`

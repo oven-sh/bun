@@ -1,5 +1,5 @@
 ---
-title: 'Auto-install'
+title: "Auto-install"
 description: "Bun's automatic package installation feature for standalone script execution"
 ---
 
@@ -8,7 +8,7 @@ If no `node_modules` directory is found in the working directory or higher, Bun 
 Under Bun-style module resolution, all imported packages are auto-installed on the fly into a [global module cache](/pm/global-cache) during execution (the same cache used by [`bun install`](/pm/cli/install)).
 
 ```ts index.ts icon="/icons/typescript.svg"
-import {foo} from 'foo'; // install `latest` version
+import { foo } from "foo"; // install `latest` version
 
 foo();
 ```
@@ -48,9 +48,9 @@ Packages are installed and cached into `<cache>/<pkg>@<version>`, so multiple ve
 This entire resolution algorithm can be short-circuited by specifying a version or version range directly in your import statement.
 
 ```ts index.ts icon="/icons/typescript.svg"
-import {z} from 'zod@3.0.0'; // specific version
-import {z} from 'zod@next'; // npm tag
-import {z} from 'zod@^3.20.0'; // semver range
+import { z } from "zod@3.0.0"; // specific version
+import { z } from "zod@next"; // npm tag
+import { z } from "zod@^3.20.0"; // semver range
 ```
 
 ---

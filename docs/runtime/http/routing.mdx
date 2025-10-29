@@ -12,12 +12,12 @@ You can add routes to `Bun.serve()` by using the `routes` property (for static p
 ```ts title="server.ts" icon="/icons/typescript.svg"
 Bun.serve({
 	routes: {
-		'/': () => new Response('Home'),
-		'/api': () => Response.json({success: true}),
-		'/users': async () => Response.json({users: []}),
+		"/": () => new Response("Home"),
+		"/api": () => Response.json({ success: true }),
+		"/users": async () => Response.json({ users: [] }),
 	},
 	fetch() {
-		return new Response('Unmatched route');
+		return new Response("Unmatched route");
 	},
 });
 ```
@@ -39,12 +39,12 @@ interface BunRequest<T extends string> extends Request {
 You can use async/await in route handlers to return a `Promise<Response>`.
 
 ```ts
-import {sql, serve} from 'bun';
+import { sql, serve } from "bun";
 
 serve({
 	port: 3001,
 	routes: {
-		'/api/version': async () => {
+		"/api/version": async () => {
 			const [version] = await sql`SELECT version()`;
 			return Response.json(version);
 		},
@@ -57,11 +57,11 @@ serve({
 You can also return a `Promise<Response>` from a route handler.
 
 ```ts
-import {sql, serve} from 'bun';
+import { sql, serve } from "bun";
 
 serve({
 	routes: {
-		'/api/version': () => {
+		"/api/version": () => {
 			return new Promise(resolve => {
 				setTimeout(async () => {
 					const [version] = await sql`SELECT version()`;
@@ -88,10 +88,10 @@ Routes are matched in order of specificity:
 Bun.serve({
 	routes: {
 		// Most specific first
-		'/api/users/me': () => new Response('Current user'),
-		'/api/users/:id': req => new Response(`User ${req.params.id}`),
-		'/api/*': () => new Response('API catch-all'),
-		'/*': () => new Response('Global catch-all'),
+		"/api/users/me": () => new Response("Current user"),
+		"/api/users/:id": req => new Response(`User ${req.params.id}`),
+		"/api/*": () => new Response("API catch-all"),
+		"/*": () => new Response("Global catch-all"),
 	},
 });
 ```
@@ -103,22 +103,22 @@ Bun.serve({
 TypeScript parses route parameters when passed as a string literal, so that your editor will show autocomplete when accessing `request.params`.
 
 ```ts title="index.ts"
-import type {BunRequest} from 'bun';
+import type { BunRequest } from "bun";
 
 Bun.serve({
 	routes: {
 		// TypeScript knows the shape of params when passed as a string literal
-		'/orgs/:orgId/repos/:repoId': req => {
-			const {orgId, repoId} = req.params;
-			return Response.json({orgId, repoId});
+		"/orgs/:orgId/repos/:repoId": req => {
+			const { orgId, repoId } = req.params;
+			return Response.json({ orgId, repoId });
 		},
 
-		'/orgs/:orgId/repos/:repoId/settings': (
+		"/orgs/:orgId/repos/:repoId/settings": (
 			// optional: you can explicitly pass a type to BunRequest:
-			req: BunRequest<'/orgs/:orgId/repos/:repoId/settings'>,
+			req: BunRequest<"/orgs/:orgId/repos/:repoId/settings">,
 		) => {
-			const {orgId, repoId} = req.params;
-			return Response.json({orgId, repoId});
+			const { orgId, repoId } = req.params;
+			return Response.json({ orgId, repoId });
 		},
 	},
 });
@@ -134,21 +134,21 @@ Routes can also be `Response` objects (without the handler function). Bun.serve(
 Bun.serve({
 	routes: {
 		// Health checks
-		'/health': new Response('OK'),
-		'/ready': new Response('Ready', {
+		"/health": new Response("OK"),
+		"/ready": new Response("Ready", {
 			headers: {
 				// Pass custom headers
-				'X-Ready': '1',
+				"X-Ready": "1",
 			},
 		}),
 
 		// Redirects
-		'/blog': Response.redirect('https://bun.com/blog'),
+		"/blog": Response.redirect("https://bun.com/blog"),
 
 		// API responses
-		'/api/config': Response.json({
-			version: '1.0.0',
-			env: 'production',
+		"/api/config": Response.json({
+			version: "1.0.0",
+			env: "production",
 		}),
 	},
 });
@@ -166,10 +166,10 @@ When serving files in routes, there are two distinct behaviors depending on whet
 Bun.serve({
 	routes: {
 		// Static route - content is buffered in memory at startup
-		'/logo.png': new Response(await Bun.file('./logo.png').bytes()),
+		"/logo.png": new Response(await Bun.file("./logo.png").bytes()),
 
 		// File route - content is read from filesystem on each request
-		'/download.zip': new Response(Bun.file('./download.zip')),
+		"/download.zip": new Response(Bun.file("./download.zip")),
 	},
 });
 ```
@@ -203,7 +203,7 @@ To stream a file, return a `Response` object with a `BunFile` object as the body
 ```ts
 Bun.serve({
 	fetch(req) {
-		return new Response(Bun.file('./hello.txt'));
+		return new Response(Bun.file("./hello.txt"));
 	},
 });
 ```
@@ -221,14 +221,14 @@ Bun.serve({
 	fetch(req) {
 		// parse `Range` header
 		const [start = 0, end = Infinity] = req.headers
-			.get('Range') // Range: bytes=0-100
-			.split('=') // ["Range: bytes", "0-100"]
+			.get("Range") // Range: bytes=0-100
+			.split("=") // ["Range: bytes", "0-100"]
 			.at(-1) // "0-100"
-			.split('-') // ["0", "100"]
+			.split("-") // ["0", "100"]
 			.map(Number); // [0, 100]
 
 		// return a slice of the file
-		const bigFile = Bun.file('./big-video.mp4');
+		const bigFile = Bun.file("./big-video.mp4");
 		return new Response(bigFile.slice(start, end));
 	},
 });
@@ -244,9 +244,9 @@ The `fetch` handler handles incoming requests that weren't matched by any route.
 Bun.serve({
 	fetch(req) {
 		const url = new URL(req.url);
-		if (url.pathname === '/') return new Response('Home page!');
-		if (url.pathname === '/blog') return new Response('Blog!');
-		return new Response('404!');
+		if (url.pathname === "/") return new Response("Home page!");
+		if (url.pathname === "/blog") return new Response("Blog!");
+		return new Response("404!");
 	},
 });
 ```
@@ -254,7 +254,7 @@ Bun.serve({
 The `fetch` handler supports async/await:
 
 ```ts
-import {sleep, serve} from 'bun';
+import { sleep, serve } from "bun";
 
 serve({
 	async fetch(req) {
@@ -272,7 +272,7 @@ Promise-based responses are also supported:
 Bun.serve({
 	fetch(req) {
 		// Forward the request to another server.
-		return fetch('https://example.com');
+		return fetch("https://example.com");
 	},
 });
 ```

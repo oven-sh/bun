@@ -1,6 +1,6 @@
 ---
 title: Create a Discord bot
-sidebarTitle: 'Discord.js with Bun'
+sidebarTitle: "Discord.js with Bun"
 mode: center
 ---
 
@@ -49,10 +49,10 @@ Now let's actually write our bot in a new file called `bot.ts`.
 
 ```ts bot.ts icon="/icons/typescript.svg"
 // import discord.js
-import {Client, Events, GatewayIntentBits} from 'discord.js';
+import { Client, Events, GatewayIntentBits } from "discord.js";
 
 // create a new Client instance
-const client = new Client({intents: [GatewayIntentBits.Guilds]});
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 // listen for the client to be ready
 client.once(Events.ClientReady, c => {

@@ -1,6 +1,6 @@
 ---
 title: Build an HTTP server using StricJS and Bun
-sidebarTitle: 'StricJS with Bun'
+sidebarTitle: "StricJS with Bun"
 mode: center
 ---
 
@@ -26,9 +26,9 @@ bun add @stricjs/router @stricjs/utils
 To implement a simple HTTP server with StricJS:
 
 ```ts index.ts icon="file-code"
-import {Router} from '@stricjs/router';
+import { Router } from "@stricjs/router";
 
-export default new Router().get('/', () => new Response('Hi'));
+export default new Router().get("/", () => new Response("Hi"));
 ```
 
 ---
@@ -36,9 +36,9 @@ export default new Router().get('/', () => new Response('Hi'));
 To serve static files from `/public`:
 
 ```ts index.ts icon="file-code"
-import {dir} from '@stricjs/utils';
+import { dir } from "@stricjs/utils";
 
-export default new Router().get('/', () => new Response('Hi')).get('/*', dir('./public'));
+export default new Router().get("/", () => new Response("Hi")).get("/*", dir("./public"));
 ```
 
 ---

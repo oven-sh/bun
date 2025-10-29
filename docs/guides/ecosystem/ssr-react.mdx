@@ -1,6 +1,6 @@
 ---
 title: Server-side render (SSR) a React component
-sidebarTitle: 'SSR React with Bun'
+sidebarTitle: "SSR React with Bun"
 mode: center
 ---
 
@@ -16,9 +16,9 @@ bun add react react-dom
 To render a React component to an HTML stream server-side (SSR):
 
 ```tsx ssr-react.tsx icon="file-code"
-import {renderToReadableStream} from 'react-dom/server';
+import { renderToReadableStream } from "react-dom/server";
 
-function Component(props: {message: string}) {
+function Component(props: { message: string }) {
 	return (
 		<body>
 			<h1>{props.message}</h1>
@@ -38,7 +38,7 @@ Bun.serve({
 	async fetch() {
 		const stream = await renderToReadableStream(<Component message="Hello from server!" />);
 		return new Response(stream, {
-			headers: {'Content-Type': 'text/html'},
+			headers: { "Content-Type": "text/html" },
 		});
 	},
 });

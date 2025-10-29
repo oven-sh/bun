@@ -7,7 +7,7 @@ mode: center
 Bun implements V8's heap snapshot API, which allows you to create snapshots of the heap at runtime. This helps debug memory leaks in your JavaScript/TypeScript application.
 
 ```ts snapshot.ts icon="/icons/typescript.svg"
-import v8 from 'node:v8';
+import v8 from "node:v8";
 
 // Creates a heap snapshot file with an auto-generated name
 const snapshotPath = v8.writeHeapSnapshot();

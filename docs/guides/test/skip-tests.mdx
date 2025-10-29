@@ -7,9 +7,9 @@ mode: center
 To skip a test with the Bun test runner, use the `test.skip` function.
 
 ```ts test.ts icon="/icons/typescript.svg"
-import {test} from 'bun:test';
+import { test } from "bun:test";
 
-test.skip('unimplemented feature', () => {
+test.skip("unimplemented feature", () => {
 	expect(Bun.isAwesome()).toBe(true);
 });
 ```

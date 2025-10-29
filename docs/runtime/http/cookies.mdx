@@ -12,15 +12,15 @@ Read cookies from incoming requests using the `cookies` property on the `BunRequ
 ```ts
 Bun.serve({
 	routes: {
-		'/profile': req => {
+		"/profile": req => {
 			// Access cookies from the request
-			const userId = req.cookies.get('user_id');
-			const theme = req.cookies.get('theme') || 'light';
+			const userId = req.cookies.get("user_id");
+			const theme = req.cookies.get("theme") || "light";
 
 			return Response.json({
 				userId,
 				theme,
-				message: 'Profile page',
+				message: "Profile page",
 			});
 		},
 	},
@@ -34,22 +34,22 @@ To set cookies, use the `set` method on the `CookieMap` from the `BunRequest` ob
 ```ts
 Bun.serve({
 	routes: {
-		'/login': req => {
+		"/login": req => {
 			const cookies = req.cookies;
 
 			// Set a cookie with various options
-			cookies.set('user_id', '12345', {
+			cookies.set("user_id", "12345", {
 				maxAge: 60 * 60 * 24 * 7, // 1 week
 				httpOnly: true,
 				secure: true,
-				path: '/',
+				path: "/",
 			});
 
 			// Add a theme preference cookie
-			cookies.set('theme', 'dark');
+			cookies.set("theme", "dark");
 
 			// Modified cookies from the request are automatically applied to the response
-			return new Response('Login successful');
+			return new Response("Login successful");
 		},
 	},
 });
@@ -64,13 +64,13 @@ To delete a cookie, use the `delete` method on the `request.cookies` (`CookieMap
 ```ts
 Bun.serve({
 	routes: {
-		'/logout': req => {
+		"/logout": req => {
 			// Delete the user_id cookie
-			req.cookies.delete('user_id', {
-				path: '/',
+			req.cookies.delete("user_id", {
+				path: "/",
 			});
 
-			return new Response('Logged out successfully');
+			return new Response("Logged out successfully");
 		},
 	},
 });

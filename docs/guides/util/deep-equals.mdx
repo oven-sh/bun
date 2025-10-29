@@ -7,8 +7,8 @@ mode: center
 Check if two objects are deeply equal. This is used internally by `expect().toEqual()` in Bun's [test runner](https://bun.com/docs/test/writing).
 
 ```ts index.ts icon="/icons/typescript.svg"
-const a = {a: 1, b: 2, c: {d: 3}};
-const b = {a: 1, b: 2, c: {d: 3}};
+const a = { a: 1, b: 2, c: { d: 3 } };
+const b = { a: 1, b: 2, c: { d: 3 } };
 
 Bun.deepEquals(a, b); // true
 ```
@@ -21,10 +21,10 @@ The following examples would return `true` in non-strict mode but `false` in str
 
 ```ts index.ts icon="/icons/typescript.svg"
 // undefined values
-Bun.deepEquals({}, {a: undefined}, true); // false
+Bun.deepEquals({}, { a: undefined }, true); // false
 
 // undefined in arrays
-Bun.deepEquals(['asdf'], ['asdf', undefined], true); // false
+Bun.deepEquals(["asdf"], ["asdf", undefined], true); // false
 
 // sparse arrays
 Bun.deepEquals([, 1], [undefined, 1], true); // false
@@ -33,7 +33,7 @@ Bun.deepEquals([, 1], [undefined, 1], true); // false
 class Foo {
 	a = 1;
 }
-Bun.deepEquals(new Foo(), {a: 1}, true); // false
+Bun.deepEquals(new Foo(), { a: 1 }, true); // false
 ```
 
 ---

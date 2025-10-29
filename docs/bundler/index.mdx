@@ -3,7 +3,7 @@ title: Bundler
 description: Bun's fast native bundler for JavaScript, TypeScript, JSX, and more
 ---
 
-import Build from '/snippets/cli/build.mdx';
+import Build from "/snippets/cli/build.mdx";
 
 Bun's fast native bundler can be used via the `bun build` CLI command or the `Bun.build()` JavaScript API.
 
@@ -62,15 +62,15 @@ Let's build our first bundle. You have the following two files, which implement 
 <CodeGroup>
 
 ```tsx index.tsx icon="/icons/typescript.svg"
-import * as ReactDOM from 'react-dom/client';
-import {Component} from './Component';
+import * as ReactDOM from "react-dom/client";
+import { Component } from "./Component";
 
-const root = ReactDOM.createRoot(document.getElementById('root')!);
+const root = ReactDOM.createRoot(document.getElementById("root")!);
 root.render(<Component message="Sup!" />);
 ```
 
 ```tsx Component.tsx icon="/icons/typescript.svg"
-export function Component(props: {message: string}) {
+export function Component(props: { message: string }) {
 	return <h1>{props.message}</h1>;
 }
 ```
@@ -85,8 +85,8 @@ To create our bundle:
 
 ```ts build.ts icon="/icons/typescript.svg"
 await Bun.build({
-	entrypoints: ['./index.tsx'],
-	outdir: './out',
+	entrypoints: ["./index.tsx"],
+	outdir: "./out",
 });
 ```
 
@@ -118,7 +118,7 @@ The contents of `out/index.js` will look something like this:
 // Component.tsx
 function Component(props) {
 	return $jsxDEV(
-		'p',
+		"p",
 		{
 			children: props.message,
 		},
@@ -130,13 +130,13 @@ function Component(props) {
 }
 
 // index.tsx
-var rootNode = document.getElementById('root');
+var rootNode = document.getElementById("root");
 var root = $createRoot(rootNode);
 root.render(
 	$jsxDEV(
 		Component,
 		{
-			message: 'Sup!',
+			message: "Sup!",
 		},
 		undefined,
 		false,
@@ -174,13 +174,13 @@ If the bundler encounters an import with an unrecognized extension, it treats th
 
 ```ts Input icon="/icons/typescript.svg"
 // bundle entrypoint
-import logo from './logo.svg';
+import logo from "./logo.svg";
 console.log(logo);
 ```
 
 ```ts Output icon="/icons/javascript.svg"
 // bundled output
-var logo = './logo-a7305bdef.svg';
+var logo = "./logo-a7305bdef.svg";
 console.log(logo);
 ```
 
@@ -189,8 +189,8 @@ console.log(logo);
 The exact behavior of the file loader is also impacted by [`naming`](#naming) and [`publicPath`](#publicpath).
 
 <Info>
-	Refer to the [Bundler > Loaders](/bundler/loaders) page for more complete documentation on
-	the file loader.
+	Refer to the [Bundler > Loaders](/bundler/loaders) page for more complete documentation on the
+	file loader.
 </Info>
 
 ### Plugins
@@ -246,7 +246,7 @@ If `outdir` is not passed to the JavaScript API, bundled code will not be writte
 
 ```ts title="build.ts" icon="/icons/typescript.svg"
 const result = await Bun.build({
-	entrypoints: ['./index.ts'],
+	entrypoints: ["./index.ts"],
 });
 
 for (const res of result.outputs) {
@@ -257,7 +257,7 @@ for (const res of result.outputs) {
 	new Response(res);
 
 	// Can be written manually, but you should use `outdir` in this case.
-	Bun.write(path.join('out', res.path), res);
+	Bun.write(path.join("out", res.path), res);
 }
 ```
 
@@ -374,12 +374,12 @@ Configure JSX transform behavior. Allows fine-grained control over how JSX is co
 
 ```ts index.ts icon="/icons/typescript.svg"
 await Bun.build({
-	entrypoints: ['./app.tsx'],
-	outdir: './out',
+	entrypoints: ["./app.tsx"],
+	outdir: "./out",
 	jsx: {
-		factory: 'h',
-		fragment: 'Fragment',
-		runtime: 'classic',
+		factory: "h",
+		fragment: "Fragment",
+		runtime: "classic",
 	},
 });
 ```
@@ -397,11 +397,11 @@ bun build ./app.tsx --outdir ./out
 
 ```ts index.ts icon="/icons/typescript.svg"
 await Bun.build({
-	entrypoints: ['./app.tsx'],
-	outdir: './out',
+	entrypoints: ["./app.tsx"],
+	outdir: "./out",
 	jsx: {
-		importSource: 'preact',
-		runtime: 'automatic',
+		importSource: "preact",
+		runtime: "automatic",
 	},
 });
 ```
@@ -439,15 +439,15 @@ When `true`, the bundler will enable code splitting. When multiple entrypoints b
 <CodeGroup>
 
 ```ts entry-a.ts icon="/icons/typescript.svg"
-import {shared} from './shared.ts';
+import { shared } from "./shared.ts";
 ```
 
 ```ts entry-b.ts icon="/icons/typescript.svg"
-import {shared} from './shared.ts';
+import { shared } from "./shared.ts";
 ```
 
 ```ts shared.ts icon="/icons/typescript.svg"
-export const shared = 'shared';
+export const shared = "shared";
 ```
 
 </CodeGroup>
@@ -492,8 +492,8 @@ A list of plugins to use during bundling.
 
 ```ts title="build.ts" icon="/icons/typescript.svg"
 await Bun.build({
-	entrypoints: ['./index.tsx'],
-	outdir: './out',
+	entrypoints: ["./index.tsx"],
+	outdir: "./out",
 	plugins: [
 		/* ... */
 	],
@@ -539,8 +539,8 @@ The generated bundle will contain the following code:
 
 ```ts title="output.js" icon="/icons/javascript.svg"
 // output.js
-console.log('bar');
-console.log('123');
+console.log("bar");
+console.log("123");
 ```
 
 #### env: "PUBLIC\_\*" (prefix)
@@ -584,7 +584,7 @@ The generated bundle will contain the following code:
 
 ```ts title="output.js" icon="/icons/javascript.svg"
 console.log(process.env.FOO);
-console.log('https://acme.com');
+console.log("https://acme.com");
 console.log(process.env.BAZ);
 ```
 
@@ -696,10 +696,10 @@ An external import is one that will not be included in the final bundle. Instead
 For instance, consider the following entrypoint file:
 
 ```tsx index.tsx icon="/icons/typescript.svg"
-import _ from 'lodash';
-import {z} from 'zod';
+import _ from "lodash";
+import { z } from "zod";
 
-const value = z.string().parse('Hello world!');
+const value = z.string().parse("Hello world!");
 console.log(_.upperCase(value));
 ```
 
@@ -725,13 +725,13 @@ Normally, bundling `index.tsx` would generate a bundle containing the entire sou
 The generated bundle will look something like this:
 
 ```ts title="out/index.js" icon="/icons/javascript.svg"
-import {z} from 'zod';
+import { z } from "zod";
 
 // ...
 // the contents of the "lodash" package
 // including the `_.upperCase` function
 
-var value = z.string().parse('Hello world!');
+var value = z.string().parse("Hello world!");
 console.log(_.upperCase(value));
 ```
 
@@ -996,12 +996,12 @@ In any of these cases, the final bundles may contain paths to other files. By de
 <CodeGroup>
 
 ```ts Input icon="/icons/typescript.svg"
-import logo from './logo.svg';
+import logo from "./logo.svg";
 console.log(logo);
 ```
 
 ```ts Output icon="/icons/javascript.svg"
-var logo = './logo-a7305bdef.svg';
+var logo = "./logo-a7305bdef.svg";
 console.log(logo);
 ```
 
@@ -1029,7 +1029,7 @@ Setting `publicPath` will prefix all file paths with the specified value.
 The output file would now look something like this.
 
 ```ts title="out/index.js" icon="/icons/javascript.svg"
-var logo = 'https://cdn.example.com/logo-a7305bdef.svg';
+var logo = "https://cdn.example.com/logo-a7305bdef.svg";
 ```
 
 ### define
@@ -1155,7 +1155,7 @@ interface BuildOutput {
 }
 
 interface BuildArtifact extends Blob {
-	kind: 'entry-point' | 'chunk' | 'asset' | 'sourcemap';
+	kind: "entry-point" | "chunk" | "asset" | "sourcemap";
 	path: string;
 	loader: Loader;
 	hash: string | null;
@@ -1179,13 +1179,13 @@ for (const output of build.outputs) {
 
 Each artifact also contains the following properties:
 
-| Property    | Description                                                                                                                                                       |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `kind`      | What kind of build output this file is. A build generates bundled entrypoints, code-split "chunks", sourcemaps, bytecode, and copied assets (like images).        |
-| `path`      | Absolute path to the file on disk                                                                                                                                 |
+| Property    | Description                                                                                                                                                  |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `kind`      | What kind of build output this file is. A build generates bundled entrypoints, code-split "chunks", sourcemaps, bytecode, and copied assets (like images).   |
+| `path`      | Absolute path to the file on disk                                                                                                                            |
 | `loader`    | The loader was used to interpret the file. See [Bundler > Loaders](/bundler/loaders) to see how Bun maps file extensions to the appropriate built-in loader. |
-| `hash`      | The hash of the file contents. Always defined for assets.                                                                                                         |
-| `sourcemap` | The sourcemap file corresponding to this file, if generated. Only defined for entrypoints and chunks.                                                             |
+| `hash`      | The hash of the file contents. Always defined for assets.                                                                                                    |
+| `sourcemap` | The sourcemap file corresponding to this file, if generated. Only defined for entrypoints and chunks.                                                        |
 
 Similar to `BunFile`, `BuildArtifact` objects can be passed directly into `new Response()`.
 
@@ -1279,13 +1279,13 @@ On failure, `Bun.build` returns a rejected promise with an `AggregateError`. Thi
 ```ts title="build.ts" icon="/icons/typescript.svg"
 try {
 	const result = await Bun.build({
-		entrypoints: ['./index.tsx'],
-		outdir: './out',
+		entrypoints: ["./index.tsx"],
+		outdir: "./out",
 	});
 } catch (e) {
 	// TypeScript does not allow annotations on the catch clause
 	const error = e as AggregateError;
-	console.error('Build Failed');
+	console.error("Build Failed");
 
 	// Example: Using the built-in formatter
 	console.error(error);
@@ -1304,7 +1304,7 @@ class BuildMessage {
 	name: string;
 	position?: Position;
 	message: string;
-	level: 'error' | 'warning' | 'info' | 'debug' | 'verbose';
+	level: "error" | "warning" | "info" | "debug" | "verbose";
 }
 
 class ResolveMessage extends BuildMessage {
@@ -1319,12 +1319,12 @@ On build success, the returned object contains a `logs` property, which contains
 
 ```ts title="build.ts" icon="/icons/typescript.svg"
 const result = await Bun.build({
-	entrypoints: ['./index.tsx'],
-	outdir: './out',
+	entrypoints: ["./index.tsx"],
+	outdir: "./out",
 });
 
 if (result.logs.length > 0) {
-	console.warn('Build succeeded with warnings:');
+	console.warn("Build succeeded with warnings:");
 	for (const message of result.logs) {
 		// Bun will pretty print the message object
 		console.warn(message);
@@ -1353,7 +1353,7 @@ interface BuildConfig {
 	 *
 	 * @default "esm"
 	 */
-	format?: 'esm' | 'cjs' | 'iife';
+	format?: "esm" | "cjs" | "iife";
 	/**
 	 * JSX configuration object for controlling JSX transform behavior
 	 */
@@ -1361,7 +1361,7 @@ interface BuildConfig {
 		factory?: string;
 		fragment?: string;
 		importSource?: string;
-		runtime?: 'automatic' | 'classic';
+		runtime?: "automatic" | "classic";
 	};
 	naming?:
 		| string
@@ -1374,11 +1374,11 @@ interface BuildConfig {
 	splitting?: boolean; // default true, enable code splitting
 	plugins?: BunPlugin[];
 	external?: string[];
-	packages?: 'bundle' | 'external';
+	packages?: "bundle" | "external";
 	publicPath?: string;
 	define?: Record<string, string>;
-	loader?: {[k in string]: Loader};
-	sourcemap?: 'none' | 'linked' | 'inline' | 'external' | 'linked' | boolean; // default: "none", true -> "inline"
+	loader?: { [k in string]: Loader };
+	sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean; // default: "none", true -> "inline"
 	/**
 	 * package.json `exports` conditions used when resolving imports
 	 *
@@ -1398,7 +1398,7 @@ interface BuildConfig {
 	 * - A string ending in `*`: Inlines environment variables that match the given prefix.
 	 *   For example, `"MY_PUBLIC_*"` will only include env vars starting with "MY_PUBLIC_"
 	 */
-	env?: 'inline' | 'disable' | `${string}*`;
+	env?: "inline" | "disable" | `${string}*`;
 	minify?:
 		| boolean
 		| {
@@ -1464,11 +1464,11 @@ interface BuildArtifact extends Blob {
 	path: string;
 	loader: Loader;
 	hash: string | null;
-	kind: 'entry-point' | 'chunk' | 'asset' | 'sourcemap' | 'bytecode';
+	kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode";
 	sourcemap: BuildArtifact | null;
 }
 
-type Loader = 'js' | 'jsx' | 'ts' | 'tsx' | 'json' | 'toml' | 'file' | 'napi' | 'wasm' | 'text';
+type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text";
 
 interface BuildOutput {
 	outputs: BuildArtifact[];
@@ -1477,24 +1477,24 @@ interface BuildOutput {
 }
 
 declare class ResolveMessage {
-	readonly name: 'ResolveMessage';
+	readonly name: "ResolveMessage";
 	readonly position: Position | null;
 	readonly code: string;
 	readonly message: string;
 	readonly referrer: string;
 	readonly specifier: string;
 	readonly importKind:
-		| 'entry_point'
-		| 'stmt'
-		| 'require'
-		| 'import'
-		| 'dynamic'
-		| 'require_resolve'
-		| 'at'
-		| 'at_conditional'
-		| 'url'
-		| 'internal';
-	readonly level: 'error' | 'warning' | 'info' | 'debug' | 'verbose';
+		| "entry_point"
+		| "stmt"
+		| "require"
+		| "import"
+		| "dynamic"
+		| "require_resolve"
+		| "at"
+		| "at_conditional"
+		| "url"
+		| "internal";
+	readonly level: "error" | "warning" | "info" | "debug" | "verbose";
 
 	toString(): string;
 }

@@ -157,7 +157,7 @@ For example:
 <CodeGroup>
 
 ```css styles.css icon="file-code"
-@import './abc.css';
+@import "./abc.css";
 
 .container {
 	background-color: blue;
@@ -190,7 +190,7 @@ You can reference local assets in your CSS files.
 
 ```css styles.css icon="file-code"
 body {
-	background-image: url('./logo.png');
+	background-image: url("./logo.png");
 }
 ```
 
@@ -198,7 +198,7 @@ This will copy `./logo.png` to the output directory and rewrite the path in the 
 
 ```css styles.css icon="file-code"
 body {
-	background-image: url('./logo-[ABC123].png');
+	background-image: url("./logo-[ABC123].png");
 }
 ```
 
@@ -207,8 +207,8 @@ body {
 To associate a CSS file with a JavaScript file, you can import it in your JavaScript file.
 
 ```ts app.ts icon="/icons/typescript.svg"
-import './styles.css';
-import './more-styles.css';
+import "./styles.css";
+import "./more-styles.css";
 ```
 
 This generates `./app.css` and `./app.js` in the output directory. All CSS files imported from JavaScript will be bundled into a single CSS file per entry point. If you import the same CSS file from multiple JavaScript files, it will only be included once in the output CSS file.
@@ -243,14 +243,10 @@ Then, reference TailwindCSS in your HTML via `<link>` tag, `@import` in CSS, or 
 		```
 	</Tab>
 	<Tab title="styles.css">
-		```css title="styles.css" icon="file-code"
-		@import "tailwindcss";
-		```
+		```css title="styles.css" icon="file-code" @import "tailwindcss"; ```
 	</Tab>
 	<Tab title="app.ts">
-		```ts title="app.ts" icon="/icons/typescript.svg"
-		import "tailwindcss";
-		```
+		```ts title="app.ts" icon="/icons/typescript.svg" import "tailwindcss"; ```
 	</Tab>
 </Tabs>
 
@@ -327,16 +323,16 @@ Need more control? Configure the bundler through the JavaScript API and use Bun'
 
 ```ts title="build.ts" icon="/icons/typescript.svg"
 await Bun.build({
-	entrypoints: ['./index.html'],
-	outdir: './dist',
+	entrypoints: ["./index.html"],
+	outdir: "./dist",
 	minify: true,
 
 	plugins: [
 		{
 			// A plugin that makes every HTML tag lowercase
-			name: 'lowercase-html-plugin',
-			setup({onLoad}) {
-				const rewriter = new HTMLRewriter().on('*', {
+			name: "lowercase-html-plugin",
+			setup({ onLoad }) {
+				const rewriter = new HTMLRewriter().on("*", {
 					element(element) {
 						element.tagName = element.tagName.toLowerCase();
 					},
@@ -345,14 +341,14 @@ await Bun.build({
 					},
 				});
 
-				onLoad({filter: /\.html$/}, async args => {
+				onLoad({ filter: /\.html$/ }, async args => {
 					const html = await Bun.file(args.path).text();
 
 					return {
 						// Bun's bundler will scan the HTML for <script> tags, <link rel="stylesheet"> tags, and other assets
 						// and bundle them automatically
 						contents: rewriter.transform(html),
-						loader: 'html',
+						loader: "html",
 					};
 				});
 			},

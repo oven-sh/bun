@@ -13,14 +13,14 @@ Bun.serve({
 		return new Response(
 			// An async generator function
 			async function* () {
-				yield 'Hello, ';
+				yield "Hello, ";
 				await Bun.sleep(100);
-				yield 'world!';
+				yield "world!";
 
 				// you can also yield a TypedArray or Buffer
-				yield new Uint8Array(['\n'.charCodeAt(0)]);
+				yield new Uint8Array(["\n".charCodeAt(0)]);
 			},
-			{headers: {'Content-Type': 'text/plain'}},
+			{ headers: { "Content-Type": "text/plain" } },
 		);
 	},
 });
@@ -37,12 +37,12 @@ Bun.serve({
 		return new Response(
 			{
 				[Symbol.asyncIterator]: async function* () {
-					yield 'Hello, ';
+					yield "Hello, ";
 					await Bun.sleep(100);
-					yield 'world!';
+					yield "world!";
 				},
 			},
-			{headers: {'Content-Type': 'text/plain'}},
+			{ headers: { "Content-Type": "text/plain" } },
 		);
 	},
 });

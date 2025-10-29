@@ -14,7 +14,7 @@ Bun uses the file extension to determine which built-in loader should be used to
 You can explicitly specify which loader to use using the `'loader'` import attribute.
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
-import my_toml from './my_file' with {loader: 'toml'};
+import my_toml from "./my_file" with { loader: "toml" };
 ```
 
 ## Built-in loaders
@@ -58,7 +58,7 @@ Transpiles both TypeScript and JSX to vanilla JavaScript.
 JSON files can be directly imported.
 
 ```js
-import pkg from './package.json';
+import pkg from "./package.json";
 pkg.name; // => "my-package"
 ```
 
@@ -66,7 +66,7 @@ During bundling, the parsed JSON is inlined into the bundle as a JavaScript obje
 
 ```js
 const pkg = {
-	name: 'my-package',
+	name: "my-package",
 	// ... other fields
 };
 
@@ -87,9 +87,9 @@ If a `.json` file is passed as an entrypoint to the bundler, it will be converte
 
 ```ts Output
 export default {
-	name: 'John Doe',
+	name: "John Doe",
 	age: 35,
-	email: 'johndoe@example.com',
+	email: "johndoe@example.com",
 };
 ```
 
@@ -104,7 +104,7 @@ export default {
 TOML files can be directly imported. Bun will parse them with its fast native TOML parser.
 
 ```js
-import config from './bunfig.toml';
+import config from "./bunfig.toml";
 config.logLevel; // => "debug"
 
 // via import attribute:
@@ -115,7 +115,7 @@ During bundling, the parsed TOML is inlined into the bundle as a JavaScript obje
 
 ```js
 var config = {
-	logLevel: 'debug',
+	logLevel: "debug",
 	// ...other fields
 };
 config.logLevel;
@@ -133,9 +133,9 @@ email = "johndoe@example.com"
 
 ```ts Output
 export default {
-	name: 'John Doe',
+	name: "John Doe",
 	age: 35,
-	email: 'johndoe@example.com',
+	email: "johndoe@example.com",
 };
 ```
 
@@ -150,12 +150,12 @@ export default {
 The contents of the text file are read and inlined into the bundle as a string. Text files can be directly imported. The file is read and returned as a string.
 
 ```js
-import contents from './file.txt';
+import contents from "./file.txt";
 console.log(contents); // => "Hello, world!"
 
 // To import an html file as text
 // The "type" attribute can be used to override the default loader.
-import html from './index.html' with {type: 'text'};
+import html from "./index.html" with { type: "text" };
 ```
 
 When referenced during a build, the contents are inlined into the bundle as a string.
@@ -174,7 +174,7 @@ Hello, world!
 ```
 
 ```ts Output
-export default 'Hello, world!';
+export default "Hello, world!";
 ```
 
 </CodeGroup>
@@ -188,7 +188,7 @@ export default 'Hello, world!';
 In the runtime, native addons can be directly imported.
 
 ```js
-import addon from './addon.node';
+import addon from "./addon.node";
 console.log(addon);
 ```
 
@@ -203,7 +203,7 @@ console.log(addon);
 In the runtime and bundler, SQLite databases can be directly imported. This will load the database using `bun:sqlite`.
 
 ```js
-import db from './my.db' with {type: 'sqlite'};
+import db from "./my.db" with { type: "sqlite" };
 ```
 
 <Warning>This is only supported when the target is `bun`.</Warning>
@@ -214,7 +214,7 @@ You can change this behavior with the `"embed"` attribute:
 
 ```js
 // embed the database into the bundle
-import db from './my.db' with {type: 'sqlite', embed: 'true'};
+import db from "./my.db" with { type: "sqlite", embed: "true" };
 ```
 
 <Info>
@@ -321,7 +321,7 @@ The file loader resolves the import as a path/URL to the imported file. It's com
 
 ```js
 // logo.ts
-import logo from './logo.svg';
+import logo from "./logo.svg";
 console.log(logo);
 ```
 
@@ -336,7 +336,7 @@ In the bundler, things are slightly different. The file is copied into `outdir` 
 
 ```js
 // Output
-var logo = './logo.svg';
+var logo = "./logo.svg";
 console.log(logo);
 ```
 

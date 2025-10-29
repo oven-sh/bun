@@ -53,9 +53,9 @@ This is analogous to the [`require.main = module` trick](https://stackoverflow.c
 Returns a `Promise` that resolves after the given number of milliseconds.
 
 ```ts
-console.log('hello');
+console.log("hello");
 await Bun.sleep(1000);
-console.log('hello one second later!');
+console.log("hello one second later!");
 ```
 
 Alternatively, pass a `Date` object to receive a `Promise` that resolves at that point in time.
@@ -63,9 +63,9 @@ Alternatively, pass a `Date` object to receive a `Promise` that resolves at that
 ```ts
 const oneSecondInFuture = new Date(Date.now() + 1000);
 
-console.log('hello');
+console.log("hello");
 await Bun.sleep(oneSecondInFuture);
-console.log('hello one second later!');
+console.log("hello one second later!");
 ```
 
 ## `Bun.sleepSync()`
@@ -75,9 +75,9 @@ console.log('hello one second later!');
 A blocking synchronous version of `Bun.sleep`.
 
 ```ts
-console.log('hello');
+console.log("hello");
 Bun.sleepSync(1000); // blocks thread for one second
-console.log('hello one second later!');
+console.log("hello one second later!");
 ```
 
 ## `Bun.which()`
@@ -87,15 +87,15 @@ console.log('hello one second later!');
 Returns the path to an executable, similar to typing `which` in your terminal.
 
 ```ts
-const ls = Bun.which('ls');
+const ls = Bun.which("ls");
 console.log(ls); // "/usr/bin/ls"
 ```
 
 By default Bun looks at the current `PATH` environment variable to determine the path. To configure `PATH`:
 
 ```ts
-const ls = Bun.which('ls', {
-	PATH: '/usr/local/bin:/usr/bin:/bin',
+const ls = Bun.which("ls", {
+	PATH: "/usr/local/bin:/usr/bin:/bin",
 });
 console.log(ls); // "/usr/bin/ls"
 ```
@@ -103,9 +103,9 @@ console.log(ls); // "/usr/bin/ls"
 Pass a `cwd` option to resolve for executable from within a specific directory.
 
 ```ts
-const ls = Bun.which('ls', {
-	cwd: '/tmp',
-	PATH: '',
+const ls = Bun.which("ls", {
+	cwd: "/tmp",
+	PATH: "",
 });
 
 console.log(ls); // null
@@ -118,7 +118,7 @@ You can think of this as a builtin alternative to the [`which`](https://www.npmj
 `Bun.randomUUIDv7()` returns a [UUID v7](https://www.ietf.org/archive/id/draft-peabody-dispatch-new-uuid-format-01.html#name-uuidv7-layout-and-bit-order), which is monotonic and suitable for sorting and databases.
 
 ```ts
-import {randomUUIDv7} from 'bun';
+import { randomUUIDv7 } from "bun";
 
 const id = randomUUIDv7();
 // => "0192ce11-26d5-7dc3-9305-1426de888c5a"
@@ -133,13 +133,13 @@ The final 8 bytes of the UUID are a cryptographically secure random value. It us
 ```ts
 namespace Bun {
 	function randomUUIDv7(
-		encoding?: 'hex' | 'base64' | 'base64url' = 'hex',
+		encoding?: "hex" | "base64" | "base64url" = "hex",
 		timestamp?: number = Date.now(),
 	): string;
 	/**
 	 * If you pass "buffer", you get a 16-byte buffer instead of a string.
 	 */
-	function randomUUIDv7(encoding: 'buffer', timestamp?: number = Date.now()): Buffer;
+	function randomUUIDv7(encoding: "buffer", timestamp?: number = Date.now()): Buffer;
 
 	// If you only pass a timestamp, you get a hex string
 	function randomUUIDv7(timestamp?: number = Date.now()): string;
@@ -149,14 +149,14 @@ namespace Bun {
 You can optionally set encoding to `"buffer"` to get a 16-byte buffer instead of a string. This can sometimes avoid string conversion overhead.
 
 ```ts buffer.ts
-const buffer = Bun.randomUUIDv7('buffer');
+const buffer = Bun.randomUUIDv7("buffer");
 ```
 
 `base64` and `base64url` encodings are also supported when you want a slightly shorter string.
 
 ```ts base64.ts
-const base64 = Bun.randomUUIDv7('base64');
-const base64url = Bun.randomUUIDv7('base64url');
+const base64 = Bun.randomUUIDv7("base64");
+const base64url = Bun.randomUUIDv7("base64url");
 ```
 
 ## `Bun.peek()`
@@ -166,9 +166,9 @@ const base64url = Bun.randomUUIDv7('base64url');
 Reads a promise's result without `await` or `.then`, but only if the promise has already fulfilled or rejected.
 
 ```ts
-import {peek} from 'bun';
+import { peek } from "bun";
 
-const promise = Promise.resolve('hi');
+const promise = Promise.resolve("hi");
 
 // no await!
 const result = peek(promise);
@@ -178,10 +178,10 @@ console.log(result); // "hi"
 This is important when attempting to reduce number of extraneous microticks in performance-sensitive code. It's an advanced API and you probably shouldn't use it unless you know what you're doing.
 
 ```ts
-import {peek} from 'bun';
-import {expect, test} from 'bun:test';
+import { peek } from "bun";
+import { expect, test } from "bun:test";
 
-test('peek', () => {
+test("peek", () => {
 	const promise = Promise.resolve(true);
 
 	// no await necessary!
@@ -202,26 +202,26 @@ test('peek', () => {
 	// If we peek a rejected promise, it:
 	// - returns the error
 	// - does not mark the promise as handled
-	const rejected = Promise.reject(new Error('Successfully tested promise rejection'));
-	expect(peek(rejected).message).toBe('Successfully tested promise rejection');
+	const rejected = Promise.reject(new Error("Successfully tested promise rejection"));
+	expect(peek(rejected).message).toBe("Successfully tested promise rejection");
 });
 ```
 
 The `peek.status` function lets you read the status of a promise without resolving it.
 
 ```ts
-import {peek} from 'bun';
-import {expect, test} from 'bun:test';
+import { peek } from "bun";
+import { expect, test } from "bun:test";
 
-test('peek.status', () => {
+test("peek.status", () => {
 	const promise = Promise.resolve(true);
-	expect(peek.status(promise)).toBe('fulfilled');
+	expect(peek.status(promise)).toBe("fulfilled");
 
 	const pending = new Promise(() => {});
-	expect(peek.status(pending)).toBe('pending');
+	expect(peek.status(pending)).toBe("pending");
 
-	const rejected = Promise.reject(new Error('oh nooo'));
-	expect(peek.status(rejected)).toBe('rejected');
+	const rejected = Promise.reject(new Error("oh nooo"));
+	expect(peek.status(rejected)).toBe("rejected");
 });
 ```
 
@@ -245,7 +245,7 @@ Or specify an editor with the `editor` param. You can also specify a line and co
 
 ```ts
 Bun.openInEditor(import.meta.url, {
-	editor: 'vscode', // or "subl"
+	editor: "vscode", // or "subl"
 	line: 10,
 	column: 5,
 });
@@ -256,20 +256,20 @@ Bun.openInEditor(import.meta.url, {
 Recursively checks if two objects are equivalent. This is used internally by `expect().toEqual()` in `bun:test`.
 
 ```ts
-const foo = {a: 1, b: 2, c: {d: 3}};
+const foo = { a: 1, b: 2, c: { d: 3 } };
 
 // true
-Bun.deepEquals(foo, {a: 1, b: 2, c: {d: 3}});
+Bun.deepEquals(foo, { a: 1, b: 2, c: { d: 3 } });
 
 // false
-Bun.deepEquals(foo, {a: 1, b: 2, c: {d: 4}});
+Bun.deepEquals(foo, { a: 1, b: 2, c: { d: 4 } });
 ```
 
 A third boolean parameter can be used to enable "strict" mode. This is used by `expect().toStrictEqual()` in the test runner.
 
 ```ts
-const a = {entries: [1, 2]};
-const b = {entries: [1, 2], extra: undefined};
+const a = { entries: [1, 2] };
+const b = { entries: [1, 2], extra: undefined };
 
 Bun.deepEquals(a, b); // => true
 Bun.deepEquals(a, b, true); // => false
@@ -279,10 +279,10 @@ In strict mode, the following are considered unequal:
 
 ```ts
 // undefined values
-Bun.deepEquals({}, {a: undefined}, true); // false
+Bun.deepEquals({}, { a: undefined }, true); // false
 
 // undefined in arrays
-Bun.deepEquals(['asdf'], ['asdf', undefined], true); // false
+Bun.deepEquals(["asdf"], ["asdf", undefined], true); // false
 
 // sparse arrays
 Bun.deepEquals([, 1], [undefined, 1], true); // false
@@ -291,7 +291,7 @@ Bun.deepEquals([, 1], [undefined, 1], true); // false
 class Foo {
 	a = 1;
 }
-Bun.deepEquals(new Foo(), {a: 1}, true); // false
+Bun.deepEquals(new Foo(), { a: 1 }, true); // false
 ```
 
 ## `Bun.escapeHTML()`
@@ -320,9 +320,9 @@ Supports ANSI escape codes, emoji, and wide characters.
 Example usage:
 
 ```ts
-Bun.stringWidth('hello'); // => 5
-Bun.stringWidth('\u001b[31mhello\u001b[0m'); // => 5
-Bun.stringWidth('\u001b[31mhello\u001b[0m', {countAnsiEscapeCodes: true}); // => 12
+Bun.stringWidth("hello"); // => 5
+Bun.stringWidth("\u001b[31mhello\u001b[0m"); // => 5
+Bun.stringWidth("\u001b[31mhello\u001b[0m", { countAnsiEscapeCodes: true }); // => 12
 ```
 
 This is useful for:
@@ -458,7 +458,7 @@ namespace Bun {
 Converts a `file://` URL to an absolute path.
 
 ```ts
-const path = Bun.fileURLToPath(new URL('file:///foo/bar.txt'));
+const path = Bun.fileURLToPath(new URL("file:///foo/bar.txt"));
 console.log(path); // "/foo/bar.txt"
 ```
 
@@ -469,7 +469,7 @@ console.log(path); // "/foo/bar.txt"
 Converts an absolute path to a `file://` URL.
 
 ```ts
-const url = Bun.pathToFileURL('/foo/bar.txt');
+const url = Bun.pathToFileURL("/foo/bar.txt");
 console.log(url); // "file:///foo/bar.txt"
 ```
 
@@ -480,7 +480,7 @@ console.log(url); // "file:///foo/bar.txt"
 Compresses a `Uint8Array` using zlib's GZIP algorithm.
 
 ```ts
-const buf = Buffer.from('hello'.repeat(100)); // Buffer extends Uint8Array
+const buf = Buffer.from("hello".repeat(100)); // Buffer extends Uint8Array
 const compressed = Bun.gzipSync(buf);
 
 buf; // => Uint8Array(500)
@@ -571,7 +571,7 @@ export type ZlibCompressionOptions = {
 Decompresses a `Uint8Array` using zlib's GUNZIP algorithm.
 
 ```ts
-const buf = Buffer.from('hello'.repeat(100)); // Buffer extends Uint8Array
+const buf = Buffer.from("hello".repeat(100)); // Buffer extends Uint8Array
 const compressed = Bun.gzipSync(buf);
 
 const dec = new TextDecoder();
@@ -587,7 +587,7 @@ dec.decode(uncompressed);
 Compresses a `Uint8Array` using zlib's DEFLATE algorithm.
 
 ```ts
-const buf = Buffer.from('hello'.repeat(100));
+const buf = Buffer.from("hello".repeat(100));
 const compressed = Bun.deflateSync(buf);
 
 buf; // => Buffer(500)
@@ -603,7 +603,7 @@ The second argument supports the same set of configuration options as [`Bun.gzip
 Decompresses a `Uint8Array` using zlib's INFLATE algorithm.
 
 ```ts
-const buf = Buffer.from('hello'.repeat(100));
+const buf = Buffer.from("hello".repeat(100));
 const compressed = Bun.deflateSync(buf);
 
 const dec = new TextDecoder();
@@ -619,7 +619,7 @@ dec.decode(decompressed);
 Compresses a `Uint8Array` using the Zstandard algorithm.
 
 ```ts
-const buf = Buffer.from('hello'.repeat(100));
+const buf = Buffer.from("hello".repeat(100));
 
 // Synchronous
 const compressedSync = Bun.zstdCompressSync(buf);
@@ -627,7 +627,7 @@ const compressedSync = Bun.zstdCompressSync(buf);
 const compressedAsync = await Bun.zstdCompress(buf);
 
 // With compression level (1-22, default: 3)
-const compressedLevel = Bun.zstdCompressSync(buf, {level: 6});
+const compressedLevel = Bun.zstdCompressSync(buf, { level: 6 });
 ```
 
 ## `Bun.zstdDecompress()` / `Bun.zstdDecompressSync()`
@@ -635,7 +635,7 @@ const compressedLevel = Bun.zstdCompressSync(buf, {level: 6});
 Decompresses a `Uint8Array` using the Zstandard algorithm.
 
 ```ts
-const buf = Buffer.from('hello'.repeat(100));
+const buf = Buffer.from("hello".repeat(100));
 const compressed = Bun.zstdCompressSync(buf);
 
 // Synchronous
@@ -655,7 +655,7 @@ dec.decode(decompressedSync);
 Serializes an object to a `string` exactly as it would be printed by `console.log`.
 
 ```ts
-const obj = {foo: 'bar'};
+const obj = { foo: "bar" };
 const str = Bun.inspect(obj);
 // => '{\nfoo: "bar" \n}'
 
@@ -671,7 +671,7 @@ This is the symbol that Bun uses to implement `Bun.inspect`. You can override th
 ```ts
 class Foo {
 	[Bun.inspect.custom]() {
-		return 'foo';
+		return "foo";
 	}
 }
 
@@ -686,9 +686,9 @@ Format tabular data into a string. Like [`console.table`](https://developer.mozi
 ```ts
 console.log(
 	Bun.inspect.table([
-		{a: 1, b: 2, c: 3},
-		{a: 4, b: 5, c: 6},
-		{a: 7, b: 8, c: 9},
+		{ a: 1, b: 2, c: 3 },
+		{ a: 4, b: 5, c: 6 },
+		{ a: 7, b: 8, c: 9 },
 	]),
 );
 //
@@ -707,10 +707,10 @@ Additionally, you can pass an array of property names to display only a subset o
 console.log(
 	Bun.inspect.table(
 		[
-			{a: 1, b: 2, c: 3},
-			{a: 4, b: 5, c: 6},
+			{ a: 1, b: 2, c: 3 },
+			{ a: 4, b: 5, c: 6 },
 		],
-		['a', 'c'],
+		["a", "c"],
 	),
 );
 //
@@ -728,8 +728,8 @@ You can also conditionally enable ANSI colors by passing `{ colors: true }`.
 console.log(
 	Bun.inspect.table(
 		[
-			{a: 1, b: 2, c: 3},
-			{a: 4, b: 5, c: 6},
+			{ a: 1, b: 2, c: 3 },
+			{ a: 4, b: 5, c: 6 },
 		],
 		{
 			colors: true,
@@ -756,7 +756,7 @@ Bun.nanoseconds();
 Bun implements a set of convenience functions for asynchronously consuming the body of a `ReadableStream` and converting it to various binary formats.
 
 ```ts
-const stream = (await fetch('https://bun.com')).body;
+const stream = (await fetch("https://bun.com")).body;
 stream; // => ReadableStream
 
 await Bun.readableStreamToArrayBuffer(stream);
@@ -792,24 +792,24 @@ await Bun.readableStreamToFormData(stream, multipartFormBoundary);
 Resolves a file path or module specifier using Bun's internal module resolution algorithm. The first argument is the path to resolve, and the second argument is the "root". If no match is found, an `Error` is thrown.
 
 ```ts
-Bun.resolveSync('./foo.ts', '/path/to/project');
+Bun.resolveSync("./foo.ts", "/path/to/project");
 // => "/path/to/project/foo.ts"
 
-Bun.resolveSync('zod', '/path/to/project');
+Bun.resolveSync("zod", "/path/to/project");
 // => "/path/to/project/node_modules/zod/index.ts"
 ```
 
 To resolve relative to the current working directory, pass `process.cwd()` or `"."` as the root.
 
 ```ts
-Bun.resolveSync('./foo.ts', process.cwd());
-Bun.resolveSync('./foo.ts', '/path/to/project');
+Bun.resolveSync("./foo.ts", process.cwd());
+Bun.resolveSync("./foo.ts", "/path/to/project");
 ```
 
 To resolve relative to the directory containing the current file, pass `import.meta.dir`.
 
 ```ts
-Bun.resolveSync('./foo.ts', import.meta.dir);
+Bun.resolveSync("./foo.ts", import.meta.dir);
 ```
 
 ---
@@ -823,12 +823,12 @@ Bun.resolveSync('./foo.ts', import.meta.dir);
 Strip ANSI escape codes from a string. This is useful for removing colors and formatting from terminal output.
 
 ```ts
-const coloredText = '\u001b[31mHello\u001b[0m \u001b[32mWorld\u001b[0m';
+const coloredText = "\u001b[31mHello\u001b[0m \u001b[32mWorld\u001b[0m";
 const plainText = Bun.stripANSI(coloredText);
 console.log(plainText); // => "Hello World"
 
 // Works with various ANSI codes
-const formatted = '\u001b[1m\u001b[4mBold and underlined\u001b[0m';
+const formatted = "\u001b[1m\u001b[4mBold and underlined\u001b[0m";
 console.log(Bun.stripANSI(formatted)); // => "Bold and underlined"
 ```
 
@@ -882,9 +882,9 @@ npm/strip-ansi 212,992 chars long-ansi      1.36 ms/iter   1.38 ms
 To save a JavaScript value into an ArrayBuffer & back, use `serialize` and `deserialize` from the `"bun:jsc"` module.
 
 ```js
-import {serialize, deserialize} from 'bun:jsc';
+import { serialize, deserialize } from "bun:jsc";
 
-const buf = serialize({foo: 'bar'});
+const buf = serialize({ foo: "bar" });
 const obj = deserialize(buf);
 console.log(obj); // => { foo: "bar" }
 ```
@@ -898,9 +898,9 @@ Internally, [`structuredClone`](https://developer.mozilla.org/en-US/docs/Web/API
 The `estimateShallowMemoryUsageOf` function returns a best-effort estimate of the memory usage of an object in bytes, excluding the memory usage of properties or other objects it references. For accurate per-object memory usage, use `Bun.generateHeapSnapshot`.
 
 ```js
-import {estimateShallowMemoryUsageOf} from 'bun:jsc';
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 
-const obj = {foo: 'bar'};
+const obj = { foo: "bar" };
 const usage = estimateShallowMemoryUsageOf(obj);
 console.log(usage); // => 16
 
@@ -908,11 +908,11 @@ const buffer = Buffer.alloc(1024 * 1024);
 estimateShallowMemoryUsageOf(buffer);
 // => 1048624
 
-const req = new Request('https://bun.com');
+const req = new Request("https://bun.com");
 estimateShallowMemoryUsageOf(req);
 // => 167
 
-const array = Array(1024).fill({a: 1});
+const array = Array(1024).fill({ a: 1 });
 // Arrays are usually not stored contiguously in memory, so this will not return a useful value (which isn't a bug).
 estimateShallowMemoryUsageOf(array);
 // => 16

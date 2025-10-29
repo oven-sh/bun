@@ -80,7 +80,7 @@ router.match("/blog/my-cool-post");
 The `.match()` method also accepts `Request` and `Response` objects. The `url` property will be used to resolve the route.
 
 ```ts
-router.match(new Request('https://example.com/blog/my-cool-post'));
+router.match(new Request("https://example.com/blog/my-cool-post"));
 ```
 
 The router will read the directory contents on initialization. To re-scan the files, use the `.reload()` method.

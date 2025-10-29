@@ -26,7 +26,7 @@ features:
 Import the file like any other source file.
 
 ```ts config.ts icon="/icons/typescript.svg"
-import config from './config.yaml';
+import config from "./config.yaml";
 
 config.database.host; // => "localhost"
 config.server.port; // => 3000
@@ -38,7 +38,7 @@ config.features.auth; // => true
 You can also use named imports to destructure top-level properties:
 
 ```ts config.ts icon="/icons/typescript.svg"
-import {database, server, features} from './config.yaml';
+import { database, server, features } from "./config.yaml";
 
 console.log(database.name); // => "myapp"
 console.log(server.timeout); // => 30
@@ -50,7 +50,7 @@ console.log(features.rateLimit); // => true
 Bun also supports [Import Attributes](https://github.com/tc39/proposal-import-attributes) syntax:
 
 ```ts config.ts icon="/icons/typescript.svg"
-import config from './config.yaml' with {type: 'yaml'};
+import config from "./config.yaml" with { type: "yaml" };
 
 config.database.port; // => 5432
 ```

@@ -1,5 +1,5 @@
 ---
-title: 'Code coverage'
+title: "Code coverage"
 description: "Learn how to use Bun's built-in code coverage reporting to track test coverage and find untested areas in your codebase"
 ---
 
@@ -323,14 +323,14 @@ All files    |   85.71 |   90.48 |
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 // Good: Test actual functionality
-test('calculateTax should handle different tax rates', () => {
+test("calculateTax should handle different tax rates", () => {
 	expect(calculateTax(100, 0.08)).toBe(8);
 	expect(calculateTax(100, 0.1)).toBe(10);
 	expect(calculateTax(0, 0.08)).toBe(0);
 });
 
 // Avoid: Just hitting lines for coverage
-test('calculateTax exists', () => {
+test("calculateTax exists", () => {
 	calculateTax(100, 0.08); // No assertions!
 });
 ```
@@ -338,13 +338,13 @@ test('calculateTax exists', () => {
 ### Test Edge Cases
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
-test('user input validation', () => {
+test("user input validation", () => {
 	// Test normal case
-	expect(validateEmail('user@example.com')).toBe(true);
+	expect(validateEmail("user@example.com")).toBe(true);
 
 	// Test edge cases that improve coverage meaningfully
-	expect(validateEmail('')).toBe(false);
-	expect(validateEmail('invalid')).toBe(false);
+	expect(validateEmail("")).toBe(false);
+	expect(validateEmail("invalid")).toBe(false);
 	expect(validateEmail(null)).toBe(false);
 });
 ```
@@ -377,9 +377,9 @@ If files aren't appearing in coverage reports, they might not be imported by you
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 // Make sure to import the modules you want to test
-import {myFunction} from '../src/my-module';
+import { myFunction } from "../src/my-module";
 
-test('my function works', () => {
+test("my function works", () => {
 	expect(myFunction()).toBeDefined();
 });
 ```

@@ -20,13 +20,13 @@ bun add express
 To define a simple HTTP route and start a server with Express:
 
 ```ts server.ts icon="/icons/typescript.svg"
-import express from 'express';
+import express from "express";
 
 const app = express();
 const port = 8080;
 
-app.get('/', (req, res) => {
-	res.send('Hello World!');
+app.get("/", (req, res) => {
+	res.send("Hello World!");
 });
 
 app.listen(port, () => {

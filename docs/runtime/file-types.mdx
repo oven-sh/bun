@@ -1,5 +1,5 @@
 ---
-title: 'File Types'
+title: "File Types"
 description: "File types and loaders supported by Bun's bundler and runtime"
 ---
 
@@ -12,7 +12,7 @@ Bun uses the file extension to determine which built-in _loader_ should be used 
 You can explicitly specify which loader to use using the 'loader' import attribute.
 
 ```ts
-import my_toml from './my_file' with {loader: 'toml'};
+import my_toml from "./my_file" with { loader: "toml" };
 ```
 
 ---
@@ -48,7 +48,7 @@ Strips out all TypeScript syntax, then behaves identically to the `js` loader. B
 JSON files can be directly imported.
 
 ```ts
-import pkg from './package.json';
+import pkg from "./package.json";
 pkg.name; // => "my-package"
 ```
 
@@ -56,7 +56,7 @@ During bundling, the parsed JSON is inlined into the bundle as a JavaScript obje
 
 ```ts
 var pkg = {
-	name: 'my-package',
+	name: "my-package",
 	// ... other fields
 };
 pkg.name;
@@ -76,9 +76,9 @@ If a `.json` file is passed as an entrypoint to the bundler, it will be converte
 
 ```ts Output
 export default {
-	name: 'John Doe',
+	name: "John Doe",
 	age: 35,
-	email: 'johndoe@example.com',
+	email: "johndoe@example.com",
 };
 ```
 
@@ -91,7 +91,7 @@ export default {
 TOML files can be directly imported. Bun will parse them with its fast native TOML parser.
 
 ```ts
-import config from './bunfig.toml';
+import config from "./bunfig.toml";
 config.logLevel; // => "debug"
 
 // via import attribute:
@@ -102,7 +102,7 @@ During bundling, the parsed TOML is inlined into the bundle as a JavaScript obje
 
 ```ts
 var config = {
-	logLevel: 'debug',
+	logLevel: "debug",
 	// ...other fields
 };
 config.logLevel;
@@ -120,9 +120,9 @@ email = "johndoe@example.com"
 
 ```ts Output
 export default {
-	name: 'John Doe',
+	name: "John Doe",
 	age: 35,
-	email: 'johndoe@example.com',
+	email: "johndoe@example.com",
 };
 ```
 
@@ -136,12 +136,12 @@ The contents of the text file are read and inlined into the bundle as a string.
 Text files can be directly imported. The file is read and returned as a string.
 
 ```ts
-import contents from './file.txt';
+import contents from "./file.txt";
 console.log(contents); // => "Hello, world!"
 
 // To import an html file as text
 // The "type' attribute can be used to override the default loader.
-import html from './index.html' with {type: 'text'};
+import html from "./index.html" with { type: "text" };
 ```
 
 When referenced during a build, the contents are inlined into the bundle as a string.
@@ -160,7 +160,7 @@ Hello, world!
 ```
 
 ```ts Output
-export default 'Hello, world!';
+export default "Hello, world!";
 ```
 
 </CodeGroup>
@@ -172,7 +172,7 @@ export default 'Hello, world!';
 In the runtime, native addons can be directly imported.
 
 ```ts
-import addon from './addon.node';
+import addon from "./addon.node";
 console.log(addon);
 ```
 
@@ -185,7 +185,7 @@ In the bundler, `.node` files are handled using the [`file`](#file) loader.
 In the runtime and bundler, SQLite databases can be directly imported. This will load the database using [`bun:sqlite`](/runtime/sqlite).
 
 ```ts
-import db from './my.db' with {type: 'sqlite'};
+import db from "./my.db" with { type: "sqlite" };
 ```
 
 This is only supported when the `target` is `bun`.
@@ -196,7 +196,7 @@ You can change this behavior with the `"embed"` attribute:
 
 ```ts
 // embed the database into the bundle
-import db from './my.db' with {type: 'sqlite', embed: 'true'};
+import db from "./my.db" with { type: "sqlite", embed: "true" };
 ```
 
 When using a [standalone executable](/bundler/executables), the database is embedded into the single-file executable.
@@ -300,7 +300,7 @@ bun run ./script.sh
 The file loader resolves the import as a _path/URL_ to the imported file. It's commonly used for referencing media or font assets.
 
 ```ts logo.ts
-import logo from './logo.svg';
+import logo from "./logo.svg";
 console.log(logo);
 ```
 
@@ -314,7 +314,7 @@ bun run logo.ts
 _In the bundler_, things are slightly different. The file is copied into `outdir` as-is, and the import is resolved as a relative path pointing to the copied file.
 
 ```ts Output
-var logo = './logo.svg';
+var logo = "./logo.svg";
 console.log(logo);
 ```
 
@@ -344,7 +344,7 @@ If you're using TypeScript, you may get an error like this:
 This can be fixed by creating `*.d.ts` file anywhere in your project (any name will work) with the following contents:
 
 ```ts
-declare module '*.svg' {
+declare module "*.svg" {
 	const content: string;
 	export default content;
 }

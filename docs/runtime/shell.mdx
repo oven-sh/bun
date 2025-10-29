@@ -8,9 +8,9 @@ Bun Shell makes shell scripting with JavaScript & TypeScript fun. It's a cross-p
 Quickstart:
 
 ```ts index.ts icon="/icons/typescript.svg"
-import {$} from 'bun';
+import { $ } from "bun";
 
-const response = await fetch('https://example.com');
+const response = await fetch("https://example.com");
 
 // Use Response as stdin.
 await $`cat < ${response} | wc -c`; // 1256
@@ -36,7 +36,7 @@ await $`cat < ${response} | wc -c`; // 1256
 The simplest shell command is `echo`. To run it, use the `$` template literal tag:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 await $`echo "Hello World!"`; // Hello World!
 ```
@@ -44,7 +44,7 @@ await $`echo "Hello World!"`; // Hello World!
 By default, shell commands print to stdout. To quiet the output, call `.quiet()`:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 await $`echo "Hello World!"`.quiet(); // No output
 ```
@@ -52,7 +52,7 @@ await $`echo "Hello World!"`.quiet(); // No output
 What if you want to access the output of the command as text? Use `.text()`:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 // .text() automatically calls .quiet() for you
 const welcome = await $`echo "Hello World!"`.text();
@@ -63,9 +63,9 @@ console.log(welcome); // Hello World!\n
 By default, `await`ing will return stdout and stderr as `Buffer`s.
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
-const {stdout, stderr} = await $`echo "Hello!"`.quiet();
+const { stdout, stderr } = await $`echo "Hello!"`.quiet();
 
 console.log(stdout); // Buffer(7) [ 72, 101, 108, 108, 111, 33, 10 ]
 console.log(stderr); // Buffer(0) []
@@ -78,7 +78,7 @@ console.log(stderr); // Buffer(0) []
 By default, non-zero exit codes will throw an error. This `ShellError` contains information about the command run.
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 try {
 	const output = await $`something-that-may-fail`.text();
@@ -93,9 +93,9 @@ try {
 Throwing can be disabled with `.nothrow()`. The result's `exitCode` will need to be checked manually.
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
-const {stdout, stderr, exitCode} = await $`something-that-may-fail`.nothrow().quiet();
+const { stdout, stderr, exitCode } = await $`something-that-may-fail`.nothrow().quiet();
 
 if (exitCode !== 0) {
 	console.log(`Non-zero exit code ${exitCode}`);
@@ -108,7 +108,7 @@ console.log(stderr);
 The default handling of non-zero exit codes can be configured by calling `.nothrow()` or `.throws(boolean)` on the `$` function itself.
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 // shell promises will not throw, meaning you will have to
 // check for `exitCode` manually on every shell command.
 $.nothrow(); // equivalent to $.throws(false)
@@ -145,7 +145,7 @@ Bun Shell also supports redirecting from and to JavaScript objects.
 To redirect stdout to a JavaScript object, use the `>` operator:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 const buffer = Buffer.alloc(100);
 await $`echo "Hello World!" > ${buffer}`;
@@ -163,9 +163,9 @@ The following JavaScript objects are supported for redirection to:
 To redirect the output from JavaScript objects to stdin, use the `<` operator:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
-const response = new Response('hello i am a response body');
+const response = new Response("hello i am a response body");
 
 const result = await $`cat < ${response}`.text();
 
@@ -181,7 +181,7 @@ The following JavaScript objects are supported for redirection from:
 ### Example: Redirect stdin -> file
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 await $`cat < myfile.txt`;
 ```
@@ -189,7 +189,7 @@ await $`cat < myfile.txt`;
 ### Example: Redirect stdout -> file
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 await $`echo bun! > greeting.txt`;
 ```
@@ -197,7 +197,7 @@ await $`echo bun! > greeting.txt`;
 ### Example: Redirect stderr -> file
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 await $`bun run index.ts 2> errors.txt`;
 ```
@@ -205,7 +205,7 @@ await $`bun run index.ts 2> errors.txt`;
 ### Example: Redirect stderr -> stdout
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 // redirects stderr to stdout, so all output
 // will be available on stdout
@@ -215,7 +215,7 @@ await $`bun run ./index.ts 2>&1`;
 ### Example: Redirect stdout -> stderr
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 // redirects stdout to stderr, so all output
 // will be available on stderr
@@ -227,7 +227,7 @@ await $`bun run ./index.ts 1>&2`;
 Like in bash, you can pipe the output of one command to another:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 const result = await $`echo "Hello World!" | wc -w`.text();
 
@@ -237,9 +237,9 @@ console.log(result); // 2\n
 You can also pipe with JavaScript objects:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
-const response = new Response('hello i am a response body');
+const response = new Response("hello i am a response body");
 
 const result = await $`cat < ${response} | wc -w`.text();
 
@@ -251,7 +251,7 @@ console.log(result); // 6\n
 Command substitution allows you to substitute the output of another script into the current script:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 // Prints out the hash of the current commit
 await $`echo Hash of current commit: $(git rev-parse HEAD)`;
@@ -260,7 +260,7 @@ await $`echo Hash of current commit: $(git rev-parse HEAD)`;
 This is a textual insertion of the command's output and can be used to, for example, declare a shell variable:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 await $`
   REV=$(git rev-parse HEAD)
@@ -274,7 +274,7 @@ await $`
 Because Bun internally uses the special [`raw`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Template_literals#raw_strings) property on the input template literal, using the backtick syntax for command substitution won't work:
 
 ```ts icon="file-code"
-import {$} from 'bun';
+import { $ } from "bun";
 
 await $`echo \`echo hi\``;
 ```
@@ -302,7 +302,7 @@ We instead recommend sticking to the `$(...)` syntax.
 Environment variables can be set like in bash:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 await $`FOO=foo bun -e 'console.log(process.env.FOO)'`; // foo\n
 ```
@@ -310,19 +310,19 @@ await $`FOO=foo bun -e 'console.log(process.env.FOO)'`; // foo\n
 You can use string interpolation to set environment variables:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
-const foo = 'bar123';
+const foo = "bar123";
 
-await $`FOO=${foo + '456'} bun -e 'console.log(process.env.FOO)'`; // bar123456\n
+await $`FOO=${foo + "456"} bun -e 'console.log(process.env.FOO)'`; // bar123456\n
 ```
 
 Input is escaped by default, preventing shell injection attacks:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
-const foo = 'bar123; rm -rf /tmp';
+const foo = "bar123; rm -rf /tmp";
 
 await $`FOO=${foo} bun -e 'console.log(process.env.FOO)'`; // bar123; rm -rf /tmp\n
 ```
@@ -334,31 +334,31 @@ By default, `process.env` is used as the environment variables for all commands.
 You can change the environment variables for a single command by calling `.env()`:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
-await $`echo $FOO`.env({...process.env, FOO: 'bar'}); // bar
+await $`echo $FOO`.env({ ...process.env, FOO: "bar" }); // bar
 ```
 
 You can change the default environment variables for all commands by calling `$.env`:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
-$.env({FOO: 'bar'});
+$.env({ FOO: "bar" });
 
 // the globally-set $FOO
 await $`echo $FOO`; // bar
 
 // the locally-set $FOO
-await $`echo $FOO`.env({FOO: 'baz'}); // baz
+await $`echo $FOO`.env({ FOO: "baz" }); // baz
 ```
 
 You can reset the environment variables to the default by calling `$.env()` with no arguments:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
-$.env({FOO: 'bar'});
+$.env({ FOO: "bar" });
 
 // the globally-set $FOO
 await $`echo $FOO`; // bar
@@ -372,23 +372,23 @@ await $`echo $FOO`.env(undefined); // ""
 You can change the working directory of a command by passing a string to `.cwd()`:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
-await $`pwd`.cwd('/tmp'); // /tmp
+await $`pwd`.cwd("/tmp"); // /tmp
 ```
 
 You can change the default working directory for all commands by calling `$.cwd`:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
-$.cwd('/tmp');
+$.cwd("/tmp");
 
 // the globally-set working directory
 await $`pwd`; // /tmp
 
 // the locally-set working directory
-await $`pwd`.cwd('/'); // /
+await $`pwd`.cwd("/"); // /
 ```
 
 ---
@@ -398,7 +398,7 @@ await $`pwd`.cwd('/'); // /
 To read the output of a command as a string, use `.text()`:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 const result = await $`echo "Hello World!"`.text();
 
@@ -410,7 +410,7 @@ console.log(result); // Hello World!\n
 To read the output of a command as JSON, use `.json()`:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 const result = await $`echo '{"foo": "bar"}'`.json();
 
@@ -422,7 +422,7 @@ console.log(result); // { foo: "bar" }
 To read the output of a command line-by-line, use `.lines()`:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 for await (let line of $`echo "Hello World!"`.lines()) {
 	console.log(line); // Hello World!
@@ -432,9 +432,9 @@ for await (let line of $`echo "Hello World!"`.lines()) {
 You can also use `.lines()` on a completed command:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
-const search = 'bun';
+const search = "bun";
 
 for await (let line of $`cat list.txt | grep ${search}`.lines()) {
 	console.log(line);
@@ -446,7 +446,7 @@ for await (let line of $`cat list.txt | grep ${search}`.lines()) {
 To read the output of a command as a Blob, use `.blob()`:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 const result = await $`echo "Hello World!"`.blob();
 
@@ -497,7 +497,7 @@ Bun Shell also implements a set of utilities for working with shells.
 This function implements simple [brace expansion](https://www.gnu.org/software/bash/manual/html_node/Brace-Expansion.html) for shell commands:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 await $.braces(`echo {1,2,3}`);
 // => ["echo 1", "echo 2", "echo 3"]
@@ -508,7 +508,7 @@ await $.braces(`echo {1,2,3}`);
 Exposes Bun Shell's escaping logic as a function:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 console.log($.escape('$(foo) `bar` "baz"'));
 // => \$(foo) \`bar\` \"baz\"
@@ -517,9 +517,9 @@ console.log($.escape('$(foo) `bar` "baz"'));
 If you do not want your string to be escaped, wrap it in a `{ raw: 'str' }` object:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
-await $`echo ${{raw: '$(foo) `bar` "baz"'}}`;
+await $`echo ${{ raw: '$(foo) `bar` "baz"' }}`;
 // => bun: command not found: foo
 // => bun: command not found: bar
 // => baz
@@ -574,9 +574,9 @@ When parsing command arguments, it treats all _interpolated variables_ as single
 This protects the Bun shell against **command injection**:
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
-const userInput = 'my-file.txt; rm -rf /';
+const userInput = "my-file.txt; rm -rf /";
 
 // SAFE: `userInput` is treated as a single quoted string
 await $`ls ${userInput}`;
@@ -598,9 +598,9 @@ When you do this, you hand off control, and Bun's built-in protections no
 longer apply to the string interpreted by that new shell.
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
-const userInput = 'world; touch /tmp/pwned';
+const userInput = "world; touch /tmp/pwned";
 
 // UNSAFE: You have explicitly started a new shell process with `bash -c`.
 // This new shell will execute the `touch` command. Any user input
@@ -615,10 +615,10 @@ command-line arguments. An attacker can supply input that the target program
 recognizes as one of its own options or flags, leading to unintended behavior.
 
 ```js
-import {$} from 'bun';
+import { $ } from "bun";
 
 // Malicious input formatted as a Git command-line flag
-const branch = '--upload-pack=echo pwned';
+const branch = "--upload-pack=echo pwned";
 
 // UNSAFE: While Bun safely passes the string as a single argument,
 // the `git` program itself sees and acts upon the malicious flag.

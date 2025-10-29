@@ -19,7 +19,7 @@ bun add -d @happy-dom/global-registrator
 This module exports a "registrator" that injects the mocked browser APIs to the global scope.
 
 ```ts happydom.ts icon="/icons/typescript.svg"
-import {GlobalRegistrator} from '@happy-dom/global-registrator';
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 GlobalRegistrator.register();
 ```
@@ -40,12 +40,12 @@ preload = "./happydom.ts"
 Now running `bun test` inside our project will automatically execute `happydom.ts` first. We can start writing tests that use browser APIs.
 
 ```ts dom.test.ts icon="/icons/typescript.svg"
-import {test, expect} from 'bun:test';
+import { test, expect } from "bun:test";
 
-test('set button text', () => {
+test("set button text", () => {
 	document.body.innerHTML = `<button>My button</button>`;
-	const button = document.querySelector('button');
-	expect(button?.innerText).toEqual('My button');
+	const button = document.querySelector("button");
+	expect(button?.innerText).toEqual("My button");
 });
 ```
 

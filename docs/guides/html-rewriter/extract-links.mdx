@@ -13,9 +13,9 @@ async function extractLinks(url: string) {
 	const links = new Set<string>();
 	const response = await fetch(url);
 
-	const rewriter = new HTMLRewriter().on('a[href]', {
+	const rewriter = new HTMLRewriter().on("a[href]", {
 		element(el) {
-			const href = el.getAttribute('href');
+			const href = el.getAttribute("href");
 			if (href) {
 				links.add(href);
 			}
@@ -28,7 +28,7 @@ async function extractLinks(url: string) {
 }
 
 // Extract all links from the Bun website
-await extractLinks('https://bun.com');
+await extractLinks("https://bun.com");
 ```
 
 ---
@@ -42,9 +42,9 @@ async function extractLinksFromURL(url: string) {
 	const response = await fetch(url);
 	const links = new Set<string>();
 
-	const rewriter = new HTMLRewriter().on('a[href]', {
+	const rewriter = new HTMLRewriter().on("a[href]", {
 		element(el) {
-			const href = el.getAttribute('href');
+			const href = el.getAttribute("href");
 			if (href) {
 				// Convert relative URLs to absolute // [!code ++]
 				try {
@@ -64,7 +64,7 @@ async function extractLinksFromURL(url: string) {
 	return [...links];
 }
 
-const websiteLinks = await extractLinksFromURL('https://example.com');
+const websiteLinks = await extractLinksFromURL("https://example.com");
 ```
 
 ---

@@ -10,8 +10,9 @@ import { Database } from "bun:sqlite";
 
 const db = new Database(":memory:");
 const query = db.query("select 'Hello world' as message;");
-query.get(); 
+query.get();
 ```
+
 ```txt
 { message: "Hello world" }
 ```
@@ -32,7 +33,8 @@ Features include:
 The `bun:sqlite` module is roughly 3-6x faster than `better-sqlite3` and 8-9x faster than `deno.land/x/sqlite` for read queries. Each driver was benchmarked against the [Northwind Traders](https://github.com/jpwhite3/northwind-SQLite3/blob/46d5f8a64f396f87cd374d1600dbf521523980e8/Northwind_large.sqlite.zip) dataset. View and run the [benchmark source](https://github.com/oven-sh/bun/tree/main/bench/sqlite).
 
 <Frame caption="Benchmarked on an M1 MacBook Pro (64GB) running macOS 12.3.1">
-	![SQLite benchmarks for Bun, better-sqlite3, and deno.land/x/sqlite](https://user-images.githubusercontent.com/709451/168459263-8cd51ca3-a924-41e9-908d-cf3478a3b7f3.png)
+	![SQLite benchmarks for Bun, better-sqlite3, and
+	deno.land/x/sqlite](https://user-images.githubusercontent.com/709451/168459263-8cd51ca3-a924-41e9-908d-cf3478a3b7f3.png)
 </Frame>
 
 ---
@@ -62,7 +64,7 @@ To open in `readonly` mode:
 
 ```ts db.ts icon="/icons/typescript.svg" highlight={2}
 import { Database } from "bun:sqlite";
-const db = new Database("mydb.sqlite", { readonly: true }); 
+const db = new Database("mydb.sqlite", { readonly: true });
 ```
 
 To create the database if the file doesn't exist:
@@ -127,7 +129,8 @@ db.close(true);
 ```
 
 <Note>
- `close(false)` is called automatically when the database is garbage collected. It is safe to call multiple times but has no effect after the first.
+	`close(false)` is called automatically when the database is garbage collected. It is safe to call
+	multiple times but has no effect after the first.
 </Note>
 
 ### `using` statement
@@ -143,7 +146,8 @@ import { Database } from "bun:sqlite";
 	console.log(query.get());
 }
 ```
-```txt 
+
+```txt
 { message: "Hello world" }
 ```
 
@@ -170,10 +174,10 @@ const query = db.query(`select "Hello world" as message`);
 <Note>
  Use the `.prepare()` method to prepare a query _without_ caching it on the `Database` instance.
 
-	```ts
-	// compile the prepared statement
-	const query = db.prepare("SELECT * FROM foo WHERE bar = ?");
-	```
+    ```ts
+    // compile the prepared statement
+    const query = db.prepare("SELECT * FROM foo WHERE bar = ?");
+    ```
 
 </Note>
 
@@ -237,7 +241,7 @@ query.all("Hello world");
 
 By default, the `$`, `:`, and `@` prefixes are **included** when binding values to named parameters. To bind without these prefixes, use the `strict` option in the `Database` constructor.
 
-```ts db.ts icon="/icons/typescript.svg" 
+```ts db.ts icon="/icons/typescript.svg"
 import { Database } from "bun:sqlite";
 
 const db = new Database(":memory:", {
@@ -262,7 +266,8 @@ Use `.all()` to run a query and get back the results as an array of objects.
 const query = db.query(`select $message;`);
 query.all({ $message: "Hello world" });
 ```
-```txt 
+
+```txt
 [{ message: "Hello world" }]
 ```
 
@@ -276,7 +281,8 @@ Use `.get()` to run a query and get back the first result as an object.
 const query = db.query(`select $message;`);
 query.get({ $message: "Hello world" });
 ```
-```txt 
+
+```txt
 { $message: "Hello world" }
 ```
 
@@ -290,7 +296,8 @@ Use `.run()` to run a query and get back `undefined`. This is useful for schema-
 const query = db.query(`create table foo;`);
 query.run();
 ```
-```txt 
+
+```txt
 {
   lastInsertRowid: 0,
   changes: 0,
@@ -322,7 +329,8 @@ const first = query.get();
 console.log(movies[0].isMarvel);
 console.log(first.isMarvel);
 ```
-```txt 
+
+```txt
 true
 true
 ```
@@ -363,6 +371,7 @@ const query = db.query(`select $message;`);
 query.values({ $message: "Hello world" });
 query.values(2);
 ```
+
 ```txt
 [
   [ "Iron Man", 2008 ],
@@ -408,24 +417,24 @@ Internally, this calls [`sqlite3_expanded_sql`](https://www.sqlite.org/capi3ref.
 
 Queries can contain parameters. These can be numerical (`?1`) or named (`$param` or `:param` or `@param`). Bind values to these parameters when executing the query:
 
-
 ```ts title="query.ts" icon="/icons/typescript.svg"
 const query = db.query("SELECT * FROM foo WHERE bar = $bar");
 const results = query.all({
 	$bar: "bar",
 });
 ```
-```txt 
+
+```txt
 [{ "$bar": "bar" }]
 ```
 
 Numbered (positional) parameters work too:
 
-
 ```ts db.ts icon="/icons/typescript.svg"
 const query = db.query("SELECT ?1, ?2");
 const results = query.all("hello", "goodbye");
 ```
+
 ```txt
 [
 	{
@@ -458,6 +467,7 @@ const result = query.get();
 
 console.log(result.max_int);
 ```
+
 ```txt
 9007199254741093n
 ```
@@ -478,6 +488,7 @@ try {
 	console.log(e.message);
 }
 ```
+
 ```txt
 BigInt value '81129638414606663681390495662081' is out of range
 ```
@@ -492,13 +503,12 @@ import { Database } from "bun:sqlite";
 const db = new Database(":memory:", { safeIntegers: false });
 const query = db.query(`SELECT ${BigInt(Number.MAX_SAFE_INTEGER) + 102n} as max_int`);
 const result = query.get();
-console.log(result.max_int); 
+console.log(result.max_int);
 ```
+
 ```txt
 9007199254741092
 ```
-
-
 
 ---
 

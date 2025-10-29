@@ -20,8 +20,8 @@ To create a simple `ReadableStream`:
 ```ts
 const stream = new ReadableStream({
 	start(controller) {
-		controller.enqueue('hello');
-		controller.enqueue('world');
+		controller.enqueue("hello");
+		controller.enqueue("world");
 		controller.close();
 	},
 });
@@ -49,8 +49,8 @@ With a traditional `ReadableStream`, chunks of data are _enqueued_. Each chunk i
 ```ts
 const stream = new ReadableStream({
 	start(controller) {
-		controller.enqueue('hello');
-		controller.enqueue('world');
+		controller.enqueue("hello");
+		controller.enqueue("world");
 		controller.close();
 	},
 });
@@ -60,10 +60,10 @@ With a direct `ReadableStream`, chunks of data are written directly to the strea
 
 ```ts
 const stream = new ReadableStream({
-	type: 'direct', // [!code ++]
+	type: "direct", // [!code ++]
 	pull(controller) {
-		controller.write('hello');
-		controller.write('world');
+		controller.write("hello");
+		controller.write("world");
 	},
 });
 ```
@@ -79,8 +79,8 @@ Bun also supports async generator functions as a source for `Response` and `Requ
 ```ts
 const response = new Response(
 	(async function* () {
-		yield 'hello';
-		yield 'world';
+		yield "hello";
+		yield "world";
 	})(),
 );
 
@@ -92,8 +92,8 @@ You can also use `[Symbol.asyncIterator]` directly.
 ```ts
 const response = new Response({
 	[Symbol.asyncIterator]: async function* () {
-		yield 'hello';
-		yield 'world';
+		yield "hello";
+		yield "world";
 	},
 });
 
@@ -105,7 +105,7 @@ If you need more granular control over the stream, `yield` will return the direc
 ```ts
 const response = new Response({
 	[Symbol.asyncIterator]: async function* () {
-		const controller = yield 'hello';
+		const controller = yield "hello";
 		await controller.end();
 	},
 });
@@ -122,11 +122,11 @@ The `Bun.ArrayBufferSink` class is a fast incremental writer for constructing an
 ```ts
 const sink = new Bun.ArrayBufferSink();
 
-sink.write('h');
-sink.write('e');
-sink.write('l');
-sink.write('l');
-sink.write('o');
+sink.write("h");
+sink.write("e");
+sink.write("l");
+sink.write("l");
+sink.write("o");
 
 sink.end();
 // ArrayBuffer(5) [ 104, 101, 108, 108, 111 ]
@@ -140,11 +140,11 @@ sink.start({
 	asUint8Array: true, // [!code ++]
 });
 
-sink.write('h');
-sink.write('e');
-sink.write('l');
-sink.write('l');
-sink.write('o');
+sink.write("h");
+sink.write("e");
+sink.write("l");
+sink.write("l");
+sink.write("o");
 
 sink.end();
 // Uint8Array(5) [ 104, 101, 108, 108, 111 ]
@@ -153,9 +153,9 @@ sink.end();
 The `.write()` method supports strings, typed arrays, `ArrayBuffer`, and `SharedArrayBuffer`.
 
 ```ts
-sink.write('h');
+sink.write("h");
 sink.write(new Uint8Array([101, 108]));
-sink.write(Buffer.from('lo').buffer);
+sink.write(Buffer.from("lo").buffer);
 
 sink.end();
 ```
@@ -168,14 +168,14 @@ sink.start({
 	stream: true, // [!code ++]
 });
 
-sink.write('h');
-sink.write('e');
-sink.write('l');
+sink.write("h");
+sink.write("e");
+sink.write("l");
 sink.flush();
 // ArrayBuffer(5) [ 104, 101, 108 ]
 
-sink.write('l');
-sink.write('o');
+sink.write("l");
+sink.write("o");
 sink.flush();
 // ArrayBuffer(5) [ 108, 111 ]
 ```

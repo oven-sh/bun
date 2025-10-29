@@ -1,6 +1,6 @@
 ---
-title: 'Snapshots'
-description: 'Learn how to use snapshot testing in Bun to save and compare output between test runs'
+title: "Snapshots"
+description: "Learn how to use snapshot testing in Bun to save and compare output between test runs"
 ---
 
 Snapshot testing saves the output of a value and compares it against future test runs. This is particularly useful for UI components, complex objects, or any output that needs to remain consistent.
@@ -10,10 +10,10 @@ Snapshot testing saves the output of a value and compares it against future test
 Snapshot tests are written using the `.toMatchSnapshot()` matcher:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
-import {test, expect} from 'bun:test';
+import { test, expect } from "bun:test";
 
-test('snap', () => {
-	expect('foo').toMatchSnapshot();
+test("snap", () => {
+	expect("foo").toMatchSnapshot();
 });
 ```
 
@@ -59,21 +59,21 @@ This is useful when:
 For smaller values, you can use inline snapshots with `.toMatchInlineSnapshot()`. These snapshots are stored directly in your test file:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
-import {test, expect} from 'bun:test';
+import { test, expect } from "bun:test";
 
-test('inline snapshot', () => {
+test("inline snapshot", () => {
 	// First run: snapshot will be inserted automatically
-	expect({hello: 'world'}).toMatchInlineSnapshot();
+	expect({ hello: "world" }).toMatchInlineSnapshot();
 });
 ```
 
 After the first run, Bun automatically updates your test file:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
-import {test, expect} from 'bun:test';
+import { test, expect } from "bun:test";
 
-test('inline snapshot', () => {
-	expect({hello: 'world'}).toMatchInlineSnapshot(`
+test("inline snapshot", () => {
+	expect({ hello: "world" }).toMatchInlineSnapshot(`
 {
   "hello": "world",
 }
@@ -95,15 +95,15 @@ Inline snapshots are particularly useful for small, simple values where it's hel
 You can also snapshot error messages using `.toThrowErrorMatchingSnapshot()` and `.toThrowErrorMatchingInlineSnapshot()`:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
-import {test, expect} from 'bun:test';
+import { test, expect } from "bun:test";
 
-test('error snapshot', () => {
+test("error snapshot", () => {
 	expect(() => {
-		throw new Error('Something went wrong');
+		throw new Error("Something went wrong");
 	}).toThrowErrorMatchingSnapshot();
 
 	expect(() => {
-		throw new Error('Another error');
+		throw new Error("Another error");
 	}).toThrowErrorMatchingInlineSnapshot();
 });
 ```
@@ -111,13 +111,13 @@ test('error snapshot', () => {
 After running, the inline version becomes:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
-test('error snapshot', () => {
+test("error snapshot", () => {
 	expect(() => {
-		throw new Error('Something went wrong');
+		throw new Error("Something went wrong");
 	}).toThrowErrorMatchingSnapshot();
 
 	expect(() => {
-		throw new Error('Another error');
+		throw new Error("Another error");
 	}).toThrowErrorMatchingInlineSnapshot(`"Another error"`);
 });
 ```
@@ -129,21 +129,21 @@ test('error snapshot', () => {
 Snapshots work well with complex nested objects:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
-import {test, expect} from 'bun:test';
+import { test, expect } from "bun:test";
 
-test('complex object snapshot', () => {
+test("complex object snapshot", () => {
 	const user = {
 		id: 1,
-		name: 'John Doe',
-		email: 'john@example.com',
+		name: "John Doe",
+		email: "john@example.com",
 		profile: {
 			age: 30,
 			preferences: {
-				theme: 'dark',
+				theme: "dark",
 				notifications: true,
 			},
 		},
-		tags: ['developer', 'javascript', 'bun'],
+		tags: ["developer", "javascript", "bun"],
 	};
 
 	expect(user).toMatchSnapshot();
@@ -155,9 +155,9 @@ test('complex object snapshot', () => {
 Arrays are also well-suited for snapshot testing:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
-import {test, expect} from 'bun:test';
+import { test, expect } from "bun:test";
 
-test('array snapshot', () => {
+test("array snapshot", () => {
 	const numbers = [1, 2, 3, 4, 5].map(n => n * 2);
 	expect(numbers).toMatchSnapshot();
 });
@@ -168,20 +168,20 @@ test('array snapshot', () => {
 Snapshot the output of functions:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
-import {test, expect} from 'bun:test';
+import { test, expect } from "bun:test";
 
 function generateReport(data: any[]) {
 	return {
 		total: data.length,
-		summary: data.map(item => ({id: item.id, name: item.name})),
-		timestamp: '2024-01-01', // Fixed for testing
+		summary: data.map(item => ({ id: item.id, name: item.name })),
+		timestamp: "2024-01-01", // Fixed for testing
 	};
 }
 
-test('report generation', () => {
+test("report generation", () => {
 	const data = [
-		{id: 1, name: 'Alice', age: 30},
-		{id: 2, name: 'Bob', age: 25},
+		{ id: 1, name: "Alice", age: 30 },
+		{ id: 2, name: "Bob", age: 25 },
 	];
 
 	expect(generateReport(data)).toMatchSnapshot();
@@ -193,16 +193,16 @@ test('report generation', () => {
 Snapshots are particularly useful for React components:
 
 ```tsx title="test.ts" icon="/icons/typescript.svg"
-import {test, expect} from 'bun:test';
-import {render} from '@testing-library/react';
+import { test, expect } from "bun:test";
+import { render } from "@testing-library/react";
 
-function Button({children, variant = 'primary'}) {
+function Button({ children, variant = "primary" }) {
 	return <button className={`btn btn-${variant}`}>{children}</button>;
 }
 
-test('Button component snapshots', () => {
-	const {container: primary} = render(<Button>Click me</Button>);
-	const {container: secondary} = render(<Button variant="secondary">Cancel</Button>);
+test("Button component snapshots", () => {
+	const { container: primary } = render(<Button>Click me</Button>);
+	const { container: secondary } = render(<Button variant="secondary">Cancel</Button>);
 
 	expect(primary.innerHTML).toMatchSnapshot();
 	expect(secondary.innerHTML).toMatchSnapshot();
@@ -214,12 +214,12 @@ test('Button component snapshots', () => {
 For values that change between test runs (like timestamps or IDs), use property matchers:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
-import {test, expect} from 'bun:test';
+import { test, expect } from "bun:test";
 
-test('snapshot with dynamic values', () => {
+test("snapshot with dynamic values", () => {
 	const user = {
 		id: Math.random(), // This changes every run
-		name: 'John',
+		name: "John",
 		createdAt: new Date().toISOString(), // This also changes
 	};
 
@@ -247,7 +247,7 @@ exports[`snapshot with dynamic values 1`] = `
 You can customize how objects are serialized in snapshots:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
-import {test, expect} from 'bun:test';
+import { test, expect } from "bun:test";
 
 // Custom serializer for Date objects
 expect.addSnapshotSerializer({
@@ -255,10 +255,10 @@ expect.addSnapshotSerializer({
 	serialize: val => `"${val.toISOString()}"`,
 });
 
-test('custom serializer', () => {
+test("custom serializer", () => {
 	const event = {
-		name: 'Meeting',
-		date: new Date('2024-01-01T10:00:00Z'),
+		name: "Meeting",
+		date: new Date("2024-01-01T10:00:00Z"),
 	};
 
 	expect(event).toMatchSnapshot();
@@ -271,13 +271,13 @@ test('custom serializer', () => {
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 // Good: Focused snapshots
-test('user name formatting', () => {
-	const formatted = formatUserName('john', 'doe');
+test("user name formatting", () => {
+	const formatted = formatUserName("john", "doe");
 	expect(formatted).toMatchInlineSnapshot(`"John Doe"`);
 });
 
 // Avoid: Huge snapshots that are hard to review
-test('entire page render', () => {
+test("entire page render", () => {
 	const page = renderEntirePage();
 	expect(page).toMatchSnapshot(); // This could be thousands of lines
 });
@@ -287,12 +287,12 @@ test('entire page render', () => {
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 // Good: Clear what the snapshot represents
-test('formats currency with USD symbol', () => {
+test("formats currency with USD symbol", () => {
 	expect(formatCurrency(99.99)).toMatchInlineSnapshot(`"$99.99"`);
 });
 
 // Avoid: Unclear what's being tested
-test('format test', () => {
+test("format test", () => {
 	expect(format(99.99)).toMatchInlineSnapshot(`"$99.99"`);
 });
 ```
@@ -324,22 +324,22 @@ describe("Button component", () => {
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 // Good: Normalize dynamic data
-test('API response format', () => {
+test("API response format", () => {
 	const response = {
-		data: {id: 1, name: 'Test'},
+		data: { id: 1, name: "Test" },
 		timestamp: Date.now(),
 		requestId: generateId(),
 	};
 
 	expect({
 		...response,
-		timestamp: 'TIMESTAMP',
-		requestId: 'REQUEST_ID',
+		timestamp: "TIMESTAMP",
+		requestId: "REQUEST_ID",
 	}).toMatchSnapshot();
 });
 
 // Or use property matchers
-test('API response with matchers', () => {
+test("API response with matchers", () => {
 	const response = getApiResponse();
 
 	expect(response).toMatchSnapshot({
@@ -423,12 +423,12 @@ Be aware of platform-specific differences:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 // Paths might differ between Windows/Unix
-test('file operations', () => {
-	const result = processFile('./test.txt');
+test("file operations", () => {
+	const result = processFile("./test.txt");
 
 	expect({
 		...result,
-		path: result.path.replace(/\\/g, '/'), // Normalize paths
+		path: result.path.replace(/\\/g, "/"), // Normalize paths
 	}).toMatchSnapshot();
 });
 ```

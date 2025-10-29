@@ -14,18 +14,18 @@ Bun provides native APIs for working with HTTP cookies through `Bun.Cookie` and 
 const cookies = new Bun.CookieMap();
 
 // From a cookie string
-const cookies1 = new Bun.CookieMap('name=value; foo=bar');
+const cookies1 = new Bun.CookieMap("name=value; foo=bar");
 
 // From an object
 const cookies2 = new Bun.CookieMap({
-	session: 'abc123',
-	theme: 'dark',
+	session: "abc123",
+	theme: "dark",
 });
 
 // From an array of name/value pairs
 const cookies3 = new Bun.CookieMap([
-	['session', 'abc123'],
-	['theme', 'dark'],
+	["session", "abc123"],
+	["theme", "dark"],
 ]);
 ```
 
@@ -36,30 +36,30 @@ In Bun's HTTP server, the `cookies` property on the request object (in `routes`)
 ```ts filename="server.ts" icon="/icons/typescript.svg"
 const server = Bun.serve({
 	routes: {
-		'/': req => {
+		"/": req => {
 			// Access request cookies
 			const cookies = req.cookies;
 
 			// Get a specific cookie
-			const sessionCookie = cookies.get('session');
+			const sessionCookie = cookies.get("session");
 			if (sessionCookie != null) {
 				console.log(sessionCookie);
 			}
 
 			// Check if a cookie exists
-			if (cookies.has('theme')) {
+			if (cookies.has("theme")) {
 				// ...
 			}
 
 			// Set a cookie, it will be automatically applied to the response
-			cookies.set('visited', 'true');
+			cookies.set("visited", "true");
 
-			return new Response('Hello');
+			return new Response("Hello");
 		},
 	},
 });
 
-console.log('Server listening at: ' + server.url);
+console.log("Server listening at: " + server.url);
 ```
 
 ### Methods
@@ -70,7 +70,7 @@ Retrieves a cookie by name. Returns `null` if the cookie doesn't exist.
 
 ```ts filename="get-cookie.ts" icon="/icons/typescript.svg"
 // Get by name
-const cookie = cookies.get('session');
+const cookie = cookies.get("session");
 
 if (cookie != null) {
 	console.log(cookie);
@@ -83,7 +83,7 @@ Checks if a cookie with the given name exists.
 
 ```ts filename="has-cookie.ts" icon="/icons/typescript.svg"
 // Check if cookie exists
-if (cookies.has('session')) {
+if (cookies.has("session")) {
 	// Cookie exists
 }
 ```
@@ -98,18 +98,18 @@ Adds or updates a cookie in the map. Cookies default to `{ path: "/", sameSite: 
 
 ```ts filename="set-cookie.ts" icon="/icons/typescript.svg"
 // Set by name and value
-cookies.set('session', 'abc123');
+cookies.set("session", "abc123");
 
 // Set using options object
 cookies.set({
-	name: 'theme',
-	value: 'dark',
+	name: "theme",
+	value: "dark",
 	maxAge: 3600,
 	secure: true,
 });
 
 // Set using Cookie instance
-const cookie = new Bun.Cookie('visited', 'true');
+const cookie = new Bun.Cookie("visited", "true");
 cookies.set(cookie);
 ```
 
@@ -121,13 +121,13 @@ Removes a cookie from the map. When applied to a Response, this adds a cookie wi
 
 ```ts filename="delete-cookie.ts" icon="/icons/typescript.svg"
 // Delete by name using default domain and path.
-cookies.delete('session');
+cookies.delete("session");
 
 // Delete with domain/path options.
 cookies.delete({
-	name: 'session',
-	domain: 'example.com',
-	path: '/admin',
+	name: "session",
+	domain: "example.com",
+	path: "/admin",
 });
 ```
 
@@ -146,25 +146,25 @@ Returns an array of values for Set-Cookie headers that can be used to apply all 
 When using `Bun.serve()`, you don't need to call this method explicitly. Any changes made to the `req.cookies` map are automatically applied to the response headers. This method is primarily useful when working with other HTTP server implementations.
 
 ```ts filename="node-server.js" icon="file-code"
-import {createServer} from 'node:http';
-import {CookieMap} from 'bun';
+import { createServer } from "node:http";
+import { CookieMap } from "bun";
 
 const server = createServer((req, res) => {
-	const cookieHeader = req.headers.cookie || '';
+	const cookieHeader = req.headers.cookie || "";
 	const cookies = new CookieMap(cookieHeader);
 
-	cookies.set('view-count', Number(cookies.get('view-count') || '0') + 1);
-	cookies.delete('session');
+	cookies.set("view-count", Number(cookies.get("view-count") || "0") + 1);
+	cookies.delete("session");
 
 	res.writeHead(200, {
-		'Content-Type': 'text/plain',
-		'Set-Cookie': cookies.toSetCookieHeaders(),
+		"Content-Type": "text/plain",
+		"Set-Cookie": cookies.toSetCookieHeaders(),
 	});
 	res.end(`Found ${cookies.size} cookies`);
 });
 
 server.listen(3000, () => {
-	console.log('Server running at http://localhost:3000/');
+	console.log("Server running at http://localhost:3000/");
 });
 ```
 
@@ -214,28 +214,28 @@ console.log(cookies.size); // Number of cookies
 `Bun.Cookie` represents an HTTP cookie with its name, value, and attributes.
 
 ```ts filename="cookie-class.ts" icon="/icons/typescript.svg"
-import {Cookie} from 'bun';
+import { Cookie } from "bun";
 
 // Create a basic cookie
-const cookie = new Bun.Cookie('name', 'value');
+const cookie = new Bun.Cookie("name", "value");
 
 // Create a cookie with options
-const secureSessionCookie = new Bun.Cookie('session', 'abc123', {
-	domain: 'example.com',
-	path: '/admin',
+const secureSessionCookie = new Bun.Cookie("session", "abc123", {
+	domain: "example.com",
+	path: "/admin",
 	expires: new Date(Date.now() + 86400000), // 1 day
 	httpOnly: true,
 	secure: true,
-	sameSite: 'strict',
+	sameSite: "strict",
 });
 
 // Parse from a cookie string
-const parsedCookie = new Bun.Cookie('name=value; Path=/; HttpOnly');
+const parsedCookie = new Bun.Cookie("name=value; Path=/; HttpOnly");
 
 // Create from an options object
 const objCookie = new Bun.Cookie({
-	name: 'theme',
-	value: 'dark',
+	name: "theme",
+	value: "dark",
 	maxAge: 3600,
 	secure: true,
 });
@@ -280,19 +280,19 @@ Checks if the cookie has expired.
 
 ```ts filename="is-expired.ts" icon="/icons/typescript.svg"
 // Expired cookie (Date in the past)
-const expiredCookie = new Bun.Cookie('name', 'value', {
+const expiredCookie = new Bun.Cookie("name", "value", {
 	expires: new Date(Date.now() - 1000),
 });
 console.log(expiredCookie.isExpired()); // true
 
 // Valid cookie (Using maxAge instead of expires)
-const validCookie = new Bun.Cookie('name', 'value', {
+const validCookie = new Bun.Cookie("name", "value", {
 	maxAge: 3600, // 1 hour in seconds
 });
 console.log(validCookie.isExpired()); // false
 
 // Session cookie (no expiration)
-const sessionCookie = new Bun.Cookie('name', 'value');
+const sessionCookie = new Bun.Cookie("name", "value");
 console.log(sessionCookie.isExpired()); // false
 ```
 
@@ -303,13 +303,13 @@ console.log(sessionCookie.isExpired()); // false
 Returns a string representation of the cookie suitable for a `Set-Cookie` header.
 
 ```ts filename="serialize-cookie.ts" icon="/icons/typescript.svg"
-const cookie = new Bun.Cookie('session', 'abc123', {
-	domain: 'example.com',
-	path: '/admin',
+const cookie = new Bun.Cookie("session", "abc123", {
+	domain: "example.com",
+	path: "/admin",
 	expires: new Date(Date.now() + 86400000),
 	secure: true,
 	httpOnly: true,
-	sameSite: 'strict',
+	sameSite: "strict",
 });
 
 console.log(cookie.serialize());
@@ -323,7 +323,7 @@ console.log(cookie.toString());
 Converts the cookie to a plain object suitable for JSON serialization.
 
 ```ts filename="cookie-json.ts" icon="/icons/typescript.svg"
-const cookie = new Bun.Cookie('session', 'abc123', {
+const cookie = new Bun.Cookie("session", "abc123", {
 	secure: true,
 	httpOnly: true,
 });
@@ -350,7 +350,7 @@ const jsonString = JSON.stringify(cookie);
 Parses a cookie string into a `Cookie` instance.
 
 ```ts filename="parse-cookie.ts" icon="/icons/typescript.svg"
-const cookie = Bun.Cookie.parse('name=value; Path=/; Secure; SameSite=Lax');
+const cookie = Bun.Cookie.parse("name=value; Path=/; Secure; SameSite=Lax");
 
 console.log(cookie.name); // "name"
 console.log(cookie.value); // "value"
@@ -364,7 +364,7 @@ console.log(cookie.sameSite); // "lax"
 Factory method to create a cookie.
 
 ```ts filename="cookie-from.ts" icon="/icons/typescript.svg"
-const cookie = Bun.Cookie.from('session', 'abc123', {
+const cookie = Bun.Cookie.from("session", "abc123", {
 	httpOnly: true,
 	secure: true,
 	maxAge: 3600,
@@ -400,7 +400,7 @@ interface CookieStoreGetOptions {
 	url?: string;
 }
 
-type CookieSameSite = 'strict' | 'lax' | 'none';
+type CookieSameSite = "strict" | "lax" | "none";
 
 class Cookie {
 	constructor(name: string, value: string, options?: CookieInit);
@@ -440,7 +440,7 @@ class CookieMap implements Iterable<[string, string]> {
 	set(options: CookieInit): void;
 	delete(name: string): void;
 	delete(options: CookieStoreDeleteOptions): void;
-	delete(name: string, options: Omit<CookieStoreDeleteOptions, 'name'>): void;
+	delete(name: string, options: Omit<CookieStoreDeleteOptions, "name">): void;
 	toJSON(): Record<string, string>;
 
 	readonly size: number;

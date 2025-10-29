@@ -12,7 +12,7 @@ Use [`Bun.spawn()`](https://bun.com/docs/api/spawn) to spawn a child process. Wh
 </Note>
 
 ```ts parent.ts icon="/icons/typescript.svg"
-const child = Bun.spawn(['bun', 'child.ts'], {
+const child = Bun.spawn(["bun", "child.ts"], {
 	ipc(message) {
 		/**
 		 * The message received from the sub process
@@ -26,16 +26,16 @@ const child = Bun.spawn(['bun', 'child.ts'], {
 The parent process can send messages to the subprocess using the `.send()` method on the returned `Subprocess` instance. A reference to the sending subprocess is also available as the second argument in the `ipc` handler.
 
 ```ts parent.ts icon="/icons/typescript.svg"
-const childProc = Bun.spawn(['bun', 'child.ts'], {
+const childProc = Bun.spawn(["bun", "child.ts"], {
 	ipc(message, childProc) {
 		/**
 		 * The message received from the sub process
 		 **/
-		childProc.send('Respond to child');
+		childProc.send("Respond to child");
 	},
 });
 
-childProc.send('I am your father'); // The parent can send messages to the child as well
+childProc.send("I am your father"); // The parent can send messages to the child as well
 ```
 
 ---
@@ -43,10 +43,10 @@ childProc.send('I am your father'); // The parent can send messages to the child
 Meanwhile the child process can send messages to its parent using with `process.send()` and receive messages with `process.on("message")`. This is the same API used for `child_process.fork()` in Node.js.
 
 ```ts child.ts icon="/icons/typescript.svg"
-process.send('Hello from child as string');
-process.send({message: 'Hello from child as object'});
+process.send("Hello from child as string");
+process.send({ message: "Hello from child as object" });
 
-process.on('message', message => {
+process.on("message", message => {
 	// print message from parent
 	console.log(message);
 });
@@ -58,10 +58,10 @@ All messages are serialized using the JSC `serialize` API, which allows for the 
 
 ```ts child.ts icon="/icons/typescript.svg"
 // send a string
-process.send('Hello from child as string');
+process.send("Hello from child as string");
 
 // send an object
-process.send({message: 'Hello from child as object'});
+process.send({ message: "Hello from child as object" });
 ```
 
 ---

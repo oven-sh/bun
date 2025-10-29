@@ -16,10 +16,10 @@ bun build --define process.env.NODE_ENV="'production'" src/index.ts # Build
 These statically-known values are used by Bun for dead code elimination and other optimizations.
 
 ```ts
-if (process.env.NODE_ENV === 'production') {
-	console.log('Production mode');
+if (process.env.NODE_ENV === "production") {
+	console.log("Production mode");
 } else {
-	console.log('Development mode');
+	console.log("Development mode");
 }
 ```
 
@@ -28,11 +28,11 @@ if (process.env.NODE_ENV === 'production') {
 Before the code reaches the JavaScript engine, Bun replaces `process.env.NODE_ENV` with `"production"`.
 
 ```ts
-if ('production' === 'production') {
+if ("production" === "production") {
 	// [!code ++]
-	console.log('Production mode');
+	console.log("Production mode");
 } else {
-	console.log('Development mode');
+	console.log("Development mode");
 }
 ```
 
@@ -45,9 +45,9 @@ Since `"production" === "production"` is always `true`, Bun replaces the entire 
 ```ts
 if (true) {
 	// [!code ++]
-	console.log('Production mode');
+	console.log("Production mode");
 } else {
-	console.log('Development mode');
+	console.log("Development mode");
 }
 ```
 
@@ -56,7 +56,7 @@ if (true) {
 And finally, Bun detects the `else` branch is not reachable, and eliminates it.
 
 ```ts
-console.log('Production mode');
+console.log("Production mode");
 ```
 
 ---
@@ -76,10 +76,10 @@ bun --define window="undefined" src/index.ts
 This can be useful when Server-Side Rendering (SSR) or when you want to make sure that the code doesn't depend on the `window` object.
 
 ```js
-if (typeof window !== 'undefined') {
-	console.log('Client-side code');
+if (typeof window !== "undefined") {
+	console.log("Client-side code");
 } else {
-	console.log('Server-side code');
+	console.log("Server-side code");
 }
 ```
 
@@ -113,7 +113,7 @@ console.log(AWS.ACCESS_KEY); // => "abc"
 To:
 
 ```ts
-console.log('abc');
+console.log("abc");
 ```
 
 ### Replace values with other properties
@@ -129,13 +129,13 @@ bun --define console.write=console.log src/index.ts
 That transforms the following input:
 
 ```ts
-console.write('Hello, world!');
+console.write("Hello, world!");
 ```
 
 Into the following output:
 
 ```ts
-console.log('Hello, world!');
+console.log("Hello, world!");
 ```
 
 ## How is this different than setting a variable?

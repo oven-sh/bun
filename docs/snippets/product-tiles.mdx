@@ -4,32 +4,31 @@ export const ProductTiles = ({ categories, hideButtons = false }) => {
     categories[0].items[0]?.id ?? null
   )
 
-  const currentCategory = categories.find((cat) => cat.id === activeCategory)
-  const currentSub = currentCategory?.items.find(
-    (item) => item.id === activeSubTab
-  )
+const currentCategory = categories.find((cat) => cat.id === activeCategory)
+const currentSub = currentCategory?.items.find(
+(item) => item.id === activeSubTab
+)
 
-  return (
-    <div className="not-prose space-y-6">
-    {!hideButtons && (
-      <div className="flex flex-wrap gap-2">
-        {categories.map((cat) => (
-          <button
-            key={cat.id}
-            onClick={() => {
-              setActiveCategory(cat.id)
-              setActiveSubTab(cat.items[0]?.id ?? null)
-            }}
-            className={`px-4 py-2 text-sm rounded-full font-medium transition-colors ${activeCategory === cat.id
+return (
+<div className="not-prose space-y-6">
+{!hideButtons && (
+<div className="flex flex-wrap gap-2">
+{categories.map((cat) => (
+<button
+key={cat.id}
+onClick={() => {
+setActiveCategory(cat.id)
+setActiveSubTab(cat.items[0]?.id ?? null)
+}}
+className={`px-4 py-2 text-sm rounded-full font-medium transition-colors ${activeCategory === cat.id
               ? 'bg-[#0A0B0D] text-white dark:bg-white dark:text-[#0A0B0D] border-black'
               : 'bg-gray-100 dark:bg-white/10 text-black dark:text-white'
-              }`}
-          >
-            {cat.label}
-          </button>
-        ))}
-      </div>
-    )}
+              }`} >
+{cat.label}
+</button>
+))}
+</div>
+)}
 
       <div>
         {currentCategory?.items?.length ? (
@@ -89,5 +88,6 @@ export const ProductTiles = ({ categories, hideButtons = false }) => {
         )}
       </div>
     </div>
-  )
+
+)
 }

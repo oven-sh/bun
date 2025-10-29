@@ -1,6 +1,6 @@
 ---
-title: 'Single-file executable'
-description: 'Generate standalone executables from TypeScript or JavaScript files with Bun'
+title: "Single-file executable"
+description: "Generate standalone executables from TypeScript or JavaScript files with Bun"
 ---
 
 Bun's bundler implements a `--compile` flag for generating a standalone binary from a TypeScript or JavaScript file.
@@ -12,7 +12,7 @@ bun build ./cli.ts --compile --outfile mycli
 ```
 
 ```ts cli.ts icon="/icons/typescript.svg"
-console.log('Hello world!');
+console.log("Hello world!");
 ```
 
 </CodeGroup>
@@ -240,13 +240,13 @@ Bun's `--compile` flag can create standalone executables that contain both serve
 <CodeGroup>
 
 ```ts server.ts icon="/icons/typescript.svg"
-import {serve} from 'bun';
-import index from './index.html';
+import { serve } from "bun";
+import index from "./index.html";
 
 const server = serve({
 	routes: {
-		'/': index,
-		'/api/hello': {GET: () => Response.json({message: 'Hello from API'})},
+		"/": index,
+		"/api/hello": { GET: () => Response.json({ message: "Hello from API" }) },
 	},
 });
 
@@ -268,7 +268,7 @@ console.log(`Server running at http://localhost:${server.port}`);
 ```
 
 ```ts app.js icon="file-code"
-console.log('Hello from the client!');
+console.log("Hello from the client!");
 ```
 
 ```css styles.css icon="file-code"
@@ -315,12 +315,12 @@ bun build --compile ./index.ts ./my-worker.ts --outfile myapp
 Then, reference the worker in your code:
 
 ```ts index.ts icon="/icons/typescript.svg"
-console.log('Hello from Bun!');
+console.log("Hello from Bun!");
 
 // Any of these will work:
-new Worker('./my-worker.ts');
-new Worker(new URL('./my-worker.ts', import.meta.url));
-new Worker(new URL('./my-worker.ts', import.meta.url).href);
+new Worker("./my-worker.ts");
+new Worker(new URL("./my-worker.ts", import.meta.url));
+new Worker(new URL("./my-worker.ts", import.meta.url).href);
 ```
 
 As of Bun v1.1.25, when you add multiple entrypoints to a standalone executable, they will be bundled separately into the executable.
@@ -338,9 +338,9 @@ You can use `bun:sqlite` imports with `bun build --compile`.
 By default, the database is resolved relative to the current working directory of the process.
 
 ```ts index.ts icon="/icons/typescript.svg"
-import db from './my.db' with {type: 'sqlite'};
+import db from "./my.db" with { type: "sqlite" };
 
-console.log(db.query('select * from users LIMIT 1').get());
+console.log(db.query("select * from users LIMIT 1").get());
 ```
 
 That means if the executable is located at `/usr/bin/hello`, the user's terminal is located at `/home/me/Desktop`, it will look for `/home/me/Desktop/my.db`.
@@ -360,8 +360,8 @@ To embed files into an executable with `bun build --compile`, import the file in
 
 ```ts index.ts icon="/icons/typescript.svg"
 // this becomes an internal file path
-import icon from './icon.png' with {type: 'file'};
-import {file} from 'bun';
+import icon from "./icon.png" with { type: "file" };
+import { file } from "bun";
 
 export default {
 	fetch(req) {
@@ -376,8 +376,8 @@ Embedded files can be read using `Bun.file`'s functions or the Node.js `fs.readF
 For example, to read the contents of the embedded file:
 
 ```ts index.ts icon="/icons/typescript.svg"
-import icon from './icon.png' with {type: 'file'};
-import {file} from 'bun';
+import icon from "./icon.png" with { type: "file" };
+import { file } from "bun";
 
 const bytes = await file(icon).arrayBuffer();
 // await fs.promises.readFile(icon)
@@ -389,9 +389,9 @@ const bytes = await file(icon).arrayBuffer();
 If your application wants to embed a SQLite database, set `type: "sqlite"` in the import attribute and the `embed` attribute to `"true"`.
 
 ```ts index.ts icon="/icons/typescript.svg"
-import myEmbeddedDb from './my.db' with {type: 'sqlite', embed: 'true'};
+import myEmbeddedDb from "./my.db" with { type: "sqlite", embed: "true" };
 
-console.log(myEmbeddedDb.query('select * from users LIMIT 1').get());
+console.log(myEmbeddedDb.query("select * from users LIMIT 1").get());
 ```
 
 This database is read-write, but all changes are lost when the executable exits (since it's stored in memory).
@@ -401,7 +401,7 @@ This database is read-write, but all changes are lost when the executable exits 
 As of Bun v1.0.23, you can embed `.node` files into executables.
 
 ```ts index.ts icon="/icons/typescript.svg"
-const addon = require('./addon.node');
+const addon = require("./addon.node");
 
 console.log(addon.hello());
 ```
@@ -419,8 +419,8 @@ bun build --compile ./index.ts ./public/**/*.png
 Then, you can reference the files in your code:
 
 ```ts index.ts icon="/icons/typescript.svg"
-import icon from './public/assets/icon.png' with {type: 'file'};
-import {file} from 'bun';
+import icon from "./public/assets/icon.png" with { type: "file" };
+import { file } from "bun";
 
 export default {
 	fetch(req) {
@@ -437,8 +437,8 @@ This is honestly a workaround, and we expect to improve this in the future with 
 To get a list of all embedded files, use `Bun.embeddedFiles`:
 
 ```ts index.ts icon="/icons/typescript.svg"
-import './icon.png' with {type: 'file'};
-import {embeddedFiles} from 'bun';
+import "./icon.png" with { type: "file" };
+import { embeddedFiles } from "bun";
 
 console.log(embeddedFiles[0].name); // `icon-${hash}.png`
 ```

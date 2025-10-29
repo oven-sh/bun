@@ -1,5 +1,5 @@
 ---
-title: 'Writing tests'
+title: "Writing tests"
 description: "Learn how to write tests using Bun's Jest-compatible API with support for async tests, timeouts, and various test modifiers"
 ---
 
@@ -10,9 +10,9 @@ Define tests with a Jest-like API imported from the built-in `bun:test` module. 
 To define a simple test:
 
 ```ts title="math.test.ts" icon="/icons/typescript.svg"
-import {expect, test} from 'bun:test';
+import { expect, test } from "bun:test";
 
-test('2 + 2', () => {
+test("2 + 2", () => {
 	expect(2 + 2).toBe(4);
 });
 ```
@@ -22,14 +22,14 @@ test('2 + 2', () => {
 Tests can be grouped into suites with `describe`.
 
 ```ts title="math.test.ts" icon="/icons/typescript.svg"
-import {expect, test, describe} from 'bun:test';
+import { expect, test, describe } from "bun:test";
 
-describe('arithmetic', () => {
-	test('2 + 2', () => {
+describe("arithmetic", () => {
+	test("2 + 2", () => {
 		expect(2 + 2).toBe(4);
 	});
 
-	test('2 * 2', () => {
+	test("2 * 2", () => {
 		expect(2 * 2).toBe(4);
 	});
 });
@@ -40,9 +40,9 @@ describe('arithmetic', () => {
 Tests can be async.
 
 ```ts title="math.test.ts" icon="/icons/typescript.svg"
-import {expect, test} from 'bun:test';
+import { expect, test } from "bun:test";
 
-test('2 * 2', async () => {
+test("2 * 2", async () => {
 	const result = await Promise.resolve(2 * 2);
 	expect(result).toEqual(4);
 });
@@ -51,9 +51,9 @@ test('2 * 2', async () => {
 Alternatively, use the `done` callback to signal completion. If you include the `done` callback as a parameter in your test definition, you must call it or the test will hang.
 
 ```ts title="math.test.ts" icon="/icons/typescript.svg"
-import {expect, test} from 'bun:test';
+import { expect, test } from "bun:test";
 
-test('2 * 2', done => {
+test("2 * 2", done => {
 	Promise.resolve(2 * 2).then(result => {
 		expect(result).toEqual(4);
 		done();
@@ -66,9 +66,9 @@ test('2 * 2', done => {
 Optionally specify a per-test timeout in milliseconds by passing a number as the third argument to `test`.
 
 ```ts title="math.test.ts" icon="/icons/typescript.svg"
-import {test} from 'bun:test';
+import { test } from "bun:test";
 
-test('wat', async () => {
+test("wat", async () => {
 	const data = await slowOperation();
 	expect(data).toBe(42);
 }, 500); // test must run in <500ms
@@ -89,9 +89,9 @@ When a test times out and processes spawned in the test via `Bun.spawn`, `Bun.sp
 Skip individual tests with `test.skip`. These tests will not be run.
 
 ```ts title="math.test.ts" icon="/icons/typescript.svg"
-import {expect, test} from 'bun:test';
+import { expect, test } from "bun:test";
 
-test.skip('wat', () => {
+test.skip("wat", () => {
 	// TODO: fix this
 	expect(0.1 + 0.2).toEqual(0.3);
 });
@@ -102,9 +102,9 @@ test.skip('wat', () => {
 Mark a test as a todo with `test.todo`. These tests will not be run.
 
 ```ts title="math.test.ts" icon="/icons/typescript.svg"
-import {expect, test} from 'bun:test';
+import { expect, test } from "bun:test";
 
-test.todo('fix this', () => {
+test.todo("fix this", () => {
 	myTestFunction();
 });
 ```
@@ -132,18 +132,18 @@ With this flag, failing todo tests will not cause an error, but todo tests which
 To run a particular test or suite of tests use `test.only()` or `describe.only()`.
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
-import {test, describe} from 'bun:test';
+import { test, describe } from "bun:test";
 
-test('test #1', () => {
+test("test #1", () => {
 	// does not run
 });
 
-test.only('test #2', () => {
+test.only("test #2", () => {
 	// runs
 });
 
-describe.only('only', () => {
-	test('test #3', () => {
+describe.only("only", () => {
+	test("test #3", () => {
 		// runs
 	});
 });
@@ -166,12 +166,12 @@ bun test
 To run a test conditionally, use `test.if()`. The test will run if the condition is truthy. This is particularly useful for tests that should only run on specific architectures or operating systems.
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
-test.if(Math.random() > 0.5)('runs half the time', () => {
+test.if(Math.random() > 0.5)("runs half the time", () => {
 	// ...
 });
 
-const macOS = process.platform === 'darwin';
-test.if(macOS)('runs on macOS', () => {
+const macOS = process.platform === "darwin";
+test.if(macOS)("runs on macOS", () => {
 	// runs if macOS
 });
 ```
@@ -181,9 +181,9 @@ test.if(macOS)('runs on macOS', () => {
 To instead skip a test based on some condition, use `test.skipIf()` or `describe.skipIf()`.
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
-const macOS = process.platform === 'darwin';
+const macOS = process.platform === "darwin";
 
-test.skipIf(macOS)('runs on non-macOS', () => {
+test.skipIf(macOS)("runs on non-macOS", () => {
 	// runs if *not* macOS
 });
 ```
@@ -193,10 +193,10 @@ test.skipIf(macOS)('runs on non-macOS', () => {
 If instead you want to mark the test as TODO, use `test.todoIf()` or `describe.todoIf()`. Carefully choosing `skipIf` or `todoIf` can show a difference between, for example, intent of "invalid for this target" and "planned but not implemented yet."
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
-const macOS = process.platform === 'darwin';
+const macOS = process.platform === "darwin";
 
 // TODO: we've only implemented this for Linux so far.
-test.todoIf(macOS)('runs on posix', () => {
+test.todoIf(macOS)("runs on posix", () => {
 	// runs if *not* macOS
 });
 ```
@@ -210,12 +210,12 @@ Use `test.failing()` when you know a test is currently failing but you want to t
 
 ```ts math.test.ts icon="/icons/typescript.svg"
 // This will pass because the test is failing as expected
-test.failing('math is broken', () => {
+test.failing("math is broken", () => {
 	expect(0.1 + 0.2).toBe(0.3); // fails due to floating point precision
 });
 
 // This will fail with a message that the test is now passing
-test.failing('fixed bug', () => {
+test.failing("fixed bug", () => {
 	expect(1 + 1).toBe(2); // passes, but we expected it to fail
 });
 ```
@@ -227,29 +227,29 @@ This is useful for tracking known bugs that you plan to fix later, or for implem
 The conditional modifiers `.if()`, `.skipIf()`, and `.todoIf()` can also be applied to describe blocks, affecting all tests within the suite:
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
-const isMacOS = process.platform === 'darwin';
+const isMacOS = process.platform === "darwin";
 
 // Only runs the entire suite on macOS
-describe.if(isMacOS)('macOS-specific features', () => {
-	test('feature A', () => {
+describe.if(isMacOS)("macOS-specific features", () => {
+	test("feature A", () => {
 		// only runs on macOS
 	});
 
-	test('feature B', () => {
+	test("feature B", () => {
 		// only runs on macOS
 	});
 });
 
 // Skips the entire suite on Windows
-describe.skipIf(process.platform === 'win32')('Unix features', () => {
-	test('feature C', () => {
+describe.skipIf(process.platform === "win32")("Unix features", () => {
+	test("feature C", () => {
 		// skipped on Windows
 	});
 });
 
 // Marks the entire suite as TODO on Linux
-describe.todoIf(process.platform === 'linux')('Upcoming Linux support', () => {
-	test('feature D', () => {
+describe.todoIf(process.platform === "linux")("Upcoming Linux support", () => {
+	test("feature D", () => {
 		// marked as TODO on Linux
 	});
 });
@@ -267,7 +267,7 @@ const cases = [
 	[3, 4, 7],
 ];
 
-test.each(cases)('%p + %p should be %p', (a, b, expected) => {
+test.each(cases)("%p + %p should be %p", (a, b, expected) => {
 	expect(a + b).toBe(expected);
 });
 ```
@@ -278,7 +278,7 @@ You can also use `describe.each` to create a parametrized suite that runs once f
 describe.each([
 	[1, 2, 3],
 	[3, 4, 7],
-])('add(%i, %i)', (a, b, expected) => {
+])("add(%i, %i)", (a, b, expected) => {
 	test(`returns ${expected}`, () => {
 		expect(a + b).toBe(expected);
 	});
@@ -302,15 +302,15 @@ How arguments are passed to your test function depends on the structure of your 
 test.each([
 	[1, 2, 3],
 	[4, 5, 9],
-])('add(%i, %i) = %i', (a, b, expected) => {
+])("add(%i, %i) = %i", (a, b, expected) => {
 	expect(a + b).toBe(expected);
 });
 
 // Object items passed as a single argument
 test.each([
-	{a: 1, b: 2, expected: 3},
-	{a: 4, b: 5, expected: 9},
-])('add($a, $b) = $expected', data => {
+	{ a: 1, b: 2, expected: 3 },
+	{ a: 4, b: 5, expected: 9 },
+])("add($a, $b) = $expected", data => {
 	expect(data.a + data.b).toBe(data.expected);
 });
 ```
@@ -336,24 +336,24 @@ There are a number of options available for formatting the test title:
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
 // Basic specifiers
 test.each([
-	['hello', 123],
-	['world', 456],
-])('string: %s, number: %i', (str, num) => {
+	["hello", 123],
+	["world", 456],
+])("string: %s, number: %i", (str, num) => {
 	// "string: hello, number: 123"
 	// "string: world, number: 456"
 });
 
 // %p for pretty-format output
 test.each([
-	[{name: 'Alice'}, {a: 1, b: 2}],
-	[{name: 'Bob'}, {x: 5, y: 10}],
-])('user %p with data %p', (user, data) => {
+	[{ name: "Alice" }, { a: 1, b: 2 }],
+	[{ name: "Bob" }, { x: 5, y: 10 }],
+])("user %p with data %p", (user, data) => {
 	// "user { name: 'Alice' } with data { a: 1, b: 2 }"
 	// "user { name: 'Bob' } with data { x: 5, y: 10 }"
 });
 
 // %# for index
-test.each(['apple', 'banana'])('fruit #%# is %s', fruit => {
+test.each(["apple", "banana"])("fruit #%# is %s", fruit => {
 	// "fruit #0 is apple"
 	// "fruit #1 is banana"
 });
@@ -368,7 +368,7 @@ Bun supports verifying that a specific number of assertions were called during a
 Use `expect.hasAssertions()` to verify that at least one assertion is called during a test:
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
-test('async work calls assertions', async () => {
+test("async work calls assertions", async () => {
 	expect.hasAssertions(); // Will fail if no assertions are called
 
 	const data = await fetchData();
@@ -383,11 +383,11 @@ This is especially useful for async tests to ensure your assertions actually run
 Use `expect.assertions(count)` to verify that a specific number of assertions are called during a test:
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
-test('exactly two assertions', () => {
+test("exactly two assertions", () => {
 	expect.assertions(2); // Will fail if not exactly 2 assertions are called
 
 	expect(1 + 1).toBe(2);
-	expect('hello').toContain('ell');
+	expect("hello").toContain("ell");
 });
 ```
 
@@ -410,15 +410,15 @@ The `expectTypeOf` function provides type-level assertions that are checked by T
 2. Run `bunx tsc --noEmit` to check that your types are correct
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
-import {expectTypeOf} from 'bun:test';
+import { expectTypeOf } from "bun:test";
 
 // Basic type assertions
 expectTypeOf<string>().toEqualTypeOf<string>();
 expectTypeOf(123).toBeNumber();
-expectTypeOf('hello').toBeString();
+expectTypeOf("hello").toBeString();
 
 // Object type matching
-expectTypeOf({a: 1, b: 'hello'}).toMatchObjectType<{a: number}>();
+expectTypeOf({ a: 1, b: "hello" }).toMatchObjectType<{ a: number }>();
 
 // Function types
 function greet(name: string): string {
@@ -553,12 +553,12 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
 // Good
-test('should calculate total price including tax for multiple items', () => {
+test("should calculate total price including tax for multiple items", () => {
 	// test implementation
 });
 
 // Avoid
-test('price calculation', () => {
+test("price calculation", () => {
 	// test implementation
 });
 ```
@@ -566,19 +566,19 @@ test('price calculation', () => {
 ### Group Related Tests
 
 ```ts title="auth.test.ts" icon="/icons/typescript.svg"
-describe('User authentication', () => {
-	describe('with valid credentials', () => {
-		test('should return user data', () => {
+describe("User authentication", () => {
+	describe("with valid credentials", () => {
+		test("should return user data", () => {
 			// test implementation
 		});
 
-		test('should set authentication token', () => {
+		test("should set authentication token", () => {
 			// test implementation
 		});
 	});
 
-	describe('with invalid credentials', () => {
-		test('should throw authentication error', () => {
+	describe("with invalid credentials", () => {
+		test("should throw authentication error", () => {
 			// test implementation
 		});
 	});
@@ -590,35 +590,35 @@ describe('User authentication', () => {
 ```ts title="auth.test.ts" icon="/icons/typescript.svg"
 // Good: Use specific matchers
 expect(users).toHaveLength(3);
-expect(user.email).toContain('@');
+expect(user.email).toContain("@");
 expect(response.status).toBeGreaterThanOrEqual(200);
 
 // Avoid: Using toBe for everything
 expect(users.length === 3).toBe(true);
-expect(user.email.includes('@')).toBe(true);
+expect(user.email.includes("@")).toBe(true);
 expect(response.status >= 200).toBe(true);
 ```
 
 ### Test Error Conditions
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
-test('should throw error for invalid input', () => {
+test("should throw error for invalid input", () => {
 	expect(() => {
-		validateEmail('not-an-email');
-	}).toThrow('Invalid email format');
+		validateEmail("not-an-email");
+	}).toThrow("Invalid email format");
 });
 
-test('should handle async errors', async () => {
+test("should handle async errors", async () => {
 	await expect(async () => {
-		await fetchUser('invalid-id');
-	}).rejects.toThrow('User not found');
+		await fetchUser("invalid-id");
+	}).rejects.toThrow("User not found");
 });
 ```
 
 ### Use Setup and Teardown
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
-import {beforeEach, afterEach, test} from 'bun:test';
+import { beforeEach, afterEach, test } from "bun:test";
 
 let testUser;
 
@@ -630,7 +630,7 @@ afterEach(() => {
 	cleanupTestUser(testUser);
 });
 
-test('should update user profile', () => {
+test("should update user profile", () => {
 	// Use testUser in test
 });
 ```

@@ -9,7 +9,7 @@ The recommended way to conditionally detect when code is being executed with `bu
 This is similar to how you'd check for the existence of the `window` variable to detect when code is being executed in a browser.
 
 ```ts
-if (typeof Bun !== 'undefined') {
+if (typeof Bun !== "undefined") {
 	// this code will only run when the file is run with Bun
 }
 ```

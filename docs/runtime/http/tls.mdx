@@ -8,8 +8,8 @@ Bun supports TLS out of the box, powered by [BoringSSL](https://boringssl.google
 ```ts
 Bun.serve({
 	tls: {
-		key: Bun.file('./key.pem'), // [!code ++]
-		cert: Bun.file('./cert.pem'), // [!code ++]
+		key: Bun.file("./key.pem"), // [!code ++]
+		cert: Bun.file("./cert.pem"), // [!code ++]
 	},
 });
 ```
@@ -19,10 +19,10 @@ The `key` and `cert` fields expect the _contents_ of your TLS key and certificat
 ```ts
 Bun.serve({
 	tls: {
-		key: Bun.file('./key.pem'), // BunFile
-		key: fs.readFileSync('./key.pem'), // Buffer
-		key: fs.readFileSync('./key.pem', 'utf8'), // string
-		key: [Bun.file('./key1.pem'), Bun.file('./key2.pem')], // array of above
+		key: Bun.file("./key.pem"), // BunFile
+		key: fs.readFileSync("./key.pem"), // Buffer
+		key: fs.readFileSync("./key.pem", "utf8"), // string
+		key: [Bun.file("./key1.pem"), Bun.file("./key2.pem")], // array of above
 	},
 });
 ```
@@ -34,9 +34,9 @@ If your private key is encrypted with a passphrase, provide a value for `passphr
 ```ts
 Bun.serve({
 	tls: {
-		key: Bun.file('./key.pem'),
-		cert: Bun.file('./cert.pem'),
-		passphrase: 'my-secret-passphrase', // [!code ++]
+		key: Bun.file("./key.pem"),
+		cert: Bun.file("./cert.pem"),
+		passphrase: "my-secret-passphrase", // [!code ++]
 	},
 });
 ```
@@ -48,9 +48,9 @@ Optionally, you can override the trusted CA certificates by passing a value for 
 ```ts
 Bun.serve({
 	tls: {
-		key: Bun.file('./key.pem'), // path to TLS key
-		cert: Bun.file('./cert.pem'), // path to TLS cert
-		ca: Bun.file('./ca.pem'), // path to root CA certificate  // [!code ++]
+		key: Bun.file("./key.pem"), // path to TLS key
+		cert: Bun.file("./cert.pem"), // path to TLS cert
+		ca: Bun.file("./ca.pem"), // path to root CA certificate  // [!code ++]
 	},
 });
 ```
@@ -62,7 +62,7 @@ To override Diffie-Hellman parameters:
 ```ts
 Bun.serve({
 	tls: {
-		dhParamsFile: '/path/to/dhparams.pem', // path to Diffie Hellman parameters // [!code ++]
+		dhParamsFile: "/path/to/dhparams.pem", // path to Diffie Hellman parameters // [!code ++]
 	},
 });
 ```
@@ -76,7 +76,7 @@ To configure the server name indication (SNI) for the server, set the `serverNam
 ```ts
 Bun.serve({
 	tls: {
-		serverName: 'my-server.com', // SNI // [!code ++]
+		serverName: "my-server.com", // SNI // [!code ++]
 	},
 });
 ```
@@ -87,14 +87,14 @@ To allow multiple server names, pass an array of objects to `tls`, each with a `
 Bun.serve({
 	tls: [
 		{
-			key: Bun.file('./key1.pem'),
-			cert: Bun.file('./cert1.pem'),
-			serverName: 'my-server1.com', // [!code ++]
+			key: Bun.file("./key1.pem"),
+			cert: Bun.file("./cert1.pem"),
+			serverName: "my-server1.com", // [!code ++]
 		},
 		{
-			key: Bun.file('./key2.pem'),
-			cert: Bun.file('./cert2.pem'),
-			serverName: 'my-server2.com', // [!code ++]
+			key: Bun.file("./key2.pem"),
+			cert: Bun.file("./cert2.pem"),
+			serverName: "my-server2.com", // [!code ++]
 		},
 	],
 });

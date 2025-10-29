@@ -11,7 +11,7 @@ To start a TCP server with `Bun.listen`:
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.listen({
-	hostname: 'localhost',
+	hostname: "localhost",
 	port: 8080,
 	socket: {
 		data(socket, data) {}, // message received from client
@@ -29,7 +29,7 @@ In Bun, a set of handlers are declared once per server instead of assigning call
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.listen({
-	hostname: 'localhost',
+	hostname: "localhost",
 	port: 8080,
 	socket: {
 		open(socket) {},
@@ -48,17 +48,17 @@ For performance-sensitive servers, assigning listeners to each socket can cause 
 Contextual data can be attached to a socket in the `open` handler.
 
 ```ts server.ts icon="/icons/typescript.svg"
-type SocketData = {sessionId: string};
+type SocketData = { sessionId: string };
 
 Bun.listen<SocketData>({
-	hostname: 'localhost',
+	hostname: "localhost",
 	port: 8080,
 	socket: {
 		data(socket, data) {
 			socket.write(`${socket.data.sessionId}: ack`); // [!code ++]
 		},
 		open(socket) {
-			socket.data = {sessionId: 'abcd'}; // [!code ++]
+			socket.data = { sessionId: "abcd" }; // [!code ++]
 		},
 	},
 });
@@ -68,15 +68,15 @@ To enable TLS, pass a `tls` object containing `key` and `cert` fields.
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.listen({
-	hostname: 'localhost',
+	hostname: "localhost",
 	port: 8080,
 	socket: {
 		data(socket, data) {},
 	},
 	tls: {
 		// can be string, BunFile, TypedArray, Buffer, or array thereof
-		key: Bun.file('./key.pem'), // [!code ++]
-		cert: Bun.file('./cert.pem'), // [!code ++]
+		key: Bun.file("./key.pem"), // [!code ++]
+		cert: Bun.file("./cert.pem"), // [!code ++]
 	},
 });
 ```
@@ -87,10 +87,10 @@ The `key` and `cert` fields expect the _contents_ of your TLS key and certificat
 Bun.listen({
 	// ...
 	tls: {
-		key: Bun.file('./key.pem'), // BunFile
-		key: fs.readFileSync('./key.pem'), // Buffer
-		key: fs.readFileSync('./key.pem', 'utf8'), // string
-		key: [Bun.file('./key1.pem'), Bun.file('./key2.pem')], // array of above
+		key: Bun.file("./key.pem"), // BunFile
+		key: fs.readFileSync("./key.pem"), // Buffer
+		key: fs.readFileSync("./key.pem", "utf8"), // string
+		key: [Bun.file("./key1.pem"), Bun.file("./key2.pem")], // array of above
 	},
 });
 ```
@@ -119,7 +119,7 @@ Use `Bun.connect` to connect to a TCP server. Specify the server to connect to w
 ```ts server.ts icon="/icons/typescript.svg"
 // The client
 const socket = await Bun.connect({
-	hostname: 'localhost',
+	hostname: "localhost",
 	port: 8080,
 
 	socket: {
@@ -191,23 +191,23 @@ socket.reload({
 Currently, TCP sockets in Bun do not buffer data. For performance-sensitive code, it's important to consider buffering carefully. For example, this:
 
 ```ts
-socket.write('h');
-socket.write('e');
-socket.write('l');
-socket.write('l');
-socket.write('o');
+socket.write("h");
+socket.write("e");
+socket.write("l");
+socket.write("l");
+socket.write("o");
 ```
 
 ...performs significantly worse than this:
 
 ```ts
-socket.write('hello');
+socket.write("hello");
 ```
 
 To simplify this for now, consider using Bun's `ArrayBufferSink` with the `{stream: true}` option:
 
 ```ts server.ts icon="/icons/typescript.svg"
-import {ArrayBufferSink} from 'bun';
+import { ArrayBufferSink } from "bun";
 
 const sink = new ArrayBufferSink();
 sink.start({
@@ -215,11 +215,11 @@ sink.start({
 	highWaterMark: 1024,
 });
 
-sink.write('h');
-sink.write('e');
-sink.write('l');
-sink.write('l');
-sink.write('o');
+sink.write("h");
+sink.write("e");
+sink.write("l");
+sink.write("l");
+sink.write("o");
 
 queueMicrotask(() => {
 	const data = sink.flush();

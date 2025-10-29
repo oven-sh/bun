@@ -1,6 +1,6 @@
 ---
-title: 'Debugging'
-description: 'Debug your Bun code with an interactive debugger using WebKit Inspector Protocol'
+title: "Debugging"
+description: "Debug your Bun code with an interactive debugger using WebKit Inspector Protocol"
 ---
 
 Bun speaks the [WebKit Inspector Protocol](https://github.com/oven-sh/bun/blob/main/packages/bun-inspector-protocol/src/protocol/jsc/index.d.ts), so you can debug your code with an interactive debugger. For demonstration purposes, consider the following simple web server.
@@ -11,7 +11,7 @@ Bun speaks the [WebKit Inspector Protocol](https://github.com/oven-sh/bun/blob/m
 Bun.serve({
 	fetch(req) {
 		console.log(req.url);
-		return new Response('Hello, world!');
+		return new Response("Hello, world!");
 	},
 });
 ```
@@ -139,14 +139,14 @@ The `BUN_CONFIG_VERBOSE_FETCH` environment variable lets you log network request
 Bun also supports printing `fetch()` and `node:http` network requests as `curl` commands by setting the environment variable `BUN_CONFIG_VERBOSE_FETCH` to `curl`.
 
 ```ts index.ts icon="/icons/typescript.svg"
-process.env.BUN_CONFIG_VERBOSE_FETCH = 'curl';
+process.env.BUN_CONFIG_VERBOSE_FETCH = "curl";
 
-await fetch('https://example.com', {
-	method: 'POST',
+await fetch("https://example.com", {
+	method: "POST",
 	headers: {
-		'Content-Type': 'application/json',
+		"Content-Type": "application/json",
 	},
-	body: JSON.stringify({foo: 'bar'}),
+	body: JSON.stringify({ foo: "bar" }),
 });
 ```
 
@@ -182,14 +182,14 @@ The `BUN_CONFIG_VERBOSE_FETCH` environment variable is supported in both `fetch(
 To print without the `curl` command, set `BUN_CONFIG_VERBOSE_FETCH` to `true`.
 
 ```ts index.ts icon="/icons/typescript.svg"
-process.env.BUN_CONFIG_VERBOSE_FETCH = 'true';
+process.env.BUN_CONFIG_VERBOSE_FETCH = "true";
 
-await fetch('https://example.com', {
-	method: 'POST',
+await fetch("https://example.com", {
+	method: "POST",
 	headers: {
-		'Content-Type': 'application/json',
+		"Content-Type": "application/json",
 	},
-	body: JSON.stringify({foo: 'bar'}),
+	body: JSON.stringify({ foo: "bar" }),
 });
 ```
 
@@ -231,8 +231,8 @@ To help with debugging, Bun automatically prints a small source-code preview whe
 
 ```ts
 // Create an error
-const err = new Error('Something went wrong');
-console.log(Bun.inspect(err, {colors: true}));
+const err = new Error("Something went wrong");
+console.log(Bun.inspect(err, { colors: true }));
 ```
 
 This prints a syntax-highlighted preview of the source code where the error occurred, along with the error message and stack trace.
@@ -266,7 +266,7 @@ Error.prepareStackTrace = (err, stack) => {
 	});
 };
 
-const err = new Error('Something went wrong');
+const err = new Error("Something went wrong");
 console.log(err.stack);
 // [ "error.js" ]
 ```
@@ -314,9 +314,9 @@ const fn = () => {
 		myInner();
 	} catch (err) {
 		console.log(err.stack);
-		console.log('');
-		console.log('-- captureStackTrace --');
-		console.log('');
+		console.log("");
+		console.log("-- captureStackTrace --");
+		console.log("");
 		Error.captureStackTrace(err, fn);
 		console.log(err.stack);
 	}

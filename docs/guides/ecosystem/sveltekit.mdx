@@ -1,6 +1,6 @@
 ---
 title: Build an app with SvelteKit and Bun
-sidebarTitle: 'SvelteKit with Bun'
+sidebarTitle: "SvelteKit with Bun"
 mode: center
 ---
 
@@ -90,9 +90,9 @@ To build for production, you'll need to add the right SvelteKit adapter. Current
 Now, make the following changes to your `svelte.config.js`.
 
 ```ts svelte.config.js icon="file-code"
-import adapter from '@sveltejs/adapter-auto'; // [!code --]
-import adapter from 'svelte-adapter-bun'; // [!code ++]
-import {vitePreprocess} from '@sveltejs/vite-plugin-svelte';
+import adapter from "@sveltejs/adapter-auto"; // [!code --]
+import adapter from "svelte-adapter-bun"; // [!code ++]
+import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {

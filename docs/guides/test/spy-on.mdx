@@ -7,16 +7,16 @@ mode: center
 Use the `spyOn` utility to track method calls with Bun's test runner.
 
 ```ts
-import {test, expect, spyOn} from 'bun:test';
+import { test, expect, spyOn } from "bun:test";
 
 const leo = {
-	name: 'Leonardo',
+	name: "Leonardo",
 	sayHi(thing: string) {
 		console.log(`Sup I'm ${this.name} and I like ${thing}`);
 	},
 };
 
-const spy = spyOn(leo, 'sayHi');
+const spy = spyOn(leo, "sayHi");
 ```
 
 ---
@@ -24,23 +24,23 @@ const spy = spyOn(leo, 'sayHi');
 Once the spy is created, it can be used to write `expect` assertions relating to method calls.
 
 ```ts
-import {test, expect, spyOn} from 'bun:test';
+import { test, expect, spyOn } from "bun:test";
 
 const leo = {
-	name: 'Leonardo',
+	name: "Leonardo",
 	sayHi(thing: string) {
 		console.log(`Sup I'm ${this.name} and I like ${thing}`);
 	},
 };
 
-const spy = spyOn(leo, 'sayHi');
+const spy = spyOn(leo, "sayHi");
 
-test('turtles', () => {
+test("turtles", () => {
 	// [!code ++]
 	expect(spy).toHaveBeenCalledTimes(0); // [!code ++]
-	leo.sayHi('pizza'); // [!code ++]
+	leo.sayHi("pizza"); // [!code ++]
 	expect(spy).toHaveBeenCalledTimes(1); // [!code ++]
-	expect(spy.mock.calls).toEqual([['pizza']]); // [!code ++]
+	expect(spy.mock.calls).toEqual([["pizza"]]); // [!code ++]
 }); // [!code ++]
 ```
 

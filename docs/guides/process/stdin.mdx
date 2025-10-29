@@ -7,7 +7,7 @@ mode: center
 For CLI tools, it's often useful to read from `stdin`. In Bun, the `console` object is an `AsyncIterable` that yields lines from `stdin`.
 
 ```ts index.ts icon="/icons/typescript.svg"
-const prompt = 'Type something: ';
+const prompt = "Type something: ";
 process.stdout.write(prompt);
 for await (const line of console) {
 	console.log(`You typed: ${line}`);

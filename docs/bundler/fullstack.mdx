@@ -1,14 +1,14 @@
 ---
-title: 'Fullstack dev server'
+title: "Fullstack dev server"
 description: "Build fullstack applications with Bun's integrated dev server that bundles frontend assets and handles API routes"
 ---
 
 To get started, import HTML files and pass them to the `routes` option in `Bun.serve()`.
 
 ```ts title="app.ts" icon="/icons/typescript.svg"
-import {serve} from 'bun';
-import dashboard from './dashboard.html';
-import homepage from './index.html';
+import { serve } from "bun";
+import dashboard from "./dashboard.html";
+import homepage from "./index.html";
 
 const server = serve({
 	routes: {
@@ -17,24 +17,24 @@ const server = serve({
 		// the HTML for `<script>` and `<link>` tags, runs Bun's JavaScript
 		// & CSS bundler on them, transpiles any TypeScript, JSX, and TSX,
 		// downlevels CSS with Bun's CSS parser and serves the result.
-		'/': homepage,
+		"/": homepage,
 		// Bundle & route dashboard.html to "/dashboard"
-		'/dashboard': dashboard,
+		"/dashboard": dashboard,
 
 		// ** API endpoints ** (Bun v1.2.3+ required)
-		'/api/users': {
+		"/api/users": {
 			async GET(req) {
 				const users = await sql`SELECT * FROM users`;
 				return Response.json(users);
 			},
 			async POST(req) {
-				const {name, email} = await req.json();
+				const { name, email } = await req.json();
 				const [user] = await sql`INSERT INTO users (name, email) VALUES (${name}, ${email})`;
 				return Response.json(user);
 			},
 		},
-		'/api/users/:id': async req => {
-			const {id} = req.params;
+		"/api/users/:id": async req => {
+			const { id } = req.params;
 			const [user] = await sql`SELECT * FROM users WHERE id = ${id}`;
 			return Response.json(user);
 		},
@@ -62,8 +62,8 @@ The web starts with HTML, and so does Bun's fullstack dev server.
 To specify entrypoints to your frontend, import HTML files into your JavaScript/TypeScript/TSX/JSX files.
 
 ```ts title="app.ts" icon="/icons/typescript.svg"
-import dashboard from './dashboard.html';
-import homepage from './index.html';
+import dashboard from "./dashboard.html";
+import homepage from "./index.html";
 ```
 
 These HTML files are used as routes in Bun's dev server you can pass to `Bun.serve()`.
@@ -71,8 +71,8 @@ These HTML files are used as routes in Bun's dev server you can pass to `Bun.ser
 ```ts title="app.ts" icon="/icons/typescript.svg"
 Bun.serve({
 	routes: {
-		'/': homepage,
-		'/dashboard': dashboard,
+		"/": homepage,
+		"/dashboard": dashboard,
 	},
 
 	fetch(req) {
@@ -130,16 +130,18 @@ import dashboard from "../public/dashboard.html";
 import { serve } from "bun";
 
 serve({
-	routes: {
-		"/": dashboard,
-	},
+routes: {
+"/": dashboard,
+},
 
-	async fetch(req) {
-		// ...api requests
-		return new Response("hello world");
-	},
+    async fetch(req) {
+    	// ...api requests
+    	return new Response("hello world");
+    },
+
 });
-```
+
+````
 </Tab>
 
 <Tab title="src/frontend.tsx">
@@ -150,7 +152,8 @@ import App from './app';
 const container = document.getElementById('root');
 const root = createRoot(container!);
 root.render(<App />);
-```
+````
+
 </Tab>
 
 <Tab title="public/dashboard.html">
@@ -176,16 +179,18 @@ import { useState } from 'react';
 export default function App() {
 	const [count, setCount] = useState(0);
 
-	return (
-		<div>
-			<h1>Dashboard</h1>
-			<button onClick={() => setCount(count + 1)}>
-				Count: {count}
-			</button>
-		</div>
-	);
+    return (
+    	<div>
+    		<h1>Dashboard</h1>
+    		<button onClick={() => setCount(count + 1)}>
+    			Count: {count}
+    		</button>
+    	</div>
+    );
+
 }
-```
+
+````
 </Tab>
 </Tabs>
 
@@ -209,7 +214,7 @@ Bun.serve({
     // ... api requests
   },
 });
-```
+````
 
 ### Development Mode Features
 
@@ -228,7 +233,7 @@ When `development` is `true`, Bun will:
 To enable this, pass `console: true` in the development object in `Bun.serve()`.
 
 ```ts title="src/backend.ts" icon="/icons/typescript.svg"
-import homepage from './index.html';
+import homepage from "./index.html";
 
 Bun.serve({
 	// development can also be an object.
@@ -241,7 +246,7 @@ Bun.serve({
 	},
 
 	routes: {
-		'/': homepage,
+		"/": homepage,
 	},
 });
 ```
@@ -274,11 +279,11 @@ bun build --target=bun --production --outdir=dist ./src/index.ts
 When Bun's bundler sees an HTML import from server-side code, it will bundle the referenced JavaScript/TypeScript/TSX/JSX and CSS files into a manifest object that `Bun.serve()` can use to serve the assets.
 
 ```ts title="src/backend.ts" icon="/icons/typescript.svg"
-import {serve} from 'bun';
-import index from './index.html';
+import { serve } from "bun";
+import index from "./index.html";
 
 serve({
-	routes: {'/': index},
+	routes: { "/": index },
 });
 ```
 
@@ -293,12 +298,12 @@ This will:
 - Minify JavaScript/TypeScript/TSX/JSX files
 
 ```ts title="src/backend.ts" icon="/icons/typescript.svg"
-import {serve} from 'bun';
-import homepage from './index.html';
+import { serve } from "bun";
+import homepage from "./index.html";
 
 serve({
 	routes: {
-		'/': homepage,
+		"/": homepage,
 	},
 
 	// Production mode
@@ -313,11 +318,11 @@ serve({
 Define API endpoints with HTTP method handlers:
 
 ```ts title="src/backend.ts" icon="/icons/typescript.svg"
-import {serve} from 'bun';
+import { serve } from "bun";
 
 serve({
 	routes: {
-		'/api/users': {
+		"/api/users": {
 			async GET(req) {
 				// Handle GET requests
 				const users = await getUsers();
@@ -328,7 +333,7 @@ serve({
 				// Handle POST requests
 				const userData = await req.json();
 				const user = await createUser(userData);
-				return Response.json(user, {status: 201});
+				return Response.json(user, { status: 201 });
 			},
 
 			async PUT(req) {
@@ -341,7 +346,7 @@ serve({
 			async DELETE(req) {
 				// Handle DELETE requests
 				await deleteUser(req.params.id);
-				return new Response(null, {status: 204});
+				return new Response(null, { status: 204 });
 			},
 		},
 	},
@@ -356,22 +361,22 @@ Use URL parameters in your routes:
 serve({
 	routes: {
 		// Single parameter
-		'/api/users/:id': async req => {
-			const {id} = req.params;
+		"/api/users/:id": async req => {
+			const { id } = req.params;
 			const user = await getUserById(id);
 			return Response.json(user);
 		},
 
 		// Multiple parameters
-		'/api/users/:userId/posts/:postId': async req => {
-			const {userId, postId} = req.params;
+		"/api/users/:userId/posts/:postId": async req => {
+			const { userId, postId } = req.params;
 			const post = await getPostByUser(userId, postId);
 			return Response.json(post);
 		},
 
 		// Wildcard routes
-		'/api/files/*': async req => {
-			const filePath = req.params['*'];
+		"/api/files/*": async req => {
+			const filePath = req.params["*"];
 			const file = await getFile(filePath);
 			return new Response(file);
 		},
@@ -384,24 +389,24 @@ serve({
 ```ts title="src/backend.ts" icon="/icons/typescript.svg"
 serve({
 	routes: {
-		'/api/data': {
+		"/api/data": {
 			async POST(req) {
 				// Parse JSON body
 				const body = await req.json();
 
 				// Access headers
-				const auth = req.headers.get('Authorization');
+				const auth = req.headers.get("Authorization");
 
 				// Access URL parameters
-				const {id} = req.params;
+				const { id } = req.params;
 
 				// Access query parameters
 				const url = new URL(req.url);
-				const page = url.searchParams.get('page') || '1';
+				const page = url.searchParams.get("page") || "1";
 
 				// Return response
 				return Response.json({
-					message: 'Data processed',
+					message: "Data processed",
 					page: parseInt(page),
 					authenticated: !!auth,
 				});
@@ -450,7 +455,7 @@ This will allow you to use TailwindCSS utility classes in your HTML and CSS file
 Or in your CSS:
 
 ```css title="style.css" icon="file-code"
-@import 'tailwindcss';
+@import "tailwindcss";
 
 .custom-class {
 	@apply bg-red-500 text-white;
@@ -467,17 +472,17 @@ plugins = ["./my-plugin-implementation.ts"]
 ```
 
 ```ts title="my-plugin-implementation.ts" icon="/icons/typescript.svg"
-import type {BunPlugin} from 'bun';
+import type { BunPlugin } from "bun";
 
 const myPlugin: BunPlugin = {
-	name: 'my-custom-plugin',
+	name: "my-custom-plugin",
 	setup(build) {
 		// Plugin implementation
-		build.onLoad({filter: /\.custom$/}, async args => {
+		build.onLoad({ filter: /\.custom$/ }, async args => {
 			const text = await Bun.file(args.path).text();
 			return {
 				contents: `export default ${JSON.stringify(text)};`,
-				loader: 'js',
+				loader: "js",
 			};
 		});
 	},
@@ -542,13 +547,13 @@ Bun uses `HTMLRewriter` to scan for `<script>` and `<link>` tags in HTML files, 
 Here's a complete fullstack application example:
 
 ```ts title="server.ts" icon="/icons/typescript.svg"
-import {serve} from 'bun';
-import {Database} from 'bun:sqlite';
-import homepage from './public/index.html';
-import dashboard from './public/dashboard.html';
+import { serve } from "bun";
+import { Database } from "bun:sqlite";
+import homepage from "./public/index.html";
+import dashboard from "./public/dashboard.html";
 
 // Initialize database
-const db = new Database('app.db');
+const db = new Database("app.db");
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -561,60 +566,60 @@ db.exec(`
 const server = serve({
 	routes: {
 		// Frontend routes
-		'/': homepage,
-		'/dashboard': dashboard,
+		"/": homepage,
+		"/dashboard": dashboard,
 
 		// API routes
-		'/api/users': {
+		"/api/users": {
 			async GET() {
-				const users = db.query('SELECT * FROM users').all();
+				const users = db.query("SELECT * FROM users").all();
 				return Response.json(users);
 			},
 
 			async POST(req) {
-				const {name, email} = await req.json();
+				const { name, email } = await req.json();
 
 				try {
 					const result = db
-						.query('INSERT INTO users (name, email) VALUES (?, ?) RETURNING *')
+						.query("INSERT INTO users (name, email) VALUES (?, ?) RETURNING *")
 						.get(name, email);
 
-					return Response.json(result, {status: 201});
+					return Response.json(result, { status: 201 });
 				} catch (error) {
-					return Response.json({error: 'Email already exists'}, {status: 400});
+					return Response.json({ error: "Email already exists" }, { status: 400 });
 				}
 			},
 		},
 
-		'/api/users/:id': {
+		"/api/users/:id": {
 			async GET(req) {
-				const {id} = req.params;
-				const user = db.query('SELECT * FROM users WHERE id = ?').get(id);
+				const { id } = req.params;
+				const user = db.query("SELECT * FROM users WHERE id = ?").get(id);
 
 				if (!user) {
-					return Response.json({error: 'User not found'}, {status: 404});
+					return Response.json({ error: "User not found" }, { status: 404 });
 				}
 
 				return Response.json(user);
 			},
 
 			async DELETE(req) {
-				const {id} = req.params;
-				const result = db.query('DELETE FROM users WHERE id = ?').run(id);
+				const { id } = req.params;
+				const result = db.query("DELETE FROM users WHERE id = ?").run(id);
 
 				if (result.changes === 0) {
-					return Response.json({error: 'User not found'}, {status: 404});
+					return Response.json({ error: "User not found" }, { status: 404 });
 				}
 
-				return new Response(null, {status: 204});
+				return new Response(null, { status: 204 });
 			},
 		},
 
 		// Health check endpoint
-		'/api/health': {
+		"/api/health": {
 			GET() {
 				return Response.json({
-					status: 'ok',
+					status: "ok",
 					timestamp: new Date().toISOString(),
 				});
 			},
@@ -629,7 +634,7 @@ const server = serve({
 
 	// Fallback for unmatched routes
 	fetch(req) {
-		return new Response('Not Found', {status: 404});
+		return new Response("Not Found", { status: 404 });
 	},
 });
 
@@ -653,16 +658,16 @@ console.log(`🚀 Server running on ${server.url}`);
 ```
 
 ```tsx title="src/main.tsx"
-import {createRoot} from 'react-dom/client';
-import {App} from './App';
+import { createRoot } from "react-dom/client";
+import { App } from "./App";
 
-const container = document.getElementById('root')!;
+const container = document.getElementById("root")!;
 const root = createRoot(container);
 root.render(<App />);
 ```
 
 ```tsx title="src/App.tsx"
-import {useState, useEffect} from 'react';
+import { useState, useEffect } from "react";
 
 interface User {
 	id: number;
@@ -673,12 +678,12 @@ interface User {
 
 export function App() {
 	const [users, setUsers] = useState<User[]>([]);
-	const [name, setName] = useState('');
-	const [email, setEmail] = useState('');
+	const [name, setName] = useState("");
+	const [email, setEmail] = useState("");
 	const [loading, setLoading] = useState(false);
 
 	const fetchUsers = async () => {
-		const response = await fetch('/api/users');
+		const response = await fetch("/api/users");
 		const data = await response.json();
 		setUsers(data);
 	};
@@ -688,40 +693,40 @@ export function App() {
 		setLoading(true);
 
 		try {
-			const response = await fetch('/api/users', {
-				method: 'POST',
-				headers: {'Content-Type': 'application/json'},
-				body: JSON.stringify({name, email}),
+			const response = await fetch("/api/users", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ name, email }),
 			});
 
 			if (response.ok) {
-				setName('');
-				setEmail('');
+				setName("");
+				setEmail("");
 				await fetchUsers();
 			} else {
 				const error = await response.json();
 				alert(error.error);
 			}
 		} catch (error) {
-			alert('Failed to create user');
+			alert("Failed to create user");
 		} finally {
 			setLoading(false);
 		}
 	};
 
 	const deleteUser = async (id: number) => {
-		if (!confirm('Are you sure?')) return;
+		if (!confirm("Are you sure?")) return;
 
 		try {
 			const response = await fetch(`/api/users/${id}`, {
-				method: 'DELETE',
+				method: "DELETE",
 			});
 
 			if (response.ok) {
 				await fetchUsers();
 			}
 		} catch (error) {
-			alert('Failed to delete user');
+			alert("Failed to delete user");
 		}
 	};
 
@@ -749,7 +754,7 @@ export function App() {
 					required
 				/>
 				<button type="submit" disabled={loading}>
-					{loading ? 'Creating...' : 'Create User'}
+					{loading ? "Creating..." : "Create User"}
 				</button>
 			</form>
 
@@ -903,13 +908,13 @@ my-app/
 
 ```ts title="server/config.ts" icon="/icons/typescript.svg"
 export const config = {
-	development: process.env.NODE_ENV !== 'production',
+	development: process.env.NODE_ENV !== "production",
 	port: process.env.PORT || 3000,
 	database: {
-		url: process.env.DATABASE_URL || './dev.db',
+		url: process.env.DATABASE_URL || "./dev.db",
 	},
 	cors: {
-		origin: process.env.CORS_ORIGIN || '*',
+		origin: process.env.CORS_ORIGIN || "*",
 	},
 };
 ```
@@ -918,10 +923,10 @@ export const config = {
 
 ```ts title="server/middleware.ts" icon="/icons/typescript.svg"
 export function errorHandler(error: Error, req: Request) {
-	console.error('Server error:', error);
+	console.error("Server error:", error);
 
-	if (process.env.NODE_ENV === 'production') {
-		return Response.json({error: 'Internal server error'}, {status: 500});
+	if (process.env.NODE_ENV === "production") {
+		return Response.json({ error: "Internal server error" }, { status: 500 });
 	}
 
 	return Response.json(
@@ -929,7 +934,7 @@ export function errorHandler(error: Error, req: Request) {
 			error: error.message,
 			stack: error.stack,
 		},
-		{status: 500},
+		{ status: 500 },
 	);
 }
 ```
@@ -938,18 +943,18 @@ export function errorHandler(error: Error, req: Request) {
 
 ```ts title="server/utils.ts" icon="/icons/typescript.svg"
 export function json(data: any, status = 200) {
-	return Response.json(data, {status});
+	return Response.json(data, { status });
 }
 
 export function error(message: string, status = 400) {
-	return Response.json({error: message}, {status});
+	return Response.json({ error: message }, { status });
 }
 
-export function notFound(message = 'Not found') {
+export function notFound(message = "Not found") {
 	return error(message, 404);
 }
 
-export function unauthorized(message = 'Unauthorized') {
+export function unauthorized(message = "Unauthorized") {
 	return error(message, 401);
 }
 ```
@@ -1028,16 +1033,16 @@ CORS_ORIGIN=https://myapp.com
 
 ```ts title="server.ts" icon="/icons/typescript.svg"
 // Before (Express + Webpack)
-app.use(express.static('dist'));
-app.get('/api/users', (req, res) => {
+app.use(express.static("dist"));
+app.get("/api/users", (req, res) => {
 	res.json(users);
 });
 
 // After (Bun fullstack)
 serve({
 	routes: {
-		'/': homepage, // Replaces express.static
-		'/api/users': {
+		"/": homepage, // Replaces express.static
+		"/api/users": {
 			GET() {
 				return Response.json(users);
 			},

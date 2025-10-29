@@ -7,10 +7,10 @@ mode: center
 Bun's test runner supports Jest-style snapshot testing via `.toMatchSnapshot()`.
 
 ```ts snap.test.ts icon="/icons/typescript.svg"
-import {test, expect} from 'bun:test';
+import { test, expect } from "bun:test";
 
-test('snapshot', () => {
-	expect({foo: 'bar'}).toMatchSnapshot();
+test("snapshot", () => {
+	expect({ foo: "bar" }).toMatchSnapshot();
 });
 ```
 

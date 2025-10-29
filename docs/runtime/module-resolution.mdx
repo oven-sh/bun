@@ -1,6 +1,6 @@
 ---
-title: 'Module Resolution'
-description: 'How Bun resolves modules and handles imports in JavaScript and TypeScript'
+title: "Module Resolution"
+description: "How Bun resolves modules and handles imports in JavaScript and TypeScript"
 ---
 
 Module resolution in JavaScript is a complex topic.
@@ -16,14 +16,14 @@ Consider the following files.
 <CodeGroup>
 
 ```ts index.ts icon="/icons/typescript.svg"
-import {hello} from './hello';
+import { hello } from "./hello";
 
 hello();
 ```
 
 ```ts hello.ts icon="/icons/typescript.svg"
 export function hello() {
-	console.log('Hello world!');
+	console.log("Hello world!");
 }
 ```
 
@@ -56,16 +56,16 @@ In this case, we are importing from `./hello`, a relative path with no extension
 Import paths can optionally include extensions. If an extension is present, Bun will only check for a file with that exact extension.
 
 ```ts index.ts icon="/icons/typescript.svg"
-import {hello} from './hello';
-import {hello} from './hello.ts'; // this works
+import { hello } from "./hello";
+import { hello } from "./hello.ts"; // this works
 ```
 
 If you import `from "*.js{x}"`, Bun will additionally check for a matching `*.ts{x}` file, to be compatible with TypeScript's [ES module support](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-7.html#new-file-extensions).
 
 ```ts index.ts icon="/icons/typescript.svg"
-import {hello} from './hello';
-import {hello} from './hello.ts'; // this works
-import {hello} from './hello.js'; // this also works
+import { hello } from "./hello";
+import { hello } from "./hello.ts"; // this works
+import { hello } from "./hello.js"; // this also works
 ```
 
 Bun supports both ES modules (`import`/`export` syntax) and CommonJS modules (`require()`/`module.exports`). The following CommonJS version would also work in Bun.
@@ -73,14 +73,14 @@ Bun supports both ES modules (`import`/`export` syntax) and CommonJS modules (`r
 <CodeGroup>
 
 ```ts index.js icon="/icons/typescript.svg"
-const {hello} = require('./hello');
+const { hello } = require("./hello");
 
 hello();
 ```
 
 ```ts hello.js icon="/icons/typescript.svg"
 function hello() {
-	console.log('Hello world!');
+	console.log("Hello world!");
 }
 
 exports.hello = hello;
@@ -108,9 +108,9 @@ In Bun's JavaScript runtime, `require` can be used by both ES Modules and Common
 You can `require()` any file or package, even `.ts` or `.mjs` files.
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
-const {foo} = require('./foo'); // extensions are optional
-const {bar} = require('./bar.mjs');
-const {baz} = require('./baz.tsx');
+const { foo } = require("./foo"); // extensions are optional
+const { bar } = require("./bar.mjs");
+const { baz } = require("./baz.tsx");
 ```
 
 <Accordion title="What is a CommonJS module?">
@@ -120,8 +120,8 @@ In 2016, ECMAScript added support for [ES Modules](https://developer.mozilla.org
 CommonJS modules are modules that use `module.exports` to export values. Typically, `require` is used to import CommonJS modules.
 
 ```ts my-commonjs.cjs icon="/icons/javascript.svg"
-const stuff = require('./stuff');
-module.exports = {stuff};
+const stuff = require("./stuff");
+module.exports = { stuff };
 ```
 
 The biggest difference between CommonJS and ES Modules is that CommonJS modules are synchronous, while ES Modules are asynchronous. There are other differences too.
@@ -149,9 +149,9 @@ The biggest difference between CommonJS and ES Modules is that CommonJS modules 
 You can `import` any file or package, even `.cjs` files.
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
-import {foo} from './foo'; // extensions are optional
-import bar from './bar.ts';
-import {stuff} from './my-commonjs.cjs';
+import { foo } from "./foo"; // extensions are optional
+import bar from "./bar.ts";
+import { stuff } from "./my-commonjs.cjs";
 ```
 
 ### Using `import` and `require()` together
@@ -159,10 +159,10 @@ import {stuff} from './my-commonjs.cjs';
 In Bun, you can use `import` or `require` in the same file—they both work, all the time.
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
-import {stuff} from './my-commonjs.cjs';
-import Stuff from './my-commonjs.cjs';
+import { stuff } from "./my-commonjs.cjs";
+import Stuff from "./my-commonjs.cjs";
 
-const myStuff = require('./my-commonjs.cjs');
+const myStuff = require("./my-commonjs.cjs");
 ```
 
 ### Top level await
@@ -178,7 +178,7 @@ Fortunately, very few libraries use top-level await, so this is rarely a problem
 Bun implements the Node.js module resolution algorithm, so you can import packages from `node_modules` with a bare specifier.
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
-import {stuff} from 'foo';
+import { stuff } from "foo";
 ```
 
 The full specification of this algorithm are officially documented in the [Node.js documentation](https://nodejs.org/api/modules.html); we won't rehash it here. Briefly: if you import `from "foo"`, Bun scans up the file system for a `node_modules` directory containing the package `foo`.
@@ -228,8 +228,8 @@ Subpath imports and conditional imports work in conjunction with each other.
 As in Node.js, Specifying any subpath in the `"exports"` map will prevent other subpaths from being importable; you can only import files that are explicitly exported. Given the `package.json` above:
 
 ```ts index.ts icon="/icons/typescript.svg"
-import stuff from 'foo'; // this works
-import stuff from 'foo/index.mjs'; // this doesn't
+import stuff from "foo"; // this works
+import stuff from "foo/index.mjs"; // this doesn't
 ```
 
 <Note>
@@ -267,9 +267,9 @@ You can also use `conditions` programmatically with `Bun.build`:
 
 ```ts build.ts icon="/icons/typescript.svg"
 await Bun.build({
-	conditions: ['react-server'],
-	target: 'bun',
-	entryPoints: ['./app/foo/route.js'],
+	conditions: ["react-server"],
+	target: "bun",
+	entryPoints: ["./app/foo/route.js"],
 });
 ```
 
@@ -327,7 +327,7 @@ import.meta.url; // => "file:///path/to/project/file.ts"
 import.meta.main; // `true` if this file is directly executed by `bun run`
 // `false` otherwise
 
-import.meta.resolve('zod'); // => "file:///path/to/project/node_modules/zod/index.js"
+import.meta.resolve("zod"); // => "file:///path/to/project/node_modules/zod/index.js"
 ```
 
 | Property               | Description                                                                                                                                                                                                                                                                                                                   |

@@ -14,7 +14,7 @@ When running tests with `bun test`, the timezone is set to `UTC` to make tests m
 </Note>
 
 ```ts process.ts icon="/icons/typescript.svg"
-process.env.TZ = 'America/New_York';
+process.env.TZ = "America/New_York";
 ```
 
 ---
@@ -32,7 +32,7 @@ Once `TZ` is set, any `Date` instances will have that time zone. By default all 
 ```ts process.ts icon="/icons/typescript.svg"
 new Date().getHours(); // => 18
 
-process.env.TZ = 'America/New_York';
+process.env.TZ = "America/New_York";
 
 new Date().getHours(); // => 21
 ```

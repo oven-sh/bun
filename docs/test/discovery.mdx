@@ -1,5 +1,5 @@
 ---
-title: 'Finding tests'
+title: "Finding tests"
 description: "Learn how Bun's test runner discovers and filters test files in your project"
 ---
 
@@ -62,9 +62,9 @@ bun test --test-name-pattern addition
 The pattern is matched against a concatenated string of the test name prepended with the labels of all its parent describe blocks, separated by spaces. For example, a test defined as:
 
 ```ts title="math.test.ts" icon="/icons/typescript.svg"
-describe('Math', () => {
-	describe('operations', () => {
-		test('should add correctly', () => {
+describe("Math", () => {
+	describe("operations", () => {
+		test("should add correctly", () => {
 			// ...
 		});
 	});

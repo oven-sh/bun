@@ -311,17 +311,18 @@ Bun has specific CPU requirements based on the binary you're using:
     | x64 | Haswell (4th gen Core) or newer | Excavator or newer |
 	</Tab>
 
-	<Tab title="Baseline Builds">
-		**x64-baseline binaries** target the Nehalem architecture for older CPUs
+    <Tab title="Baseline Builds">
+    	**x64-baseline binaries** target the Nehalem architecture for older CPUs
     | Platform | Intel Requirement | AMD Requirement |
-    |----------|-------------------|-----------------| 
+    |----------|-------------------|-----------------|
     | x64-baseline | Nehalem (1st gen Core) or newer | Bulldozer or newer |
 
-		<Warning>
-			Baseline builds are slower than regular builds. Use them only if you encounter an "Illegal
-			Instruction" error.
-		</Warning>
-	</Tab>
+    	<Warning>
+    		Baseline builds are slower than regular builds. Use them only if you encounter an "Illegal
+    		Instruction" error.
+    	</Warning>
+    </Tab>
+
 </Tabs>
 
 <Note>
@@ -342,15 +343,15 @@ To remove Bun from your system:
   ```
   </Tab>
 
-	<Tab title="Windows">
-		```powershell PowerShell icon="windows"
+    <Tab title="Windows">
+    	```powershell PowerShell icon="windows"
     powershell -c ~\.bun\uninstall.ps1
     ```
-	</Tab>
+    </Tab>
 
-	<Tab title="Package Managers">
-		<CodeGroup>
-			```bash npm icon="npm"
+    <Tab title="Package Managers">
+    	<CodeGroup>
+    		```bash npm icon="npm"
       npm uninstall -g bun
       ```
       ```bash Homebrew icon="/icons/homebrew.svg"
@@ -359,6 +360,7 @@ To remove Bun from your system:
       ```bash Scoop icon="terminal"
       scoop uninstall bun
       ```
-		</CodeGroup>
-	</Tab>
+    	</CodeGroup>
+    </Tab>
+
 </Tabs>

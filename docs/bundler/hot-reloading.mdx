@@ -22,7 +22,7 @@ However, this check is often not needed as Bun will dead-code-eliminate calls to
 ```ts title="index.ts" icon="/icons/typescript.svg"
 // This entire function call will be removed in production!
 import.meta.hot.dispose(() => {
-	console.log('dispose');
+	console.log("dispose");
 });
 ```
 
@@ -75,9 +75,9 @@ The `accept()` method indicates that a module can be hot-replaced. When called w
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
 // index.ts
-import {getCount} from './foo.ts';
+import { getCount } from "./foo.ts";
 
-console.log('count is ', getCount());
+console.log("count is ", getCount());
 
 import.meta.hot.accept();
 
@@ -107,7 +107,7 @@ export const count = 0;
 import.meta.hot.accept(newModule => {
 	if (newModule) {
 		// newModule is undefined when SyntaxError happened
-		console.log('updated: count is now ', newModule.count);
+		console.log("updated: count is now ", newModule.count);
 	}
 });
 ```
@@ -120,12 +120,12 @@ import.meta.hot.accept(newModule => {
 ### Accepting other modules
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
-import {count} from './foo';
+import { count } from "./foo";
 
-import.meta.hot.accept('./foo', () => {
+import.meta.hot.accept("./foo", () => {
 	if (!newModule) return;
 
-	console.log('updated: count is now ', count);
+	console.log("updated: count is now ", count);
 });
 ```
 
@@ -134,7 +134,7 @@ Indicates that a dependency's module can be accepted. When the dependency is upd
 ### With multiple dependencies
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
-import.meta.hot.accept(['./foo', './bar'], newModules => {
+import.meta.hot.accept(["./foo", "./bar"], newModules => {
 	// newModules is an array where each item corresponds to the updated module
 	// or undefined if that module had a syntax error
 });
@@ -147,8 +147,8 @@ Indicates that multiple dependencies' modules can be accepted. This variant acce
 `import.meta.hot.data` maintains state between module instances during hot replacement, enabling data transfer from previous to new versions. When `import.meta.hot.data` is written into, Bun will also mark this module as capable of self-accepting (equivalent of calling `import.meta.hot.accept()`).
 
 ```jsx title="index.ts" icon="/icons/typescript.svg"
-import {createRoot} from 'react-dom/client';
-import {App} from './app';
+import { createRoot } from "react-dom/client";
+import { App } from "./app";
 
 const root = (import.meta.hot.data.root ??= createRoot(elem));
 root.render(<App />); // re-use an existing root
@@ -187,7 +187,7 @@ Attaches an on-prune callback. This is called when all imports to this module ar
 This can be used to clean up resources that were created when the module was loaded. Unlike `import.meta.hot.dispose()`, this pairs much better with `accept` and `data` to manage stateful resources. A full example managing a WebSocket:
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
-import {something} from './something';
+import { something } from "./something";
 
 // Initialize or re-use a WebSocket connection
 export const ws = (import.meta.hot.data.ws ??= new WebSocket(location.origin));
@@ -208,8 +208,8 @@ import.meta.hot.prune(() => {
 `on()` and `off()` are used to listen for events from the HMR runtime. Event names are prefixed with a prefix so that plugins do not conflict with each other.
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
-import.meta.hot.on('bun:beforeUpdate', () => {
-	console.log('before a hot update');
+import.meta.hot.on("bun:beforeUpdate", () => {
+	console.log("before a hot update");
 });
 ```
 

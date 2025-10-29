@@ -7,10 +7,10 @@ mode: center
 To recursively delete a directory and all its contents, use `rm` from `node:fs/promises`. This is like running `rm -rf` in JavaScript.
 
 ```ts delete-directory.ts icon="/icons/typescript.svg"
-import {rm} from 'node:fs/promises';
+import { rm } from "node:fs/promises";
 
 // Delete a directory and all its contents
-await rm('path/to/directory', {recursive: true, force: true});
+await rm("path/to/directory", { recursive: true, force: true });
 ```
 
 ---
@@ -24,9 +24,9 @@ You can also use it without `force` to ensure the directory exists:
 
 ```ts delete-directory.ts icon="/icons/typescript.svg"
 try {
-	await rm('path/to/directory', {recursive: true});
+	await rm("path/to/directory", { recursive: true });
 } catch (error) {
-	if (error.code === 'ENOENT') {
+	if (error.code === "ENOENT") {
 		console.log("Directory doesn't exist");
 	} else {
 		throw error;

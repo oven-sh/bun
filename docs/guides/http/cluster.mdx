@@ -10,7 +10,7 @@ To run multiple HTTP servers concurrently, use the `reusePort` option in `Bun.se
 This automatically load balances incoming requests across multiple instances of Bun.
 
 ```ts server.ts icon="/icons/typescript.svg"
-import {serve} from 'bun';
+import { serve } from "bun";
 
 const id = Math.random().toString(36).slice(2);
 
@@ -23,7 +23,7 @@ serve({
 	reusePort: true,
 
 	async fetch(request) {
-		return new Response('Hello from Bun #' + id + '!\n');
+		return new Response("Hello from Bun #" + id + "!\n");
 	},
 });
 ```
@@ -40,17 +40,17 @@ After saving the file, start your servers on the same port.
 Under the hood, this uses the Linux `SO_REUSEPORT` and `SO_REUSEADDR` socket options to ensure fair load balancing across multiple processes. [Learn more about `SO_REUSEPORT` and `SO_REUSEADDR`](https://lwn.net/Articles/542629/)
 
 ```ts cluster.ts icon="/icons/typescript.svg"
-import {spawn} from 'bun';
+import { spawn } from "bun";
 
 const cpus = navigator.hardwareConcurrency; // Number of CPU cores
 const buns = new Array(cpus);
 
 for (let i = 0; i < cpus; i++) {
 	buns[i] = spawn({
-		cmd: ['bun', './server.ts'],
-		stdout: 'inherit',
-		stderr: 'inherit',
-		stdin: 'inherit',
+		cmd: ["bun", "./server.ts"],
+		stdout: "inherit",
+		stderr: "inherit",
+		stdin: "inherit",
 	});
 }
 
@@ -60,8 +60,8 @@ function kill() {
 	}
 }
 
-process.on('SIGINT', kill);
-process.on('exit', kill);
+process.on("SIGINT", kill);
+process.on("exit", kill);
 ```
 
 ---

@@ -13,19 +13,19 @@ A common usecase is rewriting URLs in HTML content. Here's an example that rewri
 
 ```ts
 // Replace all images with a rickroll
-const rewriter = new HTMLRewriter().on('img', {
+const rewriter = new HTMLRewriter().on("img", {
 	element(img) {
 		// Famous rickroll video thumbnail
-		img.setAttribute('src', 'https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg');
+		img.setAttribute("src", "https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg");
 
 		// Wrap the image in a link to the video
 		img.before('<a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" target="_blank">', {
 			html: true,
 		});
-		img.after('</a>', {html: true});
+		img.after("</a>", { html: true });
 
 		// Add some fun alt text
-		img.setAttribute('alt', 'Definitely not a rickroll');
+		img.setAttribute("alt", "Definitely not a rickroll");
 	},
 });
 
@@ -90,19 +90,19 @@ HTMLRewriter can transform HTML from various sources. The input is automatically
 
 ```ts
 // From Response
-rewriter.transform(new Response('<div>content</div>'));
+rewriter.transform(new Response("<div>content</div>"));
 
 // From string
-rewriter.transform('<div>content</div>');
+rewriter.transform("<div>content</div>");
 
 // From ArrayBuffer
-rewriter.transform(new TextEncoder().encode('<div>content</div>').buffer);
+rewriter.transform(new TextEncoder().encode("<div>content</div>").buffer);
 
 // From Blob
-rewriter.transform(new Blob(['<div>content</div>']));
+rewriter.transform(new Blob(["<div>content</div>"]));
 
 // From File
-rewriter.transform(Bun.file('index.html'));
+rewriter.transform(Bun.file("index.html"));
 ```
 
 Note that Cloudflare Workers implementation of HTMLRewriter only supports `Response` objects.
@@ -112,15 +112,15 @@ Note that Cloudflare Workers implementation of HTMLRewriter only supports `Respo
 The `on(selector, handlers)` method allows you to register handlers for HTML elements that match a CSS selector. The handlers are called for each matching element during parsing:
 
 ```ts
-rewriter.on('div.content', {
+rewriter.on("div.content", {
 	// Handle elements
 	element(element) {
-		element.setAttribute('class', 'new-content');
-		element.append('<p>New content</p>', {html: true});
+		element.setAttribute("class", "new-content");
+		element.append("<p>New content</p>", { html: true });
 	},
 	// Handle text nodes
 	text(text) {
-		text.replace('new text');
+		text.replace("new text");
 	},
 	// Handle comments
 	comments(comment) {
@@ -132,10 +132,10 @@ rewriter.on('div.content', {
 The handlers can be asynchronous and return a Promise. Note that async operations will block the transformation until they complete:
 
 ```ts
-rewriter.on('div', {
+rewriter.on("div", {
 	async element(element) {
 		await Bun.sleep(1000);
-		element.setInnerContent('<span>replace</span>', {html: true});
+		element.setInnerContent("<span>replace</span>", { html: true });
 	},
 });
 ```
@@ -146,16 +146,16 @@ The `on()` method supports a wide range of CSS selectors:
 
 ```ts
 // Tag selectors
-rewriter.on('p', handler);
+rewriter.on("p", handler);
 
 // Class selectors
-rewriter.on('p.red', handler);
+rewriter.on("p.red", handler);
 
 // ID selectors
-rewriter.on('h1#header', handler);
+rewriter.on("h1#header", handler);
 
 // Attribute selectors
-rewriter.on('p[data-test]', handler); // Has attribute
+rewriter.on("p[data-test]", handler); // Has attribute
 rewriter.on('p[data-test="one"]', handler); // Exact match
 rewriter.on('p[data-test="one" i]', handler); // Case-insensitive
 rewriter.on('p[data-test="one" s]', handler); // Case-sensitive
@@ -166,18 +166,18 @@ rewriter.on('p[data-test*="b"]', handler); // Contains
 rewriter.on('p[data-test|="a"]', handler); // Dash-separated
 
 // Combinators
-rewriter.on('div span', handler); // Descendant
-rewriter.on('div > span', handler); // Direct child
+rewriter.on("div span", handler); // Descendant
+rewriter.on("div > span", handler); // Direct child
 
 // Pseudo-classes
-rewriter.on('p:nth-child(2)', handler);
-rewriter.on('p:first-child', handler);
-rewriter.on('p:nth-of-type(2)', handler);
-rewriter.on('p:first-of-type', handler);
-rewriter.on('p:not(:first-child)', handler);
+rewriter.on("p:nth-child(2)", handler);
+rewriter.on("p:first-child", handler);
+rewriter.on("p:nth-of-type(2)", handler);
+rewriter.on("p:first-of-type", handler);
+rewriter.on("p:not(:first-child)", handler);
 
 // Universal selector
-rewriter.on('*', handler);
+rewriter.on("*", handler);
 ```
 
 ### Element Operations
@@ -185,28 +185,28 @@ rewriter.on('*', handler);
 Elements provide various methods for manipulation. All modification methods return the element instance for chaining:
 
 ```ts
-rewriter.on('div', {
+rewriter.on("div", {
 	element(el) {
 		// Attributes
-		el.setAttribute('class', 'new-class').setAttribute('data-id', '123');
+		el.setAttribute("class", "new-class").setAttribute("data-id", "123");
 
-		const classAttr = el.getAttribute('class'); // "new-class"
-		const hasId = el.hasAttribute('id'); // boolean
-		el.removeAttribute('class');
+		const classAttr = el.getAttribute("class"); // "new-class"
+		const hasId = el.hasAttribute("id"); // boolean
+		el.removeAttribute("class");
 
 		// Content manipulation
-		el.setInnerContent('New content'); // Escapes HTML by default
-		el.setInnerContent('<p>HTML content</p>', {html: true}); // Parses HTML
-		el.setInnerContent(''); // Clear content
+		el.setInnerContent("New content"); // Escapes HTML by default
+		el.setInnerContent("<p>HTML content</p>", { html: true }); // Parses HTML
+		el.setInnerContent(""); // Clear content
 
 		// Position manipulation
-		el.before('Content before').after('Content after').prepend('First child').append('Last child');
+		el.before("Content before").after("Content after").prepend("First child").append("Last child");
 
 		// HTML content insertion
-		el.before('<span>before</span>', {html: true})
-			.after('<span>after</span>', {html: true})
-			.prepend('<span>first</span>', {html: true})
-			.append('<span>last</span>', {html: true});
+		el.before("<span>before</span>", { html: true })
+			.after("<span>after</span>", { html: true })
+			.prepend("<span>first</span>", { html: true })
+			.append("<span>last</span>", { html: true });
 
 		// Removal
 		el.remove(); // Remove element and contents
@@ -226,8 +226,8 @@ rewriter.on('div', {
 
 		// End tag handling
 		el.onEndTag(endTag => {
-			endTag.before('Before end tag');
-			endTag.after('After end tag');
+			endTag.before("Before end tag");
+			endTag.after("After end tag");
 			endTag.remove(); // Remove the end tag
 			console.log(endTag.name); // Tag name in lowercase
 		});
@@ -240,7 +240,7 @@ rewriter.on('div', {
 Text handlers provide methods for text manipulation. Text chunks represent portions of text content and provide information about their position in the text node:
 
 ```ts
-rewriter.on('p', {
+rewriter.on("p", {
 	text(text) {
 		// Content
 		console.log(text.text); // Text content
@@ -248,13 +248,13 @@ rewriter.on('p', {
 		console.log(text.removed); // Whether text was removed
 
 		// Manipulation
-		text.before('Before text').after('After text').replace('New text').remove();
+		text.before("Before text").after("After text").replace("New text").remove();
 
 		// HTML content insertion
 		text
-			.before('<span>before</span>', {html: true})
-			.after('<span>after</span>', {html: true})
-			.replace('<span>replace</span>', {html: true});
+			.before("<span>before</span>", { html: true })
+			.after("<span>after</span>", { html: true })
+			.replace("<span>replace</span>", { html: true });
 	},
 });
 ```
@@ -264,21 +264,21 @@ rewriter.on('p', {
 Comment handlers allow comment manipulation with similar methods to text nodes:
 
 ```ts
-rewriter.on('*', {
+rewriter.on("*", {
 	comments(comment) {
 		// Content
 		console.log(comment.text); // Comment text
-		comment.text = 'New comment text'; // Set comment text
+		comment.text = "New comment text"; // Set comment text
 		console.log(comment.removed); // Whether comment was removed
 
 		// Manipulation
-		comment.before('Before comment').after('After comment').replace('New comment').remove();
+		comment.before("Before comment").after("After comment").replace("New comment").remove();
 
 		// HTML content insertion
 		comment
-			.before('<span>before</span>', {html: true})
-			.after('<span>after</span>', {html: true})
-			.replace('<span>replace</span>', {html: true});
+			.before("<span>before</span>", { html: true })
+			.after("<span>after</span>", { html: true })
+			.replace("<span>replace</span>", { html: true });
 	},
 });
 ```
@@ -305,7 +305,7 @@ rewriter.onDocument({
 	},
 	// Handle document end
 	end(end) {
-		end.append('<!-- Footer -->', {html: true});
+		end.append("<!-- Footer -->", { html: true });
 	},
 });
 ```
@@ -338,7 +338,7 @@ try {
 	const result = rewriter.transform(input);
 	// Process result
 } catch (error) {
-	console.error('HTMLRewriter error:', error);
+	console.error("HTMLRewriter error:", error);
 }
 ```
 

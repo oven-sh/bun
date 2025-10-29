@@ -38,19 +38,19 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--workspaces" type="boolean">
-	Run a script in all workspace packages (from the <code>workspaces</code> field in{' '}
+	Run a script in all workspace packages (from the <code>workspaces</code> field in{" "}
 	<code>package.json</code>)
 </ParamField>
 
 ### Runtime &amp; Process Control
 
 <ParamField path="--bun" type="boolean">
-	Force a script or package to use Bun's runtime instead of Node.js (via symlinking node). Alias:{' '}
+	Force a script or package to use Bun's runtime instead of Node.js (via symlinking node). Alias:{" "}
 	<code>-b</code>
 </ParamField>
 
 <ParamField path="--shell" type="string">
-	Control the shell used for <code>package.json</code> scripts. Supports either <code>bun</code> or{' '}
+	Control the shell used for <code>package.json</code> scripts. Supports either <code>bun</code> or{" "}
 	<code>system</code>
 </ParamField>
 
@@ -79,12 +79,12 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--no-addons" type="boolean">
-	Throw an error if <code>process.dlopen</code> is called, and disable export condition{' '}
+	Throw an error if <code>process.dlopen</code> is called, and disable export condition{" "}
 	<code>node-addons</code>
 </ParamField>
 
 <ParamField path="--unhandled-rejections" type="string">
-	One of <code>strict</code>, <code>throw</code>, <code>warn</code>, <code>none</code>, or{' '}
+	One of <code>strict</code>, <code>throw</code>, <code>warn</code>, <code>none</code>, or{" "}
 	<code>warn-with-error-code</code>
 </ParamField>
 
@@ -191,8 +191,8 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--loader" type="string">
-	Parse files with <code>.ext:loader</code>, e.g. <code>--loader .js:jsx</code>. Valid loaders:{' '}
-	<code>js</code>, <code>jsx</code>, <code>ts</code>, <code>tsx</code>, <code>json</code>,{' '}
+	Parse files with <code>.ext:loader</code>, e.g. <code>--loader .js:jsx</code>. Valid loaders:{" "}
+	<code>js</code>, <code>jsx</code>, <code>ts</code>, <code>tsx</code>, <code>json</code>,{" "}
 	<code>toml</code>, <code>text</code>, <code>file</code>, <code>wasm</code>, <code>napi</code>.
 	Alias: <code>-l</code>
 </ParamField>
@@ -241,7 +241,7 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--dns-result-order" type="string" default="verbatim">
-	Set the default order of DNS lookup results. Valid orders: <code>verbatim</code> (default),{' '}
+	Set the default order of DNS lookup results. Valid orders: <code>verbatim</code> (default),{" "}
 	<code>ipv4first</code>, <code>ipv6first</code>
 </ParamField>
 

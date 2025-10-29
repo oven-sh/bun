@@ -9,8 +9,8 @@ This code snippet writes a `Response` to disk at a particular path. Bun will con
 It uses the fast [`Bun.write()`](https://bun.com/docs/api/file-io#writing-files-bun-write) API to efficiently write data to disk. The first argument is a _destination_, like an absolute path or `BunFile` instance. The second argument is the _data_ to write.
 
 ```ts
-const result = await fetch('https://bun.com');
-const path = './file.txt';
+const result = await fetch("https://bun.com");
+const path = "./file.txt";
 await Bun.write(path, result);
 ```
 

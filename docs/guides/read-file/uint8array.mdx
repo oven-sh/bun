@@ -9,7 +9,7 @@ The `Bun.file()` function accepts a path and returns a `BunFile` instance. The `
 To read the file into a `Uint8Array` instance, retrieve the contents of the `BunFile` with `.bytes()`.
 
 ```ts
-const path = '/path/to/package.json';
+const path = "/path/to/package.json";
 const file = Bun.file(path);
 
 const byteArray = await file.bytes();

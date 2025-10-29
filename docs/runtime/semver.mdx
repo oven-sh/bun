@@ -20,20 +20,20 @@ Returns `true` if `version` satisfies `range`, otherwise `false`.
 Example:
 
 ```typescript
-import {semver} from 'bun';
+import { semver } from "bun";
 
-semver.satisfies('1.0.0', '^1.0.0'); // true
-semver.satisfies('1.0.0', '^1.0.1'); // false
-semver.satisfies('1.0.0', '~1.0.0'); // true
-semver.satisfies('1.0.0', '~1.0.1'); // false
-semver.satisfies('1.0.0', '1.0.0'); // true
-semver.satisfies('1.0.0', '1.0.1'); // false
-semver.satisfies('1.0.1', '1.0.0'); // false
-semver.satisfies('1.0.0', '1.0.x'); // true
-semver.satisfies('1.0.0', '1.x.x'); // true
-semver.satisfies('1.0.0', 'x.x.x'); // true
-semver.satisfies('1.0.0', '1.0.0 - 2.0.0'); // true
-semver.satisfies('1.0.0', '1.0.0 - 1.0.1'); // true
+semver.satisfies("1.0.0", "^1.0.0"); // true
+semver.satisfies("1.0.0", "^1.0.1"); // false
+semver.satisfies("1.0.0", "~1.0.0"); // true
+semver.satisfies("1.0.0", "~1.0.1"); // false
+semver.satisfies("1.0.0", "1.0.0"); // true
+semver.satisfies("1.0.0", "1.0.1"); // false
+semver.satisfies("1.0.1", "1.0.0"); // false
+semver.satisfies("1.0.0", "1.0.x"); // true
+semver.satisfies("1.0.0", "1.x.x"); // true
+semver.satisfies("1.0.0", "x.x.x"); // true
+semver.satisfies("1.0.0", "1.0.0 - 2.0.0"); // true
+semver.satisfies("1.0.0", "1.0.0 - 1.0.1"); // true
 ```
 
 If `range` is invalid, it returns false. If `version` is invalid, it returns false.
@@ -45,13 +45,13 @@ Returns `0` if `versionA` and `versionB` are equal, `1` if `versionA` is greater
 Example:
 
 ```typescript
-import {semver} from 'bun';
+import { semver } from "bun";
 
-semver.order('1.0.0', '1.0.0'); // 0
-semver.order('1.0.0', '1.0.1'); // -1
-semver.order('1.0.1', '1.0.0'); // 1
+semver.order("1.0.0", "1.0.0"); // 0
+semver.order("1.0.0", "1.0.1"); // -1
+semver.order("1.0.1", "1.0.0"); // 1
 
-const unsorted = ['1.0.0', '1.0.1', '1.0.0-alpha', '1.0.0-beta', '1.0.0-rc'];
+const unsorted = ["1.0.0", "1.0.1", "1.0.0-alpha", "1.0.0-beta", "1.0.0-rc"];
 unsorted.sort(semver.order); // ["1.0.0-alpha", "1.0.0-beta", "1.0.0-rc", "1.0.0", "1.0.1"]
 console.log(unsorted);
 ```

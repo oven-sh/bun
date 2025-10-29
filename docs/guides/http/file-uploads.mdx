@@ -13,14 +13,14 @@ const server = Bun.serve({
 		const url = new URL(req.url);
 
 		// return index.html for root path
-		if (url.pathname === '/')
-			return new Response(Bun.file('index.html'), {
+		if (url.pathname === "/")
+			return new Response(Bun.file("index.html"), {
 				headers: {
-					'Content-Type': 'text/html',
+					"Content-Type": "text/html",
 				},
 			});
 
-		return new Response('Not Found', {status: 404});
+		return new Response("Not Found", { status: 404 });
 	},
 });
 
@@ -72,26 +72,26 @@ const server = Bun.serve({
 		const url = new URL(req.url);
 
 		// return index.html for root path
-		if (url.pathname === '/')
-			return new Response(Bun.file('index.html'), {
+		if (url.pathname === "/")
+			return new Response(Bun.file("index.html"), {
 				headers: {
-					'Content-Type': 'text/html',
+					"Content-Type": "text/html",
 				},
 			});
 
 		// parse formdata at /action // [!code ++]
-		if (url.pathname === '/action') {
+		if (url.pathname === "/action") {
 			// [!code ++]
 			const formdata = await req.formData(); // [!code ++]
-			const name = formdata.get('name'); // [!code ++]
-			const profilePicture = formdata.get('profilePicture'); // [!code ++]
-			if (!profilePicture) throw new Error('Must upload a profile picture.'); // [!code ++]
+			const name = formdata.get("name"); // [!code ++]
+			const profilePicture = formdata.get("profilePicture"); // [!code ++]
+			if (!profilePicture) throw new Error("Must upload a profile picture."); // [!code ++]
 			// write profilePicture to disk // [!code ++]
-			await Bun.write('profilePicture.png', profilePicture); // [!code ++]
-			return new Response('Success'); // [!code ++]
+			await Bun.write("profilePicture.png", profilePicture); // [!code ++]
+			return new Response("Success"); // [!code ++]
 		} // [!code ++]
 
-		return new Response('Not Found', {status: 404});
+		return new Response("Not Found", { status: 404 });
 	},
 });
 ```

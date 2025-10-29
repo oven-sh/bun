@@ -11,9 +11,9 @@ Bun implements the `node:fs` module, which includes the `fs.appendFile` and `fs.
 You can use `fs.appendFile` to asynchronously append data to a file, creating the file if it does not yet exist. The content can be a string or a `Buffer`.
 
 ```ts
-import {appendFile} from 'node:fs/promises';
+import { appendFile } from "node:fs/promises";
 
-await appendFile('message.txt', 'data to append');
+await appendFile("message.txt", "data to append");
 ```
 
 ---
@@ -21,9 +21,9 @@ await appendFile('message.txt', 'data to append');
 To use the non-`Promise` API:
 
 ```ts
-import {appendFile} from 'node:fs';
+import { appendFile } from "node:fs";
 
-appendFile('message.txt', 'data to append', err => {
+appendFile("message.txt", "data to append", err => {
 	if (err) throw err;
 	console.log('The "data to append" was appended to file!');
 });
@@ -34,9 +34,9 @@ appendFile('message.txt', 'data to append', err => {
 To specify the encoding of the content:
 
 ```js
-import {appendFile} from 'node:fs';
+import { appendFile } from "node:fs";
 
-appendFile('message.txt', 'data to append', 'utf8', callback);
+appendFile("message.txt", "data to append", "utf8", callback);
 ```
 
 ---
@@ -44,9 +44,9 @@ appendFile('message.txt', 'data to append', 'utf8', callback);
 To append the data synchronously, use `fs.appendFileSync`:
 
 ```ts
-import {appendFileSync} from 'node:fs';
+import { appendFileSync } from "node:fs";
 
-appendFileSync('message.txt', 'data to append', 'utf8');
+appendFileSync("message.txt", "data to append", "utf8");
 ```
 
 ---

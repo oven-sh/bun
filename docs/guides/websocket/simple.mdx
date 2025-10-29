@@ -9,7 +9,7 @@ Start a simple WebSocket server using [`Bun.serve`](https://bun.com/docs/api/htt
 Inside `fetch`, we attempt to upgrade incoming `ws:` or `wss:` requests to WebSocket connections.
 
 ```ts server.ts icon="/icons/typescript.svg"
-const server = Bun.serve<{authToken: string}>({
+const server = Bun.serve<{ authToken: string }>({
 	fetch(req, server) {
 		const success = server.upgrade(req);
 		if (success) {
@@ -19,7 +19,7 @@ const server = Bun.serve<{authToken: string}>({
 		}
 
 		// handle HTTP request normally
-		return new Response('Hello world!');
+		return new Response("Hello world!");
 	},
 	websocket: {
 		// this is called when a message is received

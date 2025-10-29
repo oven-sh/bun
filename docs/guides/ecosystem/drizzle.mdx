@@ -21,10 +21,10 @@ bun add -D drizzle-kit
 Then we'll connect to a SQLite database using the `bun:sqlite` module and create the Drizzle database instance.
 
 ```ts db.ts icon="/icons/typescript.svg"
-import {drizzle} from 'drizzle-orm/bun-sqlite';
-import {Database} from 'bun:sqlite';
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { Database } from "bun:sqlite";
 
-const sqlite = new Database('sqlite.db');
+const sqlite = new Database("sqlite.db");
 export const db = drizzle(sqlite);
 ```
 
@@ -33,11 +33,11 @@ export const db = drizzle(sqlite);
 To see the database in action, add these lines to `index.ts`.
 
 ```ts index.ts icon="/icons/typescript.svg"
-import {db} from './db';
-import {sql} from 'drizzle-orm';
+import { db } from "./db";
+import { sql } from "drizzle-orm";
 
 const query = sql`select "hello world" as text`;
-const result = db.get<{text: string}>(query);
+const result = db.get<{ text: string }>(query);
 console.log(result);
 ```
 
@@ -60,12 +60,12 @@ bun run index.ts
 Lets give our database a proper schema. Create a `schema.ts` file and define a `movies` table.
 
 ```ts schema.ts icon="/icons/typescript.svg"
-import {sqliteTable, text, integer} from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
 
-export const movies = sqliteTable('movies', {
-	id: integer('id').primaryKey(),
-	title: text('name'),
-	releaseYear: integer('release_year'),
+export const movies = sqliteTable("movies", {
+	id: integer("id").primaryKey(),
+	title: text("name"),
+	releaseYear: integer("release_year"),
 });
 ```
 
@@ -96,14 +96,14 @@ We can execute these migrations with a simple `migrate.ts` script.
 This script creates a new connection to a SQLite database that writes to `sqlite.db`, then executes all unexecuted migrations in the `drizzle` directory.
 
 ```ts migrate.ts icon="/icons/typescript.svg"
-import {migrate} from 'drizzle-orm/bun-sqlite/migrator';
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 
-import {drizzle} from 'drizzle-orm/bun-sqlite';
-import {Database} from 'bun:sqlite';
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { Database } from "bun:sqlite";
 
-const sqlite = new Database('sqlite.db');
+const sqlite = new Database("sqlite.db");
 const db = drizzle(sqlite);
-migrate(db, {migrationsFolder: './drizzle'});
+migrate(db, { migrationsFolder: "./drizzle" });
 ```
 
 ---
@@ -119,20 +119,20 @@ bun run migrate.ts
 Now that we have a database, let's add some data to it. Create a `seed.ts` file with the following contents.
 
 ```ts seed.ts icon="/icons/typescript.svg"
-import {db} from './db';
-import * as schema from './schema';
+import { db } from "./db";
+import * as schema from "./schema";
 
 await db.insert(schema.movies).values([
 	{
-		title: 'The Matrix',
+		title: "The Matrix",
 		releaseYear: 1999,
 	},
 	{
-		title: 'The Matrix Reloaded',
+		title: "The Matrix Reloaded",
 		releaseYear: 2003,
 	},
 	{
-		title: 'The Matrix Revolutions',
+		title: "The Matrix Revolutions",
 		releaseYear: 2003,
 	},
 ]);
@@ -157,8 +157,8 @@ Seeding complete.
 We finally have a database with a schema and some sample data. Let's use Drizzle to query it. Replace the contents of `index.ts` with the following.
 
 ```ts index.ts icon="/icons/typescript.svg"
-import * as schema from './schema';
-import {db} from './db';
+import * as schema from "./schema";
+import { db } from "./db";
 
 const result = await db.select().from(schema.movies);
 console.log(result);

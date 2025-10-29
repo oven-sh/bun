@@ -18,7 +18,7 @@ Use the built-in `bun:ffi` module to efficiently call native libraries from Java
 To print the version number of `sqlite3`:
 
 ```ts
-import {dlopen, FFIType, suffix} from 'bun:ffi';
+import { dlopen, FFIType, suffix } from "bun:ffi";
 
 // `suffix` is either "dylib", "so", or "dll" depending on the platform
 // you don't have to use "suffix", it's just there for convenience
@@ -73,8 +73,8 @@ zig build-lib add.zig -dynamic -OReleaseFast
 Pass a path to the shared library and a map of symbols to import into `dlopen`:
 
 ```ts
-import {dlopen, FFIType, suffix} from 'bun:ffi';
-const {i32} = FFIType;
+import { dlopen, FFIType, suffix } from "bun:ffi";
+const { i32 } = FFIType;
 
 const path = `libadd.${suffix}`;
 
@@ -241,7 +241,7 @@ getVersion();
 If you have multiple function pointers, you can define them all at once with `linkSymbols`:
 
 ```ts
-import {linkSymbols} from 'bun:ffi';
+import { linkSymbols } from "bun:ffi";
 
 // getVersionPtrs defined elsewhere
 const [majorPtr, minorPtr, patchPtr] = getVersionPtrs();
@@ -249,7 +249,7 @@ const [majorPtr, minorPtr, patchPtr] = getVersionPtrs();
 const lib = linkSymbols({
 	// Unlike with dlopen(), the names here can be whatever you want
 	getMajor: {
-		returns: 'cstring',
+		returns: "cstring",
 		args: [],
 
 		// Since this doesn't use dlsym(), you have to provide a valid ptr
@@ -258,12 +258,12 @@ const lib = linkSymbols({
 		ptr: majorPtr,
 	},
 	getMinor: {
-		returns: 'cstring',
+		returns: "cstring",
 		args: [],
 		ptr: minorPtr,
 	},
 	getPatch: {
-		returns: 'cstring',
+		returns: "cstring",
 		args: [],
 		ptr: patchPtr,
 	},
@@ -283,24 +283,24 @@ const [major, minor, patch] = [
 Use `JSCallback` to create JavaScript callback functions that can be passed to C/FFI functions. The C/FFI function can call into the JavaScript/TypeScript code. This is useful for asynchronous code or whenever you want to call into JavaScript code from C.
 
 ```ts
-import {dlopen, JSCallback, ptr, CString} from 'bun:ffi';
+import { dlopen, JSCallback, ptr, CString } from "bun:ffi";
 
 const {
-	symbols: {search},
+	symbols: { search },
 	close,
-} = dlopen('libmylib', {
+} = dlopen("libmylib", {
 	search: {
-		returns: 'usize',
-		args: ['cstring', 'callback'],
+		returns: "usize",
+		args: ["cstring", "callback"],
 	},
 });
 
 const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, length)), {
-	returns: 'bool',
-	args: ['ptr', 'usize'],
+	returns: "bool",
+	args: ["ptr", "usize"],
 });
 
-const str = Buffer.from('wwutwutwutwutwutwutwutwutwutwutut\0', 'utf8');
+const str = Buffer.from("wwutwutwutwutwutwutwutwutwutwutut\0", "utf8");
 if (search(ptr(str), searchIterator)) {
 	// found a match!
 }
@@ -322,8 +322,8 @@ Currently, thread-safe callbacks work best when run from another thread that is 
 
 ```ts
 const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, length)), {
-	returns: 'bool',
-	args: ['ptr', 'usize'],
+	returns: "bool",
+	args: ["ptr", "usize"],
 	threadsafe: true, // Optional. Defaults to `false`
 });
 ```
@@ -333,12 +333,12 @@ const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(
 
 ```ts
 const onResolve = new JSCallback(arg => arg === 42, {
-	returns: 'bool',
-	args: ['i32'],
+	returns: "bool",
+	args: ["i32"],
 });
 const setOnResolve = new CFunction({
-	returns: 'bool',
-	args: ['function'],
+	returns: "bool",
+	args: ["function"],
 	ptr: myNativeLibrarySetOnResolve,
 });
 
@@ -368,7 +368,7 @@ Bun represents [pointers](<https://en.wikipedia.org/wiki/Pointer_(computer_progr
 To convert from a `TypedArray` to a pointer:
 
 ```ts
-import {ptr} from 'bun:ffi';
+import { ptr } from "bun:ffi";
 let myTypedArray = new Uint8Array(32);
 const myPtr = ptr(myTypedArray);
 ```
@@ -376,7 +376,7 @@ const myPtr = ptr(myTypedArray);
 To convert from a pointer to an `ArrayBuffer`:
 
 ```ts
-import {ptr, toArrayBuffer} from 'bun:ffi';
+import { ptr, toArrayBuffer } from "bun:ffi";
 let myTypedArray = new Uint8Array(32);
 const myPtr = ptr(myTypedArray);
 
@@ -388,7 +388,7 @@ myTypedArray = new Uint8Array(toArrayBuffer(myPtr, 0, 32), 0, 32);
 To read data from a pointer, you have two options. For long-lived pointers, use a `DataView`:
 
 ```ts
-import {toArrayBuffer} from 'bun:ffi';
+import { toArrayBuffer } from "bun:ffi";
 let myDataView = new DataView(toArrayBuffer(myPtr, 0, 32));
 
 console.log(
@@ -402,7 +402,7 @@ console.log(
 For short-lived pointers, use `read`:
 
 ```ts
-import {read} from 'bun:ffi';
+import { read } from "bun:ffi";
 
 console.log(
 	// ptr, byteOffset
@@ -448,7 +448,7 @@ typedef void (*JSTypedArrayBytesDeallocator)(void *bytes, void *deallocatorConte
 ```
 
 ```ts
-import {toArrayBuffer} from 'bun:ffi';
+import { toArrayBuffer } from "bun:ffi";
 
 // with a deallocatorContext:
 toArrayBuffer(
@@ -489,14 +489,14 @@ If an API expects a pointer sized to something other than `char` or `u8`, make s
 Where FFI functions expect a pointer, pass a `TypedArray` of equivalent size:
 
 ```ts
-import {dlopen, FFIType} from 'bun:ffi';
+import { dlopen, FFIType } from "bun:ffi";
 
 const {
-	symbols: {encode_png},
+	symbols: { encode_png },
 } = dlopen(myLibraryPath, {
 	encode_png: {
 		// FFIType's can be specified as strings too
-		args: ['ptr', 'u32', 'u32'],
+		args: ["ptr", "u32", "u32"],
 		returns: FFIType.ptr,
 	},
 });
@@ -521,14 +521,14 @@ The [auto-generated wrapper](https://github.com/oven-sh/bun/blob/6a65631cbdcae75
 If you don't want the automatic conversion or you want a pointer to a specific byte offset within the `TypedArray`, you can also directly get the pointer to the `TypedArray`:
 
 ```ts
-import {dlopen, FFIType, ptr} from 'bun:ffi';
+import { dlopen, FFIType, ptr } from "bun:ffi";
 
 const {
-	symbols: {encode_png},
+	symbols: { encode_png },
 } = dlopen(myLibraryPath, {
 	encode_png: {
 		// FFIType's can be specified as strings too
-		args: ['ptr', 'u32', 'u32'],
+		args: ["ptr", "u32", "u32"],
 		returns: FFIType.ptr,
 	},
 });
@@ -566,5 +566,5 @@ const out = encode_png(
 let png = new Uint8Array(toArrayBuffer(out));
 
 // save it to disk:
-await Bun.write('out.png', png);
+await Bun.write("out.png", png);
 ```

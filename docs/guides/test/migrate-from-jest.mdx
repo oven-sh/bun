@@ -22,8 +22,8 @@ There's often no need for code changes.
 But if you'd rather switch to the `bun:test` imports, you can do that too.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
-import {test, expect} from '@jest/globals'; // [!code --]
-import {test, expect} from 'bun:test'; // [!code ++]
+import { test, expect } from "@jest/globals"; // [!code --]
+import { test, expect } from "bun:test"; // [!code ++]
 ```
 
 ---
@@ -45,8 +45,8 @@ Add this directive to _just one file_ in your project, such as:
 Once added, all test files in your project automatically get TypeScript support for Jest globals:
 
 ```ts math.test.ts icon="/icons/typescript.svg"
-describe('my test suite', () => {
-	test('should work', () => {
+describe("my test suite", () => {
+	test("should work", () => {
 		expect(1 + 1).toBe(2);
 	});
 

@@ -261,11 +261,11 @@ To quickly redirect users to a presigned URL for an S3 file, pass an `S3File` in
 
 This will automatically redirect the user to the presigned URL for the S3 file, saving you the memory, time, and bandwidth cost of downloading the file to your server and sending it back to the user.
 
-
 ```ts s3.ts icon="/icons/typescript.svg"
 const response = new Response(s3file);
 console.log(response);
 ```
+
 ```txt
 Response (0 KB) {
   ok: false,
@@ -279,8 +279,6 @@ Response (0 KB) {
   bodyUsed: false
 }
 ```
-
-
 
 ---
 
@@ -389,12 +387,12 @@ const supabase = new S3Client({
 
 ### Using Bun's S3Client with S3 Virtual Hosted-Style endpoints
 
-When using a S3 Virtual Hosted-Style endpoint, you need to set the `virtualHostedStyle` option to `true`. 
+When using a S3 Virtual Hosted-Style endpoint, you need to set the `virtualHostedStyle` option to `true`.
 
 <Note>
-- If you don’t specify an endpoint, Bun will automatically determine the AWS S3 endpoint using the provided region and bucket.
-- If no region is specified, Bun defaults to us-east-1.
-- If you explicitly provide an endpoint, you don’t need to specify a bucket name.
+	- If you don’t specify an endpoint, Bun will automatically determine the AWS S3 endpoint using the
+	provided region and bucket. - If no region is specified, Bun defaults to us-east-1. - If you
+	explicitly provide an endpoint, you don’t need to specify a bucket name.
 </Note>
 
 ```ts s3.ts icon="/icons/typescript.svg" highlight={17, 25}
@@ -414,7 +412,7 @@ const s3 = new S3Client({
 const s3WithEndpoint = new S3Client({
 	accessKeyId: "access-key",
 	secretAccessKey: "secret-key",
-	endpoint: "https://<bucket-name>.s3.<region>.amazonaws.com", 
+	endpoint: "https://<bucket-name>.s3.<region>.amazonaws.com",
 	virtualHostedStyle: true, // [!code ++]
 });
 
@@ -422,7 +420,7 @@ const s3WithEndpoint = new S3Client({
 const r2WithEndpoint = new S3Client({
 	accessKeyId: "access-key",
 	secretAccessKey: "secret-key",
-	endpoint: "https://<bucket-name>.<account-id>.r2.cloudflarestorage.com", 
+	endpoint: "https://<bucket-name>.<account-id>.r2.cloudflarestorage.com",
 	virtualHostedStyle: true, // [!code ++]
 });
 ```
@@ -499,7 +497,7 @@ const client = new Bun.S3Client({
 	bucket: "my-bucket",
 });
 
-await client.write("my-file.txt", "Hello World!"); 
+await client.write("my-file.txt", "Hello World!");
 await client.write("my-file.txt", new Response("Hello World!"));
 
 // equivalent to
@@ -785,7 +783,7 @@ This is equivalent to calling `new S3Client(credentials).size("my-file.txt")`.
 
 To get the size, etag, and other metadata of an S3 file, you can use the `S3Client.stat` static method.
 
-```ts s3.ts icon="/icons/typescript.svg" 
+```ts s3.ts icon="/icons/typescript.svg"
 import { S3Client } from "bun";
 
 const credentials = {
@@ -798,6 +796,7 @@ const credentials = {
 
 const stat = await S3Client.stat("my-file.txt", credentials);
 ```
+
 ```txt
 {
   etag: "\"7a30b741503c0b461cc14157e2df4ad8\"",
@@ -833,7 +832,7 @@ await S3Client.unlink("my-file.txt", credentials);
 
 To make it easier to use the same code for local files and S3 files, the `s3://` protocol is supported in `fetch` and `Bun.file()`.
 
-```ts s3.ts icon="/icons/typescript.svg" 
+```ts s3.ts icon="/icons/typescript.svg"
 const response = await fetch("s3://my-bucket/my-file.txt");
 const file = Bun.file("s3://my-bucket/my-file.txt");
 ```
@@ -842,7 +841,7 @@ You can additionally pass `s3` options to the `fetch` and `Bun.file` functions.
 
 ```ts s3.ts icon="/icons/typescript.svg" highlight={2-6}
 const response = await fetch("s3://my-bucket/my-file.txt", {
-	s3: { 
+	s3: {
 		accessKeyId: "your-access-key",
 		secretAccessKey: "your-secret-key",
 		endpoint: "https://s3.us-east-1.amazonaws.com",

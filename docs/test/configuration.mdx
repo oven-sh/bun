@@ -1,6 +1,6 @@
 ---
-title: 'Test configuration'
-description: 'Learn how to configure Bun test behavior using bunfig.toml and command-line options'
+title: "Test configuration"
+description: "Learn how to configure Bun test behavior using bunfig.toml and command-line options"
 ---
 
 Configure `bun test` via `bunfig.toml` file and command-line options. This page documents the available configuration options for `bun test`.
@@ -64,7 +64,7 @@ bun test --preload ./test-setup.ts --preload ./global-mocks.ts
 
 ```ts title="test-setup.ts" icon="/icons/typescript.svg"
 // Global test setup
-import {beforeAll, afterAll} from 'bun:test';
+import { beforeAll, afterAll } from "bun:test";
 
 beforeAll(() => {
 	// Set up test database
@@ -79,15 +79,15 @@ afterAll(() => {
 
 ```ts title="global-mocks.ts" icon="/icons/typescript.svg"
 // Global mocks
-import {mock} from 'bun:test';
+import { mock } from "bun:test";
 
 // Mock environment variables
-process.env.NODE_ENV = 'test';
-process.env.API_URL = 'http://localhost:3001';
+process.env.NODE_ENV = "test";
+process.env.API_URL = "http://localhost:3001";
 
 // Mock external dependencies
-mock.module('./external-api', () => ({
-	fetchData: mock(() => Promise.resolve({data: 'test'})),
+mock.module("./external-api", () => ({
+	fetchData: mock(() => Promise.resolve({ data: "test" })),
 }));
 ```
 
@@ -106,12 +106,12 @@ This applies to all tests unless overridden by individual test timeouts:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 // This test will use the default timeout from bunfig.toml
-test('uses default timeout', () => {
+test("uses default timeout", () => {
 	// test implementation
 });
 
 // This test overrides the default timeout
-test('custom timeout', () => {
+test("custom timeout", () => {
 	// test implementation
 }, 30000); // 30 seconds
 ```

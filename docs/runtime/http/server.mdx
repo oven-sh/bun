@@ -10,32 +10,32 @@ const server = Bun.serve({
 	// `routes` requires Bun v1.2.3+
 	routes: {
 		// Static routes
-		'/api/status': new Response('OK'),
+		"/api/status": new Response("OK"),
 
 		// Dynamic routes
-		'/users/:id': req => {
+		"/users/:id": req => {
 			return new Response(`Hello User ${req.params.id}!`);
 		},
 
 		// Per-HTTP method handlers
-		'/api/posts': {
-			GET: () => new Response('List posts'),
+		"/api/posts": {
+			GET: () => new Response("List posts"),
 			POST: async req => {
 				const body = await req.json();
-				return Response.json({created: true, ...body});
+				return Response.json({ created: true, ...body });
 			},
 		},
 
 		// Wildcard route for all routes that start with "/api/" and aren't otherwise matched
-		'/api/*': Response.json({message: 'Not found'}, {status: 404}),
+		"/api/*": Response.json({ message: "Not found" }, { status: 404 }),
 
 		// Redirect from /blog/hello to /blog/hello/world
-		'/blog/hello': Response.redirect('/blog/hello/world'),
+		"/blog/hello": Response.redirect("/blog/hello/world"),
 
 		// Serve a file by buffering it in memory
-		'/favicon.ico': new Response(await Bun.file('./favicon.ico').bytes(), {
+		"/favicon.ico": new Response(await Bun.file("./favicon.ico").bytes(), {
 			headers: {
-				'Content-Type': 'image/x-icon',
+				"Content-Type": "image/x-icon",
 			},
 		}),
 	},
@@ -43,7 +43,7 @@ const server = Bun.serve({
 	// (optional) fallback for unmatched routes:
 	// Required if Bun's version < 1.2.3
 	fetch(req) {
-		return new Response('Not Found', {status: 404});
+		return new Response("Not Found", { status: 404 });
 	},
 });
 
@@ -61,11 +61,11 @@ Bun supports importing HTML files directly into your server code, enabling full-
 **Production (`bun build`):** When building with `bun build --target=bun`, the `import index from "./index.html"` statement resolves to a pre-built manifest object containing all bundled client assets. `Bun.serve` consumes this manifest to serve optimized assets with zero runtime bundling overhead. This is ideal for deploying to production.
 
 ```ts
-import myReactSinglePageApp from './index.html';
+import myReactSinglePageApp from "./index.html";
 
 Bun.serve({
 	routes: {
-		'/': myReactSinglePageApp,
+		"/": myReactSinglePageApp,
 	},
 });
 ```
@@ -85,9 +85,9 @@ To configure which port and hostname the server will listen on, set `port` and `
 ```ts
 Bun.serve({
 	port: 8080, // defaults to $BUN_PORT, $PORT, $NODE_PORT otherwise 3000 // [!code ++]
-	hostname: 'mydomain.com', // defaults to "0.0.0.0" // [!code ++]
+	hostname: "mydomain.com", // defaults to "0.0.0.0" // [!code ++]
 	fetch(req) {
-		return new Response('404!');
+		return new Response("404!");
 	},
 });
 ```
@@ -98,7 +98,7 @@ To randomly select an available port, set `port` to `0`.
 const server = Bun.serve({
 	port: 0, // random port // [!code ++]
 	fetch(req) {
-		return new Response('404!');
+		return new Response("404!");
 	},
 });
 
@@ -149,7 +149,7 @@ To listen on a [unix domain socket](https://en.wikipedia.org/wiki/Unix_domain_so
 
 ```ts
 Bun.serve({
-	unix: '/tmp/my-socket.sock', // path to socket
+	unix: "/tmp/my-socket.sock", // path to socket
 	fetch(req) {
 		return new Response(`404!`);
 	},
@@ -162,7 +162,7 @@ Bun supports Linux abstract namespace sockets. To use an abstract namespace sock
 
 ```ts
 Bun.serve({
-	unix: '\0my-abstract-socket', // abstract namespace socket
+	unix: "\0my-abstract-socket", // abstract namespace socket
 	fetch(req) {
 		return new Response(`404!`);
 	},
@@ -183,7 +183,7 @@ Bun.serve({
 	idleTimeout: 10,
 
 	fetch(req) {
-		return new Response('Bun!');
+		return new Response("Bun!");
 	},
 });
 ```
@@ -197,11 +197,11 @@ This is the maximum amount of time a connection is allowed to be idle before the
 Thus far, the examples on this page have used the explicit `Bun.serve` API. Bun also supports an alternate syntax.
 
 ```ts server.ts
-import {type Serve} from 'bun';
+import { type Serve } from "bun";
 
 export default {
 	fetch(req) {
-		return new Response('Bun!');
+		return new Response("Bun!");
 	},
 } satisfies Serve;
 ```
@@ -217,14 +217,14 @@ Update routes without server restarts using `server.reload()`:
 ```ts
 const server = Bun.serve({
 	routes: {
-		'/api/version': () => Response.json({version: '1.0.0'}),
+		"/api/version": () => Response.json({ version: "1.0.0" }),
 	},
 });
 
 // Deploy new routes without downtime
 server.reload({
 	routes: {
-		'/api/version': () => Response.json({version: '2.0.0'}),
+		"/api/version": () => Response.json({ version: "2.0.0" }),
 	},
 });
 ```
@@ -240,7 +240,7 @@ To stop the server from accepting new connections:
 ```ts
 const server = Bun.serve({
 	fetch(req) {
-		return new Response('Hello!');
+		return new Response("Hello!");
 	},
 });
 
@@ -272,20 +272,20 @@ Update the server's handlers without restarting:
 ```ts
 const server = Bun.serve({
 	routes: {
-		'/api/version': Response.json({version: 'v1'}),
+		"/api/version": Response.json({ version: "v1" }),
 	},
 	fetch(req) {
-		return new Response('v1');
+		return new Response("v1");
 	},
 });
 
 // Update to new handler
 server.reload({
 	routes: {
-		'/api/version': Response.json({version: 'v2'}),
+		"/api/version": Response.json({ version: "v2" }),
 	},
 	fetch(req) {
-		return new Response('v2');
+		return new Response("v2");
 	},
 });
 ```
@@ -309,7 +309,7 @@ const server = Bun.serve({
 		// If they take longer than 60 seconds to send the body, the request will be aborted
 		await req.text();
 
-		return new Response('Done!');
+		return new Response("Done!");
 	},
 });
 ```
@@ -327,7 +327,7 @@ const server = Bun.serve({
 		if (address) {
 			return new Response(`Client IP: ${address.address}, Port: ${address.port}`);
 		}
-		return new Response('Unknown client');
+		return new Response("Unknown client");
 	},
 });
 ```
@@ -360,12 +360,12 @@ Get count of subscribers for a WebSocket topic:
 ```ts
 const server = Bun.serve({
 	fetch(req, server) {
-		const chatUsers = server.subscriberCount('chat');
+		const chatUsers = server.subscriberCount("chat");
 		return new Response(`${chatUsers} users in chat`);
 	},
 	websocket: {
 		message(ws) {
-			ws.subscribe('chat');
+			ws.subscribe("chat");
 		},
 	},
 });
@@ -380,15 +380,15 @@ Below are Bun and Node.js implementations of a simple HTTP server that responds 
 ```ts Bun
 Bun.serve({
 	fetch(req: Request) {
-		return new Response('Bun!');
+		return new Response("Bun!");
 	},
 	port: 3000,
 });
 ```
 
 ```ts
-require('http')
-	.createServer((req, res) => res.end('Bun!'))
+require("http")
+	.createServer((req, res) => res.end("Bun!"))
 	.listen(8080);
 ```
 
@@ -412,10 +412,10 @@ Here's a basic database-backed REST API using Bun's router with zero dependencie
 <CodeGroup>
 
 ```ts server.ts expandable icon="file-code"
-import type {Post} from './types.ts';
-import {Database} from 'bun:sqlite';
+import type { Post } from "./types.ts";
+import { Database } from "bun:sqlite";
 
-const db = new Database('posts.db');
+const db = new Database("posts.db");
 db.exec(`
   CREATE TABLE IF NOT EXISTS posts (
     id TEXT PRIMARY KEY,
@@ -428,15 +428,15 @@ db.exec(`
 Bun.serve({
 	routes: {
 		// List posts
-		'/api/posts': {
+		"/api/posts": {
 			GET: () => {
-				const posts = db.query('SELECT * FROM posts').all();
+				const posts = db.query("SELECT * FROM posts").all();
 				return Response.json(posts);
 			},
 
 			// Create post
 			POST: async req => {
-				const post: Omit<Post, 'id' | 'created_at'> = await req.json();
+				const post: Omit<Post, "id" | "created_at"> = await req.json();
 				const id = crypto.randomUUID();
 
 				db.query(
@@ -444,16 +444,16 @@ Bun.serve({
            VALUES (?, ?, ?, ?)`,
 				).run(id, post.title, post.content, new Date().toISOString());
 
-				return Response.json({id, ...post}, {status: 201});
+				return Response.json({ id, ...post }, { status: 201 });
 			},
 		},
 
 		// Get post by ID
-		'/api/posts/:id': req => {
-			const post = db.query('SELECT * FROM posts WHERE id = ?').get(req.params.id);
+		"/api/posts/:id": req => {
+			const post = db.query("SELECT * FROM posts WHERE id = ?").get(req.params.id);
 
 			if (!post) {
-				return new Response('Not Found', {status: 404});
+				return new Response("Not Found", { status: 404 });
 			}
 
 			return Response.json(post);
@@ -462,7 +462,7 @@ Bun.serve({
 
 	error(error) {
 		console.error(error);
-		return new Response('Internal Server Error', {status: 500});
+		return new Response("Internal Server Error", { status: 500 });
 	},
 });
 ```

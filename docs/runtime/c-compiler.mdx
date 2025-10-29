@@ -14,22 +14,22 @@ See the [introduction blog post](https://bun.com/blog/compile-and-run-c-in-js) f
 JavaScript:
 
 ```ts hello.js icon="file-code"
-import {cc} from 'bun:ffi';
-import source from './hello.c' with {type: 'file'};
+import { cc } from "bun:ffi";
+import source from "./hello.c" with { type: "file" };
 
 const {
-	symbols: {hello},
+	symbols: { hello },
 } = cc({
 	source,
 	symbols: {
 		hello: {
 			args: [],
-			returns: 'int',
+			returns: "int",
 		},
 	},
 });
 
-console.log('What is the answer to the universe?', hello());
+console.log("What is the answer to the universe?", hello());
 ```
 
 C source:
@@ -88,17 +88,17 @@ You can also pass a `napi_env` to receive the N-API environment used to call the
 For example, if you have a string in C, you can return it to JavaScript like this:
 
 ```ts hello.js
-import {cc} from 'bun:ffi';
-import source from './hello.c' with {type: 'file'};
+import { cc } from "bun:ffi";
+import source from "./hello.c" with { type: "file" };
 
 const {
-	symbols: {hello},
+	symbols: { hello },
 } = cc({
 	source,
 	symbols: {
 		hello: {
-			args: ['napi_env'],
-			returns: 'napi_value',
+			args: ["napi_env"],
+			returns: "napi_value",
 		},
 	},
 });
@@ -140,8 +140,8 @@ The `library` array is used to specify the libraries that should be linked with 
 type Library = string[];
 
 cc({
-	source: 'hello.c',
-	library: ['sqlite3'],
+	source: "hello.c",
+	library: ["sqlite3"],
 });
 ```
 
@@ -166,11 +166,11 @@ The `source` is a file path to the C code that should be compiled and linked wit
 type Source = string | URL | BunFile;
 
 cc({
-	source: 'hello.c',
+	source: "hello.c",
 	symbols: {
 		hello: {
 			args: [],
-			returns: 'int',
+			returns: "int",
 		},
 	},
 });
@@ -194,9 +194,9 @@ The `define` is an optional object that should be passed to the TinyCC compiler.
 type Defines = Record<string, string>;
 
 cc({
-	source: 'hello.c',
+	source: "hello.c",
 	define: {
-		NDEBUG: '1',
+		NDEBUG: "1",
 	},
 });
 ```

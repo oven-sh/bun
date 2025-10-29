@@ -8,16 +8,16 @@ description: Spawn child processes with `Bun.spawn` or `Bun.spawnSync`
 Provide a command as an array of strings. The result of `Bun.spawn()` is a `Bun.Subprocess` object.
 
 ```ts
-const proc = Bun.spawn(['bun', '--version']);
+const proc = Bun.spawn(["bun", "--version"]);
 console.log(await proc.exited); // 0
 ```
 
 The second argument to `Bun.spawn` is a parameters object that can be used to configure the subprocess.
 
 ```ts
-const proc = Bun.spawn(['bun', '--version'], {
-	cwd: './path/to/subdir', // specify a working directory
-	env: {...process.env, FOO: 'bar'}, // specify environment variables
+const proc = Bun.spawn(["bun", "--version"], {
+	cwd: "./path/to/subdir", // specify a working directory
+	env: { ...process.env, FOO: "bar" }, // specify environment variables
 	onExit(proc, exitCode, signalCode, error) {
 		// exit handler
 	},
@@ -31,8 +31,8 @@ proc.pid; // process ID of subprocess
 By default, the input stream of the subprocess is undefined; it can be configured with the `stdin` parameter.
 
 ```ts
-const proc = Bun.spawn(['cat'], {
-	stdin: await fetch('https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js'),
+const proc = Bun.spawn(["cat"], {
+	stdin: await fetch("https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js"),
 });
 
 const text = await proc.stdout.text();
@@ -55,16 +55,16 @@ console.log(text); // "const input = "hello world".repeat(400); ..."
 The `"pipe"` option lets incrementally write to the subprocess's input stream from the parent process.
 
 ```ts
-const proc = Bun.spawn(['cat'], {
-	stdin: 'pipe', // return a FileSink for writing
+const proc = Bun.spawn(["cat"], {
+	stdin: "pipe", // return a FileSink for writing
 });
 
 // enqueue string data
-proc.stdin.write('hello');
+proc.stdin.write("hello");
 
 // enqueue binary data
 const enc = new TextEncoder();
-proc.stdin.write(enc.encode(' world!'));
+proc.stdin.write(enc.encode(" world!"));
 
 // send buffered data
 proc.stdin.flush();
@@ -78,15 +78,15 @@ Passing a `ReadableStream` to `stdin` lets you pipe data from a JavaScript `Read
 ```ts
 const stream = new ReadableStream({
 	start(controller) {
-		controller.enqueue('Hello from ');
-		controller.enqueue('ReadableStream!');
+		controller.enqueue("Hello from ");
+		controller.enqueue("ReadableStream!");
 		controller.close();
 	},
 });
 
-const proc = Bun.spawn(['cat'], {
+const proc = Bun.spawn(["cat"], {
 	stdin: stream,
-	stdout: 'pipe',
+	stdout: "pipe",
 });
 
 const output = await new Response(proc.stdout).text();
@@ -98,7 +98,7 @@ console.log(output); // "Hello from ReadableStream!"
 You can read results from the subprocess via the `stdout` and `stderr` properties. By default these are instances of `ReadableStream`.
 
 ```ts
-const proc = Bun.spawn(['bun', '--version']);
+const proc = Bun.spawn(["bun", "--version"]);
 const text = await proc.stdout.text();
 console.log(text); // => "1.3.1\n"
 ```
@@ -118,7 +118,7 @@ Configure the output stream by passing one of the following values to `stdout/st
 Use the `onExit` callback to listen for the process exiting or being killed.
 
 ```ts index.ts icon="/icons/typescript.svg"
-const proc = Bun.spawn(['bun', '--version'], {
+const proc = Bun.spawn(["bun", "--version"], {
 	onExit(proc, exitCode, signalCode, error) {
 		// exit handler
 	},
@@ -128,7 +128,7 @@ const proc = Bun.spawn(['bun', '--version'], {
 For convenience, the `exited` property is a `Promise` that resolves when the process exits.
 
 ```ts index.ts icon="/icons/typescript.svg"
-const proc = Bun.spawn(['bun', '--version']);
+const proc = Bun.spawn(["bun", "--version"]);
 
 await proc.exited; // resolves when process exit
 proc.killed; // boolean — was the process killed?
@@ -139,18 +139,18 @@ proc.signalCode; // null | "SIGABRT" | "SIGALRM" | ...
 To kill a process:
 
 ```ts index.ts icon="/icons/typescript.svg"
-const proc = Bun.spawn(['bun', '--version']);
+const proc = Bun.spawn(["bun", "--version"]);
 proc.kill();
 proc.killed; // true
 
 proc.kill(15); // specify a signal code
-proc.kill('SIGTERM'); // specify a signal name
+proc.kill("SIGTERM"); // specify a signal name
 ```
 
 The parent `bun` process will not terminate until all child processes have exited. Use `proc.unref()` to detach the child process from the parent.
 
 ```ts index.ts icon="/icons/typescript.svg"
-const proc = Bun.spawn(['bun', '--version']);
+const proc = Bun.spawn(["bun", "--version"]);
 proc.unref();
 ```
 
@@ -159,7 +159,7 @@ proc.unref();
 You can get information about the process's resource usage after it has exited:
 
 ```ts index.ts icon="/icons/typescript.svg"
-const proc = Bun.spawn(['bun', '--version']);
+const proc = Bun.spawn(["bun", "--version"]);
 await proc.exited;
 
 const usage = proc.resourceUsage();
@@ -174,10 +174,10 @@ You can abort a subprocess using an `AbortSignal`:
 
 ```ts index.ts icon="/icons/typescript.svg"
 const controller = new AbortController();
-const {signal} = controller;
+const { signal } = controller;
 
 const proc = Bun.spawn({
-	cmd: ['sleep', '100'],
+	cmd: ["sleep", "100"],
 	signal,
 });
 
@@ -192,7 +192,7 @@ You can set a timeout for a subprocess to automatically terminate after a specif
 ```ts index.ts icon="/icons/typescript.svg"
 // Kill the process after 5 seconds
 const proc = Bun.spawn({
-	cmd: ['sleep', '10'],
+	cmd: ["sleep", "10"],
 	timeout: 5000, // 5 seconds in milliseconds
 });
 
@@ -204,9 +204,9 @@ By default, timed-out processes are killed with the `SIGTERM` signal. You can sp
 ```ts index.ts icon="/icons/typescript.svg"
 // Kill the process with SIGKILL after 5 seconds
 const proc = Bun.spawn({
-	cmd: ['sleep', '10'],
+	cmd: ["sleep", "10"],
 	timeout: 5000,
-	killSignal: 'SIGKILL', // Can be string name or signal number
+	killSignal: "SIGKILL", // Can be string name or signal number
 });
 ```
 
@@ -219,7 +219,7 @@ For spawnSync, you can limit the maximum number of bytes of output before the pr
 ```ts index.ts icon="/icons/typescript.svg"
 // Kill 'yes' after it emits over 100 bytes of output
 const result = Bun.spawnSync({
-	cmd: ['yes'], // or ["bun", "exec", "yes"] on Windows
+	cmd: ["yes"], // or ["bun", "exec", "yes"] on Windows
 	maxBuffer: 100,
 });
 // process exits
@@ -230,7 +230,7 @@ const result = Bun.spawnSync({
 Bun supports direct inter-process communication channel between two `bun` processes. To receive messages from a spawned Bun subprocess, specify an `ipc` handler.
 
 ```ts parent.ts icon="/icons/typescript.svg"
-const child = Bun.spawn(['bun', 'child.ts'], {
+const child = Bun.spawn(["bun", "child.ts"], {
 	ipc(message) {
 		/**
 		 * The message received from the sub process
@@ -242,25 +242,25 @@ const child = Bun.spawn(['bun', 'child.ts'], {
 The parent process can send messages to the subprocess using the `.send()` method on the returned `Subprocess` instance. A reference to the sending subprocess is also available as the second argument in the `ipc` handler.
 
 ```ts parent.ts icon="/icons/typescript.svg"
-const childProc = Bun.spawn(['bun', 'child.ts'], {
+const childProc = Bun.spawn(["bun", "child.ts"], {
 	ipc(message, childProc) {
 		/**
 		 * The message received from the sub process
 		 **/
-		childProc.send('Respond to child');
+		childProc.send("Respond to child");
 	},
 });
 
-childProc.send('I am your father'); // The parent can send messages to the child as well
+childProc.send("I am your father"); // The parent can send messages to the child as well
 ```
 
 Meanwhile the child process can send messages to its parent using with `process.send()` and receive messages with `process.on("message")`. This is the same API used for `child_process.fork()` in Node.js.
 
 ```ts child.ts
-process.send('Hello from child as string');
-process.send({message: 'Hello from child as object'});
+process.send("Hello from child as string");
+process.send({ message: "Hello from child as object" });
 
-process.on('message', message => {
+process.on("message", message => {
 	// print message from parent
 	console.log(message);
 });
@@ -268,10 +268,10 @@ process.on('message', message => {
 
 ```ts child.ts
 // send a string
-process.send('Hello from child as string');
+process.send("Hello from child as string");
 
 // send an object
-process.send({message: 'Hello from child as object'});
+process.send({ message: "Hello from child as object" });
 ```
 
 The `serialization` option controls the underlying communication format between the two processes:
@@ -290,25 +290,25 @@ childProc.disconnect();
 To use IPC between a `bun` process and a Node.js process, set `serialization: "json"` in `Bun.spawn`. This is because Node.js and Bun use different JavaScript engines with different object serialization formats.
 
 ```ts bun-node-ipc.js icon="file-code"
-if (typeof Bun !== 'undefined') {
+if (typeof Bun !== "undefined") {
 	const prefix = `[bun ${process.versions.bun} 🐇]`;
 	const node = Bun.spawn({
-		cmd: ['node', __filename],
-		ipc({message}) {
+		cmd: ["node", __filename],
+		ipc({ message }) {
 			console.log(message);
-			node.send({message: `${prefix} 👋 hey node`});
+			node.send({ message: `${prefix} 👋 hey node` });
 			node.kill();
 		},
-		stdio: ['inherit', 'inherit', 'inherit'],
-		serialization: 'json',
+		stdio: ["inherit", "inherit", "inherit"],
+		serialization: "json",
 	});
 
-	node.send({message: `${prefix} 👋 hey node`});
+	node.send({ message: `${prefix} 👋 hey node` });
 } else {
 	const prefix = `[node ${process.version}]`;
-	process.on('message', ({message}) => {
+	process.on("message", ({ message }) => {
 		console.log(message);
-		process.send({message: `${prefix} 👋 hey bun`});
+		process.send({ message: `${prefix} 👋 hey bun` });
 	});
 }
 ```
@@ -324,7 +324,7 @@ Bun provides a synchronous equivalent of `Bun.spawn` called `Bun.spawnSync`. Thi
 3. There is no `stdin` property. Use `Bun.spawn` to incrementally write to the subprocess's input stream.
 
 ```ts
-const proc = Bun.spawnSync(['echo', 'hello']);
+const proc = Bun.spawnSync(["echo", "hello"]);
 
 console.log(proc.stdout.toString());
 // => "hello\n"
@@ -380,8 +380,8 @@ interface Bun {
 	spawn(command: string[], options?: SpawnOptions.OptionsObject): Subprocess;
 	spawnSync(command: string[], options?: SpawnOptions.OptionsObject): SyncSubprocess;
 
-	spawn(options: {cmd: string[]} & SpawnOptions.OptionsObject): Subprocess;
-	spawnSync(options: {cmd: string[]} & SpawnOptions.OptionsObject): SyncSubprocess;
+	spawn(options: { cmd: string[] } & SpawnOptions.OptionsObject): Subprocess;
+	spawnSync(options: { cmd: string[] } & SpawnOptions.OptionsObject): SyncSubprocess;
 }
 
 namespace SpawnOptions {
@@ -399,7 +399,7 @@ namespace SpawnOptions {
 			error?: ErrorLike,
 		): void | Promise<void>;
 		ipc?(message: any, subprocess: Subprocess): void;
-		serialization?: 'json' | 'advanced';
+		serialization?: "json" | "advanced";
 		windowsHide?: boolean;
 		windowsVerbatimArguments?: boolean;
 		argv0?: string;
@@ -410,9 +410,9 @@ namespace SpawnOptions {
 	}
 
 	type Readable =
-		| 'pipe'
-		| 'inherit'
-		| 'ignore'
+		| "pipe"
+		| "inherit"
+		| "ignore"
 		| null // equivalent to "ignore"
 		| undefined // to use default
 		| BunFile
@@ -420,9 +420,9 @@ namespace SpawnOptions {
 		| number;
 
 	type Writable =
-		| 'pipe'
-		| 'inherit'
-		| 'ignore'
+		| "pipe"
+		| "inherit"
+		| "ignore"
 		| null // equivalent to "ignore"
 		| undefined // to use default
 		| BunFile
@@ -492,41 +492,41 @@ interface ResourceUsage {
 }
 
 type Signal =
-	| 'SIGABRT'
-	| 'SIGALRM'
-	| 'SIGBUS'
-	| 'SIGCHLD'
-	| 'SIGCONT'
-	| 'SIGFPE'
-	| 'SIGHUP'
-	| 'SIGILL'
-	| 'SIGINT'
-	| 'SIGIO'
-	| 'SIGIOT'
-	| 'SIGKILL'
-	| 'SIGPIPE'
-	| 'SIGPOLL'
-	| 'SIGPROF'
-	| 'SIGPWR'
-	| 'SIGQUIT'
-	| 'SIGSEGV'
-	| 'SIGSTKFLT'
-	| 'SIGSTOP'
-	| 'SIGSYS'
-	| 'SIGTERM'
-	| 'SIGTRAP'
-	| 'SIGTSTP'
-	| 'SIGTTIN'
-	| 'SIGTTOU'
-	| 'SIGUNUSED'
-	| 'SIGURG'
-	| 'SIGUSR1'
-	| 'SIGUSR2'
-	| 'SIGVTALRM'
-	| 'SIGWINCH'
-	| 'SIGXCPU'
-	| 'SIGXFSZ'
-	| 'SIGBREAK'
-	| 'SIGLOST'
-	| 'SIGINFO';
+	| "SIGABRT"
+	| "SIGALRM"
+	| "SIGBUS"
+	| "SIGCHLD"
+	| "SIGCONT"
+	| "SIGFPE"
+	| "SIGHUP"
+	| "SIGILL"
+	| "SIGINT"
+	| "SIGIO"
+	| "SIGIOT"
+	| "SIGKILL"
+	| "SIGPIPE"
+	| "SIGPOLL"
+	| "SIGPROF"
+	| "SIGPWR"
+	| "SIGQUIT"
+	| "SIGSEGV"
+	| "SIGSTKFLT"
+	| "SIGSTOP"
+	| "SIGSYS"
+	| "SIGTERM"
+	| "SIGTRAP"
+	| "SIGTSTP"
+	| "SIGTTIN"
+	| "SIGTTOU"
+	| "SIGUNUSED"
+	| "SIGURG"
+	| "SIGUSR1"
+	| "SIGUSR2"
+	| "SIGVTALRM"
+	| "SIGWINCH"
+	| "SIGXCPU"
+	| "SIGXFSZ"
+	| "SIGBREAK"
+	| "SIGLOST"
+	| "SIGINFO";
 ```

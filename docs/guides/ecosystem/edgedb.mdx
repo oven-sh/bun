@@ -144,7 +144,7 @@ Paste the following code into `seed.ts`.
 The client auto-connects to the database. We insert a couple movies using the `.execute()` method. We will use EdgeQL's `for` expression to turn this bulk insert into a single optimized query.
 
 ```ts seed.ts icon="/icons/typescript.svg"
-import {createClient} from 'edgedb';
+import { createClient } from "edgedb";
 
 const client = createClient();
 
@@ -159,12 +159,12 @@ const INSERT_MOVIE = `
 `;
 
 const movies = [
-	{title: 'The Matrix', year: 1999},
-	{title: 'The Matrix Reloaded', year: 2003},
-	{title: 'The Matrix Revolutions', year: 2003},
+	{ title: "The Matrix", year: 1999 },
+	{ title: "The Matrix Reloaded", year: 2003 },
+	{ title: "The Matrix Revolutions", year: 2003 },
 ];
 
-await client.execute(INSERT_MOVIE, {movies});
+await client.execute(INSERT_MOVIE, { movies });
 
 console.log(`Seeding complete.`);
 process.exit();
@@ -213,8 +213,8 @@ the query builder directory? The following line will be added:
 In `index.ts`, we can import the generated query builder from `./dbschema/edgeql-js` and write a simple select query.
 
 ```ts index.ts icon="/icons/typescript.svg"
-import {createClient} from 'edgedb';
-import e from './dbschema/edgeql-js';
+import { createClient } from "edgedb";
+import e from "./dbschema/edgeql-js";
 
 const client = createClient();
 

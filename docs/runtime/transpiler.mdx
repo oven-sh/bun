@@ -7,7 +7,7 @@ Bun exposes its internal transpiler via the `Bun.Transpiler` class. To create an
 
 ```ts
 const transpiler = new Bun.Transpiler({
-	loader: 'tsx', // "js | "jsx" | "ts" | "tsx"
+	loader: "tsx", // "js | "jsx" | "ts" | "tsx"
 });
 ```
 
@@ -30,7 +30,8 @@ export function Home(props: {title: string}){
 }`;
 
 const result = transpiler.transformSync(code);
-```
+
+````
 
 ```ts output
 import { __require as require } from "bun:wrap";
@@ -47,14 +48,14 @@ export default jsx(
   undefined,
   this,
 );
-```
+````
 
 </CodeGroup>
 
 To override the default loader specified in the `new Bun.Transpiler()` constructor, pass a second argument to `.transformSync()`.
 
 ```ts
-transpiler.transformSync('<div>hi!</div>', 'tsx');
+transpiler.transformSync("<div>hi!</div>", "tsx");
 ```
 
 <Accordion title="Nitty gritty">
@@ -72,15 +73,15 @@ If a macro is used, it will be run in the same thread as the transpiler, but in 
 The `transform()` method is an async version of `.transformSync()` that returns a `Promise<string>`.
 
 ```js
-const transpiler = new Bun.Transpiler({loader: 'jsx'});
-const result = await transpiler.transform('<div>hi!</div>');
+const transpiler = new Bun.Transpiler({ loader: "jsx" });
+const result = await transpiler.transform("<div>hi!</div>");
 console.log(result);
 ```
 
 Unless you're transpiling _many_ large files, you should probably use `Bun.Transpiler.transformSync`. The cost of the threadpool will often take longer than actually transpiling code.
 
 ```ts
-await transpiler.transform('<div>hi!</div>', 'tsx');
+await transpiler.transform("<div>hi!</div>", "tsx");
 ```
 
 <Accordion title="Nitty gritty">
@@ -99,7 +100,7 @@ The `Transpiler` instance can also scan some source code and return a list of it
 
 ```ts example.ts icon="/icons/typescript.svg"
 const transpiler = new Bun.Transpiler({
-	loader: 'tsx',
+	loader: "tsx",
 });
 
 const code = `
@@ -155,7 +156,7 @@ For performance-sensitive code, you can use the `.scanImports()` method to get a
 
 ```ts example.ts icon="/icons/typescript.svg"
 const transpiler = new Bun.Transpiler({
-	loader: 'tsx',
+	loader: "tsx",
 });
 
 const code = `

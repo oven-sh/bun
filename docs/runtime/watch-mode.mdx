@@ -1,6 +1,6 @@
 ---
-title: 'Watch Mode'
-description: 'Automatic reloading in Bun with --watch and --hot modes'
+title: "Watch Mode"
+description: "Automatic reloading in Bun with --watch and --hot modes"
 ---
 
 Bun supports two kinds of automatic reloading via CLI flags:
@@ -43,14 +43,14 @@ bun run --watch watchy.tsx
 ```
 
 ```tsx title="watchy.tsx" icon="/icons/typescript.svg"
-import {serve} from 'bun';
+import { serve } from "bun";
 
-console.log('I restarted at:', Date.now());
+console.log("I restarted at:", Date.now());
 
 serve({
 	port: 4003,
 	fetch(request) {
-		return new Response('Sup');
+		return new Response("Sup");
 	},
 });
 ```

@@ -1,6 +1,6 @@
 ---
 title: Convert an ArrayBuffer to a Blob
-sidebarTitle: 'ArrayBuffer to Blob'
+sidebarTitle: "ArrayBuffer to Blob"
 mode: center
 ---
 
@@ -17,7 +17,7 @@ By default the `type` of the resulting `Blob` will be unset. This can be set man
 
 ```ts
 const buf = new ArrayBuffer(64);
-const blob = new Blob([buf], {type: 'application/octet-stream'});
+const blob = new Blob([buf], { type: "application/octet-stream" });
 blob.type; // => "application/octet-stream"
 ```
 

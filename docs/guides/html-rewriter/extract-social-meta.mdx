@@ -26,11 +26,11 @@ async function extractSocialMetadata(url: string): Promise<SocialMetadata> {
 		// Extract Open Graph meta tags
 		.on('meta[property^="og:"]', {
 			element(el) {
-				const property = el.getAttribute('property');
-				const content = el.getAttribute('content');
+				const property = el.getAttribute("property");
+				const content = el.getAttribute("content");
 				if (property && content) {
 					// Convert "og:image" to "image" etc.
-					const key = property.replace('og:', '') as keyof SocialMetadata;
+					const key = property.replace("og:", "") as keyof SocialMetadata;
 					metadata[key] = content;
 				}
 			},
@@ -38,10 +38,10 @@ async function extractSocialMetadata(url: string): Promise<SocialMetadata> {
 		// Extract Twitter Card meta tags as fallback
 		.on('meta[name^="twitter:"]', {
 			element(el) {
-				const name = el.getAttribute('name');
-				const content = el.getAttribute('content');
+				const name = el.getAttribute("name");
+				const content = el.getAttribute("content");
 				if (name && content) {
-					const key = name.replace('twitter:', '') as keyof SocialMetadata;
+					const key = name.replace("twitter:", "") as keyof SocialMetadata;
 					// Only use Twitter Card data if we don't have OG data
 					if (!metadata[key]) {
 						metadata[key] = content;
@@ -52,14 +52,14 @@ async function extractSocialMetadata(url: string): Promise<SocialMetadata> {
 		// Fallback to regular meta tags
 		.on('meta[name="description"]', {
 			element(el) {
-				const content = el.getAttribute('content');
+				const content = el.getAttribute("content");
 				if (content && !metadata.description) {
 					metadata.description = content;
 				}
 			},
 		})
 		// Fallback to title tag
-		.on('title', {
+		.on("title", {
 			text(text) {
 				if (!metadata.title) {
 					metadata.title = text.text;
@@ -71,7 +71,7 @@ async function extractSocialMetadata(url: string): Promise<SocialMetadata> {
 	await rewriter.transform(response).blob();
 
 	// Convert relative image URLs to absolute
-	if (metadata.image && !metadata.image.startsWith('http')) {
+	if (metadata.image && !metadata.image.startsWith("http")) {
 		try {
 			metadata.image = new URL(metadata.image, url).href;
 		} catch {
@@ -85,7 +85,7 @@ async function extractSocialMetadata(url: string): Promise<SocialMetadata> {
 
 ```ts Example Usage icon="/icons/typescript.svg"
 // Example usage
-const metadata = await extractSocialMetadata('https://bun.com');
+const metadata = await extractSocialMetadata("https://bun.com");
 console.log(metadata);
 // {
 //   title: "Bun — A fast all-in-one JavaScript runtime",

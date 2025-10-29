@@ -3,7 +3,7 @@ title: Bun Runtime
 description: Execute JavaScript/TypeScript files, package.json scripts, and executable packages with Bun's fast runtime.
 ---
 
-import Run from '/snippets/cli/run.mdx';
+import Run from "/snippets/cli/run.mdx";
 
 The Bun Runtime is designed to start fast and run fast.
 
@@ -191,7 +191,7 @@ bun --console-depth 5 run index.tsx
 This sets how deeply nested objects are displayed in `console.log()` output. The default depth is `2`. Higher values show more nested properties but may produce verbose output for complex objects.
 
 ```ts console.ts icon="/icons/typescript.svg"
-const nested = {a: {b: {c: {d: 'deep'}}}};
+const nested = { a: { b: { c: { d: "deep" } } } };
 console.log(nested);
 // With --console-depth 2 (default): { a: { b: [Object] } }
 // With --console-depth 4: { a: { b: { c: { d: 'deep' } } } }

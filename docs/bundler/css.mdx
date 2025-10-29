@@ -506,7 +506,7 @@ The `:is()` pseudo-class function (formerly `:matches()`) allows you to create m
 
 /* Complex example with multiple groups */
 :is(header, main, footer) :is(h1, h2, .title) {
-	font-family: 'Heading Font', sans-serif;
+	font-family: "Heading Font", sans-serif;
 }
 ```
 
@@ -530,15 +530,15 @@ For browsers that don't support `:is()`, Bun's CSS bundler provides fallbacks us
 
 /* Complex example with fallbacks */
 :-webkit-any(header, main, footer) :-webkit-any(h1, h2, .title) {
-	font-family: 'Heading Font', sans-serif;
+	font-family: "Heading Font", sans-serif;
 }
 
 :-moz-any(header, main, footer) :-moz-any(h1, h2, .title) {
-	font-family: 'Heading Font', sans-serif;
+	font-family: "Heading Font", sans-serif;
 }
 
 :is(header, main, footer) :is(h1, h2, .title) {
-	font-family: 'Heading Font', sans-serif;
+	font-family: "Heading Font", sans-serif;
 }
 ```
 
@@ -854,12 +854,12 @@ For browsers that don't support `system-ui`, Bun's CSS bundler automatically exp
 		system-ui,
 		-apple-system,
 		BlinkMacSystemFont,
-		'Segoe UI',
+		"Segoe UI",
 		Roboto,
-		'Noto Sans',
+		"Noto Sans",
 		Ubuntu,
 		Cantarell,
-		'Helvetica Neue';
+		"Helvetica Neue";
 }
 
 .fallback-aware {
@@ -868,12 +868,12 @@ For browsers that don't support `system-ui`, Bun's CSS bundler automatically exp
 		system-ui,
 		-apple-system,
 		BlinkMacSystemFont,
-		'Segoe UI',
+		"Segoe UI",
 		Roboto,
-		'Noto Sans',
+		"Noto Sans",
 		Ubuntu,
 		Cantarell,
-		'Helvetica Neue',
+		"Helvetica Neue",
 		sans-serif;
 }
 ```
@@ -912,8 +912,8 @@ Create a CSS file with the `.module.css` extension:
 You can then import this file, for example into a TSX file:
 
 ```tsx title="app.tsx" icon="/icons/typescript.svg"
-import styles from './styles.module.css';
-import otherStyles from './other-styles.module.css';
+import styles from "./styles.module.css";
+import otherStyles from "./other-styles.module.css";
 
 export default function App() {
 	return (
@@ -928,8 +928,8 @@ export default function App() {
 The styles object from importing the CSS module file will be an object with all class names as keys and their unique identifiers as values:
 
 ```ts title="app.tsx" icon="/icons/typescript.svg"
-import styles from './styles.module.css';
-import otherStyles from './other-styles.module.css';
+import styles from "./styles.module.css";
+import otherStyles from "./other-styles.module.css";
 
 console.log(styles);
 console.log(otherStyles);
@@ -939,11 +939,11 @@ This will output:
 
 ```ts title="app.tsx" icon="/icons/typescript.svg"
 {
-	button: 'button_123';
+	button: "button_123";
 }
 
 {
-	button: 'button_456';
+	button: "button_456";
 }
 ```
 
@@ -1011,7 +1011,7 @@ You can also compose from a separate CSS module file:
 
 ```css title="styles.module.css" icon="file-code"
 .button {
-	composes: background from './background.module.css';
+	composes: background from "./background.module.css";
 	color: red;
 }
 ```

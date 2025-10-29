@@ -1,6 +1,6 @@
 ---
-title: 'Environment Variables'
-description: 'Read and configure environment variables in Bun, including automatic .env file support'
+title: "Environment Variables"
+description: "Read and configure environment variables in Bun, including automatic .env file support"
 ---
 
 Bun reads your `.env` files automatically and provides idiomatic ways to read and write your environment variables programmatically. Plus, some aspects of Bun's runtime behavior can be configured with Bun-specific environment variables.
@@ -57,7 +57,7 @@ On Windows, `package.json` scripts called with `bun run` will automatically use 
 Or programmatically by assigning a property to `process.env`.
 
 ```ts
-process.env.FOO = 'hello';
+process.env.FOO = "hello";
 ```
 
 ---
@@ -158,7 +158,7 @@ Bun.env.whatever;
 To get autocompletion and tell TypeScript to treat a variable as a non-optional string, we'll use [interface merging](https://www.typescriptlang.org/docs/handbook/declaration-merging.html#merging-interfaces).
 
 ```ts
-declare module 'bun' {
+declare module "bun" {
 	interface Env {
 		AWESOME: string;
 	}

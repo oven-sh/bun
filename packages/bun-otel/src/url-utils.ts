@@ -1,6 +1,11 @@
 /**
  * Parse URL path and host information for OpenTelemetry semantic conventions.
  *
+ * Custom implementation instead of standard URL class because:
+ * - URL class requires valid URLs and throws on edge cases (e.g., "localhost:abc")
+ * - We need graceful handling of malformed inputs from HTTP headers
+ * - Output format matches OTel semantic conventions (e.g., IPv6 keeps brackets, query without "?")
+ *
  * @param url - The URL path (e.g., "/api/users?id=123")
  * @param host - The host header value (e.g., "localhost:3000", "[::1]:3000", "example.com")
  * @returns Object with url.path, server.address, and optionally url.query and server.port
@@ -20,24 +25,31 @@ export function parseUrlAndHost(
   const query = qIndex === -1 ? "" : raw.slice(qIndex + 1);
 
   // Parse host:port including IPv6 [::1]:3000
-  let hostname = host;
+  const trimmedHost = host.trim();
+  let hostname = trimmedHost;
   let port: number | undefined;
 
-  if (host.startsWith("[")) {
+  if (trimmedHost.startsWith("[")) {
     // IPv6 address with optional port: [::1]:3000 or [::1]
-    const end = host.indexOf("]");
+    const end = trimmedHost.indexOf("]");
     if (end !== -1) {
-      hostname = host.slice(0, end + 1);
-      if (host[end + 1] === ":") {
-        port = parseInt(host.slice(end + 2), 10);
+      hostname = trimmedHost.slice(0, end + 1);
+      if (trimmedHost[end + 1] === ":") {
+        const p = Number(trimmedHost.slice(end + 2));
+        if (Number.isInteger(p) && p >= 0 && p <= 65535) port = p;
       }
     }
   } else {
     // Regular hostname:port or just hostname
-    const parts = host.split(":");
-    if (parts.length > 1) {
-      hostname = parts[0];
-      port = parseInt(parts[1], 10);
+    const last = trimmedHost.lastIndexOf(":");
+    if (last > -1) {
+      const maybe = trimmedHost.slice(last + 1);
+      const p = Number(maybe);
+      // Always strip the port part from hostname, but only include port field if valid
+      hostname = trimmedHost.slice(0, last);
+      if (Number.isInteger(p) && p >= 0 && p <= 65535) {
+        port = p;
+      }
     }
   }
 

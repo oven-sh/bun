@@ -147,7 +147,7 @@ pub const CowFd = struct {
         this.* = .{
             .__fd = fd,
         };
-        debug("init(0x{x}, fd={})", .{ @intFromPtr(this), fd });
+        debug("init(0x{x}, fd={f})", .{ @intFromPtr(this), fd });
         return this;
     }
 
@@ -156,7 +156,7 @@ pub const CowFd = struct {
             .fd = bun.sys.dup(this.fd),
             .writercount = 1,
         });
-        debug("dup(0x{x}, fd={}) = (0x{x}, fd={})", .{ @intFromPtr(this), this.fd, new, new.fd });
+        debug("dup(0x{x}, fd={f}) = (0x{x}, fd={f})", .{ @intFromPtr(this), this.fd, new, new.fd });
         return new;
     }
 

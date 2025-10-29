@@ -3576,7 +3576,7 @@ pub const IPCInstance = struct {
 };
 
 pub fn initIPCInstance(this: *VirtualMachine, info: bun.FD, mode: IPC.Mode) void {
-    IPC.log("initIPCInstance {}", .{info});
+    IPC.log("initIPCInstance {f}", .{info});
     this.ipc = .{ .waiting = .{ .info = info, .mode = mode } };
 }
 
@@ -3585,7 +3585,7 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
     if (this.ipc.? != .waiting) return this.ipc.?.initialized;
     const opts = this.ipc.?.waiting;
 
-    IPC.log("getIPCInstance {}", .{opts.info});
+    IPC.log("getIPCInstance {f}", .{opts.info});
 
     this.event_loop.ensureWaker();
 

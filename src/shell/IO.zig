@@ -47,7 +47,7 @@ pub const InKind = union(enum) {
 
     pub fn format(this: InKind, writer: *std.Io.Writer) !void {
         switch (this) {
-            .fd => try writer.print("fd: {}", .{this.fd.fd}),
+            .fd => try writer.print("fd: {f}", .{this.fd.fd}),
             .ignore => try writer.print("ignore", .{}),
         }
     }

@@ -376,20 +376,20 @@ pub const FilePoll = struct {
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
             @field(Owner.Tag, @typeName(BufferedReader)) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) Reader", .{poll.fd});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {f}) Reader", .{poll.fd});
                 var handler: *BufferedReader = ptr.as(BufferedReader);
                 handler.onPoll(size_or_offset, poll.flags.contains(.hup));
             },
 
             @field(Owner.Tag, @typeName(Process)) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) Process", .{poll.fd});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {f}) Process", .{poll.fd});
                 var loader = ptr.as(Process);
 
                 loader.onWaitPidFromEventLoopTask();
             },
 
             @field(Owner.Tag, @typeName(DNSResolver)) => {
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) DNSResolver", .{poll.fd});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {f}) DNSResolver", .{poll.fd});
                 var loader: *DNSResolver = ptr.as(DNSResolver);
                 loader.onDNSPoll(poll);
             },
@@ -399,7 +399,7 @@ pub const FilePoll = struct {
                     unreachable;
                 }
 
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) GetAddrInfoRequest", .{poll.fd});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {f}) GetAddrInfoRequest", .{poll.fd});
                 var loader: *GetAddrInfoRequest = ptr.as(GetAddrInfoRequest);
                 loader.onMachportChange();
             },
@@ -409,14 +409,14 @@ pub const FilePoll = struct {
                     unreachable;
                 }
 
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) InternalDNSRequest", .{poll.fd});
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {f}) InternalDNSRequest", .{poll.fd});
                 const loader: *Request = ptr.as(Request);
                 Request.MacAsyncDNS.onMachportChange(loader);
             },
 
             else => {
                 const possible_name = Owner.typeNameFromTag(@intFromEnum(ptr.tag()));
-                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {}) disconnected? (maybe: {s})", .{ poll.fd, possible_name orelse "<unknown>" });
+                log("onUpdate " ++ kqueue_or_epoll ++ " (fd: {f}) disconnected? (maybe: {s})", .{ poll.fd, possible_name orelse "<unknown>" });
             },
         }
     }
@@ -695,7 +695,7 @@ pub const FilePoll = struct {
                 max_generation_number +%= 1;
                 poll.generation_number = max_generation_number;
             }
-            log("FilePoll.init(0x{x}, generation_number={d}, fd={})", .{ @intFromPtr(poll), poll.generation_number, fd });
+            log("FilePoll.init(0x{x}, generation_number={d}, fd={f})", .{ @intFromPtr(poll), poll.generation_number, fd });
             return poll;
         }
 
@@ -716,7 +716,7 @@ pub const FilePoll = struct {
             poll.generation_number = max_generation_number;
         }
 
-        log("FilePoll.initWithOwner(0x{x}, generation_number={d}, fd={})", .{ @intFromPtr(poll), poll.generation_number, fd });
+        log("FilePoll.initWithOwner(0x{x}, generation_number={d}, fd={f})", .{ @intFromPtr(poll), poll.generation_number, fd });
         return poll;
     }
 
@@ -793,7 +793,7 @@ pub const FilePoll = struct {
     pub fn registerWithFd(this: *FilePoll, loop: *Loop, flag: Flags, one_shot: OneShotFlag, fd: bun.FileDescriptor) bun.sys.Maybe(void) {
         const watcher_fd = loop.fd;
 
-        log("register: FilePoll(0x{x}, generation_number={d}) {s} ({})", .{ @intFromPtr(this), this.generation_number, @tagName(flag), fd });
+        log("register: FilePoll(0x{x}, generation_number={d}) {s} ({f})", .{ @intFromPtr(this), this.generation_number, @tagName(flag), fd });
 
         bun.assert(fd != invalid_fd);
 
@@ -974,7 +974,7 @@ pub const FilePoll = struct {
         };
 
         if (this.flags.contains(.needs_rearm) and !force_unregister) {
-            log("unregister: {s} ({}) skipped due to needs_rearm", .{ @tagName(flag), fd });
+            log("unregister: {s} ({f}) skipped due to needs_rearm", .{ @tagName(flag), fd });
             this.flags.remove(.poll_process);
             this.flags.remove(.poll_readable);
             this.flags.remove(.poll_process);
@@ -982,7 +982,7 @@ pub const FilePoll = struct {
             return .success;
         }
 
-        log("unregister: FilePoll(0x{x}, generation_number={d}) {s} ({})", .{ @intFromPtr(this), this.generation_number, @tagName(flag), fd });
+        log("unregister: FilePoll(0x{x}, generation_number={d}) {s} ({f})", .{ @intFromPtr(this), this.generation_number, @tagName(flag), fd });
 
         if (comptime Environment.isLinux) {
             const ctl = linux.epoll_ctl(

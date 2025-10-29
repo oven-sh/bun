@@ -1635,7 +1635,7 @@ pub fn GenericSelector(comptime Impl: type) type {
                 defer P.in_debug_fmt = false;
 
                 css.selector.tocss_servo.toCss_Selector(this.this, @TypeOf(w), &printer) catch |e| return try writer.print("<error writing selector: {s}>\n", .{@errorName(e)});
-                try writer.writeAll(arraylist.items);
+                try writer.writeAll(arraylist.written());
             }
         };
 

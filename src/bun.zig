@@ -570,7 +570,7 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
         PollFlag.ready
     else
         PollFlag.not_ready;
-    global_scope_log("poll({}, .readable): {} ({s}{s})", .{
+    global_scope_log("poll({f}, .readable): {} ({s}{s})", .{
         fd,
         result,
         @tagName(rc),
@@ -591,7 +591,7 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
         };
         const rc = std.os.windows.ws2_32.WSAPoll(&polls, 1, 0);
         const result = (if (rc != std.os.windows.ws2_32.SOCKET_ERROR) @as(usize, @intCast(rc)) else 0) != 0;
-        global_scope_log("poll({}) writable: {f} ({d})", .{ fd, result, polls[0].revents });
+        global_scope_log("poll({f}) writable: {f} ({d})", .{ fd, result, polls[0].revents });
         if (result and polls[0].revents & std.posix.POLL.WRNORM != 0) {
             return .hup;
         } else if (result) {
@@ -618,7 +618,7 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
         PollFlag.ready
     else
         PollFlag.not_ready;
-    global_scope_log("poll({}, .writable): {} ({s}{s})", .{
+    global_scope_log("poll({f}, .writable): {} ({s}{s})", .{
         fd,
         result,
         @tagName(rc),

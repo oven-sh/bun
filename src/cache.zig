@@ -179,7 +179,7 @@ pub const Fs = struct {
         }
 
         if (comptime !Environment.isWindows) // skip on Windows because NTCreateFile will do it.
-            debug("openat({}, {s}) = {}", .{ dirname_fd, path, bun.FD.fromStdFile(file_handle) });
+            debug("openat({f}, {s}) = {f}", .{ dirname_fd, path, bun.FD.fromStdFile(file_handle) });
 
         const will_close = rfs.needToCloseFiles() and _file_handle == null;
         defer {

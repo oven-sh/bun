@@ -1028,7 +1028,7 @@ pub const ShellRmTask = struct {
         };
         while (true) {
             if (state.treat_as_dir) {
-                log("rmdirat({}, {s})", .{ dirfd, dir_task.path });
+                log("rmdirat({f}, {s})", .{ dirfd, dir_task.path });
                 switch (ShellSyscall.rmdirat(dirfd, dir_task.path)) {
                     .result => {
                         _ = this.verboseDeleted(dir_task, dir_task.path);

@@ -59,7 +59,7 @@ pub fn init(fd: bun.FileDescriptor, evtloop: jsc.EventLoopHandle) *IOReader {
         .concurrent_task = jsc.EventLoopTask.fromEventLoop(evtloop),
         .async_deinit = .{},
     });
-    log("IOReader(0x{x}, fd={}) create", .{ @intFromPtr(this), fd });
+    log("IOReader(0x{x}, fd={f}) create", .{ @intFromPtr(this), fd });
 
     if (bun.Environment.isPosix) {
         this.reader.flags.close_handle = false;
@@ -131,7 +131,7 @@ pub fn removeReader(this: *IOReader, reader_: anytype) void {
 
 pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadState) bool {
     var this: *IOReader = @ptrCast(@alignCast(ptr));
-    log("IOReader(0x{x}, fd={}) onReadChunk(chunk_len={d}, has_more={s})", .{ @intFromPtr(this), this.fd, chunk.len, @tagName(has_more) });
+    log("IOReader(0x{x}, fd={f}) onReadChunk(chunk_len={d}, has_more={s})", .{ @intFromPtr(this), this.fd, chunk.len, @tagName(has_more) });
     this.setReading(false);
 
     var i: usize = 0;
@@ -201,7 +201,7 @@ fn asyncDeinitCallback(this: *@This()) void {
                 this.reader.closeImpl(false);
             }
         } else {
-            log("IOReader(0x{x}) __deinit fd={}", .{ @intFromPtr(this), this.fd });
+            log("IOReader(0x{x}) __deinit fd={f}", .{ @intFromPtr(this), this.fd });
             this.fd.close();
         }
     }

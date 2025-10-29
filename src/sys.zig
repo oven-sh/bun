@@ -1212,7 +1212,7 @@ pub fn openFileAtWindowsNtPath(
                 bun.Output.debugWarn("NtCreateFile({f}, {f}) = {s} (file) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
             } else {
                 if (rc == .SUCCESS) {
-                    log("NtCreateFile({f}, {f}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), bun.FD.fromNative(result) });
+                    log("NtCreateFile({f}, {f}) = {s} (file) = {f}", .{ dir, bun.fmt.utf16(path), @tagName(rc), bun.FD.fromNative(result) });
                 } else {
                     log("NtCreateFile({f}, {f}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), rc });
                 }
@@ -1538,7 +1538,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
     while (true) {
         const rc = syscall.openat(dirfd.cast(), file_path, bun.O.toPacked(flags), perm);
         if (comptime Environment.allow_assert)
-            log("openat({}, {s}, {d}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), flags, rc });
+            log("openat({f}, {s}, {d}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), flags, rc });
 
         return switch (sys.getErrno(rc)) {
             .SUCCESS => .{ .result = .fromNative(@intCast(rc)) },
@@ -1653,7 +1653,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
     defer {
         if (Environment.isDebug) {
             if (debug_timer.timer.read() > std.time.ns_per_ms) {
-                log("write({}, {d}) blocked for {f}", .{ fd, bytes.len, debug_timer });
+                log("write({f}, {d}) blocked for {f}", .{ fd, bytes.len, debug_timer });
             }
         }
     }
@@ -1661,7 +1661,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
     return switch (Environment.os) {
         .mac => {
             const rc = darwin_nocancel.@"write$NOCANCEL"(fd.cast(), bytes.ptr, adjusted_len);
-            log("write({}, {d}) = {d} ({f})", .{ fd, adjusted_len, rc, debug_timer });
+            log("write({f}, {d}) = {d} ({f})", .{ fd, adjusted_len, rc, debug_timer });
 
             if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
                 return err;
@@ -1672,7 +1672,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
         .linux => {
             while (true) {
                 const rc = syscall.write(fd.cast(), bytes.ptr, adjusted_len);
-                log("write({}, {d}) = {d} {}", .{ fd, adjusted_len, rc, debug_timer });
+                log("write({f}, {d}) = {d} {f}", .{ fd, adjusted_len, rc, debug_timer });
 
                 if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
                     if (err.getErrno() == .INTR) continue;
@@ -1694,7 +1694,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
                 null,
             );
             if (rc == 0) {
-                log("WriteFile({}, {d}) = {s}", .{ fd, adjusted_len, @tagName(bun.windows.getLastErrno()) });
+                log("WriteFile({f}, {d}) = {s}", .{ fd, adjusted_len, @tagName(bun.windows.getLastErrno()) });
                 const er = std.os.windows.kernel32.GetLastError();
                 if (er == .ACCESS_DENIED) {
                     // file is not writable
@@ -1714,7 +1714,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
                 };
             }
 
-            log("WriteFile({}, {d}) = {d}", .{ fd, adjusted_len, bytes_written });
+            log("WriteFile({f}, {d}) = {d}", .{ fd, adjusted_len, bytes_written });
 
             return Maybe(usize){ .result = bytes_written };
         },
@@ -1734,7 +1734,7 @@ pub fn writev(fd: bun.FileDescriptor, buffers: []std.posix.iovec) Maybe(usize) {
     if (comptime Environment.isMac) {
         const rc = writev_sym(fd.cast(), @as([*]std.posix.iovec_const, @ptrCast(buffers.ptr)), @as(i32, @intCast(buffers.len)));
         if (comptime Environment.allow_assert)
-            log("writev({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+            log("writev({f}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
         if (Maybe(usize).errnoSysFd(rc, .writev, fd)) |err| {
             return err;
@@ -1745,7 +1745,7 @@ pub fn writev(fd: bun.FileDescriptor, buffers: []std.posix.iovec) Maybe(usize) {
         while (true) {
             const rc = writev_sym(fd.cast(), @as([*]std.posix.iovec_const, @ptrCast(buffers.ptr)), buffers.len);
             if (comptime Environment.allow_assert)
-                log("writev({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+                log("writev({f}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
             if (Maybe(usize).errnoSysFd(rc, .writev, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
@@ -1765,7 +1765,7 @@ pub fn pwritev(fd: bun.FileDescriptor, buffers: []const bun.PlatformIOVecConst, 
     if (comptime Environment.isMac) {
         const rc = pwritev_sym(fd.cast(), buffers.ptr, @as(i32, @intCast(buffers.len)), position);
         if (comptime Environment.allow_assert)
-            log("pwritev({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+            log("pwritev({f}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
         if (Maybe(usize).errnoSysFd(rc, .pwritev, fd)) |err| {
             return err;
@@ -1776,7 +1776,7 @@ pub fn pwritev(fd: bun.FileDescriptor, buffers: []const bun.PlatformIOVecConst, 
         while (true) {
             const rc = pwritev_sym(fd.cast(), buffers.ptr, buffers.len, position);
             if (comptime Environment.allow_assert)
-                log("pwritev({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+                log("pwritev({f}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
             if (Maybe(usize).errnoSysFd(rc, .pwritev, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
@@ -1799,7 +1799,7 @@ pub fn readv(fd: bun.FileDescriptor, buffers: []std.posix.iovec) Maybe(usize) {
     if (comptime Environment.isMac) {
         const rc = readv_sym(fd.cast(), buffers.ptr, @as(i32, @intCast(buffers.len)));
         if (comptime Environment.allow_assert)
-            log("readv({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+            log("readv({f}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
         if (Maybe(usize).errnoSysFd(rc, .readv, fd)) |err| {
             return err;
@@ -1810,7 +1810,7 @@ pub fn readv(fd: bun.FileDescriptor, buffers: []std.posix.iovec) Maybe(usize) {
         while (true) {
             const rc = readv_sym(fd.cast(), buffers.ptr, buffers.len);
             if (comptime Environment.allow_assert)
-                log("readv({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+                log("readv({f}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
             if (Maybe(usize).errnoSysFd(rc, .readv, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
@@ -1833,7 +1833,7 @@ pub fn preadv(fd: bun.FileDescriptor, buffers: []std.posix.iovec, position: isiz
     if (comptime Environment.isMac) {
         const rc = preadv_sym(fd.cast(), buffers.ptr, @as(i32, @intCast(buffers.len)), position);
         if (comptime Environment.allow_assert)
-            log("preadv({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+            log("preadv({f}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
         if (Maybe(usize).errnoSysFd(rc, .preadv, fd)) |err| {
             return err;
@@ -1844,7 +1844,7 @@ pub fn preadv(fd: bun.FileDescriptor, buffers: []std.posix.iovec, position: isiz
         while (true) {
             const rc = preadv_sym(fd.cast(), buffers.ptr, buffers.len, position);
             if (comptime Environment.allow_assert)
-                log("preadv({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+                log("preadv({f}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
             if (Maybe(usize).errnoSysFd(rc, .preadv, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
@@ -1983,12 +1983,12 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
                 };
 
                 if (comptime Environment.isDebug) {
-                    log("ReadFile({}, {d}) = {s} ({})", .{ fd, adjusted_len, ret.err.name(), debug_timer });
+                    log("ReadFile({f}, {d}) = {s} ({f})", .{ fd, adjusted_len, ret.err.name(), debug_timer });
                 }
 
                 return ret;
             }
-            log("ReadFile({}, {d}) = {d} ({})", .{ fd, adjusted_len, amount_read, debug_timer });
+            log("ReadFile({f}, {d}) = {d} ({f})", .{ fd, adjusted_len, amount_read, debug_timer });
 
             return Maybe(usize){ .result = amount_read };
         },
@@ -2061,11 +2061,11 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
         const rc = darwin_nocancel.@"recvfrom$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len, flag, null, null);
 
         if (Maybe(usize).errnoSysFd(rc, .recv, fd)) |err| {
-            log("recv({}, {d}) = {s} {f}", .{ fd, adjusted_len, err.err.name(), debug_timer });
+            log("recv({f}, {d}) = {s} {f}", .{ fd, adjusted_len, err.err.name(), debug_timer });
             return err;
         }
 
-        log("recv({}, {d}) = {d} {f}", .{ fd, adjusted_len, rc, debug_timer });
+        log("recv({f}, {d}) = {d} {f}", .{ fd, adjusted_len, rc, debug_timer });
 
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
@@ -2074,10 +2074,10 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
 
             if (Maybe(usize).errnoSysFd(rc, .recv, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
-                log("recv({}, {d}) = {s} {}", .{ fd, adjusted_len, err.err.name(), debug_timer });
+                log("recv({f}, {d}) = {s} {f}", .{ fd, adjusted_len, err.err.name(), debug_timer });
                 return err;
             }
-            log("recv({}, {d}) = {d} {}", .{ fd, adjusted_len, rc, debug_timer });
+            log("recv({f}, {d}) = {d} {f}", .{ fd, adjusted_len, rc, debug_timer });
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
     }
@@ -2105,11 +2105,11 @@ pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
         const rc = darwin_nocancel.@"sendto$NOCANCEL"(fd.cast(), buf.ptr, buf.len, flag, null, 0);
 
         if (Maybe(usize).errnoSysFd(rc, .send, fd)) |err| {
-            syslog("send({}, {d}) = {s} ({f})", .{ fd, buf.len, err.err.name(), debug_timer });
+            syslog("send({f}, {d}) = {s} ({f})", .{ fd, buf.len, err.err.name(), debug_timer });
             return err;
         }
 
-        syslog("send({}, {d}) = {d} ({f})", .{ fd, buf.len, rc, debug_timer });
+        syslog("send({f}, {d}) = {d} ({f})", .{ fd, buf.len, rc, debug_timer });
 
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
@@ -2119,11 +2119,11 @@ pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
 
             if (Maybe(usize).errnoSysFd(rc, .send, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
-                syslog("send({}, {d}) = {s} ({f})", .{ fd, buf.len, err.err.name(), debug_timer });
+                syslog("send({f}, {d}) = {s} ({f})", .{ fd, buf.len, err.err.name(), debug_timer });
                 return err;
             }
 
-            syslog("send({}, {d}) = {d} ({f})", .{ fd, buf.len, rc, debug_timer });
+            syslog("send({f}, {d}) = {d} ({f})", .{ fd, buf.len, rc, debug_timer });
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
     }
@@ -2336,11 +2336,11 @@ pub fn renameat2(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.F
         if (Maybe(void).errnoSys(rc, .rename)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
-                log("renameat2({}, {s}, {}, {s}) = {d}", .{ from_dir, from, to_dir, to, @intFromEnum(err.getErrno()) });
+                log("renameat2({f}, {s}, {f}, {s}) = {d}", .{ from_dir, from, to_dir, to, @intFromEnum(err.getErrno()) });
             return err;
         }
         if (comptime Environment.allow_assert)
-            log("renameat2({}, {s}, {}, {s}) = {d}", .{ from_dir, from, to_dir, to, 0 });
+            log("renameat2({f}, {s}, {f}, {s}) = {d}", .{ from_dir, from, to_dir, to, 0 });
         return .success;
     }
 }
@@ -2368,11 +2368,11 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
         if (Maybe(void).errnoSys(syscall.renameat(from_dir.cast(), from, to_dir.cast(), to), .rename)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
-                log("renameat({}, {s}, {}, {s}) = {d}", .{ from_dir, from, to_dir, to, @intFromEnum(err.getErrno()) });
+                log("renameat({f}, {s}, {f}, {s}) = {d}", .{ from_dir, from, to_dir, to, @intFromEnum(err.getErrno()) });
             return err;
         }
         if (comptime Environment.allow_assert)
-            log("renameat({}, {s}, {}, {s}) = {d}", .{ from_dir, from, to_dir, to, 0 });
+            log("renameat({f}, {s}, {f}, {s}) = {d}", .{ from_dir, from, to_dir, to, 0 });
         return .success;
     }
 }
@@ -2418,10 +2418,10 @@ pub fn symlinkat(target: [:0]const u8, dirfd: bun.FileDescriptor, dest: [:0]cons
     while (true) {
         if (Maybe(void).errnoSys(syscall.symlinkat(target, dirfd.cast(), dest), .symlinkat)) |err| {
             if (err.getErrno() == .INTR) continue;
-            log("symlinkat({s}, {}, {s}) = {s}", .{ target, dirfd, dest, @tagName(err.getErrno()) });
+            log("symlinkat({s}, {f}, {s}) = {s}", .{ target, dirfd, dest, @tagName(err.getErrno()) });
             return err;
         }
-        log("symlinkat({s}, {}, {s}) = 0", .{ target, dirfd, dest });
+        log("symlinkat({s}, {f}, {s}) = 0", .{ target, dirfd, dest });
         return .success;
     }
 }
@@ -2573,9 +2573,9 @@ pub fn clonefileat(from: FD, from_path: [:0]const u8, to: FD, to_path: [:0]const
             if (err.getErrno() == .INTR) continue;
             log(
                 \\clonefileat(
-                \\  {},
+                \\  {f},
                 \\  {s},
-                \\  {},
+                \\  {f},
                 \\  {s},
                 \\) = {s}
                 \\
@@ -2584,9 +2584,9 @@ pub fn clonefileat(from: FD, from_path: [:0]const u8, to: FD, to_path: [:0]const
         }
         log(
             \\clonefileat(
-            \\  {},
+            \\  {f},
             \\  {s},
-            \\  {},
+            \\  {f},
             \\  {s},
             \\) = 0
             \\
@@ -2675,11 +2675,11 @@ pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) 
         if (Maybe(void).errnoSysFP(syscall.unlinkat(dirfd.cast(), to, flags), .unlink, dirfd, to)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
-                log("unlinkat({}, {s}) = {s}", .{ dirfd, bun.sliceTo(to, 0), @tagName(err.getErrno()) });
+                log("unlinkat({f}, {s}) = {s}", .{ dirfd, bun.sliceTo(to, 0), @tagName(err.getErrno()) });
             return err;
         }
         if (comptime Environment.allow_assert)
-            log("unlinkat({}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
+            log("unlinkat({f}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
         return .success;
     }
     unreachable;
@@ -2693,11 +2693,11 @@ pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
         if (Maybe(void).errnoSysFP(syscall.unlinkat(dirfd.cast(), to, 0), .unlink, dirfd, to)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
-                log("unlinkat({}, {s}) = {s}", .{ dirfd, bun.sliceTo(to, 0), @tagName(err.getErrno()) });
+                log("unlinkat({f}, {s}) = {s}", .{ dirfd, bun.sliceTo(to, 0), @tagName(err.getErrno()) });
             return err;
         }
         if (comptime Environment.allow_assert)
-            log("unlinkat({}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
+            log("unlinkat({f}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
         return .success;
     }
 }
@@ -2819,7 +2819,7 @@ pub fn setsockopt(fd: bun.FileDescriptor, level: c_int, optname: u32, value: i32
 
 pub fn setNoSigpipe(fd: bun.FileDescriptor) Maybe(void) {
     if (comptime Environment.isMac) {
-        log("setNoSigpipe({})", .{fd});
+        log("setNoSigpipe({f})", .{fd});
         return switch (setsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.NOSIGPIPE, 1)) {
             .result => .success,
             .err => |err| .{ .err = err },
@@ -3238,7 +3238,7 @@ pub fn futimens(fd: bun.FileDescriptor, atime: jsc.Node.TimeLike, mtime: jsc.Nod
             .{ .sec = @intCast(mtime.sec), .nsec = mtime.nsec },
         });
 
-        log("futimens({}, accessed=({d}, {d}), modified=({d}, {d})) = {d}", .{ fd, atime.sec, atime.nsec, mtime.sec, mtime.nsec, rc });
+        log("futimens({f}, accessed=({d}, {d}), modified=({d}, {d})) = {d}", .{ fd, atime.sec, atime.nsec, mtime.sec, mtime.nsec, rc });
 
         if (rc == 0) {
             return .success;
@@ -3362,7 +3362,7 @@ pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType
         var basic_info: w.FILE_BASIC_INFORMATION = undefined;
         const rc = ntdll.NtQueryAttributesFile(&attr, &basic_info);
         if (bun.sys.Maybe(bool).errnoSys(rc, .access)) |err| {
-            syslog("NtQueryAttributesFile({f}, O_RDONLY, 0) = {}", .{ bun.fmt.fmtOSPath(path, .{}), err });
+            syslog("NtQueryAttributesFile({f}, O_RDONLY, 0) = {f}", .{ bun.fmt.fmtOSPath(path, .{}), err });
             return .{ .err = err.err };
         }
 
@@ -3537,12 +3537,12 @@ pub fn pipe() Maybe([2]bun.FileDescriptor) {
         var fds: [2]uv.uv_file = undefined;
         if (uv.uv_pipe(&fds, 0, 0).errEnum()) |e| {
             const err = Error.fromCode(e, .pipe);
-            log("pipe() = {}", .{err});
+            log("pipe() = {f}", .{err});
             return .{ .err = err };
         }
         out[0] = .fromUV(fds[0]);
         out[1] = .fromUV(fds[1]);
-        log("pipe() = [{}, {}]", .{ out[0], out[1] });
+        log("pipe() = [{f}, {f}]", .{ out[0], out[1] });
         return .{ .result = out };
     }
 
@@ -3579,12 +3579,12 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, _: i32) Maybe(bun.FileDescriptor) {
         );
         if (out == 0) {
             if (Maybe(bun.FileDescriptor).errnoSysFd(0, .dup, fd)) |err| {
-                log("dup({}) = {}", .{ fd, err });
+                log("dup({f}) = {}", .{ fd, err });
                 return err;
             }
         }
         const duplicated_fd = bun.FD.fromNative(target);
-        log("dup({}) = {}", .{ fd, duplicated_fd });
+        log("dup({f}) = {f}", .{ fd, duplicated_fd });
         return Maybe(bun.FileDescriptor){ .result = duplicated_fd };
     }
 
@@ -3592,12 +3592,12 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, _: i32) Maybe(bun.FileDescriptor) {
     const out = switch (fcntl(fd, @as(i32, bun.c.F_DUPFD_CLOEXEC), @as(ArgType, 0))) {
         .result => |result| result,
         .err => |err| {
-            log("dup({}) = {f}", .{ fd, err });
+            log("dup({f}) = {f}", .{ fd, err });
             return .{ .err = err };
         },
     };
 
-    log("dup({}) = {}", .{ fd, bun.FileDescriptor.fromNative(@intCast(out)) });
+    log("dup({f}) = {f}", .{ fd, bun.FileDescriptor.fromNative(@intCast(out)) });
 
     return .initResult(.fromNative(@intCast(out)));
 }
@@ -3657,10 +3657,10 @@ pub fn linkat(src: bun.FileDescriptor, src_path: []const u8, dest: bun.FileDescr
 pub fn linkatZ(src: FD, src_path: [:0]const u8, dest: FD, dest_path: [:0]const u8) Maybe(void) {
     const ret = std.c.linkat(src.cast(), src_path, dest.cast(), dest_path, 0);
     if (Maybe(void).errnoSysP(ret, .link, src_path)) |err| {
-        log("linkat({}, {s}, {}, {s}) = {s}", .{ src, src_path, dest, dest_path, @tagName(err.getErrno()) });
+        log("linkat({f}, {s}, {f}, {s}) = {s}", .{ src, src_path, dest, dest_path, @tagName(err.getErrno()) });
         return err;
     }
-    log("linkat({}, {s}, {}, {s}) = 0", .{ src, src_path, dest, dest_path });
+    log("linkat({f}, {s}, {f}, {s}) = 0", .{ src, src_path, dest, dest_path });
     return .success;
 }
 
@@ -3750,7 +3750,7 @@ pub fn readNonblocking(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
             const rc = sys_preadv2(fd.native(), &iovec, 1, -1, std.os.linux.RWF.NOWAIT);
 
             if (comptime Environment.isDebug) {
-                log("preadv2({}, {d}) = {d} ({})", .{ fd, buf.len, rc, debug_timer });
+                log("preadv2({f}, {d}) = {d} ({f})", .{ fd, buf.len, rc, debug_timer });
 
                 if (debug_timer.timer.read() > std.time.ns_per_ms) {
                     bun.Output.debugWarn("preadv2({}, {d}) blocked for {}", .{ fd, buf.len, debug_timer });
@@ -3803,7 +3803,7 @@ pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
             const rc = sys_pwritev2(fd.native(), &iovec, 1, -1, std.os.linux.RWF.NOWAIT);
 
             if (comptime Environment.isDebug) {
-                log("pwritev2({}, {d}) = {d} ({})", .{ fd, buf.len, rc, debug_timer });
+                log("pwritev2({f}, {d}) = {d} ({f})", .{ fd, buf.len, rc, debug_timer });
 
                 if (debug_timer.timer.read() > std.time.ns_per_ms) {
                     bun.Output.debugWarn("pwritev2({}, {d}) blocked for {}", .{ fd, buf.len, debug_timer });
@@ -3836,10 +3836,10 @@ pub fn getFileSize(fd: bun.FileDescriptor) Maybe(usize) {
         var size: windows.LARGE_INTEGER = undefined;
         if (windows.kernel32.GetFileSizeEx(fd.cast(), &size) == windows.FALSE) {
             const err = Error.fromCode(windows.getLastErrno(), .fstat);
-            log("GetFileSizeEx({}) = {s}", .{ fd, err.name() });
+            log("GetFileSizeEx({f}) = {s}", .{ fd, err.name() });
             return .{ .err = err };
         }
-        log("GetFileSizeEx({}) = {d}", .{ fd, size });
+        log("GetFileSizeEx({f}) = {d}", .{ fd, size });
         return .{ .result = @intCast(@max(size, 0)) };
     }
 

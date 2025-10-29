@@ -495,7 +495,7 @@ pub const Poll = struct {
             fd: bun.FileDescriptor,
             kqueue_event: *std.posix.system.kevent64_s,
         ) void {
-            log("register({s}, {})", .{ @tagName(action), fd });
+            log("register({s}, {f})", .{ @tagName(action), fd });
             defer {
                 switch (comptime action) {
                     .readable => poll.flags.insert(Flags.poll_readable),

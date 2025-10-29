@@ -235,7 +235,7 @@ pub const FD = packed struct(backing_int) {
     /// Prefer asserting that EBADF does not happen with `.close()`
     pub fn closeAllowingBadFileDescriptor(fd: FD, return_address: ?usize) ?bun.sys.Error {
         if (fd.stdioTag() != null) {
-            log("close({}) SKIPPED", .{fd});
+            log("close({f}) SKIPPED", .{fd});
             return null;
         }
         return fd.closeAllowingStandardIo(return_address orelse @returnAddress());

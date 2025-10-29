@@ -3,7 +3,6 @@
  * NO @opentelemetry/* imports allowed - testing ONLY native hooks
  */
 import { describe, expect, test } from "bun:test";
-import { InstrumentKinds } from "./types";
 
 describe("fetch telemetry hooks", () => {
   test("calls onOperationStart with correct attributes on successful fetch", async () => {
@@ -17,7 +16,7 @@ describe("fetch telemetry hooks", () => {
     let startId: number | undefined;
 
     const instrument = {
-      kind: InstrumentKinds.Fetch,
+      kind: "fetch",
       name: "test-fetch-start",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -58,7 +57,7 @@ describe("fetch telemetry hooks", () => {
     let capturedEndId: number | undefined;
 
     const instrument = {
-      kind: InstrumentKinds.Fetch,
+      kind: "fetch",
       name: "test-fetch-end",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -104,7 +103,7 @@ describe("fetch telemetry hooks", () => {
     let errorId: number | undefined;
 
     const instrument = {
-      kind: InstrumentKinds.Fetch,
+      kind: "fetch",
       name: "test-fetch-error",
       version: "1.0.0",
       onOperationStart() {},
@@ -146,7 +145,7 @@ describe("fetch telemetry hooks", () => {
     const operationIds = new Set<number>();
 
     const instrument = {
-      kind: InstrumentKinds.Fetch,
+      kind: "fetch",
       name: "test-concurrent-fetch",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -186,7 +185,7 @@ describe("fetch telemetry hooks", () => {
     const startAttrs: any = {};
 
     const instrument = {
-      kind: InstrumentKinds.Fetch,
+      kind: "fetch",
       name: "test-post-fetch",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -222,7 +221,7 @@ describe("fetch telemetry hooks", () => {
     let endId: number | undefined;
 
     const instrument = {
-      kind: InstrumentKinds.Fetch,
+      kind: "fetch",
       name: "test-lifecycle",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {
@@ -264,7 +263,7 @@ describe("fetch telemetry hooks", () => {
       const capturedAttrs: any = {};
 
       const instrument = {
-        kind: InstrumentKinds.Fetch,
+        kind: "fetch",
         name: `test-${method}`,
         version: "1.0.0",
         onOperationStart(id: number, attributes: any) {
@@ -291,7 +290,7 @@ describe("fetch telemetry hooks", () => {
     const startAttrs: any = {};
 
     const instrument = {
-      kind: InstrumentKinds.Fetch,
+      kind: "fetch",
       name: "test-query-params",
       version: "1.0.0",
       onOperationStart(id: number, attributes: any) {

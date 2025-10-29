@@ -286,9 +286,21 @@ static int lazyLoadSQLite()
     lazy_sqlite3_errstr = (lazy_sqlite3_errstr_type)dlsym(sqlite3_handle, "sqlite3_errstr");
     lazy_sqlite3_expanded_sql = (lazy_sqlite3_expanded_sql_type)dlsym(sqlite3_handle, "sqlite3_expanded_sql");
     lazy_sqlite3_sql = (lazy_sqlite3_sql_type)dlsym(sqlite3_handle, "sqlite3_sql");
+    if (!lazy_sqlite3_sql) {
+        lazy_sqlite3_sql = [](sqlite3_stmt*) -> const char* { return nullptr; };
+    }
     lazy_sqlite3_db_filename = (lazy_sqlite3_db_filename_type)dlsym(sqlite3_handle, "sqlite3_db_filename");
+    if (!lazy_sqlite3_db_filename) {
+        lazy_sqlite3_db_filename = [](sqlite3*, const char*) -> const char* { return nullptr; };
+    }
     lazy_sqlite3_trace_v2 = (lazy_sqlite3_trace_v2_type)dlsym(sqlite3_handle, "sqlite3_trace_v2");
+    if (!lazy_sqlite3_trace_v2) {
+        lazy_sqlite3_trace_v2 = [](sqlite3*, unsigned, int(*)(unsigned,void*,void*,void*), void*) -> int {
+            return SQLITE_MISUSE; // indicate unsupported
+        };
+    }
     lazy_sqlite3_finalize = (lazy_sqlite3_finalize_type)dlsym(sqlite3_handle, "sqlite3_finalize");
+    if (!lazy_sqlite3_finalize) return -1; // Required function
     lazy_sqlite3_free = (lazy_sqlite3_free_type)dlsym(sqlite3_handle, "sqlite3_free");
     lazy_sqlite3_get_autocommit = (lazy_sqlite3_get_autocommit_type)dlsym(sqlite3_handle, "sqlite3_get_autocommit");
     lazy_sqlite3_prepare_v3 = (lazy_sqlite3_prepare_v3_type)dlsym(sqlite3_handle, "sqlite3_prepare_v3");

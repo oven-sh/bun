@@ -112,10 +112,16 @@ describe("validateHeaderName()", () => {
       });
     });
 
-    test("allows headers in different cases", () => {
-      expect(() => validateHeaderName("TraceParent")).not.toThrow();
-      expect(() => validateHeaderName("TRACEPARENT")).not.toThrow();
-      expect(() => validateHeaderName("X-Request-ID")).not.toThrow();
+    test("rejects non-lowercase headers for security consistency", () => {
+      expect(() => validateHeaderName("TraceParent")).toThrow("Header names must be lowercase");
+      expect(() => validateHeaderName("TRACEPARENT")).toThrow("Header names must be lowercase");
+      expect(() => validateHeaderName("X-Request-ID")).toThrow("Header names must be lowercase");
+    });
+
+    test("allows lowercase headers", () => {
+      expect(() => validateHeaderName("traceparent")).not.toThrow();
+      expect(() => validateHeaderName("x-request-id")).not.toThrow();
+      expect(() => validateHeaderName("user-agent")).not.toThrow();
     });
   });
 });

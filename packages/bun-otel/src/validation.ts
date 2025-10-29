@@ -23,6 +23,19 @@
 export const MIGRATED_MARKER = "__bun_otel_migrated__" as const;
 
 /**
+ * Maximum number of headers allowed in configuration lists (per RFC 9110 guidance).
+ * Prevents DoS through excessive header processing.
+ */
+const MAX_HEADERS = 50;
+
+/**
+ * RFC 9110 field-name pattern (lowercase only for security consistency).
+ * field-name = token = 1*tchar where tchar = "!" / "#" / "$" / "%" / "&" / "'" /
+ *              "*" / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
+ */
+const FIELD_NAME_RE = /^[!#$%&'*+.^_`|~0-9a-z-]+$/;
+
+/**
  * Headers that are explicitly blocked from injection or capture.
  * These headers commonly contain authentication credentials or session tokens.
  */
@@ -54,19 +67,38 @@ const BLOCKED_PATTERNS = [/^x-secret-/i, /^x-token-/i, /password/i, /secret/i, /
  * Validates that a header name does not match security constraints.
  *
  * @param headerName - The header name to validate
- * @throws {TypeError} If the header is blocked or matches a blocked pattern
+ * @throws {TypeError} If the header is blocked, not lowercase, or invalid per RFC 9110
  *
  * @example
  * ```typescript
  * validateHeaderName("traceparent"); // OK
- * validateHeaderName("authorization"); // Throws TypeError
- * validateHeaderName("x-secret-key"); // Throws TypeError
+ * validateHeaderName("authorization"); // Throws TypeError - blocked
+ * validateHeaderName("x-secret-key"); // Throws TypeError - blocked pattern
+ * validateHeaderName("Content-Type"); // Throws TypeError - not lowercase
+ * validateHeaderName("invalid header"); // Throws TypeError - invalid RFC 9110 token
  * ```
  */
 export function validateHeaderName(headerName: string): void {
-  const normalized = headerName.toLowerCase().trim();
+  const trimmed = headerName.trim();
 
-  // Check exact matches
+  // Enforce lowercase for security consistency
+  if (trimmed !== trimmed.toLowerCase()) {
+    throw new TypeError(
+      `Header names must be lowercase: "${headerName}". ` + `Use lowercase to comply with telemetry security policy.`,
+    );
+  }
+
+  const normalized = trimmed;
+
+  // Validate RFC 9110 field-name format
+  if (!FIELD_NAME_RE.test(normalized)) {
+    throw new TypeError(
+      `Invalid header name "${headerName}": does not match RFC 9110 field-name. ` +
+        `Only alphanumeric and !#$%&'*+-.^_\`|~ characters are allowed.`,
+    );
+  }
+
+  // Check exact matches against blocked list
   if (BLOCKED_HEADERS.has(normalized)) {
     throw new TypeError(
       `Cannot inject or capture header "${headerName}": ` +
@@ -75,7 +107,7 @@ export function validateHeaderName(headerName: string): void {
     );
   }
 
-  // Check patterns
+  // Check patterns for potentially sensitive headers
   for (const pattern of BLOCKED_PATTERNS) {
     if (pattern.test(normalized)) {
       throw new TypeError(
@@ -87,8 +119,11 @@ export function validateHeaderName(headerName: string): void {
   }
 }
 
-export function validateOptionalHeaderList(headerList: string[] | undefined): number {
+export function validateOptionalHeaderList(headerList: string[] | undefined, listName: string): number {
   if (headerList) {
+    if (headerList.length > MAX_HEADERS) {
+      throw new TypeError(`Too many ${listName} (${headerList.length}); max is ${MAX_HEADERS}.`);
+    }
     for (const header of headerList) {
       validateHeaderName(header);
     }
@@ -118,7 +153,10 @@ export function validateOptionalHeaderList(headerList: string[] | undefined): nu
  * ```
  */
 export function validateInjectHeaders(config: { request?: string[]; response?: string[] }): number {
-  return validateOptionalHeaderList(config.request) + validateOptionalHeaderList(config.response);
+  return (
+    validateOptionalHeaderList(config.request, "request headers") +
+    validateOptionalHeaderList(config.response, "response headers")
+  );
 }
 
 type CaptureAttributes = {
@@ -147,7 +185,10 @@ type CaptureAttributes = {
  * ```
  */
 export function validateCaptureAttributes(config?: { requestHeaders?: string[]; responseHeaders?: string[] }): number {
-  return validateOptionalHeaderList(config?.requestHeaders) + validateOptionalHeaderList(config?.responseHeaders);
+  return (
+    validateOptionalHeaderList(config?.requestHeaders, "requestHeaders") +
+    validateOptionalHeaderList(config?.responseHeaders, "responseHeaders")
+  );
 }
 
 type ConfigWithCaptureAttributes = {

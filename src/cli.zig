@@ -224,7 +224,7 @@ pub const HelpCommand = struct {
                 if (comptime Environment.isDebug) {
                     if (bun.argv.len == 1) {
                         if (bun.Output.isAIAgent()) {
-                            if (bun.getenvZ("npm_lifecycle_event")) |event| {
+                            if (bun.env_var.npm_lifecycle_event.get()) |event| {
                                 if (bun.strings.hasPrefixComptime(event, "bd")) {
                                     // claude gets very confused by the help menu
                                     // let's give claude some self confidence.
@@ -342,6 +342,7 @@ pub const Command = struct {
         repeat_count: u32 = 0,
         run_todo: bool = false,
         only: bool = false,
+        pass_with_no_tests: bool = false,
         concurrent: bool = false,
         randomize: bool = false,
         seed: ?u32 = null,
@@ -354,6 +355,7 @@ pub const Command = struct {
 
         reporters: struct {
             dots: bool = false,
+            only_failures: bool = false,
             junit: bool = false,
         } = .{},
         reporter_outfile: ?[]const u8 = null,
@@ -526,9 +528,9 @@ pub const Command = struct {
             // if we are bunx, but NOT a symlink to bun. when we run `<self> install`, we dont
             // want to recursively run bunx. so this check lets us peek back into bun install.
             if (args_iter.next()) |next| {
-                if (bun.strings.eqlComptime(next, "add") and bun.getRuntimeFeatureFlag(.BUN_INTERNAL_BUNX_INSTALL)) {
+                if (bun.strings.eqlComptime(next, "add") and bun.feature_flag.BUN_INTERNAL_BUNX_INSTALL.get()) {
                     return .AddCommand;
-                } else if (bun.strings.eqlComptime(next, "exec") and bun.getRuntimeFeatureFlag(.BUN_INTERNAL_BUNX_INSTALL)) {
+                } else if (bun.strings.eqlComptime(next, "exec") and bun.feature_flag.BUN_INTERNAL_BUNX_INSTALL.get()) {
                     return .ExecCommand;
                 }
             }
@@ -657,13 +659,13 @@ pub const Command = struct {
     /// function or that stack space is used up forever.
     pub fn start(allocator: std.mem.Allocator, log: *logger.Log) !void {
         if (comptime Environment.allow_assert) {
-            if (bun.getenvZ("MI_VERBOSE") == null) {
+            if (!bun.env_var.MI_VERBOSE.get()) {
                 bun.mimalloc.mi_option_set_enabled(.verbose, false);
             }
         }
 
         // bun build --compile entry point
-        if (!bun.getRuntimeFeatureFlag(.BUN_BE_BUN)) {
+        if (!bun.feature_flag.BUN_BE_BUN.get()) {
             if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
                 var offset_for_passthrough: usize = 0;
 
@@ -1150,8 +1152,8 @@ pub const Command = struct {
                 Command.Tag.CreateCommand => {
                     const intro_text =
                         \\<b>Usage<r><d>:<r>
-                        \\  <b><green>bun create<r> <magenta>\<MyReactComponent.(jsx|tsx)\><r> 
-                        \\  <b><green>bun create<r> <magenta>\<template\><r> <cyan>[...flags]<r> <blue>dest<r> 
+                        \\  <b><green>bun create<r> <magenta>\<MyReactComponent.(jsx|tsx)\><r>
+                        \\  <b><green>bun create<r> <magenta>\<template\><r> <cyan>[...flags]<r> <blue>dest<r>
                         \\  <b><green>bun create<r> <magenta>\<github-org/repo\><r> <cyan>[...flags]<r> <blue>dest<r>
                         \\
                         \\<b>Environment variables<r><d>:<r>
@@ -1725,11 +1727,11 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
-const RegularExpression = bun.RegularExpression;
 const bun_js = bun.bun_js;
 const clap = bun.clap;
 const default_allocator = bun.default_allocator;
 const logger = bun.logger;
 const strings = bun.strings;
 const File = bun.sys.File;
+const RegularExpression = bun.jsc.RegularExpression;
 const api = bun.schema.api;

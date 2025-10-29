@@ -2322,11 +2322,11 @@ pub const Formatter = struct {
                 }
             },
             .Function => {
-                var printable = value.getName(this.globalThis);
+                var printable = try value.getName(this.globalThis);
                 defer printable.deref();
 
                 const proto = value.getPrototype(this.globalThis);
-                const func_name = proto.getName(this.globalThis); // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
+                const func_name = try proto.getName(this.globalThis); // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
                 defer func_name.deref();
 
                 if (printable.isEmpty() or func_name.eql(printable)) {
@@ -2717,7 +2717,7 @@ pub const Formatter = struct {
             },
             .Map => {
                 const length_value = try value.get(this.globalThis, "size") orelse jsc.JSValue.jsNumberFromInt32(0);
-                const length = length_value.toInt32();
+                const length = try length_value.coerce(i32, this.globalThis);
 
                 const prev_quote_strings = this.quote_strings;
                 this.quote_strings = true;
@@ -2824,7 +2824,7 @@ pub const Formatter = struct {
             },
             .Set => {
                 const length_value = try value.get(this.globalThis, "size") orelse jsc.JSValue.jsNumberFromInt32(0);
-                const length = length_value.toInt32();
+                const length = try length_value.coerce(i32, this.globalThis);
 
                 const prev_quote_strings = this.quote_strings;
                 this.quote_strings = true;
@@ -3312,7 +3312,7 @@ pub const Formatter = struct {
                         this.resetLine();
                     }
 
-                    var display_name = value.getName(this.globalThis);
+                    var display_name = try value.getName(this.globalThis);
                     if (display_name.isEmpty()) {
                         display_name = String.static("Object");
                     }

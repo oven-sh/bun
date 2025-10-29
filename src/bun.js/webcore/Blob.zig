@@ -34,7 +34,7 @@ content_type_was_set: bool = false,
 
 /// JavaScriptCore strings are either latin1 or UTF-16
 /// When UTF-16, they're nearly always due to non-ascii characters
-charset: Charset = .unknown,
+charset: strings.AsciiStatus = .unknown,
 
 /// Was it created via file constructor?
 is_jsdom_file: bool = false,
@@ -542,8 +542,7 @@ const URLSearchParamsConverter = struct {
     buf: []u8 = "",
     globalThis: *jsc.JSGlobalObject,
     pub fn convert(this: *URLSearchParamsConverter, str: ZigString) void {
-        var out = bun.handleOom(str.toSlice(this.allocator).cloneIfNeeded(this.allocator));
-        this.buf = @constCast(out.slice());
+        this.buf = bun.handleOom(str.toOwnedSlice(this.allocator));
     }
 };
 
@@ -628,8 +627,8 @@ export fn Blob__setAsFile(this: *Blob, path_str: *bun.String) void {
     if (this.store) |store| {
         if (store.data == .bytes) {
             if (store.data.bytes.stored_name.len == 0) {
-                var utf8 = path_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch unreachable;
-                store.data.bytes.stored_name = bun.PathString.init(utf8.slice());
+                const utf8 = path_str.toUTF8Bytes(bun.default_allocator);
+                store.data.bytes.stored_name = bun.PathString.init(utf8);
             }
         }
     }
@@ -1738,7 +1737,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
             switch (store_.data) {
                 .bytes => |*bytes| {
                     bytes.stored_name = bun.PathString.init(
-                        bun.handleOom(name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator)).slice(),
+                        name_value_str.toUTF8Bytes(bun.default_allocator),
                     );
                 },
                 .s3, .file => {
@@ -1750,9 +1749,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
             blob.store = Blob.Store.new(.{
                 .data = .{
                     .bytes = Blob.Store.Bytes.initEmptyWithName(
-                        bun.PathString.init(
-                            bun.handleOom(name_value_str.toUTF8WithoutRef(bun.default_allocator).cloneIfNeeded(bun.default_allocator)).slice(),
-                        ),
+                        bun.PathString.init(name_value_str.toUTF8Bytes(bun.default_allocator)),
                         allocator,
                     ),
                 },
@@ -2483,11 +2480,10 @@ pub fn pipeReadableStreamToBlob(this: *Blob, globalThis: *jsc.JSGlobalObject, re
                 break :brk .{ .fd = store.data.file.pathlike.fd };
             } else {
                 break :brk .{
-                    .path = ZigString.Slice.fromUTF8NeverFree(
-                        store.data.file.pathlike.path.slice(),
-                    ).cloneIfNeeded(
+                    .path = bun.handleOom(ZigString.Slice.initDupe(
                         bun.default_allocator,
-                    ) catch |err| bun.handleOom(err),
+                        store.data.file.pathlike.path.slice(),
+                    )),
                 };
             }
         };
@@ -2723,11 +2719,10 @@ pub fn getWriter(
             break :brk .{ .fd = store.data.file.pathlike.fd };
         } else {
             break :brk .{
-                .path = ZigString.Slice.fromUTF8NeverFree(
-                    store.data.file.pathlike.path.slice(),
-                ).cloneIfNeeded(
+                .path = bun.handleOom(ZigString.Slice.initDupe(
                     bun.default_allocator,
-                ) catch |err| bun.handleOom(err),
+                    store.data.file.pathlike.path.slice(),
+                )),
             };
         }
     };
@@ -3244,7 +3239,7 @@ pub fn initWithAllASCII(bytes: []u8, allocator: std.mem.Allocator, globalThis: *
         .store = store,
         .content_type = "",
         .globalThis = globalThis,
-        .charset = .fromIsAllASCII(is_all_ascii),
+        .charset = .fromBool(is_all_ascii),
     };
 }
 
@@ -3423,7 +3418,7 @@ pub fn sharedView(this: *const Blob) []const u8 {
 pub const Lifetime = jsc.WebCore.Lifetime;
 
 pub fn setIsASCIIFlag(this: *Blob, is_all_ascii: bool) void {
-    this.charset = .fromIsAllASCII(is_all_ascii);
+    this.charset = .fromBool(is_all_ascii);
     // if this Blob represents the entire binary data
     // which will be pretty common
     // we can update the store's is_all_ascii flag
@@ -4734,20 +4729,6 @@ pub fn FileCloser(comptime This: type) type {
         }
     };
 }
-
-/// This takes up less space than a `?bool`.
-pub const Charset = enum {
-    unknown,
-    all_ascii,
-    non_ascii,
-
-    pub fn fromIsAllASCII(is_all_ascii: ?bool) Charset {
-        return if (is_all_ascii orelse return .unknown)
-            .all_ascii
-        else
-            .non_ascii;
-    }
-};
 
 pub fn isAllASCII(self: *const Blob) ?bool {
     return switch (self.charset) {

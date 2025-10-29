@@ -12,43 +12,16 @@ pub fn isEnabled() bool {
         .no => false,
         .unknown => {
             enabled = detect: {
-                if (bun.getenvZ("DO_NOT_TRACK")) |x| {
-                    if (x.len == 1 and x[0] == '1') {
-                        break :detect .no;
-                    }
+                if (bun.env_var.DO_NOT_TRACK.get()) {
+                    break :detect .no;
                 }
-                if (bun.getenvZ("HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET") != null) {
+                if (bun.env_var.HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET.get() != null) {
                     break :detect .no;
                 }
                 break :detect .yes;
             };
             bun.assert(enabled == .yes or enabled == .no);
             return enabled == .yes;
-        },
-    };
-}
-
-pub fn isCI() bool {
-    return switch (is_ci) {
-        .yes => true,
-        .no => false,
-        .unknown => {
-            is_ci = detect: {
-                inline for (.{
-                    "CI",
-                    "TDDIUM",
-                    "GITHUB_ACTIONS",
-                    "JENKINS_URL",
-                    "bamboo.buildKey",
-                }) |key| {
-                    if (bun.getenvZ(key) != null) {
-                        break :detect .yes;
-                    }
-                }
-                break :detect .no;
-            };
-            bun.assert(is_ci == .yes or is_ci == .no);
-            return is_ci == .yes;
         },
     };
 }

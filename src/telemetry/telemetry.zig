@@ -245,10 +245,8 @@ pub const InstrumentRecord = struct {
         if (self.instrument_config) |*config| {
             config.deinit();
         }
-        for (self.on_op_fns) |maybe_fn| {
-            if (maybe_fn.isCallable()) {
-                maybe_fn.unprotect();
-            }
+        for (self.on_op_fns) |fn_val| {
+            fn_val.unprotect();
         }
     }
 

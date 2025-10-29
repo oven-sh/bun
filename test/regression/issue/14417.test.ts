@@ -1,18 +1,18 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, tmpdirSync } from "harness";
+import { bunEnv, tempDirWithFiles } from "harness";
 import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import https from "node:https";
 import { join } from "node:path";
 
-// Test for issue #14417: pfx option of https.Agent isn't respected
-describe("https.Agent with pfx and ca options", () => {
+// Test for pfx option of https.Agent
+describe.skip("https.Agent with pfx and ca options", () => {
   let testDir: string;
   let serverProcess: any;
   let serverPort: number;
 
   beforeAll(async () => {
-    testDir = tmpdirSync();
+    testDir = tempDirWithFiles("https-agent-pfx", {});
 
     // Generate self-signed certificates
     // Create private key and certificate

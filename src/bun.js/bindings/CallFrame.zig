@@ -150,7 +150,7 @@ pub const CallFrame = opaque {
         const slice = self.arguments();
         comptime bun.assert(max <= 15);
         return switch (@as(u4, @min(slice.len, max))) {
-            0 => .{ .ptr = undefined, .len = 0 },
+            0 => .{ .ptr = @splat(.zero), .len = 0 },
             inline 1...15 => |count| Arguments(max).init(comptime @min(count, max), slice.ptr),
         };
     }

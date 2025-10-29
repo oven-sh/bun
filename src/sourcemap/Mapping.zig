@@ -231,7 +231,7 @@ pub const Lookup = struct {
         // See doc comment on `external_source_names`
         if (source_map.external_source_names.len == 0)
             return null;
-        if (lookup.mapping.source_index >= source_map.external_source_names.len)
+        if (lookup.mapping.source_index < 0 or lookup.mapping.source_index >= source_map.external_source_names.len)
             return null;
 
         const name = source_map.external_source_names[@intCast(lookup.mapping.source_index)];
@@ -271,13 +271,16 @@ pub const Lookup = struct {
             // They are decompressed on demand.
             if (source_map.is_standalone_module_graph) {
                 const serialized = source_map.standaloneModuleGraphData();
-                if (index >= source_map.external_source_names.len)
+                if (index < 0 or index >= source_map.external_source_names.len)
                     return null;
 
                 const code = serialized.sourceFileContents(@intCast(index));
 
                 return bun.jsc.ZigString.Slice.fromUTF8NeverFree(code orelse return null);
             }
+
+            if (index < 0 or index >= source_map.external_source_names.len)
+                return null;
 
             if (provider.getSourceMap(
                 base_filename,
@@ -286,9 +289,6 @@ pub const Lookup = struct {
             )) |parsed|
                 if (parsed.source_contents) |contents|
                     break :bytes contents;
-
-            if (index >= source_map.external_source_names.len)
-                return null;
 
             const name = source_map.external_source_names[@intCast(index)];
 

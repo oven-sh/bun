@@ -9,7 +9,8 @@ TODO:
 - [ ] remove:
   - [ ] deprecated.zig autoFormatLabelFallback
   - [ ] deprecated.zig autoFormatLabel
-  - [ ] bun.zig maybeAdaptWriter
+  - [x] bun.zig maybeAdaptWriter
+- [ ] try webui, see time report
 
 Follow-up:
 

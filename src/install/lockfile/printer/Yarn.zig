@@ -3,20 +3,19 @@ const Yarn = @This();
 pub fn print(
     this: *Printer,
     comptime Writer: type,
-    writer: Writer,
+    writer: *std.Io.Writer,
 ) !void {
     // internal for debugging, print the lockfile as custom json
     // limited to debug because we don't want people to rely on this format.
     if (Environment.isDebug) {
         if (std.process.hasEnvVarConstant("JSON")) {
-            var adapted = bun.maybeAdaptWriter(writer);
             var stringify = std.json.Stringify{
                 .options = .{
                     .whitespace = .indent_2,
                     .emit_null_optional_fields = true,
                     .emit_nonportable_numbers_as_strings = true,
                 },
-                .writer = &adapted.new_interface,
+                .writer = writer,
             };
             try stringify.write(this.lockfile);
             try writer.writeAll("\n");

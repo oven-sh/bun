@@ -634,7 +634,6 @@ async function runTests() {
             return runTest(title, async index =>
               spawnBunTest(execPath, join("test", testPath), {
                 cwd,
-                env: { ...env, TEST_SERIAL_ID: index },
                 stdout: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
                 stderr: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
               }),

@@ -19,5 +19,5 @@ const mainWorker :Workerd.Worker = (
     (name = "worker", esModule = embed "react-hello-world.workerd.js"),
   ],
   compatibilityDate = "2025-01-01",
-  compatibilityFlags = ["nodejs_compat"],
+  compatibilityFlags = ["nodejs_compat_v2"],
 );

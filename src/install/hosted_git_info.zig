@@ -550,7 +550,7 @@ const UrlProtocolPair = struct {
 
     url: union(enum) {
         managed: struct {
-            buf: []u8,
+            buf: []const u8,
             allocator: std.mem.Allocator,
         },
         unmanaged: []const u8,
@@ -799,7 +799,7 @@ const HostProvider = enum {
         user: ?[]const u8,
         project: []const u8,
         committish: ?[]const u8,
-    ) error{OutOfMemory}![]u8 {
+    ) error{OutOfMemory}![]const u8 {
         return configs.get(self).format_ssh(self, allocator, user, project, committish);
     }
 
@@ -809,7 +809,7 @@ const HostProvider = enum {
         user: ?[]const u8,
         project: []const u8,
         committish: ?[]const u8,
-    ) error{OutOfMemory}![]u8 {
+    ) error{OutOfMemory}![]const u8 {
         return configs.get(self).format_sshurl(self, allocator, user, project, committish);
     }
 
@@ -820,7 +820,7 @@ const HostProvider = enum {
         user: ?[]const u8,
         project: []const u8,
         committish: ?[]const u8,
-    ) error{OutOfMemory}![]u8 {
+    ) error{OutOfMemory}![]const u8 {
         return configs.get(self).format_https(self, allocator, auth, user, project, committish);
     }
 
@@ -830,7 +830,7 @@ const HostProvider = enum {
         user: ?[]const u8,
         project: []const u8,
         committish: ?[]const u8,
-    ) error{OutOfMemory}![]u8 {
+    ) error{OutOfMemory}![]const u8 {
         return configs.get(self).format_shortcut(self, allocator, user, project, committish);
     }
 
@@ -876,7 +876,7 @@ const HostProvider = enum {
                     user: ?[]const u8,
                     project: []const u8,
                     committish: ?[]const u8,
-                ) error{OutOfMemory}![]u8;
+                ) error{OutOfMemory}![]const u8;
 
                 fn default(
                     self: Self,
@@ -884,7 +884,7 @@ const HostProvider = enum {
                     user: ?[]const u8,
                     project: []const u8,
                     committish: ?[]const u8,
-                ) error{OutOfMemory}![]u8 {
+                ) error{OutOfMemory}![]const u8 {
                     requiresUser(user);
                     const cmsh: []const u8 = if (committish) |c| c else "";
                     const cmsh_sep = if (cmsh.len > 0) "#" else "";
@@ -902,7 +902,7 @@ const HostProvider = enum {
                     user: ?[]const u8,
                     project: []const u8,
                     committish: ?[]const u8,
-                ) error{OutOfMemory}![]u8 {
+                ) error{OutOfMemory}![]const u8 {
                     _ = user;
                     const cmsh: []const u8 = if (committish) |c| c else "";
                     const cmsh_sep = if (cmsh.len > 0) "#" else "";
@@ -923,7 +923,7 @@ const HostProvider = enum {
                     user: ?[]const u8,
                     project: []const u8,
                     committish: ?[]const u8,
-                ) error{OutOfMemory}![]u8;
+                ) error{OutOfMemory}![]const u8;
 
                 fn default(
                     self: Self,
@@ -931,7 +931,7 @@ const HostProvider = enum {
                     user: ?[]const u8,
                     project: []const u8,
                     committish: ?[]const u8,
-                ) error{OutOfMemory}![]u8 {
+                ) error{OutOfMemory}![]const u8 {
                     requiresUser(user);
                     const cmsh: []const u8 = if (committish) |c| c else "";
                     const cmsh_sep = if (cmsh.len > 0) "#" else "";
@@ -949,7 +949,7 @@ const HostProvider = enum {
                     user: ?[]const u8,
                     project: []const u8,
                     committish: ?[]const u8,
-                ) error{OutOfMemory}![]u8 {
+                ) error{OutOfMemory}![]const u8 {
                     _ = user;
                     const cmsh: []const u8 = if (committish) |c| c else "";
                     const cmsh_sep = if (cmsh.len > 0) "#" else "";
@@ -971,7 +971,7 @@ const HostProvider = enum {
                     user: ?[]const u8,
                     project: []const u8,
                     committish: ?[]const u8,
-                ) error{OutOfMemory}![]u8;
+                ) error{OutOfMemory}![]const u8;
 
                 fn default(
                     self: Self,
@@ -980,7 +980,7 @@ const HostProvider = enum {
                     user: ?[]const u8,
                     project: []const u8,
                     committish: ?[]const u8,
-                ) error{OutOfMemory}![]u8 {
+                ) error{OutOfMemory}![]const u8 {
                     requiresUser(user);
 
                     const auth_str = if (auth) |a| a else "";
@@ -1002,7 +1002,7 @@ const HostProvider = enum {
                     user: ?[]const u8,
                     project: []const u8,
                     committish: ?[]const u8,
-                ) error{OutOfMemory}![]u8 {
+                ) error{OutOfMemory}![]const u8 {
                     _ = auth;
                     _ = user;
 
@@ -1023,7 +1023,7 @@ const HostProvider = enum {
                     user: ?[]const u8,
                     project: []const u8,
                     committish: ?[]const u8,
-                ) error{OutOfMemory}![]u8 {
+                ) error{OutOfMemory}![]const u8 {
                     requiresUser(user);
                     _ = auth;
 
@@ -1046,7 +1046,7 @@ const HostProvider = enum {
                     user: ?[]const u8,
                     project: []const u8,
                     committish: ?[]const u8,
-                ) error{OutOfMemory}![]u8;
+                ) error{OutOfMemory}![]const u8;
 
                 fn default(
                     self: Self,
@@ -1054,7 +1054,7 @@ const HostProvider = enum {
                     user: ?[]const u8,
                     project: []const u8,
                     committish: ?[]const u8,
-                ) error{OutOfMemory}![]u8 {
+                ) error{OutOfMemory}![]const u8 {
                     requiresUser(user);
 
                     const cmsh: []const u8 = if (committish) |c| c else "";
@@ -1073,7 +1073,7 @@ const HostProvider = enum {
                     user: ?[]const u8,
                     project: []const u8,
                     committish: ?[]const u8,
-                ) error{OutOfMemory}![]u8 {
+                ) error{OutOfMemory}![]const u8 {
                     _ = user;
 
                     const cmsh: []const u8 = if (committish) |c| c else "";
@@ -1468,7 +1468,7 @@ const HostProvider = enum {
                     user: ?[]const u8,
                     project: []const u8,
                     committish: ?[]const u8,
-                ) error{OutOfMemory}![]u8;
+                ) error{OutOfMemory}![]const u8;
 
                 const default: Type = null;
 
@@ -1479,7 +1479,7 @@ const HostProvider = enum {
                     user: ?[]const u8,
                     project: []const u8,
                     committish: ?[]const u8,
-                ) error{OutOfMemory}![]u8 {
+                ) error{OutOfMemory}![]const u8 {
                     requiresUser(user);
 
                     const auth_str = if (auth) |a| a else "";
@@ -1501,7 +1501,7 @@ const HostProvider = enum {
                     user: ?[]const u8,
                     project: []const u8,
                     committish: ?[]const u8,
-                ) error{OutOfMemory}![]u8 {
+                ) error{OutOfMemory}![]const u8 {
                     _ = auth;
                     _ = user;
 

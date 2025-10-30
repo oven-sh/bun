@@ -292,7 +292,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         struct us_poll_t *poll = GET_READY_POLL(loop, loop->current_ready_poll);
         /* Any ready poll marked with nullptr will be ignored */
         if (LIKELY(poll)) {
-            if (CLEAR_POINTER_TAG(poll) != poll) {
+            struct us_poll_t *clear_poll = (struct us_poll_t *) CLEAR_POINTER_TAG(poll);
+            if (clear_poll != poll || !clear_poll) {
                 continue;
             }
 
@@ -367,11 +368,8 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
 struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, unsigned int ext_size, unsigned int old_ext_size) {
     int events = us_poll_events(p);
     
-
-    // struct us_poll_t *new_p = us_realloc(p, sizeof(struct us_poll_t) + ext_size);
     struct us_poll_t *new_p = us_calloc(1, sizeof(struct us_poll_t) + ext_size);
     memcpy(new_p, p, old_ext_size);
-    // if (p != new_p) {
 #ifdef LIBUS_USE_EPOLL
         /* Hack: forcefully update poll by stripping away already set events */
         new_p->state.poll_type = us_internal_poll_type(new_p);
@@ -380,8 +378,8 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
         /* Forcefully update poll by resetting them with new_p as user data */
         kqueue_change(loop->fd, new_p->state.fd, 0, LIBUS_SOCKET_WRITABLE | LIBUS_SOCKET_READABLE, new_p);
 #endif      /* This is needed for epoll also (us_change_poll doesn't update the old poll) */
-        us_internal_loop_update_pending_ready_polls(loop, p, new_p, events, events);
-    // }
+        
+    us_internal_loop_update_pending_ready_polls(loop, p, new_p, events, events);
 
     return new_p;
 }

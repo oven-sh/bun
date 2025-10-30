@@ -22,7 +22,7 @@
 #ifndef WIN32
 #include <sys/ioctl.h>
 #endif
-
+#include <assert.h>
 #if __has_include("wtf/Platform.h")
 #include "wtf/Platform.h"
 #elif !defined(ASSERT_ENABLED)
@@ -187,13 +187,20 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
     loop_data->low_prio_budget = MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION;
 
     for (s = loop_data->low_prio_head; s && loop_data->low_prio_budget > 0; s = loop_data->low_prio_head, loop_data->low_prio_budget--) {
+        
         /* Unlink this socket from the low-priority queue */
         loop_data->low_prio_head = s->next;
         if (s->next) s->next->prev = 0;
         s->next = 0;
-
         
+        if (us_socket_is_closed(0, s)) {
+            s->flags.low_prio_state = 2;
+            us_socket_context_unref(0, s->context);
+            continue;
+        }
+
         us_internal_socket_context_link_socket(0, s->context, s);
+        us_socket_context_unref(0, s->context);
         us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
         s->flags.low_prio_state = 2;
     }
@@ -241,8 +248,12 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
     
     /* Free all closed sockets (maybe it is better to reverse order?) */
     for (struct us_socket_t *s = loop->data.closed_head; s; ) {
+        assert(us_socket_is_closed(0, s));
+        if(s->context) {
+            assert(s->context->head_sockets != s);
+        }
+        
         struct us_socket_t *next = s->next;
-
         us_poll_free((struct us_poll_t *) s, loop);
         s = next;
     }
@@ -367,6 +378,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
              * but they poll for different events */
             if (us_poll_events(p) == LIBUS_SOCKET_WRITABLE) {
                 struct us_socket_t* s = (struct us_socket_t *) p;
+                if (us_socket_is_closed(0, s)) {
+                    return;
+                }
                 us_internal_socket_after_open(s, s->flags.has_error || s->flags.has_received_eof);
             } else {
                 struct us_listen_socket_t *listen_socket = (struct us_listen_socket_t *) p;
@@ -460,11 +474,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
                 #endif
             }
             
-            if (is_readable && !s->flags.is_paused) {
-                if (UNLIKELY(us_socket_is_closed(0, s))) {
-                    // Do not call on_end after the socket has been closed
-                    return;
-                }
+            if (is_readable && !s->flags.is_paused && !us_socket_is_closed(0, s)) {
+                
                 /* Contexts may prioritize down sockets that are currently readable, e.g. when SSL handshake has to be done.
                  * SSL handshakes are CPU intensive, so we limit the number of handshakes per loop iteration, and move the rest
                  * to the low-priority queue */

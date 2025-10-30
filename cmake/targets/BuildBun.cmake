@@ -684,6 +684,7 @@ register_command(
       -Dcpu=${ZIG_CPU}
       -Denable_logs=$<IF:$<BOOL:${ENABLE_LOGS}>,true,false>
       -Denable_asan=$<IF:$<BOOL:${ENABLE_ZIG_ASAN}>,true,false>
+      -Denable_fuzzilli=$<IF:$<BOOL:${ENABLE_FUZZILLI}>,true,false>
       -Denable_valgrind=$<IF:$<BOOL:${ENABLE_VALGRIND}>,true,false>
       -Duse_mimalloc=$<IF:$<BOOL:${USE_MIMALLOC_AS_DEFAULT_ALLOCATOR}>,true,false>
       -Dllvm_codegen_threads=${LLVM_ZIG_CODEGEN_THREADS}

@@ -131,9 +131,7 @@ endif()
 optionx(ENABLE_FUZZILLI BOOL "If Fuzzilli fuzzing support should be enabled (requires ASAN)" DEFAULT OFF)
 
 if(ENABLE_FUZZILLI AND NOT ENABLE_ASAN)
-  message(STATUS "ENABLE_FUZZILLI requires ENABLE_ASAN, enabling ASAN")
-  setx(ENABLE_ASAN ON)
-  setx(ENABLE_ZIG_ASAN ON)
+  message(FATAL_ERROR "ENABLE_FUZZILLI requires ENABLE_ASAN to be enabled. Please set -DENABLE_ASAN=ON")
 endif()
 
 if(RELEASE AND LINUX AND CI AND NOT ENABLE_ASSERTIONS AND NOT ENABLE_ASAN)

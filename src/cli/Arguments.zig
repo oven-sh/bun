@@ -217,23 +217,28 @@ pub const test_only_params = [_]ParamType{
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
+fn loadGlobalBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+    if (ctx.has_loaded_global_config) return;
+
+    ctx.has_loaded_global_config = true;
+
+    var config_buf: bun.PathBuffer = undefined;
+    if (getHomeConfigPath(&config_buf)) |path| {
+        try loadBunfig(allocator, true, path, ctx, comptime cmd);
+    }
+}
+
 pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
     if (comptime cmd.readGlobalConfig()) {
-        if (!ctx.has_loaded_global_config) {
-            ctx.has_loaded_global_config = true;
+        loadGlobalBunfig(allocator, ctx, cmd) catch |err| {
+            if (auto_loaded) return;
 
-            var config_buf: bun.PathBuffer = undefined;
-            if (getHomeConfigPath(&config_buf)) |path| {
-                loadBunfig(allocator, true, path, ctx, comptime cmd) catch |err| {
-                    if (ctx.log.hasAny()) {
-                        ctx.log.print(Output.errorWriter()) catch {};
-                    }
-                    if (ctx.log.hasAny()) Output.printError("\n", .{});
-                    Output.err(err, "failed to load bunfig", .{});
-                    Global.crash();
-                };
-            }
-        }
+            Output.prettyErrorln("{}\nreading global config \"{s}\"", .{
+                err,
+                config_path,
+            });
+            Global.exit(1);
+        };
     }
 
     try loadBunfig(allocator, auto_loaded, config_path, ctx, cmd);

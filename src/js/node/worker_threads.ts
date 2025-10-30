@@ -223,8 +223,6 @@ function moveMessagePortToContext() {
   throwNotImplemented("worker_threads.moveMessagePortToContext");
 }
 
-const unsupportedOptions = ["stdin", "stdout", "stderr", "trackedUnmanagedFds", "resourceLimits"];
-
 class Worker extends EventEmitter {
   #worker: WebWorker;
   #performance;
@@ -236,11 +234,6 @@ class Worker extends EventEmitter {
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
-    for (const key of unsupportedOptions) {
-      if (key in options && options[key] != null) {
-        warnNotImplementedOnce(`worker_threads.Worker option "${key}"`);
-      }
-    }
 
     const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
     if (options && builtinsGeneratorHatesEval in options) {

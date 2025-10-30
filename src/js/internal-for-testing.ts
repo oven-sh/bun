@@ -25,6 +25,13 @@ export const patchInternals = {
 const shellLex = $newZigFunction("shell.zig", "TestingAPIs.shellLex", 2);
 const shellParse = $newZigFunction("shell.zig", "TestingAPIs.shellParse", 2);
 
+export const escapeRegExp = $newZigFunction("escapeRegExp.zig", "jsEscapeRegExp", 1);
+export const escapeRegExpForPackageNameMatching = $newZigFunction(
+  "escapeRegExp.zig",
+  "jsEscapeRegExpForPackageNameMatching",
+  1,
+);
+
 export const shellInternals = {
   lex: (a, ...b) => shellLex(a.raw, b),
   parse: (a, ...b) => shellParse(a.raw, b),
@@ -203,3 +210,8 @@ export const structuredCloneAdvanced: (
 ) => any = $newCppFunction("StructuredClone.cpp", "jsFunctionStructuredCloneAdvanced", 5);
 
 export const lsanDoLeakCheck = $newCppFunction("InternalForTesting.cpp", "jsFunction_lsanDoLeakCheck", 1);
+
+export const hostedGitInfo = {
+  parseUrl: $newZigFunction("hosted_git_info.zig", "TestingAPIs.jsParseUrl", 1),
+  fromUrl: $newZigFunction("hosted_git_info.zig", "TestingAPIs.jsFromUrl", 1),
+};

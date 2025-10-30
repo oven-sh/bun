@@ -14,20 +14,26 @@ comptime {
 
 var title_mutex = bun.Mutex{};
 
-pub fn getTitle(_: *JSGlobalObject, title: *ZigString) callconv(.C) void {
+pub fn getTitle(_: *JSGlobalObject, title: *bun.String) callconv(.C) void {
     title_mutex.lock();
     defer title_mutex.unlock();
     const str = bun.cli.Bun__Node__ProcessTitle;
-    title.* = ZigString.init(str orelse "bun");
+    title.* = bun.String.cloneUTF8(str orelse "bun");
 }
 
 // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
-pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *ZigString) callconv(.C) JSValue {
+pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *bun.String) callconv(.C) void {
+    defer newvalue.deref();
     title_mutex.lock();
     defer title_mutex.unlock();
-    if (bun.cli.Bun__Node__ProcessTitle) |_| bun.default_allocator.free(bun.cli.Bun__Node__ProcessTitle.?);
-    bun.cli.Bun__Node__ProcessTitle = bun.handleOom(newvalue.dupe(bun.default_allocator));
-    return newvalue.toJS(globalObject);
+
+    const new_title = newvalue.toOwnedSlice(bun.default_allocator) catch {
+        globalObject.throwOutOfMemory() catch {};
+        return;
+    };
+
+    if (bun.cli.Bun__Node__ProcessTitle) |slice| bun.default_allocator.free(slice);
+    bun.cli.Bun__Node__ProcessTitle = new_title;
 }
 
 pub fn createArgv0(globalObject: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
@@ -333,11 +339,11 @@ comptime {
 }
 
 pub export fn Bun__NODE_NO_WARNINGS() bool {
-    return bun.getRuntimeFeatureFlag(.NODE_NO_WARNINGS);
+    return bun.feature_flag.NODE_NO_WARNINGS.get();
 }
 
 pub export fn Bun__suppressCrashOnProcessKillSelfIfDesired() void {
-    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF)) {
+    if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF.get()) {
         bun.crash_handler.suppressReporting();
     }
 }

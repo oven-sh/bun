@@ -182,9 +182,9 @@ pub const JunitReporter = struct {
 
         const properties: PropertiesList = .{
             .ci = brk: {
-                if (bun.getenvZ("GITHUB_RUN_ID")) |github_run_id| {
-                    if (bun.getenvZ("GITHUB_SERVER_URL")) |github_server_url| {
-                        if (bun.getenvZ("GITHUB_REPOSITORY")) |github_repository| {
+                if (bun.env_var.GITHUB_RUN_ID.get()) |github_run_id| {
+                    if (bun.env_var.GITHUB_SERVER_URL.get()) |github_server_url| {
+                        if (bun.env_var.GITHUB_REPOSITORY.get()) |github_repository| {
                             if (github_run_id.len > 0 and github_server_url.len > 0 and github_repository.len > 0) {
                                 break :brk try std.fmt.allocPrint(allocator, "{s}/{s}/actions/runs/{s}", .{ github_server_url, github_repository, github_run_id });
                             }
@@ -192,7 +192,7 @@ pub const JunitReporter = struct {
                     }
                 }
 
-                if (bun.getenvZ("CI_JOB_URL")) |ci_job_url| {
+                if (bun.env_var.CI_JOB_URL.get()) |ci_job_url| {
                     if (ci_job_url.len > 0) {
                         break :brk ci_job_url;
                     }
@@ -201,19 +201,19 @@ pub const JunitReporter = struct {
                 break :brk "";
             },
             .commit = brk: {
-                if (bun.getenvZ("GITHUB_SHA")) |github_sha| {
+                if (bun.env_var.GITHUB_SHA.get()) |github_sha| {
                     if (github_sha.len > 0) {
                         break :brk github_sha;
                     }
                 }
 
-                if (bun.getenvZ("CI_COMMIT_SHA")) |sha| {
+                if (bun.env_var.CI_COMMIT_SHA.get()) |sha| {
                     if (sha.len > 0) {
                         break :brk sha;
                     }
                 }
 
-                if (bun.getenvZ("GIT_SHA")) |git_sha| {
+                if (bun.env_var.GIT_SHA.get()) |git_sha| {
                     if (git_sha.len > 0) {
                         break :brk git_sha;
                     }
@@ -579,6 +579,7 @@ pub const CommandLineReporter = struct {
 
     reporters: struct {
         dots: bool = false,
+        only_failures: bool = false,
         junit: ?*JunitReporter = null,
     } = .{},
 
@@ -874,8 +875,8 @@ pub const CommandLineReporter = struct {
                             },
                         }
                         buntest.reporter.?.last_printed_dot = true;
-                    } else if (Output.isAIAgent() and (comptime result.basicResult()) != .fail) {
-                        // when using AI agents, only print failures
+                    } else if (((comptime result.basicResult()) != .fail) and (buntest.reporter != null and buntest.reporter.?.reporters.only_failures)) {
+                        // when using --only-failures, only print failures
                     } else {
                         buntest.bun_test_root.onBeforePrint();
 
@@ -900,7 +901,7 @@ pub const CommandLineReporter = struct {
 
         var this: *CommandLineReporter = buntest.reporter orelse return; // command line reporter is missing! uh oh!
 
-        if (!this.reporters.dots) switch (sequence.result.basicResult()) {
+        if (!this.reporters.dots and !this.reporters.only_failures) switch (sequence.result.basicResult()) {
             .skip => bun.handleOom(this.skips_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
             .todo => bun.handleOom(this.todos_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
             .fail => bun.handleOom(this.failures_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
@@ -959,7 +960,7 @@ pub const CommandLineReporter = struct {
 
         var map = coverage.ByteRangeMapping.map orelse return;
         var iter = map.valueIterator();
-        var byte_ranges = try std.ArrayList(bun.sourcemap.coverage.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
+        var byte_ranges = try std.ArrayList(bun.SourceMap.coverage.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
 
         while (iter.next()) |entry| {
             byte_ranges.appendAssumeCapacity(entry.*);
@@ -970,10 +971,10 @@ pub const CommandLineReporter = struct {
         }
 
         std.sort.pdq(
-            bun.sourcemap.coverage.ByteRangeMapping,
+            bun.SourceMap.coverage.ByteRangeMapping,
             byte_ranges.items,
             {},
-            bun.sourcemap.coverage.ByteRangeMapping.isLessThan,
+            bun.SourceMap.coverage.ByteRangeMapping.isLessThan,
         );
 
         try this.printCodeCoverage(vm, opts, byte_ranges.items, reporters, enable_ansi_colors);
@@ -983,7 +984,7 @@ pub const CommandLineReporter = struct {
         _: *CommandLineReporter,
         vm: *jsc.VirtualMachine,
         opts: *TestCommand.CodeCoverageOptions,
-        byte_ranges: []bun.sourcemap.coverage.ByteRangeMapping,
+        byte_ranges: []bun.SourceMap.coverage.ByteRangeMapping,
         comptime reporters: TestCommand.Reporters,
         comptime enable_ansi_colors: bool,
     ) !void {
@@ -1053,7 +1054,7 @@ pub const CommandLineReporter = struct {
         var console_buffer_buffer = console_buffer.bufferedWriter();
         var console_writer = console_buffer_buffer.writer();
 
-        var avg = bun.sourcemap.coverage.Fraction{
+        var avg = bun.SourceMap.coverage.Fraction{
             .functions = 0.0,
             .lines = 0.0,
             .stmts = 0.0,
@@ -1184,7 +1185,7 @@ pub const CommandLineReporter = struct {
                     avg.stmts /= avg_count;
                 }
 
-                const failed = if (avg_count > 0) base_fraction else bun.sourcemap.coverage.Fraction{
+                const failed = if (avg_count > 0) base_fraction else bun.SourceMap.coverage.Fraction{
                     .functions = 0,
                     .lines = 0,
                     .stmts = 0,
@@ -1279,7 +1280,7 @@ pub const TestCommand = struct {
         skip_test_files: bool = !Environment.allow_assert,
         reporters: Reporters = .{ .text = true, .lcov = false },
         reports_directory: string = "coverage",
-        fractions: bun.sourcemap.coverage.Fraction = .{},
+        fractions: bun.SourceMap.coverage.Fraction = .{},
         ignore_sourcemap: bool = false,
         enabled: bool = false,
         fail_on_low_coverage: bool = false,
@@ -1361,6 +1362,11 @@ pub const TestCommand = struct {
         }
         if (ctx.test_options.reporters.dots) {
             reporter.reporters.dots = true;
+        }
+        if (ctx.test_options.reporters.only_failures) {
+            reporter.reporters.only_failures = true;
+        } else if (Output.isAIAgent()) {
+            reporter.reporters.only_failures = true; // only-failures defaults to true for ai agents
         }
 
         js_ast.Expr.Data.Store.create();
@@ -1766,7 +1772,8 @@ pub const TestCommand = struct {
         }
         const summary = reporter.summary();
 
-        if (failed_to_find_any_tests or summary.didLabelFilterOutAllTests() or summary.fail > 0 or (coverage_options.enabled and coverage_options.fractions.failing and coverage_options.fail_on_low_coverage) or !write_snapshots_success) {
+        const should_fail_on_no_tests = !ctx.test_options.pass_with_no_tests and (failed_to_find_any_tests or summary.didLabelFilterOutAllTests());
+        if (should_fail_on_no_tests or summary.fail > 0 or (coverage_options.enabled and coverage_options.fractions.failing and coverage_options.fail_on_low_coverage) or !write_snapshots_success) {
             vm.exit_handler.exit_code = 1;
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
             vm.exit_handler.exit_code = 1;
@@ -2006,12 +2013,12 @@ const strings = bun.strings;
 const uws = bun.uws;
 const HTTPThread = bun.http.HTTPThread;
 
+const coverage = bun.SourceMap.coverage;
+const CodeCoverageReport = coverage.Report;
+
 const jsc = bun.jsc;
 const jest = jsc.Jest;
 const Snapshots = jsc.Snapshot.Snapshots;
 
 const TestRunner = jsc.Jest.TestRunner;
 const Test = TestRunner.Test;
-
-const coverage = bun.sourcemap.coverage;
-const CodeCoverageReport = coverage.Report;

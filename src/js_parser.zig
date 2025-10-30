@@ -930,16 +930,17 @@ pub const MacroState = struct {
 };
 
 pub const Jest = struct {
-    expect: Ref = Ref.None,
-    expectTypeOf: Ref = Ref.None,
-    describe: Ref = Ref.None,
     @"test": Ref = Ref.None,
     it: Ref = Ref.None,
+    describe: Ref = Ref.None,
+    expect: Ref = Ref.None,
+    expectTypeOf: Ref = Ref.None,
+    beforeAll: Ref = Ref.None,
     beforeEach: Ref = Ref.None,
     afterEach: Ref = Ref.None,
-    beforeAll: Ref = Ref.None,
     afterAll: Ref = Ref.None,
     jest: Ref = Ref.None,
+    vi: Ref = Ref.None,
     xit: Ref = Ref.None,
     xtest: Ref = Ref.None,
     xdescribe: Ref = Ref.None,

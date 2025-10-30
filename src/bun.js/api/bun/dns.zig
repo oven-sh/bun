@@ -1147,26 +1147,11 @@ pub const internal = struct {
 
     var __max_dns_time_to_live_seconds: ?u32 = null;
     pub fn getMaxDNSTimeToLiveSeconds() u32 {
-        // Amazon Web Services recommends 5 seconds: https://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/jvm-ttl-dns.html
-        const default_max_dns_time_to_live_seconds = 30;
-
         // This is racy, but it's okay because the number won't be invalid, just stale.
         return __max_dns_time_to_live_seconds orelse {
-            if (bun.getenvZ("BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS")) |string_value| {
-                const value = std.fmt.parseInt(i64, string_value, 10) catch {
-                    __max_dns_time_to_live_seconds = default_max_dns_time_to_live_seconds;
-                    return default_max_dns_time_to_live_seconds;
-                };
-                if (value < 0) {
-                    __max_dns_time_to_live_seconds = std.math.maxInt(u32);
-                } else {
-                    __max_dns_time_to_live_seconds = @truncate(@as(u64, @intCast(value)));
-                }
-                return __max_dns_time_to_live_seconds.?;
-            }
-
-            __max_dns_time_to_live_seconds = default_max_dns_time_to_live_seconds;
-            return default_max_dns_time_to_live_seconds;
+            const value = bun.env_var.BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS.get();
+            __max_dns_time_to_live_seconds = @truncate(@as(u64, @intCast(value)));
+            return __max_dns_time_to_live_seconds.?;
         };
     }
 
@@ -1393,12 +1378,12 @@ pub const internal = struct {
     };
     pub fn getHints() std.c.addrinfo {
         var hints_copy = default_hints;
-        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG)) {
+        if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG.get()) {
             hints_copy.flags.ADDRCONFIG = false;
         }
-        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_IPV6)) {
+        if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_IPV6.get()) {
             hints_copy.family = std.c.AF.INET;
-        } else if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_IPV4)) {
+        } else if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_IPV4.get()) {
             hints_copy.family = std.c.AF.INET6;
         }
 
@@ -1685,7 +1670,7 @@ pub const internal = struct {
         getaddrinfo_calls += 1;
         var timestamp_to_store: u32 = 0;
         // is there a cache hit?
-        if (!bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_DNS_CACHE)) {
+        if (!bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_DNS_CACHE.get()) {
             if (global_cache.get(key, &timestamp_to_store)) |entry| {
                 if (preload) {
                     global_cache.lock.unlock();
@@ -1724,7 +1709,7 @@ pub const internal = struct {
         global_cache.lock.unlock();
 
         if (comptime Environment.isMac) {
-            if (!bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO)) {
+            if (!bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO.get()) {
                 const res = lookupLibinfo(req, loop.internal_loop_data.getParent());
                 log("getaddrinfo({s}) = cache miss (libinfo)", .{host orelse ""});
                 if (res) return req;
@@ -1987,7 +1972,7 @@ pub const Resolver = struct {
     const AddrPendingCache = bun.HiveArray(GetHostByAddrInfoRequest.PendingCacheKey, 32);
     const NameInfoPendingCache = bun.HiveArray(GetNameInfoRequest.PendingCacheKey, 32);
 
-    pub fn checkTimeouts(this: *Resolver, now: *const timespec, vm: *jsc.VirtualMachine) EventLoopTimer.Arm {
+    pub fn checkTimeouts(this: *Resolver, now: *const timespec, vm: *jsc.VirtualMachine) void {
         defer {
             vm.timer.incrementTimerRef(-1);
             this.deref();
@@ -1998,13 +1983,9 @@ pub const Resolver = struct {
         if (this.getChannelOrError(vm.global)) |channel| {
             if (this.anyRequestsPending()) {
                 c_ares.ares_process_fd(channel, c_ares.ARES_SOCKET_BAD, c_ares.ARES_SOCKET_BAD);
-                if (this.addTimer(now)) {
-                    return .{ .rearm = this.event_loop_timer.next };
-                }
+                _ = this.addTimer(now);
             }
         } else |_| {}
-
-        return .disarm;
     }
 
     fn anyRequestsPending(this: *Resolver) bool {
@@ -3244,24 +3225,21 @@ pub const Resolver = struct {
     }
 
     fn setChannelLocalAddress(channel: *c_ares.Channel, globalThis: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!c_int {
-        const str = try value.toBunString(globalThis);
-        defer str.deref();
+        var str = try value.toSlice(globalThis, bun.default_allocator);
+        defer str.deinit();
 
-        const slice = str.toSlice(bun.default_allocator).slice();
-        var buffer = bun.handleOom(bun.default_allocator.alloc(u8, slice.len + 1));
-        defer bun.default_allocator.free(buffer);
-        _ = strings.copy(buffer[0..], slice);
-        buffer[slice.len] = 0;
+        const slice = try str.intoOwnedSliceZ(bun.default_allocator);
+        defer bun.default_allocator.free(slice);
 
         var addr: [16]u8 = undefined;
 
-        if (c_ares.ares_inet_pton(c_ares.AF.INET, buffer.ptr, &addr) == 1) {
+        if (c_ares.ares_inet_pton(c_ares.AF.INET, slice.ptr, &addr) == 1) {
             const ip = std.mem.readInt(u32, addr[0..4], .big);
             c_ares.ares_set_local_ip4(channel, ip);
             return c_ares.AF.INET;
         }
 
-        if (c_ares.ares_inet_pton(c_ares.AF.INET6, buffer.ptr, &addr) == 1) {
+        if (c_ares.ares_inet_pton(c_ares.AF.INET6, slice.ptr, &addr) == 1) {
             c_ares.ares_set_local_ip6(channel, &addr);
             return c_ares.AF.INET6;
         }

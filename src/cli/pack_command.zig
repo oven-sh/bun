@@ -1626,6 +1626,7 @@ pub const PackCommand = struct {
         defer ctx.allocator.destroy(file_reader);
         file_reader.* = .{
             .unbuffered_reader = undefined,
+            .buf = undefined,
         };
 
         var entry = Archive.Entry.new2(archive);
@@ -1769,6 +1770,7 @@ pub const PackCommand = struct {
 
             file_reader.* = .{
                 .unbuffered_reader = tarball_file.reader(),
+                .buf = undefined,
             };
 
             var size: usize = 0;
@@ -2050,6 +2052,7 @@ pub const PackCommand = struct {
 
         file_reader.* = .{
             .unbuffered_reader = File.from(file).reader(),
+            .buf = undefined,
         };
 
         var read = file_reader.read(read_buf) catch |err| {

@@ -387,6 +387,11 @@ pub const Command = struct {
         expose_gc: bool = false,
         preserve_symlinks_main: bool = false,
         console_depth: ?u16 = null,
+        cpu_prof: struct {
+            enabled: bool = false,
+            name: []const u8 = "",
+            dir: []const u8 = "",
+        } = .{},
     };
 
     var global_cli_ctx: Context = undefined;

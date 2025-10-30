@@ -112,6 +112,8 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\"") catch unreachable,
     clap.parseParam("--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"") catch unreachable,
     clap.parseParam("--console-depth <NUMBER>          Set the default depth for console.log object inspection (default: 2)") catch unreachable,
+    clap.parseParam("--console-log-file <STR>         Redirect console.log output to a file") catch unreachable,
+    clap.parseParam("--console-error-file <STR>       Redirect console.error output to a file") catch unreachable,
     clap.parseParam("--user-agent <STR>               Set the default User-Agent header for HTTP requests") catch unreachable,
 };
 
@@ -735,6 +737,14 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             };
             // Treat depth=0 as maxInt(u16) for infinite depth
             ctx.runtime_options.console_depth = if (depth == 0) std.math.maxInt(u16) else depth;
+        }
+
+        if (args.option("--console-log-file")) |log_file| {
+            ctx.runtime_options.console_log_file = log_file;
+        }
+
+        if (args.option("--console-error-file")) |error_file| {
+            ctx.runtime_options.console_error_file = error_file;
         }
 
         if (args.option("--dns-result-order")) |order| {

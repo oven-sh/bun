@@ -8,12 +8,24 @@ const DEFAULT_CONSOLE_LOG_DEPTH: u16 = 2;
 
 const Counter = std.AutoHashMapUnmanaged(u64, u32);
 
+/// Output destination for console output - can be stdout/stderr or a file path
+pub const OutputDestination = union(enum) {
+    std: void,
+    path: []const u8,
+    file: bun.sys.File,
+};
+
 const BufferedWriter = std.io.BufferedWriter(4096, Output.WriterType);
 error_writer: BufferedWriter,
 writer: BufferedWriter,
 default_indent: u16 = 0,
 
 counts: Counter = .{},
+
+/// Lazy console log file destination
+lazy_console_log_file: OutputDestination = .{ .std = {} },
+/// Lazy console error file destination
+lazy_console_error_file: OutputDestination = .{ .std = {} },
 
 pub fn format(_: @This(), comptime _: []const u8, _: anytype, _: anytype) !void {}
 
@@ -22,6 +34,78 @@ pub fn init(error_writer: Output.WriterType, writer: Output.WriterType) ConsoleO
         .error_writer = BufferedWriter{ .unbuffered_writer = error_writer },
         .writer = BufferedWriter{ .unbuffered_writer = writer },
     };
+}
+
+pub fn initWithFiles(
+    error_writer: Output.WriterType,
+    writer: Output.WriterType,
+    log_file_path: ?[]const u8,
+    error_file_path: ?[]const u8,
+) ConsoleObject {
+    var console = ConsoleObject{
+        .error_writer = BufferedWriter{ .unbuffered_writer = error_writer },
+        .writer = BufferedWriter{ .unbuffered_writer = writer },
+    };
+
+    if (log_file_path) |path| {
+        console.lazy_console_log_file = .{ .path = path };
+    }
+
+    if (error_file_path) |path| {
+        console.lazy_console_error_file = .{ .path = path };
+    }
+
+    return console;
+}
+
+/// Ensures the console log file is opened if needed and returns the appropriate writer
+fn ensureLogFileWriter(console: *ConsoleObject) !Output.WriterType {
+    switch (console.lazy_console_log_file) {
+        .std => return Output.writer(),
+        .path => |path| {
+            // Open the file and transition to .file state
+            // Convert path to null-terminated string
+            var path_buf: bun.PathBuffer = undefined;
+            if (path.len >= path_buf.len) return error.PathTooLong;
+            @memcpy(path_buf[0..path.len], path);
+            path_buf[path.len] = 0;
+            const path_z = path_buf[0..path.len :0];
+            const file = try bun.sys.File.openat(
+                bun.FD.cwd(),
+                path_z,
+                bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC,
+                0o644,
+            ).unwrap();
+            console.lazy_console_log_file = .{ .file = file };
+            return file.handle.quietWriter();
+        },
+        .file => |file| return file.handle.quietWriter(),
+    }
+}
+
+/// Ensures the console error file is opened if needed and returns the appropriate writer
+fn ensureErrorFileWriter(console: *ConsoleObject) !Output.WriterType {
+    switch (console.lazy_console_error_file) {
+        .std => return Output.errorWriter(),
+        .path => |path| {
+            // Open the file and transition to .file state
+            // Convert path to null-terminated string
+            var path_buf: bun.PathBuffer = undefined;
+            if (path.len >= path_buf.len) return error.PathTooLong;
+            @memcpy(path_buf[0..path.len], path);
+            path_buf[path.len] = 0;
+            const path_z = path_buf[0..path.len :0];
+            const file = try bun.sys.File.openat(
+                bun.FD.cwd(),
+                path_z,
+                bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC,
+                0o644,
+            ).unwrap();
+            console.lazy_console_error_file = .{ .file = file };
+            return file.handle.quietWriter();
+        },
+        .file => |file| return file.handle.quietWriter(),
+    }
 }
 
 pub const MessageLevel = enum(u32) {
@@ -122,6 +206,15 @@ fn messageWithTypeAndLevel_(
                 stdout_mutex.unlock();
             }
         }
+    }
+
+    // Ensure file writers are set up if redirecting console output
+    if (level == .Warning or level == .Error or message_type == .Assert) {
+        const error_writer = ensureErrorFileWriter(console) catch Output.errorWriter();
+        console.error_writer.unbuffered_writer = error_writer;
+    } else {
+        const log_writer = ensureLogFileWriter(console) catch Output.writer();
+        console.writer.unbuffered_writer = log_writer;
     }
 
     if (message_type == .Clear) {

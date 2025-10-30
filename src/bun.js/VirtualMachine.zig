@@ -981,7 +981,13 @@ pub fn initWithModuleGraph(
     const allocator = opts.allocator;
     VMHolder.vm = try allocator.create(VirtualMachine);
     const console = try allocator.create(ConsoleObject);
-    console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
+    const cli_ctx = CLI.get();
+    console.* = ConsoleObject.initWithFiles(
+        Output.errorWriter(),
+        Output.writer(),
+        cli_ctx.runtime_options.console_log_file,
+        cli_ctx.runtime_options.console_error_file,
+    );
     const log = opts.log.?;
     const transpiler = try Transpiler.init(
         allocator,
@@ -1103,7 +1109,13 @@ pub fn init(opts: Options) !*VirtualMachine {
 
     VMHolder.vm = try allocator.create(VirtualMachine);
     const console = try allocator.create(ConsoleObject);
-    console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
+    const cli_ctx = CLI.get();
+    console.* = ConsoleObject.initWithFiles(
+        Output.errorWriter(),
+        Output.writer(),
+        cli_ctx.runtime_options.console_log_file,
+        cli_ctx.runtime_options.console_error_file,
+    );
     const transpiler = try Transpiler.init(
         allocator,
         log,
@@ -1266,7 +1278,13 @@ pub fn initWorker(
 
     VMHolder.vm = try allocator.create(VirtualMachine);
     const console = try allocator.create(ConsoleObject);
-    console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
+    const cli_ctx = CLI.get();
+    console.* = ConsoleObject.initWithFiles(
+        Output.errorWriter(),
+        Output.writer(),
+        cli_ctx.runtime_options.console_log_file,
+        cli_ctx.runtime_options.console_error_file,
+    );
     const transpiler = try Transpiler.init(
         allocator,
         log,
@@ -1364,7 +1382,13 @@ pub fn initBake(opts: Options) anyerror!*VirtualMachine {
 
     VMHolder.vm = try allocator.create(VirtualMachine);
     const console = try allocator.create(ConsoleObject);
-    console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
+    const cli_ctx = CLI.get();
+    console.* = ConsoleObject.initWithFiles(
+        Output.errorWriter(),
+        Output.writer(),
+        cli_ctx.runtime_options.console_log_file,
+        cli_ctx.runtime_options.console_error_file,
+    );
     const transpiler = try Transpiler.init(
         allocator,
         log,
@@ -3713,6 +3737,7 @@ const Ordinal = bun.Ordinal;
 const Output = bun.Output;
 const SourceMap = bun.SourceMap;
 const String = bun.String;
+const CLI = bun.cli.Command;
 const Transpiler = bun.Transpiler;
 const Watcher = bun.Watcher;
 const default_allocator = bun.default_allocator;

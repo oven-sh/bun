@@ -91,6 +91,7 @@ pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
 pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
+pub const ProcessManagerCommand = @import("./cli/process_manager_command.zig").ProcessManagerCommand;
 
 pub const Arguments = @import("./cli/Arguments.zig");
 
@@ -617,8 +618,11 @@ pub const Command = struct {
             RootCommandMatcher.case("logout") => .ReservedCommand,
             RootCommandMatcher.case("whoami") => .PackageManagerCommand,
             RootCommandMatcher.case("prune") => .ReservedCommand,
-            RootCommandMatcher.case("list") => .ReservedCommand,
+            RootCommandMatcher.case("list") => .ListCommand,
             RootCommandMatcher.case("why") => .WhyCommand,
+            RootCommandMatcher.case("start") => .StartCommand,
+            RootCommandMatcher.case("stop") => .StopCommand,
+            RootCommandMatcher.case("logs") => .LogsCommand,
 
             RootCommandMatcher.case("-e") => .AutoCommand,
 
@@ -788,6 +792,26 @@ pub const Command = struct {
             .WhyCommand => {
                 const ctx = try Command.init(allocator, log, .WhyCommand);
                 try WhyCommand.exec(ctx);
+                return;
+            },
+            .StartCommand => {
+                const ctx = try Command.init(allocator, log, .StartCommand);
+                try ProcessManagerCommand.exec(ctx);
+                return;
+            },
+            .StopCommand => {
+                const ctx = try Command.init(allocator, log, .StopCommand);
+                try ProcessManagerCommand.exec(ctx);
+                return;
+            },
+            .ListCommand => {
+                const ctx = try Command.init(allocator, log, .ListCommand);
+                try ProcessManagerCommand.exec(ctx);
+                return;
+            },
+            .LogsCommand => {
+                const ctx = try Command.init(allocator, log, .LogsCommand);
+                try ProcessManagerCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
@@ -963,6 +987,10 @@ pub const Command = struct {
         PublishCommand,
         AuditCommand,
         WhyCommand,
+        StartCommand,
+        StopCommand,
+        ListCommand,
+        LogsCommand,
 
         /// Used by crash reports.
         ///
@@ -1000,6 +1028,10 @@ pub const Command = struct {
                 .PublishCommand => 'k',
                 .AuditCommand => 'A',
                 .WhyCommand => 'W',
+                .StartCommand => 'S',
+                .StopCommand => 's',
+                .ListCommand => 'L',
+                .LogsCommand => 'O',
             };
         }
 

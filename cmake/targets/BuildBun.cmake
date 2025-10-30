@@ -886,6 +886,10 @@ if(DEBUG)
   target_compile_definitions(${bun} PRIVATE BUN_DEBUG=1)
 endif()
 
+if(ENABLE_FUZZILLI)
+  target_compile_definitions(${bun} PRIVATE ENABLE_FUZZILLI=1)
+endif()
+
 if(APPLE)
   target_compile_definitions(${bun} PRIVATE _DARWIN_NON_CANCELABLE=1)
 endif()

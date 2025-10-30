@@ -13,7 +13,7 @@
 #include <sys/stat.h>
 #include <cerrno>
 
-#if __has_feature(address_sanitizer) || defined(__SANITIZE_ADDRESS__)
+#ifdef ENABLE_FUZZILLI
 #include <sanitizer/asan_interface.h>
 #endif
 
@@ -183,10 +183,10 @@ void Bun__REPRL__registerFuzzilliFunction(Zig::GlobalObject* globalObject) {
 // ============================================================================
 // Coverage instrumentation for Fuzzilli
 // Based on workerd implementation
-// Only enabled when ASAN is active
+// Only enabled when ENABLE_FUZZILLI is set
 // ============================================================================
 
-#if __has_feature(address_sanitizer) || defined(__SANITIZE_ADDRESS__)
+#ifdef ENABLE_FUZZILLI
 
 #define SHM_SIZE 0x200000
 #define MAX_EDGES ((SHM_SIZE - 4) * 8)
@@ -276,7 +276,7 @@ extern "C" void Bun__REPRL__resetCoverage() {
 
 #else
 
-// Stub implementations when ASAN is not enabled
+// Stub implementations when ENABLE_FUZZILLI is not enabled
 extern "C" void __sanitizer_cov_trace_pc_guard_init(uint32_t* start, uint32_t* stop) {
     (void)start;
     (void)stop;
@@ -289,6 +289,6 @@ extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t* guard) {
 extern "C" void Bun__REPRL__resetCoverage() {
 }
 
-#endif // ASAN
+#endif // ENABLE_FUZZILLI
 
 } // extern "C"

@@ -127,6 +127,15 @@ if (NOT ENABLE_ASAN)
   set(ENABLE_ZIG_ASAN OFF)
 endif()
 
+# Fuzzilli fuzzing support requires ASAN
+optionx(ENABLE_FUZZILLI BOOL "If Fuzzilli fuzzing support should be enabled (requires ASAN)" DEFAULT OFF)
+
+if(ENABLE_FUZZILLI AND NOT ENABLE_ASAN)
+  message(STATUS "ENABLE_FUZZILLI requires ENABLE_ASAN, enabling ASAN")
+  setx(ENABLE_ASAN ON)
+  setx(ENABLE_ZIG_ASAN ON)
+endif()
+
 if(RELEASE AND LINUX AND CI AND NOT ENABLE_ASSERTIONS AND NOT ENABLE_ASAN)
   set(DEFAULT_LTO ON)
 else()

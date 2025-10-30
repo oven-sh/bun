@@ -49,15 +49,17 @@ if(ENABLE_ASAN)
     DESCRIPTION "Enable AddressSanitizer"
     -fsanitize=address
   )
+endif()
 
-  # Enable coverage instrumentation for fuzzing with Fuzzilli
+# Coverage instrumentation should ONLY be enabled for Fuzzilli builds
+if(ENABLE_FUZZILLI)
   register_compiler_flags(
-    DESCRIPTION "Enable coverage instrumentation for fuzzing"
+    DESCRIPTION "Enable coverage instrumentation for fuzzing with Fuzzilli"
     -fsanitize-coverage=trace-pc-guard
   )
 
   register_linker_flags(
-    DESCRIPTION "Link coverage instrumentation"
+    DESCRIPTION "Link coverage instrumentation for Fuzzilli"
     -fsanitize-coverage=trace-pc-guard
   )
 endif()

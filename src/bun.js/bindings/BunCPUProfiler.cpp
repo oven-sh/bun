@@ -21,8 +21,15 @@ extern "C" BunString Bun__stopCPUProfilerAndGetJSON(JSC::VM* vm);
 
 namespace Bun {
 
+// Store the profiling start time in microseconds since Unix epoch
+static double s_profilingStartTime = 0.0;
+
 void startCPUProfiler(JSC::VM& vm)
 {
+    // Capture the wall clock time when profiling starts (before creating stopwatch)
+    // This will be used as the profile's startTime
+    s_profilingStartTime = MonotonicTime::now().approximateWallTime().secondsSinceEpoch().value() * 1000000.0;
+
     // Create a stopwatch and start it
     auto stopwatch = WTF::Stopwatch::create();
     stopwatch->start();
@@ -91,36 +98,33 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
     WTF::Vector<int> samples;
     WTF::Vector<long long> timeDeltas;
 
-    // Find the minimum stopwatch timestamp to determine the actual start time
-    // Don't assume stackTraces are ordered
-    WTF::Seconds minStopwatchTimestamp = stackTraces[0].stopwatchTimestamp;
-    MonotonicTime minMonotonicTime = stackTraces[0].timestamp;
-
-    for (const auto& stackTrace : stackTraces) {
-        if (stackTrace.stopwatchTimestamp < minStopwatchTimestamp) {
-            minStopwatchTimestamp = stackTrace.stopwatchTimestamp;
-            minMonotonicTime = stackTrace.timestamp;
-        }
+    // Create an index array to process stack traces in chronological order
+    // We can't sort stackTraces directly because StackTrace has deleted copy assignment
+    WTF::Vector<size_t> sortedIndices;
+    sortedIndices.reserveInitialCapacity(stackTraces.size());
+    for (size_t i = 0; i < stackTraces.size(); i++) {
+        sortedIndices.append(i);
     }
 
-    // Get the wall clock time for the earliest sample
-    double wallClockStart = minMonotonicTime.approximateWallTime().secondsSinceEpoch().value() * 1000000.0;
+    // Sort indices by monotonic timestamp to ensure chronological order
+    // Use timestamp instead of stopwatchTimestamp for better resolution
+    // This is critical for calculating correct timeDeltas between samples
+    std::sort(sortedIndices.begin(), sortedIndices.end(), [&stackTraces](size_t a, size_t b) {
+        return stackTraces[a].timestamp < stackTraces[b].timestamp;
+    });
 
-    // The stopwatch timestamp for the earliest sample
-    double stopwatchStart = minStopwatchTimestamp.seconds() * 1000000.0;
+    // Use the profiling start time that was captured when profiling began
+    // This ensures the first timeDelta represents the time from profiling start to first sample
+    double startTime = s_profilingStartTime;
+    double lastTime = s_profilingStartTime;
 
-    // Calculate the offset to convert stopwatch times to wall clock times
-    // startTime will be the wall clock time when profiling started
-    double startTime = wallClockStart - stopwatchStart;
-    // lastTime should also start from the converted earliest sample time
-    double lastTime = startTime + stopwatchStart;
-
-    // Process each stack trace
-    for (auto& stackTrace : stackTraces) {
+    // Process each stack trace in chronological order
+    for (size_t idx : sortedIndices) {
+        auto& stackTrace = stackTraces[idx];
         if (stackTrace.frames.isEmpty()) {
             samples.append(1); // Root node
-            // Convert stopwatch time to wall clock time
-            double currentTime = startTime + (stackTrace.stopwatchTimestamp.seconds() * 1000000.0);
+            // Use monotonic timestamp converted to wall clock time
+            double currentTime = stackTrace.timestamp.approximateWallTime().secondsSinceEpoch().value() * 1000000.0;
             double delta = std::max(0.0, currentTime - lastTime);
             timeDeltas.append(static_cast<long long>(delta));
             lastTime = currentTime;
@@ -248,8 +252,8 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
         samples.append(currentParentId);
 
         // Add time delta
-        // Convert stopwatch time to wall clock time
-        double currentTime = startTime + (stackTrace.stopwatchTimestamp.seconds() * 1000000.0);
+        // Use monotonic timestamp converted to wall clock time
+        double currentTime = stackTrace.timestamp.approximateWallTime().secondsSinceEpoch().value() * 1000000.0;
         double delta = std::max(0.0, currentTime - lastTime);
         timeDeltas.append(static_cast<long long>(delta));
         lastTime = currentTime;
@@ -293,9 +297,12 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
     }
     json->setValue("nodes"_s, nodesArray);
 
-    // Add timing info as integer microseconds
-    json->setInteger("startTime"_s, static_cast<long long>(startTime));
-    json->setInteger("endTime"_s, static_cast<long long>(endTime));
+    // Add timing info in microseconds
+    // Note: Using setDouble() instead of setInteger() because setInteger() has precision
+    // issues with large values (> 2^31). Chrome DevTools expects microseconds since Unix epoch,
+    // which are typically 16-digit numbers. JSON numbers can represent these precisely.
+    json->setDouble("startTime"_s, startTime);
+    json->setDouble("endTime"_s, endTime);
 
     // Add samples array
     auto samplesArray = JSON::Array::create();

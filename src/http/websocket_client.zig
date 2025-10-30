@@ -145,7 +145,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         pub fn handleHandshake(this: *WebSocket, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
             jsc.markBinding(@src());
-
+            this.tcp = socket;
             const authorized = if (success == 1) true else false;
 
             log("onHandshake({d})", .{success});
@@ -350,7 +350,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn handleData(this: *WebSocket, socket: Socket, data_: []const u8) void {
-
+            this.tcp = socket;
             // after receiving close we should ignore the data
             if (this.close_received) return;
             this.ref();
@@ -931,6 +931,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         pub fn handleEnd(this: *WebSocket, socket: Socket) void {
             bun.assert(this.isSameSocket(socket));
+            this.tcp = socket;
             this.terminate(ErrorCode.ended);
         }
 
@@ -939,6 +940,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             socket: Socket,
         ) void {
             if (this.close_received) return;
+            this.tcp = socket;
             bun.assert(this.isSameSocket(socket));
             const send_buf = this.send_buffer.readableSlice(0);
             if (send_buf.len == 0)
@@ -947,8 +949,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
         pub fn handleTimeout(
             this: *WebSocket,
-            _: Socket,
+            socket: Socket,
         ) void {
+            this.tcp = socket;
             this.terminate(ErrorCode.timeout);
         }
         pub fn handleConnectError(this: *WebSocket, _: Socket, _: c_int) void {

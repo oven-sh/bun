@@ -245,6 +245,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         pub fn handleHandshake(this: *HTTPClient, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
             log("onHandshake({d})", .{success});
+            this.tcp = socket;
 
             const handshake_success = if (success == 1) true else false;
             var reject_unauthorized = false;
@@ -306,6 +307,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         pub fn handleData(this: *HTTPClient, socket: Socket, data: []const u8) void {
             log("onData", .{});
+            this.tcp = socket;
             if (this.outgoing_websocket == null) {
                 this.clearData();
                 socket.close(.failure);
@@ -353,7 +355,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.processResponse(response, body[@as(usize, @intCast(response.bytes_read))..]);
         }
 
-        pub fn handleEnd(this: *HTTPClient, _: Socket) void {
+        pub fn handleEnd(this: *HTTPClient, socket: Socket) void {
+            this.tcp = socket;
             log("onEnd", .{});
             this.terminate(ErrorCode.ended);
         }
@@ -567,6 +570,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this: *HTTPClient,
             socket: Socket,
         ) void {
+            this.tcp = socket;
             bun.assert(this.isSameSocket(socket));
 
             if (this.to_send.len == 0)
@@ -585,8 +589,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         }
         pub fn handleTimeout(
             this: *HTTPClient,
-            _: Socket,
+            socket: Socket,
         ) void {
+            this.tcp = socket;
             this.terminate(ErrorCode.timeout);
         }
 

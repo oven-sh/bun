@@ -64,6 +64,7 @@ void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls) {
 void us_socket_context_close(int ssl, struct us_socket_context_t *context) {
     /* First start closing pending connecting sockets*/
     struct us_connecting_socket_t *c = context->head_connecting_sockets;
+    context->head_connecting_sockets = 0;
     while (c) {
         struct us_connecting_socket_t *nextC = c->next_pending;
         us_connecting_socket_close(ssl, c);
@@ -71,6 +72,7 @@ void us_socket_context_close(int ssl, struct us_socket_context_t *context) {
     }
     /* After this by closing all listen sockets */
     struct us_listen_socket_t *ls = context->head_listen_sockets;
+    context->head_listen_sockets = 0;
     while (ls) {
         struct us_listen_socket_t *nextLS = (struct us_listen_socket_t *) ls->s.next;
         us_listen_socket_close(ssl, ls);
@@ -80,6 +82,7 @@ void us_socket_context_close(int ssl, struct us_socket_context_t *context) {
 
     /* Then close all regular sockets */
     struct us_socket_t *s = context->head_sockets;
+    context->head_sockets = 0;
     while (s) {
         struct us_socket_t *nextS = s->next;
         us_socket_close(ssl, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
@@ -829,10 +832,7 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
     struct us_loop_t *loop = old_context->loop;
     /* We need to be sure that we still holding a reference*/
     us_socket_context_ref(ssl, old_context);
-    if (s->flags.low_prio_state != 1) {
-        /* This properly updates the iterator if in on_timeout */
-        us_internal_socket_context_unlink_socket(ssl, old_context, s);
-    } else {
+    if (s->flags.low_prio_state == 1) {
         /* Unlink this socket from the low-priority queue */
         if (!s->prev) s->context->loop->data.low_prio_head = s->next;
         else s->prev->next = s->next;
@@ -842,8 +842,11 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
         s->prev = 0;
         s->next = 0;
         s->flags.low_prio_state = 0;
-       /* We manually ref/unref context to handle context life cycle with low-priority queue */
+        /* We manually ref/unref context to handle context life cycle with low-priority queue */
         us_socket_context_unref(ssl, old_context);
+    } else {
+     /* This properly updates the iterator if in on_timeout */
+     us_internal_socket_context_unlink_socket(ssl, old_context, s);
     }
 
     struct us_connecting_socket_t *c = s->connect_state;

@@ -2038,6 +2038,16 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 .specific => |m| m,
             }) orelse return;
 
+            // OpenTelemetry: Notify operation start AFTER URL is available, BEFORE user handler
+            bun.telemetry.http.notifyHttpRequestStart(
+                &prepared.ctx.telemetry_ctx,
+                server.globalThis,
+                prepared.request_object,
+                req,
+                @tagName(prepared.ctx.method),
+                server,
+            );
+
             const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
             const response_value = bun.jsc.fromJSHostCall(server.globalThis, @src(), Bun__ServerRouteList__callRoute, .{ server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req }) catch |err| server.globalThis.takeException(err);
 

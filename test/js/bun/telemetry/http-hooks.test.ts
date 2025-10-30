@@ -377,4 +377,80 @@ describe("Bun.serve() telemetry hooks", () => {
     // url.query should not be present or should be empty
     expect(startAttrs["url.query"] === undefined || startAttrs["url.query"] === "").toBe(true);
   });
+
+  test("calls hooks for user-defined routes", async () => {
+    let startCalled = false;
+    let endCalled = false;
+    const startAttrs: any = {};
+    const endAttrs: any = {};
+
+    const instrument = {
+      kind: InstrumentKinds.HTTP,
+      name: "test-user-routes",
+      version: "1.0.0",
+      onOperationStart(id: number, attributes: any) {
+        startCalled = true;
+        Object.assign(startAttrs, attributes);
+      },
+      onOperationEnd(id: number, attributes: any) {
+        endCalled = true;
+        Object.assign(endAttrs, attributes);
+      },
+      onOperationError() {},
+    };
+
+    using ref = Bun.telemetry.attach(instrument);
+
+    using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/api/users/:id": req => {
+          return new Response(JSON.stringify({ id: req.params.id }));
+        },
+        "/api/posts": {
+          GET: () => new Response("GET posts"),
+          POST: () => new Response("POST post", { status: 201 }),
+        },
+      },
+      fetch() {
+        return new Response("fallback");
+      },
+    });
+
+    // Test parameterized route
+    const response1 = await fetch(`http://localhost:${server.port}/api/users/123`);
+    await response1.text();
+
+    expect(startCalled).toBe(true);
+    expect(startAttrs).toMatchObject({
+      "http.request.method": "GET",
+      "url.path": "/api/users/123",
+    });
+    expect(endCalled).toBe(true);
+    expect(endAttrs).toMatchObject({
+      "http.response.status_code": 200,
+    });
+
+    // Reset for next test
+    startCalled = false;
+    endCalled = false;
+    Object.keys(startAttrs).forEach(key => delete startAttrs[key]);
+    Object.keys(endAttrs).forEach(key => delete endAttrs[key]);
+
+    // Test method-specific route
+    const response2 = await fetch(`http://localhost:${server.port}/api/posts`, {
+      method: "POST",
+    });
+    await response2.text();
+
+    expect(startCalled).toBe(true);
+    expect(startAttrs).toMatchObject({
+      "http.request.method": "POST",
+      "url.path": "/api/posts",
+    });
+    expect(endCalled).toBe(true);
+    expect(endAttrs).toMatchObject({
+      "http.response.status_code": 201,
+    });
+  });
 });

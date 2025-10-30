@@ -103,24 +103,29 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
         }
     }
 
-    // Get the wall clock time for the earliest sample
+    // Get the wall clock time for the earliest sample (in microseconds)
+    // This will be our startTime for the CPU profile
     double wallClockStart = minMonotonicTime.approximateWallTime().secondsSinceEpoch().value() * 1000000.0;
 
-    // The stopwatch timestamp for the earliest sample
+    // The stopwatch timestamp for the earliest sample (in microseconds)
     double stopwatchStart = minStopwatchTimestamp.seconds() * 1000000.0;
 
     // Calculate the offset to convert stopwatch times to wall clock times
-    // startTime will be the wall clock time when profiling started
-    double startTime = wallClockStart - stopwatchStart;
-    // lastTime should also start from the converted earliest sample time
-    double lastTime = startTime + stopwatchStart;
+    // For each sample: wallClockTime = wallClockOffset + stopwatchTime
+    // We calculate: wallClockOffset = wallClockStart - stopwatchStart
+    // So that for the earliest sample: wallClockTime = wallClockStart - stopwatchStart + stopwatchStart = wallClockStart
+    double wallClockOffset = wallClockStart - stopwatchStart;
+
+    // Use wallClockStart as the startTime (earliest sample's wall clock time)
+    double startTime = wallClockStart;
+    double lastTime = wallClockStart;
 
     // Process each stack trace
     for (auto& stackTrace : stackTraces) {
         if (stackTrace.frames.isEmpty()) {
             samples.append(1); // Root node
             // Convert stopwatch time to wall clock time
-            double currentTime = startTime + (stackTrace.stopwatchTimestamp.seconds() * 1000000.0);
+            double currentTime = wallClockOffset + (stackTrace.stopwatchTimestamp.seconds() * 1000000.0);
             double delta = std::max(0.0, currentTime - lastTime);
             timeDeltas.append(static_cast<long long>(delta));
             lastTime = currentTime;
@@ -249,7 +254,7 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
 
         // Add time delta
         // Convert stopwatch time to wall clock time
-        double currentTime = startTime + (stackTrace.stopwatchTimestamp.seconds() * 1000000.0);
+        double currentTime = wallClockOffset + (stackTrace.stopwatchTimestamp.seconds() * 1000000.0);
         double delta = std::max(0.0, currentTime - lastTime);
         timeDeltas.append(static_cast<long long>(delta));
         lastTime = currentTime;
@@ -293,9 +298,12 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
     }
     json->setValue("nodes"_s, nodesArray);
 
-    // Add timing info as integer microseconds
-    json->setInteger("startTime"_s, static_cast<long long>(startTime));
-    json->setInteger("endTime"_s, static_cast<long long>(endTime));
+    // Add timing info in microseconds
+    // Note: Using setDouble() instead of setInteger() because setInteger() has precision
+    // issues with large values (> 2^31). Chrome DevTools expects microseconds since Unix epoch,
+    // which are typically 16-digit numbers. JSON numbers can represent these precisely.
+    json->setDouble("startTime"_s, startTime);
+    json->setDouble("endTime"_s, endTime);
 
     // Add samples array
     auto samplesArray = JSON::Array::create();

@@ -79,6 +79,15 @@ describe.concurrent("--cpu-prof", () => {
     expect(profile.timeDeltas.length).toBe(profile.samples.length);
     // For very fast programs, start and end times might be equal or very close
     expect(profile.startTime).toBeLessThanOrEqual(profile.endTime);
+
+    // CRITICAL: Validate timestamps are positive and in microseconds
+    // Chrome DevTools requires timestamps in microseconds since Unix epoch
+    // A valid timestamp should be > 1000000000000000 (around year 2001)
+    // and < 3000000000000000 (around year 2065)
+    expect(profile.startTime).toBeGreaterThan(1000000000000000);
+    expect(profile.startTime).toBeLessThan(3000000000000000);
+    expect(profile.endTime).toBeGreaterThan(1000000000000000);
+    expect(profile.endTime).toBeLessThan(3000000000000000);
   });
 
   test("--cpu-prof-name sets custom filename", async () => {

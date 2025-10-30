@@ -91,6 +91,7 @@ pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
 pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
+pub const ProcessManagerCommand = @import("./cli/process_manager_command.zig").ProcessManagerCommand;
 
 pub const Arguments = @import("./cli/Arguments.zig");
 
@@ -617,8 +618,11 @@ pub const Command = struct {
             RootCommandMatcher.case("logout") => .ReservedCommand,
             RootCommandMatcher.case("whoami") => .PackageManagerCommand,
             RootCommandMatcher.case("prune") => .ReservedCommand,
-            RootCommandMatcher.case("list") => .ReservedCommand,
+            RootCommandMatcher.case("list") => .ListCommand,
             RootCommandMatcher.case("why") => .WhyCommand,
+            RootCommandMatcher.case("start") => .StartCommand,
+            RootCommandMatcher.case("stop") => .StopCommand,
+            RootCommandMatcher.case("logs") => .LogsCommand,
 
             RootCommandMatcher.case("-e") => .AutoCommand,
 
@@ -921,6 +925,26 @@ pub const Command = struct {
                 Output.flush();
                 try HelpCommand.exec(allocator);
             },
+            .StartCommand => {
+                const ctx = try Command.init(allocator, log, .StartCommand);
+                try ProcessManagerCommand.exec(ctx);
+                return;
+            },
+            .StopCommand => {
+                const ctx = try Command.init(allocator, log, .StopCommand);
+                try ProcessManagerCommand.exec(ctx);
+                return;
+            },
+            .ListCommand => {
+                const ctx = try Command.init(allocator, log, .ListCommand);
+                try ProcessManagerCommand.exec(ctx);
+                return;
+            },
+            .LogsCommand => {
+                const ctx = try Command.init(allocator, log, .LogsCommand);
+                try ProcessManagerCommand.exec(ctx);
+                return;
+            },
             .ExecCommand => {
                 const ctx = try Command.init(allocator, log, .ExecCommand);
 
@@ -949,6 +973,10 @@ pub const Command = struct {
         RemoveCommand,
         RunCommand,
         RunAsNodeCommand, // arg0 == 'node'
+        StartCommand,
+        StopCommand,
+        ListCommand,
+        LogsCommand,
         TestCommand,
         UnlinkCommand,
         UpdateCommand,
@@ -986,6 +1014,10 @@ pub const Command = struct {
                 .RemoveCommand => 'R',
                 .RunCommand => 'r',
                 .RunAsNodeCommand => 'n',
+                .StartCommand => 's',
+                .StopCommand => 'S',
+                .ListCommand => 'L',
+                .LogsCommand => 'K',
                 .TestCommand => 't',
                 .UnlinkCommand => 'U',
                 .UpdateCommand => 'u',
@@ -1312,8 +1344,12 @@ pub const Command = struct {
                     Output.pretty(intro_text, .{});
                     Output.flush();
                 },
+                .StartCommand, .StopCommand, .ListCommand, .LogsCommand => {
+                    // These commands handle their own help
+                    ProcessManagerCommand.printHelp();
+                },
                 else => {
-                    HelpCommand.printWithReason(.explicit);
+                    HelpCommand.printWithReason(.explicit, show_all_flags);
                 },
             }
         }

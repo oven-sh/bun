@@ -91,41 +91,39 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
     WTF::Vector<int> samples;
     WTF::Vector<long long> timeDeltas;
 
-    // Find the minimum stopwatch timestamp to determine the actual start time
-    // Don't assume stackTraces are ordered
-    WTF::Seconds minStopwatchTimestamp = stackTraces[0].stopwatchTimestamp;
-    MonotonicTime minMonotonicTime = stackTraces[0].timestamp;
-
-    for (const auto& stackTrace : stackTraces) {
-        if (stackTrace.stopwatchTimestamp < minStopwatchTimestamp) {
-            minStopwatchTimestamp = stackTrace.stopwatchTimestamp;
-            minMonotonicTime = stackTrace.timestamp;
-        }
+    // Create an index array to process stack traces in chronological order
+    // We can't sort stackTraces directly because StackTrace has deleted copy assignment
+    WTF::Vector<size_t> sortedIndices;
+    sortedIndices.reserveInitialCapacity(stackTraces.size());
+    for (size_t i = 0; i < stackTraces.size(); i++) {
+        sortedIndices.append(i);
     }
+
+    // Sort indices by monotonic timestamp to ensure chronological order
+    // Use timestamp instead of stopwatchTimestamp for better resolution
+    // This is critical for calculating correct timeDeltas between samples
+    std::sort(sortedIndices.begin(), sortedIndices.end(), [&stackTraces](size_t a, size_t b) {
+        return stackTraces[a].timestamp < stackTraces[b].timestamp;
+    });
+
+    // Find the earliest timestamp (first in sorted order)
+    MonotonicTime minMonotonicTime = stackTraces[sortedIndices[0]].timestamp;
 
     // Get the wall clock time for the earliest sample (in microseconds)
     // This will be our startTime for the CPU profile
     double wallClockStart = minMonotonicTime.approximateWallTime().secondsSinceEpoch().value() * 1000000.0;
 
-    // The stopwatch timestamp for the earliest sample (in microseconds)
-    double stopwatchStart = minStopwatchTimestamp.seconds() * 1000000.0;
-
-    // Calculate the offset to convert stopwatch times to wall clock times
-    // For each sample: wallClockTime = wallClockOffset + stopwatchTime
-    // We calculate: wallClockOffset = wallClockStart - stopwatchStart
-    // So that for the earliest sample: wallClockTime = wallClockStart - stopwatchStart + stopwatchStart = wallClockStart
-    double wallClockOffset = wallClockStart - stopwatchStart;
-
     // Use wallClockStart as the startTime (earliest sample's wall clock time)
     double startTime = wallClockStart;
     double lastTime = wallClockStart;
 
-    // Process each stack trace
-    for (auto& stackTrace : stackTraces) {
+    // Process each stack trace in chronological order
+    for (size_t idx : sortedIndices) {
+        auto& stackTrace = stackTraces[idx];
         if (stackTrace.frames.isEmpty()) {
             samples.append(1); // Root node
-            // Convert stopwatch time to wall clock time
-            double currentTime = wallClockOffset + (stackTrace.stopwatchTimestamp.seconds() * 1000000.0);
+            // Use monotonic timestamp converted to wall clock time
+            double currentTime = stackTrace.timestamp.approximateWallTime().secondsSinceEpoch().value() * 1000000.0;
             double delta = std::max(0.0, currentTime - lastTime);
             timeDeltas.append(static_cast<long long>(delta));
             lastTime = currentTime;
@@ -253,8 +251,8 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
         samples.append(currentParentId);
 
         // Add time delta
-        // Convert stopwatch time to wall clock time
-        double currentTime = wallClockOffset + (stackTrace.stopwatchTimestamp.seconds() * 1000000.0);
+        // Use monotonic timestamp converted to wall clock time
+        double currentTime = stackTrace.timestamp.approximateWallTime().secondsSinceEpoch().value() * 1000000.0;
         double delta = std::max(0.0, currentTime - lastTime);
         timeDeltas.append(static_cast<long long>(delta));
         lastTime = currentTime;

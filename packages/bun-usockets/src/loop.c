@@ -22,6 +22,7 @@
 #ifndef WIN32
 #include <sys/ioctl.h>
 #endif
+#include <assert.h>
 
 #if __has_include("wtf/Platform.h")
 #include "wtf/Platform.h"
@@ -242,6 +243,8 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
     /* Free all closed sockets (maybe it is better to reverse order?) */
     for (struct us_socket_t *s = loop->data.closed_head; s; ) {
         struct us_socket_t *next = s->next;
+        assert(us_socket_is_closed(0, s));
+        assert(s->context && s->context->head_sockets != s);
 
         us_poll_free((struct us_poll_t *) s, loop);
         s = next;

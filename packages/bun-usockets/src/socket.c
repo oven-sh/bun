@@ -151,7 +151,21 @@ void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
     if (c->closed) return;
     c->closed = 1;
     for (struct us_socket_t *s = c->connecting_head; s; s = s->connect_next) {
-        us_internal_socket_context_unlink_socket(ssl, s->context, s);
+        if (s->flags.low_prio_state == 1) {
+            /* Unlink this socket from the low-priority queue */
+            if (!s->prev) s->context->loop->data.low_prio_head = s->next;
+            else s->prev->next = s->next;
+
+            if (s->next) s->next->prev = s->prev;
+
+            s->prev = 0;
+            s->next = 0;
+            s->flags.low_prio_state = 0;
+            us_socket_context_unref(ssl, s->context);
+
+        } else {
+            us_internal_socket_context_unlink_socket(ssl, s->context, s);
+        }
 
         us_poll_stop((struct us_poll_t *) s, s->context->loop);
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));

@@ -758,12 +758,22 @@ fn updatePackageJSONAndInstallWithManagerWithUpdates(
                                     const lockfile_version = self.package_resolutions[pkg_id].value.npm.version;
                                     const string_buf = self.manager.lockfile.buffers.string_bytes.items;
 
-                                    const lockfile_ver_str = std.fmt.allocPrint(
-                                        self.manager.allocator,
-                                        "{any}",
-                                        .{lockfile_version.fmt(string_buf)},
-                                    ) catch continue;
-                                    defer self.manager.allocator.free(lockfile_ver_str);
+                                    // Try stack buffer first (fast path for typical version strings)
+                                    var stack_buf: [64]u8 = undefined;
+                                    var heap_allocated = false;
+                                    const lockfile_ver_str = std.fmt.bufPrint(&stack_buf, "{any}", .{lockfile_version.fmt(string_buf)}) catch |err| blk: {
+                                        if (err == error.NoSpaceLeft) {
+                                            heap_allocated = true;
+                                            break :blk std.fmt.allocPrint(
+                                                self.manager.allocator,
+                                                "{any}",
+                                                .{lockfile_version.fmt(string_buf)},
+                                            ) catch continue;
+                                        } else {
+                                            continue;
+                                        }
+                                    };
+                                    defer if (heap_allocated) self.manager.allocator.free(lockfile_ver_str);
 
                                     if (strings.eql(inst_ver, lockfile_ver_str)) {
                                         matched_pkg_id = pkg_id;

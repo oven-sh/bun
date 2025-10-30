@@ -21,7 +21,6 @@ pub const ConfigurationProperty = enum(u8) {
     http_capture_headers_fetch_request = 4,
     http_capture_headers_fetch_response = 5,
     http_propagate_headers_fetch_request = 6,
-    _context_storage = 7, // AsyncLocalStorage instance for context propagation
 
     pub const COUNT = @typeInfo(ConfigurationProperty).@"enum".fields.len;
 };
@@ -89,7 +88,6 @@ pub const TelemetryConfig = struct {
         js_properties[@intFromEnum(ConfigurationProperty.http_capture_headers_fetch_request)] = fetch_req_headers_js;
         js_properties[@intFromEnum(ConfigurationProperty.http_capture_headers_fetch_response)] = fetch_res_headers_js;
         js_properties[@intFromEnum(ConfigurationProperty.http_propagate_headers_fetch_request)] = .js_undefined; // TODO
-        js_properties[@intFromEnum(ConfigurationProperty._context_storage)] = .js_undefined;
 
         // Initialize native configuration properties (bun.String arrays)
         var native_properties: [ConfigurationProperty.COUNT]std.ArrayList(bun.String) = undefined;
@@ -213,15 +211,6 @@ pub const TelemetryConfig = struct {
                 if (!js_value.isUndefined()) {
                     return error.InvalidPropertyType;
                 }
-            },
-            ._context_storage => {
-                // Context storage can be undefined/null (not set) or an object (AsyncLocalStorage instance)
-                if (!js_value.isUndefined() and !js_value.isNull()) {
-                    if (!js_value.isObject()) {
-                        return error.InvalidPropertyType;
-                    }
-                }
-                // No native_list validation needed for context storage
             },
             // All capture/propagate properties must be arrays
             .http_capture_headers_server_request,

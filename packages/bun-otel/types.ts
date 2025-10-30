@@ -32,8 +32,6 @@ export enum ConfigurationProperty {
   http_capture_headers_fetch_response = 5,
   /** Fetch client request headers to inject/propagate */
   http_propagate_headers_fetch_request = 6,
-  /** AsyncLocalStorage instance for context propagation */
-  _context_storage = 7,
 }
 
 /**

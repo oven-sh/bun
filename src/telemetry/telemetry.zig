@@ -360,25 +360,6 @@ pub const TelemetryContext = struct {
         self.allocator.destroy(self);
     }
 
-    /// Enter async context by calling AsyncLocalStorage.enterWith(context)
-    /// Called from Zig hooks after creating span to propagate context across async boundaries
-    ///
-    /// @param globalObject The JavaScript global object
-    /// @param spanContext The OTel span context object to enter (has { requestId, traceId, spanId })
-    pub fn enterContext(self: *TelemetryContext, globalObject: *JSGlobalObject, spanContext: JSValue) void {
-        // Get context storage from configuration property
-        const storage = self.getConfigurationProperty(@intFromEnum(ConfigurationProperty._context_storage));
-        if (storage.isEmptyOrUndefinedOrNull()) return;
-
-        // Get enterWith method from AsyncLocalStorage instance
-        const enter_with = storage.get(globalObject, "enterWith") catch return;
-        if (enter_with) |ew| {
-            if (!ew.isCallable()) return;
-            // Call storage.enterWith(spanContext)
-            _ = ew.call(globalObject, storage, &.{spanContext}) catch {};
-        }
-    }
-
     /// Generate a new unique instrument ID (thread-safe)
     fn generateInstrumentId(self: *TelemetryContext) u32 {
         return self.next_instrument_id.fetchAdd(1, .monotonic);

@@ -150,7 +150,6 @@ export class BunSDK implements Disposable {
 
   // Context management
   protected _contextManager?: BunAsyncLocalStorageContextManager;
-  private _contextStorage?: AsyncLocalStorage<any>;
 
   // Instrumentations
   private readonly _instruments: BunGenericInstrumentation[] = [];
@@ -307,14 +306,9 @@ export class BunSDK implements Disposable {
    * Setup shared AsyncLocalStorage context
    */
   private _setupContext(): void {
-    this._contextStorage = new AsyncLocalStorage();
-    this._contextManager = new BunAsyncLocalStorageContextManager(this._contextStorage);
+    this._contextManager = new BunAsyncLocalStorageContextManager(new AsyncLocalStorage());
 
     context.setGlobalContextManager(this._contextManager);
-
-    // Share with native telemetry
-    const ConfigProperty = { _context_storage: 7 };
-    Bun.telemetry.nativeHooks()?.setConfigurationProperty(ConfigProperty._context_storage, this._contextStorage);
   }
 
   /**

@@ -20,9 +20,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
  * const sharedStorage = new AsyncLocalStorage();
  * const contextManager = new BunAsyncLocalStorageContextManager(sharedStorage);
  *
- * // Both OTel and Bun use the same storage:
+ * // OTel uses this shared storage:
  * context.setGlobalContextManager(contextManager);
- * Bun.telemetry.configure({ _contextStorage: sharedStorage });
  * ```
  */
 export class BunAsyncLocalStorageContextManager extends AsyncHooksContextManager {

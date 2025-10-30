@@ -1,7 +1,7 @@
 pub fn BufferedReader(comptime buffer_size: usize, comptime ReaderType: type) type {
     return struct {
         unbuffered_reader: ReaderType,
-        buf: [buffer_size]u8 = undefined,
+        buf: [buffer_size]u8,
         start: usize = 0,
         end: usize = 0,
 
@@ -41,11 +41,11 @@ pub fn BufferedReader(comptime buffer_size: usize, comptime ReaderType: type) ty
 }
 
 pub fn bufferedReader(reader: anytype) BufferedReader(4096, @TypeOf(reader)) {
-    return .{ .unbuffered_reader = reader };
+    return .{ .unbuffered_reader = reader, .buf = undefined };
 }
 
 pub fn bufferedReaderSize(comptime size: usize, reader: anytype) BufferedReader(size, @TypeOf(reader)) {
-    return .{ .unbuffered_reader = reader };
+    return .{ .unbuffered_reader = reader, .buf = undefined };
 }
 
 /// A singly-linked list is headed by a single forward pointer. The elements
@@ -501,7 +501,7 @@ test "DoublyLinkedList concatenation" {
 
 pub const RapidHash = struct {
     const readInt = std.mem.readInt;
-    const assert = std.debug.assert;
+    const assert = bun.assert;
     const expect = std.testing.expect;
     const expectEqual = std.testing.expectEqual;
 
@@ -591,16 +591,11 @@ pub const RapidHash = struct {
             0x4b575f5bf25600d6,
         };
 
-        var success: bool = true;
         for (sizes, outcomes) |s, e| {
             const r = hash(RAPID_SEED, bytes[0..s]);
 
-            expectEqual(e, r) catch |err| {
-                std.debug.print("Failed on {d}: {!}\n", .{ s, err });
-                success = false;
-            };
+            try expectEqual(e, r);
         }
-        try expect(success);
     }
 
     inline fn mum(a: *u64, b: *u64) void {

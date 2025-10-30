@@ -219,12 +219,12 @@ pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params
 
 pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
     if (comptime cmd.readGlobalConfig()) {
-        var config_buf: bun.PathBuffer = undefined;
         if (!ctx.has_loaded_global_config) {
             ctx.has_loaded_global_config = true;
 
+            var config_buf: bun.PathBuffer = undefined;
             if (getHomeConfigPath(&config_buf)) |path| {
-                loadConfigPath(allocator, true, path, ctx, comptime cmd) catch |err| {
+                loadBunfig(allocator, true, path, ctx, comptime cmd) catch |err| {
                     if (ctx.log.hasAny()) {
                         ctx.log.print(Output.errorWriter()) catch {};
                     }
@@ -235,6 +235,11 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
             }
         }
     }
+
+    try loadBunfig(allocator, auto_loaded, config_path, ctx, cmd);
+}
+
+fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
     const source = switch (bun.sys.File.toSource(config_path, allocator, .{ .convert_bom = true })) {
         .result => |s| s,
         .err => |err| {
@@ -246,7 +251,6 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
             Global.exit(1);
         },
     };
-
     js_ast.Stmt.Data.Store.create();
     js_ast.Expr.Data.Store.create();
     defer {

@@ -244,7 +244,7 @@ function Install-NodeJs {
 }
 
 function Install-Bun {
-  Install-Package bun -Version "1.2.17"
+  Install-Package bun -Version "1.3.1"
 }
 
 function Install-Cygwin {

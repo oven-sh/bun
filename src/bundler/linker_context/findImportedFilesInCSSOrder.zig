@@ -604,7 +604,7 @@ const CssOrderDebugStep = enum {
 fn debugCssOrder(this: *LinkerContext, order: *const BabyList(Chunk.CssImportOrder), comptime step: CssOrderDebugStep) void {
     if (comptime bun.Environment.isDebug) {
         const env_var = "BUN_DEBUG_CSS_ORDER_" ++ @tagName(step);
-        const enable_all = bun.getenvTruthy("BUN_DEBUG_CSS_ORDER");
+        const enable_all = bun.env_var.BUN_DEBUG_CSS_ORDER.get();
         if (enable_all or bun.getenvTruthy(env_var)) {
             debugCssOrderImpl(this, order, step);
         }

@@ -1087,7 +1087,7 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
                 const fd: bun.FD = bun.take(&send_queue.incoming_fd).?;
 
                 const target: bun.jsc.JSValue = switch (send_queue.owner) {
-                    .subprocess => |subprocess| subprocess.this_jsvalue,
+                    .subprocess => |subprocess| subprocess.this_value.tryGet() orelse .zero,
                     .virtual_machine => bun.jsc.JSValue.null,
                 };
 

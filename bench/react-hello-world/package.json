@@ -4,13 +4,14 @@
   "description": "",
   "main": "react-hello-world.node.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build:workerd": "bun build react-hello-world.workerd.jsx --outfile=react-hello-world.workerd.js --format=esm --production && (echo '// MessageChannel polyfill for workerd'; echo 'if (typeof MessageChannel === \"undefined\") {'; echo '  globalThis.MessageChannel = class MessageChannel {'; echo '    constructor() {'; echo '      this.port1 = { onmessage: null, postMessage: () => {} };'; echo '      this.port2 = {'; echo '        postMessage: (msg) => {'; echo '          if (this.port1.onmessage) {'; echo '            queueMicrotask(() => this.port1.onmessage({ data: msg }));'; echo '          }'; echo '        }'; echo '      };'; echo '    }'; echo '  };'; echo '}'; cat react-hello-world.workerd.js) > temp.js && mv temp.js react-hello-world.workerd.js"
   },
   "keywords": [],
   "author": "Colin McDonnell",
   "license": "ISC",
   "dependencies": {
-    "react": "next",
-    "react-dom": "next"
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
   }
 }

@@ -234,7 +234,7 @@ pub fn forManifest(
     }
 
     // Incase the ETag causes invalidation, we fallback to the last modified date.
-    if (last_modified.len != 0 and bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304)) {
+    if (last_modified.len != 0 and bun.feature_flag.BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304.get()) {
         this.unsafe_http_client.client.flags.force_last_modified = true;
         this.unsafe_http_client.client.if_modified_since = last_modified;
     }

@@ -7308,6 +7308,68 @@ describe("css tests", () => {
         `,
       { chrome: Some(90 << 16) },
     );
+
+    // Test color-scheme inside @layer blocks (issue #20689)
+    prefix_test(
+      `@layer colors {
+        .foo { color-scheme: dark; }
+      }`,
+      `@layer colors {
+          .foo {
+            --buncss-light: ;
+            --buncss-dark: initial;
+            color-scheme: dark;
+          }
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      `@layer shm.colors {
+        body.theme-dark {
+          color-scheme: dark;
+        }
+        body.theme-light {
+          color-scheme: light;
+        }
+      }`,
+      `@layer shm.colors {
+          body.theme-dark {
+            --buncss-light: ;
+            --buncss-dark: initial;
+            color-scheme: dark;
+          }
+
+          body.theme-light {
+            --buncss-light: initial;
+            --buncss-dark: ;
+            color-scheme: light;
+          }
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      `@layer {
+        .foo { color-scheme: light dark; }
+      }`,
+      `@layer {
+          .foo {
+            --buncss-light: initial;
+            --buncss-dark: ;
+            color-scheme: light dark;
+          }
+
+          @media (prefers-color-scheme: dark) {
+            .foo {
+              --buncss-light: ;
+              --buncss-dark: initial;
+            }
+          }
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
   });
 
   describe("edge cases", () => {

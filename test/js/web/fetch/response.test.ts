@@ -49,7 +49,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (3.82 KB) {
+    "Response (4.15 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -108,4 +108,18 @@ test("new Response(123, { statusText: 123 }) does not throw", () => {
 test("new Response(123, { method: 456 }) does not throw", () => {
   // @ts-expect-error
   expect(() => new Response("123", { method: 456 })).not.toThrow();
+});
+
+test("handle stack overflow", () => {
+  function f0(a1, a2) {
+    const v4 = new Response();
+    // @ts-ignore
+    const v5 = v4.text(a2, a2, v4, f0, f0);
+    a1(a1); // Recursive call causes stack overflow
+    return v5;
+  }
+  expect(() => {
+    // @ts-ignore
+    f0(f0);
+  }).toThrow("Maximum call stack size exceeded.");
 });

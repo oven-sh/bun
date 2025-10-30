@@ -3397,7 +3397,14 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, err)));
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, result)));
+    JSValue resolved = JSC::JSPromise::resolvedPromise(globalObject, result);
+    if (scope.exception()) [[unlikely]] {
+        auto* exception = scope.exception();
+        scope.clearException();
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, exception->value())));
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(resolved));
 }
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSPromise__reject(JSC::JSPromise* arg0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue JSValue2)

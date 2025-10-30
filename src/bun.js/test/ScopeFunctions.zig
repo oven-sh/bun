@@ -296,6 +296,7 @@ const ParseArgumentsResult = struct {
     }
 };
 pub const CallbackMode = enum { require, allow };
+pub const FunctionKind = enum { test_or_describe, hook };
 
 fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, description: jsc.JSValue, signature: Signature) bun.JSError![]const u8 {
     if (description == .zero) {
@@ -329,7 +330,7 @@ fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, descr
     return globalThis.throwPretty("{s}() expects first argument to be a named class, named function, number, or string", .{signature});
 }
 
-pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, gpa: std.mem.Allocator, cfg: struct { callback: CallbackMode }) bun.JSError!ParseArgumentsResult {
+pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, gpa: std.mem.Allocator, cfg: struct { callback: CallbackMode, kind: FunctionKind = .test_or_describe }) bun.JSError!ParseArgumentsResult {
     var a1, var a2, var a3 = callframe.argumentsAsArray(3);
 
     const len: enum { three, two, one, zero } = if (!a3.isUndefinedOrNull()) .three else if (!a2.isUndefinedOrNull()) .two else if (!a1.isUndefinedOrNull()) .one else .zero;
@@ -338,8 +339,9 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
         // description, callback(fn), options(!fn)
         // description, options(!fn), callback(fn)
         .three => if (a2.isFunction()) .{ .description = a1, .callback = a2, .options = a3 } else .{ .description = a1, .callback = a3, .options = a2 },
+        // callback(fn), options(!fn)
         // description, callback(fn)
-        .two => .{ .description = a1, .callback = a2 },
+        .two => if (a1.isFunction() and !a2.isFunction()) .{ .callback = a1, .options = a2 } else .{ .description = a1, .callback = a2 },
         // description
         // callback(fn)
         .one => if (a1.isFunction()) .{ .callback = a1 } else .{ .description = a1 },
@@ -352,7 +354,8 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
     } else if (callback.isFunction()) blk: {
         break :blk callback.withAsyncContextIfNeeded(globalThis);
     } else {
-        return globalThis.throw("{s} expects a function as the second argument", .{signature});
+        const ordinal = if (cfg.kind == .hook) "first" else "second";
+        return globalThis.throw("{s} expects a function as the {s} argument", .{ signature, ordinal });
     };
 
     var result: ParseArgumentsResult = .{

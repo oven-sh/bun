@@ -26,6 +26,11 @@ interface GitHubReaction {
   content: string;
 }
 
+interface GitHubEvent {
+  event: string;
+  created_at: string;
+}
+
 async function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -153,6 +158,13 @@ async function fetchAllReactions(
   return allReactions;
 }
 
+async function wasIssueReopened(owner: string, repo: string, issueNumber: number, token: string): Promise<boolean> {
+  const events: GitHubEvent[] = await githubRequest(`/repos/${owner}/${repo}/issues/${issueNumber}/events`, token);
+
+  // Check if there's a "reopened" event in the issue's timeline
+  return events.some(event => event.event === "reopened");
+}
+
 function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -185,13 +197,7 @@ async function closeIssueAsDuplicate(
   duplicateOfNumber: number,
   token: string,
 ): Promise<void> {
-  // Close the issue as duplicate and add the duplicate label
-  await githubRequest(`/repos/${owner}/${repo}/issues/${issueNumber}`, token, "PATCH", {
-    state: "closed",
-    state_reason: "duplicate",
-    labels: ["duplicate"],
-  });
-
+  // Close the issue as duplicate
   await githubRequest(`/repos/${owner}/${repo}/issues/${issueNumber}/comments`, token, "POST", {
     body: `This issue has been automatically closed as a duplicate of #${duplicateOfNumber}.
 
@@ -305,16 +311,23 @@ async function autoCloseDuplicates(): Promise<void> {
     }
 
     console.log(`[DEBUG] Issue #${issue.number} - checking reactions on duplicate comment...`);
-    const reactions = await fetchAllReactions(owner, repo, lastDupeComment.id, token, issue.user.id);
+    const reactions = await fetchAllReactions(owner, repo, lastDupeComment.id, token);
     console.log(`[DEBUG] Issue #${issue.number} - duplicate comment has ${reactions.length} reactions`);
 
-    const authorThumbsDown = reactions.some(
-      reaction => reaction.user.id === issue.user.id && reaction.content === "-1",
-    );
-    console.log(`[DEBUG] Issue #${issue.number} - author thumbs down reaction: ${authorThumbsDown}`);
+    const hasThumbsDown = reactions.some(reaction => reaction.content === "-1");
+    console.log(`[DEBUG] Issue #${issue.number} - has thumbs down reaction: ${hasThumbsDown}`);
 
-    if (authorThumbsDown) {
-      console.log(`[DEBUG] Issue #${issue.number} - author disagreed with duplicate detection, skipping`);
+    if (hasThumbsDown) {
+      console.log(`[DEBUG] Issue #${issue.number} - someone disagreed with duplicate detection, skipping`);
+      continue;
+    }
+
+    console.log(`[DEBUG] Issue #${issue.number} - checking if issue was reopened...`);
+    const wasReopened = await wasIssueReopened(owner, repo, issue.number, token);
+    console.log(`[DEBUG] Issue #${issue.number} - was reopened: ${wasReopened}`);
+
+    if (wasReopened) {
+      console.log(`[DEBUG] Issue #${issue.number} - issue was previously reopened, skipping auto-close`);
       continue;
     }
 

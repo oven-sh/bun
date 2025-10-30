@@ -426,7 +426,6 @@ const base64 = bun.base64;
 const default_allocator = bun.default_allocator;
 const jsc = bun.jsc;
 const options = bun.options;
-const sourcemap = bun.sourcemap;
 const strings = bun.strings;
 
 const bundler = bun.bundle_v2;

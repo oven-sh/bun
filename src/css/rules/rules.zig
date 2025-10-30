@@ -216,8 +216,8 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         debug("TODO: ContainerRule", .{});
                     },
                     .layer_block => |*lay| {
-                        _ = lay; // autofix
-                        debug("TODO: LayerBlockRule", .{});
+                        try lay.rules.minify(context, parent_is_unused);
+                        if (lay.rules.v.items.len == 0) continue;
                     },
                     .layer_statement => |*lay| {
                         _ = lay; // autofix

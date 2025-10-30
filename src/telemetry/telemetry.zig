@@ -25,6 +25,22 @@ pub const OpId = u64;
 /// Can be changed to u64 if we switch to relative timing (bun.getRoughTickCountMs)
 pub const OpTime = i128;
 
+/// Context for tracking operation telemetry state
+/// Centralized pattern used across all instrumented code (fetch, http, etc.)
+pub const OpTag = struct {
+    op_id: OpId = 0,
+    start_time_ns: OpTime = 0,
+
+    pub inline fn isEnabled(self: *const OpTag) bool {
+        return self.op_id != 0;
+    }
+
+    pub inline fn reset(self: *OpTag) void {
+        self.op_id = 0;
+        self.start_time_ns = 0;
+    }
+};
+
 // ============================================================================
 // Timing Utilities
 // ============================================================================

@@ -2330,7 +2330,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (this.telemetry_ctx.isEnabled()) {
                 bun.telemetry.http.renderInjectedTraceHeadersToUWSResponse(
                     .http,
-                    this.telemetry_ctx.request_id,
+                    this.telemetry_ctx.op_id,
                     this.resp.?,
                     this.server.?.globalThis,
                 );

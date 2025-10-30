@@ -15,19 +15,8 @@ const traceparent = @import("traceparent.zig");
 const simple_url_parser = @import("simple_url_parser.zig");
 
 /// Context for tracking HTTP request telemetry state
-pub const HttpTelemetryContext = struct {
-    request_id: u64 = 0,
-    start_time_ns: telemetry.OpTime = 0,
-
-    pub inline fn isEnabled(self: *const HttpTelemetryContext) bool {
-        return self.request_id != 0;
-    }
-
-    pub inline fn reset(self: *HttpTelemetryContext) void {
-        self.request_id = 0;
-        self.start_time_ns = 0;
-    }
-};
+/// Re-exported from telemetry.OpTag for backward compatibility
+pub const HttpTelemetryContext = telemetry.OpTag;
 
 /// Build HTTP request start attributes following OpenTelemetry semantic conventions v1.23.0+
 ///
@@ -435,7 +424,7 @@ pub inline fn maybeNotifyHttpRequestStart(
     if (!telemetry_inst.isEnabledFor(.http)) return;
 
     // Generate unique request ID and store timestamp
-    ctx.request_id = telemetry_inst.generateId();
+    ctx.op_id = telemetry_inst.generateId();
     ctx.start_time_ns = telemetry.getOperationStartTime();
 
     // Get FetchHeaders directly from Request (no JS property access)
@@ -459,7 +448,7 @@ pub inline fn maybeNotifyHttpRequestStart(
     // Build and send start attributes
     var start_attrs = buildHttpStartAttributes(
         globalObject,
-        ctx.request_id,
+        ctx.op_id,
         method,
         uws_req.url(),
         fetch_headers,
@@ -468,7 +457,7 @@ pub inline fn maybeNotifyHttpRequestStart(
         fallback_port,
         route_pattern,
     );
-    telemetry_inst.notifyOperationStart(.http, ctx.request_id, &start_attrs);
+    telemetry_inst.notifyOperationStart(.http, ctx.op_id, &start_attrs);
 }
 
 /// Notify HTTP request error - extracts error details from JSValue
@@ -531,7 +520,7 @@ pub inline fn notifyHttpRequestError(
 
     // Build and send error attributes (copies strings into JS heap)
     var error_attrs = buildHttpErrorAttributes(globalObject, ctx.start_time_ns, error_type, error_message, stack_trace, null);
-    telemetry_inst.notifyOperationError(.http, ctx.request_id, &error_attrs);
+    telemetry_inst.notifyOperationError(.http, ctx.op_id, &error_attrs);
     // Slices are cleaned up by defer block
 }
 
@@ -550,7 +539,7 @@ pub inline fn notifyHttpResponseHeaders(
     captureNativeFetchHeaders(&progress_attrs, fetch_headers, globalObject, .http_capture_headers_server_response);
 
     // Send progress event (preserves request state, adds these attributes)
-    telemetry_inst.notifyOperationProgress(.http, ctx.request_id, &progress_attrs);
+    telemetry_inst.notifyOperationProgress(.http, ctx.op_id, &progress_attrs);
 }
 
 /// Notify HTTP request end - call this in finalizeWithoutDeinit
@@ -568,7 +557,7 @@ pub inline fn notifyHttpRequestEnd(
     // Build end attributes (status code, body size, duration)
     // Headers were already captured in notifyHttpResponseHeaders() via notifyOperationUpdate
     var end_attrs = buildHttpEndAttributesNative(globalObject, ctx.start_time_ns, status_code, content_length, null);
-    telemetry_inst.notifyOperationEnd(.http, ctx.request_id, &end_attrs);
+    telemetry_inst.notifyOperationEnd(.http, ctx.op_id, &end_attrs);
 
     // CRITICAL: Reset to prevent double-cleanup
     ctx.reset();

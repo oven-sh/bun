@@ -142,14 +142,11 @@ static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionFuzzilli(JSC::JSGlob
                 break;
         }
     } else if (command == "FUZZILLI_PRINT"_s) {
-        // Optional: Print the second argument
         if (callFrame->argumentCount() >= 2) {
-            JSC::JSValue arg1 = callFrame->argument(1);
-            WTF::String output = arg1.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-
-            fprintf(stdout, "FUZZILLI_PRINT: %s\n", output.utf8().data());
-            fflush(stdout);
+            String string = callFrame->argument(1).toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, { });
+            Fuzzilli::logFile().println(string);
+            Fuzzilli::logFile().flush();
         }
     }
 
@@ -177,6 +174,22 @@ void Fuzzilli::registerFuzzilliFunction(Zig::GlobalObject* globalObject) {
         JSC::NoIntrinsic,
         JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete
     );
+}
+
+WTF::FilePrintStream& Fuzzilli::logFile()
+{
+    constexpr uint8_t REPRL_DWFD = 103;
+    static LazyNeverDestroyed<FilePrintStream> result;
+    static std::once_flag flag;
+    std::call_once(flag, []() {
+        if (FILE* file = fdopen(REPRL_DWFD, "w"))
+            result.construct(file, FilePrintStream::AdoptionMode::Adopt);
+        else {
+            result.construct(stdout, FilePrintStream::AdoptionMode::Borrow);
+            dataLogLn("Fuzzer output channel not available, printing to stdout instead.");
+        }
+    });
+    return result.get();
 }
 
 // ============================================================================

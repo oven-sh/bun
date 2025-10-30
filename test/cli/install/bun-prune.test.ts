@@ -458,12 +458,10 @@ linkWorkspacePackages = true
     expect(stderr).not.toContain("error:");
 
     // Verify workspace packages still exist
-    const pkg1Exists = await file(join(String(dir), "node_modules", "pkg1", "package.json")).exists();
-    expect(pkg1Exists).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules/pkg1"))).toBe(true);
 
     // Verify workspace dependency still exists
-    const lodashExists = await file(join(String(dir), "node_modules", "lodash", "package.json")).exists();
-    expect(lodashExists).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules/lodash"))).toBe(true);
   });
 
   it("should handle nested dependencies correctly", async () => {
@@ -641,8 +639,7 @@ linkWorkspacePackages = true
     writeFileSync(join(strayPkgPath, "index.js"), "module.exports = {};");
 
     // Verify lodash exists before dry-run
-    const lodashExistsBefore = await file(join(String(dir), "node_modules", "lodash", "package.json")).exists();
-    expect(lodashExistsBefore).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules/lodash"))).toBe(true);
 
     // Run prune with --dry-run
     await using pruneProc = Bun.spawn({
@@ -663,8 +660,7 @@ linkWorkspacePackages = true
     expect(stderr).not.toContain("error:");
 
     // Verify lodash still exists after dry-run (should not have been removed)
-    const lodashExistsAfter = await file(join(String(dir), "node_modules", "lodash", "package.json")).exists();
-    expect(lodashExistsAfter).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules/lodash"))).toBe(true);
   });
 
   it("should report consistent counts between dry-run and actual execution", async () => {

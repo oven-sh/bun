@@ -81,7 +81,7 @@ function getNodeParallelTestTimeout(testPath) {
     return 90_000;
   }
   if (!isCI) return 60_000; // everything slower in debug mode
-  if (basename(options["exec-path"]).includes("-asan")) return 60_000;
+  if (process.env.BUILDKITE_STEP_KEY?.includes("-asan-")) return 60_000;
   return 20_000;
 }
 
@@ -168,6 +168,9 @@ const { values: options, positionals: filters } = parseArgs({
       default: false,
     },
   },
+});
+startGroup("CLI Options",()=>{
+  console.log(options);
 });
 
 const cliOptions = options;

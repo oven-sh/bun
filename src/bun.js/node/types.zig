@@ -132,8 +132,9 @@ pub const StringOrBuffer = union(enum) {
         switch (this.*) {
             .string => {
                 this.string.toThreadSafe();
+                const str = this.string;
                 this.* = .{
-                    .threadsafe_string = this.string,
+                    .threadsafe_string = str,
                 };
             },
             .threadsafe_string => {},

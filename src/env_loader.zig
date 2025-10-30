@@ -1348,7 +1348,7 @@ test "loadFromString with template expansion" {
 
     // Test string with backtick expansion
     const test_content = "KEY=`hello$VAR`\n";
-    
+
     // Load with expansion enabled (expand = true)
     try loader.loadFromString(test_content, true, true);
 
@@ -1394,7 +1394,7 @@ test "loadFromString with double-quoted value (no expansion without backticks)" 
 
     // Test string with double-quoted value (should NOT expand without backticks)
     const test_content = "KEY=\"hello $VAR\"\n";
-    
+
     // Load with expansion enabled (expand = true)
     try loader.loadFromString(test_content, true, true);
 
@@ -1417,7 +1417,7 @@ test "loadFromString with single quoted value" {
 
     // Test string with single quoted value and spaces
     const test_content = "KEY='hello $VAR'\n";
-    
+
     // Load with expansion enabled (expand = true)
     try loader.loadFromString(test_content, true, true);
 
@@ -1435,8 +1435,8 @@ test "loadFromString with random string containing a dollar sign" {
     var map = Map.init(allocator);
     var loader = Loader.init(&map, allocator);
 
-    // Test string with random characters and a dollar sign 
-    // that represent a typical password 
+    // Test string with random characters and a dollar sign
+    // that represent a typical password
     const test_content = "RANDOM_STRING=abc$123!@#\n";
 
     // Load with expansion enabled (expand = true)
@@ -1462,7 +1462,7 @@ test "loadFromString prevents expansion without backticks" {
 
     // Test the PR's example: password with $ should NOT expand
     const test_content = "DB_PASSWORD=uiA$DZ6Pz@YGBU\n";
-    
+
     // Load with expansion enabled but NO backticks
     try loader.loadFromString(test_content, true, true);
 
@@ -1485,7 +1485,7 @@ test "loadFromString prevents expansion if expand is false" {
 
     // Test string with backtick expansion
     const test_content = "KEY=`hello$VAR`\n";
-    
+
     // Load with expansion disabled (expand = false)
     // This wont usually be done in practice, but we want to test it
     // to ensure that the expand flag works as intended

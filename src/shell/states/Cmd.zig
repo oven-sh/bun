@@ -264,7 +264,9 @@ pub fn next(this: *Cmd) Yield {
             .expanding_redirect => {
                 if (this.state.expanding_redirect.idx >= 1) {
                     this.state = .{
-                        .expanding_args = undefined,
+                        .expanding_args = .{
+                            .expansion = undefined, // initialized in the next iteration
+                        },
                     };
                     continue;
                 }
@@ -276,7 +278,7 @@ pub fn next(this: *Cmd) Yield {
                     if (this.node.redirect_file != null and this.node.redirect_file.? == .atom) break :brk &this.node.redirect_file.?.atom;
                     this.state = .{
                         .expanding_args = .{
-                            .expansion = undefined,
+                            .expansion = undefined, // initialized in the next iteration
                         },
                     };
                     continue;

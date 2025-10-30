@@ -172,7 +172,7 @@ void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
         Bun__addrinfo_freeRequest(c->addrinfo_req, c->error == ECONNREFUSED);
         c->addrinfo_req = 0;
     }
-    // we can only schedule the socxket to be freed if there is no pending callback
+    // we can only schedule the socket to be freed if there is no pending callback
     // otherwise, the callback will see that the socket is closed and will free it
     if (!c->pending_resolve_callback) {
         us_connecting_socket_free(ssl, c);

@@ -2171,7 +2171,7 @@ us_socket_context_on_socket_connect_error(
           0, context, s,
           sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
           new_socket_ext_size,
-              sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + old_socket_ext_size);
+              old_socket_ext_size);
   socket->ssl = NULL;
   socket->ssl_write_wants_read = 0;
   socket->ssl_read_wants_write = 0;

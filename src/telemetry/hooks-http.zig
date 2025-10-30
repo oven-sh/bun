@@ -420,7 +420,9 @@ inline fn getFetchHeadersForTelemetry(
 
 /// Notify HTTP request start - call this AFTER URL is available, BEFORE user handler
 /// Returns initialized context for tracking this request
-pub inline fn notifyHttpRequestStart(
+///
+/// Zero-cost when disabled: inline function with internal guards (getGlobalTelemetry + isEnabledFor)
+pub inline fn maybeNotifyHttpRequestStart(
     ctx: *HttpTelemetryContext,
     globalObject: *JSGlobalObject,
     request: *bun.webcore.Request,

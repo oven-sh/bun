@@ -206,10 +206,10 @@ export class TestSDK extends BunSDK implements AsyncDisposable, Disposable {
     throw new Error("TestSDK should not be shutdown manually; use 'using' or 'await using' to auto-manage lifecycle");
   }
   [Symbol.dispose](): void | Promise<void> {
-    return super.stop();
+    return super.shutdown();
   }
   [Symbol.asyncDispose](): Promise<void> {
-    return super.stop();
+    return super.shutdown();
   }
 }
 

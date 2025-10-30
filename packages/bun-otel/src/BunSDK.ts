@@ -1,8 +1,8 @@
 /**
- * BunSDK2 - Clean, autowired OpenTelemetry SDK for Bun
+ * BunSDK - OpenTelemetry SDK for Bun
  *
- * Key improvements:
- * - Uses BunGenericInstrumentation (no more class hierarchy!)
+ * Drop-in replacement for NodeSDK with Bun-native instrumentation:
+ * - Uses BunGenericInstrumentation for zero-overhead telemetry
  * - Pure config mapping (testable in isolation)
  * - Autowires context manager, propagation, providers
  * - Works with InMemory exporters for testing
@@ -41,9 +41,9 @@ export type SupportedInstruments = "http" | "fetch" | "node";
 const DEFAULT_INSTRUMENTS: SupportedInstruments[] = ["http", "fetch", "node"];
 
 /**
- * Configuration for BunSDK2
+ * Configuration for BunSDK
  */
-export interface BunSDK2Config extends NodeSDKConfig {
+export interface BunSDKConfig extends NodeSDKConfig {
   /**
    * Service name for resource attributes
    */
@@ -100,11 +100,11 @@ export interface BunSDK2Config extends NodeSDKConfig {
 }
 
 /**
- * Clean, autowired OpenTelemetry SDK for Bun
+ * OpenTelemetry SDK for Bun - drop-in replacement for NodeSDK
  *
  * @example Basic usage
  * ```typescript
- * using sdk = new BunSDK2({
+ * using sdk = new BunSDK({
  *   serviceName: "my-service",
  *   spanExporter: new ConsoleSpanExporter(),
  * });
@@ -116,7 +116,7 @@ export interface BunSDK2Config extends NodeSDKConfig {
  * const spanExporter = new InMemorySpanExporter();
  * const metricReader = new InMemoryMetricReader();
  *
- * using sdk = new BunSDK2({
+ * using sdk = new BunSDK({
  *   spanExporter,
  *   metricReaders: [metricReader],
  * });
@@ -129,7 +129,7 @@ export interface BunSDK2Config extends NodeSDKConfig {
  *
  * @example Custom instrumentation config
  * ```typescript
- * using sdk = new BunSDK2({
+ * using sdk = new BunSDK({
  *   http: {
  *     captureAttributes: {
  *       requestHeaders: ["x-custom"],
@@ -142,7 +142,7 @@ export interface BunSDK2Config extends NodeSDKConfig {
  * ```
  */
 export class BunSDK implements Disposable {
-  private readonly _config: BunSDK2Config;
+  private readonly _config: BunSDKConfig;
 
   // Providers
   protected _tracerProvider?: NodeTracerProvider;
@@ -159,7 +159,7 @@ export class BunSDK implements Disposable {
   // State
   private _started = false;
 
-  constructor(config: BunSDK2Config = {}) {
+  constructor(config: BunSDKConfig = {}) {
     this._config = config;
 
     // Auto-start unless explicitly disabled
@@ -248,7 +248,7 @@ export class BunSDK implements Disposable {
           await beforeShutdown();
         }
         // Shutdown SDK
-        await this.stop();
+        await this.shutdown();
         diag.debug("✓ Shutdown complete");
       } catch (error) {
         diag.debug("Error during shutdown:", error);
@@ -264,9 +264,10 @@ export class BunSDK implements Disposable {
   }
 
   /**
-   * Stop the SDK - disable instrumentations and shutdown providers
+   * Shutdown the SDK - disable instrumentations and shutdown providers
+   * This matches NodeSDK's API for drop-in compatibility
    */
-  async stop(): Promise<void> {
+  async shutdown(): Promise<void> {
     if (!this._started) return;
 
     // 1. Disable instrumentations
@@ -297,8 +298,8 @@ export class BunSDK implements Disposable {
    */
   [Symbol.dispose](): void {
     // Synchronous dispose - start async shutdown but don't await
-    this.stop().catch(err => {
-      console.error("Error during BunSDK2 disposal:", err);
+    this.shutdown().catch(err => {
+      console.error("Error during BunSDK disposal:", err);
     });
   }
 

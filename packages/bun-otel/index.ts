@@ -19,4 +19,4 @@
 
 // Re-export BunSDK (main entry point)
 export { BunSDK } from "./src/BunSDK";
-export type { BunSDK2Config as BunSDKConfig } from "./src/BunSDK";
+export type { BunSDKConfig } from "./src/BunSDK";

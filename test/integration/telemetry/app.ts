@@ -11,13 +11,12 @@ const sdk = new BunSDK({
   traceExporter: new OTLPTraceExporter({
     url: "http://localhost:4318/v1/traces",
   }),
+  autoStart: false, // We'll use startAndRegisterSystemShutdownHooks instead
 });
-
-sdk.start();
 
 // Simple HTTP server
 const server = Bun.serve({
-  port: 3000,
+  port: 0, // Use ephemeral port to avoid collisions
   async fetch(req) {
     const url = new URL(req.url);
 
@@ -31,7 +30,7 @@ const server = Bun.serve({
 
       // Make downstream call to simulate distributed tracing
       if (url.searchParams.has("downstream")) {
-        await fetch("http://localhost:3000/api/downstream");
+        await fetch(`http://localhost:${server.port}/api/downstream`);
       }
 
       return Response.json({
@@ -55,10 +54,7 @@ const server = Bun.serve({
 
 console.log(`Server running at http://localhost:${server.port}`);
 
-// Graceful shutdown
-process.on("SIGTERM", async () => {
-  console.log("Shutting down...");
-  await sdk.shutdown();
+// Graceful shutdown using SDK's built-in signal handlers
+await sdk.startAndRegisterSystemShutdownHooks(async () => {
   server.stop();
-  process.exit(0);
 });

@@ -90,11 +90,22 @@ if(EXISTS ${WEBKIT_PATH}/package.json)
   endif()
 endif()
 
-file(DOWNLOAD ${WEBKIT_DOWNLOAD_URL} ${CACHE_PATH}/${WEBKIT_FILENAME} SHOW_PROGRESS)
-file(ARCHIVE_EXTRACT INPUT ${CACHE_PATH}/${WEBKIT_FILENAME} DESTINATION ${CACHE_PATH} TOUCH)
-file(REMOVE ${CACHE_PATH}/${WEBKIT_FILENAME})
-file(REMOVE_RECURSE ${WEBKIT_PATH})
-file(RENAME ${CACHE_PATH}/bun-webkit ${WEBKIT_PATH})
+# Use DownloadUrl.cmake script for reliable download/extract with curl/tar
+# This still runs at configure time, but curl/tar are more atomic than file() commands
+execute_process(
+  COMMAND
+    ${CMAKE_COMMAND}
+      -DDOWNLOAD_URL=${WEBKIT_DOWNLOAD_URL}
+      -DDOWNLOAD_PATH=${WEBKIT_PATH}
+      -P ${CMAKE_CURRENT_LIST_DIR}/../scripts/DownloadUrl.cmake
+  ERROR_STRIP_TRAILING_WHITESPACE
+  ERROR_VARIABLE WEBKIT_DOWNLOAD_ERROR
+  RESULT_VARIABLE WEBKIT_DOWNLOAD_RESULT
+)
+
+if(NOT WEBKIT_DOWNLOAD_RESULT EQUAL 0)
+  message(FATAL_ERROR "WebKit download failed: ${WEBKIT_DOWNLOAD_ERROR}")
+endif()
 
 if(APPLE)
   file(REMOVE_RECURSE ${WEBKIT_INCLUDE_PATH}/unicode)

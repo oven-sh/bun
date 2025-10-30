@@ -23,6 +23,7 @@ set(DOWNLOAD_TMP_PATH ${TMP_PATH}/${DOWNLOAD_ID}-${RANDOM_ID})
 set(DOWNLOAD_TMP_FILE ${DOWNLOAD_TMP_PATH}/tmp)
 
 file(REMOVE_RECURSE ${DOWNLOAD_TMP_PATH})
+file(MAKE_DIRECTORY ${DOWNLOAD_TMP_PATH})
 
 if(DOWNLOAD_ACCEPT_HEADER)
   set(DOWNLOAD_ACCEPT_HEADER "Accept: ${DOWNLOAD_ACCEPT_HEADER}")
@@ -38,19 +39,23 @@ foreach(i RANGE 10)
   else()
     message(STATUS "Downloading ${DOWNLOAD_URL}... (retry ${i})")
   endif()
-  
-  file(DOWNLOAD
-    ${DOWNLOAD_URL}
-    ${DOWNLOAD_TMP_FILE_${i}}
-    HTTPHEADER "User-Agent: cmake/${CMAKE_VERSION}"
-    HTTPHEADER ${DOWNLOAD_ACCEPT_HEADER}
-    STATUS DOWNLOAD_STATUS
-    INACTIVITY_TIMEOUT 60
-    TIMEOUT 180
-    SHOW_PROGRESS
+
+  # Use curl instead of file(DOWNLOAD) for better reliability
+  execute_process(
+    COMMAND curl
+      -L
+      --fail
+      --connect-timeout 60
+      --max-time 180
+      -H "User-Agent: cmake/${CMAKE_VERSION}"
+      -H "${DOWNLOAD_ACCEPT_HEADER}"
+      -o ${DOWNLOAD_TMP_FILE_${i}}
+      ${DOWNLOAD_URL}
+    RESULT_VARIABLE DOWNLOAD_STATUS_CODE
+    ERROR_VARIABLE DOWNLOAD_STATUS_TEXT
+    ERROR_STRIP_TRAILING_WHITESPACE
   )
 
-  list(GET DOWNLOAD_STATUS 0 DOWNLOAD_STATUS_CODE)
   if(DOWNLOAD_STATUS_CODE EQUAL 0)
     if(NOT EXISTS ${DOWNLOAD_TMP_FILE_${i}})
       message(WARNING "Download failed: result is ok, but file does not exist: ${DOWNLOAD_TMP_FILE_${i}}")
@@ -61,7 +66,6 @@ foreach(i RANGE 10)
     break()
   endif()
 
-  list(GET DOWNLOAD_STATUS 1 DOWNLOAD_STATUS_TEXT)
   file(REMOVE ${DOWNLOAD_TMP_FILE_${i}})
   message(WARNING "Download failed: ${DOWNLOAD_STATUS_CODE} ${DOWNLOAD_STATUS_TEXT}")
 endforeach()
@@ -76,11 +80,45 @@ if(DOWNLOAD_FILENAME MATCHES "\\.(zip|tar|gz|xz)$")
   message(STATUS "Extracting ${DOWNLOAD_FILENAME}...")
 
   set(DOWNLOAD_TMP_EXTRACT ${DOWNLOAD_TMP_PATH}/extract)
-  file(ARCHIVE_EXTRACT
-    INPUT ${DOWNLOAD_TMP_FILE}
-    DESTINATION ${DOWNLOAD_TMP_EXTRACT}
-    TOUCH
-  )
+  file(MAKE_DIRECTORY ${DOWNLOAD_TMP_EXTRACT})
+
+  # Use tar/unzip instead of file(ARCHIVE_EXTRACT) for better reliability
+  if(DOWNLOAD_FILENAME MATCHES "\\.zip$")
+    execute_process(
+      COMMAND unzip -q ${DOWNLOAD_TMP_FILE} -d ${DOWNLOAD_TMP_EXTRACT}
+      RESULT_VARIABLE EXTRACT_RESULT
+      ERROR_VARIABLE EXTRACT_ERROR
+      ERROR_STRIP_TRAILING_WHITESPACE
+    )
+  elseif(DOWNLOAD_FILENAME MATCHES "\\.(tar\\.gz|tgz)$")
+    execute_process(
+      COMMAND tar -xzf ${DOWNLOAD_TMP_FILE} -C ${DOWNLOAD_TMP_EXTRACT}
+      RESULT_VARIABLE EXTRACT_RESULT
+      ERROR_VARIABLE EXTRACT_ERROR
+      ERROR_STRIP_TRAILING_WHITESPACE
+    )
+  elseif(DOWNLOAD_FILENAME MATCHES "\\.(tar\\.xz|txz)$")
+    execute_process(
+      COMMAND tar -xJf ${DOWNLOAD_TMP_FILE} -C ${DOWNLOAD_TMP_EXTRACT}
+      RESULT_VARIABLE EXTRACT_RESULT
+      ERROR_VARIABLE EXTRACT_ERROR
+      ERROR_STRIP_TRAILING_WHITESPACE
+    )
+  elseif(DOWNLOAD_FILENAME MATCHES "\\.tar$")
+    execute_process(
+      COMMAND tar -xf ${DOWNLOAD_TMP_FILE} -C ${DOWNLOAD_TMP_EXTRACT}
+      RESULT_VARIABLE EXTRACT_RESULT
+      ERROR_VARIABLE EXTRACT_ERROR
+      ERROR_STRIP_TRAILING_WHITESPACE
+    )
+  else()
+    message(FATAL_ERROR "Unsupported archive format: ${DOWNLOAD_FILENAME}")
+  endif()
+
+  if(NOT EXTRACT_RESULT EQUAL 0)
+    file(REMOVE_RECURSE ${DOWNLOAD_TMP_PATH})
+    message(FATAL_ERROR "Extract failed: ${EXTRACT_ERROR}")
+  endif()
 
   file(REMOVE ${DOWNLOAD_TMP_FILE})
 

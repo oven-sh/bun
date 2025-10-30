@@ -162,23 +162,31 @@ void us_internal_socket_context_unlink_connecting_socket(int ssl, struct us_sock
 
 /* We always add in the top, so we don't modify any s.next */
 void us_internal_socket_context_link_listen_socket(int ssl, struct us_socket_context_t *context, struct us_listen_socket_t *ls) {
+    if(us_socket_is_closed(0, &ls->s)) {
+        return;
+    }
+    struct us_socket_t* head =  (struct us_socket_t *) context->head_listen_sockets;
     struct us_socket_t* s = &ls->s;
     s->context = context;
-    s->next = (struct us_socket_t *) context->head_listen_sockets;
+    s->next = head;
     s->prev = 0;
-    if (context->head_listen_sockets) {
-        context->head_listen_sockets->s.prev = s;
+    if (head) {
+        head->prev = s;
     }
     context->head_listen_sockets = ls;
     us_socket_context_ref(ssl, context);
 }
 
 void us_internal_socket_context_link_connecting_socket(int ssl, struct us_socket_context_t *context, struct us_connecting_socket_t *c) {
+    if(c->closed) {
+        return;
+    }
+    struct us_connecting_socket_t* head = context->head_connecting_sockets;
     c->context = context;
-    c->next_pending = context->head_connecting_sockets;
+    c->next_pending = head;
     c->prev_pending = 0;
-    if (context->head_connecting_sockets) {
-        context->head_connecting_sockets->prev_pending = c;
+    if (head) {
+        head->prev_pending = c;
     }
     context->head_connecting_sockets = c;
     us_socket_context_ref(ssl, context);

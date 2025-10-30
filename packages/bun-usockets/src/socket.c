@@ -25,6 +25,7 @@
 #include <stdio.h>
 #ifndef WIN32
 #include <fcntl.h>
+#include <assert.h>
 #endif
 
 /* Shared with SSL */
@@ -151,6 +152,7 @@ void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
     if (c->closed) return;
     c->closed = 1;
     for (struct us_socket_t *s = c->connecting_head; s; s = s->connect_next) {
+        assert(s->flags.low_prio_state != 1);
         us_internal_socket_context_unlink_socket(ssl, s->context, s);
 
         us_poll_stop((struct us_poll_t *) s, s->context->loop);

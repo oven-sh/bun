@@ -37,6 +37,15 @@ inline fn nqlAtIndexCaseInsensitive(comptime string_count: comptime_int, index: 
     return false;
 }
 
+/// The given string contains separators that match the platform's path separator style.
+pub fn hasPlatformPathSeparators(input_path: []const u8) bool {
+    if (bun.Environment.isWindows) {
+        return bun.strings.containsChar(input_path, '\\');
+    } else {
+        return bun.strings.containsChar(input_path, '/');
+    }
+}
+
 const IsSeparatorFunc = fn (char: u8) bool;
 const IsSeparatorFuncT = fn (comptime T: type, char: anytype) bool;
 const LastSeparatorFunction = fn (slice: []const u8) ?usize;

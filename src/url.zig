@@ -1,4 +1,8 @@
-// This is close to WHATWG URL, but we don't want the validation errors
+/// Unsafe parser. Assumes the given string is already a valid URL.
+///
+/// Use bun.jsc.URL for a safe, compliant URL parser.
+///
+/// This is close to WHATWG URL, but we don't want the validation errors.
 pub const URL = struct {
     const log = Output.scoped(.URL, .visible);
 
@@ -869,6 +873,30 @@ pub const PercentEncoding = struct {
         }
 
         return written;
+    }
+
+    /// Extracts and percent-decodes the pathname from a URL string.
+    /// Returns an owned slice that must be freed by the caller.
+    /// Returns error.InvalidURL if the URL cannot be parsed.
+    /// Returns error.InvalidPath if percent-decoding fails.
+    pub fn extractDecodedPathname(url_string: bun.String, allocator: std.mem.Allocator) ![]u8 {
+        const url = bun.jsc.URL.fromString(url_string) orelse return error.InvalidURL;
+        defer url.deinit();
+
+        const pathname_str = url.pathname();
+        defer pathname_str.deref();
+        const pathname = pathname_str.toUTF8(allocator);
+        defer pathname.deinit();
+
+        var path_list = std.ArrayList(u8).init(allocator);
+        defer path_list.deinit();
+        _ = decode(
+            @TypeOf(path_list.writer()),
+            path_list.writer(),
+            pathname.slice(),
+        ) catch return error.InvalidPath;
+
+        return try path_list.toOwnedSlice();
     }
 };
 

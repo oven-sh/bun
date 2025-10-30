@@ -838,11 +838,11 @@ pub fn migrateNPMLockfile(
                                     const dep_resolved: string = dep_resolved: {
                                         if (dep_pkg.get("resolved")) |resolved| {
                                             const dep_resolved = resolved.asString(this.allocator) orelse return error.InvalidNPMLockfile;
-                                            switch (Dependency.Version.Tag.infer(dep_resolved)) {
+                                            switch (Dependency.NpaBridge.inferTag(dep_resolved)) {
                                                 .git, .github => |tag| {
                                                     const dep_resolved_str = try string_buf.append(dep_resolved);
                                                     const dep_resolved_sliced = dep_resolved_str.sliced(string_buf.bytes.items);
-                                                    res_version = Dependency.parseWithTag(
+                                                    res_version = Dependency.NpaBridge.parseWithKnownTag(
                                                         this.allocator,
                                                         dep_name,
                                                         name_hash,

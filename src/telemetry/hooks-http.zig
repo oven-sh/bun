@@ -42,6 +42,7 @@ pub const HttpTelemetryContext = struct {
 /// - url.path: string
 /// - url.query: string (if present)
 /// - url.scheme: string
+/// - http.route: string (if route pattern provided, e.g., "/api/users/:id")
 /// - server.address: string
 /// - server.port: number
 /// - http.request.header.*: string (if configured via captureAttributes)
@@ -55,6 +56,7 @@ pub fn buildHttpStartAttributes(
     host_header: ?[]const u8,
     fallback_server_address: ?[]const u8,
     fallback_server_port: ?u16,
+    route_pattern: ?[]const u8,
 ) AttributeMap {
     const otel = telemetry.getGlobalTelemetry() orelse {
         return AttributeMap.init(globalObject);
@@ -88,6 +90,14 @@ pub fn buildHttpStartAttributes(
         attrs.set(otel.semconv.url_scheme, parsed.scheme);
     } else {
         attrs.set(otel.semconv.url_scheme, "http");
+    }
+
+    // HTTP route pattern (for route-based servers, e.g., "/api/users/:id")
+    // OpenTelemetry semantic convention: http.route is the route template, not the actual path
+    if (route_pattern) |pattern| {
+        if (pattern.len > 0) {
+            attrs.set(otel.semconv.http_route, pattern);
+        }
     }
 
     // Server address and port: prioritize Host header, then fallback
@@ -417,6 +427,7 @@ pub inline fn notifyHttpRequestStart(
     uws_req: anytype, // *uws.Request
     method: []const u8,
     server: anytype, // *Server (generic to handle HTTP/HTTPS/Debug variants)
+    route_pattern: ?[]const u8,
 ) void {
     const telemetry_inst = telemetry.getGlobalTelemetry() orelse return;
     if (!telemetry_inst.isEnabledFor(.http)) return;
@@ -453,6 +464,7 @@ pub inline fn notifyHttpRequestStart(
         host_header,
         fallback_address,
         fallback_port,
+        route_pattern,
     );
     telemetry_inst.notifyOperationStart(.http, ctx.request_id, &start_attrs);
 }

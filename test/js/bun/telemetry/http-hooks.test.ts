@@ -453,4 +453,85 @@ describe("Bun.serve() telemetry hooks", () => {
       "http.response.status_code": 201,
     });
   });
+
+  test("includes http.route for parameterized routes", async () => {
+    let startCalled = false;
+    const startAttrs: any = {};
+
+    const instrument = {
+      kind: InstrumentKinds.HTTP,
+      name: "test-http-route",
+      version: "1.0.0",
+      onOperationStart(id: number, attributes: any) {
+        startCalled = true;
+        Object.assign(startAttrs, attributes);
+      },
+      onOperationEnd() {},
+      onOperationError() {},
+    };
+
+    using ref = Bun.telemetry.attach(instrument);
+
+    using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/api/users/:id": req => new Response(`User ${req.params.id}`),
+        "/api/posts/:postId/comments/:commentId": () => new Response("comment"),
+      },
+      fetch() {
+        return new Response("fallback");
+      },
+    });
+
+    // Test parameterized route with single parameter
+    await fetch(`http://localhost:${server.port}/api/users/123`);
+
+    expect(startCalled).toBe(true);
+    expect(startAttrs["url.path"]).toBe("/api/users/123"); // actual path
+    expect(startAttrs["http.route"]).toBe("/api/users/:id"); // route pattern
+
+    // Reset for next test
+    startCalled = false;
+    Object.keys(startAttrs).forEach(key => delete startAttrs[key]);
+
+    // Test parameterized route with multiple parameters
+    await fetch(`http://localhost:${server.port}/api/posts/456/comments/789`);
+
+    expect(startCalled).toBe(true);
+    expect(startAttrs["url.path"]).toBe("/api/posts/456/comments/789"); // actual path
+    expect(startAttrs["http.route"]).toBe("/api/posts/:postId/comments/:commentId"); // route pattern
+  });
+
+  test("fetch-based requests do not have http.route", async () => {
+    let startCalled = false;
+    const startAttrs: any = {};
+
+    const instrument = {
+      kind: InstrumentKinds.HTTP,
+      name: "test-no-route",
+      version: "1.0.0",
+      onOperationStart(id: number, attributes: any) {
+        startCalled = true;
+        Object.assign(startAttrs, attributes);
+      },
+      onOperationEnd() {},
+      onOperationError() {},
+    };
+
+    using ref = Bun.telemetry.attach(instrument);
+
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response("OK");
+      },
+    });
+
+    await fetch(`http://localhost:${server.port}/some/path`);
+
+    expect(startCalled).toBe(true);
+    expect(startAttrs["url.path"]).toBe("/some/path");
+    // http.route should not be present for fetch-based handlers
+    expect(startAttrs["http.route"]).toBeUndefined();
+  });
 });

@@ -2039,6 +2039,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }) orelse return;
 
             // OpenTelemetry: Notify operation start AFTER URL is available, BEFORE user handler
+            // Include route pattern for http.route semantic convention (e.g., "/api/users/:id")
             bun.telemetry.http.notifyHttpRequestStart(
                 &prepared.ctx.telemetry_ctx,
                 server.globalThis,
@@ -2046,6 +2047,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 req,
                 @tagName(prepared.ctx.method),
                 server,
+                user_route.route.path,
             );
 
             const server_request_list = js.routeListGetCached(server.jsValueAssertAlive()).?;
@@ -2095,6 +2097,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 req,
                 @tagName(prepared.ctx.method),
                 this,
+                null, // No route pattern for fetch-based handlers
             );
 
             bun.assert(this.config.onRequest != .zero);

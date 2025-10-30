@@ -637,7 +637,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     auto env = globalObject->makeNapiEnv(nmodule);
     env->filename = filename_cstr;
 
-    auto encoded = reinterpret_cast<EncodedJSValue>(napi_register_module_v1(env, reinterpret_cast<napi_value>(exportsValue)));
+    auto encoded = reinterpret_cast<EncodedJSValue>(napi_register_module_v1(env.ptr(), reinterpret_cast<napi_value>(exportsValue)));
     if (env->throwPendingException()) {
         return {};
     }
@@ -656,7 +656,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
             // TODO: think about the finalizer here
             // currently we do not dealloc napi modules so we don't have to worry about it right now
             auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
-            Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, env, nullptr);
+            Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr, env.ptr());
             bool success = resultObject->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
             ASSERT(success);
             RETURN_IF_EXCEPTION(scope, {});
@@ -3430,14 +3430,23 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& ar
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue nextTick;
     if (!this->m_nextTickFunction) {
-        this->get(globalObject, Identifier::fromString(vm, "nextTick"_s));
+        nextTick = this->get(globalObject, Identifier::fromString(vm, "nextTick"_s));
         RETURN_IF_EXCEPTION(scope, void());
     }
 
     ASSERT(!args.isEmpty());
     JSObject* nextTickFn = this->m_nextTickFunction.get();
-    ASSERT(nextTickFn);
+    if (!nextTickFn) [[unlikely]] {
+        if (nextTick && nextTick.isObject())
+            nextTickFn = asObject(nextTick);
+        else {
+            throwVMError(globalObject, scope, "Failed to call nextTick"_s);
+            return;
+        }
+    }
     ASSERT_WITH_MESSAGE(!args.at(0).inherits<AsyncContextFrame>(), "queueNextTick must not pass an AsyncContextFrame. This will cause a crash.");
     JSC::call(globalObject, nextTickFn, args, "Failed to call nextTick"_s);
     RELEASE_AND_RETURN(scope, void());
@@ -3616,19 +3625,25 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort, (JSC::JSGlobalObject * globalObjec
 
 JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-#if !OS(WINDOWS)
-    ZigString str;
-    Bun__Process__getTitle(globalObject, &str);
-    return JSValue::encode(Zig::toJSString(str, globalObject));
-#else
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+#if !OS(WINDOWS)
+    BunString str;
+    Bun__Process__getTitle(globalObject, &str);
+    auto value = str.transferToWTFString();
+    auto* result = jsString(globalObject->vm(), WTFMove(value));
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(result));
+#else
     char title[1024];
     title[0] = '\0'; // Initialize buffer to empty string
     if (uv_get_process_title(title, sizeof(title)) != 0 || title[0] == '\0') {
-        return JSValue::encode(jsString(vm, String("bun"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, String("bun"_s))));
     }
 
-    return JSValue::encode(jsString(vm, WTF::String::fromUTF8(title)));
+    auto* result = jsString(vm, WTF::String::fromUTF8(title));
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(result));
 #endif
 }
 
@@ -3642,7 +3657,7 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
         return false;
     }
 #if !OS(WINDOWS)
-    ZigString str = Zig::toZigString(jsString, globalObject);
+    BunString str = Bun::toStringRef(globalObject, jsString);
     Bun__Process__setTitle(globalObject, &str);
     return true;
 #else

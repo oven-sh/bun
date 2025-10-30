@@ -44,7 +44,7 @@ pub const js_fns = struct {
                 defer group.end();
                 errdefer group.log("ended in error", .{});
 
-                var args = try ScopeFunctions.parseArguments(globalThis, callFrame, .{ .str = @tagName(tag) ++ "()" }, bun.default_allocator, .{ .callback = .require });
+                var args = try ScopeFunctions.parseArguments(globalThis, callFrame, .{ .str = @tagName(tag) ++ "()" }, bun.default_allocator, .{ .callback = .require, .kind = .hook });
                 defer args.deinit(bun.default_allocator);
 
                 const has_done_parameter = if (args.callback) |callback| try callback.getLength(globalThis) > 0 else false;
@@ -56,6 +56,9 @@ pub const js_fns = struct {
                     .timeout = args.options.timeout,
                 };
                 const bunTest = bunTestRoot.getActiveFileUnlessInPreload(globalThis.bunVM()) orelse {
+                    if (tag == .onTestFinished) {
+                        return globalThis.throw("Cannot call {s}() in preload. It can only be called inside a test.", .{@tagName(tag)});
+                    }
                     group.log("genericHook in preload", .{});
 
                     _ = try bunTestRoot.hook_scope.appendHook(bunTestRoot.gpa, tag, args.callback, cfg, .{}, .preload);
@@ -64,36 +67,49 @@ pub const js_fns = struct {
 
                 switch (bunTest.phase) {
                     .collection => {
+                        if (tag == .onTestFinished) {
+                            return globalThis.throw("Cannot call {s}() outside of a test. It can only be called inside a test.", .{@tagName(tag)});
+                        }
                         _ = try bunTest.collection.active_scope.appendHook(bunTest.gpa, tag, args.callback, cfg, .{}, .collection);
 
                         return .js_undefined;
                     },
                     .execution => {
-                        if (tag == .afterAll or tag == .afterEach) {
-                            // allowed
-                            const active = bunTest.getCurrentStateData();
-                            const sequence, _ = bunTest.execution.getCurrentAndValidExecutionSequence(active) orelse {
-                                return globalThis.throw("Cannot call {s}() here. It cannot be called inside a concurrent test. Call it inside describe() instead.", .{@tagName(tag)});
-                            };
-                            var append_point = sequence.active_entry;
+                        const active = bunTest.getCurrentStateData();
+                        const sequence, _ = bunTest.execution.getCurrentAndValidExecutionSequence(active) orelse {
+                            const message = if (tag == .onTestFinished)
+                                "Cannot call {s}() here. It cannot be called inside a concurrent test. Use test.serial or remove test.concurrent."
+                            else
+                                "Cannot call {s}() here. It cannot be called inside a concurrent test. Call it inside describe() instead.";
+                            return globalThis.throw(message, .{@tagName(tag)});
+                        };
 
-                            var iter = append_point;
-                            const before_test_entry = while (iter) |entry| : (iter = entry.next) {
-                                if (entry == sequence.test_entry) break true;
-                            } else false;
+                        const append_point = switch (tag) {
+                            .afterAll, .afterEach => blk: {
+                                var iter = sequence.active_entry;
+                                while (iter) |entry| : (iter = entry.next) {
+                                    if (entry == sequence.test_entry) break :blk sequence.test_entry.?;
+                                }
 
-                            if (before_test_entry) append_point = sequence.test_entry;
+                                break :blk sequence.active_entry orelse return globalThis.throw("Cannot call {s}() here. Call it inside describe() instead.", .{@tagName(tag)});
+                            },
+                            .onTestFinished => blk: {
+                                // Find the last entry in the sequence
+                                var last_entry = sequence.active_entry orelse return globalThis.throw("Cannot call {s}() here. Call it inside a test instead.", .{@tagName(tag)});
+                                while (last_entry.next) |next_entry| {
+                                    last_entry = next_entry;
+                                }
+                                break :blk last_entry;
+                            },
+                            else => return globalThis.throw("Cannot call {s}() inside a test. Call it inside describe() instead.", .{@tagName(tag)}),
+                        };
 
-                            const append_point_value = append_point orelse return globalThis.throw("Cannot call {s}() here. Call it inside describe() instead.", .{@tagName(tag)});
+                        const new_item = ExecutionEntry.create(bunTest.gpa, null, args.callback, cfg, null, .{}, .execution);
+                        new_item.next = append_point.next;
+                        append_point.next = new_item;
+                        bun.handleOom(bunTest.extra_execution_entries.append(new_item));
 
-                            const new_item = ExecutionEntry.create(bunTest.gpa, null, args.callback, cfg, null, .{}, .execution);
-                            new_item.next = append_point_value.next;
-                            append_point_value.next = new_item;
-                            bun.handleOom(bunTest.extra_execution_entries.append(new_item));
-
-                            return .js_undefined;
-                        }
-                        return globalThis.throw("Cannot call {s}() inside a test. Call it inside describe() instead.", .{@tagName(tag)});
+                        return .js_undefined;
                     },
                     .done => return globalThis.throw("Cannot call {s}() after the test run has completed", .{@tagName(tag)}),
                 }
@@ -173,7 +189,7 @@ pub const BunTestRoot = struct {
     pub fn onBeforePrint(this: *BunTestRoot) void {
         if (this.active_file.get()) |active_file| {
             if (active_file.reporter) |reporter| {
-                if (reporter.last_printed_dot and reporter.reporters.dots) {
+                if (reporter.reporters.dots and reporter.last_printed_dot) {
                     bun.Output.prettyError("<r>\n", .{});
                     bun.Output.flush();
                     reporter.last_printed_dot = false;
@@ -455,7 +471,7 @@ pub const BunTest = struct {
 
         return .js_undefined;
     }
-    pub fn bunTestTimeoutCallback(this_strong: BunTestPtr, _: *const bun.timespec, vm: *jsc.VirtualMachine) bun.api.Timer.EventLoopTimer.Arm {
+    pub fn bunTestTimeoutCallback(this_strong: BunTestPtr, _: *const bun.timespec, vm: *jsc.VirtualMachine) void {
         group.begin(@src());
         defer group.end();
         const this = this_strong.get();
@@ -472,8 +488,6 @@ pub const BunTest = struct {
         run(this_strong, vm.global) catch |e| {
             this.onUncaughtException(vm.global, vm.global.takeException(e), false, .done);
         };
-
-        return .disarm; // this won't disable the timer if .run() re-arms it
     }
     pub fn runNextTick(weak: BunTestPtr.Weak, globalThis: *jsc.JSGlobalObject, phase: RefDataValue) void {
         const done_callback_test = bun.new(RunTestsTask, .{ .weak = weak.clone(), .globalThis = globalThis, .phase = phase });

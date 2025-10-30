@@ -819,7 +819,7 @@ set_target_properties(${bun} PROPERTIES
   CXX_STANDARD_REQUIRED YES
   CXX_EXTENSIONS YES
   CXX_VISIBILITY_PRESET hidden
-  C_STANDARD 23
+  C_STANDARD 17 # Cannot uprev to C23 because MSVC doesn't have support.
   C_STANDARD_REQUIRED YES
   VISIBILITY_INLINES_HIDDEN YES
 )
@@ -944,7 +944,7 @@ if(NOT WIN32)
     if (NOT ABI STREQUAL "musl")
       target_compile_options(${bun} PUBLIC
         -fsanitize=null
-        -fsanitize-recover=all
+        -fno-sanitize-recover=all
         -fsanitize=bounds
         -fsanitize=return
         -fsanitize=nullability-arg
@@ -999,6 +999,20 @@ if(NOT WIN32)
     )
 
     if(ENABLE_ASAN)
+      target_compile_options(${bun} PUBLIC
+        -fsanitize=null
+        -fno-sanitize-recover=all
+        -fsanitize=bounds
+        -fsanitize=return
+        -fsanitize=nullability-arg
+        -fsanitize=nullability-assign
+        -fsanitize=nullability-return
+        -fsanitize=returns-nonnull-attribute
+        -fsanitize=unreachable
+      )
+      target_link_libraries(${bun} PRIVATE
+        -fsanitize=null
+      )
       target_compile_options(${bun} PUBLIC -fsanitize=address)
       target_link_libraries(${bun} PUBLIC -fsanitize=address)
     endif()

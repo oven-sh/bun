@@ -178,7 +178,8 @@ DEFINE_NATIVE_MODULE(NodeBuffer)
         auto attributes = PropertyAttribute::DontDelete | PropertyAttribute::CustomAccessor;
         defaultObject->putDirectCustomAccessor(vm, name, value, (unsigned)attributes);
         exportNames.append(name);
-        exportValues.append(value);
+        // We cannot assign a custom getter/setter to ESM exports.
+        exportValues.append(jsNumber(defaultGlobalObject(lexicalGlobalObject)->INSPECT_MAX_BYTES));
         __NATIVE_MODULE_ASSERT_INCR;
     }
 

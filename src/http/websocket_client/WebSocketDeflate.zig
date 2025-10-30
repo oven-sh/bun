@@ -129,7 +129,7 @@ pub fn deinit(self: *PerMessageDeflate) void {
 }
 
 fn canUseLibDeflate(len: usize) bool {
-    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_NO_LIBDEFLATE)) {
+    if (bun.feature_flag.BUN_FEATURE_FLAG_NO_LIBDEFLATE.get()) {
         return false;
     }
 

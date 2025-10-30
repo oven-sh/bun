@@ -318,7 +318,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .memory_visualizer_timer = .initPaused(.DevServerMemoryVisualizerTick),
         .has_pre_crash_handler = bun.FeatureFlags.bake_debugging_features and
             options.dump_state_on_crash orelse
-                bun.getRuntimeFeatureFlag(.BUN_DUMP_STATE_ON_CRASH),
+                bun.feature_flag.BUN_DUMP_STATE_ON_CRASH.get(),
         .frontend_only = options.framework.file_system_router_types.len == 0,
         .client_graph = .empty,
         .server_graph = .empty,
@@ -343,13 +343,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .source_maps = .empty,
         .plugin_state = .unknown,
         .bundling_failures = .{},
-        .assume_perfect_incremental_bundling = if (bun.Environment.isDebug)
-            if (bun.getenvZ("BUN_ASSUME_PERFECT_INCREMENTAL")) |env|
-                !bun.strings.eqlComptime(env, "0")
-            else
-                true
-        else
-            bun.getRuntimeFeatureFlag(.BUN_ASSUME_PERFECT_INCREMENTAL),
+        .assume_perfect_incremental_bundling = bun.feature_flag.BUN_ASSUME_PERFECT_INCREMENTAL.get() orelse bun.Environment.isDebug,
         .testing_batch_events = .disabled,
         .broadcast_console_log_from_browser_to_server = options.broadcast_console_log_from_browser_to_server,
         .server_transpiler = undefined,
@@ -3625,14 +3619,13 @@ pub fn emitVisualizerMessageIfNeeded(dev: *DevServer) void {
     dev.publish(.incremental_visualizer, payload.items, .binary);
 }
 
-pub fn emitMemoryVisualizerMessageTimer(timer: *EventLoopTimer, _: *const bun.timespec) EventLoopTimer.Arm {
-    if (!bun.FeatureFlags.bake_debugging_features) return .disarm;
+pub fn emitMemoryVisualizerMessageTimer(timer: *EventLoopTimer, _: *const bun.timespec) void {
+    if (!bun.FeatureFlags.bake_debugging_features) return;
     const dev: *DevServer = @alignCast(@fieldParentPtr("memory_visualizer_timer", timer));
     assert(dev.magic == .valid);
     dev.emitMemoryVisualizerMessage();
     timer.state = .FIRED;
     dev.vm.timer.update(timer, &bun.timespec.msFromNow(1000));
-    return .disarm;
 }
 
 pub fn emitMemoryVisualizerMessageIfNeeded(dev: *DevServer) void {
@@ -4671,7 +4664,7 @@ fn extractPathnameFromUrl(url: []const u8) []const u8 {
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
-const SourceMap = bun.sourcemap;
+const SourceMap = bun.SourceMap;
 const Watcher = bun.Watcher;
 const assert = bun.assert;
 const bake = bun.bake;

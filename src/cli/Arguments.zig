@@ -85,6 +85,9 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--inspect <STR>?                  Activate Bun's debugger") catch unreachable,
     clap.parseParam("--inspect-wait <STR>?             Activate Bun's debugger, wait for a connection before executing") catch unreachable,
     clap.parseParam("--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait") catch unreachable,
+    clap.parseParam("--cpu-prof                        Start CPU profiler and write profile to disk on exit") catch unreachable,
+    clap.parseParam("--cpu-prof-name <STR>             Specify the name of the CPU profile file") catch unreachable,
+    clap.parseParam("--cpu-prof-dir <STR>              Specify the directory where the CPU profile will be saved") catch unreachable,
     clap.parseParam("--if-present                      Exit without an error if the entrypoint does not exist") catch unreachable,
     clap.parseParam("--no-install                      Disable auto install in the Bun runtime") catch unreachable,
     clap.parseParam("--install <STR>                   Configure auto-install behavior. One of \"auto\" (default, auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always).") catch unreachable,
@@ -209,6 +212,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--reporter <STR>                 Test output reporter format. Available: 'junit' (requires --reporter-outfile), 'dots'. Default: console output.") catch unreachable,
     clap.parseParam("--reporter-outfile <STR>         Output file path for the reporter format (required with --reporter).") catch unreachable,
     clap.parseParam("--dots                           Enable dots reporter. Shorthand for --reporter=dots.") catch unreachable,
+    clap.parseParam("--only-failures                  Only display test failures, hiding passing tests.") catch unreachable,
     clap.parseParam("--max-concurrency <NUMBER>        Maximum number of concurrent tests to execute at once. Default is 20.") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
@@ -241,9 +245,14 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
 }
 
 fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
-    if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |data_dir| {
-        var paths = [_]string{".bunfig.toml"};
+    var paths = [_]string{".bunfig.toml"};
+
+    if (bun.env_var.XDG_CONFIG_HOME.get()) |data_dir| {
         return resolve_path.joinAbsStringBufZ(data_dir, buf, &paths, .auto);
+    }
+
+    if (bun.env_var.HOME.get()) |home_dir| {
+        return resolve_path.joinAbsStringBufZ(home_dir, buf, &paths, .auto);
     }
 
     return null;
@@ -463,6 +472,11 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.test_options.reporters.dots = true;
         }
 
+        // Handle --only-failures flag
+        if (args.flag("--only-failures")) {
+            ctx.test_options.reporters.only_failures = true;
+        }
+
         if (args.option("--coverage-dir")) |dir| {
             ctx.test_options.coverage.reports_directory = dir;
         }
@@ -589,7 +603,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             const preloads = args.options("--preload");
             const preloads2 = args.options("--require");
             const preloads3 = args.options("--import");
-            const preload4 = bun.getenvZ("BUN_INSPECT_PRELOAD");
+            const preload4 = bun.env_var.BUN_INSPECT_PRELOAD.get();
 
             const total_preloads = ctx.preloads.len + preloads.len + preloads2.len + preloads3.len + (if (preload4 != null) @as(usize, 1) else @as(usize, 0));
             if (total_preloads > 0) {
@@ -767,6 +781,24 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         }
 
+        if (args.flag("--cpu-prof")) {
+            ctx.runtime_options.cpu_prof.enabled = true;
+            if (args.option("--cpu-prof-name")) |name| {
+                ctx.runtime_options.cpu_prof.name = name;
+            }
+            if (args.option("--cpu-prof-dir")) |dir| {
+                ctx.runtime_options.cpu_prof.dir = dir;
+            }
+        } else {
+            // Warn if --cpu-prof-name or --cpu-prof-dir is used without --cpu-prof
+            if (args.option("--cpu-prof-name")) |_| {
+                Output.warn("--cpu-prof-name requires --cpu-prof to be enabled", .{});
+            }
+            if (args.option("--cpu-prof-dir")) |_| {
+                Output.warn("--cpu-prof-dir requires --cpu-prof to be enabled", .{});
+            }
+        }
+
         if (args.flag("--no-deprecation")) {
             Bun__Node__ProcessNoDeprecation = true;
         }
@@ -797,10 +829,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         } else if (use_system_ca) {
             Bun__Node__CAStore = .system;
         } else {
-            if (bun.getenvZ("NODE_USE_SYSTEM_CA")) |val| {
-                if (val.len > 0 and val[0] == '1') {
-                    Bun__Node__CAStore = .system;
-                }
+            if (bun.env_var.NODE_USE_SYSTEM_CA.get()) {
+                Bun__Node__CAStore = .system;
             }
         }
 
@@ -1327,7 +1357,6 @@ const FeatureFlags = bun.FeatureFlags;
 const Global = bun.Global;
 const OOM = bun.OOM;
 const Output = bun.Output;
-const RegularExpression = bun.RegularExpression;
 const clap = bun.clap;
 const js_ast = bun.ast;
 const logger = bun.logger;
@@ -1335,6 +1364,7 @@ const options = bun.options;
 const resolve_path = bun.path;
 const strings = bun.strings;
 const Api = bun.schema.api;
+const RegularExpression = bun.jsc.RegularExpression;
 
 const CLI = bun.cli;
 const Command = CLI.Command;

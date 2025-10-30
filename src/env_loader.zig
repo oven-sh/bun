@@ -1333,8 +1333,6 @@ pub const Map = struct {
 
 pub var instance: ?*Loader = null;
 
-pub const home_env = if (Environment.isWindows) "USERPROFILE" else "HOME";
-
 test "loadFromString with template expansion" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

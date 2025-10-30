@@ -1305,6 +1305,7 @@ pub inline fn errFmt(formatter: anytype) void {
 
 pub var buffered_stdin = bun.deprecated.BufferedReader(4096, File.Reader){
     .unbuffered_reader = .{ .context = .{ .handle = if (Environment.isWindows) undefined else .stdin() } },
+    .buf = undefined,
 };
 
 const string = []const u8;

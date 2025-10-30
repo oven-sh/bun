@@ -21,9 +21,11 @@ pub var current_time: struct {
     pub fn set(this: *@This(), globalObject: *jsc.JSGlobalObject, value: ?struct {
         timespec: *const bun.timespec,
         js: ?f64,
+        perf: ?u64,
     }) void {
         const vm = globalObject.bunVM();
         if (value) |v| {
+            const prev_timespec = this.getTimespecNow();
             this.#timespec_now.store(.{ .sec = v.timespec.sec, .nsec = v.timespec.nsec }, .seq_cst);
             const timespec_ms: f64 = @floatFromInt(v.timespec.ms());
             if (v.js) |js| {
@@ -31,9 +33,19 @@ pub var current_time: struct {
             }
             bun.cpp.JSMock__setOverridenDateNow(globalObject, this.date_now_offset + timespec_ms);
 
-            // Also override performance.now() with the same time (in nanoseconds)
-            const timespec_nano: u64 = @as(u64, @intCast(v.timespec.sec)) * std.time.ns_per_s + @as(u64, @intCast(v.timespec.nsec));
-            vm.overridden_performance_now = timespec_nano;
+            // Also override performance.now() with the current value (in nanoseconds)
+            // performance.now() should be relative to when the process started, not an absolute timestamp
+            if (v.perf) |perf| {
+                vm.overridden_performance_now = perf;
+            } else if (prev_timespec) |prev| {
+                // Advance performance.now() by the time delta
+                const delta_ns: i64 = (v.timespec.sec - prev.sec) * std.time.ns_per_s + (v.timespec.nsec - prev.nsec);
+                if (delta_ns >= 0) {
+                    if (vm.overridden_performance_now) |current_perf| {
+                        vm.overridden_performance_now = current_perf + @as(u64, @intCast(delta_ns));
+                    }
+                }
+            }
         } else {
             this.#timespec_now.store(.min, .seq_cst);
             bun.cpp.JSMock__setOverridenDateNow(globalObject, -1.0);
@@ -58,12 +70,12 @@ pub fn isActive(this: *FakeTimers) bool {
 
     return this.#active;
 }
-fn activate(this: *FakeTimers, timespec_now: bun.timespec, js_now: f64, globalObject: *jsc.JSGlobalObject) void {
+fn activate(this: *FakeTimers, timespec_now: bun.timespec, js_now: f64, perf_now: u64, globalObject: *jsc.JSGlobalObject) void {
     this.assertValid(.locked);
     defer this.assertValid(.locked);
 
     this.#active = true;
-    current_time.set(globalObject, .{ .timespec = &timespec_now, .js = js_now });
+    current_time.set(globalObject, .{ .timespec = &timespec_now, .js = js_now, .perf = perf_now });
 }
 fn deactivate(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) void {
     this.assertValid(.locked);
@@ -114,7 +126,7 @@ fn fire(this: *FakeTimers, globalObject: *jsc.JSGlobalObject, next: *bun.api.Tim
         bun.assert(next.next.eql(&prev.?) or next.next.greater(&prev.?));
     }
     const now = next.next;
-    current_time.set(globalObject, .{ .timespec = &now, .js = null });
+    current_time.set(globalObject, .{ .timespec = &now, .js = null, .perf = null });
     next.fire(&now, vm);
 }
 fn executeUntil(this: *FakeTimers, globalObject: *jsc.JSGlobalObject, until: bun.timespec) void {
@@ -181,11 +193,12 @@ fn useFakeTimers(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 
     const js_now = bun.cpp.JSMock__getCurrentUnixTimeMs();
     const timespec_now = bun.timespec.now();
+    const perf_now = vm.origin_timer.read();
 
     {
         timers.lock.lock();
         defer timers.lock.unlock();
-        this.activate(timespec_now, js_now, globalObject);
+        this.activate(timespec_now, js_now, perf_now, globalObject);
     }
 
     return callframe.this();
@@ -224,10 +237,11 @@ fn advanceTimersByTime(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFr
         return globalObject.throwInvalidArguments("advanceTimersToNextTimer() expects a number of milliseconds", .{});
     }
     const timeoutAdd = try globalObject.validateIntegerRange(arg, u32, 0, .{ .min = 0, .field_name = "ms" });
-    const target = bun.timespec.now().addMs(timeoutAdd);
+    const current = current_time.getTimespecNow() orelse return globalObject.throwInvalidArguments("Fake timers not initialized", .{});
+    const target = current.addMs(timeoutAdd);
 
     this.executeUntil(globalObject, target);
-    current_time.set(globalObject, .{ .timespec = &target, .js = null });
+    current_time.set(globalObject, .{ .timespec = &target, .js = null, .perf = null });
 
     return callframe.this();
 }

@@ -395,3 +395,36 @@ exports[`dependencies: {"bar": "1.0.0 - 2.0.0"} 1`] = `
   "version": ">=1.0.0 <=2.0.0-bar",
 }
 `;
+
+exports[`npa https://gitlab.com/inkscape/inkscape/-/archive/INKSCAPE_1_4/inkscape-INKSCAPE_1_4.tar.gz 1`] = `
+{
+  "name": "",
+  "version": {
+    "name": "",
+    "type": "tarball",
+    "url": "https://gitlab.com/inkscape/inkscape/-/archive/INKSCAPE_1_4/inkscape-INKSCAPE_1_4.tar.gz",
+  },
+}
+`;
+
+exports[`npa file:./path/to/folder 1`] = `
+{
+  "name": "",
+  "version": {
+    "folder": "./path/to/folder",
+    "type": "folder",
+  },
+}
+`;
+
+exports[`npa https://github.com/Jarred-Sumner/test-tarball-url.tgz 1`] = `
+{
+  "name": "",
+  "version": {
+    "owner": "Jarred-Sumner",
+    "ref": "",
+    "repo": "test-tarball-url.tgz",
+    "type": "github",
+  },
+}
+`;

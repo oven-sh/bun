@@ -4436,7 +4436,8 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
             switch (this.*) {
                 .inlined => {
                     if (this.inlined.len == INLINED_MAX) {
-                        this.* = .{ .heap = this.inlined.promote(INLINED_MAX, new) };
+                        const promoted = this.inlined.promote(INLINED_MAX, new);
+                        this.* = .{ .heap = promoted };
                         return;
                     }
                     this.inlined.items[this.inlined.len] = new;

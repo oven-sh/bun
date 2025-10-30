@@ -40,7 +40,7 @@ describe("Distributed tracing: Bun.serve → http.request", () => {
     const traceparent = `00-${upstreamTraceId}-${upstreamSpanId}-01`;
 
     await echoServer.fetch(`http://localhost:${server.port}/test`, { headers: { traceparent } });
-    const [serverSpan] = await tsdk.waitForSpans(1, 1000, s => s.server().withTraceId(upstreamTraceId));
+    const [serverSpan] = await tsdk.waitForSpans(1, s => s.server().withTraceId(upstreamTraceId));
 
     // Verify context.active() returned the correct span
     expect(capturedTraceId).toBe(upstreamTraceId);
@@ -93,8 +93,8 @@ describe("Distributed tracing: Bun.serve → http.request", () => {
     const result = await response.json();
 
     // Wait for 2 spans: Bun.serve (SERVER) + http.request (CLIENT)
-    const [serverSpan] = await tsdk.waitForSpans(1, 1000, s => s.server().withTraceId(upstreamTraceId));
-    const [clientSpan] = await tsdk.waitForSpans(1, 1000, s => s.client().withTraceId(upstreamTraceId));
+    const [serverSpan] = await tsdk.waitForSpans(1, s => s.server().withTraceId(upstreamTraceId));
+    const [clientSpan] = await tsdk.waitForSpans(1, s => s.client().withTraceId(upstreamTraceId));
 
     // CRITICAL ASSERTIONS for distributed tracing:
     // 1. Both spans share the same trace ID (distributed trace)
@@ -165,8 +165,8 @@ describe("Distributed tracing: Bun.serve → http.request", () => {
     });
     const echoData = await response.json();
 
-    const [serverSpan] = await tsdk.waitForSpans(1, 1000, s => s.server().withTraceId(upstreamTraceId));
-    const [clientSpan] = await tsdk.waitForSpans(1, 1000, s => s.client().withTraceId(upstreamTraceId));
+    const [serverSpan] = await tsdk.waitForSpans(1, s => s.server().withTraceId(upstreamTraceId));
+    const [clientSpan] = await tsdk.waitForSpans(1, s => s.client().withTraceId(upstreamTraceId));
 
     // CRITICAL: CLIENT span created inside setTimeout should still be child of server span
     // This proves AsyncLocalStorage context propagates across async boundaries
@@ -229,10 +229,8 @@ describe("Distributed tracing: Bun.serve → http.request", () => {
     const result = await response.json();
 
     // Wait for 1 gateway (SERVER) + 3 http.request (CLIENT) = 4 spans
-    const [gatewaySpan] = await tsdk.waitForSpans(1, 1000, s =>
-      s.server().withTraceId(traceId).withName("GET /gateway"),
-    );
-    const clientSpans = await tsdk.waitForSpans(3, 1000, s => s.client().withTraceId(traceId));
+    const [gatewaySpan] = await tsdk.waitForSpans(1, s => s.server().withTraceId(traceId).withName("GET /gateway"));
+    const clientSpans = await tsdk.waitForSpans(3, s => s.client().withTraceId(traceId));
 
     // All 3 http.request CLIENT spans should be children of the gateway span
     for (const clientSpan of clientSpans) {

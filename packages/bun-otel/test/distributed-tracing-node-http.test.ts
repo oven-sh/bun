@@ -194,7 +194,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
     const echoData = await response.json();
 
     // Wait for 2 spans with our specific trace ID
-    const spans = await tsdk.waitForSpans(2, 500, s => s.withTraceId(upstreamTraceId));
+    const spans = await tsdk.waitForSpans(2, s => s.withTraceId(upstreamTraceId));
     expect(spans).toHaveLength(2);
 
     // Sort spans by start time

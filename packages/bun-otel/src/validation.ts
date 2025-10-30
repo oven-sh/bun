@@ -81,7 +81,7 @@ const BLOCKED_PATTERNS = [/^x-secret-/i, /^x-token-/i, /password/i, /secret/i, /
  * validateHeaderName("invalid header"); // Throws TypeError - invalid RFC 9110 token
  * ```
  */
-export function validateHeaderName(headerName: string): void {
+export function validateHeaderName(headerName: string): Lowercase<string> {
   const trimmed = headerName.trim();
 
   // Normalize to lowercase per RFC 9110 (header names are case-insensitive)
@@ -114,6 +114,18 @@ export function validateHeaderName(headerName: string): void {
       );
     }
   }
+
+  return normalized as Lowercase<string>;
+}
+
+export function toValidHeaderList(headerList: string[] | undefined, listName: string): Lowercase<string>[] {
+  if (!headerList) {
+    return [];
+  }
+  if (headerList.length > MAX_HEADERS) {
+    throw new TypeError(`Too many ${listName} (${headerList.length}); max is ${MAX_HEADERS}.`);
+  }
+  return [...new Set(headerList.map(validateHeaderName))];
 }
 
 export function validateOptionalHeaderList(headerList: string[] | undefined, listName: string): number {

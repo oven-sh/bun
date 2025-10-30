@@ -3,7 +3,6 @@
  * NO @opentelemetry/* imports allowed - testing ONLY native hooks
  */
 import { describe, expect, test } from "bun:test";
-import { InstrumentRef } from "./types";
 
 describe("Bun.telemetry.attach() validation", () => {
   test("throws when called with no arguments", () => {

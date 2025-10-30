@@ -52,7 +52,7 @@ describe("Node.js http.createServer integration", () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("Node.js server");
 
-    const [span] = await tsdk.waitForSpans(1, 1000, s => s.server());
+    const [span] = await tsdk.waitForSpans(1, s => s.server());
     expect(span).toHaveSpanName("GET /test");
     expect(span).toHaveAttribute(ATTR_HTTP_REQUEST_METHOD, "GET");
     expect(span).toHaveAttribute(ATTR_URL_PATH, "/test");
@@ -84,7 +84,7 @@ describe("Node.js http.createServer integration", () => {
       "Content-Length": "42",
     });
 
-    const spans = await tsdk.waitForSpans(1, 1000, s => s.server());
+    const spans = await tsdk.waitForSpans(1, s => s.server());
     expect(spans[0]).toHaveAttribute(ATTR_HTTP_REQUEST_HEADER("user-agent"), "TestAgent/1.0");
     expect(spans[0]).toHaveAttribute(ATTR_URL_PATH, "/api/users/123");
   });
@@ -132,7 +132,7 @@ describe("Node.js http.createServer integration", () => {
     // Make second request
     await makeUninstrumentedRequest(`http://localhost:${port}/request2`);
 
-    await tsdk.waitForSpans(2, 1000, s => s.server());
+    await tsdk.waitForSpans(2, s => s.server());
     // Verify OpIds were captured
     expect(capturedOpIds.start.length).toBeGreaterThanOrEqual(2);
     expect(capturedOpIds.inject.length).toBeGreaterThanOrEqual(2);

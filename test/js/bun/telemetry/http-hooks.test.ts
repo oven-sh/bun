@@ -535,3 +535,118 @@ describe("Bun.serve() telemetry hooks", () => {
     expect(startAttrs["http.route"]).toBeUndefined();
   });
 });
+
+describe("hook edge cases - circular references and malformed data", () => {
+  test("handles circular object references in hook return values gracefully", async () => {
+    let hookError = false;
+    const capturedAttrs: any = {};
+
+    const circularObj: any = { name: "root" };
+    circularObj.self = circularObj; // Create circular reference
+    circularObj.nested = { parent: circularObj }; // Nested circular reference
+
+    const instrument = {
+      kind: InstrumentKinds.HTTP,
+      name: "circular-ref-test",
+      version: "1.0.0",
+      onOperationStart(id: number, attributes: any) {
+        Object.assign(capturedAttrs, attributes);
+        // Return circular object to test graceful handling
+        return circularObj;
+      },
+      onOperationEnd() {},
+      onOperationError(id: number, error: any) {
+        hookError = true;
+      },
+    };
+
+    using ref = Bun.telemetry.attach(instrument);
+
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response("OK");
+      },
+    });
+
+    // Request should succeed even if hook returns circular data
+    const response = await fetch(`http://localhost:${server.port}/test`);
+    expect(response.status).toBe(200);
+
+    // Hook should have been called
+    expect(capturedAttrs["http.request.method"]).toBe("GET");
+
+    // System should not have crashed or called onOperationError
+    // (circular refs should be handled gracefully, not treated as errors)
+    expect(hookError).toBe(false);
+  });
+
+  test("handles hook returning deeply nested objects", async () => {
+    let deeplyNested: any = { level: 0 };
+    let current = deeplyNested;
+
+    // Create 100-level deep nesting
+    for (let i = 1; i <= 100; i++) {
+      current.next = { level: i };
+      current = current.next;
+    }
+
+    const instrument = {
+      kind: InstrumentKinds.HTTP,
+      name: "deep-nested-test",
+      version: "1.0.0",
+      onOperationStart() {
+        return deeplyNested;
+      },
+      onOperationEnd() {},
+    };
+
+    using ref = Bun.telemetry.attach(instrument);
+
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response("OK");
+      },
+    });
+
+    // Should not crash with deep nesting
+    const response = await fetch(`http://localhost:${server.port}/`);
+    expect(response.status).toBe(200);
+  });
+
+  test("handles hook returning non-serializable values", async () => {
+    let requestSucceeded = false;
+
+    const instrument = {
+      kind: InstrumentKinds.HTTP,
+      name: "non-serializable-test",
+      version: "1.0.0",
+      onOperationStart() {
+        // Return values that can't be JSON.stringify'd
+        return {
+          func: () => {},
+          symbol: Symbol("test"),
+          undef: undefined,
+          bigint: BigInt(9007199254740991),
+        };
+      },
+      onOperationEnd() {},
+    };
+
+    using ref = Bun.telemetry.attach(instrument);
+
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requestSucceeded = true;
+        return new Response("OK");
+      },
+    });
+
+    // Request should complete successfully despite non-serializable hook data
+    const response = await fetch(`http://localhost:${server.port}/`);
+    expect(response.status).toBe(200);
+    expect(requestSucceeded).toBe(true);
+  });
+});

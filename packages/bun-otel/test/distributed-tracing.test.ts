@@ -40,7 +40,7 @@ describe("Distributed tracing with fetch propagation", () => {
     await echoServer.fetch(`http://localhost:${server.port}/test`, { headers: { traceparent } });
 
     // Wait for the server span to be exported (scoped to our trace)
-    const spans = await tsdk.waitForSpans(1, 1000, s => s.server().withTraceId(upstreamTraceId));
+    const spans = await tsdk.waitForSpans(1, s => s.server().withTraceId(upstreamTraceId));
     expect(spans).toHaveLength(1);
 
     const serverSpan = spans[0];
@@ -87,7 +87,7 @@ describe("Distributed tracing with fetch propagation", () => {
 
     // Wait for 2 spans: serverA (SERVER) + fetch to echoServer (CLIENT)
     // Note: Echo server runs in separate process, so we only see serverA's spans
-    const spans = await tsdk.waitForSpans(2, 1000, s => s.withTraceId(upstreamTraceId));
+    const spans = await tsdk.waitForSpans(2, s => s.withTraceId(upstreamTraceId));
     expect(spans).toHaveLength(2);
 
     // With fetch instrumentation: serverA (SERVER), fetchClient (CLIENT)
@@ -155,7 +155,7 @@ describe("Distributed tracing with fetch propagation", () => {
     const echoData = await response.json();
 
     // Wait for 2 spans with our specific trace ID
-    const spans = await tsdk.waitForSpans(2, 1000, s => s.withTraceId(upstreamTraceId));
+    const spans = await tsdk.waitForSpans(2, s => s.withTraceId(upstreamTraceId));
     expect(spans).toHaveLength(2);
 
     const serverSpan = spans.server()[0];
@@ -217,7 +217,7 @@ describe("Distributed tracing with fetch propagation", () => {
     });
     const echoData = await response.json();
 
-    const spans = await tsdk.waitForSpans(2, 1000, s => s.withTraceId(upstreamTraceId));
+    const spans = await tsdk.waitForSpans(2, s => s.withTraceId(upstreamTraceId));
     expect(spans).toHaveLength(2);
 
     const serverSpan = spans.server()[0];
@@ -270,7 +270,7 @@ describe("Distributed tracing with fetch propagation", () => {
     });
     const echoData = await response.json();
 
-    const spans = await tsdk.waitForSpans(2, 1000, s => s.withTraceId(upstreamTraceId));
+    const spans = await tsdk.waitForSpans(2, s => s.withTraceId(upstreamTraceId));
     expect(spans).toHaveLength(2);
 
     const serverSpan = spans.server()[0];
@@ -326,7 +326,7 @@ describe("Distributed tracing with fetch propagation", () => {
     const result = await response.json();
 
     // Wait for 1 SERVER + 3 CLIENT spans (scoped to our trace)
-    const spans = await tsdk.waitForSpans(4, 1500, s => s.withTraceId(upstreamTraceId));
+    const spans = await tsdk.waitForSpans(4, s => s.withTraceId(upstreamTraceId));
     expect(spans).toHaveLength(4);
 
     // All spans should share same trace ID
@@ -385,7 +385,7 @@ describe("Distributed tracing with fetch propagation", () => {
 
     // Wait for 1 gateway (SERVER) + 3 fetch (CLIENT) = 4 spans
     // (Echo server is external, so no SERVER spans from it)
-    const spans = await tsdk.waitForSpans(4, 1000, s => s.withTraceId(traceId));
+    const spans = await tsdk.waitForSpans(4, s => s.withTraceId(traceId));
     expect(spans).toHaveLength(4);
 
     // All spans share the same trace ID by construction (filtered)

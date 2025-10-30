@@ -416,6 +416,13 @@ pub const AttributeKeys = struct {
         };
 
         const len = try js_array.getLength(global);
+
+        // Note: FR-023 specified max 50 headers per list for DOS prevention,
+        // but this is already enforced by the global MAX_KEYS = 1100 limit.
+        // Attempting to create >1100 unique AttributeKeys will fail with
+        // error.AttributeKeyLimitExceeded (see allocateRuntimeAttribute).
+        // No per-list limit needed - global pool protection is sufficient.
+
         var i: u32 = 0;
         while (i < len) : (i += 1) {
             const name_js = try js_array.getIndex(global, i);

@@ -34,7 +34,17 @@ function extractContentLength(response: ServerResponse): number {
 
   return 0;
 }
-
+function isNodeHttpCreateServerRequest(attrs: unknown): attrs is {
+  http_req: IncomingMessage;
+  http_res: ServerResponse;
+} {
+  if (typeof attrs !== "object" || attrs === null) {
+    return false;
+  }
+  const asRecord = attrs as Record<string, unknown>;
+  const { http_req, http_res } = asRecord;
+  return !!http_req && typeof http_req === "object" && !!http_res && typeof http_res === "object";
+}
 /**
  * Adapter for Node.js http.createServer()
  *
@@ -71,8 +81,11 @@ export class BunNodeHttpCreateServerAdapter extends BunGenericInstrumentation {
        * .once() listeners for lifecycle events.
        */
       onOperationStart: (id, attrs) => {
-        const nodeRequest = attrs["http_req"] as IncomingMessage;
-        const nodeResponse = attrs["http_res"] as ServerResponse;
+        if (!isNodeHttpCreateServerRequest(attrs)) {
+          return;
+        }
+        const nodeRequest = attrs.http_req;
+        const nodeResponse = attrs.http_res;
 
         if (!nodeRequest || !nodeResponse) {
           // Not a Node.js server request, skip

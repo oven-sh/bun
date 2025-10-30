@@ -52,7 +52,7 @@ describe("Distributed tracing: http.createServer → http.request", () => {
     await using echoServer = await getEchoServer();
     await echoServer.fetch(`http://localhost:${port}/test`, { headers: { traceparent } });
 
-    const spans = await tsdk.waitForSpans(1, 500, s => s.server().withTraceId(upstreamTraceId));
+    const spans = await tsdk.waitForSpans(1, s => s.server().withTraceId(upstreamTraceId));
     expect(spans).toHaveLength(1);
 
     const serverSpan = spans[0];
@@ -126,7 +126,7 @@ describe("Distributed tracing: http.createServer → http.request", () => {
     const result = await response.json();
 
     // Wait for 2 spans: http.createServer (SERVER) + http.request (CLIENT)
-    const allSpans = await tsdk.waitForSpans(2, 500, s => s.withTraceId(upstreamTraceId));
+    const allSpans = await tsdk.waitForSpans(2, s => s.withTraceId(upstreamTraceId));
     expect(allSpans).toHaveLength(2);
 
     const serverSpan = allSpans.server()[0];
@@ -218,7 +218,7 @@ describe("Distributed tracing: http.createServer → http.request", () => {
     });
     const echoData = await response.json();
 
-    const spans = await tsdk.waitForSpans(2, 500, s => s.withTraceId(upstreamTraceId));
+    const spans = await tsdk.waitForSpans(2, s => s.withTraceId(upstreamTraceId));
     expect(spans).toHaveLength(2);
 
     const serverSpan = spans.server()[0];
@@ -302,7 +302,7 @@ describe("Distributed tracing: http.createServer → http.request", () => {
     const result = await response.json();
 
     // Wait for 1 gateway (SERVER) + 3 http.request (CLIENT) = 4 spans
-    const allSpans = await tsdk.waitForSpans(4, 500, s => s.withTraceId(traceId));
+    const allSpans = await tsdk.waitForSpans(4, s => s.withTraceId(traceId));
     expect(allSpans).toHaveLength(4);
 
     const gatewaySpan = allSpans.server().withName("GET /gateway")[0];

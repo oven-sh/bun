@@ -20,7 +20,7 @@ describe("W3C trace context propagation", () => {
       traceparent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
     });
 
-    const spans = await tsdk.waitForSpans(1, 1000, s => s.withTraceId("4bf92f3577b34da6a3ce929d0e0e4736"));
+    const spans = await tsdk.waitForSpans(1, s => s.withTraceId("4bf92f3577b34da6a3ce929d0e0e4736"));
     expect(spans).toHaveLength(1);
     const span = spans[0];
     expect(span.spanContext().traceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
@@ -51,7 +51,7 @@ describe("W3C trace context propagation", () => {
     await makeUninstrumentedRequest(`http://localhost:${port}/`, {
       traceparent: "00-abcdef1234567890abcdef1234567890-1234567890abcdef-01",
     });
-    const spans = await tsdk.waitForSpans(1, 1000, { traceId: "abcdef1234567890abcdef1234567890" });
+    const spans = await tsdk.waitForSpans(1, { traceId: "abcdef1234567890abcdef1234567890" });
 
     expect(spans).toHaveLength(1);
 

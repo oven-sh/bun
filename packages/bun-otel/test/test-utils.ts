@@ -1,7 +1,7 @@
 /**
  * Test utilities for bun-otel tests
  */
-import { SpanKind, SpanStatusCode } from "@opentelemetry/api";
+import { SpanContext, SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import {
   AggregationTemporality,
   InMemoryMetricExporter,
@@ -10,10 +10,10 @@ import {
 } from "@opentelemetry/sdk-metrics";
 import { InMemorySpanExporter, ReadableSpan } from "@opentelemetry/sdk-trace-base";
 import { expect } from "bun:test";
-import { BunSDK, type BunSDK2Config } from "../src/BunSDK";
+import { BunSDK, BunSDKConfig } from "../src/BunSDK";
 import { NativeHooks } from "../types";
 import { EchoServer } from "./echo-server";
-
+const DEFAULT_TIMEOUT_MS = 500;
 /**
  * Ref-counted EchoServer reference for tests.
  * Provides fast uninstrumented fetch without spawning Bun processes.
@@ -134,8 +134,8 @@ function refCountDown(): void {
 export class TestSDK extends BunSDK implements AsyncDisposable, Disposable {
   readonly spanExporter: InMemorySpanExporter;
   readonly metricExporter: InMemoryMetricExporter;
-
-  constructor(config: BunSDK2Config = {}) {
+  private echoServerRef: EchoServerRef | null = null;
+  constructor(config: BunSDKConfig = {}) {
     // Create exporters automatically
     const spanExporter = new InMemorySpanExporter();
     const metricExporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
@@ -177,10 +177,24 @@ export class TestSDK extends BunSDK implements AsyncDisposable, Disposable {
 
   waitForSpans(
     expectedCount: number,
-    timeout: number | { timeoutMs: number; pollIntervalMs?: number } = 500,
-    options?: { traceId?: string } | ((spans: SpanAssertHelper) => ReadableSpan[]),
+    options?:
+      | { traceId?: string; timeoutMs?: number; pollIntervalMs?: number }
+      | ((spans: SpanAssertHelper) => ReadableSpan[])
+      | number,
   ): Promise<SpanAssertHelper> {
-    return waitForSpans(this.spanExporter, expectedCount, timeout, options);
+    const extractTimeout =
+      typeof options === "number"
+        ? options
+        : options && typeof options === "object" && "timeoutMs" in options
+          ? options.timeoutMs
+          : DEFAULT_TIMEOUT_MS;
+    const extractFilterFn =
+      typeof options === "function"
+        ? options
+        : typeof options === "object" && options !== null && !("traceId" in options)
+          ? options
+          : undefined;
+    return waitForSpans(this.spanExporter, expectedCount, extractTimeout, extractFilterFn);
   }
 
   /**
@@ -202,13 +216,33 @@ export class TestSDK extends BunSDK implements AsyncDisposable, Disposable {
     return metrics;
   }
 
+  async echoServerFetch(url: string, init?: RequestInit): Promise<Response> {
+    if (this.echoServerRef === null) this.echoServerRef = await getEchoServer();
+    return await this.echoServerRef.fetch(url, init);
+  }
+
+  async makeUninstrumentedRequest(url: string, headers: Record<string, string> = {}): Promise<string> {
+    if (this.echoServerRef === null) this.echoServerRef = await getEchoServer();
+    const response = await this.echoServerRef.fetch(url, { headers });
+    return await response.text();
+  }
+
   shutdown(): Promise<void> {
     throw new Error("TestSDK should not be shutdown manually; use 'using' or 'await using' to auto-manage lifecycle");
   }
+
   [Symbol.dispose](): void | Promise<void> {
+    if (this.echoServerRef) {
+      this.echoServerRef[Symbol.dispose]();
+      this.echoServerRef = null;
+    }
     return super.shutdown();
   }
   [Symbol.asyncDispose](): Promise<void> {
+    if (this.echoServerRef) {
+      this.echoServerRef[Symbol.dispose]();
+      this.echoServerRef = null;
+    }
     return super.shutdown();
   }
 }
@@ -377,12 +411,43 @@ function makeSpanAssertHelper(
 export function printSpans(exporter: InMemorySpanExporter): void {
   fmtSpans(exporter.getFinishedSpans()).forEach(msg => console.log(msg));
 }
-export function fmtSpans(spans: ReadableSpan[]): string[] {
+export function fmtSpans(spans: ReadableSpan[], includeAttributes: boolean | undefined = undefined): string[] {
   console.log(`Exported ${spans.length} spans:`);
-  return spans.map(
-    span =>
-      `- (K${span.kind}) ${span.name}: TraceId: ${span.spanContext().traceId}, SpanId: ${span.spanContext().spanId}, ParentSpanId: ${span.parentSpanContext?.spanId}, Status: ${span.status.code}`,
-  );
+  return spans.map(span => fmtSpan(span, includeAttributes ?? inAssertMode > 0));
+}
+
+function fmtContext(ctx: SpanContext, type = "spanContext"): string {
+  const { isRemote, spanId, traceId, traceFlags, traceState } = ctx;
+  return `${type}: { TraceId: ${traceId}, SpanId: ${spanId}, TraceFlags: ${traceFlags}, isRemote: ${isRemote ?? "-"}, TraceState: ${traceState ?? "-"} }`;
+}
+
+function fmtSpan(span: ReadableSpan, includeAttributes: boolean = false): string {
+  const lines: string[] = [];
+
+  // First line: K(kind), span.name, status
+  const parts = [`K(${span.kind})`];
+  if (span.name) parts.push(`span.name: ${JSON.stringify(span.name)}`);
+  if (span.status.code) parts.push(`span.status.code: ${span.status.code}`);
+  if (span.status.message) parts.push(`span.status.message: ${JSON.stringify(span.status.message)}`);
+  lines.push(parts.join(", "));
+
+  // SpanContext
+  lines.push(`    - ${fmtContext(span.spanContext())}`);
+
+  // Parent context if present
+  if (span.parentSpanContext) {
+    lines.push(`    - ${fmtContext(span.parentSpanContext, "parentSpanContext")}`);
+  }
+
+  // Attributes if requested
+  if (includeAttributes) {
+    lines.push("    - Attributes:");
+    Object.entries(span.attributes).forEach(([key, value]) => {
+      lines.push(`        ${key}: ${JSON.stringify(value)}`);
+    });
+  }
+
+  return lines.join("\n");
 }
 
 // Test helper: make HTTP request without instrumentation (uses curl)
@@ -405,6 +470,11 @@ export function fmtSpans(spans: ReadableSpan[]): string[] {
  * @throws Error if maybeMakingUninstrumentedRequests() was not called
  */
 export async function makeUninstrumentedRequest(url: string, headers: Record<string, string> = {}): Promise<string> {
+  const response = await echoServerFetch(url, { headers });
+  return await response.text();
+}
+
+async function echoServerFetch(url: string, requestInit?: RequestInit): Promise<Response> {
   // Check if maybeMakingUninstrumentedRequests() was called
   if (inFlight === 0) {
     throw new Error(
@@ -415,8 +485,7 @@ export async function makeUninstrumentedRequest(url: string, headers: Record<str
 
   // Use fast socket-based fetch via ref-counted EchoServer
   await using echo = await getEchoServer();
-  const response = await echo.fetch(url, { headers });
-  return await response.text();
+  return await echo.fetch(url, requestInit);
 }
 
 // Ensure native hooks are installed by attaching a dummy instrumentation if needed
@@ -431,7 +500,7 @@ export function getNativeHooks(): NativeHooks {
       version: "1.0.0",
       onOperationStart() {},
       onOperationInject() {
-        return [];
+        return {};
       },
     });
     installedDummyInstrument = true;
@@ -449,11 +518,24 @@ declare module "bun:test" {
     toHaveSpanKind(expected: SpanKind): T;
     toHaveSpanName(expected: string): T;
     toHaveStatusCode(expected: SpanStatusCode): T;
-    toHaveParentSpanId(expected: string): T;
+    toHaveParentSpanId(expected: string | ReadableSpan): T;
+    toHaveTraceId(expected: string | ReadableSpan): T;
   }
 }
 // Custom matchers for OpenTelemetry spans
 expect.extend({
+  toHaveTraceId(received: ReadableSpan, expected: string | ReadableSpan) {
+    const actual = received.spanContext().traceId;
+    const pass = actual === (typeof expected === "string" ? expected : expected.spanContext().traceId);
+    return {
+      pass,
+      message: () =>
+        pass
+          ? `Expected span not to have trace ID "${expected}"`
+          : `Expected span to have trace ID "${expected}", got "${actual}"`,
+    };
+  },
+
   toHaveAttributes(received: ReadableSpan, expected: Record<string, any>) {
     const { attributes } = received;
     const missingKeys: string[] = [];
@@ -544,15 +626,16 @@ expect.extend({
     };
   },
 
-  toHaveParentSpanId(received: ReadableSpan, expected: string) {
-    const actual = received.parentSpanContext?.spanId;
-    const pass = actual === expected;
+  toHaveParentSpanId(received: ReadableSpan, expected: string | ReadableSpan) {
+    const actual = received.parentSpanContext;
+    const expectedSpanId = typeof expected === "string" ? expected : expected.spanContext().spanId;
+    const pass = actual?.spanId === expectedSpanId;
     return {
       pass,
       message: () =>
         pass
-          ? `Expected span not to have parent span ID "${expected}"`
-          : `Expected span to have parent span ID "${expected}", got "${actual}"`,
+          ? `Expected span not to have parent span ID "${expectedSpanId}"`
+          : `Expected span to have parent span ID "${expectedSpanId}", got "${actual?.spanId}"`,
     };
   },
 } as any);

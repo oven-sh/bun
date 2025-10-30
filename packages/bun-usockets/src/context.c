@@ -98,7 +98,7 @@ void us_internal_socket_context_unlink_listen_socket(int ssl, struct us_socket_c
 
     struct us_socket_t* prev = ls->s.prev;
     struct us_socket_t* next = ls->s.next;
-    if (prev == next) {
+    if (!prev && !next) {
         context->head_listen_sockets = 0;
     } else {
         if (prev) {
@@ -110,6 +110,7 @@ void us_internal_socket_context_unlink_listen_socket(int ssl, struct us_socket_c
             next->prev = prev;
         }
     }
+    ls->s.next = ls->s.prev = 0;
     us_socket_context_unref(ssl, context);
 }
 
@@ -122,7 +123,7 @@ void us_internal_socket_context_unlink_socket(int ssl, struct us_socket_context_
     struct us_socket_t* prev = s->prev;
     struct us_socket_t* next = s->next;
 
-    if (prev == next) {
+    if (!prev && !next) {
         context->head_sockets = 0;
     } else {
         if (prev) {
@@ -134,6 +135,7 @@ void us_internal_socket_context_unlink_socket(int ssl, struct us_socket_context_
             next->prev = prev;
         }
     }
+    s->next = s->prev = 0;
 
     us_internal_disable_sweep_timer(context->loop);
     us_socket_context_unref(ssl, context);
@@ -141,7 +143,7 @@ void us_internal_socket_context_unlink_socket(int ssl, struct us_socket_context_
 void us_internal_socket_context_unlink_connecting_socket(int ssl, struct us_socket_context_t *context, struct us_connecting_socket_t *c) {
     struct us_connecting_socket_t* prev = c->prev_pending;
     struct us_connecting_socket_t* next = c->next_pending;
-    if (prev == next) {
+    if (!prev && !next) {
         context->head_connecting_sockets = 0;
     } else {
         if (prev) {
@@ -153,6 +155,7 @@ void us_internal_socket_context_unlink_connecting_socket(int ssl, struct us_sock
             next->prev_pending = prev;
         }
     }
+    c->next_pending = c->prev_pending = 0;
     us_internal_disable_sweep_timer(context->loop);
     us_socket_context_unref(ssl, context);
 }

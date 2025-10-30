@@ -503,6 +503,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
     vm.setOnComputeErrorInfo(computeErrorInfoWrapperToString);
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);
+    vm.setComputeLineColumnWithSourcemap(computeLineColumnWithSourcemap);
     vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
         // if you process.nextTick on a microtask we need this
         auto* globalObject = defaultGlobalObject();
@@ -3517,10 +3518,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
     }
 }
 
-napi_env GlobalObject::makeNapiEnv(const napi_module& mod)
+Ref<NapiEnv> GlobalObject::makeNapiEnv(const napi_module& mod)
 {
-    m_napiEnvs.append(std::make_unique<napi_env__>(this, mod));
-    return m_napiEnvs.last().get();
+    m_napiEnvs.append(NapiEnv::create(this, mod));
+    return m_napiEnvs.last();
 }
 
 napi_env GlobalObject::makeNapiEnvForFFI()
@@ -3534,7 +3535,7 @@ napi_env GlobalObject::makeNapiEnvForFFI()
         .nm_priv = nullptr,
         .reserved = {},
     });
-    return out;
+    return &out.leakRef();
 }
 
 bool GlobalObject::hasNapiFinalizers() const

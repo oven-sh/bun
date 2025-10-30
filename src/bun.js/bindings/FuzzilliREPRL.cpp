@@ -1,3 +1,4 @@
+#include "FuzzilliREPRL.h"
 #include "root.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/CallFrame.h"
@@ -16,8 +17,6 @@
 #ifdef ENABLE_FUZZILLI
 #include <sanitizer/asan_interface.h>
 #endif
-
-extern "C" {
 
 // Signal handler to ensure output is flushed before crash
 static void fuzzilliSignalHandler(int sig) {
@@ -158,7 +157,7 @@ static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionFuzzilli(JSC::JSGlob
 }
 
 // Register the fuzzilli() function on a Bun global object
-void Bun__REPRL__registerFuzzilliFunction(Zig::GlobalObject* globalObject) {
+void Fuzzilli::registerFuzzilliFunction(Zig::GlobalObject* globalObject) {
     JSC::VM& vm = globalObject->vm();
 
     // Install signal handlers to ensure output is flushed before crashes
@@ -186,10 +185,16 @@ void Bun__REPRL__registerFuzzilliFunction(Zig::GlobalObject* globalObject) {
 // Only enabled when ENABLE_FUZZILLI is set
 // ============================================================================
 
+extern "C" {
+
 #ifdef ENABLE_FUZZILLI
 
 #define SHM_SIZE 0x200000
 #define MAX_EDGES ((SHM_SIZE - 4) * 8)
+
+// Global variable used by sanitizer coverage to track the lowest stack address
+// This needs to be provided when using custom coverage instrumentation
+__attribute__((used)) uintptr_t __sancov_lowest_stack = 0;
 
 struct shmem_data {
     uint32_t num_edges;

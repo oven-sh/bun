@@ -214,6 +214,11 @@
 #include <unistd.h>
 #endif
 
+#ifdef ENABLE_FUZZILLI
+#include "FuzzilliREPRL.h"
+#endif
+
+
 using namespace Bun;
 
 BUN_DECLARE_HOST_FUNCTION(Bun__NodeUtil__jsParseArgs);
@@ -257,11 +262,6 @@ extern "C" unsigned getJSCBytecodeCacheVersion()
 {
     return getWebKitBytecodeCacheVersion();
 }
-
-#ifdef ENABLE_FUZZILLI
-// Declare fuzzilli function registration from FuzzilliREPRL.cpp
-extern "C" void Bun__REPRL__registerFuzzilliFunction(Zig::GlobalObject*);
-#endif
 
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode)
 {
@@ -509,7 +509,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 #ifdef ENABLE_FUZZILLI
     // Register fuzzilli() function if in fuzzilli mode
     if (std::getenv("BUN_FUZZILLI_MODE")) {
-        Bun__REPRL__registerFuzzilliFunction(static_cast<Zig::GlobalObject*>(globalObject));
+        Fuzzilli::registerFuzzilliFunction(static_cast<Zig::GlobalObject*>(globalObject));
     }
 #endif
 

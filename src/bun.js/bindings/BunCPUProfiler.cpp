@@ -21,8 +21,15 @@ extern "C" BunString Bun__stopCPUProfilerAndGetJSON(JSC::VM* vm);
 
 namespace Bun {
 
+// Store the profiling start time in microseconds since Unix epoch
+static double s_profilingStartTime = 0.0;
+
 void startCPUProfiler(JSC::VM& vm)
 {
+    // Capture the wall clock time when profiling starts (before creating stopwatch)
+    // This will be used as the profile's startTime
+    s_profilingStartTime = MonotonicTime::now().approximateWallTime().secondsSinceEpoch().value() * 1000000.0;
+
     // Create a stopwatch and start it
     auto stopwatch = WTF::Stopwatch::create();
     stopwatch->start();
@@ -106,16 +113,10 @@ WTF::String stopCPUProfilerAndGetJSON(JSC::VM& vm)
         return stackTraces[a].timestamp < stackTraces[b].timestamp;
     });
 
-    // Find the earliest timestamp (first in sorted order)
-    MonotonicTime minMonotonicTime = stackTraces[sortedIndices[0]].timestamp;
-
-    // Get the wall clock time for the earliest sample (in microseconds)
-    // This will be our startTime for the CPU profile
-    double wallClockStart = minMonotonicTime.approximateWallTime().secondsSinceEpoch().value() * 1000000.0;
-
-    // Use wallClockStart as the startTime (earliest sample's wall clock time)
-    double startTime = wallClockStart;
-    double lastTime = wallClockStart;
+    // Use the profiling start time that was captured when profiling began
+    // This ensures the first timeDelta represents the time from profiling start to first sample
+    double startTime = s_profilingStartTime;
+    double lastTime = s_profilingStartTime;
 
     // Process each stack trace in chronological order
     for (size_t idx : sortedIndices) {

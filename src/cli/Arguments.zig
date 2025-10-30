@@ -85,6 +85,9 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--inspect <STR>?                  Activate Bun's debugger") catch unreachable,
     clap.parseParam("--inspect-wait <STR>?             Activate Bun's debugger, wait for a connection before executing") catch unreachable,
     clap.parseParam("--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait") catch unreachable,
+    clap.parseParam("--cpu-prof                        Start CPU profiler and write profile to disk on exit") catch unreachable,
+    clap.parseParam("--cpu-prof-name <STR>             Specify the name of the CPU profile file") catch unreachable,
+    clap.parseParam("--cpu-prof-dir <STR>              Specify the directory where the CPU profile will be saved") catch unreachable,
     clap.parseParam("--if-present                      Exit without an error if the entrypoint does not exist") catch unreachable,
     clap.parseParam("--no-install                      Disable auto install in the Bun runtime") catch unreachable,
     clap.parseParam("--install <STR>                   Configure auto-install behavior. One of \"auto\" (default, auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always).") catch unreachable,
@@ -776,6 +779,24 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 } };
 
             bun.jsc.RuntimeTranspilerCache.is_disabled = true;
+        }
+
+        if (args.flag("--cpu-prof")) {
+            ctx.runtime_options.cpu_prof.enabled = true;
+            if (args.option("--cpu-prof-name")) |name| {
+                ctx.runtime_options.cpu_prof.name = name;
+            }
+            if (args.option("--cpu-prof-dir")) |dir| {
+                ctx.runtime_options.cpu_prof.dir = dir;
+            }
+        } else {
+            // Warn if --cpu-prof-name or --cpu-prof-dir is used without --cpu-prof
+            if (args.option("--cpu-prof-name")) |_| {
+                Output.warn("--cpu-prof-name requires --cpu-prof to be enabled", .{});
+            }
+            if (args.option("--cpu-prof-dir")) |_| {
+                Output.warn("--cpu-prof-dir requires --cpu-prof to be enabled", .{});
+            }
         }
 
         if (args.flag("--no-deprecation")) {

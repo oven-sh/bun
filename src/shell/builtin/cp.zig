@@ -137,7 +137,8 @@ pub fn next(this: *Cp) Yield {
                         }
                         if (comptime bun.Environment.isWindows) {
                             if (exec.ebusy.tasks.items.len > 0) {
-                                this.state = .{ .ebusy = .{ .state = this.state.exec.ebusy, .main_exit_code = exit_code } };
+                                const ebusy = this.state.exec.ebusy;
+                                this.state = .{ .ebusy = .{ .state = ebusy, .main_exit_code = exit_code } };
                                 continue;
                             }
                             exec.ebusy.deinit();

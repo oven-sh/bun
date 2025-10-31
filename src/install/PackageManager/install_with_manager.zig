@@ -31,6 +31,8 @@ pub fn installWithManager(
 
     try manager.updateLockfileIfNeeded(load_result);
 
+    manager.options.config_version = load_result.configVersion();
+
     var root = Lockfile.Package{};
     var needs_new_lockfile = load_result != .ok or
         (load_result.ok.lockfile.buffers.dependencies.items.len == 0 and manager.update_requests.len > 0);
@@ -782,27 +784,17 @@ pub fn installWithManager(
             break :install_summary .{};
         }
 
-        switch (manager.options.node_linker) {
+        linker: switch (manager.options.node_linker) {
             .auto => {
-                if (manager.lockfile.workspace_paths.count() > 0 and
-                    !load_result.migratedFromNpm())
-                {
-                    break :install_summary bun.handleOom(installIsolatedPackages(
-                        manager,
-                        ctx,
-                        install_root_dependencies,
-                        workspace_filters,
-                        null,
-                    ));
+                const config_version = manager.options.config_version orelse {
+                    manager.options.config_version = .v1;
+                    continue :linker .hoisted;
+                };
+
+                switch (config_version) {
+                    .v0 => continue :linker .hoisted,
+                    .v1 => if (manager.lockfile.workspace_paths.count() > 0 and !load_result.migratedFromNpm()) .isolated else .hoisted,
                 }
-                break :install_summary try installHoistedPackages(
-                    manager,
-                    ctx,
-                    workspace_filters,
-                    install_root_dependencies,
-                    log_level,
-                    null,
-                );
             },
 
             .hoisted,

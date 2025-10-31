@@ -9,8 +9,9 @@ const has_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "tRuStEDd".*));
 const has_empty_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "eMpTrUsT".*));
 const has_overrides_tag: u64 = @bitCast(@as([8]u8, "oVeRriDs".*));
 const has_catalogs_tag: u64 = @bitCast(@as([8]u8, "cAtAlOgS".*));
+const has_config_version_tag: u64 = @bitCast(@as([8]u8, "cNfGvRsN".*));
 
-pub fn save(this: *Lockfile, verbose_log: bool, bytes: *std.ArrayList(u8), total_size: *usize, end_pos: *usize) !void {
+pub fn save(this: *Lockfile, options: *const PackageManager.Options, bytes: *std.ArrayList(u8), total_size: *usize, end_pos: *usize) !void {
 
     // we clone packages with the z_allocator to make sure bytes are zeroed.
     // TODO: investigate if we still need this now that we have `padding_checker.zig`
@@ -65,7 +66,7 @@ pub fn save(this: *Lockfile, verbose_log: bool, bytes: *std.ArrayList(u8), total
     }
 
     try Lockfile.Package.Serializer.save(this.packages, StreamType, stream, @TypeOf(writer), writer);
-    try Lockfile.Buffers.save(this, verbose_log, z_allocator, StreamType, stream, @TypeOf(writer), writer);
+    try Lockfile.Buffers.save(this, options, z_allocator, StreamType, stream, @TypeOf(writer), writer);
     try writer.writeInt(u64, 0, .little);
 
     // < Bun v1.0.4 stopped right here when reading the lockfile
@@ -245,6 +246,10 @@ pub fn save(this: *Lockfile, verbose_log: bool, bytes: *std.ArrayList(u8), total
             );
         }
     }
+
+    try writer.writeAll(std.mem.asBytes(&has_config_version_tag));
+    const config_version: bun.options.ConfigVersion = options.config_version orelse .current;
+    try writer.writeInt(u64, @intFromEnum(config_version), .little);
 
     total_size.* = try stream.getPos();
 
@@ -552,6 +557,20 @@ pub fn load(
                 }
             } else {
                 stream.pos -= 8;
+            }
+        }
+    }
+
+    {
+        const remaining_in_buffer = total_buffer_size -| stream.pos;
+
+        if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
+            const next_num = try reader.readInt(u64, .little);
+            if (next_num == has_config_version_tag) {
+                const config_version = bun.options.ConfigVersion.fromInt(try reader.readInt(u64, .little)) orelse {
+                    return error.InvalidLockfile;
+                };
+                lockfile.saved_config_version = config_version;
             }
         }
     }

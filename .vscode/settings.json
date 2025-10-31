@@ -148,6 +148,10 @@
     "ios": "cpp",
     "oxlint.json": "jsonc",
     "bun.lock": "jsonc",
+    "*.inc": "cpp",
+    "__locale": "cpp",
+    "locale": "cpp",
+    "fstream": "cpp",
   },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,

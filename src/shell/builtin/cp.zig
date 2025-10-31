@@ -219,7 +219,7 @@ pub fn onShellCpTaskDone(this: *Cp, task: *ShellCpTask) void {
                 (task.src_absolute != null and
                     err.sys.path.eqlUTF8(task.src_absolute.?)))
             {
-                log("{} got ebusy {d} {d}", .{ this, this.state.exec.ebusy.tasks.items.len, this.state.exec.paths_to_copy.len });
+                log("{f} got ebusy {d} {d}", .{ this, this.state.exec.ebusy.tasks.items.len, this.state.exec.paths_to_copy.len });
                 bun.handleOom(this.state.exec.ebusy.tasks.append(bun.default_allocator, task));
                 this.next().run();
                 return;

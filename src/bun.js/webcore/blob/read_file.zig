@@ -632,7 +632,6 @@ pub const ReadFileUV = struct {
         }
 
         const stat = req.statbuf;
-        log("stat: {f}", .{stat});
 
         // keep in sync with resolveSizeAndLastModified
         if (this.store.data == .file) {

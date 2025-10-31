@@ -328,8 +328,8 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
     assert(@intFromPtr(cmd_line_u16.ptr) % 2 == 0); // alignment assumption
 
     if (dbg) {
-        debug("CommandLine: {}", .{fmt16(cmd_line_u16[0 .. cmd_line_b_len / 2])});
-        debug("ImagePathName: {}", .{fmt16(image_path_u16[0 .. image_path_b_len / 2])});
+        debug("CommandLine: {f}", .{fmt16(cmd_line_u16[0 .. cmd_line_b_len / 2])});
+        debug("ImagePathName: {f}", .{fmt16(image_path_u16[0 .. image_path_b_len / 2])});
     }
 
     var buf1: [w.PATH_MAX_WIDE + "\"\" ".len]u16 = undefined;
@@ -477,7 +477,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         assert(ptr[1] == '.');
 
         while (true) {
-            if (dbg) debug("1 - {}", .{std.unicode.fmtUtf16Le(ptr[0..1])});
+            if (dbg) debug("1 - {f}", .{std.unicode.fmtUtf16Le(ptr[0..1])});
             if (ptr[0] == '\\') {
                 left -= 1;
                 // ptr is of type [*]u16, which means -= operates on number of ITEMS, not BYTES
@@ -495,7 +495,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         // inlined loop to do this again, because the completion case is different
         // using `inline for` caused comptime issues that made the code much harder to read
         while (true) {
-            if (dbg) debug("2 - {}", .{std.unicode.fmtUtf16Le(ptr[0..1])});
+            if (dbg) debug("2 - {f}", .{std.unicode.fmtUtf16Le(ptr[0..1])});
             if (ptr[0] == '\\') {
                 // ptr is at the position marked S, so move forward one *character*
                 break :brk ptr + 1;
@@ -545,7 +545,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
 
     _ = nt.NtClose(metadata_handle);
 
-    if (dbg) debug("BufferAfterRead: '{}'", .{fmt16(buf1_u16[0 .. ((@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) + read_len) / 2])});
+    if (dbg) debug("BufferAfterRead: '{f}'", .{fmt16(buf1_u16[0 .. ((@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) + read_len) / 2])});
 
     read_ptr = @ptrFromInt(@intFromPtr(read_ptr) + read_len - @sizeOf(Flags));
     const flags: Flags = @as(*align(1) Flags, @ptrCast(read_ptr)).*;
@@ -684,7 +684,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             const filename = buf1_u8[2 * nt_object_prefix.len ..][0..length_of_filename_u8];
             if (dbg) {
                 const sliced = std.mem.bytesAsSlice(u16, filename);
-                debug("filename and quote: '{}'", .{fmt16(@alignCast(sliced))});
+                debug("filename and quote: '{f}'", .{fmt16(@alignCast(sliced))});
                 debug("last char of above is '{}'", .{sliced[sliced.len - 1]});
                 assert(sliced[sliced.len - 1] == '\"');
             }
@@ -768,7 +768,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
 
     inline for (.{ 0, 1 }) |attempt_number| iteration: {
         if (dbg)
-            debug("lpCommandLine: {}\n", .{fmt16(std.mem.span(spawn_command_line))});
+            debug("lpCommandLine: {f}\n", .{fmt16(std.mem.span(spawn_command_line))});
         const did_process_spawn = k32.CreateProcessW(
             null,
             spawn_command_line,

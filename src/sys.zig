@@ -2496,7 +2496,7 @@ pub fn symlinkW(dest: [:0]const u16, target: [:0]const u16, options: WindowsSyml
 
         if (windows.CreateSymbolicLinkW(dest, target, flags) == 0) {
             const errno = bun.windows.Win32Error.get();
-            log("CreateSymbolicLinkW({f}, {f}, {f}) = {s}", .{
+            log("CreateSymbolicLinkW({f}, {f}, {}) = {s}", .{
                 bun.fmt.fmtPath(u16, dest, .{}),
                 bun.fmt.fmtPath(u16, target, .{}),
                 flags,
@@ -2537,7 +2537,7 @@ pub fn symlinkW(dest: [:0]const u16, target: [:0]const u16, options: WindowsSyml
             }
         }
 
-        log("CreateSymbolicLinkW({f}, {f}, {f}) = 0", .{
+        log("CreateSymbolicLinkW({f}, {f}, {}) = 0", .{
             bun.fmt.fmtPath(u16, dest, .{}),
             bun.fmt.fmtPath(u16, target, .{}),
             flags,
@@ -3579,7 +3579,7 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, _: i32) Maybe(bun.FileDescriptor) {
         );
         if (out == 0) {
             if (Maybe(bun.FileDescriptor).errnoSysFd(0, .dup, fd)) |err| {
-                log("dup({f}) = {}", .{ fd, err });
+                log("dup({f}) = {f}", .{ fd, err });
                 return err;
             }
         }

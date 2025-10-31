@@ -637,7 +637,7 @@ pub const CopyFileWindows = struct {
 
             const rc = req.result;
 
-            bun.sys.syslog("uv_fs_read({}, {d}) = {d}", .{ source_fd, read_buf.len, rc.int() });
+            bun.sys.syslog("uv_fs_read({f}, {d}) = {d}", .{ source_fd, read_buf.len, rc.int() });
             if (rc.toError(.read)) |err| {
                 this.err = err;
                 this.onReadWriteLoopComplete();
@@ -682,7 +682,7 @@ pub const CopyFileWindows = struct {
 
             const rc = req.result;
 
-            bun.sys.syslog("uv_fs_write({}, {d}) = {d}", .{ destination_fd, buf.len, rc.int() });
+            bun.sys.syslog("uv_fs_write({f}, {d}) = {d}", .{ destination_fd, buf.len, rc.int() });
 
             if (rc.toError(.write)) |err| {
                 this.err = err;
@@ -1014,7 +1014,7 @@ pub const CopyFileWindows = struct {
         event_loop.unrefConcurrently();
         const rc = req.result;
 
-        bun.sys.syslog("uv_fs_copyfile() = {}", .{rc});
+        bun.sys.syslog("uv_fs_copyfile() = {f}", .{rc});
         if (rc.errEnum()) |errno| {
             if (this.mkdirp_if_not_exists and errno == .NOENT) {
                 req.deinit();

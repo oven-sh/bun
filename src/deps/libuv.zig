@@ -401,7 +401,7 @@ fn HandleMixin(comptime Type: type) type {
         }
         pub fn close(this: *Type, cb: *const fn (*Type) callconv(.c) void) void {
             if (comptime Env.isDebug)
-                log("{s}.close({})", .{ bun.meta.typeName(Type), fd(this) });
+                log("{s}.close({f})", .{ bun.meta.typeName(Type), fd(this) });
             uv_close(@ptrCast(this), @ptrCast(cb));
         }
 
@@ -411,13 +411,13 @@ fn HandleMixin(comptime Type: type) type {
 
         pub fn ref(this: *Type) void {
             if (comptime Env.isDebug)
-                log("{s}.ref({})", .{ bun.meta.typeName(Type), if (comptime Type != Process) fd(this) else Process.getPid(this) });
+                log("{s}.ref({f})", .{ bun.meta.typeName(Type), bun.fs.printHandle(if (comptime Type != Process) fd(this) else Process.getPid(this)) });
             uv_ref(@ptrCast(this));
         }
 
         pub fn unref(this: *Type) void {
             if (comptime Env.isDebug)
-                log("{s}.unref({})", .{ bun.meta.typeName(Type), if (comptime Type != Process) fd(this) else Process.getPid(this) });
+                log("{s}.unref({f})", .{ bun.meta.typeName(Type), bun.fs.printHandle(if (comptime Type != Process) fd(this) else Process.getPid(this)) });
             uv_unref(@ptrCast(this));
         }
 
@@ -2891,10 +2891,7 @@ pub const ReturnCodeI64 = enum(i64) {
         return @enumFromInt(i);
     }
 
-    pub fn format(this: ReturnCodeI64, comptime fmt_: []const u8, options_: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt_;
-        _ = options_;
-
+    pub fn format(this: ReturnCodeI64, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         if (this.errEnum()) |err| {
             try writer.writeAll(@tagName(err));
         } else {

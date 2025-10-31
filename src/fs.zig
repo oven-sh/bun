@@ -981,7 +981,7 @@ pub const FileSystem = struct {
                 try dir.addEntry(prev_map, _entry, allocator, Iterator, iterator);
             }
 
-            debug("readdir({d}, {s}) = {d}", .{ handle.fd, _dir, dir.data.count() });
+            debug("readdir({f}, {s}) = {d}", .{ printHandle(handle.fd), _dir, dir.data.count() });
 
             return dir;
         }
@@ -1994,6 +1994,24 @@ pub const Path = struct {
 //     var opened = try std.posix.open(path, if (Environment.isLinux) bun.O.PATH else bun.O.RDONLY, 0);
 //     defer std.posix.close(opened);
 // }
+
+pub fn printHandle(handle: anytype) std.fmt.Alt(@TypeOf(handle), FmtHandleFnGenerator(@TypeOf(handle)).fmtHandle) {
+    return .{ .data = handle };
+}
+fn FmtHandleFnGenerator(comptime T: type) type {
+    return struct {
+        fn fmtHandle(handle: T, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            switch (@TypeOf(handle)) {
+                i32, c_int => try writer.print("{d}", .{handle}),
+                *anyopaque => try writer.print("{*}", .{handle}),
+                FD => try writer.print("{f}", .{handle}),
+                else => {
+                    @compileError("unsupported type for fmtHandle: " ++ @typeName(T));
+                },
+            }
+        }
+    };
+}
 
 pub const StatHash = @import("./fs/stat_hash.zig");
 

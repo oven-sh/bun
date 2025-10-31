@@ -175,7 +175,7 @@ pub fn __start(this: *IOWriter) Maybe(void) {
     }
 
     if (comptime bun.Environment.isWindows) {
-        log("IOWriter(0x{x}, {}) starting with source={s}", .{ @intFromPtr(this), this.fd, if (this.writer.source) |src| @tagName(src) else "no source lol" });
+        log("IOWriter(0x{x}, {f}) starting with source={s}", .{ @intFromPtr(this), this.fd, if (this.writer.source) |src| @tagName(src) else "no source lol" });
     }
 
     return .success;
@@ -215,7 +215,7 @@ fn write(this: *IOWriter) enum {
     }
 
     if (bun.Environment.isWindows) {
-        log("IOWriter(0x{x}, fd={f}) write() is_writing={f}", .{ @intFromPtr(this), this.fd, this.is_writing });
+        log("IOWriter(0x{x}, fd={f}) write() is_writing={}", .{ @intFromPtr(this), this.fd, this.is_writing });
         if (this.is_writing) return .suspended;
         this.is_writing = true;
         if (this.writer.startWithCurrentPipe().asErr()) |e| {
@@ -692,7 +692,7 @@ pub fn isLastIdx(this: *IOWriter, idx: usize) bool {
 /// Only does things on windows
 pub inline fn setWriting(this: *IOWriter, writing: bool) void {
     if (bun.Environment.isWindows) {
-        log("IOWriter(0x{x}, fd={f}) setWriting({f})", .{ @intFromPtr(this), this.fd, writing });
+        log("IOWriter(0x{x}, fd={f}) setWriting({})", .{ @intFromPtr(this), this.fd, writing });
         this.is_writing = writing;
     }
 }

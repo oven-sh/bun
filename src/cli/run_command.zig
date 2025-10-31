@@ -1729,7 +1729,7 @@ pub const BunXFastPath = struct {
         };
 
         if (Environment.isDebug) {
-            debug("run_ctx.handle: '{}'", .{bun.FD.fromSystem(handle)});
+            debug("run_ctx.handle: '{f}'", .{bun.FD.fromSystem(handle)});
             debug("run_ctx.base_path: '{f}'", .{bun.fmt.utf16(run_ctx.base_path)});
             debug("run_ctx.arguments: '{f}'", .{bun.fmt.utf16(run_ctx.arguments)});
             debug("run_ctx.force_use_bun: '{}'", .{run_ctx.force_use_bun});

@@ -447,7 +447,7 @@ pub const WriteFileWindows = struct {
         bun.assert(this == @as(*WriteFileWindows, @ptrCast(@alignCast(req.data.?))));
         const rc = this.io_request.result;
         if (comptime Environment.allow_assert)
-            log("onOpen({s}) = {}", .{ this.file_blob.store.?.data.file.pathlike.path.slice(), rc });
+            log("onOpen({s}) = {f}", .{ this.file_blob.store.?.data.file.pathlike.path.slice(), rc });
 
         if (rc.errEnum()) |err| {
             if (err == .NOENT and this.mkdirp_if_not_exists) {

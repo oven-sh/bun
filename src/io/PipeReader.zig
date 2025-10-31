@@ -997,7 +997,7 @@ pub const WindowsBufferedReader = struct {
         const nread_int = result.int();
         const was_canceled = nread_int == uv.UV_ECANCELED;
 
-        bun.sys.syslog("onFileRead({}) = {d}", .{ bun.FD.fromUV(fs.file.fd), nread_int });
+        bun.sys.syslog("onFileRead({f}) = {d}", .{ bun.FD.fromUV(fs.file.fd), nread_int });
 
         // Get parent before completing (fs.data may be null if detached)
         const parent_ptr = fs.data;

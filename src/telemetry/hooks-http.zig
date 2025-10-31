@@ -322,61 +322,6 @@ fn extractTraceparentFromFetchHeaders(
     attrs.set(otel.semconv.trace_parent_trace_flags, ctx.trace_flags);
 }
 
-/// Extract traceparent header and parse W3C Trace Context into attributes
-/// Sets attributes: trace.parent.trace_id, trace.parent.span_id, trace.parent.trace_flags
-///
-/// Uses the W3C spec-compliant parser from ../telemetry/traceparent.zig
-///
-/// TODO: this may be dead code?
-fn extractTraceparent(
-    attrs: *AttributeMap,
-    headers_jsvalue: JSValue,
-    globalObject: *JSGlobalObject,
-) void {
-    const otel = telemetry.getGlobalTelemetry() orelse return;
-
-    // Set up exception handling for JavaScript operations
-    var catch_scope: jsc.CatchScope = undefined;
-    catch_scope.init(globalObject, @src());
-    defer catch_scope.deinit();
-
-    // Check if headers is valid
-    if (headers_jsvalue.isUndefined() or headers_jsvalue.isNull()) return;
-
-    // Get the headers.get method
-    const get_method = headers_jsvalue.get(globalObject, "get") catch {
-        _ = catch_scope.clearException();
-        return;
-    };
-    if (get_method == null or !get_method.?.isCallable()) return;
-
-    // Call headers.get("traceparent") with headers as `this` context
-    const traceparent_key = ZigString.init("traceparent").toJS(globalObject);
-    const args = [_]JSValue{traceparent_key};
-    const traceparent_value_js = get_method.?.call(globalObject, headers_jsvalue, &args) catch {
-        _ = catch_scope.clearException();
-        return;
-    };
-
-    if (traceparent_value_js.isNull() or traceparent_value_js.isUndefined()) return;
-    if (!traceparent_value_js.isString()) return;
-
-    // Convert to Zig string
-    var traceparent_zig: ZigString = ZigString.Empty;
-    traceparent_value_js.toZigString(&traceparent_zig, globalObject) catch return;
-    const traceparent_slice = traceparent_zig.toSlice(bun.default_allocator);
-    defer traceparent_slice.deinit();
-
-    // Parse using W3C spec-compliant parser
-    const ctx = traceparent.TraceContext.parse(traceparent_slice.slice()) orelse return;
-
-    // Set attributes for distributed tracing
-    attrs.set(otel.semconv.http_request_header_traceparent, &ctx.traceparent);
-    attrs.set(otel.semconv.trace_parent_trace_id, &ctx.trace_id);
-    attrs.set(otel.semconv.trace_parent_span_id, &ctx.span_id);
-    attrs.set(otel.semconv.trace_parent_trace_flags, ctx.trace_flags);
-}
-
 // ============================================================================
 // FetchHeaders Access Helpers
 // ============================================================================

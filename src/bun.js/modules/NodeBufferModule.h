@@ -124,6 +124,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
 }
 
 BUN_DECLARE_HOST_FUNCTION(jsFunctionResolveObjectURL);
+BUN_DECLARE_HOST_FUNCTION(jsBufferFunction_transcode);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplemented,
     (JSGlobalObject * globalObject,
@@ -203,7 +204,7 @@ DEFINE_NATIVE_MODULE(NodeBuffer)
     put(atobI, atobV);
     put(btoaI, btoaV);
 
-    auto* transcode = InternalFunction::createFunctionThatMasqueradesAsUndefined(vm, globalObject, 1, "transcode"_s, jsFunctionNotImplemented);
+    auto* transcode = JSC::JSFunction::create(vm, globalObject, 3, "transcode"_s, jsBufferFunction_transcode, ImplementationVisibility::Public, NoIntrinsic, jsBufferFunction_transcode);
 
     put(JSC::Identifier::fromString(vm, "transcode"_s), transcode);
 

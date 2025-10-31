@@ -16,6 +16,7 @@
 
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/ExceptionScope.h"
+#include "wtf/SIMDUTF.h"
 
 #include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
@@ -2110,6 +2111,175 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
     RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
 }
 
+// Helper function for transcoding between encodings
+static JSC::JSUint8Array* transcodeBuffer(
+    JSC::JSGlobalObject* lexicalGlobalObject,
+    const uint8_t* source,
+    size_t sourceLength,
+    BufferEncodingType fromEncoding,
+    BufferEncodingType toEncoding)
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Handle empty source
+    if (sourceLength == 0) {
+        return createUninitializedBuffer(lexicalGlobalObject, 0);
+    }
+
+    JSC::JSUint8Array* result = nullptr;
+
+    // Handle same encoding
+    if (fromEncoding == toEncoding) {
+        result = createUninitializedBuffer(lexicalGlobalObject, sourceLength);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (sourceLength > 0) {
+            memcpy(result->typedVector(), source, sourceLength);
+        }
+        return result;
+    }
+
+    // Transcoding logic based on encoding pairs
+    switch (fromEncoding) {
+    case BufferEncodingType::utf8: {
+        switch (toEncoding) {
+        case BufferEncodingType::utf16le:
+        case BufferEncodingType::ucs2: {
+            // UTF-8 to UTF-16LE
+            size_t expectedLength = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(source), sourceLength);
+            result = createUninitializedBuffer(lexicalGlobalObject, expectedLength * 2);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+
+            size_t actualLength = simdutf::convert_utf8_to_utf16le(
+                reinterpret_cast<const char*>(source),
+                sourceLength,
+                reinterpret_cast<char16_t*>(result->typedVector()));
+
+            if (actualLength == 0) {
+                throwTypeError(lexicalGlobalObject, scope, "Invalid UTF-8 sequence"_s);
+                return nullptr;
+            }
+            return result;
+        }
+        case BufferEncodingType::ascii:
+        case BufferEncodingType::latin1: {
+            // UTF-8 to ASCII/Latin1: convert UTF-8 to UTF-16 first, then to Latin1
+            // Invalid characters will be replaced with '?'
+            size_t expectedUtf16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(source), sourceLength);
+            std::vector<char16_t> utf16Buffer(expectedUtf16Length);
+
+            size_t actualLength = simdutf::convert_utf8_to_utf16le(
+                reinterpret_cast<const char*>(source),
+                sourceLength,
+                utf16Buffer.data());
+
+            if (actualLength == 0) {
+                throwTypeError(lexicalGlobalObject, scope, "Invalid UTF-8 sequence"_s);
+                return nullptr;
+            }
+
+            result = createUninitializedBuffer(lexicalGlobalObject, actualLength);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+
+            // Convert UTF-16 to Latin1, replacing invalid chars with '?'
+            uint8_t* dest = result->typedVector();
+            for (size_t i = 0; i < actualLength; i++) {
+                char16_t c = utf16Buffer[i];
+                dest[i] = (c <= 0xFF) ? static_cast<uint8_t>(c) : '?';
+            }
+            return result;
+        }
+        default:
+            break;
+        }
+        break;
+    }
+    case BufferEncodingType::utf16le:
+    case BufferEncodingType::ucs2: {
+        // Source is UTF-16LE
+        size_t utf16Length = sourceLength / 2;
+        const char16_t* utf16Source = reinterpret_cast<const char16_t*>(source);
+
+        switch (toEncoding) {
+        case BufferEncodingType::utf8: {
+            // UTF-16LE to UTF-8
+            size_t expectedLength = simdutf::utf8_length_from_utf16le(utf16Source, utf16Length);
+            result = createUninitializedBuffer(lexicalGlobalObject, expectedLength);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+
+            size_t actualLength = simdutf::convert_utf16le_to_utf8(
+                utf16Source,
+                utf16Length,
+                reinterpret_cast<char*>(result->typedVector()));
+
+            if (actualLength == 0) {
+                throwTypeError(lexicalGlobalObject, scope, "Invalid UTF-16 sequence"_s);
+                return nullptr;
+            }
+            return result;
+        }
+        case BufferEncodingType::ascii:
+        case BufferEncodingType::latin1: {
+            // UTF-16LE to ASCII/Latin1
+            result = createUninitializedBuffer(lexicalGlobalObject, utf16Length);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+
+            uint8_t* dest = result->typedVector();
+            for (size_t i = 0; i < utf16Length; i++) {
+                char16_t c = utf16Source[i];
+                dest[i] = (c <= 0xFF) ? static_cast<uint8_t>(c) : '?';
+            }
+            return result;
+        }
+        default:
+            break;
+        }
+        break;
+    }
+    case BufferEncodingType::ascii:
+    case BufferEncodingType::latin1: {
+        // Source is ASCII/Latin1
+        switch (toEncoding) {
+        case BufferEncodingType::utf8: {
+            // Latin1 to UTF-8
+            size_t expectedLength = simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(source), sourceLength);
+            result = createUninitializedBuffer(lexicalGlobalObject, expectedLength);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+
+            [[maybe_unused]] size_t written = simdutf::convert_latin1_to_utf8(
+                reinterpret_cast<const char*>(source),
+                sourceLength,
+                reinterpret_cast<char*>(result->typedVector()));
+
+            return result;
+        }
+        case BufferEncodingType::utf16le:
+        case BufferEncodingType::ucs2: {
+            // Latin1 to UTF-16LE
+            result = createUninitializedBuffer(lexicalGlobalObject, sourceLength * 2);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+
+            [[maybe_unused]] size_t written = simdutf::convert_latin1_to_utf16le(
+                reinterpret_cast<const char*>(source),
+                sourceLength,
+                reinterpret_cast<char16_t*>(result->typedVector()));
+
+            return result;
+        }
+        default:
+            break;
+        }
+        break;
+    }
+    default:
+        break;
+    }
+
+    // If we get here, the encoding combination is not supported
+    throwTypeError(lexicalGlobalObject, scope, "Unsupported encoding combination"_s);
+    return nullptr;
+}
+
 extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject* globalObject, void* ptr, size_t length)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2799,6 +2969,75 @@ JSC::JSObject* createBufferConstructor(JSC::VM& vm, JSC::JSGlobalObject* globalO
 }
 
 } // namespace WebCore
+
+// Transcode function with C linkage for NodeBufferModule
+extern "C" JSC::EncodedJSValue jsBufferFunction_transcode(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    using namespace WebCore;
+    using namespace JSC;
+
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Validate arguments
+    if (callFrame->argumentCount() < 3) {
+        throwTypeError(lexicalGlobalObject, scope, "transcode requires 3 arguments"_s);
+        return {};
+    }
+
+    JSValue sourceValue = callFrame->argument(0);
+    JSValue fromEncodingValue = callFrame->argument(1);
+    JSValue toEncodingValue = callFrame->argument(2);
+
+    // Validate source is a Uint8Array
+    auto* sourceView = JSC::jsDynamicCast<JSC::JSUint8Array*>(sourceValue);
+    if (!sourceView) {
+        Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"source\" argument must be an instance of Buffer or Uint8Array"_s);
+        return {};
+    }
+
+    if (sourceView->isDetached()) {
+        Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Cannot transcode a detached buffer"_s);
+        return {};
+    }
+
+    // Parse encodings
+    auto fromEncoding = parseEncoding(scope, lexicalGlobalObject, fromEncodingValue, false);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto toEncoding = parseEncoding(scope, lexicalGlobalObject, toEncodingValue, false);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Check for supported encodings
+    bool fromSupported = (fromEncoding == BufferEncodingType::utf8 ||
+                         fromEncoding == BufferEncodingType::utf16le ||
+                         fromEncoding == BufferEncodingType::ucs2 ||
+                         fromEncoding == BufferEncodingType::latin1 ||
+                         fromEncoding == BufferEncodingType::ascii);
+
+    bool toSupported = (toEncoding == BufferEncodingType::utf8 ||
+                       toEncoding == BufferEncodingType::utf16le ||
+                       toEncoding == BufferEncodingType::ucs2 ||
+                       toEncoding == BufferEncodingType::latin1 ||
+                       toEncoding == BufferEncodingType::ascii);
+
+    if (!fromSupported || !toSupported) {
+        Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_UNKNOWN_ENCODING, "Unknown encoding"_s);
+        return {};
+    }
+
+    // Perform transcoding
+    auto* result = transcodeBuffer(
+        lexicalGlobalObject,
+        sourceView->typedVector(),
+        sourceView->byteLength(),
+        fromEncoding,
+        toEncoding);
+
+    RETURN_IF_EXCEPTION(scope, {});
+
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(result));
+}
 
 EncodedJSValue constructBufferFromArray(JSC::ThrowScope& throwScope, JSGlobalObject* lexicalGlobalObject, JSValue arrayValue)
 {

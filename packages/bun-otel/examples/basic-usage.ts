@@ -14,11 +14,6 @@ import { BunSDK } from "bun-otel";
 
 // 1. Create and configure BunSDK using `using` for automatic cleanup
 using sdk = new BunSDK({
-  // Exporter for sending traces (ConsoleSpanExporter prints to console)
-  tracerProvider: new BasicTracerProvider({
-    spanProcessors: [new SimpleSpanProcessor(new ConsoleSpanExporter())],
-  }),
-}),
   // Service name identifies your application in distributed traces
   serviceName: "bun-example-service",
 
@@ -36,6 +31,11 @@ using sdk = new BunSDK({
   //     responseHeaders: ["content-type", "cache-control"],
   //   },
   // },
+
+  // Exporter for sending traces (ConsoleSpanExporter prints to console)
+  tracerProvider: new BasicTracerProvider({
+    spanProcessors: [new SimpleSpanProcessor(new ConsoleSpanExporter())],
+  }),
 });
 
 // 2. Start the SDK and register graceful shutdown handlers

@@ -5,7 +5,7 @@
  * Everything else uses the clean OtelCapabilities interface
  */
 
-import type { Counter, Histogram, Meter, MeterProvider, Span, Tracer, TracerProvider } from "@opentelemetry/api";
+import type { Counter, Histogram, Link, Meter, MeterProvider, Span, Tracer, TracerProvider } from "@opentelemetry/api";
 import { context, propagation, SpanKind, SpanStatusCode, trace, ValueType } from "@opentelemetry/api";
 
 import type { CapabilitiesConfig, OtelCapabilities } from "../capabilities";
@@ -145,12 +145,25 @@ export class OtelCapabilitiesImpl implements OtelCapabilities {
 
     // Handle tracing
     if (this.tracingEnabled) {
-      // Extract parent context if configured
-      let parentContext = context.active();
-      if (this._config.extractParentContext) {
-        const headers = this._config.extractParentContext(attributes);
+      // Extract parent context if configured. Probably ROOT_CONTEXT for servers
+      const activeContext = context.active();
+      let parentContext = activeContext;
+      let links: Link[] | undefined;
+
+      if (this._config.extractInboundTraceContext) {
+        const headers = this._config.extractInboundTraceContext(attributes);
         if (headers?.traceparent) {
-          parentContext = propagation.extract(parentContext, headers, HEADER_GETTER);
+          const extractedContext = propagation.extract(activeContext, headers, HEADER_GETTER);
+          if (headers.linkOnly) {
+            // support for untrusted incoming contexts via link-only mode
+            const remoteSpanContext = trace.getSpanContext(extractedContext);
+            if (remoteSpanContext) {
+              links = links || [];
+              links.push({ context: remoteSpanContext });
+            }
+          } else {
+            parentContext = extractedContext;
+          }
         }
       }
 
@@ -169,6 +182,7 @@ export class OtelCapabilitiesImpl implements OtelCapabilities {
         spanName,
         {
           kind: spanKind,
+          links,
         },
         parentContext,
       );

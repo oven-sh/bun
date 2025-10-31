@@ -51,6 +51,9 @@ export interface OtelCapabilities {
  * Configuration for which attributes to capture at each lifecycle phase
  */
 export interface AttributesToCapture {
+  /** used to propagate link-only vs full distributed tracing */
+  flags?: Record<string, boolean>;
+
   /** Attributes to capture when operation starts */
   start?: string[];
 
@@ -140,9 +143,10 @@ export interface CapabilitiesConfig {
    * })
    * ```
    */
-  extractParentContext?: (attributes: Record<string, any>) => {
+  extractInboundTraceContext?: (attributes: Record<string, any>) => {
     traceparent?: string;
     tracestate?: string;
+    linkOnly?: boolean;
   };
 
   /**

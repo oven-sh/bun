@@ -104,7 +104,7 @@ declare module "bun" {
    * Bun.telemetry.detach(instrument);
    * ```
    */
-  export type InstrumentRef = { readonly id: number } & (Disposable | DisposableLike);
+  type InstrumentRef = { readonly id: number } & (Disposable | DisposableLike);
 
   /**
    * Categorizes operation types for routing telemetry data to appropriate handlers.
@@ -112,7 +112,7 @@ declare module "bun" {
    * Use string literals to specify which operations your instrumentation handles.
    * For example: `kind: "http"` instruments HTTP server operations.
    */
-  export type InstrumentKind = "custom" | "http" | "fetch" | "sql" | "redis" | "s3" | "node";
+  type InstrumentKind = "custom" | "http" | "fetch" | "sql" | "redis" | "s3" | "node";
 
   /**
    * User-facing API for registering instrumentations with Bun's native telemetry hooks.

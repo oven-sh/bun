@@ -113,13 +113,14 @@ describe("mapHttpServerConfig", () => {
   test("extractParentContext gets traceparent from headers", () => {
     const config = mapHttpServerConfig();
 
-    const headers = config.extractParentContext!({
+    const headers = config.extractInboundTraceContext!({
       "http.request.header.traceparent": "00-trace-span-01",
       "http.request.header.tracestate": "vendor=value",
     });
 
     expect(headers.traceparent).toBe("00-trace-span-01");
     expect(headers.tracestate).toBe("vendor=value");
+    expect(headers.linkOnly).toBeUndefined();
   });
 
   test("nativeDuration is 'end' for http", () => {
@@ -352,7 +353,7 @@ describe("distributed tracing configuration", () => {
       const config = mapHttpServerConfig({ distributedTracing: false });
 
       // Should not have extractParentContext function
-      expect(config.extractParentContext).toBeUndefined();
+      expect(config.extractInboundTraceContext).toBeUndefined();
     });
 
     test("disables header injection for HTTP server", () => {
@@ -365,7 +366,7 @@ describe("distributed tracing configuration", () => {
     test("disables parent extraction for Node HTTP server", () => {
       const config = mapNodeHttpServerConfig({ distributedTracing: false });
 
-      expect(config.extractParentContext).toBeUndefined();
+      expect(config.extractInboundTraceContext).toBeUndefined();
       expect(config.injectHeaders).toBe(false);
     });
 
@@ -377,7 +378,7 @@ describe("distributed tracing configuration", () => {
   });
 
   describe("link-only mode", () => {
-    test("disables parent extraction when requestHeaderContext = 'link-only'", () => {
+    test("enables parent extraction when requestHeaderContext = 'link-only'", () => {
       const config = mapHttpServerConfig({
         distributedTracing: {
           server: { requestHeaderContext: "link-only" },
@@ -385,19 +386,26 @@ describe("distributed tracing configuration", () => {
       });
 
       // Should not extract parent (would create Link instead in future)
-      expect(config.extractParentContext).toBeUndefined();
+      expect(config.extractInboundTraceContext).toBeFunction();
+      const result = config.extractInboundTraceContext!({
+        "http.request.header.traceparent": "00-trace-span-01",
+        "http.request.header.tracestate": "vendor=value",
+      });
+      expect(result.traceparent).toBe("00-trace-span-01");
+      expect(result.tracestate).toBe("vendor=value");
+      expect(result.linkOnly).toBe(true);
     });
 
-    test("disables header capture in link-only mode", () => {
+    test("enables header capture in link-only mode", () => {
       const config = mapHttpServerConfig({
         distributedTracing: {
           server: { requestHeaderContext: "link-only" },
         },
       });
 
-      // Should not capture headers in link-only mode
-      expect(config.trace?.start).not.toContain("http.request.header.traceparent");
-      expect(config.trace?.start).not.toContain("http.request.header.tracestate");
+      // Must capture these headers in link mode (but not create a parent context)
+      expect(config.trace?.start).toContain("http.request.header.traceparent");
+      expect(config.trace?.start).toContain("http.request.header.tracestate");
     });
 
     test("still allows injection in link-only mode", () => {
@@ -448,7 +456,7 @@ describe("distributed tracing configuration", () => {
       const config = mapHttpServerConfig({ injectHeaders: false });
 
       // Should still extract parent (only injection disabled)
-      expect(config.extractParentContext).toBeDefined();
+      expect(config.extractInboundTraceContext).toBeDefined();
     });
   });
 
@@ -456,14 +464,14 @@ describe("distributed tracing configuration", () => {
     test("enables parent extraction by default for HTTP server", () => {
       const config = mapHttpServerConfig();
 
-      expect(config.extractParentContext).toBeDefined();
+      expect(config.extractInboundTraceContext).toBeDefined();
       expect(config.injectHeaders).toBe(true);
     });
 
     test("enables parent extraction by default for Node HTTP server", () => {
       const config = mapNodeHttpServerConfig();
 
-      expect(config.extractParentContext).toBeDefined();
+      expect(config.extractInboundTraceContext).toBeDefined();
       expect(config.injectHeaders).toBe(true);
     });
 

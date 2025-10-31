@@ -8,9 +8,10 @@
 
 import type { ContextManager, MeterProvider, TracerProvider } from "@opentelemetry/api";
 import type { Instrumentation, InstrumentationConfig } from "@opentelemetry/instrumentation";
-import type { InstrumentRef, NativeInstrument } from "bun";
+import type { InstrumentRef, NativeInstrument, ReadonlyHeaderList } from "bun";
 import type { CapabilitiesConfig, OtelCapabilities } from "../capabilities";
 import { OtelCapabilitiesImpl } from "./OtelCapabilitiesImpl";
+import { toValidHeaderList } from "../validation";
 
 /**
  * Configuration for BunGenericInstrumentation
@@ -31,9 +32,10 @@ export interface BunGenericInstrumentationConfig extends CapabilitiesConfig, Ins
   /**
    * Control header injection for distributed tracing
    * - true (default): Inject traceparent/tracestate headers
+   * - string[]: Inject only specified headers
    * - false: Disable header injection entirely
    */
-  injectHeaders?: boolean;
+  injectHeaders?: string[] | boolean;
 }
 
 /**
@@ -184,10 +186,7 @@ export class BunGenericInstrumentation implements Disposable, Instrumentation<Bu
       kind: this._config.kind,
       name: this._config.name,
       version: this._config.version,
-      captureAttributes:
-        captureAttributes.requestHeaders.length > 0 || captureAttributes.responseHeaders.length > 0
-          ? captureAttributes
-          : undefined,
+      captureAttributes,
       injectHeaders,
 
       // Bridge hooks - just pass through to capabilities!
@@ -206,7 +205,14 @@ export class BunGenericInstrumentation implements Disposable, Instrumentation<Bu
   /**
    * Extract headers to capture from trace config
    */
-  private _extractCaptureAttributes(): { requestHeaders: string[]; responseHeaders: string[] } {
+  private _extractCaptureAttributes():
+    | {
+        /** HTTP request headers to capture (max 50 headers, normalized to lowercase) */
+        requestHeaders?: ReadonlyHeaderList;
+        /** HTTP response headers to capture (max 50 headers, normalized to lowercase) */
+        responseHeaders?: ReadonlyHeaderList;
+      }
+    | undefined {
     const requestHeaders: string[] = [];
     const responseHeaders: string[] = [];
 
@@ -237,27 +243,33 @@ export class BunGenericInstrumentation implements Disposable, Instrumentation<Bu
       }
     }
 
-    return { requestHeaders, responseHeaders };
+    return requestHeaders.length === 0 && responseHeaders.length === 0
+      ? undefined
+      : {
+          requestHeaders: toValidHeaderList(requestHeaders, "capture request headers"),
+          responseHeaders: toValidHeaderList(responseHeaders, "capture response headers"),
+        };
   }
 
   /**
    * Extract headers to inject (for distributed tracing)
-   * Returns { request?: string[], response?: string[] } or undefined if injection disabled
+   * Returns { request?: string[], response?: string[] }
    */
-  private _extractInjectHeaders(): { request?: string[]; response?: string[] } | undefined {
-    // Respect injectHeaders config
+  private _extractInjectHeaders(): { request?: ReadonlyHeaderList; response?: ReadonlyHeaderList } {
+    let headers = ["traceparent", "tracestate"];
     if (this._config.injectHeaders === false) {
-      return undefined;
+      // Disabled
+      return {};
+    } else if (Array.isArray(this._config.injectHeaders)) {
+      headers = [...toValidHeaderList(this._config.injectHeaders, "inject headers")];
     }
-
-    const headers = ["traceparent", "tracestate"];
-
     // CLIENT spans (fetch) inject into outgoing requests
     // SERVER spans (http, node) inject into responses
+    const validated = toValidHeaderList(headers, "inject headers");
     if (this._config.kind === "fetch") {
-      return { request: headers };
+      return { request: validated };
     } else {
-      return { response: headers };
+      return { response: validated };
     }
   }
 }

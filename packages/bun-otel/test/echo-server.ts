@@ -161,16 +161,17 @@ export class EchoServer {
         (async () => {
           let httpPort: number | null = null;
           let socketPort: number | null = null;
+          let buffer = "";
 
-          // @ts-expect-error stdout is ReadableStream
-          for await (const chunk of this.proc?.stdout) {
-            const text = decoder.decode(chunk);
+          const stdout = this.proc!.stdout as ReadableStream<Uint8Array>;
+          for await (const chunk of stdout) {
+            buffer += decoder.decode(chunk);
 
-            // Parse both ports
-            const httpMatch = text.match(/Echo server listening on (\d+)/);
+            // Parse both ports from accumulated buffer
+            const httpMatch = buffer.match(/Echo server listening on (\d+)/);
             if (httpMatch) httpPort = parseInt(httpMatch[1]);
 
-            const socketMatch = text.match(/Socket server listening on (\d+)/);
+            const socketMatch = buffer.match(/Socket server listening on (\d+)/);
             if (socketMatch) socketPort = parseInt(socketMatch[1]);
 
             if (httpPort !== null && socketPort !== null) {

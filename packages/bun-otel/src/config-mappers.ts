@@ -130,8 +130,8 @@ function validateHeadersAndMapToAttributes(params: { requestHeaders: string[]; r
   requestHeaderAttrs: string[];
 } {
   const { requestHeaders, responseHeaders } = params;
-  validateOptionalHeaderList(requestHeaders);
-  validateOptionalHeaderList(responseHeaders);
+  validateOptionalHeaderList(requestHeaders, "requestHeaders");
+  validateOptionalHeaderList(responseHeaders, "responseHeaders");
 
   const requestHeaderAttrs = requestHeaders.map(ATTR_HTTP_REQUEST_HEADER);
   const responseHeaderAttrs = responseHeaders.map(ATTR_HTTP_RESPONSE_HEADER);
@@ -153,6 +153,7 @@ function parseDistributedTracingConfig(
   shouldCaptureHeaders: boolean;
   shouldExtractParent: boolean;
   shouldInject: boolean;
+  shouldLinkOnly?: boolean;
 } {
   const dt = config.distributedTracing;
 
@@ -179,13 +180,11 @@ function parseDistributedTracingConfig(
     }
 
     // Handle link-only mode
-    const isLinkOnly = serverConfig.requestHeaderContext === "link-only";
-    const shouldExtract = serverConfig.requestHeaderContext === true;
-
     return {
-      shouldCaptureHeaders: shouldExtract,
-      shouldExtractParent: shouldExtract,
+      shouldCaptureHeaders: true, // need to capture to link
+      shouldExtractParent: !!serverConfig.requestHeaderContext,
       shouldInject: serverConfig.responseHeaders !== false,
+      shouldLinkOnly: serverConfig.requestHeaderContext === "link-only",
     };
   } else {
     // fetch/client
@@ -211,6 +210,7 @@ function mergeHeaderConfigs(
   responseHeaders: string[];
   shouldExtractParent: boolean;
   shouldInject: boolean;
+  shouldLinkOnly?: boolean;
 } {
   const requestHeaders = new Set<string>();
   const responseHeaders = new Set<string>();
@@ -269,6 +269,7 @@ function mergeHeaderConfigs(
     responseHeaders: Array.from(responseHeaders),
     shouldExtractParent: dtConfig.shouldExtractParent,
     shouldInject: dtConfig.shouldInject && config.injectHeaders !== false,
+    shouldLinkOnly: dtConfig.shouldLinkOnly,
   };
 }
 
@@ -376,9 +377,10 @@ export function mapHttpServerConfig(config: LegacyHttpConfig = {}): BunGenericIn
     // Extract parent context from request headers (if enabled)
     ...(headers.shouldExtractParent
       ? {
-          extractParentContext: attrs => ({
+          extractInboundTraceContext: attrs => ({
             traceparent: attrs[ATTR_HTTP_REQUEST_HEADER_TRACEPARENT],
             tracestate: attrs[ATTR_HTTP_REQUEST_HEADER_TRACESTATE],
+            linkOnly: headers.shouldLinkOnly,
           }),
         }
       : {}),
@@ -424,6 +426,7 @@ export function mapNodeHttpServerConfig(config: LegacyHttpConfig = {}): BunGener
     setsAsyncStorageContext: true,
 
     trace: {
+      flags: headers.shouldLinkOnly ? { "link-only": true } : undefined,
       start: [
         ATTR_HTTP_REQUEST_METHOD, //"http.request.method",
         ATTR_URL_PATH, // "url.path",
@@ -472,9 +475,10 @@ export function mapNodeHttpServerConfig(config: LegacyHttpConfig = {}): BunGener
     // Extract parent context from request headers (if enabled)
     ...(headers.shouldExtractParent
       ? {
-          extractParentContext: attrs => ({
+          extractInboundTraceContext: attrs => ({
             traceparent: attrs[ATTR_HTTP_REQUEST_HEADER_TRACEPARENT],
             tracestate: attrs[ATTR_HTTP_REQUEST_HEADER_TRACESTATE],
+            linkOnly: headers.shouldLinkOnly,
           }),
         }
       : {}),

@@ -1046,6 +1046,28 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                 // There is still a case where deduplication must happen.
                 if (import_record.is_unused) continue;
 
+                // Workers are handled as separate entry points in dev mode
+                // They get their own bundles and are served independently
+                if (import_record.kind == .worker) {
+                    const worker_path = import_record.path.keyForIncrementalGraph();
+                    log("Worker import detected: {s}", .{worker_path});
+
+                    // Register the worker with DevServer if it has a valid source_index
+                    // The worker will be bundled on-demand when requested via HTTP
+                    if (import_record.source_index.isValid()) {
+                        const dev = g.owner();
+                        _ = dev.getOrCreateWorkerBundle(
+                            import_record.source_index,
+                            worker_path,
+                        ) catch |err| {
+                            log("Failed to register worker bundle: {s}", .{@errorName(err)});
+                            continue;
+                        };
+                        log("Worker registered successfully: {s}", .{worker_path});
+                        continue;
+                    }
+                }
+
                 if (!import_record.source_index.isRuntime()) try_index_record: {
                     // TODO: move this block into a function
                     const key = import_record.path.keyForIncrementalGraph();

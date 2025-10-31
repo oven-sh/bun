@@ -276,7 +276,8 @@ pub fn load(
         }
 
         for (dynamic_import_entry_points) |id| {
-            bun.assert(this.code_splitting); // this should never be a thing without code splitting
+            // Workers must be separate entry points even without code splitting
+            // because they run in separate threads
 
             if (entry_point_kinds[id] != .none) {
                 // You could dynamic import a file that is already an entry point
@@ -501,6 +502,9 @@ pub fn propagateAsyncDependencies(this: *LinkerGraph) !void {
                     // non-top-level contexts (like inside an async function) or in contexts that
                     // don't use `await`, which don't necessarily make the parent module async.
                     .dynamic => continue,
+
+                    // Workers run in a separate context and don't propagate async dependencies
+                    .worker => continue,
 
                     // `require()` cannot import async modules.
                     .require, .require_resolve => continue,

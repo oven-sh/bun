@@ -342,9 +342,9 @@ function makeSpanAssertHelper(
   }
 
   helper.allOf = function (...filters: SpanAssertFilter[]) {
-    let filteredSpans: ReadableSpan[] = original;
+    let filteredSpans: ReadableSpan[] = spans;
     for (const filter of filters) {
-      filteredSpans.push(...filter(makeSpanAssertHelper(original, filteredSpans, message + ".allOf()")));
+      filteredSpans = filter(makeSpanAssertHelper(spans, filteredSpans, message + ".allOf()"));
     }
     return makeSpanAssertHelper(spans, filteredSpans, message + ".allOf()");
   };

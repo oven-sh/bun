@@ -46,8 +46,9 @@ export function initializeCompressionStream(format) {
   };
 
   const transformAlgorithm = chunk => {
+    const comp = $getByIdDirectPrivate(this, "compressionStreamCompressor");
     return new Promise((resolve, reject) => {
-      compressor.write(chunk, err => {
+      comp.write(chunk, err => {
         if (err) reject(err);
         else resolve();
       });
@@ -55,11 +56,11 @@ export function initializeCompressionStream(format) {
   };
 
   const flushAlgorithm = () => {
+    const comp = $getByIdDirectPrivate(this, "compressionStreamCompressor");
     return new Promise((resolve, reject) => {
-      compressor.end(err => {
-        if (err) reject(err);
-        else resolve();
-      });
+      comp.once("end", () => resolve());
+      comp.once("error", err => reject(err));
+      comp.end();
     });
   };
 
@@ -67,11 +68,17 @@ export function initializeCompressionStream(format) {
   $putByIdDirectPrivate(this, "compressionStreamTransform", transform);
   $putByIdDirectPrivate(this, "compressionStreamCompressor", compressor);
 
-  // Set up event handlers to pipe compressed data through the transform stream
+  // Set up persistent data handler to feed compressed data to the transform stream
   compressor.on("data", chunk => {
     const transformStream = $getByIdDirectPrivate(this, "compressionStreamTransform");
     const controller = $getByIdDirectPrivate(transformStream, "controller");
     $transformStreamDefaultControllerEnqueue(controller, chunk);
+  });
+
+  compressor.on("error", err => {
+    const transformStream = $getByIdDirectPrivate(this, "compressionStreamTransform");
+    const controller = $getByIdDirectPrivate(transformStream, "controller");
+    $transformStreamDefaultControllerError(controller, err);
   });
 
   return this;

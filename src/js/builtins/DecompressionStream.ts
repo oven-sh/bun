@@ -46,8 +46,9 @@ export function initializeDecompressionStream(format) {
   };
 
   const transformAlgorithm = chunk => {
+    const decomp = $getByIdDirectPrivate(this, "decompressionStreamDecompressor");
     return new Promise((resolve, reject) => {
-      decompressor.write(chunk, err => {
+      decomp.write(chunk, err => {
         if (err) reject(err);
         else resolve();
       });
@@ -55,11 +56,11 @@ export function initializeDecompressionStream(format) {
   };
 
   const flushAlgorithm = () => {
+    const decomp = $getByIdDirectPrivate(this, "decompressionStreamDecompressor");
     return new Promise((resolve, reject) => {
-      decompressor.end(err => {
-        if (err) reject(err);
-        else resolve();
-      });
+      decomp.once("end", () => resolve());
+      decomp.once("error", err => reject(err));
+      decomp.end();
     });
   };
 
@@ -67,11 +68,17 @@ export function initializeDecompressionStream(format) {
   $putByIdDirectPrivate(this, "decompressionStreamTransform", transform);
   $putByIdDirectPrivate(this, "decompressionStreamDecompressor", decompressor);
 
-  // Set up event handlers to pipe decompressed data through the transform stream
+  // Set up persistent data handler to feed decompressed data to the transform stream
   decompressor.on("data", chunk => {
     const transformStream = $getByIdDirectPrivate(this, "decompressionStreamTransform");
     const controller = $getByIdDirectPrivate(transformStream, "controller");
     $transformStreamDefaultControllerEnqueue(controller, chunk);
+  });
+
+  decompressor.on("error", err => {
+    const transformStream = $getByIdDirectPrivate(this, "decompressionStreamTransform");
+    const controller = $getByIdDirectPrivate(transformStream, "controller");
+    $transformStreamDefaultControllerError(controller, err);
   });
 
   return this;

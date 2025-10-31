@@ -85,6 +85,7 @@ private:
 };
 
 const EventNames& eventNames();
+void clearEventNames();
 
 inline bool EventNames::isGestureEventType(const AtomString& eventType) const
 {

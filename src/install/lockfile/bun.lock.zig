@@ -27,7 +27,16 @@ pub const Stringifier = struct {
     //     _ = this;
     // }
 
-    pub fn saveFromBinary(allocator: std.mem.Allocator, lockfile: *BinaryLockfile, load_result: *const LoadResult, writer: anytype) @TypeOf(writer).Error!void {
+    fn scopeForPackageName(options: *const PackageManager.Options, name: string) *const Npm.Registry.Scope {
+        if (name.len == 0 or name[0] != '@') return &options.scope;
+        return options.registries.getPtr(
+            Npm.Registry.Scope.hash(
+                Npm.Registry.Scope.getName(name),
+            ),
+        ) orelse &options.scope;
+    }
+
+    pub fn saveFromBinary(allocator: std.mem.Allocator, lockfile: *BinaryLockfile, load_result: *const LoadResult, options: *const PackageManager.Options, writer: anytype) @TypeOf(writer).Error!void {
         const buf = lockfile.buffers.string_bytes.items;
         const extern_strings = lockfile.buffers.extern_strings.items;
         const deps_buf = lockfile.buffers.dependencies.items;
@@ -582,13 +591,19 @@ pub const Stringifier = struct {
                                 res.value.npm.version.fmt(buf),
                             });
 
-                            // only write the registry if it's not the default. empty string means default registry
-                            try writer.print("\"{s}\", ", .{
-                                if (strings.hasPrefixComptime(res.value.npm.url.slice(buf), strings.withoutTrailingSlash(Npm.Registry.default_url)))
-                                    ""
-                                else
-                                    res.value.npm.url.slice(buf),
-                            });
+                            // Strip the registry URL prefix if the resolved URL starts with it
+                            // This allows users with proxies or custom registries to more easily share lockfiles
+                            const resolved_url = res.value.npm.url.slice(buf);
+                            const pkg_name_slice = pkg_name.slice(buf);
+                            const scope = scopeForPackageName(options, pkg_name_slice);
+                            const scope_url = strings.withoutTrailingSlash(scope.url.href);
+
+                            const url_to_write = if (strings.hasPrefix(resolved_url, scope_url))
+                                resolved_url[scope_url.len..]
+                            else
+                                resolved_url;
+
+                            try writer.print("\"{s}\", ", .{url_to_write});
 
                             try writePackageInfoObject(
                                 writer,
@@ -1691,18 +1706,32 @@ pub fn parseIntoBinaryLockfile(
                     return error.InvalidPackageInfo;
                 };
 
-                if (registry_str.len == 0) {
+                // If the URL is relative (doesn't start with http:// or https://),
+                // prepend the registry URL for this package's scope
+                const resolved_url = if (registry_str.len > 0 and
+                    !strings.hasPrefixComptime(registry_str, "https://") and
+                    !strings.hasPrefixComptime(registry_str, "http://"))
+                url: {
+                    // Get the registry URL for this package's scope
+                    const scope_url = if (manager) |pm| scope_url: {
+                        const scope = PackageManagerResolution.scopeForPackageName(pm, name.slice(string_buf.bytes.items));
+                        break :scope_url strings.withoutTrailingSlash(scope.url.href);
+                    } else strings.withoutTrailingSlash(Npm.Registry.default_url);
+
+                    // Concatenate registry URL + relative URL
+                    break :url try std.fmt.allocPrint(allocator, "{s}{s}", .{ scope_url, registry_str });
+                } else if (registry_str.len == 0) url: {
+                    // Empty string means use the default registry
                     const url = try ExtractTarball.buildURL(
                         Npm.Registry.default_url,
                         strings.StringOrTinyString.init(name.slice(string_buf.bytes.items)),
                         res.value.npm.version,
                         string_buf.bytes.items,
                     );
+                    break :url url;
+                } else registry_str;
 
-                    res.value.npm.url = try string_buf.append(url);
-                } else {
-                    res.value.npm.url = try string_buf.append(registry_str);
-                }
+                res.value.npm.url = try string_buf.append(resolved_url);
             }
 
             if (lockfile_version != .v0) {
@@ -2223,6 +2252,7 @@ const Dependency = Install.Dependency;
 const DependencyID = Install.DependencyID;
 const PackageID = Install.PackageID;
 const PackageManager = bun.install.PackageManager;
+const PackageManagerResolution = @import("../PackageManager/PackageManagerResolution.zig");
 const PackageNameHash = Install.PackageNameHash;
 const Repository = Install.Repository;
 const Resolution = Install.Resolution;

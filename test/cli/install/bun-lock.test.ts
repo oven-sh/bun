@@ -7,6 +7,7 @@ import {
   isWindows,
   readdirSorted,
   runBunInstall,
+  tempDirWithFiles,
   toBeValidBin,
   VerdaccioRegistry,
 } from "harness";
@@ -614,4 +615,74 @@ it("should include unused resolutions in the lockfile", async () => {
 
   // --frozen-lockfile works
   await runBunInstall(env, packageDir, { frozenLockfile: true });
+});
+
+it("should strip registry URL from tarball URLs in lockfile", async () => {
+  // Test with a real npm package using the default npm registry
+  const packageDir = tempDirWithFiles("lockfile-url-strip", {
+    "package.json": JSON.stringify({
+      name: "test-registry-url-stripping",
+      version: "1.0.0",
+      dependencies: {
+        "is-number": "^7.0.0",
+      },
+    }),
+  });
+
+  // Run install to generate lockfile
+  await runBunInstall(env, packageDir);
+
+  // Read the lockfile
+  const lockfileContent = await file(join(packageDir, "bun.lock")).text();
+
+  // The lockfile should contain relative URLs (starting with /)
+  // not full URLs like "https://registry.npmjs.org/is-number/-/is-number-7.0.0.tgz"
+  expect(lockfileContent).toContain('"/is-number/-/is-number-7.0.0.tgz"');
+  expect(lockfileContent).not.toContain('"https://registry.npmjs.org/is-number');
+
+  // Now reinstall from the lockfile to ensure it can read the relative URLs correctly
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  // runBunInstall will throw if the install fails, so just await it
+  await runBunInstall(env, packageDir, { frozenLockfile: true });
+
+  // Verify package was installed correctly
+  expect(await exists(join(packageDir, "node_modules", "is-number", "package.json"))).toBe(true);
+});
+
+it("should preserve full URLs when tarball URL doesn't match registry", async () => {
+  // When a registry redirects to a different domain (e.g., yarn -> npmjs.org),
+  // the full URL should be preserved since it doesn't match the configured registry
+  const packageDir = tempDirWithFiles("lockfile-preserve-full-url", {
+    "package.json": JSON.stringify({
+      name: "test-preserve-full-url",
+      version: "1.0.0",
+      dependencies: {
+        "is-number": "^7.0.0",
+      },
+    }),
+    // Configure yarn registry, which redirects tarballs to npmjs.org
+    "bunfig.toml": `
+[install]
+registry = "https://registry.yarnpkg.com/"
+`,
+  });
+
+  // Run install
+  await runBunInstall(env, packageDir);
+
+  // Read the lockfile
+  const lockfileContent = await file(join(packageDir, "bun.lock")).text();
+
+  // Yarn registry redirects to npmjs.org, so the tarball URL won't match
+  // the configured registry (yarnpkg.com). The full URL should be preserved.
+  expect(lockfileContent).toContain('"https://registry.npmjs.org/is-number/-/is-number-7.0.0.tgz"');
+
+  // Should NOT be a relative URL since it doesn't match the registry
+  expect(lockfileContent).not.toContain('"/is-number/-/is-number-7.0.0.tgz"');
+
+  // Verify reinstall works with the full URL
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await runBunInstall(env, packageDir, { frozenLockfile: true });
+  expect(await exists(join(packageDir, "node_modules", "is-number", "package.json"))).toBe(true);
 });

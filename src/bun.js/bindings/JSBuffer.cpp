@@ -2145,9 +2145,8 @@ static JSC::JSUint8Array* transcodeBuffer(
     switch (fromEncoding) {
     case BufferEncodingType::utf8: {
         switch (toEncoding) {
-        case BufferEncodingType::utf16le:
-        case BufferEncodingType::ucs2: {
-            // UTF-8 to UTF-16LE
+        case BufferEncodingType::utf16le: {
+            // UTF-8 to UTF-16LE (ucs2 normalized to utf16le earlier)
             size_t expectedLength = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(source), sourceLength);
             result = createUninitializedBuffer(lexicalGlobalObject, expectedLength * 2);
             RETURN_IF_EXCEPTION(scope, nullptr);
@@ -2198,9 +2197,8 @@ static JSC::JSUint8Array* transcodeBuffer(
         }
         break;
     }
-    case BufferEncodingType::utf16le:
-    case BufferEncodingType::ucs2: {
-        // Source is UTF-16LE
+    case BufferEncodingType::utf16le: {
+        // Source is UTF-16LE (ucs2 normalized to utf16le earlier)
         size_t utf16Length = sourceLength / 2;
         const char16_t* utf16Source = reinterpret_cast<const char16_t*>(source);
 
@@ -2280,9 +2278,8 @@ static JSC::JSUint8Array* transcodeBuffer(
 
             return result;
         }
-        case BufferEncodingType::utf16le:
-        case BufferEncodingType::ucs2: {
-            // Latin1 to UTF-16LE
+        case BufferEncodingType::utf16le: {
+            // Latin1 to UTF-16LE (ucs2 normalized to utf16le earlier)
             result = createUninitializedBuffer(lexicalGlobalObject, sourceLength * 2);
             RETURN_IF_EXCEPTION(scope, nullptr);
 

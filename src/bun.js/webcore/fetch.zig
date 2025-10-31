@@ -1516,7 +1516,7 @@ pub fn Bun__fetch_(
     bun.analytics.Features.fetch += 1;
     const vm = jsc.VirtualMachine.get();
 
-    var memory_reporter: *bun.MemoryReportingAllocator = undefined;
+    var memory_reporter: ?*bun.MemoryReportingAllocator = null;
     var has_memory_reporter = false;
     // used to clean up dynamically allocated memory on error (a poor man's errdefer)
     var is_error = false;

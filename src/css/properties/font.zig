@@ -829,6 +829,16 @@ pub const FontHandler = struct {
     flushed_properties: FontProperty = .{},
     has_any: bool = false,
 
+    const PropertyName = enum {
+        family,
+        size,
+        style,
+        weight,
+        stretch,
+        line_height,
+        variant_caps,
+    };
+
     pub fn handleProperty(
         this: *FontHandler,
         property: *const css.Property,
@@ -836,21 +846,21 @@ pub const FontHandler = struct {
         context: *css.PropertyHandlerContext,
     ) bool {
         switch (property.*) {
-            .@"font-family" => |*val| this.propertyHelper(dest, context, "family", val),
-            .@"font-size" => |*val| this.propertyHelper(dest, context, "size", val),
-            .@"font-style" => |*val| this.propertyHelper(dest, context, "style", val),
-            .@"font-weight" => |*val| this.propertyHelper(dest, context, "weight", val),
-            .@"font-stretch" => |*val| this.propertyHelper(dest, context, "stretch", val),
-            .@"font-variant-caps" => |*val| this.propertyHelper(dest, context, "variant_caps", val),
-            .@"line-height" => |*val| this.propertyHelper(dest, context, "line_height", val),
+            .@"font-family" => |*val| this.propertyHelperFamily(dest, context, val),
+            .@"font-size" => |*val| this.propertyHelperSize(dest, context, val),
+            .@"font-style" => |*val| this.propertyHelperStyle(dest, context, val),
+            .@"font-weight" => |*val| this.propertyHelperWeight(dest, context, val),
+            .@"font-stretch" => |*val| this.propertyHelperStretch(dest, context, val),
+            .@"font-variant-caps" => |*val| this.propertyHelperVariantCaps(dest, context, val),
+            .@"line-height" => |*val| this.propertyHelperLineHeight(dest, context, val),
             .font => |*val| {
-                this.flushHelper(dest, context, "family", &val.family);
-                this.flushHelper(dest, context, "size", &val.size);
-                this.flushHelper(dest, context, "style", &val.style);
-                this.flushHelper(dest, context, "weight", &val.weight);
-                this.flushHelper(dest, context, "stretch", &val.stretch);
-                this.flushHelper(dest, context, "line_height", &val.line_height);
-                this.flushHelper(dest, context, "variant_caps", &val.variant_caps);
+                this.flushHelperFamily(dest, context, &val.family);
+                this.flushHelperSize(dest, context, &val.size);
+                this.flushHelperStyle(dest, context, &val.style);
+                this.flushHelperWeight(dest, context, &val.weight);
+                this.flushHelperStretch(dest, context, &val.stretch);
+                this.flushHelperLineHeight(dest, context, &val.line_height);
+                this.flushHelperVariantCaps(dest, context, &val.variant_caps);
 
                 this.family = css.generic.deepClone(bun.BabyList(FontFamily), &val.family, context.allocator);
                 this.size = val.size.deepClone(context.allocator);
@@ -877,25 +887,104 @@ pub const FontHandler = struct {
         return true;
     }
 
-    inline fn propertyHelper(this: *FontHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, comptime prop: []const u8, val: anytype) void {
-        this.flushHelper(dest, context, prop, val);
-        @field(this, prop) = css.generic.deepClone(@TypeOf(val.*), val, context.allocator);
+    fn propertyHelperFamily(this: *FontHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, val: *const bun.BabyList(FontFamily)) void {
+        this.flushHelperFamily(dest, context, val);
+        this.family = css.generic.deepClone(bun.BabyList(FontFamily), val, context.allocator);
         this.has_any = true;
     }
 
-    inline fn flushHelper(
-        this: *FontHandler,
-        dest: *css.DeclarationList,
-        context: *css.PropertyHandlerContext,
-        comptime prop: []const u8,
-        val: anytype,
-    ) void {
-        if (@field(this, prop) != null and
-            !css.generic.eql(@TypeOf(@field(this, prop).?), &@field(this, prop).?, val) and
-            context.targets.browsers != null and
-            !css.generic.isCompatible(@TypeOf(@field(this, prop).?), val, context.targets.browsers.?))
-        {
-            this.flush(dest, context);
+    fn propertyHelperSize(this: *FontHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, val: *const FontSize) void {
+        this.flushHelperSize(dest, context, val);
+        this.size = val.deepClone(context.allocator);
+        this.has_any = true;
+    }
+
+    fn propertyHelperStyle(this: *FontHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, val: *const FontStyle) void {
+        this.flushHelperStyle(dest, context, val);
+        this.style = val.deepClone(context.allocator);
+        this.has_any = true;
+    }
+
+    fn propertyHelperWeight(this: *FontHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, val: *const FontWeight) void {
+        this.flushHelperWeight(dest, context, val);
+        this.weight = val.deepClone(context.allocator);
+        this.has_any = true;
+    }
+
+    fn propertyHelperStretch(this: *FontHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, val: *const FontStretch) void {
+        this.flushHelperStretch(dest, context, val);
+        this.stretch = val.deepClone(context.allocator);
+        this.has_any = true;
+    }
+
+    fn propertyHelperLineHeight(this: *FontHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, val: *const LineHeight) void {
+        this.flushHelperLineHeight(dest, context, val);
+        this.line_height = val.deepClone(context.allocator);
+        this.has_any = true;
+    }
+
+    fn propertyHelperVariantCaps(this: *FontHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, val: *const FontVariantCaps) void {
+        this.flushHelperVariantCaps(dest, context, val);
+        this.variant_caps = val.deepClone(context.allocator);
+        this.has_any = true;
+    }
+
+    fn flushHelperFamily(this: *FontHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, val: *const bun.BabyList(FontFamily)) void {
+        if (this.family) |*f| {
+            if (!css.generic.eql(bun.BabyList(FontFamily), f, val) and
+                context.targets.browsers != null and
+                !css.generic.isCompatible(bun.BabyList(FontFamily), val, context.targets.browsers.?))
+            {
+                this.flush(dest, context);
+            }
+        }
+    }
+
+    fn flushHelperSize(this: *FontHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, val: *const FontSize) void {
+        if (this.size) |*s| {
+            if (!s.eql(val) and context.targets.browsers != null and !val.isCompatible(context.targets.browsers.?)) {
+                this.flush(dest, context);
+            }
+        }
+    }
+
+    fn flushHelperStyle(this: *FontHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, val: *const FontStyle) void {
+        if (this.style) |*s| {
+            if (!s.eql(val) and context.targets.browsers != null and !val.isCompatible(context.targets.browsers.?)) {
+                this.flush(dest, context);
+            }
+        }
+    }
+
+    fn flushHelperWeight(this: *FontHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, val: *const FontWeight) void {
+        if (this.weight) |*w| {
+            if (!w.eql(val) and context.targets.browsers != null and !val.isCompatible(context.targets.browsers.?)) {
+                this.flush(dest, context);
+            }
+        }
+    }
+
+    fn flushHelperStretch(this: *FontHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, val: *const FontStretch) void {
+        if (this.stretch) |*s| {
+            if (!s.eql(val) and context.targets.browsers != null and !val.isCompatible(context.targets.browsers.?)) {
+                this.flush(dest, context);
+            }
+        }
+    }
+
+    fn flushHelperLineHeight(this: *FontHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, val: *const LineHeight) void {
+        if (this.line_height) |*l| {
+            if (!l.eql(val) and context.targets.browsers != null and !val.isCompatible(context.targets.browsers.?)) {
+                this.flush(dest, context);
+            }
+        }
+    }
+
+    fn flushHelperVariantCaps(this: *FontHandler, dest: *css.DeclarationList, context: *css.PropertyHandlerContext, val: *const FontVariantCaps) void {
+        if (this.variant_caps) |*v| {
+            if (!v.eql(val) and context.targets.browsers != null and !val.isCompatible(context.targets.browsers.?)) {
+                this.flush(dest, context);
+            }
         }
     }
 
@@ -904,15 +993,44 @@ pub const FontHandler = struct {
         this.flushed_properties = .{};
     }
 
-    fn push(self: *FontHandler, d: *css.DeclarationList, ctx: *css.PropertyHandlerContext, comptime prop: []const u8, val: anytype) void {
-        bun.handleOom(d.append(ctx.allocator, @unionInit(css.Property, prop, val)));
-        var insertion: FontProperty = .{};
-        if (comptime std.mem.eql(u8, prop, "font")) {
-            insertion = FontProperty.FONT;
-        } else {
-            @field(insertion, prop) = true;
-        }
-        bun.bits.insert(FontProperty, &self.flushed_properties, insertion);
+    fn pushFont(self: *FontHandler, d: *css.DeclarationList, ctx: *css.PropertyHandlerContext, val: Font) void {
+        bun.handleOom(d.append(ctx.allocator, .{ .font = val }));
+        bun.bits.insert(FontProperty, &self.flushed_properties, FontProperty.FONT);
+    }
+
+    fn pushFontFamily(self: *FontHandler, d: *css.DeclarationList, ctx: *css.PropertyHandlerContext, val: bun.BabyList(FontFamily)) void {
+        bun.handleOom(d.append(ctx.allocator, .{ .@"font-family" = val }));
+        bun.bits.insert(FontProperty, &self.flushed_properties, .{ .@"font-family" = true });
+    }
+
+    fn pushFontSize(self: *FontHandler, d: *css.DeclarationList, ctx: *css.PropertyHandlerContext, val: FontSize) void {
+        bun.handleOom(d.append(ctx.allocator, .{ .@"font-size" = val }));
+        bun.bits.insert(FontProperty, &self.flushed_properties, .{ .@"font-size" = true });
+    }
+
+    fn pushFontStyle(self: *FontHandler, d: *css.DeclarationList, ctx: *css.PropertyHandlerContext, val: FontStyle) void {
+        bun.handleOom(d.append(ctx.allocator, .{ .@"font-style" = val }));
+        bun.bits.insert(FontProperty, &self.flushed_properties, .{ .@"font-style" = true });
+    }
+
+    fn pushFontWeight(self: *FontHandler, d: *css.DeclarationList, ctx: *css.PropertyHandlerContext, val: FontWeight) void {
+        bun.handleOom(d.append(ctx.allocator, .{ .@"font-weight" = val }));
+        bun.bits.insert(FontProperty, &self.flushed_properties, .{ .@"font-weight" = true });
+    }
+
+    fn pushFontStretch(self: *FontHandler, d: *css.DeclarationList, ctx: *css.PropertyHandlerContext, val: FontStretch) void {
+        bun.handleOom(d.append(ctx.allocator, .{ .@"font-stretch" = val }));
+        bun.bits.insert(FontProperty, &self.flushed_properties, .{ .@"font-stretch" = true });
+    }
+
+    fn pushFontVariantCaps(self: *FontHandler, d: *css.DeclarationList, ctx: *css.PropertyHandlerContext, val: FontVariantCaps) void {
+        bun.handleOom(d.append(ctx.allocator, .{ .@"font-variant-caps" = val }));
+        bun.bits.insert(FontProperty, &self.flushed_properties, .{ .@"font-variant-caps" = true });
+    }
+
+    fn pushLineHeight(self: *FontHandler, d: *css.DeclarationList, ctx: *css.PropertyHandlerContext, val: LineHeight) void {
+        bun.handleOom(d.append(ctx.allocator, .{ .@"line-height" = val }));
+        bun.bits.insert(FontProperty, &self.flushed_properties, .{ .@"line-height" = true });
     }
 
     fn flush(this: *FontHandler, decls: *css.DeclarationList, context: *css.PropertyHandlerContext) void {
@@ -956,7 +1074,7 @@ pub const FontHandler = struct {
 
         if (family != null and size != null and style != null and weight != null and stretch != null and line_height != null and variant_caps != null) {
             const caps = variant_caps.?;
-            push(this, decls, context, "font", Font{
+            this.pushFont(decls, context, Font{
                 .family = family.?,
                 .size = size.?,
                 .style = style.?,
@@ -969,35 +1087,35 @@ pub const FontHandler = struct {
             // The `font` property only accepts CSS 2.1 values for font-variant caps.
             // If we have a CSS 3+ value, we need to add a separate property.
             if (!caps.isCss2()) {
-                push(this, decls, context, "font-variant-caps", caps);
+                this.pushFontVariantCaps(decls, context, caps);
             }
         } else {
             if (family) |val| {
-                push(this, decls, context, "font-family", val);
+                this.pushFontFamily(decls, context, val);
             }
 
             if (size) |val| {
-                push(this, decls, context, "font-size", val);
+                this.pushFontSize(decls, context, val);
             }
 
             if (style) |val| {
-                push(this, decls, context, "font-style", val);
+                this.pushFontStyle(decls, context, val);
             }
 
             if (variant_caps) |val| {
-                push(this, decls, context, "font-variant-caps", val);
+                this.pushFontVariantCaps(decls, context, val);
             }
 
             if (weight) |val| {
-                push(this, decls, context, "font-weight", val);
+                this.pushFontWeight(decls, context, val);
             }
 
             if (stretch) |val| {
-                push(this, decls, context, "font-stretch", val);
+                this.pushFontStretch(decls, context, val);
             }
 
             if (line_height) |val| {
-                push(this, decls, context, "line-height", val);
+                this.pushLineHeight(decls, context, val);
             }
         }
     }

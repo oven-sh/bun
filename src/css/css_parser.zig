@@ -298,6 +298,16 @@ pub fn voidWrap(comptime T: type, comptime parsefn: *const fn (*Parser) Result(T
     return Wrapper.wrapped;
 }
 
+pub fn voidWrapRuntime(comptime T: type) type {
+    return struct {
+        parse_fn: *const fn (*Parser) Result(T),
+
+        pub fn wrapped(self: @This(), p: *Parser) Result(T) {
+            return self.parse_fn(p);
+        }
+    };
+}
+
 pub fn DefineListShorthand(comptime T: type) type {
     _ = T; // autofix
     // TODO: implement this when we implement visit?
@@ -1157,7 +1167,7 @@ fn parse_until_before(
     error_behavior: ParseUntilErrorBehavior,
     comptime T: type,
     closure: anytype,
-    comptime parse_fn: *const fn (@TypeOf(closure), *Parser) Result(T),
+    parse_fn: *const fn (@TypeOf(closure), *Parser) Result(T),
 ) Result(T) {
     const delimiters = bun.bits.@"or"(Delimiters, parser.stop_before, delimiters_);
     const result = result: {
@@ -1227,7 +1237,7 @@ pub fn parse_until_after(
     return result;
 }
 
-fn parse_nested_block(parser: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Result(T)) Result(T) {
+fn parse_nested_block(parser: *Parser, comptime T: type, closure: anytype, parsefn: *const fn (@TypeOf(closure), *Parser) Result(T)) Result(T) {
     const block_type: BlockType = if (parser.at_start_of) |block_type| brk: {
         parser.at_start_of = null;
         break :brk block_type;
@@ -3925,7 +3935,7 @@ pub const Parser = struct {
     }
 
     /// Implementation of Vec::<T>::parse
-    pub fn parseList(this: *Parser, comptime T: type, comptime parse_one: *const fn (*Parser) Result(T)) Result(ArrayList(T)) {
+    pub fn parseList(this: *Parser, comptime T: type, parse_one: *const fn (*Parser) Result(T)) Result(ArrayList(T)) {
         return this.parseCommaSeparated(T, parse_one);
     }
 
@@ -3943,16 +3953,17 @@ pub const Parser = struct {
     pub fn parseCommaSeparated(
         this: *Parser,
         comptime T: type,
-        comptime parse_one: *const fn (*Parser) Result(T),
+        parse_one: *const fn (*Parser) Result(T),
     ) Result(ArrayList(T)) {
-        return this.parseCommaSeparatedInternal(T, {}, voidWrap(T, parse_one), false);
+        const wrapper = voidWrapRuntime(T){ .parse_fn = parse_one };
+        return this.parseCommaSeparatedInternal(T, wrapper, voidWrapRuntime(T).wrapped, false);
     }
 
     pub fn parseCommaSeparatedWithCtx(
         this: *Parser,
         comptime T: type,
         closure: anytype,
-        comptime parse_one: *const fn (@TypeOf(closure), *Parser) Result(T),
+        parse_one: *const fn (@TypeOf(closure), *Parser) Result(T),
     ) Result(ArrayList(T)) {
         return this.parseCommaSeparatedInternal(T, closure, parse_one, false);
     }
@@ -3961,7 +3972,7 @@ pub const Parser = struct {
         this: *Parser,
         comptime T: type,
         closure: anytype,
-        comptime parse_one: *const fn (@TypeOf(closure), *Parser) Result(T),
+        parse_one: *const fn (@TypeOf(closure), *Parser) Result(T),
         ignore_errors: bool,
     ) Result(ArrayList(T)) {
         // Vec grows from 0 to 4 by default on first push().  So allocate with
@@ -4039,7 +4050,7 @@ pub const Parser = struct {
         return result;
     }
 
-    pub inline fn parseNestedBlock(this: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Result(T)) Result(T) {
+    pub inline fn parseNestedBlock(this: *Parser, comptime T: type, closure: anytype, parsefn: *const fn (@TypeOf(closure), *Parser) Result(T)) Result(T) {
         return parse_nested_block(this, T, closure, parsefn);
     }
 
@@ -4344,11 +4355,11 @@ pub const Parser = struct {
         );
     }
 
-    pub fn parseUntilBefore(this: *Parser, delimiters: Delimiters, comptime T: type, closure: anytype, comptime parse_fn: *const fn (@TypeOf(closure), *Parser) Result(T)) Result(T) {
+    pub fn parseUntilBefore(this: *Parser, delimiters: Delimiters, comptime T: type, closure: anytype, parse_fn: *const fn (@TypeOf(closure), *Parser) Result(T)) Result(T) {
         return parse_until_before(this, delimiters, .consume, T, closure, parse_fn);
     }
 
-    pub fn parseEntirely(this: *Parser, comptime T: type, closure: anytype, comptime parsefn: *const fn (@TypeOf(closure), *Parser) Result(T)) Result(T) {
+    pub fn parseEntirely(this: *Parser, comptime T: type, closure: anytype, parsefn: *const fn (@TypeOf(closure), *Parser) Result(T)) Result(T) {
         const result = switch (parsefn(closure, this)) {
             .err => |e| return .{ .err = e },
             .result => |v| v,

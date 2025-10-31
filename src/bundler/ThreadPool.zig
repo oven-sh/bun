@@ -319,9 +319,15 @@ pub const ThreadPool = struct {
                 const other_transpiler = if (this.data.other_transpiler) |*other|
                     other
                 else blk: {
-                    this.data.other_transpiler = undefined;
+                    // Copy the client transpiler and then customize it
+                    this.data.other_transpiler = this.ctx.client_transpiler.?.*;
                     const other = &this.data.other_transpiler.?;
-                    this.initializeTranspiler(other, this.ctx.client_transpiler.?, this.allocator);
+                    other.setLog(this.data.log);
+                    other.setAllocator(this.allocator);
+                    other.linker.resolver = &other.resolver;
+                    other.macro_context = js_ast.Macro.MacroContext.init(other);
+                    const CacheSet = @import("../cache.zig");
+                    other.resolver.caches = CacheSet.Set.init(this.allocator);
                     break :blk other;
                 };
                 bun.debugAssert(other_transpiler.options.target == target);

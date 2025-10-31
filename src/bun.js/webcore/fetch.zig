@@ -1523,16 +1523,10 @@ pub fn Bun__fetch_(
     // Start with default allocator until we know we need a FetchTasklet with a MemoryReportingAllocator
     var allocator = bun.default_allocator;
     defer {
-        if (has_memory_reporter) {
-            memory_reporter.report(globalThis.vm());
-            if (is_error) bun.default_allocator.destroy(memory_reporter);
+        if (memory_reporter) |reporter| {
+            reporter.report(globalThis.vm());
+            if (is_error) bun.default_allocator.destroy(reporter);
         }
-    }
-    errdefer bun.default_allocator.destroy(memory_reporter);
-    defer {
-        memory_reporter.report(globalThis.vm());
-
-        if (is_error) bun.default_allocator.destroy(memory_reporter);
     }
 
     if (arguments.len == 0) {
@@ -2374,9 +2368,9 @@ pub fn Bun__fetch_(
     }
 
     // only create the memory reporter if we are sure this is real HTTP/S3 fetch
-    memory_reporter = bun.handleOom(bun.default_allocator.create(bun.MemoryReportingAllocator));
-    has_memory_reporter = true;
-    allocator = memory_reporter.wrap(bun.default_allocator);
+    const reporter = bun.handleOom(bun.default_allocator.create(bun.MemoryReportingAllocator));
+    memory_reporter = reporter;
+    allocator = reporter.wrap(bun.default_allocator);
 
     if (url.protocol.len > 0) {
         if (!(url.isHTTP() or url.isHTTPS() or url.isS3())) {
@@ -2709,7 +2703,7 @@ pub fn Bun__fetch_(
             .globalThis = globalThis,
             .ssl_config = ssl_config,
             .hostname = hostname,
-            .memory_reporter = memory_reporter,
+            .memory_reporter = memory_reporter.?,
             .upgraded_connection = upgraded_connection,
             .check_server_identity = if (check_server_identity.isEmptyOrUndefinedOrNull()) .empty else .create(check_server_identity, globalThis),
             .unix_socket_path = unix_socket_path,

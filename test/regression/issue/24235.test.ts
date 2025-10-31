@@ -94,4 +94,31 @@ describe("transcode", () => {
     const result = transcode(utf16Buffer, "utf16le", "utf8");
     expect(result.toString("utf8")).toBe("你好");
   });
+
+  test("should transcode ASCII to Latin1", () => {
+    const asciiBuffer = Buffer.from("hello", "ascii");
+    const result = transcode(asciiBuffer, "ascii", "latin1");
+    expect(result.toString("latin1")).toBe("hello");
+  });
+
+  test("should transcode Latin1 to ASCII with high byte replacement", () => {
+    // 0xC0 is 'À' which is > 0x7F, should become '?'
+    const latin1Buffer = Buffer.from([0x68, 0x69, 0xc0], "latin1"); // "hi" + À
+    const result = transcode(latin1Buffer, "latin1", "ascii");
+    expect(result).toEqual(Buffer.from([0x68, 0x69, 0x3f])); // "hi?"
+  });
+
+  test("should enforce 7-bit ASCII limit from UTF-8", () => {
+    // © (U+00A9 = 0xA9 in Latin1) should become '?' in ASCII
+    const utf8Buffer = Buffer.from("©", "utf8");
+    const result = transcode(utf8Buffer, "utf8", "ascii");
+    expect(result.toString("ascii")).toBe("?");
+  });
+
+  test("should preserve Latin1 characters when transcoding to Latin1", () => {
+    // À (0xC0) is valid in Latin1
+    const latin1Buffer = Buffer.from([0xc0], "latin1");
+    const result = transcode(latin1Buffer, "latin1", "latin1");
+    expect(result).toEqual(Buffer.from([0xc0]));
+  });
 });

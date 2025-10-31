@@ -2183,11 +2183,13 @@ static JSC::JSUint8Array* transcodeBuffer(
             result = createUninitializedBuffer(lexicalGlobalObject, actualLength);
             RETURN_IF_EXCEPTION(scope, nullptr);
 
-            // Convert UTF-16 to Latin1, replacing invalid chars with '?'
+            // Convert UTF-16 to ASCII/Latin1, replacing invalid chars with '?'
+            // ASCII is 7-bit (0x00-0x7F), Latin1 is 8-bit (0x00-0xFF)
+            const auto maxCodePoint = (toEncoding == BufferEncodingType::ascii) ? 0x7F : 0xFF;
             uint8_t* dest = result->typedVector();
             for (size_t i = 0; i < actualLength; i++) {
                 char16_t c = utf16Buffer[i];
-                dest[i] = (c <= 0xFF) ? static_cast<uint8_t>(c) : '?';
+                dest[i] = (c <= maxCodePoint) ? static_cast<uint8_t>(c) : '?';
             }
             return result;
         }
@@ -2226,10 +2228,12 @@ static JSC::JSUint8Array* transcodeBuffer(
             result = createUninitializedBuffer(lexicalGlobalObject, utf16Length);
             RETURN_IF_EXCEPTION(scope, nullptr);
 
+            // ASCII is 7-bit (0x00-0x7F), Latin1 is 8-bit (0x00-0xFF)
+            const auto maxCodePoint = (toEncoding == BufferEncodingType::ascii) ? 0x7F : 0xFF;
             uint8_t* dest = result->typedVector();
             for (size_t i = 0; i < utf16Length; i++) {
                 char16_t c = utf16Source[i];
-                dest[i] = (c <= 0xFF) ? static_cast<uint8_t>(c) : '?';
+                dest[i] = (c <= maxCodePoint) ? static_cast<uint8_t>(c) : '?';
             }
             return result;
         }
@@ -2242,6 +2246,27 @@ static JSC::JSUint8Array* transcodeBuffer(
     case BufferEncodingType::latin1: {
         // Source is ASCII/Latin1
         switch (toEncoding) {
+        case BufferEncodingType::latin1: {
+            // ASCII/Latin1 to Latin1 - if source is ASCII, all bytes are valid Latin1
+            // if source is Latin1, just copy
+            result = createUninitializedBuffer(lexicalGlobalObject, sourceLength);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (sourceLength > 0) {
+                memcpy(result->typedVector(), source, sourceLength);
+            }
+            return result;
+        }
+        case BufferEncodingType::ascii: {
+            // ASCII/Latin1 to ASCII - clamp high bytes to '?'
+            result = createUninitializedBuffer(lexicalGlobalObject, sourceLength);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            uint8_t* dest = result->typedVector();
+            for (size_t i = 0; i < sourceLength; i++) {
+                uint8_t byte = source[i];
+                dest[i] = (byte <= 0x7F) ? byte : '?';
+            }
+            return result;
+        }
         case BufferEncodingType::utf8: {
             // Latin1 to UTF-8
             size_t expectedLength = simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(source), sourceLength);

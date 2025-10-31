@@ -140,9 +140,9 @@ fn handleDatabaseClose(ctx: *TraceContext) !void {
     // Report database close
     otel.notifyOperationEnd(.sql, ctx.operation_id, &attrs);
 
-    // Clean up context (will be freed by SQLite after this callback returns)
-    // Note: We can't call deinit here because SQLite might still use the context
-    // The context will be leaked, but it's small and only happens once per DB
+    // Clean up context - this callback is called during sqlite3_close() and the
+    // context is no longer needed after notifyOperationEnd returns
+    ctx.deinit();
 }
 
 /// Build query attributes for progress event
@@ -188,8 +188,9 @@ fn buildQueryAttributes(
     }
 
     // Generate query summary
-    if (generateQuerySummary(query_text)) |summary| {
-        attrs.set(otel.semconv.db_query_summary, summary);
+    if (generateQuerySummary(query_text)) |summary_result| {
+        defer if (summary_result.owned) std.heap.c_allocator.free(summary_result.text);
+        attrs.set(otel.semconv.db_query_summary, summary_result.text);
     }
 
     return attrs;
@@ -289,8 +290,14 @@ fn extractTableName(query: []const u8) ?[]const u8 {
     return null;
 }
 
+/// Result from generateQuerySummary indicating ownership
+const QuerySummary = struct {
+    text: []const u8,
+    owned: bool, // true if text was allocated and must be freed
+};
+
 /// Generate low-cardinality query summary
-fn generateQuerySummary(query: []const u8) ?[]const u8 {
+fn generateQuerySummary(query: []const u8) ?QuerySummary {
     const operation = extractQueryOperation(query) orelse return null;
     const table = extractTableName(query);
 
@@ -299,11 +306,11 @@ fn generateQuerySummary(query: []const u8) ?[]const u8 {
             std.heap.c_allocator,
             "{s} {s}",
             .{ operation, t },
-        ) catch return operation;
-        return summary;
+        ) catch return .{ .text = operation, .owned = false };
+        return .{ .text = summary, .owned = true };
     }
 
-    return operation;
+    return .{ .text = operation, .owned = false };
 }
 
 // ============================================================================

@@ -382,7 +382,20 @@ pub const AttributeKeys = struct {
             "http.response.header.";
 
         var buf: [256]u8 = undefined;
-        const semconv_name = try std.fmt.bufPrint(&buf, "{s}{s}", .{ prefix, header_name });
+        const semconv_name = std.fmt.bufPrint(&buf, "{s}{s}", .{ prefix, header_name }) catch {
+            // Buffer overflow - header name too long, use allocPrint instead
+            const name_alloc = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ prefix, header_name });
+            defer self.allocator.free(name_alloc);
+
+            // Look up existing
+            if (self.lookupSemconv(name_alloc)) |existing| {
+                return existing;
+            }
+
+            // Allocate new (name_alloc is already allocated, use it directly)
+            const name_copy = try self.allocator.dupe(u8, name_alloc);
+            return try self.allocateRuntimeAttribute(name_copy);
+        };
 
         // Look up existing
         if (self.lookupSemconv(semconv_name)) |existing| {

@@ -135,13 +135,25 @@ export class TestSDK extends BunSDK implements AsyncDisposable, Disposable {
   readonly spanExporter: InMemorySpanExporter;
   readonly metricExporter: InMemoryMetricExporter;
   private echoServerRef: EchoServerRef | null = null;
-  constructor(config: BunSDKConfig = {}) {
+
+  /**
+   * Static factory method to create and start a TestSDK instance
+   * Usage: await using sdk = await TestSDK.start();
+   */
+  static async start(config: BunSDKConfig = {}): Promise<TestSDK> {
+    const sdk = new TestSDK(config);
+    await sdk.start();
+    return sdk;
+  }
+
+  private constructor(config: BunSDKConfig = {}) {
     // Create exporters automatically
     const spanExporter = new InMemorySpanExporter();
     const metricExporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
 
     super({
       ...config,
+      useEnv: false, // Disable env-based auto-configuration in tests
       spanExporter,
       metricReaders: [
         ...(config.metricReaders || []),
@@ -150,7 +162,6 @@ export class TestSDK extends BunSDK implements AsyncDisposable, Disposable {
           exportIntervalMillis: 100,
         }),
       ],
-      autoStart: true,
     });
 
     this.spanExporter = spanExporter;

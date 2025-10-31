@@ -26,7 +26,7 @@ describe("Node.js http.createServer integration", () => {
   afterAll(afterUsingEchoServer);
 
   test("creates spans for Node.js http server requests", async () => {
-    await using tsdk = new TestSDK();
+    await using tsdk = await TestSDK.start();
 
     await using srv = toDisposableServer(
       http.createServer((req, res) => {
@@ -60,7 +60,7 @@ describe("Node.js http.createServer integration", () => {
   });
 
   test("extracts headers from IncomingMessage correctly", async () => {
-    await using tsdk = new TestSDK();
+    await using tsdk = await TestSDK.start();
 
     await using server = http.createServer((req, res) => {
       res.writeHead(200);
@@ -92,7 +92,7 @@ describe("Node.js http.createServer integration", () => {
   test("auto-generates OpId starting from 1 and maintains consistency across calls", async () => {
     const capturedOpIds: { start: number[]; inject: number[] } = { start: [], inject: [] };
 
-    await using tsdk = new TestSDK();
+    await using tsdk = await TestSDK.start();
 
     // Manually attach a custom instrumentation to capture OpIds
     using instrument = Bun.telemetry.attach({

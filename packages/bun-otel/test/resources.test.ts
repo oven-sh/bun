@@ -1,10 +1,10 @@
-import { resourceFromAttributes } from "@opentelemetry/resources";
 import { describe, expect, test } from "bun:test";
 import { TestSDK } from "./test-utils";
+import { resourceFromAttributes } from "@opentelemetry/resources";
 
 describe("BunSDK resource configuration", () => {
   test("sets service name in resource", async () => {
-    await using tsdk = new TestSDK({
+    await using sdk = await TestSDK.start({
       serviceName: "test-service",
     });
 
@@ -16,14 +16,14 @@ describe("BunSDK resource configuration", () => {
     });
 
     await fetch(`http://localhost:${server.port}/`);
-    const spans = await tsdk.waitForSpans(2);
+    const spans = await sdk.waitForSpans(2);
 
     const resource = spans[0].resource;
     expect(resource.attributes["service.name"]).toBe("test-service");
   });
 
   test("merges custom resources with auto-detected resources", async () => {
-    await using tsdk = new TestSDK({
+    await using sdk = await TestSDK.start({
       resource: resourceFromAttributes({
         "deployment.environment": "production",
         "service.version": "1.0.0",
@@ -40,7 +40,7 @@ describe("BunSDK resource configuration", () => {
     });
 
     await fetch(`http://localhost:${server.port}/`);
-    const spans = await tsdk.waitForSpans(1, 500, s => s.server());
+    const spans = await sdk.waitForSpans(1, s => s.server());
 
     const resource = spans[0].resource;
     // Check custom attributes
@@ -53,7 +53,7 @@ describe("BunSDK resource configuration", () => {
   });
 
   test("can disable auto-detect resources", async () => {
-    await using tsdk = new TestSDK({
+    await using sdk = await TestSDK.start({
       resource: resourceFromAttributes({
         "custom.attribute": "value",
       }),
@@ -68,7 +68,7 @@ describe("BunSDK resource configuration", () => {
     });
 
     await fetch(`http://localhost:${server.port}/`);
-    const spans = await tsdk.waitForSpans(1, 500, s => s.server());
+    const spans = await sdk.waitForSpans(1, s => s.server());
 
     const resource = spans[0].resource;
     expect(resource.attributes["custom.attribute"]).toBe("value");

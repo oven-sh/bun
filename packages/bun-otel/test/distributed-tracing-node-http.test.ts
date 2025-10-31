@@ -14,7 +14,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
   afterAll(afterUsingEchoServer);
 
   test("context.active() returns the correct span synchronously in request handler", async () => {
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "node-http-context-active-test",
     });
 
@@ -66,7 +66,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
   });
 
   test("propagates trace context from Node.js server → fetch → echo server", async () => {
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "node-http-distributed-tracing-test",
       // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
@@ -144,7 +144,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
   });
 
   test("propagates trace context across setTimeout boundary in Node.js server", async () => {
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "node-http-settimeout-test",
       // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
@@ -228,7 +228,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
   });
 
   test("propagates trace context across setImmediate boundary in Node.js server", async () => {
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "node-http-setimmediate-test",
       // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
@@ -287,7 +287,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
   });
 
   test("propagates trace context through nested async functions in Node.js server", async () => {
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "node-http-nested-async-test",
       // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
@@ -350,7 +350,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
   });
 
   test("propagates trace context through async generator in Node.js server", async () => {
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "node-http-async-generator-test",
       // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
@@ -420,7 +420,7 @@ describe("Distributed tracing with Node.js HTTP server", () => {
   });
 
   test("fetch propagation works with parallel requests in Node.js server", async () => {
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "node-http-parallel-fetch-test",
       // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });

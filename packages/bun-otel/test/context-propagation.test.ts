@@ -7,7 +7,7 @@ describe("W3C trace context propagation", () => {
 
   // Uses default W3C propagator installed by BunSDK.start()
   test("propagates trace context in Bun.serve", async () => {
-    await using tsdk = new TestSDK();
+    await using tsdk = await TestSDK.start();
 
     using server = Bun.serve({
       port: 0,
@@ -29,7 +29,7 @@ describe("W3C trace context propagation", () => {
   });
 
   test("propagates trace context in Node.js http.createServer", async () => {
-    await using tsdk = new TestSDK();
+    await using tsdk = await TestSDK.start();
 
     const http = await import("node:http");
     await using server = http.createServer((req, res) => {

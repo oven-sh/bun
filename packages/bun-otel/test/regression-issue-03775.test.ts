@@ -35,7 +35,7 @@ describe("issue #3775 - OpenTelemetry with Bun.serve()", () => {
   beforeAll(beforeUsingEchoServer);
   afterAll(afterUsingEchoServer);
   test("BunSDK instruments Bun.serve() and exports spans", async () => {
-    await using sdk = new TestSDK();
+    await using sdk = await TestSDK.start();
 
     // Create HTTP server (the failing case from original issue)
     using server = Bun.serve({
@@ -67,7 +67,7 @@ describe("issue #3775 - OpenTelemetry with Bun.serve()", () => {
   });
 
   test("AsyncLocalStorage context propagation works with Bun.serve()", async () => {
-    await using sdk = new TestSDK();
+    await using sdk = await TestSDK.start();
 
     let activeSpanWasDefined = false;
     let capturedTraceId: string | undefined;
@@ -106,7 +106,7 @@ describe("issue #3775 - OpenTelemetry with Bun.serve()", () => {
   });
 
   test("outgoing fetch calls from server handlers create client spans", async () => {
-    await using sdk = new TestSDK();
+    await using sdk = await TestSDK.start();
 
     // Create a simple echo server to fetch from
     using echoServer = Bun.serve({

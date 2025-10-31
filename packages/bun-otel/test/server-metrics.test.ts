@@ -70,7 +70,7 @@ describe("BunHttpInstrumentation - Metrics", () => {
   });
 
   test("records http.server.request.duration histogram metric", async () => {
-    await using tsdk = new TestSDK();
+    await using tsdk = await TestSDK.start();
 
     const response = await fetch(`${serverUrl}/hello`);
     expect(response.ok).toBe(true);
@@ -105,7 +105,7 @@ describe("BunHttpInstrumentation - Metrics", () => {
   });
 
   test("records http.server.requests.total counter metric", async () => {
-    await using tsdk = new TestSDK();
+    await using tsdk = await TestSDK.start();
 
     // Make multiple requests
     for (let i = 0; i < 3; i++) {
@@ -132,7 +132,7 @@ describe("BunHttpInstrumentation - Metrics", () => {
 
   test("metrics work without tracing (metrics-only mode)", async () => {
     // TestSDK automatically provides both spans and metrics
-    await using tsdk = new TestSDK();
+    await using tsdk = await TestSDK.start();
 
     const response = await fetch(`${serverUrl}/hello`);
     await response.text();
@@ -151,7 +151,7 @@ describe("BunHttpInstrumentation - Metrics", () => {
   });
 
   test("tracks multiple endpoints separately with correct attributes", async () => {
-    await using tsdk = new TestSDK();
+    await using tsdk = await TestSDK.start();
 
     // Make requests to different endpoints
     await fetch(`${serverUrl}/hello`);
@@ -181,7 +181,7 @@ describe("BunHttpInstrumentation - Metrics", () => {
   });
 
   test("duration increases with slow handlers", async () => {
-    await using tsdk = new TestSDK();
+    await using tsdk = await TestSDK.start();
 
     // Make fast request
     const fastResponse = await fetch(`${serverUrl}/hello`);
@@ -210,7 +210,7 @@ describe("BunHttpInstrumentation - Metrics", () => {
   });
 
   test("metrics include server.address and server.port attributes", async () => {
-    await using tsdk = new TestSDK();
+    await using tsdk = await TestSDK.start();
 
     await fetch(`${serverUrl}/hello`);
 

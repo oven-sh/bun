@@ -7,7 +7,7 @@ describe("Custom span matchers", () => {
   afterAll(afterUsingEchoServer);
 
   test("toHaveAttributes - should match all attributes", async () => {
-    await using tsdk = new TestSDK();
+    await using tsdk = await TestSDK.start();
 
     using server = Bun.serve({
       port: 0,
@@ -26,7 +26,7 @@ describe("Custom span matchers", () => {
   });
 
   test("toHaveAttribute - should match single attribute", async () => {
-    await using tsdk = new TestSDK();
+    await using tsdk = await TestSDK.start();
 
     using server = Bun.serve({
       port: 0,
@@ -43,7 +43,7 @@ describe("Custom span matchers", () => {
   });
 
   test("toHaveSpanKind - should match span kind", async () => {
-    await using tsdk = new TestSDK();
+    await using tsdk = await TestSDK.start();
 
     using server = Bun.serve({
       port: 0,
@@ -59,7 +59,7 @@ describe("Custom span matchers", () => {
   });
 
   test("toHaveSpanName - should match span name", async () => {
-    await using tsdk = new TestSDK();
+    await using tsdk = await TestSDK.start();
 
     using server = Bun.serve({
       port: 0,
@@ -75,7 +75,7 @@ describe("Custom span matchers", () => {
   });
 
   test("toHaveStatusCode - should match status code", async () => {
-    await using tsdk = new TestSDK();
+    await using tsdk = await TestSDK.start();
 
     using server = Bun.serve({
       port: 0,

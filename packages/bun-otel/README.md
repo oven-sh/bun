@@ -40,14 +40,63 @@ Bun.serve({
 
 ### Configuration
 
-Follows standard OpenTelemetry environment variables:
+#### Zero-Configuration Setup
 
+BunSDK supports zero-configuration initialization using standard OpenTelemetry environment variables:
+
+```typescript
+import { BunSDK } from "bun-otel";
+
+// No config needed - reads from environment variables
+const sdk = new BunSDK();
+await sdk.start();
+```
+
+Set these environment variables:
+
+```bash
+export OTEL_SERVICE_NAME=my-service
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+```
+
+#### Environment Variables
+
+**General SDK Configuration:**
+- `OTEL_SDK_DISABLED` - Disable SDK entirely (default: `false`)
 - `OTEL_SERVICE_NAME` - Service name (defaults to package.json name)
-- `OTEL_TRACES_EXPORTER` - Trace exporter (otlp, console, none)
-- `OTEL_EXPORTER_OTLP_ENDPOINT` - OTLP collector endpoint
-- `OTEL_RESOURCE_ATTRIBUTES` - Additional resource attributes
+- `OTEL_LOG_LEVEL` - SDK log level: `NONE`, `ERROR`, `WARN`, `INFO`, `DEBUG`, `VERBOSE`, `ALL`
+- `OTEL_RESOURCE_ATTRIBUTES` - Additional resource attributes (comma-separated key=value pairs)
 
-Or configure programmatically:
+**Exporter Selection:**
+- `OTEL_TRACES_EXPORTER` - Trace exporter: `otlp` (default), `zipkin`, `console`, `none`
+- `OTEL_METRICS_EXPORTER` - Metrics exporter: `otlp` (default), `prometheus`, `console`, `none`
+- `OTEL_LOGS_EXPORTER` - Logs exporter: `otlp` (default), `console`, `none`
+
+**OTLP Exporter Configuration:**
+- `OTEL_EXPORTER_OTLP_ENDPOINT` - Base endpoint for all signals (e.g., `http://localhost:4318`)
+- `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` - Trace-specific endpoint
+- `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` - Metrics-specific endpoint
+- `OTEL_EXPORTER_OTLP_HEADERS` - Headers for all signals (comma-separated key=value pairs)
+- `OTEL_EXPORTER_OTLP_TRACES_HEADERS` - Trace-specific headers
+- `OTEL_EXPORTER_OTLP_TIMEOUT` - Export timeout in milliseconds (default: 10000)
+- `OTEL_EXPORTER_OTLP_COMPRESSION` - Compression: `none`, `gzip`
+
+**Propagators:**
+- `OTEL_PROPAGATORS` - Comma-separated list: `tracecontext`, `baggage`, `b3`, `b3multi`, `jaeger` (default: `tracecontext,baggage`)
+
+**Batch Span Processor:**
+- `OTEL_BSP_SCHEDULE_DELAY` - Batch delay in milliseconds (default: 5000)
+- `OTEL_BSP_EXPORT_TIMEOUT` - Export timeout in milliseconds (default: 30000)
+- `OTEL_BSP_MAX_QUEUE_SIZE` - Maximum queue size (default: 2048)
+- `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` - Maximum batch size (default: 512)
+
+**Metric Reader:**
+- `OTEL_METRIC_EXPORT_INTERVAL` - Export interval in milliseconds (default: 60000)
+- `OTEL_METRIC_EXPORT_TIMEOUT` - Export timeout in milliseconds (default: 30000)
+
+#### Programmatic Configuration
+
+Programmatic configuration always overrides environment variables:
 
 ```typescript
 import { BunSDK } from "bun-otel";

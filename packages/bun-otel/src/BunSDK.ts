@@ -10,6 +10,7 @@
 import {
   context,
   diag,
+  DiagLogLevel,
   metrics,
   propagation,
   trace,
@@ -17,6 +18,8 @@ import {
   type TracerProvider as ITracerProvider,
 } from "@opentelemetry/api";
 import { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator } from "@opentelemetry/core";
+import { B3InjectEncoding, B3Propagator } from "@opentelemetry/propagator-b3";
+import { JaegerPropagator } from "@opentelemetry/propagator-jaeger";
 import {
   detectResources,
   emptyResource,
@@ -35,10 +38,29 @@ import "../types";
 import type { NodeSDKConfig } from "./config-mappers";
 import { mapNodeSDKConfig } from "./config-mappers";
 import { BunAsyncLocalStorageContextManager } from "./context/BunAsyncLocalStorageContextManager";
+import { parseOtelEnvConfig, type OtelLogLevel } from "./env-config";
+import { createMetricReaderFromEnv, createTraceExporterFromEnv } from "./exporter-factory";
 import { BunGenericInstrumentation } from "./instruments/BunGenericInstrumentation";
 import { BunNodeHttpCreateServerAdapter } from "./instruments/BunNodeHttpCreateServerAdapter";
 export type SupportedInstruments = "http" | "fetch" | "node";
 const DEFAULT_INSTRUMENTS: SupportedInstruments[] = ["http", "fetch", "node"];
+
+/**
+ * Apply log level to diag logger
+ */
+function applyLogLevel(level: OtelLogLevel): void {
+  const diagLevelMap: Record<OtelLogLevel, DiagLogLevel> = {
+    NONE: DiagLogLevel.NONE,
+    ERROR: DiagLogLevel.ERROR,
+    WARN: DiagLogLevel.WARN,
+    INFO: DiagLogLevel.INFO,
+    DEBUG: DiagLogLevel.DEBUG,
+    VERBOSE: DiagLogLevel.VERBOSE,
+    ALL: DiagLogLevel.ALL,
+  };
+
+  diag.setLogger(diag, diagLevelMap[level]);
+}
 
 /**
  * Configuration for BunSDK
@@ -97,6 +119,18 @@ export interface BunSDKConfig extends NodeSDKConfig {
    * @default ["http", "fetch", "node"]
    */
   bunInstruments?: SupportedInstruments[];
+
+  /**
+   * Whether to use environment variables for auto-configuration
+   * @default true
+   *
+   * Set to false in tests to disable env-based configuration:
+   * @example
+   * ```typescript
+   * const sdk = new BunSDK({ useEnv: false, spanExporter: new InMemorySpanExporter() });
+   * ```
+   */
+  useEnv?: boolean;
 }
 
 /**
@@ -160,18 +194,91 @@ export class BunSDK implements Disposable {
   private _started = false;
 
   constructor(config: BunSDKConfig = {}) {
-    this._config = config;
+    // Check if we should use environment variables (default: true)
+    const useEnv = config.useEnv !== false;
 
-    // Auto-start unless explicitly disabled
-    if (config.autoStart !== false) {
-      this.start();
+    if (useEnv) {
+      // Parse environment configuration
+      const envConfig = parseOtelEnvConfig();
+
+      // Check if SDK is disabled via environment
+      if (envConfig.sdkDisabled) {
+        diag.info("OpenTelemetry SDK disabled via OTEL_SDK_DISABLED");
+        this._config = config;
+        this._started = true; // Mark as started but inactive
+        return;
+      }
+
+      // Apply log level from environment if set
+      if (envConfig.logLevel !== undefined) {
+        applyLogLevel(envConfig.logLevel);
+      }
+
+      // Merge env-based defaults with user config (user config takes precedence)
+      this._config = {
+        ...this._getEnvBasedDefaults(envConfig),
+        ...config,
+      };
+    } else {
+      // Skip env parsing - use only explicit config
+      this._config = config;
     }
+  }
+
+  /**
+   * Get default configuration from environment variables
+   * User-provided config will override these defaults
+   */
+  private _getEnvBasedDefaults(envConfig: ReturnType<typeof parseOtelEnvConfig>): Partial<BunSDKConfig> {
+    const defaults: Partial<BunSDKConfig> = {};
+
+    // Auto-configure trace exporter if not provided by user
+    if (envConfig.traceExporter && envConfig.traceExporter !== "none") {
+      const exporter = createTraceExporterFromEnv(envConfig.traceExporter);
+      if (exporter) {
+        // Create BatchSpanProcessor with env-configured settings
+        const processorOptions: any = {};
+        if (envConfig.bspScheduleDelay !== undefined) {
+          processorOptions.scheduledDelayMillis = envConfig.bspScheduleDelay;
+        }
+        if (envConfig.bspExportTimeout !== undefined) {
+          processorOptions.exportTimeoutMillis = envConfig.bspExportTimeout;
+        }
+        if (envConfig.bspMaxQueueSize !== undefined) {
+          processorOptions.maxQueueSize = envConfig.bspMaxQueueSize;
+        }
+        if (envConfig.bspMaxExportBatchSize !== undefined) {
+          processorOptions.maxExportBatchSize = envConfig.bspMaxExportBatchSize;
+        }
+
+        const processor =
+          Object.keys(processorOptions).length > 0
+            ? new BatchSpanProcessor(exporter, processorOptions)
+            : new BatchSpanProcessor(exporter);
+
+        defaults.spanProcessors = [processor];
+      }
+    }
+
+    // Auto-configure metric reader if not provided by user
+    if (envConfig.metricsExporter && envConfig.metricsExporter !== "none") {
+      const reader = createMetricReaderFromEnv(
+        envConfig.metricsExporter,
+        envConfig.metricExportInterval,
+        envConfig.metricExportTimeout,
+      );
+      if (reader) {
+        defaults.metricReaders = [reader];
+      }
+    }
+
+    return defaults;
   }
 
   /**
    * Start the SDK - setup providers, context, and instrumentations
    */
-  start(): void {
+  async start(): Promise<void> {
     if (this._started) return;
     this._started = true;
 
@@ -182,10 +289,10 @@ export class BunSDK implements Disposable {
     this._setupPropagation();
 
     // 3. Setup tracer provider
-    this._setupTracing();
+    await this._setupTracing();
 
     // 4. Setup meter provider
-    this._setupMetrics();
+    await this._setupMetrics();
 
     // 5. Create and enable instrumentations
     this._setupInstrumentations();
@@ -223,7 +330,7 @@ export class BunSDK implements Disposable {
    */
   async startAndRegisterSystemShutdownHooks(beforeShutdown?: () => void | Promise<void>): Promise<void> {
     // Start SDK if not already started
-    this.start();
+    await this.start();
 
     // Only register signal handlers once
     if (this._signalHandlersRegistered) {
@@ -304,6 +411,13 @@ export class BunSDK implements Disposable {
   }
 
   /**
+   * Symbol.asyncDispose for 'await using' statement
+   */
+  async [Symbol.asyncDispose](): Promise<void> {
+    await this.shutdown();
+  }
+
+  /**
    * Setup shared AsyncLocalStorage context
    */
   private _setupContext(): void {
@@ -313,29 +427,52 @@ export class BunSDK implements Disposable {
   }
 
   /**
-   * Setup W3C trace context propagation
+   * Setup propagators from environment or defaults
    */
   private _setupPropagation(): void {
-    const propagator = new CompositePropagator({
-      propagators: [new W3CTraceContextPropagator(), new W3CBaggagePropagator()],
-    });
+    const envConfig = parseOtelEnvConfig();
+    const propagatorTypes = envConfig.propagators;
 
+    const propagators: any[] = [];
+
+    for (const type of propagatorTypes) {
+      switch (type) {
+        case "tracecontext":
+          propagators.push(new W3CTraceContextPropagator());
+          break;
+        case "baggage":
+          propagators.push(new W3CBaggagePropagator());
+          break;
+        case "b3":
+          propagators.push(new B3Propagator());
+          break;
+        case "b3multi":
+          propagators.push(new B3Propagator({ injectEncoding: B3InjectEncoding.MULTI_HEADER }));
+          break;
+        case "jaeger":
+          propagators.push(new JaegerPropagator());
+          break;
+        default:
+          diag.warn(`Unknown propagator type: ${type}`);
+      }
+    }
+
+    const propagator = new CompositePropagator({ propagators });
     propagation.setGlobalPropagator(propagator);
   }
 
   /**
    * Build resource by merging auto-detected resources with custom resources
    */
-  private _buildResource(): Resource {
+  private async _buildResource(): Promise<Resource> {
     let resource = emptyResource();
 
     // Auto-detect resources (enabled by default)
     if (this._config.autoDetectResources !== false) {
-      resource = resource.merge(
-        detectResources({
-          detectors: [envDetector, processDetector, hostDetector],
-        }),
-      );
+      const detected = await detectResources({
+        detectors: [envDetector, processDetector, hostDetector],
+      });
+      resource = resource.merge(detected);
     }
 
     // Merge custom resource if provided
@@ -358,7 +495,7 @@ export class BunSDK implements Disposable {
   /**
    * Setup tracing (provider + processors)
    */
-  private _setupTracing(): void {
+  private async _setupTracing(): Promise<void> {
     // Use provided tracer provider or create one
     if (this._config.tracerProvider) {
       this._tracerProvider = this._config.tracerProvider as NodeTracerProvider;
@@ -382,7 +519,7 @@ export class BunSDK implements Disposable {
       if (spanProcessors.length > 0) {
         this._tracerProvider = new NodeTracerProvider({
           spanProcessors,
-          resource: this._buildResource(),
+          resource: await this._buildResource(),
         });
       }
     }
@@ -396,14 +533,14 @@ export class BunSDK implements Disposable {
   /**
    * Setup metrics (provider + readers)
    */
-  private _setupMetrics(): void {
+  private async _setupMetrics(): Promise<void> {
     // Use provided meter provider or create one
     if (this._config.meterProvider) {
       this._meterProvider = this._config.meterProvider as MeterProvider;
     } else if (this._config.metricReaders && this._config.metricReaders.length > 0) {
       this._meterProvider = new MeterProvider({
         readers: this._config.metricReaders,
-        resource: this._buildResource(),
+        resource: await this._buildResource(),
       });
     }
 

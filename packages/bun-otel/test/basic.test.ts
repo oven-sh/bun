@@ -8,7 +8,7 @@ describe("BunSDK basic functionality", () => {
 
   test("creates spans for HTTP requests", async () => {
     await using echoServer = await getEchoServer();
-    await using tsdk = new TestSDK();
+    await using tsdk = await TestSDK.start();
 
     using server = Bun.serve({
       port: 0,
@@ -30,7 +30,7 @@ describe("BunSDK basic functionality", () => {
 
   test("ERROR status from 5xx is not overwritten by onRequestEnd", async () => {
     await using echoServer = await getEchoServer();
-    await using tsdk = new TestSDK();
+    await using tsdk = await TestSDK.start();
 
     using server = Bun.serve({
       port: 0,

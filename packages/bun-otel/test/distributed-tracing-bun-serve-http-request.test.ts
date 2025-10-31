@@ -17,7 +17,7 @@ describe("Distributed tracing: Bun.serve → http.request", () => {
 
   test("context.active() returns the correct span in Bun.serve handler", async () => {
     await using echoServer = await getEchoServer();
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "bun-serve-context-active-test",
     });
 
@@ -50,7 +50,7 @@ describe("Distributed tracing: Bun.serve → http.request", () => {
 
   test("propagates trace context: Bun.serve → http.request → echo server", async () => {
     await using echoServer = await getEchoServer();
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "bun-serve-http-request-test",
     });
     // UUT: Bun.serve that makes http.request to echo server
@@ -121,7 +121,7 @@ describe("Distributed tracing: Bun.serve → http.request", () => {
 
   test("propagates trace context across setTimeout: Bun.serve → http.request", async () => {
     await using echoServer = await getEchoServer();
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "bun-serve-http-request-settimeout-test",
     });
 
@@ -182,7 +182,7 @@ describe("Distributed tracing: Bun.serve → http.request", () => {
 
   test("propagates trace context through parallel http.request calls in Bun.serve", async () => {
     await using echoServer = await getEchoServer();
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "bun-serve-parallel-http-request-test",
     });
 

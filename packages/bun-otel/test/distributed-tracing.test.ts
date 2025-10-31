@@ -13,7 +13,7 @@ describe("Distributed tracing with fetch propagation", () => {
   afterAll(afterUsingEchoServer);
 
   test("context.active() returns the correct span synchronously in request handler", async () => {
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "context-active-test",
     });
 
@@ -56,7 +56,7 @@ describe("Distributed tracing with fetch propagation", () => {
   });
 
   test("propagates trace context from server A → fetch → server B", async () => {
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "distributed-tracing-test",
       // Note: Don't specify instrumentations to auto-register BunHttpInstrumentation + BunFetchInstrumentation
     });
@@ -120,7 +120,7 @@ describe("Distributed tracing with fetch propagation", () => {
   });
 
   test("propagates trace context across setTimeout boundary", async () => {
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "settimeout-test",
       // Note: Don't specify instrumentations to auto-register BunHttpInstrumentation + BunFetchInstrumentation
     });
@@ -187,7 +187,7 @@ describe("Distributed tracing with fetch propagation", () => {
     // Tests that AsyncLocalStorage context persists through setImmediate callbacks.
     // setImmediate schedules work after I/O events, similar to setTimeout(0) but
     // guaranteed to execute after the current I/O polling phase.
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "setimmediate-test",
       // Note: Don't specify instrumentations to auto-register BunHttpInstrumentation + BunFetchInstrumentation
     });
@@ -236,7 +236,7 @@ describe("Distributed tracing with fetch propagation", () => {
     // Tests that context flows correctly through a chain of async function calls.
     // This verifies that each async function boundary maintains the parent context,
     // which is critical for real-world code that uses helper functions.
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "nested-async-test",
       // Note: Don't specify instrumentations to auto-register BunHttpInstrumentation + BunFetchInstrumentation
     });
@@ -287,7 +287,7 @@ describe("Distributed tracing with fetch propagation", () => {
     // Tests that context is maintained across async generator yield points.
     // Each yield suspends execution and resumes later, so this verifies that
     // AsyncLocalStorage correctly restores context after each resume.
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "async-generator-test",
       // Note: Don't specify instrumentations to auto-register BunHttpInstrumentation + BunFetchInstrumentation
     });
@@ -350,7 +350,7 @@ describe("Distributed tracing with fetch propagation", () => {
   });
 
   test("fetch propagation works with parallel requests", async () => {
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "parallel-fetch-test",
       // Note: Don't specify instrumentations to auto-register BunHttpInstrumentation + BunFetchInstrumentation
     });

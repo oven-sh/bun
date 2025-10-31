@@ -16,7 +16,7 @@ describe("Distributed tracing: http.createServer → http.request", () => {
   afterAll(afterUsingEchoServer);
 
   test("context.active() returns the correct span in http.createServer handler", async () => {
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "node-http-context-active-test",
       // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
@@ -64,7 +64,7 @@ describe("Distributed tracing: http.createServer → http.request", () => {
   });
 
   test("propagates trace context: http.createServer → http.request → echo server", async () => {
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "node-http-both-test",
       // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
@@ -156,7 +156,7 @@ describe("Distributed tracing: http.createServer → http.request", () => {
   });
 
   test("propagates trace context across setTimeout: http.createServer → http.request", async () => {
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "node-http-settimeout-test",
       // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });
@@ -237,7 +237,7 @@ describe("Distributed tracing: http.createServer → http.request", () => {
   });
 
   test("propagates trace context through parallel http.request calls in http.createServer", async () => {
-    await using tsdk = new TestSDK({
+    await using tsdk = await TestSDK.start({
       serviceName: "node-http-parallel-test",
       // Don't pass instrumentations - let BunSDK auto-register with shared contextStorage
     });

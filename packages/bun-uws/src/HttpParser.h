@@ -38,6 +38,7 @@
 #include "ProxyParser.h"
 #include "QueryParser.h"
 #include "HttpErrors.h"
+
 extern "C" size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
 extern "C" int16_t Bun__HTTPMethod__from(const char *str, size_t len);
 
@@ -285,7 +286,7 @@ namespace uWS
                     te.has = lastTokenLen > 0;
 
                     // Check if the last token is "chunked"
-                    if (lastTokenLen == 7 && WTF::equalIgnoringASCIICase<char, char>({ value.data() + lastTokenStart, 7 }, { "chunked", 7 })) [[likely]] {
+                    if (lastTokenLen == 7 && strncasecmp(value.data() + lastTokenStart, "chunked", 7) == 0) [[likely]] {
                         te.chunked = true;
                     }
 

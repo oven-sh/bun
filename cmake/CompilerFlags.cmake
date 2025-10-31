@@ -216,44 +216,35 @@ if(ENABLE_ASSERTIONS)
     -fno-delete-null-pointer-checks
   )
 
-  register_compiler_definitions(
-    DESCRIPTION "Enable libc++ assertions"
-    _LIBCPP_ENABLE_ASSERTIONS=1
-    _LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE ${RELEASE}
-    _LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG ${DEBUG}
-  )
+  if(RELEASE)
+    add_compile_definitions(
+      _LIBCPP_ENABLE_ASSERTIONS=1
+      _LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE
+    )
+  elseif(DEBUG)
+    add_compile_definitions(
+      _LIBCPP_ENABLE_ASSERTIONS=1
+      _LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG
+    )
+  endif()
 
   # Nix glibc already sets _FORTIFY_SOURCE, don't override it
-  if(NOT DEFINED ENV{NIX_CC})
-    register_compiler_definitions(
-      DESCRIPTION "Enable fortified sources (Release only)"
-      _FORTIFY_SOURCE=3 ${RELEASE}
-    )
+  if(NOT DEFINED ENV{NIX_CC} AND RELEASE)
+    add_compile_definitions(_FORTIFY_SOURCE=3)
   endif()
 
   if(LINUX)
-    register_compiler_definitions(
-      DESCRIPTION "Enable glibc++ assertions"
-      _GLIBCXX_ASSERTIONS=1
-    )
+    add_compile_definitions(_GLIBCXX_ASSERTIONS=1)
   endif()
 else()
-  register_compiler_definitions(
-    DESCRIPTION "Disable debug assertions"
+  add_compile_definitions(
     NDEBUG=1
-  )
-
-  register_compiler_definitions(
-    DESCRIPTION "Disable libc++ assertions"
     _LIBCPP_ENABLE_ASSERTIONS=0
     _LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE
   )
 
   if(LINUX)
-    register_compiler_definitions(
-      DESCRIPTION "Disable glibc++ assertions"
-      _GLIBCXX_ASSERTIONS=0
-    )
+    add_compile_definitions(_GLIBCXX_ASSERTIONS=0)
   endif()
 endif()
 
@@ -310,7 +301,7 @@ endif()
 # Valgrind cannot handle SSE4.2 instructions
 # This is needed for picohttpparser
 if(ENABLE_VALGRIND AND ARCH STREQUAL "x64")
-  register_compiler_definitions(__SSE4_2__=0)
+  add_compile_definitions(__SSE4_2__=0)
 endif()
 
 # --- Other ---

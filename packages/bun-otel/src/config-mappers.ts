@@ -139,6 +139,68 @@ function validateHeadersAndMapToAttributes(params: { requestHeaders: string[]; r
 }
 
 /**
+ * Parse distributed tracing configuration and determine flags
+ *
+ * Handles:
+ * - distributedTracing: false (disable all)
+ * - distributedTracing.server.requestHeaderContext: "link-only" (no parent extraction)
+ * - distributedTracing.server.responseHeaders: false (no injection)
+ */
+function parseDistributedTracingConfig(
+  config: LegacyHttpConfig,
+  type: "server" | "client" | "fetch",
+): {
+  shouldCaptureHeaders: boolean;
+  shouldExtractParent: boolean;
+  shouldInject: boolean;
+} {
+  const dt = config.distributedTracing;
+
+  // If boolean or undefined
+  if (typeof dt !== "object" || dt === null) {
+    const enabled = dt !== false;
+    return {
+      shouldCaptureHeaders: enabled && type === "server",
+      shouldExtractParent: enabled && type === "server",
+      shouldInject: enabled,
+    };
+  }
+
+  // Parse object structure
+  if (type === "server") {
+    const serverConfig = dt.server;
+    if (typeof serverConfig !== "object" || serverConfig === null) {
+      const enabled = serverConfig !== false;
+      return {
+        shouldCaptureHeaders: enabled,
+        shouldExtractParent: enabled,
+        shouldInject: enabled,
+      };
+    }
+
+    // Handle link-only mode
+    const isLinkOnly = serverConfig.requestHeaderContext === "link-only";
+    const shouldExtract = serverConfig.requestHeaderContext === true;
+
+    return {
+      shouldCaptureHeaders: shouldExtract,
+      shouldExtractParent: shouldExtract,
+      shouldInject: serverConfig.responseHeaders !== false,
+    };
+  } else {
+    // fetch/client
+    const clientConfig = dt.client;
+    const enabled = typeof clientConfig === "object" ? clientConfig?.requestHeaders !== false : clientConfig !== false;
+
+    return {
+      shouldCaptureHeaders: false, // clients don't capture incoming headers
+      shouldExtractParent: false, // clients don't extract parent
+      shouldInject: enabled,
+    };
+  }
+}
+
+/**
  * Merge legacy header configs (captureAttributes + headersToSpanAttributes)
  */
 function mergeHeaderConfigs(
@@ -147,6 +209,8 @@ function mergeHeaderConfigs(
 ): {
   requestHeaders: string[];
   responseHeaders: string[];
+  shouldExtractParent: boolean;
+  shouldInject: boolean;
 } {
   const requestHeaders = new Set<string>();
   const responseHeaders = new Set<string>();
@@ -190,8 +254,12 @@ function mergeHeaderConfigs(
     if (type === "server") DEFAULT_HTTP_SERVER_RESPONSE_HEADERS.forEach(h => responseHeaders.add(h));
     if (type === "fetch") DEFAULT_FETCH_RESPONSE_HEADERS.forEach(h => responseHeaders.add(h));
   }
-  const traceEnabled = config.distributedTracing !== false;
-  if (traceEnabled && type === "server") {
+
+  // Parse distributed tracing config to determine what to capture/inject
+  const dtConfig = parseDistributedTracingConfig(config, type);
+
+  // Only capture traceparent/tracestate if we should extract parent context
+  if (dtConfig.shouldCaptureHeaders && type === "server") {
     requestHeaders.add(TRACEPARENT);
     requestHeaders.add(TRACESTATE);
   }
@@ -199,6 +267,8 @@ function mergeHeaderConfigs(
   return {
     requestHeaders: Array.from(requestHeaders),
     responseHeaders: Array.from(responseHeaders),
+    shouldExtractParent: dtConfig.shouldExtractParent,
+    shouldInject: dtConfig.shouldInject && config.injectHeaders !== false,
   };
 }
 
@@ -303,11 +373,18 @@ export function mapHttpServerConfig(config: LegacyHttpConfig = {}): BunGenericIn
     // Native provides duration
     nativeDuration: "end",
 
-    // Extract parent context from request headers
-    extractParentContext: attrs => ({
-      traceparent: attrs[ATTR_HTTP_REQUEST_HEADER_TRACEPARENT],
-      tracestate: attrs[ATTR_HTTP_REQUEST_HEADER_TRACESTATE],
-    }),
+    // Extract parent context from request headers (if enabled)
+    ...(headers.shouldExtractParent
+      ? {
+          extractParentContext: attrs => ({
+            traceparent: attrs[ATTR_HTTP_REQUEST_HEADER_TRACEPARENT],
+            tracestate: attrs[ATTR_HTTP_REQUEST_HEADER_TRACESTATE],
+          }),
+        }
+      : {}),
+
+    // Control header injection for distributed tracing
+    injectHeaders: headers.shouldInject,
 
     // Span name: "GET /users"
     extractSpanName: attrs => {
@@ -392,10 +469,18 @@ export function mapNodeHttpServerConfig(config: LegacyHttpConfig = {}): BunGener
     // Node doesn't provide native duration - track internally
     nativeDuration: undefined,
 
-    extractParentContext: attrs => ({
-      traceparent: attrs[ATTR_HTTP_REQUEST_HEADER_TRACEPARENT],
-      tracestate: attrs[ATTR_HTTP_REQUEST_HEADER_TRACESTATE],
-    }),
+    // Extract parent context from request headers (if enabled)
+    ...(headers.shouldExtractParent
+      ? {
+          extractParentContext: attrs => ({
+            traceparent: attrs[ATTR_HTTP_REQUEST_HEADER_TRACEPARENT],
+            tracestate: attrs[ATTR_HTTP_REQUEST_HEADER_TRACESTATE],
+          }),
+        }
+      : {}),
+
+    // Control header injection for distributed tracing
+    injectHeaders: headers.shouldInject,
 
     extractSpanName: attrs => {
       const method = attrs[ATTR_HTTP_REQUEST_METHOD] || HTTP_REQUEST_METHOD_VALUE_OTHER;
@@ -463,6 +548,9 @@ export function mapFetchClientConfig(config: LegacyHttpConfig = {}): BunGenericI
 
     // Track duration internally (fetch is fast, no native timing yet)
     nativeDuration: undefined,
+
+    // Control header injection for distributed tracing
+    injectHeaders: headers.shouldInject,
 
     // Span name: Just method (low cardinality)
     extractSpanName: attrs => {

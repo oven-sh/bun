@@ -27,6 +27,13 @@ export interface BunGenericInstrumentationConfig extends CapabilitiesConfig, Ins
 
   /** Is this instrumentation enabled? */
   enabled?: boolean;
+
+  /**
+   * Control header injection for distributed tracing
+   * - true (default): Inject traceparent/tracestate headers
+   * - false: Disable header injection entirely
+   */
+  injectHeaders?: boolean;
 }
 
 /**
@@ -235,9 +242,14 @@ export class BunGenericInstrumentation implements Disposable, Instrumentation<Bu
 
   /**
    * Extract headers to inject (for distributed tracing)
-   * Returns { request?: string[], response?: string[] }
+   * Returns { request?: string[], response?: string[] } or undefined if injection disabled
    */
-  private _extractInjectHeaders(): { request?: string[]; response?: string[] } {
+  private _extractInjectHeaders(): { request?: string[]; response?: string[] } | undefined {
+    // Respect injectHeaders config
+    if (this._config.injectHeaders === false) {
+      return undefined;
+    }
+
     const headers = ["traceparent", "tracestate"];
 
     // CLIENT spans (fetch) inject into outgoing requests

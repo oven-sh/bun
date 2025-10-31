@@ -337,3 +337,147 @@ describe("metrics configuration", () => {
     expect(config.metrics?.end).toContain("http.response.status_code");
   });
 });
+
+describe("distributed tracing configuration", () => {
+  describe("distributedTracing: false", () => {
+    test("disables header capture for HTTP server", () => {
+      const config = mapHttpServerConfig({ distributedTracing: false });
+
+      // Should not capture traceparent/tracestate headers
+      expect(config.trace?.start).not.toContain("http.request.header.traceparent");
+      expect(config.trace?.start).not.toContain("http.request.header.tracestate");
+    });
+
+    test("disables parent extraction for HTTP server", () => {
+      const config = mapHttpServerConfig({ distributedTracing: false });
+
+      // Should not have extractParentContext function
+      expect(config.extractParentContext).toBeUndefined();
+    });
+
+    test("disables header injection for HTTP server", () => {
+      const config = mapHttpServerConfig({ distributedTracing: false });
+
+      // Should disable injection
+      expect(config.injectHeaders).toBe(false);
+    });
+
+    test("disables parent extraction for Node HTTP server", () => {
+      const config = mapNodeHttpServerConfig({ distributedTracing: false });
+
+      expect(config.extractParentContext).toBeUndefined();
+      expect(config.injectHeaders).toBe(false);
+    });
+
+    test("disables header injection for fetch client", () => {
+      const config = mapFetchClientConfig({ distributedTracing: false });
+
+      expect(config.injectHeaders).toBe(false);
+    });
+  });
+
+  describe("link-only mode", () => {
+    test("disables parent extraction when requestHeaderContext = 'link-only'", () => {
+      const config = mapHttpServerConfig({
+        distributedTracing: {
+          server: { requestHeaderContext: "link-only" },
+        },
+      });
+
+      // Should not extract parent (would create Link instead in future)
+      expect(config.extractParentContext).toBeUndefined();
+    });
+
+    test("disables header capture in link-only mode", () => {
+      const config = mapHttpServerConfig({
+        distributedTracing: {
+          server: { requestHeaderContext: "link-only" },
+        },
+      });
+
+      // Should not capture headers in link-only mode
+      expect(config.trace?.start).not.toContain("http.request.header.traceparent");
+      expect(config.trace?.start).not.toContain("http.request.header.tracestate");
+    });
+
+    test("still allows injection in link-only mode", () => {
+      const config = mapHttpServerConfig({
+        distributedTracing: {
+          server: { requestHeaderContext: "link-only" },
+        },
+      });
+
+      // Injection should still work (unless responseHeaders: false)
+      expect(config.injectHeaders).toBe(true);
+    });
+
+    test("disables injection when responseHeaders: false in link-only", () => {
+      const config = mapHttpServerConfig({
+        distributedTracing: {
+          server: {
+            requestHeaderContext: "link-only",
+            responseHeaders: false,
+          },
+        },
+      });
+
+      expect(config.injectHeaders).toBe(false);
+    });
+  });
+
+  describe("injectHeaders: false", () => {
+    test("disables header injection for HTTP server", () => {
+      const config = mapHttpServerConfig({ injectHeaders: false });
+
+      expect(config.injectHeaders).toBe(false);
+    });
+
+    test("disables header injection for Node HTTP server", () => {
+      const config = mapNodeHttpServerConfig({ injectHeaders: false });
+
+      expect(config.injectHeaders).toBe(false);
+    });
+
+    test("disables header injection for fetch client", () => {
+      const config = mapFetchClientConfig({ injectHeaders: false });
+
+      expect(config.injectHeaders).toBe(false);
+    });
+
+    test("still extracts parent context when only injection disabled", () => {
+      const config = mapHttpServerConfig({ injectHeaders: false });
+
+      // Should still extract parent (only injection disabled)
+      expect(config.extractParentContext).toBeDefined();
+    });
+  });
+
+  describe("default behavior (enabled)", () => {
+    test("enables parent extraction by default for HTTP server", () => {
+      const config = mapHttpServerConfig();
+
+      expect(config.extractParentContext).toBeDefined();
+      expect(config.injectHeaders).toBe(true);
+    });
+
+    test("enables parent extraction by default for Node HTTP server", () => {
+      const config = mapNodeHttpServerConfig();
+
+      expect(config.extractParentContext).toBeDefined();
+      expect(config.injectHeaders).toBe(true);
+    });
+
+    test("enables header injection by default for fetch client", () => {
+      const config = mapFetchClientConfig();
+
+      expect(config.injectHeaders).toBe(true);
+    });
+
+    test("captures traceparent/tracestate by default for HTTP server", () => {
+      const config = mapHttpServerConfig();
+
+      expect(config.trace?.start).toContain("http.request.header.traceparent");
+      expect(config.trace?.start).toContain("http.request.header.tracestate");
+    });
+  });
+});

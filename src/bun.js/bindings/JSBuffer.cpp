@@ -3020,7 +3020,7 @@ extern "C" JSC::EncodedJSValue jsBufferFunction_transcode(JSC::JSGlobalObject* l
     }
 
     if (sourceView->isDetached()) {
-        Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Cannot transcode a detached buffer"_s);
+        throwVMTypeError(lexicalGlobalObject, scope, "Cannot transcode a detached buffer"_s);
         return {};
     }
 
@@ -3045,7 +3045,8 @@ extern "C" JSC::EncodedJSValue jsBufferFunction_transcode(JSC::JSGlobalObject* l
     bool toSupported = (toEncoding == BufferEncodingType::utf8 || toEncoding == BufferEncodingType::utf16le || toEncoding == BufferEncodingType::latin1 || toEncoding == BufferEncodingType::ascii);
 
     if (!fromSupported || !toSupported) {
-        Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_UNKNOWN_ENCODING, "Unknown encoding"_s);
+        auto* error = Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_UNKNOWN_ENCODING, "Unknown encoding"_s);
+        scope.throwException(lexicalGlobalObject, error);
         return {};
     }
 

@@ -2124,7 +2124,9 @@ static JSC::JSUint8Array* transcodeBuffer(
 
     // Handle empty source
     if (sourceLength == 0) {
-        return createUninitializedBuffer(lexicalGlobalObject, 0);
+        auto* emptyResult = createUninitializedBuffer(lexicalGlobalObject, 0);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return emptyResult;
     }
 
     JSC::JSUint8Array* result = nullptr;
@@ -2992,8 +2994,7 @@ extern "C" JSC::EncodedJSValue jsBufferFunction_transcode(JSC::JSGlobalObject* l
     // Validate source is a Uint8Array
     auto* sourceView = JSC::jsDynamicCast<JSC::JSUint8Array*>(sourceValue);
     if (!sourceView) {
-        Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"source\" argument must be an instance of Buffer or Uint8Array"_s);
-        return {};
+        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "source"_s, "Buffer or Uint8Array"_s, sourceValue);
     }
 
     if (sourceView->isDetached()) {

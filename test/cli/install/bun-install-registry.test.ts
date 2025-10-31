@@ -6509,6 +6509,7 @@ test("doesn't error when the migration is out of sync", async () => {
     "package-lock.json": JSON.stringify({
       "name": "reproo",
       "lockfileVersion": 3,
+      "configVersion": 1,
       "requires": true,
       "packages": {
         "": {

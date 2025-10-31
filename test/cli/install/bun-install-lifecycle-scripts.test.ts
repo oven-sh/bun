@@ -1761,7 +1761,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("will run default trustedDependencies after install that didn't include them", async () => {
-      await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false });
+      await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -2561,7 +2561,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         test(withRm ? "withRm" : "withoutRm", async () => {
           const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
-          await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false });
+          await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
           await writeFile(
             packageJson,
             JSON.stringify({

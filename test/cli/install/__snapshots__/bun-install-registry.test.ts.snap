@@ -149,7 +149,7 @@ exports[`binaries each type of binary serializes correctly to text lockfile 1`] 
 exports[`binaries root resolution bins 1`] = `
 "{
   "lockfileVersion": 1,
-  "configVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "fooooo",

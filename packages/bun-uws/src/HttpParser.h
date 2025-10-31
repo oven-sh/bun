@@ -39,6 +39,10 @@
 #include "QueryParser.h"
 #include "HttpErrors.h"
 
+#if defined(_WIN32)
+#define strncasecmp _strnicmp
+#endif
+
 extern "C" size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
 extern "C" int16_t Bun__HTTPMethod__from(const char *str, size_t len);
 

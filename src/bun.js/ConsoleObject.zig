@@ -3139,7 +3139,12 @@ pub const Formatter = struct {
                                     .{prop.trunc(128)},
                                 );
 
-                                if (tag.cell.isStringLike()) {
+                                // For non-string values, wrap in braces for valid JSX syntax
+                                const needs_braces = !tag.cell.isStringLike();
+
+                                if (needs_braces) {
+                                    writer.writeAll("{");
+                                } else {
                                     if (comptime enable_ansi_colors) {
                                         writer.writeAll(comptime Output.prettyFmt("<r><green>", true));
                                     }
@@ -3147,7 +3152,9 @@ pub const Formatter = struct {
 
                                 try this.format(tag, Writer, writer_, property_value, this.globalThis, enable_ansi_colors);
 
-                                if (tag.cell.isStringLike()) {
+                                if (needs_braces) {
+                                    writer.writeAll("}");
+                                } else {
                                     if (comptime enable_ansi_colors) {
                                         writer.writeAll(comptime Output.prettyFmt("<r>", true));
                                     }
@@ -3181,6 +3188,7 @@ pub const Formatter = struct {
                             };
 
                             if (print_children and !this.single_line) {
+                                var did_print_children = false;
                                 print_children: {
                                     switch (tag.tag) {
                                         .String => {
@@ -3189,6 +3197,7 @@ pub const Formatter = struct {
                                             if (comptime enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", true));
 
                                             writer.writeAll(">");
+                                            did_print_children = true;
                                             if (children_string.len < 128) {
                                                 writer.writeString(children_string);
                                             } else {
@@ -3203,6 +3212,7 @@ pub const Formatter = struct {
                                         },
                                         .JSX => {
                                             writer.writeAll(">\n");
+                                            did_print_children = true;
 
                                             {
                                                 this.indent += 1;
@@ -3218,6 +3228,7 @@ pub const Formatter = struct {
                                             const length = try children.getLength(this.globalThis);
                                             if (length == 0) break :print_children;
                                             writer.writeAll(">\n");
+                                            did_print_children = true;
 
                                             {
                                                 this.indent += 1;
@@ -3258,7 +3269,7 @@ pub const Formatter = struct {
                                     writer.writeAll(">");
                                 }
 
-                                return;
+                                if (did_print_children) return;
                             }
                         }
                     }

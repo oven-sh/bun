@@ -3034,10 +3034,18 @@ extern "C" JSC::EncodedJSValue jsBufferFunction_transcode(JSC::JSGlobalObject* l
     auto toEncoding = parseEncoding(scope, lexicalGlobalObject, toEncodingValue, false);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Check for supported encodings
-    bool fromSupported = (fromEncoding == BufferEncodingType::utf8 || fromEncoding == BufferEncodingType::utf16le || fromEncoding == BufferEncodingType::ucs2 || fromEncoding == BufferEncodingType::latin1 || fromEncoding == BufferEncodingType::ascii);
+    // Normalize encoding aliases: ucs2 is an alias for utf16le
+    if (fromEncoding == BufferEncodingType::ucs2) {
+        fromEncoding = BufferEncodingType::utf16le;
+    }
+    if (toEncoding == BufferEncodingType::ucs2) {
+        toEncoding = BufferEncodingType::utf16le;
+    }
 
-    bool toSupported = (toEncoding == BufferEncodingType::utf8 || toEncoding == BufferEncodingType::utf16le || toEncoding == BufferEncodingType::ucs2 || toEncoding == BufferEncodingType::latin1 || toEncoding == BufferEncodingType::ascii);
+    // Check for supported encodings (ucs2 already normalized to utf16le)
+    bool fromSupported = (fromEncoding == BufferEncodingType::utf8 || fromEncoding == BufferEncodingType::utf16le || fromEncoding == BufferEncodingType::latin1 || fromEncoding == BufferEncodingType::ascii);
+
+    bool toSupported = (toEncoding == BufferEncodingType::utf8 || toEncoding == BufferEncodingType::utf16le || toEncoding == BufferEncodingType::latin1 || toEncoding == BufferEncodingType::ascii);
 
     if (!fromSupported || !toSupported) {
         Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_UNKNOWN_ENCODING, "Unknown encoding"_s);

@@ -121,4 +121,22 @@ describe("transcode", () => {
     const result = transcode(latin1Buffer, "latin1", "latin1");
     expect(result).toEqual(Buffer.from([0xc0]));
   });
+
+  test("should treat ucs2 and utf16le as aliases", () => {
+    const utf16leBuffer = Buffer.from("hi", "utf16le");
+    const result = transcode(utf16leBuffer, "utf16le", "ucs2");
+    expect(result.toString("ucs2")).toBe("hi");
+  });
+
+  test("should transcode from ucs2 to utf16le", () => {
+    const ucs2Buffer = Buffer.from("hello", "ucs2");
+    const result = transcode(ucs2Buffer, "ucs2", "utf16le");
+    expect(result.toString("utf16le")).toBe("hello");
+  });
+
+  test("should transcode from ucs2 to utf8", () => {
+    const ucs2Buffer = Buffer.from("test", "ucs2");
+    const result = transcode(ucs2Buffer, "ucs2", "utf8");
+    expect(result.toString("utf8")).toBe("test");
+  });
 });

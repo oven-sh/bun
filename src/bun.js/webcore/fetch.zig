@@ -1516,11 +1516,19 @@ pub fn Bun__fetch_(
     bun.analytics.Features.fetch += 1;
     const vm = jsc.VirtualMachine.get();
 
-    var memory_reporter = bun.handleOom(bun.default_allocator.create(bun.MemoryReportingAllocator));
+    var memory_reporter: *bun.MemoryReportingAllocator = undefined;
+    var has_memory_reporter = false;
     // used to clean up dynamically allocated memory on error (a poor man's errdefer)
     var is_error = false;
     var upgraded_connection = false;
-    var allocator = memory_reporter.wrap(bun.default_allocator);
+    // Start with default allocator until we know we need a FetchTasklet with a MemoryReportingAllocator
+    var allocator = bun.default_allocator;
+    defer {
+        if (has_memory_reporter) {
+            memory_reporter.report(globalThis.vm());
+            if (is_error) bun.default_allocator.destroy(memory_reporter);
+        }
+    }
     errdefer bun.default_allocator.destroy(memory_reporter);
     defer {
         memory_reporter.report(globalThis.vm());
@@ -1688,7 +1696,7 @@ pub fn Bun__fetch_(
         };
 
         data_url.url = url_str;
-        return dataURLResponse(data_url, globalThis, allocator);
+        return dataURLResponse(data_url, globalThis, bun.default_allocator);
     }
 
     url = ZigURL.fromString(allocator, url_str) catch {
@@ -1716,7 +1724,8 @@ pub fn Bun__fetch_(
         };
         data_url.url = url_str;
 
-        return dataURLResponse(data_url, globalThis, allocator);
+        // use default allocator on fast path to avoid allocating a MemoryReportingAllocator
+        return dataURLResponse(data_url, globalThis, bun.default_allocator);
     }
 
     // **Start with the harmless ones.**
@@ -2260,7 +2269,7 @@ pub fn Bun__fetch_(
     }
 
     // This is not 100% correct.
-    // We don't pass along headers, we ignore method, we ignore status code...
+    // We don't pass along headers, we ignore method, we ignore status code... (yeah brother this is fucked up.)
     // But it's better than status quo.
     if (url_type != .remote) {
         defer unix_socket_path.deinit();
@@ -2364,6 +2373,11 @@ pub fn Bun__fetch_(
 
         return JSPromise.resolvedPromiseValue(globalThis, response.toJS(globalThis));
     }
+
+    // only create the memory reporter if we are sure this is real HTTP/S3 fetch
+    memory_reporter = bun.handleOom(bun.default_allocator.create(bun.MemoryReportingAllocator));
+    has_memory_reporter = true;
+    allocator = memory_reporter.wrap(bun.default_allocator);
 
     if (url.protocol.len > 0) {
         if (!(url.isHTTP() or url.isHTTPS() or url.isS3())) {

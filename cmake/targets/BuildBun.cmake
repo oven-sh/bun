@@ -45,12 +45,6 @@ else()
 endif()
 
 set(LLVM_ZIG_CODEGEN_THREADS 0)
-# This makes the build slower, so we turn it off for now.
-# if (DEBUG)
-#   include(ProcessorCount)
-#   ProcessorCount(CPU_COUNT)
-#   set(LLVM_ZIG_CODEGEN_THREADS ${CPU_COUNT})
-# endif()
 
 # --- Dependencies ---
 
@@ -71,9 +65,6 @@ set(BUN_DEPENDENCIES
 )
 
 include(CloneZstd)
-# foreach(dependency ${BUN_DEPENDENCIES})
-#   include(Clone${dependency})
-# endforeach()
 
 # --- Codegen ---
 
@@ -1261,15 +1252,9 @@ if(LINUX)
     target_link_libraries(${bun} PUBLIC libatomic.so)
   endif()
 
-  if(USE_SYSTEM_ICU)
-    target_link_libraries(${bun} PRIVATE libicudata.a)
-    target_link_libraries(${bun} PRIVATE libicui18n.a)
-    target_link_libraries(${bun} PRIVATE libicuuc.a)
-  else()
-    target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicudata.a)
-    target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicui18n.a)
-    target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicuuc.a)
-  endif()
+  target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicudata.a)
+  target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicui18n.a)
+  target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicuuc.a)
 endif()
 
 if(WIN32)
@@ -1322,32 +1307,32 @@ if(NOT BUN_CPP_ONLY)
       OUTPUTS
         ${BUILD_PATH}/${bunStripExe}
     )
-    
+
     # Then sign both executables on Windows
     if(WIN32 AND ENABLE_WINDOWS_CODESIGNING)
       set(SIGN_SCRIPT "${CMAKE_SOURCE_DIR}/.buildkite/scripts/sign-windows.ps1")
-      
+
       # Verify signing script exists
       if(NOT EXISTS "${SIGN_SCRIPT}")
         message(FATAL_ERROR "Windows signing script not found: ${SIGN_SCRIPT}")
       endif()
-      
+
       # Use PowerShell for Windows code signing (native Windows, no path issues)
-      find_program(POWERSHELL_EXECUTABLE 
+      find_program(POWERSHELL_EXECUTABLE
         NAMES pwsh.exe powershell.exe
-        PATHS 
+        PATHS
           "C:/Program Files/PowerShell/7"
           "C:/Program Files (x86)/PowerShell/7"
           "C:/Windows/System32/WindowsPowerShell/v1.0"
         DOC "Path to PowerShell executable"
       )
-      
+
       if(NOT POWERSHELL_EXECUTABLE)
         set(POWERSHELL_EXECUTABLE "powershell.exe")
       endif()
-      
+
       message(STATUS "Using PowerShell executable: ${POWERSHELL_EXECUTABLE}")
-      
+
       # Sign both bun-profile.exe and bun.exe after stripping
       register_command(
         TARGET

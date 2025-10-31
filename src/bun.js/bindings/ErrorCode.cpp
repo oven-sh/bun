@@ -2379,7 +2379,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         auto arg0 = callFrame->argument(1);
         auto str0 = arg0.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto arg1 = callFrame->argument(21);
+        auto arg1 = callFrame->argument(2);
         auto str1 = arg1.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto message = makeString("Response body's content-length of "_s, str0, " byte(s) does not match the content-length of "_s, str1, " byte(s) set in header"_s);

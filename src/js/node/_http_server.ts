@@ -194,6 +194,7 @@ function emitListeningNextTick(self, hostname, port) {
   }
 }
 
+type Server = import("node:http").Server;
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
   EventEmitter.$call(this);
@@ -816,11 +817,11 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   timeout = 0;
   [kBytesWritten] = 0;
   [kHandle];
-  server: typeof Server;
+  server: Server;
   _httpMessage;
   _secureEstablished = false;
   #pendingCallback = null;
-  constructor(server: typeof Server, handle, encrypted) {
+  constructor(server: Server, handle, encrypted) {
     super();
     this.server = server;
     this[kHandle] = handle;

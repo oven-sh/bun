@@ -1579,8 +1579,7 @@ function isJavaScriptTest(path) {
  * @returns {boolean}
  */
 function isNodeTest(path) {
-  // Do not run node tests on macOS x64 in CI
-  // TODO: Unclear why we decided to do this?
+  // Do not run node tests on macOS x64 in CI, those machines are slow.
   if (isCI && isMacOS && isX64) {
     return false;
   }

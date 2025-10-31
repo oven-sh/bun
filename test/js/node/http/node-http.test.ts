@@ -856,6 +856,7 @@ describe("node:http", () => {
         req.on("socket", resolve);
         req.end();
         await promise;
+        done();
       });
     });
   });

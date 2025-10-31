@@ -285,7 +285,7 @@ namespace uWS
                     te.has = lastTokenLen > 0;
 
                     // Check if the last token is "chunked"
-                    if (lastTokenLen == 7 && !strncmp(value.data() + lastTokenStart, "chunked", 7)) [[likely]] {
+                    if (lastTokenLen == 7 && !WTF::equalIgnoringASCIICase<char, char>({ value.data() + lastTokenStart, 7 }, { "chunked", 7 })) [[likely]] {
                         te.chunked = true;
                     }
 

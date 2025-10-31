@@ -28,7 +28,7 @@ patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 catalogs: CatalogMap = .{},
 
-saved_config_version: ?bun.options.ConfigVersion,
+saved_config_version: ?bun.ConfigVersion,
 
 pub const DepSorter = struct {
     lockfile: *const Lockfile,
@@ -192,7 +192,7 @@ pub const LoadResult = union(enum) {
         }
     }
 
-    pub fn configVersion(this: *const LoadResult) ?bun.options.ConfigVersion {
+    pub fn configVersion(this: *const LoadResult) ?bun.ConfigVersion {
         return switch (this.*) {
             .not_found, .err => null,
             .ok => |ok| ok.lockfile.saved_config_version,

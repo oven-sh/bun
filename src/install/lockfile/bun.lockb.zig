@@ -248,7 +248,7 @@ pub fn save(this: *Lockfile, options: *const PackageManager.Options, bytes: *std
     }
 
     try writer.writeAll(std.mem.asBytes(&has_config_version_tag));
-    const config_version: bun.options.ConfigVersion = options.config_version orelse .current;
+    const config_version: bun.ConfigVersion = options.config_version orelse .current;
     try writer.writeInt(u64, @intFromEnum(config_version), .little);
 
     total_size.* = try stream.getPos();
@@ -567,7 +567,7 @@ pub fn load(
         if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
             const next_num = try reader.readInt(u64, .little);
             if (next_num == has_config_version_tag) {
-                const config_version = bun.options.ConfigVersion.fromInt(try reader.readInt(u64, .little)) orelse {
+                const config_version = bun.ConfigVersion.fromInt(try reader.readInt(u64, .little)) orelse {
                     return error.InvalidLockfile;
                 };
                 lockfile.saved_config_version = config_version;

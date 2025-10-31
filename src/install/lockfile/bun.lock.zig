@@ -91,7 +91,7 @@ pub const Stringifier = struct {
             try writer.print("\"lockfileVersion\": {d},\n", .{@intFromEnum(Version.current)});
             try writeIndent(writer, indent);
 
-            const config_version: bun.options.ConfigVersion = options.config_version orelse .current;
+            const config_version: bun.ConfigVersion = options.config_version orelse .current;
             try writer.print("\"configVersion\": {d},\n", .{@intFromEnum(config_version)});
 
             try writer.writeAll("\"workspaces\": {\n");
@@ -1158,7 +1158,7 @@ pub fn parseIntoBinaryLockfile(
 
     // configVersion is not required
     if (root.get("configVersion")) |config_version_expr| {
-        lockfile.saved_config_version = bun.options.ConfigVersion.fromExpr(config_version_expr) orelse {
+        lockfile.saved_config_version = bun.ConfigVersion.fromExpr(config_version_expr) orelse {
             try log.addError(source, config_version_expr.loc, "Invalid \"configVersion\". Expected a number");
             return error.InvalidConfigVersion;
         };

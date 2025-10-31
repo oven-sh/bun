@@ -1,21 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const JSError = bun.JSError;
-const JSGlobalObject = jsc.JSGlobalObject;
-const CallFrame = jsc.CallFrame;
-const ZigString = jsc.ZigString;
-
-const telemetry_config = @import("config.zig");
-pub const ConfigurationProperty = telemetry_config.ConfigurationProperty;
-const TelemetryConfig = telemetry_config.TelemetryConfig;
-
-const attributes_module = @import("attributes.zig");
-pub const AttributeMap = attributes_module.AttributeMap;
-pub const AttributeKey = attributes_module.AttributeKey;
-pub const AttributeKeys = attributes_module.AttributeKeys;
-
 /// Operation ID type - branded u64 for type safety
 /// Prevents accidental mixing of operation IDs with other numeric values
 pub const OpId = u64;
@@ -279,7 +261,7 @@ pub const InstrumentRecord = struct {
         // This allows callbacks to access instance properties via 'this'
         return op_fn.call(globalObject, self.native_instrument_object, &args) catch |err| {
             // Defensive isolation: telemetry failures must not crash the application
-            std.debug.print("Telemetry: operation hook failed: {}\n", .{err});
+            log("Telemetry: operation hook failed: {any}\n", .{err});
             // Clear the pending JavaScript exception to avoid assertion failures
             _ = globalObject.takeException(err);
             return .js_undefined;
@@ -314,11 +296,15 @@ pub const TelemetryContext = struct {
     /// Initialize the global telemetry singleton
     pub fn init(allocator: std.mem.Allocator, globalObject: *JSGlobalObject) !*TelemetryContext {
         const self = try allocator.create(TelemetryContext);
+        errdefer allocator.destroy(self);
 
         // Initialize all instrument lists
         var instrument_table: [InstrumentType.COUNT]std.ArrayList(InstrumentRecord) = undefined;
         for (&instrument_table) |*list| {
             list.* = std.ArrayList(InstrumentRecord).init(allocator);
+        }
+        errdefer {
+            for (&instrument_table) |*list| list.deinit();
         }
 
         // Initialize all operation lists (2D: [kind][step])
@@ -328,13 +314,21 @@ pub const TelemetryContext = struct {
                 step_list.* = std.ArrayList(*InstrumentRecord).init(allocator);
             }
         }
+        errdefer {
+            for (&operations_table) |*kind_table| {
+                for (kind_table) |*step_list| step_list.deinit();
+            }
+        }
 
         // Initialize semantic conventions attribute keys (needed by config)
         const semconv_keys = try allocator.create(AttributeKeys);
+        errdefer allocator.destroy(semconv_keys);
         semconv_keys.* = try AttributeKeys.init(allocator);
+        errdefer semconv_keys.deinit();
 
         // Initialize configuration manager (requires attribute_keys for HeaderNameList)
         const config = try TelemetryConfig.init(allocator, globalObject, semconv_keys);
+        errdefer config.deinit();
 
         self.* = TelemetryContext{
             .instrument_table = instrument_table,
@@ -480,7 +474,7 @@ pub const TelemetryContext = struct {
                     if (op_fn.isCallable()) {
                         self.getOnOperations(step, record.type).append(record) catch {
                             // This should never fail in practice since we pre-allocate
-                            std.debug.print("Telemetry: Failed to append to operations table\n", .{});
+                            log("Telemetry: Failed to append instrument {} (kind={}, step={}) to operations table\n", .{ record.id, @intFromEnum(record.type), step_idx });
                         };
                     }
                 }
@@ -502,10 +496,10 @@ pub const TelemetryContext = struct {
                     // Rebuild inject and capture config for this kind if it's HTTP or Fetch
                     if (kind == .http or kind == .fetch) {
                         self.config.rebuildInjectConfig(kind, list.items) catch |err| {
-                            std.debug.print("Telemetry: Failed to rebuild inject config on detach: {}\n", .{err});
+                            log("Telemetry: Failed to rebuild inject config on detach: {any}\n", .{err});
                         };
                         self.config.rebuildCaptureConfig(kind, list.items) catch |err| {
-                            std.debug.print("Telemetry: Failed to rebuild capture config on detach: {}\n", .{err});
+                            log("Telemetry: Failed to rebuild capture config on detach: {any}\n", .{err});
                         };
                     }
                     // Rebuild operations table
@@ -1030,7 +1024,7 @@ pub fn jsNotifyOperationProgress(
 
 /// Bun.telemetry.nativeHooks.notifyInject(kind: number, id: number, data: object): object
 /// Internal API for TypeScript telemetry bridges
-/// Returns merged injected data from all registered instruments
+/// Returns the result from userland instrumentation (merging happens on TS side)
 pub fn jsNotifyOperationInject(
     _: *JSGlobalObject,
     callframe: *CallFrame,
@@ -1163,3 +1157,27 @@ comptime {
         @export(&sql.Bun__telemetry__sql__register_trace, .{ .name = "Bun__telemetry__sql__register_trace" });
     }
 }
+
+// ============================================================================
+// Imports
+// ============================================================================
+
+const std = @import("std");
+const bun = @import("bun");
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+const JSError = bun.JSError;
+const JSGlobalObject = jsc.JSGlobalObject;
+const CallFrame = jsc.CallFrame;
+const ZigString = jsc.ZigString;
+
+const telemetry_config = @import("config.zig");
+pub const ConfigurationProperty = telemetry_config.ConfigurationProperty;
+const TelemetryConfig = telemetry_config.TelemetryConfig;
+
+const attributes_module = @import("attributes.zig");
+pub const AttributeMap = attributes_module.AttributeMap;
+pub const AttributeKey = attributes_module.AttributeKey;
+pub const AttributeKeys = attributes_module.AttributeKeys;
+
+const log = bun.Output.scoped(.telemetry, .hidden);

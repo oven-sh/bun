@@ -787,13 +787,18 @@ pub fn installWithManager(
         linker: switch (manager.options.node_linker) {
             .auto => {
                 const config_version = manager.options.config_version orelse {
-                    manager.options.config_version = .v1;
+                    manager.options.config_version = .v0;
                     continue :linker .hoisted;
                 };
 
                 switch (config_version) {
                     .v0 => continue :linker .hoisted,
-                    .v1 => if (manager.lockfile.workspace_paths.count() > 0 and !load_result.migratedFromNpm()) .isolated else .hoisted,
+                    .v1 => {
+                        if (!load_result.migratedFromNpm()) {
+                            continue :linker .isolated;
+                        }
+                        continue :linker .hoisted;
+                    },
                 }
             },
 

@@ -1,5 +1,6 @@
 - [ ] support performance.now
 - [ ] support Date.now()
+- [ ] support useFakeTimers in combination with setSystemTime
 - [ ] support functions:
   - [x] advanceTimersByTime
   - [ ] advanceTimersByTimeAsync\*

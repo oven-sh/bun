@@ -217,7 +217,34 @@ pub const test_only_params = [_]ParamType{
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
+fn loadGlobalBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+    if (ctx.has_loaded_global_config) return;
+
+    ctx.has_loaded_global_config = true;
+
+    var config_buf: bun.PathBuffer = undefined;
+    if (getHomeConfigPath(&config_buf)) |path| {
+        try loadBunfig(allocator, true, path, ctx, comptime cmd);
+    }
+}
+
 pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+    if (comptime cmd.readGlobalConfig()) {
+        loadGlobalBunfig(allocator, ctx, cmd) catch |err| {
+            if (auto_loaded) return;
+
+            Output.prettyErrorln("{}\nreading global config \"{s}\"", .{
+                err,
+                config_path,
+            });
+            Global.exit(1);
+        };
+    }
+
+    try loadBunfig(allocator, auto_loaded, config_path, ctx, cmd);
+}
+
+fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
     const source = switch (bun.sys.File.toSource(config_path, allocator, .{ .convert_bom = true })) {
         .result => |s| s,
         .err => |err| {
@@ -229,7 +256,6 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
             Global.exit(1);
         },
     };
-
     js_ast.Stmt.Data.Store.create();
     js_ast.Expr.Data.Store.create();
     defer {
@@ -241,6 +267,7 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
         ctx.log.level = original_level;
     }
     ctx.log.level = logger.Log.Level.warn;
+    ctx.debug.loaded_bunfig = true;
     try Bunfig.parse(allocator, &source, ctx, cmd);
 }
 
@@ -294,7 +321,6 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
     if (config_path_.len == 0) {
         return;
     }
-    defer ctx.debug.loaded_bunfig = true;
     var config_path: [:0]u8 = undefined;
     if (config_path_[0] == '/') {
         @memcpy(config_buf[0..config_path_.len], config_path_);

@@ -1,0 +1,3 @@
+reviews:
+  path_filters:
+    - !test/js/node/test/

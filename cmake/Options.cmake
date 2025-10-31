@@ -140,11 +140,6 @@ if(ENABLE_ASAN AND ENABLE_LTO)
   setx(ENABLE_LTO OFF)
 endif()
 
-if(USE_VALGRIND AND NOT USE_BASELINE)
-  message(WARNING "If valgrind is enabled, baseline must also be enabled")
-  setx(USE_BASELINE ON)
-endif()
-
 if(BUILDKITE_COMMIT)
   set(DEFAULT_REVISION ${BUILDKITE_COMMIT})
 else()

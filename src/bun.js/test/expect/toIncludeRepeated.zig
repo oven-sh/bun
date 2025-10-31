@@ -57,7 +57,7 @@ pub fn toIncludeRepeated(this: *Expect, globalThis: *JSGlobalObject, callFrame: 
     pass = actual_count == countAsNum;
 
     if (not) pass = !pass;
-    if (pass) return .js_undefined;
+    if (pass) return this.returnMatcherValue(globalThis);
 
     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
     defer formatter.deinit();

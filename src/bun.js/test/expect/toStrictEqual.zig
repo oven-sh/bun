@@ -18,7 +18,7 @@ pub fn toStrictEqual(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Cal
     var pass = try value.jestStrictDeepEquals(expected, globalThis);
 
     if (not) pass = !pass;
-    if (pass) return .js_undefined;
+    if (pass) return this.returnMatcherValue(globalThis);
 
     // handle failure
     const diff_formatter = DiffFormatter{ .received = value, .expected = expected, .globalThis = globalThis, .not = not };

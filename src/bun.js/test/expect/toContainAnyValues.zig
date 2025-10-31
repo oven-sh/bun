@@ -42,7 +42,7 @@ pub fn toContainAnyValues(
     }
 
     if (not) pass = !pass;
-    if (pass) return thisValue;
+    if (pass) return this.returnMatcherValue(globalObject);
 
     // handle failure
     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };

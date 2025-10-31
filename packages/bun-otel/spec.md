@@ -60,7 +60,7 @@ Developers can correlate application logs with traces by injecting trace context
 - **FR-003**: System MUST provide automatic HTTP client span creation for `fetch()` requests
 - **FR-004**: System MUST support standard OpenTelemetry semantic conventions for HTTP spans (method, URL, status code, user agent)
 - **FR-005**: System MUST allow developers to configure trace exporters (OTLP, Jaeger, Zipkin, Console)
-- **FR-014**: System MUST support B3, Jaeger, and W3C Baggage propagation formats in addition to W3C TraceContext
+- ~~**FR-014**: (Moved to Intentionally Removed Requirements)~~
 - **FR-015**: System MUST allow configuration of request/response header capture with explicit allowlist (deny-by-default security model), providing safe defaults (content-type, user-agent, accept, content-length) when no custom allowlist specified
 - **FR-016**: System MUST support error tracking with automatic span status marking and error recording
 
@@ -87,7 +87,7 @@ Developers can correlate application logs with traces by injecting trace context
 
 ### Error Handling and Reliability
 
-- **FR-017**: System MUST implement bounded retry with exponential backoff (3 attempts) for failed telemetry exports, dropping data after retry exhaustion to prevent memory buildup
+- **FR-017**: System MUST delegate export retry behavior to OpenTelemetry SDK (BatchSpanProcessor handles retry, backoff, and buffer management), dropping data after retry exhaustion to prevent memory buildup
 - **FR-022**: System MUST implement defensive error handling for instrumentation hook exceptions - catch exceptions, log to stderr with rate limiting to prevent log flooding, clear exception state, and continue request processing normally without affecting application behavior
 - **FR-023**: System MUST enforce header validation rules (lowercase strings only, maximum 50 headers per list, sensitive headers always blocked, invalid headers logged and ignored non-fatally) to prevent data leakage and denial-of-service attacks
 - **FR-024**: System MUST minimize memory allocations in telemetry hooks to ensure predictable performance characteristics
@@ -96,7 +96,7 @@ Developers can correlate application logs with traces by injecting trace context
 
 - **FR-029**: Header injection MUST support synchronous response from TypeScript (no async allowed at this layer)
 - **FR-032**: Operation IDs (OpId/u64) MUST be monotonic and never reused within process lifetime
-- **FR-034**: `init()` and `attach()` MUST raise global error on invalid configuration
+- **FR-034**: `attach()` MUST raise global error on invalid configuration
 - **FR-035**: `notifyOperation*` functions MUST silently fail on OOM (no errors to caller)
 - **FR-036**: `enabled()` MUST return null if initialization failed (never throws)
 - **FR-037**: All telemetry operations MUST be thread-safe: `enabled()` uses atomic read, `generateId()` uses atomic increment, `notifyOperation*` functions have safe concurrent access, AttributeKeys singleton is immutable after initialization
@@ -126,7 +126,7 @@ Developers can correlate application logs with traces by injecting trace context
 - **CON-003**: `notifyOperation*` functions MUST be inline functions (zero call overhead)
 - **CON-004**: AttributeMap operations MUST NOT allocate when telemetry disabled
 
-**Rationale**: These constraints ensure SC-004 (<0.1% overhead when disabled) is achievable through compiler optimizations rather than runtime checks.
+**Rationale**: These constraints ensure minimal overhead when telemetry is disabled through compiler optimizations rather than runtime checks.
 
 #### Minimal Allocation Strategy
 
@@ -135,7 +135,7 @@ Developers can correlate application logs with traces by injecting trace context
 - **CON-007**: AttributeMap created by `createAttributeMap()` MUST be stack-allocated and not require cleanup
 - **CON-008**: AttributeMap passed to `notifyOperation*` methods MUST remain valid for the duration of the call only (no ownership transfer)
 
-**Rationale**: Minimizing allocations and managing memory predictably ensures low overhead (SC-003) and prevents memory leaks or fragmentation under high load.
+**Rationale**: Minimizing allocations and managing memory predictably ensures low overhead and prevents memory leaks or fragmentation under high load.
 
 #### Synchronous Operation Requirements
 
@@ -155,7 +155,7 @@ Developers can correlate application logs with traces by injecting trace context
 
 #### Configuration and Initialization
 
-- **CON-011**: `init()` and `attach()` MUST raise global error on invalid configuration
+- **CON-011**: `attach()` MUST raise global error on invalid configuration
 - **CON-012**: `enabled()` MUST return null if initialization failed (never throws)
 
 **Rationale**: Fail-fast at startup ensures configuration errors are caught early, but runtime checks must be safe to prevent crashing production applications.
@@ -306,13 +306,13 @@ Developers can correlate application logs with traces by injecting trace context
 
 ### Exporter Failure Handling
 
-**Decision**: Bounded retry with exponential backoff (3 attempts), then drop data.
+**Decision**: Export behavior follows standard OpenTelemetry SDK patterns.
 
-- Failed exports retried up to 3 times with exponential backoff
+- Export behavior follows standard OpenTelemetry SDK patterns (batching, retry, backoff)
+- Memory management handled by OpenTelemetry BatchSpanProcessor with configurable limits
 - After retry exhaustion, data is dropped to prevent memory buildup
-- Memory buffer capped at 100MB (configurable)
 
-**Rationale**: Prevents memory exhaustion when telemetry backend is unavailable. Application stability prioritized over telemetry data completeness.
+**Rationale**: Prevents memory exhaustion when telemetry backend is unavailable. Application stability prioritized over telemetry data completeness. Export retry and buffer behavior is controlled by the OpenTelemetry SDK and can be configured via SDK options.
 
 ---
 
@@ -344,7 +344,7 @@ The telemetry system implements defense-in-depth security measures:
 ### Rate Limiting and DoS Prevention
 
 - Telemetry error logging rate-limited to 10 messages/second
-- Failed export buffer capped at 100MB (configurable) before data is dropped
+- Export buffer management handled by OpenTelemetry SDK with configurable limits
 - Maximum 50 headers per capture list
 
 ---
@@ -353,8 +353,6 @@ The telemetry system implements defense-in-depth security measures:
 
 - **SC-001**: Developers can set up distributed tracing in under 10 lines of configuration code without loader hooks or monkey-patching
 - **SC-002**: HTTP server traces are successfully exported to standard OpenTelemetry backends (Jaeger, Zipkin, OTLP collectors) with 100 percent of critical HTTP attributes present
-- **SC-003**: Instrumentation overhead is less than 5 percent latency increase for HTTP request processing compared to uninstrumented baseline (measured using oha or bombardier load testing tools per Bun benchmarking standards)
-- **SC-004**: When telemetry is disabled, performance impact is unmeasurable (less than 0.1 percent overhead, measured using oha or bombardier)
 - **SC-005**: Applications using `@opentelemetry/sdk-node` can migrate to Bun with less than 20 lines of code changes to achieve equivalent tracing functionality by importing a `bun-otel` native/integrated package
 - **SC-006**: Trace context propagates correctly through at least 10 hops in a distributed system without data loss
 - **SC-007**: System maintains stability under sustained load of 10,000+ requests per second with tracing enabled
@@ -436,3 +434,15 @@ The telemetry system implements defense-in-depth security measures:
 - Proprietary tracing formats (only OpenTelemetry-compatible backends)
 - Performance profiling or continuous profiling features
 - Guaranteed compatibility with all opentelemetry-js-contrib instrumentation packages - best-effort compatibility, tracked per-package separately
+
+---
+
+## Intentionally Removed Requirements
+
+### Out of Scope
+
+The following requirements were intentionally removed from the specification:
+
+- **FR-014** _(Removed)_: B3, Jaeger, and W3C Baggage propagator support
+  - **Rationale**: The implementation focuses on W3C TraceContext propagation as the primary standard. B3 and Jaeger propagators are available through user-provided configuration via `OTEL_PROPAGATORS` environment variable or custom propagator registration. The integration test uses Jaeger only as a trace storage backend (receives OTLP), not as a propagation format.
+  - **Alternative**: Users can configure additional propagators via OpenTelemetry SDK's standard propagator configuration mechanisms.

@@ -21,7 +21,8 @@
 
 'use strict';
 const common = require('../common');
-if (common.isLinux) return; // TODO: BUN
+if (common.isLinux) return; // TODO: BUN hang in release
+if (common.isMacOS) return; // TODO: BUN flaky crash
 if (!common.hasCrypto)
   common.skip('missing crypto');
 

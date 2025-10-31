@@ -93,6 +93,7 @@ pub const Stringifier = struct {
 
             const config_version: bun.ConfigVersion = options.config_version orelse .current;
             try writer.print("\"configVersion\": {d},\n", .{@intFromEnum(config_version)});
+            try writeIndent(writer, indent);
 
             try writer.writeAll("\"workspaces\": {\n");
             try incIndent(writer, indent);

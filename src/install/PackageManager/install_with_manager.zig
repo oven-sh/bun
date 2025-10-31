@@ -31,7 +31,8 @@ pub fn installWithManager(
 
     try manager.updateLockfileIfNeeded(load_result);
 
-    manager.options.config_version = load_result.configVersion();
+    const config_version = load_result.chooseConfigVersion();
+    manager.options.config_version = config_version;
 
     var root = Lockfile.Package{};
     var needs_new_lockfile = load_result != .ok or
@@ -786,11 +787,6 @@ pub fn installWithManager(
 
         linker: switch (manager.options.node_linker) {
             .auto => {
-                const config_version = manager.options.config_version orelse {
-                    manager.options.config_version = .v0;
-                    continue :linker .hoisted;
-                };
-
                 switch (config_version) {
                     .v0 => continue :linker .hoisted,
                     .v1 => {

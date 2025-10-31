@@ -192,10 +192,17 @@ pub const LoadResult = union(enum) {
         }
     }
 
-    pub fn configVersion(this: *const LoadResult) ?bun.ConfigVersion {
+    pub fn chooseConfigVersion(this: *const LoadResult) bun.ConfigVersion {
         return switch (this.*) {
-            .not_found, .err => null,
-            .ok => |ok| ok.lockfile.saved_config_version,
+            .not_found, .err => .current,
+            .ok => |ok| switch (ok.migrated) {
+                .none => ok.lockfile.saved_config_version orelse
+                    // existing bun project without configVersion
+                    .v0,
+                .pnpm => .v1,
+                .npm => .v0,
+                .yarn => .v0,
+            },
         };
     }
 

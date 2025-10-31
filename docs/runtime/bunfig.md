@@ -645,6 +645,108 @@ Valid values are:
 
 {% /table %}
 
+### `install.publicHoistPattern`
+
+Controls which dependencies are hoisted to the root `node_modules` directory when using isolated installs. By default, no dependencies are hoisted when using `linker = "isolated"`.
+
+This setting is identical to pnpm's `publicHoistPattern`. Patterns match against the dependency **name** only (not the full package path or version).
+
+```toml
+[install]
+linker = "isolated"
+# Hoist all @types packages to root node_modules
+publicHoistPattern = "@types/*"
+```
+
+You can specify multiple patterns as an array:
+
+```toml
+[install]
+linker = "isolated"
+# Hoist @types packages and packages matching *eslint*
+publicHoistPattern = ["@types/*", "*eslint*"]
+```
+
+Use exclusion patterns (prefixed with `!`) to prevent specific packages from being hoisted:
+
+```toml
+[install]
+linker = "isolated"
+# Hoist everything except no-deps
+publicHoistPattern = ["*", "!no-deps"]
+```
+
+Common use cases:
+
+```toml
+[install]
+linker = "isolated"
+
+# Hoist all type definitions to avoid TypeScript issues
+publicHoistPattern = ["@types/*"]
+
+# Hoist specific build tools that scan node_modules
+publicHoistPattern = ["eslint*", "prettier*", "@types/*"]
+
+# Prevent all hoisting (most strict isolation)
+publicHoistPattern = ["!*"]
+```
+
+This setting can also be configured via `.npmrc`:
+
+```ini
+# Single pattern
+public-hoist-pattern=@types/*
+
+# Multiple patterns (array syntax)
+public-hoist-pattern[]=@types/*
+public-hoist-pattern[]=*eslint*
+```
+
+**Note:** Direct dependencies are always installed in the project's `node_modules` regardless of this setting. This pattern only affects transitive dependencies.
+
+### `install.hoistPattern`
+
+Controls which dependencies are hoisted within each package's isolated `node_modules` directory when using isolated installs. Default `["*"]` (hoist all dependencies within each package).
+
+This setting is identical to pnpm's `hoistPattern`. Patterns match against the dependency **name** only (not the full package path or version).
+
+```toml
+[install]
+linker = "isolated"
+# Only hoist @types packages within each package's node_modules
+hoistPattern = ["@types/*"]
+```
+
+Unlike `publicHoistPattern` which controls hoisting to the root, `hoistPattern` controls hoisting within each package's own isolated `node_modules` directory.
+
+```toml
+[install]
+linker = "isolated"
+
+# Most strict: don't hoist anything within packages
+hoistPattern = ["!*"]
+
+# Default: hoist everything within packages
+hoistPattern = ["*"]
+
+# Custom: only hoist specific patterns
+hoistPattern = ["@babel/*", "@types/*"]
+```
+
+This setting can also be configured via `.npmrc`:
+
+```ini
+# Single pattern
+hoist-pattern=@types/*
+
+# Multiple patterns (array syntax)
+hoist-pattern[]=@babel/*
+hoist-pattern[]=@types/*
+```
+
+**Note:** For most use cases, the default `hoistPattern = ["*"]` works well. You typically only need to configure `publicHoistPattern` to control what gets hoisted to the workspace root.
+
 ### `install.minimumReleaseAge`
 
 Configure a minimum age (in seconds) for npm package versions. Package versions published more recently than this threshold will be filtered out during installation. Default is `null` (disabled).

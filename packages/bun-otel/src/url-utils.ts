@@ -37,8 +37,11 @@ export function parseUrlAndHost(url: string, host: string): UrlAttrs {
     if (end !== -1) {
       hostname = trimmedHost.slice(0, end + 1);
       if (trimmedHost[end + 1] === ":") {
-        const p = Number(trimmedHost.slice(end + 2));
-        if (Number.isInteger(p) && p >= 0 && p <= 65535) port = p;
+        const maybe = trimmedHost.slice(end + 2);
+        if (maybe.length > 0) {
+          const p = Number(maybe);
+          if (Number.isInteger(p) && p >= 0 && p <= 65535) port = p;
+        }
       }
     }
   } else {
@@ -46,11 +49,13 @@ export function parseUrlAndHost(url: string, host: string): UrlAttrs {
     const last = trimmedHost.lastIndexOf(":");
     if (last > -1) {
       const maybe = trimmedHost.slice(last + 1);
-      const p = Number(maybe);
       // Always strip the port part from hostname, but only include port field if valid
       hostname = trimmedHost.slice(0, last);
-      if (Number.isInteger(p) && p >= 0 && p <= 65535) {
-        port = p;
+      if (maybe.length > 0) {
+        const p = Number(maybe);
+        if (Number.isInteger(p) && p >= 0 && p <= 65535) {
+          port = p;
+        }
       }
     }
   }

@@ -86,7 +86,7 @@ pub const FetchTasklet = struct {
     promise: jsc.JSPromise.Strong,
     concurrent_task: jsc.ConcurrentTask = .{},
     poll_ref: Async.KeepAlive = .{},
-    memory_reporter: *bun.MemoryReportingAllocator,
+    allocation_scope: bun.AllocationScope,
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the request
     /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
@@ -255,7 +255,7 @@ pub const FetchTasklet = struct {
 
     fn clearData(this: *FetchTasklet) void {
         log("clearData ", .{});
-        const allocator = this.memory_reporter.allocator();
+        const allocator = this.allocation_scope.allocator();
         if (this.url_proxy_buffer.len > 0) {
             allocator.free(this.url_proxy_buffer);
             this.url_proxy_buffer.len = 0;
@@ -314,16 +314,15 @@ pub const FetchTasklet = struct {
 
         this.clearData();
 
-        var reporter = this.memory_reporter;
-        const allocator = reporter.allocator();
+        var scope = this.allocation_scope;
+        const allocator = scope.allocator();
 
         if (this.http) |http_| {
             this.http = null;
             allocator.destroy(http_);
         }
         allocator.destroy(this);
-        // reporter.assert();
-        bun.default_allocator.destroy(reporter);
+        scope.deinit();
     }
 
     fn getCurrentResponse(this: *FetchTasklet) ?*Response {
@@ -478,7 +477,7 @@ pub const FetchTasklet = struct {
             buffer_reset = false;
             if (!this.result.has_more) {
                 var scheduled_response_buffer = this.scheduled_response_buffer.list;
-                this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
+                this.allocation_scope.leakSlice(scheduled_response_buffer.allocatedSlice());
                 const body = response.getBodyValue();
                 // done resolve body
                 var old = body.*;
@@ -491,7 +490,7 @@ pub const FetchTasklet = struct {
                 log("onBodyReceived body_value length={}", .{body_value.InternalBlob.bytes.items.len});
 
                 this.scheduled_response_buffer = .{
-                    .allocator = this.memory_reporter.allocator(),
+                    .allocator = this.allocation_scope.allocator(),
                     .list = .{
                         .items = &.{},
                         .capacity = 0,
@@ -885,9 +884,9 @@ pub const FetchTasklet = struct {
         var scheduled_response_buffer = this.scheduled_response_buffer.list;
         // This means we have received part of the body but not the whole thing
         if (scheduled_response_buffer.items.len > 0) {
-            this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
+            this.allocation_scope.leakSlice(scheduled_response_buffer.allocatedSlice());
             this.scheduled_response_buffer = .{
-                .allocator = this.memory_reporter.allocator(),
+                .allocator = this.allocation_scope.allocator(),
                 .list = .{
                     .items = &.{},
                     .capacity = 0,
@@ -933,14 +932,14 @@ pub const FetchTasklet = struct {
         }
 
         var scheduled_response_buffer = this.scheduled_response_buffer.list;
-        this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
+        this.allocation_scope.leakSlice(scheduled_response_buffer.allocatedSlice());
         const response = Body.Value{
             .InternalBlob = .{
                 .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
             },
         };
         this.scheduled_response_buffer = .{
-            .allocator = this.memory_reporter.allocator(),
+            .allocator = this.allocation_scope.allocator(),
             .list = .{
                 .items = &.{},
                 .capacity = 0,
@@ -1048,14 +1047,14 @@ pub const FetchTasklet = struct {
         fetch_tasklet.* = .{
             .mutex = .{},
             .scheduled_response_buffer = .{
-                .allocator = fetch_options.memory_reporter.allocator(),
+                .allocator = fetch_options.allocation_scope.allocator(),
                 .list = .{
                     .items = &.{},
                     .capacity = 0,
                 },
             },
             .response_buffer = MutableString{
-                .allocator = fetch_options.memory_reporter.allocator(),
+                .allocator = fetch_options.allocation_scope.allocator(),
                 .list = .{
                     .items = &.{},
                     .capacity = 0,
@@ -1071,7 +1070,7 @@ pub const FetchTasklet = struct {
             .signal = fetch_options.signal,
             .hostname = fetch_options.hostname,
             .tracker = jsc.Debugger.AsyncTaskTracker.init(jsc_vm),
-            .memory_reporter = fetch_options.memory_reporter,
+            .allocation_scope = fetch_options.allocation_scope,
             .check_server_identity = fetch_options.check_server_identity,
             .reject_unauthorized = fetch_options.reject_unauthorized,
             .upgraded_connection = fetch_options.upgraded_connection,
@@ -1102,7 +1101,7 @@ pub const FetchTasklet = struct {
 
         // This task gets queued on the HTTP thread.
         fetch_tasklet.http.?.* = http.AsyncHTTP.init(
-            fetch_options.memory_reporter.allocator(),
+            fetch_options.allocation_scope.allocator(),
             fetch_options.method,
             fetch_options.url,
             fetch_options.headers.entries,
@@ -1295,7 +1294,7 @@ pub const FetchTasklet = struct {
         globalThis: ?*JSGlobalObject,
         // Custom Hostname
         hostname: ?[]u8 = null,
-        memory_reporter: *bun.MemoryReportingAllocator,
+        allocation_scope: bun.AllocationScope,
         check_server_identity: jsc.Strong.Optional = .empty,
         unix_socket_path: ZigString.Slice,
         ssl_config: ?*SSLConfig = null,
@@ -1375,7 +1374,7 @@ pub const FetchTasklet = struct {
             if (task.scheduled_response_buffer.list.capacity > 0) {
                 task.scheduled_response_buffer.deinit();
                 task.scheduled_response_buffer = .{
-                    .allocator = task.memory_reporter.allocator(),
+                    .allocator = task.allocation_scope.allocator(),
                     .list = .{
                         .items = &.{},
                         .capacity = 0,
@@ -1516,16 +1515,14 @@ pub fn Bun__fetch_(
     bun.analytics.Features.fetch += 1;
     const vm = jsc.VirtualMachine.get();
 
-    var memory_reporter = bun.handleOom(bun.default_allocator.create(bun.MemoryReportingAllocator));
+    var allocation_scope = bun.AllocationScope.init(bun.default_allocator);
     // used to clean up dynamically allocated memory on error (a poor man's errdefer)
     var is_error = false;
     var upgraded_connection = false;
-    var allocator = memory_reporter.wrap(bun.default_allocator);
-    errdefer bun.default_allocator.destroy(memory_reporter);
+    var allocator = allocation_scope.allocator();
+    errdefer allocation_scope.deinit();
     defer {
-        memory_reporter.report(globalThis.vm());
-
-        if (is_error) bun.default_allocator.destroy(memory_reporter);
+        if (is_error) allocation_scope.deinit();
     }
 
     if (arguments.len == 0) {
@@ -2696,7 +2693,7 @@ pub fn Bun__fetch_(
             .globalThis = globalThis,
             .ssl_config = ssl_config,
             .hostname = hostname,
-            .memory_reporter = memory_reporter,
+            .allocation_scope = allocation_scope,
             .upgraded_connection = upgraded_connection,
             .check_server_identity = if (check_server_identity.isEmptyOrUndefinedOrNull()) .empty else .create(check_server_identity, globalThis),
             .unix_socket_path = unix_socket_path,

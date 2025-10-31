@@ -264,6 +264,17 @@ pub const Run = struct {
         vm.hot_reload = this.ctx.debug.hot_reload;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
+        // Start CPU profiler if enabled
+        if (this.ctx.runtime_options.cpu_prof.enabled) {
+            const cpu_prof_opts = this.ctx.runtime_options.cpu_prof;
+
+            vm.cpu_profiler_config = CPUProfiler.CPUProfilerConfig{
+                .name = cpu_prof_opts.name,
+                .dir = cpu_prof_opts.dir,
+            };
+            CPUProfiler.startCPUProfiler(vm.jsc_vm);
+        }
+
         this.addConditionalGlobals();
         do_redis_preconnect: {
             // This must happen within the API lock, which is why it's not in the "doPreconnect" function
@@ -524,6 +535,7 @@ const VirtualMachine = jsc.VirtualMachine;
 
 const string = []const u8;
 
+const CPUProfiler = @import("./bun.js/bindings/BunCPUProfiler.zig");
 const options = @import("./options.zig");
 const std = @import("std");
 const Command = @import("./cli.zig").Command;

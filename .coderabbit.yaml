@@ -1,0 +1,4 @@
+reviews:
+  path_filters:
+    - "!test/js/node/test/parallel"
+    - "!test/js/node/test/sequential"

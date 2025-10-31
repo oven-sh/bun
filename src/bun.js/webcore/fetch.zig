@@ -313,6 +313,8 @@ pub const FetchTasklet = struct {
 
         this.clearData();
 
+        // FetchTasklet and AsyncHTTP are allocated with bun.default_allocator from fetch()
+        // but HTTP buffers use bun.http.default_allocator
         const allocator = bun.default_allocator;
 
         if (this.http) |http_| {
@@ -486,7 +488,7 @@ pub const FetchTasklet = struct {
                 log("onBodyReceived body_value length={}", .{body_value.InternalBlob.bytes.items.len});
 
                 this.scheduled_response_buffer = .{
-                    .allocator = bun.default_allocator,
+                    .allocator = bun.http.default_allocator,
                     .list = .{
                         .items = &.{},
                         .capacity = 0,
@@ -881,7 +883,7 @@ pub const FetchTasklet = struct {
         // This means we have received part of the body but not the whole thing
         if (scheduled_response_buffer.items.len > 0) {
             this.scheduled_response_buffer = .{
-                .allocator = bun.default_allocator,
+                .allocator = bun.http.default_allocator,
                 .list = .{
                     .items = &.{},
                     .capacity = 0,
@@ -933,7 +935,7 @@ pub const FetchTasklet = struct {
             },
         };
         this.scheduled_response_buffer = .{
-            .allocator = bun.default_allocator,
+            .allocator = bun.http.default_allocator,
             .list = .{
                 .items = &.{},
                 .capacity = 0,
@@ -1041,14 +1043,14 @@ pub const FetchTasklet = struct {
         fetch_tasklet.* = .{
             .mutex = .{},
             .scheduled_response_buffer = .{
-                .allocator = bun.default_allocator,
+                .allocator = bun.http.default_allocator,
                 .list = .{
                     .items = &.{},
                     .capacity = 0,
                 },
             },
             .response_buffer = MutableString{
-                .allocator = bun.default_allocator,
+                .allocator = bun.http.default_allocator,
                 .list = .{
                     .items = &.{},
                     .capacity = 0,
@@ -1094,7 +1096,7 @@ pub const FetchTasklet = struct {
 
         // This task gets queued on the HTTP thread.
         fetch_tasklet.http.?.* = http.AsyncHTTP.init(
-            bun.default_allocator,
+            bun.http.default_allocator,
             fetch_options.method,
             fetch_options.url,
             fetch_options.headers.entries,
@@ -1366,7 +1368,7 @@ pub const FetchTasklet = struct {
             if (task.scheduled_response_buffer.list.capacity > 0) {
                 task.scheduled_response_buffer.deinit();
                 task.scheduled_response_buffer = .{
-                    .allocator = bun.default_allocator,
+                    .allocator = bun.http.default_allocator,
                     .list = .{
                         .items = &.{},
                         .capacity = 0,

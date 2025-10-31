@@ -34,7 +34,7 @@ beforeAll(() => {
 
 beforeEach(async () => {
   add_dir = tmpdirSync();
-  await dummyBeforeEach();
+  await dummyBeforeEach({ linker: "hoisted" });
 });
 afterEach(async () => {
   await dummyAfterEach();

@@ -1452,7 +1452,7 @@ export async function ensureReactCache(): Promise<void> {
 
         try {
           // Install React packages
-          await Bun.$`${bunExe()} i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental && ${bunExe()} install`
+          await Bun.$`${bunExe()} i --linker=hoisted react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental && ${bunExe()} install`
             .cwd(tempInstallDir)
             .env({ ...bunEnv })
             .throws(true);

@@ -310,6 +310,7 @@ pub fn Builder(comptime method: BuilderMethod) type {
             }
             this.queue.deinit();
             this.sort_buf.deinit(this.allocator);
+            this.pending_optional_peers.deinit();
 
             // take over the `builder.list` pointer for only trees
             if (@intFromPtr(trees.ptr) != @intFromPtr(list_ptr)) {

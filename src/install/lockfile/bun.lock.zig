@@ -246,23 +246,27 @@ pub const Stringifier = struct {
                 TreeSortCtx.isLessThan,
             );
 
-            if (found_trusted_dependencies.count() > 0) {
+            // Write trustedDependencies if it exists in lockfile, even if empty
+            if (lockfile.trusted_dependencies) |_| {
                 try writeIndent(writer, indent);
                 try writer.writeAll(
                     \\"trustedDependencies": [
                     \\
                 );
-                indent.* += 1;
-                var values_iter = found_trusted_dependencies.valueIterator();
-                while (values_iter.next()) |dep_name| {
-                    try writeIndent(writer, indent);
-                    try writer.print(
-                        \\"{s}",
-                        \\
-                    , .{dep_name.slice(buf)});
+
+                if (found_trusted_dependencies.count() > 0) {
+                    indent.* += 1;
+                    var values_iter = found_trusted_dependencies.valueIterator();
+                    while (values_iter.next()) |dep_name| {
+                        try writeIndent(writer, indent);
+                        try writer.print(
+                            \\"{s}",
+                            \\
+                        , .{dep_name.slice(buf)});
+                    }
+                    try decIndent(writer, indent);
                 }
 
-                try decIndent(writer, indent);
                 try writer.writeAll(
                     \\],
                     \\

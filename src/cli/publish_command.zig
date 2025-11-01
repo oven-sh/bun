@@ -1430,9 +1430,92 @@ pub const PublishCommand = struct {
             const count = bun.simdutf.base64.encode(ctx.tarball_bytes, buf.items[buf.items.len - encoded_tarball_len ..], false);
             bun.assertWithLocation(count == encoded_tarball_len, @src());
 
-            try writer.print("\",\"length\":{d}}}}}}}", .{
+            try writer.print("\",\"length\":{d}}", .{
                 ctx.tarball_bytes.len,
             });
+
+            // Add provenance attachment if enabled
+            if (ctx.manager.options.publish_config.provenance) {
+                var provenance_generator = ProvenanceGenerator.init(ctx.allocator);
+                defer provenance_generator.deinit();
+
+                const access_str = if (ctx.manager.options.publish_config.access) |access| @tagName(access) else null;
+
+                provenance_generator.ensureProvenanceGeneration(access_str) catch |err| {
+                    switch (err) {
+                        error.UnsupportedCIProvider => {
+                            Output.errGeneric("Automatic provenance generation not supported for current CI provider", .{});
+                            Global.crash();
+                        },
+                        error.MissingCIEnvironment => {
+                            Output.errGeneric("Missing required CI environment for provenance generation", .{});
+                            Global.crash();
+                        },
+                        error.PublicAccessRequired => {
+                            Output.errGeneric("Can't generate provenance for private package, you must set `access` to public", .{});
+                            Global.crash();
+                        },
+                        error.TokenAcquisitionFailed => {
+                            Output.errGeneric("Failed to acquire OIDC token for provenance generation", .{});
+                            Global.crash();
+                        },
+                        error.CertificateRequestFailed => {
+                            Output.errGeneric("Failed to request certificate from Fulcio for provenance generation", .{});
+                            Global.crash();
+                        },
+                        error.SigningFailed => {
+                            Output.errGeneric("Failed to sign provenance data", .{});
+                            Global.crash();
+                        },
+                        error.TransparencyLogFailed => {
+                            Output.errGeneric("Failed to submit to Rekor transparency log", .{});
+                            Global.crash();
+                        },
+                        else => {
+                            Output.err(err, "Failed to ensure provenance generation", .{});
+                            Global.crash();
+                        },
+                    }
+                };
+
+                // Compute SHA512 hex digest from raw bytes (SLSA expects hex)
+                const integrity_sha512_hex = try std.fmt.allocPrint(
+                    ctx.allocator,
+                    "{s}",
+                    .{std.fmt.bytesToHex(ctx.integrity, .lower)},
+                );
+                defer ctx.allocator.free(integrity_sha512_hex);
+
+                const provenance_json = provenance_generator.generateProvenanceBundle(
+                    ctx.package_name,
+                    version_without_build_tag,
+                    integrity_sha512_hex,
+                ) catch |err| {
+                    Output.err(err, "Failed to generate provenance bundle", .{});
+                    Global.crash();
+                };
+                defer ctx.allocator.free(provenance_json);
+
+                // Base64-encode the bundle JSON for attachment "data"
+                const provenance_b64_len = std.base64.standard.Encoder.calcSize(provenance_json.len);
+                var provenance_b64 = try ctx.allocator.alloc(u8, provenance_b64_len);
+                defer ctx.allocator.free(provenance_b64);
+                _ = std.base64.standard.Encoder.encode(provenance_b64, provenance_json);
+
+                const provenance_filename = try std.fmt.allocPrint(ctx.allocator, "{s}-{s}.sigstore", .{ ctx.package_name, version_without_build_tag });
+                defer ctx.allocator.free(provenance_filename);
+
+                try writer.print(",\"{s}\":{{\"content_type\":\"application/vnd.dev.sigstore.bundle+json;version=0.2\",\"data\":\"{s}\",\"length\":{d}}}", .{
+                    provenance_filename,
+                    provenance_b64,
+                    provenance_json.len,
+                });
+
+                // Log provenance generation
+                Output.prettyln("<green>✓<r> Generated provenance attestation for {s}@{s}", .{ ctx.package_name, version_without_build_tag });
+            }
+
+            try writer.writeAll("}}");
         }
 
         return buf.items;
@@ -1444,6 +1527,7 @@ const stringZ = [:0]const u8;
 
 const Open = @import("../open.zig");
 const std = @import("std");
+const ProvenanceGenerator = @import("../install/provenance.zig").ProvenanceGenerator;
 
 const bun = @import("bun");
 const DotEnv = bun.DotEnv;

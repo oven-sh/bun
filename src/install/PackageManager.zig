@@ -1315,6 +1315,7 @@ const PackageManifestMap = bun.install.PackageManifestMap;
 const PackageNameAndVersionHash = bun.install.PackageNameAndVersionHash;
 const PackageNameHash = bun.install.PackageNameHash;
 const PatchTask = bun.install.PatchTask;
+const PostinstallOptimizer = bun.install.PostinstallOptimizer;
 const PreinstallState = bun.install.PreinstallState;
 const Task = bun.install.Task;
 const TaskCallbackContext = bun.install.TaskCallbackContext;
@@ -1322,4 +1323,3 @@ const initializeStore = bun.install.initializeStore;
 
 const Lockfile = bun.install.Lockfile;
 const Package = Lockfile.Package;
-const PostinstallOptimizer = bun.install.PostinstallOptimizer;

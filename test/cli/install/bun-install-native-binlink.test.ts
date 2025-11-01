@@ -1,7 +1,7 @@
 import { spawn } from "bun";
-import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { rm, writeFile } from "fs/promises";
-import { VerdaccioRegistry, bunExe, bunEnv } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe } from "harness";
 import { join } from "path";
 
 let verdaccio: VerdaccioRegistry;

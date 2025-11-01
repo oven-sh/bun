@@ -5,7 +5,7 @@ data: Data = .{ .empty = {} },
 pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReader(Container)) !void {
     const length = try reader.length();
 
-    const data = try reader.read(@intCast(length -| 5));
+    const data = try reader.read(@intCast(length -| 4));
     this.* = .{
         .data = data,
     };
@@ -19,12 +19,12 @@ pub fn writeInternal(
     writer: NewWriter(Context),
 ) !void {
     const data = this.data.slice();
-    const count: u32 = @sizeOf((u32)) + data.len + 1;
+    const count: u32 = @sizeOf(u32) + @as(u32, @intCast(data.len));
     const header = [_]u8{
         'd',
     } ++ toBytes(Int32(count));
     try writer.write(&header);
-    try writer.string(data);
+    try writer.write(data);
 }
 
 pub const write = WriteWrap(@This(), writeInternal).write;

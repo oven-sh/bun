@@ -727,7 +727,7 @@ pub const JSValue = enum(i64) {
         defer buf.deinit();
 
         var writer = buf.writer();
-        switch (Output.enable_ansi_colors) {
+        switch (Output.enable_ansi_colors_stderr) {
             inline else => |enabled| try writer.print(Output.prettyFmt(fmt, enabled), args),
         }
         return String.init(buf.slice()).toJS(globalThis);

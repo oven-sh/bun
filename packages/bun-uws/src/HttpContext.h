@@ -92,17 +92,8 @@ private:
         MACRO("UNSUBSCRIBE") \
 
 
-#ifndef _WIN32
-    static constexpr std::array<const std::string, 35> HTTP_METHODS = {
-        #define MACRO(name) std::string {name},
-        FOR_EACH_HTTP_METHOD(MACRO)
-        #undef MACRO
-    };
-    static std::span<const std::string> getAllHttpMethods() {
-        return {HTTP_METHODS.data(), HTTP_METHODS.size()};
-    }
-#else
-    // Windows, and older C++ can't do constexpr std::array<const std::string, 35>
+    // Use const char* for constexpr compatibility across all platforms
+    // constexpr std::string requires heap allocation and cannot be used at namespace scope
     static constexpr std::array<const char*, 35> HTTP_METHODS = {
         #define MACRO(name) name,
         FOR_EACH_HTTP_METHOD(MACRO)
@@ -121,7 +112,6 @@ private:
         });
         return {methods.data(), methods.size()};
     }
-#endif
 #undef FOR_EACH_HTTP_METHOD
 
 

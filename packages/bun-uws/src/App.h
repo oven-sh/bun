@@ -73,6 +73,9 @@ namespace uWS {
         unsigned int cert_count = 0;
         const char **ca = nullptr;
         unsigned int ca_count = 0;
+        const char **pfx = nullptr;
+        unsigned int pfx_count = 0;
+        unsigned int *pfx_len = nullptr;
         unsigned int secure_options = 0;
         int reject_unauthorized = 0;
         int request_cert = 0;

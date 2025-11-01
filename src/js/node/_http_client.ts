@@ -724,8 +724,19 @@ function ClientRequest(input, options, cb) {
   }
   this.joinDuplicateHeaders = joinDuplicateHeaders;
 
+  // Handle pfx option from request or agent
   if (options.pfx) {
-    throw new Error("pfx is not supported");
+    if (!isValidTLSArray(options.pfx))
+      throw new TypeError(
+        "pfx argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+      );
+    this._ensureTls().pfx = options.pfx;
+  } else if (agent?.options?.pfx) {
+    if (!isValidTLSArray(agent.options.pfx))
+      throw new TypeError(
+        "pfx argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+      );
+    this._ensureTls().pfx = agent.options.pfx;
   }
 
   if (options.rejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = options.rejectUnauthorized;
@@ -744,6 +755,12 @@ function ClientRequest(input, options, cb) {
         "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
       );
     this._ensureTls().ca = options.ca;
+  } else if (agent?.options?.ca) {
+    if (!isValidTLSArray(agent.options.ca))
+      throw new TypeError(
+        "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+      );
+    this._ensureTls().ca = agent.options.ca;
   }
   if (options.cert) {
     if (!isValidTLSArray(options.cert))
@@ -751,6 +768,12 @@ function ClientRequest(input, options, cb) {
         "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
       );
     this._ensureTls().cert = options.cert;
+  } else if (agent?.options?.cert) {
+    if (!isValidTLSArray(agent.options.cert))
+      throw new TypeError(
+        "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+      );
+    this._ensureTls().cert = agent.options.cert;
   }
   if (options.key) {
     if (!isValidTLSArray(options.key))
@@ -758,10 +781,19 @@ function ClientRequest(input, options, cb) {
         "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
       );
     this._ensureTls().key = options.key;
+  } else if (agent?.options?.key) {
+    if (!isValidTLSArray(agent.options.key))
+      throw new TypeError(
+        "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+      );
+    this._ensureTls().key = agent.options.key;
   }
   if (options.passphrase) {
     if (typeof options.passphrase !== "string") throw new TypeError("passphrase argument must be a string");
     this._ensureTls().passphrase = options.passphrase;
+  } else if (agent?.options?.passphrase) {
+    if (typeof agent.options.passphrase !== "string") throw new TypeError("passphrase argument must be a string");
+    this._ensureTls().passphrase = agent.options.passphrase;
   }
   if (options.ciphers) {
     if (typeof options.ciphers !== "string") throw new TypeError("ciphers argument must be a string");

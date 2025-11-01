@@ -232,6 +232,9 @@ struct us_bun_socket_context_options_t {
     unsigned int cert_count;
     const char * const *ca;
     unsigned int ca_count;
+    const char * const *pfx;
+    unsigned int pfx_count;
+    unsigned int *pfx_len;
     unsigned int secure_options;
     int reject_unauthorized;
     int request_cert;

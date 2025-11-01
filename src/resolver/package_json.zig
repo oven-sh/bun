@@ -1302,10 +1302,12 @@ pub const ExportsMap = struct {
 pub const ESModule = struct {
     pub const ConditionsMap = bun.StringArrayHashMap(void);
 
+    resolver: *resolver.Resolver,
     debug_logs: ?*resolver.DebugLogs = null,
     conditions: ConditionsMap,
     allocator: std.mem.Allocator,
     module_type: *options.ModuleType = undefined,
+    abs_package_path: string,
 
     pub const Resolution = struct {
         status: Status = Status.Undefined,
@@ -1710,6 +1712,41 @@ pub const ESModule = struct {
 
     threadlocal var resolve_target_buf: bun.PathBuffer = undefined;
     threadlocal var resolve_target_buf2: bun.PathBuffer = undefined;
+    threadlocal var check_file_exists_buf: bun.PathBuffer = undefined;
+
+    /// Checks if a file exists for the given resolution result.
+    /// Uses the resolver's directory cache for performance.
+    fn checkFileExists(r: *const ESModule, resolution: Resolution) bool {
+        // Only check for .Exact status - other statuses don't represent files
+        if (resolution.status != .Exact and resolution.status != .ExactEndsWithStar) {
+            return true; // Not a file path, so assume valid
+        }
+        
+        if (resolution.path.len == 0 or resolution.path[0] != std.fs.path.sep) {
+            return true; // Invalid path format
+        }
+
+        // Construct the absolute path
+        const abs_esm_path: string = brk: {
+            var parts = [_]string{
+                r.abs_package_path,
+                strings.withoutLeadingPathSeparator(resolution.path),
+            };
+            break :brk r.resolver.fs.absBuf(&parts, &check_file_exists_buf);
+        };
+
+        const base = bun.path.basename(abs_esm_path);
+        const dir_path = bun.path.dirname(abs_esm_path, .auto);
+        if (dir_path.len == 0) return false;
+        
+        const dir_info = (r.resolver.readDirInfo(dir_path) catch null) orelse return false;
+        const entries = dir_info.getEntries(r.resolver.generation) orelse return false;
+        const entry_query = entries.get(base) orelse return false;
+
+        // Check if it's actually a file, not a directory
+        return entry_query.entry.kind(&r.resolver.fs.fs, r.resolver.store_fd) == .file;
+    }
+
     fn resolveTarget(
         r: *const ESModule,
         package_url: string,
@@ -1809,7 +1846,7 @@ pub const ESModule = struct {
                     const status: Status = if (strings.endsWithCharOrIsZeroLength(result, '*') and strings.indexOfChar(result, '*').? == result.len - 1)
                         .ExactEndsWithStar
                     else
-                        .Exact;
+                        .Exact; 
                     return Resolution{ .path = result, .status = status, .debug = .{ .token = target.first_token } };
                 } else {
                     const parts2 = [_]string{ package_url, str, subpath };
@@ -1946,6 +1983,19 @@ pub const ESModule = struct {
                         continue;
                     }
 
+                    // When a file doesn't exist, we should continue to the next item in the array.
+                    // resolveTarget returns .Exact even when the file doesn't exist, so we check
+                    // file existence here to enable proper array fallback.
+                    if (result.status == .Exact or result.status == .ExactEndsWithStar) {
+                        // Check if the file actually exists before accepting this result
+                        if (!r.checkFileExists(result)) {
+                            last_debug = result.debug;
+                            last_exception = .ModuleNotFound;
+                            r.module_type.* = prev_module_type;
+                            continue;
+                        }
+                    }
+                    
                     return result;
                 }
 

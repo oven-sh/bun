@@ -1734,6 +1734,9 @@ pub const api = struct {
         /// from --unhandled-rejections, default is 'bun'
         unhandled_rejections: ?UnhandledRejections = null,
 
+        /// from bunfig.toml dotenv field, disables .env file loading when true
+        disable_dotenv: bool = false,
+
         bunfig_path: []const u8,
 
         pub fn decode(reader: anytype) anyerror!TransformOptions {

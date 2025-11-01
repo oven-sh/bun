@@ -1349,6 +1349,7 @@ pub const TestCommand = struct {
                     .values = &snapshot_values,
                     .counts = &snapshot_counts,
                     .inline_snapshots_to_write = &inline_snapshots_to_write,
+                    .serializers = std.ArrayList(jsc.JSValue).init(ctx.allocator),
                 },
                 .bun_test_root = .init(ctx.allocator),
             },

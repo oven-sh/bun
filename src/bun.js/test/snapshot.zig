@@ -16,6 +16,7 @@ pub const Snapshots = struct {
     _current_file: ?File = null,
     snapshot_dir_path: ?string = null,
     inline_snapshots_to_write: *std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(InlineSnapshotToWrite)),
+    serializers: std.ArrayList(JSValue),
 
     pub const InlineSnapshotToWrite = struct {
         line: c_ulong,
@@ -565,3 +566,4 @@ const strings = bun.strings;
 
 const jsc = bun.jsc;
 const VirtualMachine = jsc.VirtualMachine;
+const JSValue = jsc.JSValue;

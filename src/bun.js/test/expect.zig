@@ -1157,7 +1157,46 @@ pub const Expect = struct {
         return thisValue;
     }
 
-    pub const addSnapshotSerializer = notImplementedStaticFn;
+    /// Implements `expect.addSnapshotSerializer(serializer)`
+    /// https://jestjs.io/docs/expect#expectaddsnapshotserializerserializer
+    pub fn addSnapshotSerializer(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
+        const args = callFrame.arguments_old(1).slice();
+
+        if (args.len == 0 or !args[0].isObject()) {
+            return globalThis.throwPretty("<d>expect.<r>addSnapshotSerializer<d>(<r>serializer<d>)<r>\n\nExpected an object with 'test' and 'serialize' or 'print' properties\n", .{});
+        }
+
+        const serializer = args[0];
+
+        // Validate that serializer has a 'test' function
+        const test_fn = try serializer.getIfPropertyExists(globalThis, "test") orelse {
+            return globalThis.throwPretty("<d>expect.<r>addSnapshotSerializer<d>(<r>serializer<d>)<r>\n\nExpected serializer to have a 'test' function\n", .{});
+        };
+
+        if (!test_fn.jsType().isFunction()) {
+            return globalThis.throwPretty("<d>expect.<r>addSnapshotSerializer<d>(<r>serializer<d>)<r>\n\nExpected serializer.test to be a function\n", .{});
+        }
+
+        // Validate that serializer has either 'serialize' or 'print' function
+        const serialize_fn = try serializer.getIfPropertyExists(globalThis, "serialize");
+        const print_fn = try serializer.getIfPropertyExists(globalThis, "print");
+
+        if ((serialize_fn == null and print_fn == null) or
+            (serialize_fn != null and !serialize_fn.?.jsType().isFunction()) or
+            (print_fn != null and !print_fn.?.jsType().isFunction()))
+        {
+            return globalThis.throwPretty("<d>expect.<r>addSnapshotSerializer<d>(<r>serializer<d>)<r>\n\nExpected serializer to have either 'serialize' or 'print' function\n", .{});
+        }
+
+        // Add serializer to the list (prepend so latest serializers are checked first, matching Jest behavior)
+        if (Jest.runner) |runner| {
+            try runner.snapshots.serializers.insert(0, serializer);
+        }
+
+        globalThis.bunVM().autoGarbageCollect();
+
+        return .js_undefined;
+    }
 
     pub fn hasAssertions(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         _ = callFrame;

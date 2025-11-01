@@ -541,6 +541,51 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn jestSnapshotPrettyFormat(this: JSValue, out: *MutableString, globalObject: *JSGlobalObject) !void {
+        // Check for custom snapshot serializers
+        if (Jest.runner) |runner| {
+            for (runner.snapshots.serializers.items) |serializer| {
+                // Call the test function to check if this serializer applies
+                const test_fn = (try serializer.getIfPropertyExists(globalObject, "test")) orelse continue;
+
+                var test_result = test_fn.callWithGlobalThis(globalObject, &[_]JSValue{this}) catch continue;
+
+                // If test returns truthy, use this serializer
+                if (test_result.toBoolean()) {
+                    // Try print first (modern Jest API)
+                    if (try serializer.getIfPropertyExists(globalObject, "print")) |print_fn| {
+                        // Call print(val) with just the value
+                        // Note: Jest's print() can optionally receive a second argument (printer function)
+                        // but many serializers work fine with just the value
+                        const result = print_fn.callWithGlobalThis(globalObject, &[_]JSValue{this}) catch {
+                            // If print fails, fall through to default formatting
+                            break;
+                        };
+
+                        if (result.isString()) {
+                            const result_str = try result.toBunString(globalObject);
+                            defer result_str.deref();
+                            try out.append(result_str.toUTF8(bun.default_allocator).slice());
+                            return;
+                        }
+                    } else if (try serializer.getIfPropertyExists(globalObject, "serialize")) |serialize_fn| {
+                        // Try serialize (legacy Jest API) - call it with just the value
+                        const result = serialize_fn.callWithGlobalThis(globalObject, &[_]JSValue{this}) catch {
+                            // If serialize fails, fall through to default formatting
+                            break;
+                        };
+
+                        if (result.isString()) {
+                            const result_str = try result.toBunString(globalObject);
+                            defer result_str.deref();
+                            try out.append(result_str.toUTF8(bun.default_allocator).slice());
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fall back to default formatting
         var buffered_writer = MutableString.BufferedWriter{ .context = out };
         const writer = buffered_writer.writer();
         const Writer = @TypeOf(writer);
@@ -2413,6 +2458,7 @@ const string = []const u8;
 const FFI = @import("./FFI.zig");
 const std = @import("std");
 const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
+const Jest = @import("../test/jest.zig").Jest;
 
 const bun = @import("bun");
 const Environment = bun.Environment;

@@ -809,6 +809,9 @@ pub fn cleanWithLogger(
         });
     }
 
+    // Keep it around.
+    new.postinstall_optimizer = old.postinstall_optimizer;
+
     return new;
 }
 

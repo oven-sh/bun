@@ -11,10 +11,12 @@ pub fn dumpDescribe(describe: *DescribeScope) bun.JSError!void {
     defer group.end();
 
     for (describe.beforeAll.items) |entry| try dumpTest(entry, "beforeAll");
+    for (describe.before.items) |entry| try dumpTest(entry, "before");
     for (describe.beforeEach.items) |entry| try dumpTest(entry, "beforeEach");
     for (describe.entries.items) |entry| try dumpSub(entry);
     for (describe.afterEach.items) |entry| try dumpTest(entry, "afterEach");
     for (describe.afterAll.items) |entry| try dumpTest(entry, "afterAll");
+    for (describe.after.items) |entry| try dumpTest(entry, "after");
 }
 pub fn dumpTest(current: *ExecutionEntry, label: []const u8) bun.JSError!void {
     if (!group.getLogEnabled()) return;

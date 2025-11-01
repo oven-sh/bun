@@ -181,7 +181,9 @@ pub const Jest = struct {
 
         module.put(globalObject, ZigString.static("beforeEach"), jsc.host_fn.NewFunction(globalObject, ZigString.static("beforeEach"), 1, bun_test.js_fns.genericHook(.beforeEach).hookFn, false));
         module.put(globalObject, ZigString.static("beforeAll"), jsc.host_fn.NewFunction(globalObject, ZigString.static("beforeAll"), 1, bun_test.js_fns.genericHook(.beforeAll).hookFn, false));
+        module.put(globalObject, ZigString.static("before"), jsc.host_fn.NewFunction(globalObject, ZigString.static("before"), 1, bun_test.js_fns.genericHook(.before).hookFn, false));
         module.put(globalObject, ZigString.static("afterAll"), jsc.host_fn.NewFunction(globalObject, ZigString.static("afterAll"), 1, bun_test.js_fns.genericHook(.afterAll).hookFn, false));
+        module.put(globalObject, ZigString.static("after"), jsc.host_fn.NewFunction(globalObject, ZigString.static("after"), 1, bun_test.js_fns.genericHook(.after).hookFn, false));
         module.put(globalObject, ZigString.static("afterEach"), jsc.host_fn.NewFunction(globalObject, ZigString.static("afterEach"), 1, bun_test.js_fns.genericHook(.afterEach).hookFn, false));
         module.put(globalObject, ZigString.static("onTestFinished"), jsc.host_fn.NewFunction(globalObject, ZigString.static("onTestFinished"), 1, bun_test.js_fns.genericHook(.onTestFinished).hookFn, false));
         module.put(globalObject, ZigString.static("setDefaultTimeout"), jsc.host_fn.NewFunction(globalObject, ZigString.static("setDefaultTimeout"), 1, jsSetDefaultTimeout, false));

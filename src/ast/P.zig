@@ -2080,9 +2080,11 @@ pub fn NewParser_(
                 p.jest.expect = try p.declareCommonJSSymbol(.unbound, "expect");
                 p.jest.expectTypeOf = try p.declareCommonJSSymbol(.unbound, "expectTypeOf");
                 p.jest.beforeAll = try p.declareCommonJSSymbol(.unbound, "beforeAll");
+                p.jest.before = try p.declareCommonJSSymbol(.unbound, "before");
                 p.jest.beforeEach = try p.declareCommonJSSymbol(.unbound, "beforeEach");
                 p.jest.afterEach = try p.declareCommonJSSymbol(.unbound, "afterEach");
                 p.jest.afterAll = try p.declareCommonJSSymbol(.unbound, "afterAll");
+                p.jest.after = try p.declareCommonJSSymbol(.unbound, "after");
                 p.jest.jest = try p.declareCommonJSSymbol(.unbound, "jest");
                 p.jest.vi = try p.declareCommonJSSymbol(.unbound, "vi");
                 p.jest.xit = try p.declareCommonJSSymbol(.unbound, "xit");

@@ -348,7 +348,7 @@ pub const FetchTasklet = struct {
         bun.assert(this.request_body == .ReadableStream);
 
         // Making sure the stream doesn't retain twice -transfer ownership out of the union to avoid double-Strong retention
-        var stream_ref = &this.request_body.ReadableStream;
+        var stream_ref = this.request_body.ReadableStream;
         this.request_body = HTTPRequestBody.Empty;
 
         if (stream_ref.get(this.global_this)) |stream| {

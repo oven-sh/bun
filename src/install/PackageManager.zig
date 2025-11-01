@@ -195,7 +195,6 @@ pub const Subcommand = enum {
     // TODO: make all subcommands find root and chdir
     pub fn shouldChdirToRoot(this: Subcommand) bool {
         return switch (this) {
-            .link => false,
             else => true,
         };
     }
@@ -599,6 +598,7 @@ pub fn init(
 
     var workspace_name_hash: ?PackageNameHash = null;
     var root_package_json_name_at_time_of_init: []const u8 = "";
+    var found_workspace_root = false;
 
     // Step 1. Find the nearest package.json directory
     //
@@ -680,7 +680,6 @@ pub fn init(
         const child_cwd = strings.withoutSuffixComptime(original_package_json_path, std.fs.path.sep_str ++ "package.json");
 
         // Check if this is a workspace; if so, use root package
-        var found = false;
         if (subcommand.shouldChdirToRoot()) {
             if (!created_package_json) {
                 while (std.fs.path.dirname(this_cwd)) |parent| : (this_cwd = parent) {
@@ -696,7 +695,7 @@ pub fn init(
                     ) catch {
                         continue;
                     };
-                    defer if (!found) json_file.close();
+                    defer if (!found_workspace_root) json_file.close();
                     const json_stat_size = try json_file.getEndPos();
                     const json_buf = try ctx.allocator.alloc(u8, json_stat_size + 64);
                     defer ctx.allocator.free(json_buf);
@@ -746,7 +745,7 @@ pub fn init(
 
                             if (strings.eqlLong(maybe_workspace_path, path, true)) {
                                 fs.top_level_dir = try bun.default_allocator.dupeZ(u8, parent);
-                                found = true;
+                                found_workspace_root = true;
                                 child_json.close();
                                 if (comptime Environment.isWindows) {
                                     try json_file.seekTo(0);
@@ -772,6 +771,10 @@ pub fn init(
     cwd_buf[fs.top_level_dir.len] = 0;
     fs.top_level_dir = cwd_buf[0..fs.top_level_dir.len :0];
     root_package_json_path = try bun.getFdPathZ(.fromStdFile(root_package_json_file), &root_package_json_path_buf);
+    // Update original_package_json_path to point to the workspace root when found
+    if (found_workspace_root) {
+        original_package_json_path = root_package_json_path;
+    }
 
     const entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
     if (entries_option.* == .err) {

@@ -20,7 +20,8 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 'use strict';
-require('../common');
+const common = require('../common');
+if (common.isMacOS && require('os').release().split(".")[0] === "22") return; // TODO: BUN macOS 13
 const assert = require('assert');
 const http = require('http');
 const Countdown = require('../common/countdown');

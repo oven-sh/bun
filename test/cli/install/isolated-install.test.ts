@@ -555,6 +555,48 @@ describe("optional peers", () => {
       await checkInstall();
     });
   }
+
+  test("successfully resolves optional peer with nested package", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { isolated: true },
+      files: {
+        "package.json": JSON.stringify({
+          name: "optional-peer-nested-resolve",
+          dependencies: {
+            "one-one-dep": "1.0.0",
+          },
+          peerDependencies: {
+            "one-dep": "1.0.0",
+          },
+          peerDependenciesMeta: {
+            "one-dep": {
+              optional: true,
+            },
+          },
+        }),
+      },
+    });
+
+    async function checkInstall() {
+      let { exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        env: bunEnv,
+      });
+      expect(await exited).toBe(0);
+
+      expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "one-dep", "one-one-dep"]);
+      expect(await readdirSorted(join(packageDir, "node_modules/.bun"))).toEqual([
+        "no-deps@1.0.1",
+        "node_modules",
+        "one-dep@1.0.0",
+        "one-one-dep@1.0.0",
+      ]);
+    }
+
+    await checkInstall();
+    await checkInstall();
+  });
 });
 
 for (const backend of ["clonefile", "hardlink", "copyfile"]) {

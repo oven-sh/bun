@@ -2921,6 +2921,263 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exited).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
     });
+
+    test("skipScriptsFrom prevents scripts and excludes from blocked count", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "all-lifecycle-scripts": "1.0.0",
+            "uses-what-bin": "1.0.0",
+          },
+          skipScriptsFrom: ["all-lifecycle-scripts"],
+        }),
+      );
+
+      var { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      var err = await stderr.text();
+      var out = await stdout.text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+
+      // Should only show 1 blocked script (uses-what-bin), not 4 (all-lifecycle-scripts + uses-what-bin)
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        "+ all-lifecycle-scripts@1.0.0",
+        "+ uses-what-bin@1.0.0",
+        "",
+        "2 packages installed",
+        "",
+        "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+        "",
+      ]);
+      expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+
+      // Verify scripts were skipped for all-lifecycle-scripts
+      const depDir = join(packageDir, "node_modules", "all-lifecycle-scripts");
+      expect(await exists(join(depDir, "preinstall.txt"))).toBeFalse();
+      expect(await exists(join(depDir, "install.txt"))).toBeFalse();
+      expect(await exists(join(depDir, "postinstall.txt"))).toBeFalse();
+      expect(await exists(join(depDir, "preprepare.txt"))).toBeFalse();
+      expect(await exists(join(depDir, "prepare.txt"))).toBeTrue(); // prepare always runs
+      expect(await exists(join(depDir, "postprepare.txt"))).toBeFalse();
+
+      // Verify scripts were blocked for uses-what-bin
+      const whatBinDir = join(packageDir, "node_modules", "uses-what-bin");
+      expect(await exists(join(whatBinDir, "what-bin.txt"))).toBeFalse();
+
+      // Verify skipScriptsFrom has higher precedence than trustedDependencies
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "all-lifecycle-scripts": "1.0.0",
+          },
+          trustedDependencies: ["all-lifecycle-scripts"],
+          skipScriptsFrom: ["all-lifecycle-scripts"],
+        }),
+      );
+
+      ({ stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      }));
+
+      err = await stderr.text();
+      out = await stdout.text();
+      expect(err).not.toContain("error:");
+
+      // Should not show any blocked scripts message because the only package is in skipScriptsFrom
+      const outLines = out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/);
+      expect(outLines).not.toContain(expect.stringContaining("Blocked"));
+      expect(await exited).toBe(0);
+
+      // Scripts should still be skipped even though it's in trustedDependencies
+      expect(await exists(join(depDir, "preinstall.txt"))).toBeFalse();
+      expect(await exists(join(depDir, "install.txt"))).toBeFalse();
+      expect(await exists(join(depDir, "postinstall.txt"))).toBeFalse();
+
+      // Verify skipped packages don't appear in untrusted list
+      ({ stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "pm", "untrusted"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: testEnv,
+      }));
+
+      out = await stdout.text();
+      err = await stderr.text();
+      expect(err).not.toContain("error:");
+      expect(out).not.toContain("all-lifecycle-scripts");
+      expect(await exited).toBe(0);
+    });
+
+    test("skipScriptsFrom works with aliased dependencies (default list)", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "my-bundler": "npm:esbuild@0.19.0",
+            "uses-what-bin": "1.0.0",
+          },
+        }),
+      );
+
+      var { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      var err = await stderr.text();
+      var out = await stdout.text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+
+      // esbuild is in default skip list, so even with alias "my-bundler" it should be skipped
+      // Only uses-what-bin should be blocked
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        "+ my-bundler@0.19.0",
+        "+ uses-what-bin@1.0.0",
+        "",
+        expect.stringContaining("packages installed"),
+        "",
+        "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+        "",
+      ]);
+      expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+
+      // Verify esbuild's postinstall was skipped (installed as "my-bundler")
+      const esbuildDir = join(packageDir, "node_modules", "my-bundler");
+      expect(await exists(join(esbuildDir, "install.txt"))).toBeFalse();
+    });
+
+    test("skipScriptsFrom works with aliased dependencies (user-specified)", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "my-scripts": "npm:all-lifecycle-scripts@1.0.0",
+            "uses-what-bin": "1.0.0",
+          },
+          skipScriptsFrom: ["all-lifecycle-scripts"],
+        }),
+      );
+
+      var { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      var err = await stderr.text();
+      var out = await stdout.text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+
+      // all-lifecycle-scripts is in user's skipScriptsFrom, so even with alias it should be skipped
+      // Only uses-what-bin should be blocked
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        "+ my-scripts@1.0.0",
+        "+ uses-what-bin@1.0.0",
+        "",
+        "2 packages installed",
+        "",
+        "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+        "",
+      ]);
+      expect(await exited).toBe(0);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
+
+      // Verify scripts were skipped for all-lifecycle-scripts (installed as "my-scripts")
+      const scriptsDir = join(packageDir, "node_modules", "my-scripts");
+      expect(await exists(join(scriptsDir, "preinstall.txt"))).toBeFalse();
+      expect(await exists(join(scriptsDir, "install.txt"))).toBeFalse();
+      expect(await exists(join(scriptsDir, "postinstall.txt"))).toBeFalse();
+      expect(await exists(join(scriptsDir, "prepare.txt"))).toBeTrue(); // prepare always runs
+    });
+
+    // skipScriptsFrom accepts either the dependency alias or canonical package name for flexibility
+    test("skipScriptsFrom by alias name", async () => {
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "my-scripts": "npm:all-lifecycle-scripts@1.0.0",
+          },
+          skipScriptsFrom: ["my-scripts"], // Skip by alias name instead of canonical
+        }),
+      );
+
+      var { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      var err = await stderr.text();
+      var out = await stdout.text();
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("not found");
+      expect(err).not.toContain("error:");
+
+      // Should not show any blocked scripts message
+      const outLines = out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/);
+      expect(outLines).not.toContain(expect.stringContaining("Blocked"));
+      expect(await exited).toBe(0);
+
+      // Verify scripts were skipped
+      const scriptsDir = join(packageDir, "node_modules", "my-scripts");
+      expect(await exists(join(scriptsDir, "preinstall.txt"))).toBeFalse();
+      expect(await exists(join(scriptsDir, "install.txt"))).toBeFalse();
+      expect(await exists(join(scriptsDir, "postinstall.txt"))).toBeFalse();
+    });
   });
 }
 

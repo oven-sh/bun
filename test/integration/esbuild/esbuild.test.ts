@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { cp, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, tempDir, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, tempDir } from "harness";
 import { join } from "path";
 
 beforeAll(() => {

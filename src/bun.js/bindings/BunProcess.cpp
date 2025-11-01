@@ -3120,6 +3120,144 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * global
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
 }
 
+template<typename Sec, typename Usec>
+double totalMicroseconds(Sec seconds, Usec microseconds)
+{
+    std::chrono::microseconds total = std::chrono::seconds(seconds) + std::chrono::microseconds(microseconds);
+    return total.count();
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+#if OS(DARWIN)
+    mach_msg_type_number_t count;
+    thread_basic_info_data_t info;
+    kern_return_t kr;
+    thread_t thread;
+
+    thread = mach_thread_self();
+    count = THREAD_BASIC_INFO_COUNT;
+    kr = thread_info(thread,
+        THREAD_BASIC_INFO,
+        (thread_info_t)&info,
+        &count);
+
+    if (kr != KERN_SUCCESS) {
+        mach_port_deallocate(mach_task_self(), thread);
+        throwSystemError(throwScope, globalObject, "Failed to get thread CPU usage"_s, "thread_info"_s, kr);
+        return {};
+    }
+
+    auto* process = getProcessObject(globalObject, callFrame->thisValue());
+    Structure* cpuUsageStructure = process->cpuUsageStructure();
+
+    double user = totalMicroseconds(info.user_time.seconds, info.user_time.microseconds);
+    double system = totalMicroseconds(info.system_time.seconds, info.system_time.microseconds);
+
+    mach_port_deallocate(mach_task_self(), thread);
+
+#elif OS(LINUX)
+    struct rusage rusage;
+#ifdef RUSAGE_THREAD
+    int status = getrusage(RUSAGE_THREAD, &rusage);
+#elifdef RUSAGE_LWP
+    int status = getrusage(RUSAGE_LWP, &rusage);
+#else
+    throwSystemError(throwScope, globalObject, "Thread CPU usage not supported on this platform"_s, "getrusage"_s, ENOTSUP);
+    return {};
+#endif
+
+    if (status != 0) {
+        throwSystemError(throwScope, globalObject, "Failed to get thread CPU usage"_s, "getrusage"_s, errno);
+        return {};
+    }
+
+    auto* process = getProcessObject(globalObject, callFrame->thisValue());
+    Structure* cpuUsageStructure = process->cpuUsageStructure();
+
+    double user = totalMicroseconds(rusage.ru_utime.tv_sec, rusage.ru_utime.tv_usec);
+    double system = totalMicroseconds(rusage.ru_stime.tv_sec, rusage.ru_stime.tv_usec);
+
+#elif OS(WINDOWS)
+    // Windows: use libuv
+    uv_rusage_t rusage;
+    int status = uv_getrusage_thread(&rusage);
+    if (status) {
+        throwSystemError(throwScope, globalObject, "Failed to get thread CPU usage"_s, "uv_getrusage_thread"_s, status);
+        return {};
+    }
+
+    auto* process = getProcessObject(globalObject, callFrame->thisValue());
+    Structure* cpuUsageStructure = process->cpuUsageStructure();
+
+    double user = totalMicroseconds(rusage.ru_utime.tv_sec, rusage.ru_utime.tv_usec);
+    double system = totalMicroseconds(rusage.ru_stime.tv_sec, rusage.ru_stime.tv_usec);
+#else
+    // Other platforms: not supported yet
+    throwSystemError(throwScope, globalObject, "Thread CPU usage not supported on this platform"_s, "threadCpuUsage"_s, ENOTSUP);
+    return {};
+#endif
+
+    if (callFrame->argumentCount() > 0) {
+        JSValue comparatorValue = callFrame->argument(0);
+        if (!comparatorValue.isUndefined()) {
+            JSC::JSObject* comparator = comparatorValue.getObject();
+            if (!comparator) [[unlikely]] {
+                return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "prevValue"_s, "object"_s, comparatorValue);
+            }
+
+            JSValue userValue;
+            JSValue systemValue;
+
+            if (comparator->structureID() == cpuUsageStructure->id()) [[likely]] {
+                userValue = comparator->getDirect(0);
+                systemValue = comparator->getDirect(1);
+            } else {
+                userValue = comparator->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "user"_s));
+                RETURN_IF_EXCEPTION(throwScope, {});
+                if (userValue.isEmpty()) userValue = jsUndefined();
+
+                systemValue = comparator->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "system"_s));
+                RETURN_IF_EXCEPTION(throwScope, {});
+                if (systemValue.isEmpty()) systemValue = jsUndefined();
+            }
+
+            Bun::V::validateNumber(throwScope, globalObject, userValue, "prevValue.user"_s, jsUndefined(), jsUndefined());
+            RETURN_IF_EXCEPTION(throwScope, {});
+
+            Bun::V::validateNumber(throwScope, globalObject, systemValue, "prevValue.system"_s, jsUndefined(), jsUndefined());
+            RETURN_IF_EXCEPTION(throwScope, {});
+
+            double userComparator = userValue.toNumber(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            double systemComparator = systemValue.toNumber(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+
+            if (!(userComparator >= 0 && userComparator <= JSC::maxSafeInteger())) {
+                return Bun::ERR::INVALID_ARG_VALUE_RangeError(throwScope, globalObject, "prevValue.user"_s, userValue, "is invalid"_s);
+            }
+
+            if (!(systemComparator >= 0 && systemComparator <= JSC::maxSafeInteger())) {
+                return Bun::ERR::INVALID_ARG_VALUE_RangeError(throwScope, globalObject, "prevValue.system"_s, systemValue, "is invalid"_s);
+            }
+
+            user -= userComparator;
+            system -= systemComparator;
+        }
+    }
+
+    JSC::JSObject* result = JSC::constructEmptyObject(vm, cpuUsageStructure);
+    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
+
+    result->putDirectOffset(vm, 0, JSC::jsNumber(user));
+    result->putDirectOffset(vm, 1, JSC::jsNumber(system));
+
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
+}
+
 extern "C" int getRSS(size_t* rss)
 {
 #if defined(__APPLE__)
@@ -3929,6 +4067,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   stderr                           constructStderr                                     PropertyCallback
   stdin                            constructStdin                                      PropertyCallback
   stdout                           constructStdout                                     PropertyCallback
+  threadCpuUsage                   Process_functionThreadCpuUsage                      Function 1
   throwDeprecation                 processThrowDeprecation                             CustomAccessor
   title                            processTitle                                        CustomAccessor
   umask                            Process_functionUmask                               Function 1

@@ -102,7 +102,7 @@ it("should remove existing package", async () => {
     "",
     `+ pkg2@${pkg2_path.replace(/\\/g, "/")}`,
     "",
-    "1 package installed",
+    "2 packages installed",
     "Removed: 1",
     "",
   ]);

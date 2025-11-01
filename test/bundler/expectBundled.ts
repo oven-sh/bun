@@ -658,7 +658,7 @@ function expectBundled(
     mkdirSync(root, { recursive: true });
     if (install) {
       const installProcess = Bun.spawnSync({
-        cmd: [bunExe(), "install", ...install],
+        cmd: [bunExe(), "install", ...install, "--linker=hoisted"],
         cwd: root,
       });
       if (!installProcess.success) {

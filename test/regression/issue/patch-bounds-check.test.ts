@@ -30,7 +30,7 @@ test("patch application should handle out-of-bounds line numbers gracefully", as
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install"],
+    cmd: [bunExe(), "install", "--linker=hoisted"],
     env: bunEnv,
     cwd: dir,
     stdout: "pipe",
@@ -72,7 +72,7 @@ test("patch application should handle deletion beyond file bounds", async () => 
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install"],
+    cmd: [bunExe(), "install", "--linker=hoisted"],
     env: bunEnv,
     cwd: dir,
     stdout: "pipe",
@@ -111,7 +111,7 @@ test("patch application should work correctly with valid patches", async () => {
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install"],
+    cmd: [bunExe(), "install", "--linker=hoisted"],
     env: bunEnv,
     cwd: dir,
     stdout: "pipe",

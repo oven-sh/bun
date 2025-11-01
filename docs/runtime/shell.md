@@ -284,6 +284,27 @@ We instead recommend sticking to the `$(...)` syntax.
 
 {% /callout %}
 
+## Deferred execution and background tasks
+
+Occasionally, there may be shell commands that need to run, but don't need to block execution of a given Bun Shell script. For example, you might want to emit some metrics or analytics before a CLI command is executed, but you don't want that to impact the responsiveness of the CLI.
+
+Normally, when writing a shell script, you might use `&` to send a task to the background. In Bun Shell, `&` is not supported, and Bun Shell commands do not execute until either:
+
+- Calling `await`
+- Calling `.then()`
+
+You can use the latter to handle such "send to background" cases. E.g.
+
+```js
+import { $ } from "bun";
+
+$`[some long running task that you dont want to wait to finish before executing other commands]`
+  .then(() => console.log("Done with long running task"))
+
+await $`command A`;
+await $`command B that depends on command A`;
+```
+
 ## Environment variables
 
 Environment variables can be set like in bash:

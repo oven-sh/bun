@@ -786,6 +786,7 @@ const install = bun.install;
 const Dependency = install.Dependency;
 const DependencyID = install.DependencyID;
 const PackageID = install.PackageID;
+const PackageNameHash = install.PackageNameHash;
 const Resolution = install.Resolution;
 const invalid_dependency_id = install.invalid_dependency_id;
 const invalid_package_id = install.invalid_package_id;
@@ -797,4 +798,3 @@ const PackageIDSlice = Lockfile.PackageIDSlice;
 
 const PackageManager = bun.install.PackageManager;
 const WorkspaceFilter = install.PackageManager.WorkspaceFilter;
-const PackageNameHash = install.PackageNameHash;

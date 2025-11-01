@@ -3,6 +3,8 @@
 #include "root.h"
 
 #include "JavaScriptCore/Error.h"
+
+extern "C" bool Bun__mkdirp(JSC::JSGlobalObject*, const char*);
 #include "JavaScriptCore/JSBigInt.h"
 #include "JavaScriptCore/Structure.h"
 #include "JavaScriptCore/ThrowScope.h"
@@ -49,6 +51,8 @@
 #include "wtf/LazyRef.h"
 #include "wtf/text/StringToIntegerConversion.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
+#include <cstring>
+#include <cstdlib>
 
 static constexpr int32_t kSafeIntegersFlag = 1 << 1;
 static constexpr int32_t kStrictFlag = 1 << 2;
@@ -1616,9 +1620,26 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     }
 
     JSValue finalizationTarget = callFrame->argument(2);
+    WTF::CString pathUTF8 = path.utf8();
+    const char* pathStr = pathUTF8.data();
+
+    if (pathStr && pathUTF8.length() > 0 && strcmp(pathStr, ":memory:") != 0) {
+        const char* lastSep = strrchr(pathStr, '/');
+
+    #if defined(_WIN32)
+        const char* lastBackslash = strrchr(pathStr, '\\');
+        if (lastBackslash && (!lastSep || lastBackslash > lastSep))
+            lastSep = lastBackslash;
+    #endif
+
+        if (lastSep && lastSep != pathStr) {
+            std::string parentDir(pathStr, static_cast<size_t>(lastSep - pathStr));
+            Bun__mkdirp(lexicalGlobalObject, parentDir.c_str());
+        }
+    }
 
     sqlite3* db = nullptr;
-    int statusCode = sqlite3_open_v2(path.utf8().data(), &db, openFlags, nullptr);
+    int statusCode = sqlite3_open_v2(pathUTF8.data(), &db, openFlags, nullptr);
 
     if (statusCode != SQLITE_OK) {
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));

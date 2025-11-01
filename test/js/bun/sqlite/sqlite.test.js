@@ -1491,3 +1491,61 @@ it("#13082", async () => {
 
   await Promise.allSettled(runs);
 });
+describe("Database directory creation", () => {
+  const createDbAndCheck = dbPath => {
+    const db = new Database(dbPath);
+    expect(existsSync(path.dirname(dbPath))).toBe(true);
+    expect(existsSync(dbPath)).toBe(true);
+    return db;
+  };
+
+  it("creates parent directories when they don't exist", () => {
+    const dir = tempDirWithFiles("sqlite-dir-test", {});
+    const dbPath = path.join(dir, "nested", "path", "test.db");
+
+    expect(existsSync(path.dirname(dbPath))).toBe(false);
+
+    const db = createDbAndCheck(dbPath);
+    db.close();
+  });
+
+  it("works when directories already exist", () => {
+    const dir = tempDirWithFiles("sqlite-exists-test", {});
+    const dbPath = path.join(dir, "existing", "test.db");
+
+    require("fs").mkdirSync(path.dirname(dbPath), { recursive: true });
+    expect(existsSync(path.dirname(dbPath))).toBe(true);
+
+    const db = createDbAndCheck(dbPath);
+    db.close();
+  });
+
+  it("handles relative paths", () => {
+    const dir = tempDirWithFiles("sqlite-relative-test", {});
+    const originalCwd = process.cwd();
+
+    try {
+      process.chdir(dir);
+      const dbPath = "relative/path/test.db";
+      const db = createDbAndCheck(dbPath);
+      db.close();
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
+  it("does not affect memory databases", () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE test (id INTEGER)");
+    expect(db.query("SELECT COUNT(*) as count FROM test").get().count).toBe(0);
+    db.close();
+  });
+
+  it("handles deeply nested paths", () => {
+    const dir = tempDirWithFiles("sqlite-deep-test", {});
+    const dbPath = path.join(dir, "a", "b", "c", "d", "e", "test.db");
+
+    const db = createDbAndCheck(dbPath);
+    db.close();
+  });
+});

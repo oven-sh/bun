@@ -448,36 +448,36 @@ test("decorators random", () => {
     constructor() {
       this.k = 3;
       expect(this.k).toBe("3 😛");
-      expect(S.j).toBe(4);
+      expect(S.j).toBe("4 🤠");
       expect(this[i]).toBe("8 🤑");
       expect(this.e).toBe("10 🎃");
-      expect(S[h]).toBe(30);
-      expect(S.u).toBe(60);
+      expect(S[h]).toBe("30 😵‍💫");
+      expect(S.u).toBe("60 🤯");
       expect(this[t]).toBe("32 🤪");
-      expect(S[q]).toBe(202);
+      expect(S[q]).toBe("202 👻");
       expect(this.#o).toBe(100);
-      expect(this.r).toBe("30 😇");
+      expect(this.r).toBe("30 😵‍💫 😇");
       expect(this.y).toBe(undefined);
       this.y = 100;
       expect(this.y).toBe(100);
 
-      expect(this.u1).toBe(undefined);
-      expect(S.u2).toBe(undefined);
-      expect(S[u3]).toBe(undefined);
-      expect(S.u4).toBe(undefined);
-      expect(this[u5]).toBe(undefined);
-      expect(this[u6]).toBe(undefined);
-      expect(this.u7).toBe(undefined);
-      expect(S[u8]).toBe(undefined);
+      expect(this.u1).toBe("undefined 😍");
+      expect(S.u2).toBe("undefined 🥳");
+      expect(S[u3]).toBe("undefined 🤓");
+      expect(S.u4).toBe("undefined 🥺");
+      expect(this[u5]).toBe("undefined 🤯");
+      expect(this[u6]).toBe("undefined 🤩");
+      expect(this.u7).toBe("undefined ☹️");
+      expect(S[u8]).toBe("undefined 🙃");
 
-      expect(this.u9).toBe("undefined 🤔");
+      expect(this.u9).toBe("undefined 😍 🤔");
       expect(this.u10).toBe("undefined 🤨");
-      expect(this.u11).toBe("undefined 🙂");
-      expect(this.u12).toBe("undefined 🙁");
-      expect(this.u13).toBe("undefined 😐");
-      expect(this.u14).toBe("undefined 😑");
-      expect(this.u15).toBe("undefined 😶");
-      expect(this.u16).toBe("undefined 😏");
+      expect(this.u11).toBe("undefined 🤓 🙂");
+      expect(this.u12).toBe("undefined 🥺 🙁");
+      expect(this.u13).toBe("undefined 🤯 😐");
+      expect(this.u14).toBe("undefined 🤩 😑");
+      expect(this.u15).toBe("undefined ☹️ 😶");
+      expect(this.u16).toBe("undefined 🙃 😏");
 
       this.u1 = 100;
       expect(this.u1).toBe("100 😍");
@@ -496,26 +496,26 @@ test("decorators random", () => {
       S[u8] = 100;
       expect(S[u8]).toBe("100 🙃");
 
-      expect(this.u9).toBe("undefined 🤔");
+      expect(this.u9).toBe("undefined 😍 🤔");
       expect(this.u10).toBe("undefined 🤨");
-      expect(this.u11).toBe("undefined 🙂");
-      expect(this.u12).toBe("undefined 🙁");
-      expect(this.u13).toBe("undefined 😐");
-      expect(this.u14).toBe("undefined 😑");
-      expect(this.u15).toBe("undefined 😶");
-      expect(this.u16).toBe("undefined 😏");
+      expect(this.u11).toBe("undefined 🤓 🙂");
+      expect(this.u12).toBe("undefined 🥺 🙁");
+      expect(this.u13).toBe("undefined 🤯 😐");
+      expect(this.u14).toBe("undefined 🤩 😑");
+      expect(this.u15).toBe("undefined ☹️ 😶");
+      expect(this.u16).toBe("undefined 🙃 😏");
     }
   }
 
   let s = new S();
-  expect(s.u9).toBe("undefined 🤔");
+  expect(s.u9).toBe("undefined 😍 🤔");
   expect(s.u10).toBe("undefined 🤨");
-  expect(s.u11).toBe("undefined 🙂");
-  expect(s.u12).toBe("undefined 🙁");
-  expect(s.u13).toBe("undefined 😐");
-  expect(s.u14).toBe("undefined 😑");
-  expect(s.u15).toBe("undefined 😶");
-  expect(s.u16).toBe("undefined 😏");
+  expect(s.u11).toBe("undefined 🤓 🙂");
+  expect(s.u12).toBe("undefined 🥺 🙁");
+  expect(s.u13).toBe("undefined 🤯 😐");
+  expect(s.u14).toBe("undefined 🤩 😑");
+  expect(s.u15).toBe("undefined ☹️ 😶");
+  expect(s.u16).toBe("undefined 🙃 😏");
 
   s.u9 = 35;
   expect(s.u9).toBe("35 🤔");
@@ -1035,4 +1035,33 @@ test("decorator and declare", () => {
 
   new A();
   expect(counter).toBe(1);
+});
+
+test("decorated properties should be included in class definition", () => {
+  class MyClass {
+    a: string;
+    @d1()
+    b: string;
+    @d2()
+    c: string = "2";
+  }
+
+  function d1() {}
+
+  function d2() {}
+
+  // Test that the class still has all properties
+  const instance = new MyClass();
+  const properties = Object.keys(instance);
+
+  // All properties should be present in the class definition
+  expect(properties).toEqual(["a", "b", "c"]);
+
+  // Properties should be accessible on the instance
+  expect("a" in instance).toBe(true);
+  expect("b" in instance).toBe(true);
+  expect("c" in instance).toBe(true);
+
+  // Initializtion works fine
+  expect(instance.c).toBe("2");
 });

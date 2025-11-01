@@ -371,7 +371,6 @@ pub const FetchTasklet = struct {
             stream_ref.deinit();
         }
         // in any other cases we will drop the transferred Strong anyways
-        stream_ref.deinit();
     }
 
     pub fn onBodyReceived(this: *FetchTasklet) bun.JSTerminated!void {

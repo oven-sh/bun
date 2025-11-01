@@ -457,13 +457,16 @@ pub const FetchTasklet = struct {
                         );
                     } else {
                         readable.value.ensureStillAlive();
-                        response.detachReadableStream(globalThis);
+
                         try readable.ptr.Bytes.onData(
                             .{
                                 .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                             },
                             bun.default_allocator,
                         );
+
+                        // Detach after .onData to ensure it stays alive.
+                        response.detachReadableStream(globalThis);
                     }
 
                     return;

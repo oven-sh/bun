@@ -340,7 +340,7 @@ pub const PackageInstaller = struct {
                 if (can_retry_without_native_binlink_optimization and (bin_linker.skipped_due_to_missing_bin or bin_linker.err != null)) {
                     can_retry_without_native_binlink_optimization = false;
                     if (PackageManager.verbose_install) {
-                        Output.prettyErrorln("[Bin Linker] {s} -> {s} retrying without native bin link", .{
+                        Output.prettyErrorln("<d>[Bin Linker]<r> {s} -> {s} retrying without native bin link", .{
                             package_name_.slice(),
                             target_package_name.slice(),
                         });

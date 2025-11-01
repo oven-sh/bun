@@ -436,6 +436,7 @@ pub const Installer = struct {
             const pkg_name_hashes = pkgs.items(.name_hash);
             const pkg_resolutions = pkgs.items(.resolution);
             const pkg_resolutions_lists = pkgs.items(.resolutions);
+            const pkg_metas: []const Lockfile.Package.Meta = pkgs.items(.meta);
             const pkg_bins = pkgs.items(.bin);
             const pkg_script_lists = pkgs.items(.scripts);
 
@@ -926,8 +927,17 @@ pub const Installer = struct {
 
                     installer.appendStorePath(&pkg_cwd, this.entry_id);
 
-                    if (pkg_res.tag != .root and (pkg_res.tag == .workspace or is_trusted)) {
+                    if (pkg_res.tag != .root and (pkg_res.tag == .workspace or is_trusted)) enqueueLifecycleScripts: {
                         var pkg_scripts: Package.Scripts = pkg_script_lists[pkg_id];
+                        if (is_trusted and manager.postinstall_optimizer.shouldIgnoreLifecycleScripts(
+                            pkg_name_hashes[pkg_id],
+                            installer.lockfile.buffers.resolutions.items,
+                            pkg_metas,
+                            manager.options.cpu,
+                            manager.options.os,
+                        )) {
+                            break :enqueueLifecycleScripts;
+                        }
 
                         var log = bun.logger.Log.init(bun.default_allocator);
                         defer log.deinit();

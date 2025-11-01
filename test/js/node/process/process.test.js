@@ -318,6 +318,7 @@ it("process.config", () => {
   expect(process.config.variables.clang).toBeNumber();
   expect(process.config.variables.host_arch).toBeDefined();
   expect(process.config.variables.target_arch).toBeDefined();
+  expect(process.config.variables.v8_enable_i18n_support).toBe(1);
 });
 
 it("process.execArgv", () => {

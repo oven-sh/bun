@@ -691,6 +691,27 @@ pub const Loader = enum(u8) {
         };
     }
 
+    /// Returns true if this loader creates "proxy" JS modules that just export file paths/handles.
+    /// When these are used as entrypoints, we should copy the file directly instead of
+    /// creating both a proxy JS file and the asset.
+    ///
+    /// Loaders like .json, .text, etc. are NOT included here because they inline content
+    /// into JS modules, which is useful for tree-shaking and optimization.
+    pub fn shouldCopyAsEntrypoint(this: Loader) bool {
+        return switch (this) {
+            // These create proxy JS files that export paths/handles - copy directly for entrypoints
+            .file,
+            .wasm,
+            .napi,
+            .sqlite,
+            .sqlite_embedded,
+            => true,
+            // Everything else should go through normal bundling
+            // (json, text, yaml, etc. inline their content into JS which is useful)
+            else => false,
+        };
+    }
+
     pub fn handlesEmptyFile(this: Loader) bool {
         return switch (this) {
             .wasm, .file, .text => true,

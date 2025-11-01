@@ -127,8 +127,11 @@ describe("bundler", async () => {
     },
   });
 
-  const loaders: Loader[] = ["wasm", "json", "file" /* "napi" */, "text"];
-  const exts = ["wasm", "json", "lmao" /*  ".node" */, "txt"];
+  // Test loaders that inline content into JS (json, text)
+  // Note: wasm and file loaders are excluded because when used as entrypoints,
+  // they now copy files directly without creating JS wrappers
+  const loaders: Loader[] = ["json", "text"];
+  const exts = ["json", "txt"];
   for (let i = 0; i < loaders.length; i++) {
     const loader = loaders[i];
     const ext = exts[i];
@@ -153,8 +156,6 @@ describe("bundler", async () => {
           expect(module.default).toStrictEqual({ hello: "friends" });
         } else if (loader === "text") {
           expect(module.default).toStrictEqual('{ "hello": "friends" }');
-        } else {
-          api.assertFileExists(join("out", module.default));
         }
       },
     });
@@ -179,8 +180,6 @@ describe("bundler", async () => {
           expect(module.default).toStrictEqual({ hello: "friends" });
         } else if (loader === "text") {
           expect(module.default).toStrictEqual('{ "hello": "friends" }');
-        } else {
-          api.assertFileExists(join("out", module.default));
         }
       },
     });

@@ -26,7 +26,7 @@ Bun.serve({
     "/api/posts": {
       GET: () => new Response("List posts"),
       POST: async req => {
-        const body = await req.json();
+        const body = await req.json() as Record<string, unknown>;
         return Response.json({ created: true, ...body });
       },
     },

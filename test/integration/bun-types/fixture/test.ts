@@ -7,6 +7,7 @@ import {
   expect,
   expectTypeOf,
   jest,
+  vi,
   mock,
   type Mock,
   spyOn,
@@ -334,6 +335,16 @@ expectType(spy.mock.calls).is<[message?: any, ...optionalParams: any[]][]>();
 
 jest.spyOn(console, "log");
 jest.fn(() => 123 as const);
+
+// vi (Vitest-compatible) API: simple type checks
+expectType<typeof jest.fn>(vi.fn);
+expectType<typeof spyOn>(vi.spyOn);
+expectType<typeof mock.module>(vi.mock);
+expectType<typeof jest.restoreAllMocks>(vi.restoreAllMocks);
+expectType<typeof jest.clearAllMocks>(vi.clearAllMocks);
+expectType<typeof jest.resetAllMocks>(vi.resetAllMocks);
+expectType<typeof jest.useFakeTimers>(vi.useFakeTimers);
+expectType<typeof jest.useRealTimers>(vi.useRealTimers);
 
 xtest("", () => {});
 xdescribe("", () => {});

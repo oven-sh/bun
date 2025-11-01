@@ -191,6 +191,13 @@ pub const Bunfig = struct {
                 this.bunfig.origin = try expr.data.e_string.string(allocator);
             }
 
+            if (json.get("env")) |env_expr| {
+                if (env_expr.get("autoExpand")) |auto_expand| {
+                    try this.expect(auto_expand, .e_boolean);
+                    this.bunfig.env_auto_expand = auto_expand.data.e_boolean.value;
+                }
+            }
+
             if (comptime cmd == .RunCommand or cmd == .AutoCommand) {
                 if (json.get("serve")) |expr| {
                     if (expr.get("port")) |port| {

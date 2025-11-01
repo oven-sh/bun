@@ -1729,6 +1729,10 @@ pub const api = struct {
         serve_hmr: ?bool = null,
         serve_define: ?StringMap = null,
 
+        // [env]
+        // autoExpand = false
+        env_auto_expand: bool = true,
+
         // from --no-addons. null == true
         allow_addons: ?bool = null,
         /// from --unhandled-rejections, default is 'bun'

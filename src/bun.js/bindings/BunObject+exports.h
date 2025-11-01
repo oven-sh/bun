@@ -19,6 +19,7 @@
     macro(SHA512_256) \
     macro(TOML) \
     macro(YAML) \
+    macro(CSV) \
     macro(Transpiler) \
     macro(ValkeyClient) \
     macro(argv) \

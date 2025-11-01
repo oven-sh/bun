@@ -99,7 +99,7 @@ pub fn transpileSourceCode(
     const disable_transpilying = comptime flags.disableTranspiling();
 
     if (comptime disable_transpilying) {
-        if (!(loader.isJavaScriptLike() or loader == .toml or loader == .yaml or loader == .text or loader == .json or loader == .jsonc)) {
+        if (!(loader.isJavaScriptLike() or loader == .toml or loader == .yaml or loader == .text or loader == .json or loader == .jsonc or loader.isCSVLike())) {
             // Don't print "export default <file path>"
             return ResolvedSource{
                 .allocator = null,
@@ -111,7 +111,7 @@ pub fn transpileSourceCode(
     }
 
     switch (loader) {
-        .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .yaml, .text => {
+        .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .yaml, .text, .csv, .csv_no_header, .tsv, .tsv_no_header => {
             // Ensure that if there was an ASTMemoryAllocator in use, it's not used anymore.
             var ast_scope = js_ast.ASTMemoryAllocator.Scope{};
             ast_scope.enter();
@@ -357,6 +357,34 @@ pub fn transpileSourceCode(
                     },
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
+                };
+            }
+
+            if (loader.isCSVLike()) {
+                const options_string = switch (loader) {
+                    .csv => "{}",
+                    .csv_no_header => "{ header: false }",
+                    .tsv => "{ delimiter: '\\t' }",
+                    .tsv_no_header => "{ delimiter: '\\t', header: false }",
+                    else => unreachable,
+                };
+
+                const csv_module_source_code_string = std.fmt.allocPrint(allocator,
+                    \\// Generated code
+                    \\import {{CSV}} from 'bun';
+                    \\const parsed = CSV.parse("{s}",{s});
+                    \\
+                    \\export const __esModule = true;
+                    \\export const {{ rows, columns, errors, comments, data }} = parsed;
+                    \\export default data;
+                , .{ strings.formatEscapes(source.contents, .{ .quote_char = '"' }), options_string }) catch bun.outOfMemory();
+
+                return ResolvedSource{
+                    .allocator = null,
+                    .source_code = bun.String.cloneUTF8(csv_module_source_code_string),
+                    .specifier = input_specifier,
+                    .source_url = input_specifier.createIfDifferent(path.text),
+                    .tag = .esm,
                 };
             }
 

@@ -752,6 +752,11 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunStri
         }
     }
 
+    // Check again after promise resolution - null/undefined means "no match, try next plugin"
+    if (result.isUndefinedOrNull()) {
+        return JSValue::encode(jsUndefined());
+    }
+
     if (!result.isObject()) {
         JSC::throwTypeError(globalObject, scope, "onLoad() expects an object returned"_s);
         return {};

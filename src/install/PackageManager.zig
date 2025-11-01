@@ -89,6 +89,7 @@ lockfile: *Lockfile = undefined,
 
 options: Options,
 preinstall_state: std.ArrayListUnmanaged(PreinstallState) = .{},
+postinstall_optimizer: PostinstallOptimizer.List = .{},
 
 global_link_dir: ?std.fs.Dir = null,
 global_dir: ?std.fs.Dir = null,
@@ -1314,6 +1315,7 @@ const PackageManifestMap = bun.install.PackageManifestMap;
 const PackageNameAndVersionHash = bun.install.PackageNameAndVersionHash;
 const PackageNameHash = bun.install.PackageNameHash;
 const PatchTask = bun.install.PatchTask;
+const PostinstallOptimizer = bun.install.PostinstallOptimizer;
 const PreinstallState = bun.install.PreinstallState;
 const Task = bun.install.Task;
 const TaskCallbackContext = bun.install.TaskCallbackContext;

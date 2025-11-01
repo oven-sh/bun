@@ -435,6 +435,8 @@ pub const Installer = struct {
             const pkg_names = pkgs.items(.name);
             const pkg_name_hashes = pkgs.items(.name_hash);
             const pkg_resolutions = pkgs.items(.resolution);
+            const pkg_resolutions_lists = pkgs.items(.resolutions);
+            const pkg_metas: []const Lockfile.Package.Meta = pkgs.items(.meta);
             const pkg_bins = pkgs.items(.bin);
             const pkg_script_lists = pkgs.items(.scripts);
 
@@ -925,8 +927,18 @@ pub const Installer = struct {
 
                     installer.appendStorePath(&pkg_cwd, this.entry_id);
 
-                    if (pkg_res.tag != .root and (pkg_res.tag == .workspace or is_trusted)) {
+                    if (pkg_res.tag != .root and (pkg_res.tag == .workspace or is_trusted)) enqueueLifecycleScripts: {
                         var pkg_scripts: Package.Scripts = pkg_script_lists[pkg_id];
+                        if (is_trusted and manager.postinstall_optimizer.shouldIgnoreLifecycleScripts(
+                            pkg_name_hashes[pkg_id],
+                            installer.lockfile.buffers.resolutions.items,
+                            pkg_metas,
+                            manager.options.cpu,
+                            manager.options.os,
+                            null,
+                        )) {
+                            break :enqueueLifecycleScripts;
+                        }
 
                         var log = bun.logger.Log.init(bun.default_allocator);
                         defer log.deinit();
@@ -999,26 +1011,60 @@ pub const Installer = struct {
 
                     var node_modules_path: bun.AbsPath(.{}) = .initTopLevelDir();
                     defer node_modules_path.deinit();
-
                     installer.appendStoreNodeModulesPath(&node_modules_path, this.entry_id);
 
-                    var bin_linker: Bin.Linker = .{
-                        .bin = bin,
-                        .global_bin_path = installer.manager.options.bin_path,
-                        .package_name = strings.StringOrTinyString.init(dep_name),
-                        .string_buf = string_buf,
-                        .extern_string_buf = installer.lockfile.buffers.extern_strings.items,
-                        .seen = &seen,
-                        .node_modules_path = &node_modules_path,
-                        .abs_target_buf = abs_target_buf,
-                        .abs_dest_buf = abs_dest_buf,
-                        .rel_buf = rel_buf,
-                    };
+                    var target_node_modules_path: ?bun.AbsPath(.{}) = null;
+                    defer if (target_node_modules_path) |*path| path.deinit();
 
-                    bin_linker.link(false);
+                    var target_package_name = installer.maybeReplaceNodeModulesPath(
+                        entry_node_ids,
+                        node_pkg_ids,
+                        pkg_name_hashes,
+                        pkg_resolutions_lists,
+                        installer.lockfile.buffers.resolutions.items,
+                        installer.lockfile.packages.items(.meta),
+                        pkg_id,
+                        &target_node_modules_path,
+                    ) orelse strings.StringOrTinyString.init(dep_name);
+                    var can_retry_without_native_binlink_optimization = target_node_modules_path != null;
 
-                    if (bin_linker.err) |err| {
-                        return .failure(.{ .binaries = err });
+                    while (true) {
+                        var bin_linker: Bin.Linker = .{
+                            .bin = bin,
+                            .global_bin_path = installer.manager.options.bin_path,
+                            .package_name = strings.StringOrTinyString.init(dep_name),
+                            .target_package_name = target_package_name,
+                            .string_buf = string_buf,
+                            .extern_string_buf = installer.lockfile.buffers.extern_strings.items,
+                            .seen = &seen,
+                            .target_node_modules_path = if (target_node_modules_path) |*path| path else &node_modules_path,
+                            .node_modules_path = &node_modules_path,
+                            .abs_target_buf = abs_target_buf,
+                            .abs_dest_buf = abs_dest_buf,
+                            .rel_buf = rel_buf,
+                        };
+
+                        bin_linker.link(false);
+
+                        if (can_retry_without_native_binlink_optimization and (bin_linker.skipped_due_to_missing_bin or bin_linker.err != null)) {
+                            can_retry_without_native_binlink_optimization = false;
+                            target_node_modules_path.?.deinit();
+                            target_node_modules_path = null;
+                            target_package_name = strings.StringOrTinyString.init(dep_name);
+                            if (PackageManager.verbose_install) {
+                                Output.prettyErrorln("<d>[Bin Linker]<r> {s} -> {s} retrying without native bin link", .{
+                                    dep_name,
+                                    target_package_name.slice(),
+                                });
+                            }
+                            continue;
+                        }
+
+                        if (bin_linker.err) |err| {
+                            return .failure(.{ .binaries = err });
+                        }
+
+                        break;
                     }
 
                     continue :next_step this.nextStep(current_step);
@@ -1243,6 +1289,53 @@ pub const Installer = struct {
         _ = symlinker.ensureSymlink(link_strategy);
     }
 
+    fn maybeReplaceNodeModulesPath(
+        this: *const Installer,
+        entry_node_ids: []const Store.Node.Id,
+        node_pkg_ids: []const PackageID,
+        name_hashes: []const PackageNameHash,
+        pkg_resolutions_lists: []const Lockfile.PackageIDSlice,
+        pkg_resolutions_buffer: []const PackageID,
+        pkg_metas: []const Package.Meta,
+        pkg_id: PackageID,
+        target_node_modules_path: *?bun.AbsPath(.{}),
+    ) ?bun.strings.StringOrTinyString {
+        const postinstall_optimizer = &this.manager.postinstall_optimizer;
+        if (!postinstall_optimizer.isNativeBinlinkEnabled()) {
+            return null;
+        }
+        const name_hash = name_hashes[pkg_id];
+
+        if (postinstall_optimizer.get(name_hash)) |optimizer| {
+            switch (optimizer) {
+                .native_binlink => {
+                    const manager = this.manager;
+                    const target_cpu = manager.options.cpu;
+                    const target_os = manager.options.os;
+                    if (PostinstallOptimizer.getNativeBinlinkReplacementPackageID(
+                        pkg_resolutions_lists[pkg_id].get(pkg_resolutions_buffer),
+                        pkg_metas,
+                        target_cpu,
+                        target_os,
+                    )) |replacement_pkg_id| {
+                        for (entry_node_ids, 0..) |new_node_id, new_entry_id| {
+                            if (node_pkg_ids[new_node_id.get()] == replacement_pkg_id) {
+                                target_node_modules_path.* = bun.AbsPath(.{}).initTopLevelDir();
+                                const buf: *bun.AbsPath(.{}) = &target_node_modules_path.*.?;
+                                this.appendStoreNodeModulesPath(buf, .from(@intCast(new_entry_id)));
+                                debug("native bin link {d} -> {d}", .{ pkg_id, replacement_pkg_id });
+                                return strings.StringOrTinyString.init(this.lockfile.str(&this.lockfile.packages.items(.name)[replacement_pkg_id]));
+                            }
+                        }
+                    }
+                },
+                .ignore => {},
+            }
+        }
+
+        return null;
+    }
+
     pub fn linkDependencyBins(this: *const Installer, parent_entry_id: Store.Entry.Id) !void {
         const lockfile = this.lockfile;
         const store = this.store;
@@ -1251,7 +1344,7 @@ pub const Installer = struct {
         const extern_string_buf = lockfile.buffers.extern_strings.items;
 
         const entries = store.entries.slice();
-        const entry_node_ids = entries.items(.node_id);
+        const entry_node_ids: []const Store.Node.Id = entries.items(.node_id);
         const entry_deps = entries.items(.dependencies);
 
         const nodes = store.nodes.slice();
@@ -1259,6 +1352,10 @@ pub const Installer = struct {
         const node_dep_ids = nodes.items(.dep_id);
 
         const pkgs = lockfile.packages.slice();
+        const pkg_name_hashes = pkgs.items(.name_hash);
+        const pkg_metas = pkgs.items(.meta);
+        const pkg_resolutions_lists = pkgs.items(.resolutions);
+        const pkg_resolutions_buffer = lockfile.buffers.resolutions.items;
         const pkg_bins = pkgs.items(.bin);
 
         const link_target_buf = bun.path_buffer_pool.get();
@@ -1284,26 +1381,60 @@ pub const Installer = struct {
             if (bin.tag == .none) {
                 continue;
             }
-
             const alias = lockfile.buffers.dependencies.items[dep_id].name;
 
-            var bin_linker: Bin.Linker = .{
-                .bin = bin,
-                .global_bin_path = this.manager.options.bin_path,
-                .package_name = strings.StringOrTinyString.init(alias.slice(string_buf)),
-                .string_buf = string_buf,
-                .extern_string_buf = extern_string_buf,
-                .seen = &seen,
-                .node_modules_path = &node_modules_path,
-                .abs_target_buf = link_target_buf,
-                .abs_dest_buf = link_dest_buf,
-                .rel_buf = link_rel_buf,
-            };
+            var target_node_modules_path: ?bun.AbsPath(.{}) = null;
+            defer if (target_node_modules_path) |*path| path.deinit();
+            const package_name = strings.StringOrTinyString.init(alias.slice(string_buf));
 
-            bin_linker.link(false);
+            const target_package_name = this.maybeReplaceNodeModulesPath(
+                entry_node_ids,
+                node_pkg_ids,
+                pkg_name_hashes,
+                pkg_resolutions_lists,
+                pkg_resolutions_buffer,
+                pkg_metas,
+                pkg_id,
+                &target_node_modules_path,
+            ) orelse package_name;
 
-            if (bin_linker.err) |err| {
-                return err;
+            var can_retry_without_native_binlink_optimization = target_node_modules_path != null;
+            while (true) {
+                var bin_linker: Bin.Linker = .{
+                    .bin = bin,
+                    .global_bin_path = this.manager.options.bin_path,
+                    .package_name = package_name,
+                    .string_buf = string_buf,
+                    .extern_string_buf = extern_string_buf,
+                    .seen = &seen,
+                    .node_modules_path = &node_modules_path,
+                    .target_node_modules_path = if (target_node_modules_path) |*path| path else &node_modules_path,
+                    .target_package_name = if (target_node_modules_path != null) target_package_name else package_name,
+                    .abs_target_buf = link_target_buf,
+                    .abs_dest_buf = link_dest_buf,
+                    .rel_buf = link_rel_buf,
+                };
+
+                bin_linker.link(false);
+
+                if (can_retry_without_native_binlink_optimization and (bin_linker.skipped_due_to_missing_bin or bin_linker.err != null)) {
+                    can_retry_without_native_binlink_optimization = false;
+                    target_node_modules_path.?.deinit();
+                    target_node_modules_path = null;
+                    if (PackageManager.verbose_install) {
+                        Output.prettyErrorln("<d>[Bin Linker]<r> {s} -> {s} retrying without native bin link", .{
+                            package_name.slice(),
+                            target_package_name.slice(),
+                        });
+                    }
+                    continue;
+                }
+
+                if (bin_linker.err) |err| {
+                    return err;
+                }
+
+                break;
             }
         }
     }
@@ -1436,6 +1567,8 @@ pub const Installer = struct {
 
 const string = []const u8;
 
+const debug = Output.scoped(.IsolatedInstaller, .hidden);
+
 const FileCloner = @import("./FileCloner.zig");
 const Hardlinker = @import("./Hardlinker.zig");
 const std = @import("std");
@@ -1464,6 +1597,7 @@ const PackageID = install.PackageID;
 const PackageInstall = install.PackageInstall;
 const PackageManager = install.PackageManager;
 const PackageNameHash = install.PackageNameHash;
+const PostinstallOptimizer = install.PostinstallOptimizer;
 const Resolution = install.Resolution;
 const Store = install.Store;
 const TruncatedPackageNameHash = install.TruncatedPackageNameHash;

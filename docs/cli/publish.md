@@ -95,6 +95,22 @@ $ bun publish --tolerate-republish
 Specify the level of gzip compression to use when packing the package. Only applies to `bun publish` without a tarball path argument. Values range from `0` to `9` (default is `9`).
 {% bunCLIUsage command="publish" /%}
 
+### Authentication to npm registry
+
+You can authenticate with npm using the `NPM_CONFIG_TOKEN` environment variable. This is useful for automated workflows and CI/CD pipelines, as it allows you to authenticate without interactive prompts.
+
+```sh
+$ NPM_CONFIG_TOKEN=your_token bun publish
+```
+
+In GitHub Actions workflows, you can use it like this:
+
+```yaml
+- run: bun publish --access public
+  env:
+    NPM_CONFIG_TOKEN: ${{secrets.NPM_TOKEN}}
+```
+
 ### `--auth-type`
 
 If you have 2FA enabled for your npm account, `bun publish` will prompt you for a one-time password. This can be done through a browser or the CLI. The `--auth-type` flag can be used to tell the npm registry which method you prefer. The possible values are `web` and `legacy`, with `web` being the default.

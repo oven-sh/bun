@@ -171,6 +171,7 @@ pub const feature_flag = struct {
     pub const BUN_FEATURE_FLAG_NO_LIBDEFLATE = newFeatureFlag("BUN_FEATURE_FLAG_NO_LIBDEFLATE", .{});
     pub const NODE_NO_WARNINGS = newFeatureFlag("NODE_NO_WARNINGS", .{});
     pub const BUN_TRACE = newFeatureFlag("BUN_TRACE", .{});
+    pub const BUN_DISABLE_EMULATOR_CHECK = newFeatureFlag("BUN_DISABLE_EMULATOR_CHECK", .{});
 };
 
 /// Interface between each of the different EnvVar types and the common logic.

@@ -264,6 +264,21 @@ pub const Run = struct {
         vm.hot_reload = this.ctx.debug.hot_reload;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
+        if (!bun.feature_flag.BUN_DISABLE_EMULATOR_CHECK.get() and isBrokenEmulator()) {
+            vm.exit_handler.exit_code = 1;
+            vm.onExit();
+
+            Output.prettyErrorln(
+                \\<r><yellow>Buggy CPU emulator detected! Bun cannot function correctly.
+                \\This is most commonly caused by Rosetta. If you are using a Linux emulation environment for Mac, try configuring it to use QEMU instead or running the arm64 version of Bun instead of x64.
+                \\See https://github.com/oven-sh/bun/issues/19677 for more details. Disable this check by setting BUN_DISABLE_EMULATOR_CHECK=1.
+                \\
+                \\<r><d>{s}<r>
+            , .{Global.unhandled_error_bun_version_string});
+
+            vm.globalExit();
+        }
+
         // Start CPU profiler if enabled
         if (this.ctx.runtime_options.cpu_prof.enabled) {
             const cpu_prof_opts = this.ctx.runtime_options.cpu_prof;
@@ -533,6 +548,27 @@ pub noinline fn failWithBuildError(vm: *jsc.VirtualMachine) noreturn {
     @branchHint(.cold);
     dumpBuildError(vm);
     Global.exit(1);
+}
+
+fn isBrokenEmulator() bool {
+    if (bun.Environment.isX64) {
+        const newBits = asm volatile (
+            \\
+            // copy input into xmm0
+            \\movsd %xmm2, %xmm0
+            // convert doubles in xmm0 to ints in xmm1
+            // -- this SHOULD leave xmm0 unchanged, but it does not in some Rosetta versions
+            \\cvttpd2dq %xmm0, %xmm1
+            // the result of this expression is the value left in xmm0
+            : [ret] "={xmm0}" (-> f64),
+              // start with 0.5 in xmm2
+            : [input] "{xmm2}" (@as(f64, 0.5)),
+              // we clobber xmm0 and xmm1
+            : "xmm0", "xmm1"
+        );
+        return newBits != 0.5;
+    }
+    return false;
 }
 
 const OpaqueWrap = jsc.OpaqueWrap;

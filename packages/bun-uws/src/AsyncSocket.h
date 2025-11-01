@@ -64,6 +64,13 @@ public:
         return us_socket_get_native_handle(SSL, (us_socket_t *) this);
     }
 
+
+    bool isWritable() {
+        return ((us_socket_t *) this)->flags.is_writable;
+    }
+    bool isReadable() {
+        return ((us_socket_t *) this)->flags.is_readable;
+    }
     /* Get loop data for socket */
     LoopData *getLoopData() {
         return (LoopData *) us_loop_ext(us_socket_context_loop(SSL, us_socket_context(SSL, (us_socket_t *) this)));
@@ -228,6 +235,7 @@ public:
     * @return The total number of bytes successfully written to the socket
     */
     size_t flush() {
+
         /* Check if socket is valid for operations */
         if (us_socket_is_closed(SSL, (us_socket_t *) this)) {
             /* Socket is closed, no flushing is possible */
@@ -274,6 +282,8 @@ public:
             /* Successfully wrote the entire buffer, clear the buffer */
             asyncSocketData->buffer.clear();
         }
+
+        
 
         /* Return the total number of bytes written during this flush operation */
         return total_written;

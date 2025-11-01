@@ -412,7 +412,6 @@ private:
                 /* Timeout on uncork failure */
                 auto [written, failed] = ((AsyncSocket<SSL> *) returnedData)->uncork();
                 if (written > 0 || failed) {
-                    httpResponseData->isIdle = true;
                     /* All Http sockets timeout by this, and this behavior match the one in HttpResponse::cork */
                     ((HttpResponse<SSL> *) s)->resetTimeout();
                 }

@@ -683,10 +683,17 @@ public:
 
     /* Attach handler for writable HTTP response */
     HttpResponse *onWritable(void* userData, HttpResponseData<SSL>::OnWritableCallback handler) {
+        
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         httpResponseData->userData = userData;
         httpResponseData->onWritable = handler;
+        if(this->isWritable() && httpResponseData->onWritable) {
+            this->cork([&]() {
+                httpResponseData->callOnWritable(this, httpResponseData->offset);
+                this->flush();
+            });
+        }
         return this;
     }
 
@@ -731,7 +738,6 @@ public:
         httpResponseData->onAborted = nullptr;
         return this;
     }
-
     HttpResponse* clearOnTimeout() {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 

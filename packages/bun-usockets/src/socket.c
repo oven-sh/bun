@@ -22,6 +22,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <errno.h>
+#include <stdio.h>
 #ifndef WIN32
 #include <fcntl.h>
 #endif
@@ -296,9 +297,10 @@ int us_socket_write2(int ssl, struct us_socket_t *s, const char *header, int hea
 
     int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
     if (written != header_length + payload_length) {
+        s->flags.is_writable = false;
+        s->context->loop->data.last_write_failed = 1;
         us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     }
-
     return written < 0 ? 0 : written;
 }
 
@@ -321,9 +323,14 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
     s->flags.low_prio_state = 0;
     s->flags.allow_half_open = 0;
     s->flags.is_paused = 0;
-    s->flags.is_ipc = 0;
     s->flags.is_ipc = ipc;
+    s->flags.is_readable = true;
+    s->flags.is_writable = true;
+    s->flags.writable_emitted = true;
+    s->flags.has_error = false;
+    s->flags.has_received_eof = false;
     s->connect_state = NULL;
+    s->connect_next = NULL;
 
     /* We always use nodelay */
     bsd_socket_nodelay(fd, 1);
@@ -363,54 +370,74 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
         return us_internal_ssl_socket_write((struct us_internal_ssl_socket_t *) s, data, length);
     }
 #endif
-    if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s)) {
+    if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s) || !s->flags.is_writable) {
         return 0;
     }
 
-    int written = bsd_send(us_poll_fd(&s->p), data, length);
-    if (written != length) {
-        s->context->loop->data.last_write_failed = 1;
-        us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
-    }
-
-    return written < 0 ? 0 : written;
+    int total_written = 0;
+    int remaining = length;
+    do {
+        int written = bsd_send(us_poll_fd(&s->p), data, remaining);
+        if (written <= 0) {
+            s->context->loop->data.last_write_failed = 1;
+            s->flags.is_writable = false;
+            us_poll_change(&s->p, s->context->loop, us_poll_events(&s->p) | LIBUS_SOCKET_WRITABLE);
+            break;
+        } else {
+            data += written;
+            remaining -= written;
+            total_written += written;
+        }
+    } while(remaining > 0);
+    return total_written;
 }
 
 #if !defined(_WIN32)
 /* Send a message with data and an attached file descriptor, for use in IPC. Returns the number of bytes written. If that
     number is less than the length, the file descriptor was not sent. */
 int us_socket_ipc_write_fd(struct us_socket_t *s, const char* data, int length, int fd) {
-    if (us_socket_is_closed(0, s) || us_socket_is_shut_down(0, s)) {
+    if (us_socket_is_closed(0, s) || us_socket_is_shut_down(0, s) || !s->flags.is_writable) {
         return 0;
     }
 
-    struct msghdr msg = {0};
-    struct iovec iov = {0};
-    char cmsgbuf[CMSG_SPACE(sizeof(int))];
+    int total_written = 0;
+    int remaining = length;
+    do {
 
-    iov.iov_base = (void*)data;
-    iov.iov_len = length;
+        struct msghdr msg = {0};
+        struct iovec iov = {0};
+        char cmsgbuf[CMSG_SPACE(sizeof(int))];
 
-    msg.msg_iov = &iov;
-    msg.msg_iovlen = 1;
-    msg.msg_control = cmsgbuf;
-    msg.msg_controllen = CMSG_SPACE(sizeof(int));
+        iov.iov_base = (void*)data;
+        iov.iov_len = remaining;
 
-    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
-    cmsg->cmsg_level = SOL_SOCKET;
-    cmsg->cmsg_type = SCM_RIGHTS;
-    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = cmsgbuf;
+        msg.msg_controllen = CMSG_SPACE(sizeof(int));
 
-    *(int *)CMSG_DATA(cmsg) = fd;
+        struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
+        cmsg->cmsg_level = SOL_SOCKET;
+        cmsg->cmsg_type = SCM_RIGHTS;
+        cmsg->cmsg_len = CMSG_LEN(sizeof(int));
 
-    int sent = bsd_sendmsg(us_poll_fd(&s->p), &msg, 0);
+        *(int *)CMSG_DATA(cmsg) = fd;
 
-    if (sent != length) {
-        s->context->loop->data.last_write_failed = 1;
-        us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
-    }
+        int written = bsd_sendmsg(us_poll_fd(&s->p), &msg, 0);
+        
+        if (written <= 0) {
+            s->context->loop->data.last_write_failed = 1;
+            s->flags.is_writable = false;
+            us_poll_change(&s->p, s->context->loop, us_poll_events(&s->p) | LIBUS_SOCKET_WRITABLE);
+            break;
+        } else {
+            data += written;
+            remaining -= written;
+            total_written += written;
+        }
+    } while(remaining > 0);
 
-    return sent < 0 ? 0 : sent;
+    return total_written;
 }
 #endif
 

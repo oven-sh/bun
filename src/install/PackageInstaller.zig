@@ -369,7 +369,7 @@ pub const PackageInstaller = struct {
                         const args = .{ name, @errorName(err) };
 
                         if (log_level.showProgress()) {
-                            switch (Output.enable_ansi_colors) {
+                            switch (Output.enable_ansi_colors_stderr) {
                                 inline else => |enable_ansi_colors| {
                                     this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
                                 },
@@ -452,7 +452,7 @@ pub const PackageInstaller = struct {
                     const args = .{ package_name, @errorName(err) };
 
                     if (log_level.showProgress()) {
-                        switch (Output.enable_ansi_colors) {
+                        switch (Output.enable_ansi_colors_stderr) {
                             inline else => |enable_ansi_colors| {
                                 this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
                             },
@@ -1328,7 +1328,7 @@ pub const PackageInstaller = struct {
                 const args = .{ folder_name, @errorName(err) };
 
                 if (log_level.showProgress()) {
-                    switch (Output.enable_ansi_colors) {
+                    switch (Output.enable_ansi_colors_stderr) {
                         inline else => |enable_ansi_colors| {
                             this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
                         },

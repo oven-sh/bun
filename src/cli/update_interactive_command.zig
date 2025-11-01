@@ -1162,7 +1162,7 @@ pub const UpdateInteractiveCommand = struct {
     }
 
     fn processMultiSelect(state: *MultiSelectState, initial_terminal_size: TerminalSize) ![]bool {
-        const colors = Output.enable_ansi_colors;
+        const colors = Output.enable_ansi_colors_stdout;
 
         // Clear any previous progress output
         Output.print("\r\x1B[2K", .{}); // Clear entire line
@@ -1427,7 +1427,7 @@ pub const UpdateInteractiveCommand = struct {
 
                     const uses_default_registry = pkg.manager.options.scope.url_hash == Install.Npm.Registry.default_url_hash and
                         pkg.manager.scopeForPackageName(pkg.name).url_hash == Install.Npm.Registry.default_url_hash;
-                    const package_url = if (Output.enable_ansi_colors and uses_default_registry)
+                    const package_url = if (Output.enable_ansi_colors_stdout and uses_default_registry)
                         try std.fmt.allocPrint(bun.default_allocator, "https://npmjs.org/package/{s}/v/{s}", .{ pkg.name, brk: {
                             if (selected) {
                                 if (pkg.use_latest) {

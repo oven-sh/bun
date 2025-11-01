@@ -10,7 +10,6 @@ pub const AllocationScopeIn = allocation_scope.AllocationScopeIn;
 
 pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");
 pub const MaxHeapAllocator = @import("./allocators/MaxHeapAllocator.zig");
-pub const MemoryReportingAllocator = @import("./allocators/MemoryReportingAllocator.zig");
 pub const LinuxMemFdAllocator = @import("./allocators/LinuxMemFdAllocator.zig");
 pub const MaybeOwned = @import("./allocators/maybe_owned.zig").MaybeOwned;
 

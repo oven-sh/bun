@@ -25,7 +25,6 @@ const arena_vtable = blk: {
 fn hasPtr(alloc: Allocator) bool {
     return alloc.vtable == arena_vtable or
         bun.allocators.allocation_scope.isInstance(alloc) or
-        bun.MemoryReportingAllocator.isInstance(alloc) or
         ((comptime bun.Environment.isLinux) and LinuxMemFdAllocator.isInstance(alloc)) or
         bun.MaxHeapAllocator.isInstance(alloc) or
         alloc.vtable == bun.allocators.c_allocator.vtable or

@@ -101,7 +101,7 @@ pub fn toHaveBeenCalledWith(this: *Expect, globalThis: *JSGlobalObject, callfram
         \\    Number of calls: {d}
     ;
 
-    switch (Output.enable_ansi_colors) {
+    switch (Output.enable_ansi_colors_stderr) {
         inline else => |colors| {
             return this.throw(globalThis, signature, Output.prettyFmt("\n\n" ++ fmt ++ "\n", colors), .{
                 expected_args_js_array.toFmt(&formatter),

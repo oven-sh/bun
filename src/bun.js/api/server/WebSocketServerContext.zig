@@ -124,6 +124,9 @@ pub fn protect(this: WebSocketServerContext) void {
 pub fn unprotect(this: WebSocketServerContext) void {
     this.handler.unprotect();
 }
+pub fn deinit(this: *WebSocketServerContext) void {
+    this.unprotect();
+}
 
 const CompressTable = bun.ComptimeStringMap(i32, .{
     .{ "disable", 0 },

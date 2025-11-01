@@ -1321,3 +1321,4 @@ const initializeStore = bun.install.initializeStore;
 
 const Lockfile = bun.install.Lockfile;
 const Package = Lockfile.Package;
+const PostinstallOptimizer = bun.install.PostinstallOptimizer;

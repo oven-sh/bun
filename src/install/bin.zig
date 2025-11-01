@@ -504,6 +504,14 @@ pub const Bin = extern struct {
     pub const Linker = struct {
         bin: Bin,
 
+        /// Usually will be the same as `node_modules_path`.
+        /// Used to support native bin linking.
+        target_node_modules_path: *bun.AbsPath(.{}),
+
+        /// Usually will be the same as `package_name`.
+        /// Used to support native bin linking.
+        target_package_name: strings.StringOrTinyString,
+
         // Hash map of seen destination paths for this `node_modules/.bin` folder. PackageInstaller will reset it before
         // linking each tree.
         seen: ?*bun.StringHashMap(void),
@@ -838,7 +846,7 @@ pub const Bin = extern struct {
 
         /// uses `this.abs_target_buf`
         pub fn buildTargetPackageDir(this: *const Linker) []const u8 {
-            const dest_dir_without_trailing_slash = strings.withoutTrailingSlash(this.node_modules_path.slice());
+            const dest_dir_without_trailing_slash = strings.withoutTrailingSlash(this.target_node_modules_path.slice());
 
             var remain = this.abs_target_buf;
 
@@ -847,7 +855,7 @@ pub const Bin = extern struct {
             remain[0] = std.fs.path.sep;
             remain = remain[1..];
 
-            const package_name = this.package_name.slice();
+            const package_name = this.target_package_name.slice();
             @memcpy(remain[0..package_name.len], package_name);
             remain = remain[package_name.len..];
             remain[0] = std.fs.path.sep;

@@ -27,6 +27,7 @@ trusted_dependencies: ?TrustedDependenciesSet = null,
 patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 catalogs: CatalogMap = .{},
+postinstall_optimizer: PostinstallOptimizer.List = .{},
 
 pub const DepSorter = struct {
     lockfile: *const Lockfile,
@@ -2191,3 +2192,4 @@ const invalid_package_id = Install.invalid_package_id;
 
 const PackageManager = Install.PackageManager;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
+const PostinstallOptimizer = Install.PostinstallOptimizer;

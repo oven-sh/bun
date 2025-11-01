@@ -914,7 +914,6 @@ pub fn hoist(
     var slice = lockfile.packages.slice();
 
     var builder = Tree.Builder(method){
-        .name_hashes = slice.items(.name_hash),
         .queue = .init(allocator),
         .resolution_lists = slice.items(.resolutions),
         .resolutions = lockfile.buffers.resolutions.items,

@@ -52,6 +52,7 @@ pub const invalid_id: Id = std.math.maxInt(Id);
 pub const HoistDependencyResult = union(enum) {
     dependency_loop,
     hoisted,
+    resolved: PackageID,
     placement: struct {
         id: Id,
         bundled: bool = false,
@@ -234,9 +235,8 @@ pub const BuilderMethod = enum {
 pub fn Builder(comptime method: BuilderMethod) type {
     return struct {
         allocator: Allocator,
-        name_hashes: []const PackageNameHash,
         list: bun.MultiArrayList(Entry) = .{},
-        resolutions: []const PackageID,
+        resolutions: []PackageID,
         dependencies: []const Dependency,
         resolution_lists: []const Lockfile.DependencyIDSlice,
         queue: TreeFiller,
@@ -328,6 +328,10 @@ pub fn isFilteredDependencyOrWorkspace(
 ) bool {
     const pkg_id = lockfile.buffers.resolutions.items[dep_id];
     if (pkg_id >= lockfile.packages.len) {
+        const dep = lockfile.buffers.dependencies.items[dep_id];
+        if (dep.behavior.isOptionalPeer()) {
+            return false;
+        }
         return true;
     }
 
@@ -454,8 +458,6 @@ pub fn processSubtree(
     const trees = list_slice.items(.tree);
     const dependency_lists = list_slice.items(.dependencies);
     const next: *Tree = &trees[builder.list.len - 1];
-    const name_hashes: []const PackageNameHash = builder.name_hashes;
-    const max_package_id = @as(PackageID, @truncate(name_hashes.len));
 
     const pkgs = builder.lockfile.packages.slice();
     const pkg_resolutions = pkgs.items(.resolution);
@@ -478,8 +480,6 @@ pub fn processSubtree(
 
     for (builder.sort_buf.items) |dep_id| {
         const pkg_id = builder.resolutions[dep_id];
-        // Skip unresolved packages, e.g. "peerDependencies"
-        if (pkg_id >= max_package_id) continue;
 
         // filter out disabled dependencies
         if (comptime method == .filter) {
@@ -519,6 +519,24 @@ pub fn processSubtree(
                 break :hoisted .{ .placement = .{ .id = next.id, .bundled = true } };
             }
 
+            if (pkg_id == invalid_package_id) {
+                if (dependency.behavior.isOptionalPeer()) {
+                    break :hoisted try next.hoistDependency(
+                        true,
+                        hoist_root_id,
+                        pkg_id,
+                        &dependency,
+                        dependency_lists,
+                        trees,
+                        method,
+                        builder,
+                    );
+                }
+
+                // skip unresolvable dependencies
+                continue;
+            }
+
             if (pkg_resolutions[pkg_id].tag == .folder) {
                 break :hoisted .{ .placement = .{ .id = next.id } };
             }
@@ -537,10 +555,14 @@ pub fn processSubtree(
 
         switch (hoisted) {
             .dependency_loop, .hoisted => continue,
+            .resolved => |res_id| {
+                bun.assertWithLocation(pkg_id == invalid_package_id, @src());
+                builder.resolutions[dep_id] = res_id;
+            },
             .placement => |dest| {
                 bun.handleOom(dependency_lists[dest.id].append(builder.allocator, dep_id));
                 trees[dest.id].dependencies.len += 1;
-                if (builder.resolution_lists[pkg_id].len > 0) {
+                if (pkg_id != invalid_package_id and builder.resolution_lists[pkg_id].len > 0) {
                     try builder.queue.writeItem(.{
                         .tree_id = dest.id,
                         .dependency_id = dep_id,
@@ -579,6 +601,11 @@ fn hoistDependency(
         const dep_id = this_dependencies[i];
         const dep = builder.dependencies[dep_id];
         if (dep.name_hash != dependency.name_hash) continue;
+
+        if (package_id == invalid_package_id) {
+            // resolve optional peer to `builder.resolutions[dep_id]`
+            return .{ .resolved = builder.resolutions[dep_id] }; // 1
+        }
 
         if (builder.resolutions[dep_id] == package_id) {
             // this dependency is the same package as the other, hoist

@@ -25,7 +25,7 @@ pub const PostinstallOptimizer = enum {
             }
         }
 
-        return false;
+        return true;
     }
 
     pub fn fromPackageJSON(list: *List, expr: *const ast.Expr, allocator: std.mem.Allocator) !void {

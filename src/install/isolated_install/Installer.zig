@@ -998,7 +998,7 @@ pub const Installer = struct {
                     var seen: bun.StringHashMap(void) = .init(bun.default_allocator);
                     defer seen.deinit();
 
-                    var node_modules_path: bun.AbsPath(.{}) = .init();
+                    var node_modules_path: bun.AbsPath(.{}) = .initTopLevelDir();
                     defer node_modules_path.deinit();
                     installer.appendStoreNodeModulesPath(&node_modules_path, this.entry_id);
 

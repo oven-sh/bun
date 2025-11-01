@@ -41,6 +41,33 @@ pub fn Intrusive(
             return self.root;
         }
 
+        /// Look at the next maximum value but do not remove it. This is an O(N) operation.
+        pub fn findMax(self: *const Self) ?*T {
+            const root = self.root orelse return null;
+
+            return findMaxInternal(self.context, root, root, less);
+        }
+        fn findMaxInternal(ctx: Context, node: *T, current_max: *T, lessFn: *const fn (ctx: Context, a: *T, b: *T) bool) *T {
+            var max_so_far = current_max;
+
+            // Update max if current node is greater
+            if (lessFn(ctx, max_so_far, node)) {
+                max_so_far = node;
+            }
+
+            // Traverse children
+            if (node.heap.child) |child| {
+                max_so_far = findMaxInternal(ctx, child, max_so_far, lessFn);
+            }
+
+            // Traverse siblings
+            if (node.heap.next) |next_sibling| {
+                max_so_far = findMaxInternal(ctx, next_sibling, max_so_far, lessFn);
+            }
+
+            return max_so_far;
+        }
+
         /// Delete the minimum value from the heap and return it.
         pub fn deleteMin(self: *Self) ?*T {
             const root = self.root orelse return null;

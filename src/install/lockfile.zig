@@ -2185,6 +2185,7 @@ const PackageID = Install.PackageID;
 const PackageInstall = Install.PackageInstall;
 const PackageNameAndVersionHash = Install.PackageNameAndVersionHash;
 const PackageNameHash = Install.PackageNameHash;
+const PostinstallOptimizer = Install.PostinstallOptimizer;
 const TruncatedPackageNameHash = Install.TruncatedPackageNameHash;
 const initializeStore = Install.initializeStore;
 const invalid_dependency_id = Install.invalid_dependency_id;
@@ -2192,4 +2193,3 @@ const invalid_package_id = Install.invalid_package_id;
 
 const PackageManager = Install.PackageManager;
 const WorkspaceFilter = PackageManager.WorkspaceFilter;
-const PostinstallOptimizer = Install.PostinstallOptimizer;

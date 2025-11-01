@@ -124,15 +124,14 @@ pub const PostinstallOptimizer = enum {
 };
 
 const std = @import("std");
+
 const bun = @import("bun");
 const ast = bun.ast;
-const install = bun.install;
 
-const PackageNameHash = install.PackageNameHash;
+const install = bun.install;
 const ArrayIdentityContext = install.ArrayIdentityContext;
-const PackageID = install.PackageID;
 const Lockfile = install.Lockfile;
-const ExternalSlice = Lockfile.ExternalSlice;
-const PackageIDSlice = Lockfile.PackageIDSlice;
-const Meta = Lockfile.Package.Meta;
 const Npm = install.Npm;
+const PackageID = install.PackageID;
+const PackageNameHash = install.PackageNameHash;
+const Meta = Lockfile.Package.Meta;

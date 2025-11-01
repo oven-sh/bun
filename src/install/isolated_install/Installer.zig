@@ -1548,6 +1548,8 @@ pub const Installer = struct {
 
 const string = []const u8;
 
+const debug = Output.scoped(.IsolatedInstaller, .hidden);
+
 const FileCloner = @import("./FileCloner.zig");
 const Hardlinker = @import("./Hardlinker.zig");
 const std = @import("std");
@@ -1576,6 +1578,7 @@ const PackageID = install.PackageID;
 const PackageInstall = install.PackageInstall;
 const PackageManager = install.PackageManager;
 const PackageNameHash = install.PackageNameHash;
+const PostinstallOptimizer = install.PostinstallOptimizer;
 const Resolution = install.Resolution;
 const Store = install.Store;
 const TruncatedPackageNameHash = install.TruncatedPackageNameHash;
@@ -1583,5 +1586,3 @@ const invalid_dependency_id = install.invalid_dependency_id;
 
 const Lockfile = install.Lockfile;
 const Package = Lockfile.Package;
-const debug = Output.scoped(.IsolatedInstaller, .hidden);
-const PostinstallOptimizer = install.PostinstallOptimizer;

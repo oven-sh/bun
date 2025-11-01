@@ -10,8 +10,8 @@ on:
   merge_group:
 env:
   BUN_VERSION: "1.2.20"
-  LLVM_VERSION: "19.1.7"
-  LLVM_VERSION_MAJOR: "19"
+  LLVM_VERSION: "20.1.8"
+  LLVM_VERSION_MAJOR: "20"
 
 jobs:
   autofix:

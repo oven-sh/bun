@@ -729,11 +729,46 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunStri
     auto scope = DECLARE_THROW_SCOPE(vm);
     scope.assertNoExceptionExceptTermination();
 
-    JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+    JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
     const auto& builtinNames = WebCore::builtinNames(vm);
+
+    // Add path property
     paramsObject->putDirect(
         vm, builtinNames.pathPublicName(),
         jsString(vm, pathString));
+
+    // Add namespace property if it exists
+    if (namespaceString) {
+        auto namespaceWTFString = namespaceString->toWTFString(BunString::ZeroCopy);
+        if (!namespaceWTFString.isEmpty()) {
+            paramsObject->putDirect(
+                vm, JSC::Identifier::fromString(vm, "namespace"_s),
+                jsString(vm, namespaceWTFString));
+        }
+    }
+
+    // Add loader property (default based on file extension)
+    // This matches the behavior of Bun.build() plugins
+    WTF::String loaderName;
+    if (pathString.endsWith(".js"_s) || pathString.endsWith(".cjs"_s) || pathString.endsWith(".mjs"_s)) {
+        loaderName = "js"_s;
+    } else if (pathString.endsWith(".ts"_s) || pathString.endsWith(".tsx"_s) || pathString.endsWith(".mts"_s) || pathString.endsWith(".cts"_s)) {
+        loaderName = "tsx"_s;
+    } else if (pathString.endsWith(".jsx"_s)) {
+        loaderName = "jsx"_s;
+    } else if (pathString.endsWith(".json"_s)) {
+        loaderName = "json"_s;
+    } else if (pathString.endsWith(".txt"_s)) {
+        loaderName = "text"_s;
+    } else if (pathString.endsWith(".toml"_s)) {
+        loaderName = "toml"_s;
+    } else {
+        loaderName = "file"_s;
+    }
+    paramsObject->putDirect(
+        vm, JSC::Identifier::fromString(vm, "loader"_s),
+        jsString(vm, loaderName));
+
     arguments.append(paramsObject);
 
     auto result = AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);

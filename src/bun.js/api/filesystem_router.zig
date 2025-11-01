@@ -14,6 +14,7 @@ pub const FileSystemRouter = struct {
     arena: *bun.ArenaAllocator = undefined,
     allocator: std.mem.Allocator = undefined,
     asset_prefix: ?*jsc.RefString = null,
+    style: Options.RouteStyle = .nextjs,
 
     pub const js = jsc.Codegen.JSFileSystemRouter;
     pub const toJS = js.toJS;
@@ -38,13 +39,16 @@ pub const FileSystemRouter = struct {
         var asset_prefix_slice: ZigString.Slice = .{};
 
         var out_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
-        if (try argument.get(globalThis, "style")) |style_val| {
-            if (!(try style_val.getZigString(globalThis)).eqlComptime("nextjs")) {
-                return globalThis.throwInvalidArguments("Only 'nextjs' style is currently implemented", .{});
+        const style: Options.RouteStyle = blk: {
+            if (try argument.get(globalThis, "style")) |style_val| {
+                const style_str = try style_val.getZigString(globalThis);
+                if (style_str.eqlComptime("nextjs")) break :blk .nextjs;
+                if (style_str.eqlComptime("react-router")) break :blk .react_router;
+                return globalThis.throwInvalidArguments("Invalid style. Expected 'nextjs' or 'react-router'", .{});
+            } else {
+                return globalThis.throwInvalidArguments("Expected 'style' option (ex: \"style\": \"nextjs\")", .{});
             }
-        } else {
-            return globalThis.throwInvalidArguments("Expected 'style' option (ex: \"style\": \"nextjs\")", .{});
-        }
+        };
 
         if (try argument.get(globalThis, "dir")) |dir| {
             if (!dir.isString()) {
@@ -124,6 +128,7 @@ pub const FileSystemRouter = struct {
             .dir = path_to_use,
             .extensions = if (extensions.items.len > 0) extensions.items else default_extensions,
             .asset_prefix_path = asset_prefix_slice.slice(),
+            .style = style,
         }) catch unreachable;
 
         router.loadRoutes(&log, root_dir_info, Resolver, &vm.transpiler.resolver, router.config.dir) catch {
@@ -160,6 +165,7 @@ pub const FileSystemRouter = struct {
             .router = router,
             .arena = arena,
             .allocator = allocator,
+            .style = style,
         };
 
         router.config.dir = fs_router.base_dir.?.slice();
@@ -244,6 +250,7 @@ pub const FileSystemRouter = struct {
             .dir = allocator.dupe(u8, this.router.config.dir) catch unreachable,
             .extensions = allocator.dupe(string, this.router.config.extensions) catch unreachable,
             .asset_prefix_path = this.router.config.asset_prefix_path,
+            .style = this.style,
         }) catch unreachable;
         router.loadRoutes(&log, root_dir_info, Resolver, &vm.transpiler.resolver, router.config.dir) catch {
             arena.deinit();
@@ -361,8 +368,12 @@ pub const FileSystemRouter = struct {
         );
     }
 
-    pub fn getStyle(_: *FileSystemRouter, globalThis: *jsc.JSGlobalObject) JSValue {
-        return bun.String.static("nextjs").toJS(globalThis);
+    pub fn getStyle(this: *FileSystemRouter, globalThis: *jsc.JSGlobalObject) JSValue {
+        const value = switch (this.style) {
+            .nextjs => "nextjs",
+            .react_router => "react-router",
+        };
+        return bun.String.static(value).toJS(globalThis);
     }
 
     pub fn getAssetPrefix(this: *FileSystemRouter, globalThis: *jsc.JSGlobalObject) JSValue {
@@ -663,6 +674,7 @@ const string = []const u8;
 
 const Fs = @import("../../fs.zig");
 const Router = @import("../../router.zig");
+const Options = @import("../../options.zig");
 const URLPath = @import("../../http/URLPath.zig");
 const std = @import("std");
 const Resolver = @import("../../resolver/resolver.zig").Resolver;

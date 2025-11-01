@@ -79,6 +79,8 @@
   TextDecoderStream               TextDecoderStreamConstructorCallback                 PropertyCallback
   TextEncoder                     TextEncoderConstructorCallback                       PropertyCallback
   TextEncoderStream               TextEncoderStreamConstructorCallback                 PropertyCallback
+  CompressionStream               CompressionStreamConstructorCallback                 PropertyCallback
+  DecompressionStream             DecompressionStreamConstructorCallback               PropertyCallback
   TransformStream                 TransformStreamConstructorCallback                   PropertyCallback
   TransformStreamDefaultController TransformStreamDefaultControllerConstructorCallback PropertyCallback
   URL                             DOMURLConstructorCallback                            DontEnum|PropertyCallback

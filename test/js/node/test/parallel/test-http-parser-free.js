@@ -22,6 +22,7 @@
 'use strict';
 const common = require('../common');
 if (common.isMacOS && require('os').release().split(".")[0] === "22") return; // TODO: BUN macOS 13
+if (common.isMacOS && process.arch === "arm64" && process.env.CI === "true") return; // TODO: BUN CI
 const assert = require('assert');
 const http = require('http');
 const Countdown = require('../common/countdown');

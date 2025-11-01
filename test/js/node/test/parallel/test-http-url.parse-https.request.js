@@ -20,43 +20,42 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 'use strict';
-// See https://github.com/joyent/node/issues/3257
-
 const common = require('../common');
-const http = require('http');
+if (!common.hasCrypto)
+  common.skip('missing crypto');
+const { readKey } = require('../common/fixtures');
 
-const server = http.createServer(function(req, res) {
-  req.resume();
-  req.once('end', function() {
-    res.writeHead(200);
-    res.end();
-    server.close();
-  });
-});
+const assert = require('assert');
+const https = require('https');
+const url = require('url');
 
-const tmpdir = require('../common/tmpdir');
-tmpdir.refresh();
+// https options
+const httpsOptions = {
+  key: readKey('agent1-key.pem'),
+  cert: readKey('agent1-cert.pem')
+};
 
-server.listen(common.PIPE, function() {
-  const req = http.request({
-    socketPath: common.PIPE,
-    headers: { 'Content-Length': '1' },
-    method: 'POST',
-    path: '/'
-  });
-
-  req.write('.');
-
-  sched(function() { req.end(); }, 5);
-});
-
-// Schedule a callback after `ticks` event loop ticks
-function sched(cb, ticks) {
-  function fn() {
-    if (--ticks)
-      setImmediate(fn);
-    else
-      cb();
-  }
-  setImmediate(fn);
+function check(request) {
+  // Assert that I'm https
+  assert.ok(request.socket._secureEstablished);
 }
+
+const server = https.createServer(httpsOptions, function(request, response) {
+  // Run the check function
+  check(request);
+  response.writeHead(200, {});
+  response.end('ok');
+  server.close();
+});
+
+server.listen(0, function() {
+  const testURL = url.parse(`https://localhost:${this.address().port}`);
+  testURL.rejectUnauthorized = false;
+
+  // make the request
+  const clientRequest = https.request(testURL);
+  // Since there is a little magic with the agent
+  // make sure that the request uses the https.Agent
+  assert.ok(clientRequest.agent instanceof https.Agent);
+  clientRequest.end();
+});

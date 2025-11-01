@@ -20,43 +20,33 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 'use strict';
-// See https://github.com/joyent/node/issues/3257
-
-const common = require('../common');
+require('../common');
+const assert = require('assert');
 const http = require('http');
+const Countdown = require('../common/countdown');
+const N = 100;
 
 const server = http.createServer(function(req, res) {
-  req.resume();
-  req.once('end', function() {
-    res.writeHead(200);
-    res.end();
-    server.close();
-  });
+  res.end('Hello');
 });
 
-const tmpdir = require('../common/tmpdir');
-tmpdir.refresh();
+const countdown = new Countdown(N, () => server.close());
 
-server.listen(common.PIPE, function() {
-  const req = http.request({
-    socketPath: common.PIPE,
-    headers: { 'Content-Length': '1' },
-    method: 'POST',
-    path: '/'
-  });
+server.listen(0, function() {
+  http.globalAgent.maxSockets = 1;
+  let parser;
+  for (let i = 0; i < N; ++i) {
+    (function makeRequest(i) {
+      const req = http.get({ port: server.address().port }, function(res) {
+        if (!parser) {
+          parser = req.parser;
+        } else {
+          assert.strictEqual(req.parser, parser);
+        }
 
-  req.write('.');
-
-  sched(function() { req.end(); }, 5);
-});
-
-// Schedule a callback after `ticks` event loop ticks
-function sched(cb, ticks) {
-  function fn() {
-    if (--ticks)
-      setImmediate(fn);
-    else
-      cb();
+        countdown.dec();
+        res.resume();
+      });
+    })(i);
   }
-  setImmediate(fn);
-}
+});

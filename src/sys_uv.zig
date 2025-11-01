@@ -308,7 +308,7 @@ pub fn preadv(fd: FileDescriptor, bufs: []const bun.PlatformIOVec, position: i64
         for (bufs) |buf| {
             total_bytes += buf.len;
         }
-        log("uv read({}, {d} total bytes) = {d} ({any})", .{ uv_fd, total_bytes, rc.int(), debug_timer });
+        log("uv read({}, {d} total bytes) = {d} ({f})", .{ uv_fd, total_bytes, rc.int(), debug_timer });
     }
 
     if (rc.errno()) |errno| {
@@ -342,7 +342,7 @@ pub fn pwritev(fd: FileDescriptor, bufs: []const bun.PlatformIOVecConst, positio
         for (bufs) |buf| {
             total_bytes += buf.len;
         }
-        log("uv write({}, {d} total bytes) = {d} ({any})", .{ uv_fd, total_bytes, rc.int(), debug_timer });
+        log("uv write({}, {d} total bytes) = {d} ({f})", .{ uv_fd, total_bytes, rc.int(), debug_timer });
     }
 
     if (rc.errno()) |errno| {

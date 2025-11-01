@@ -42,17 +42,15 @@ pub const DeclarationBlock = struct {
     const DebugFmt = struct {
         self: *const DeclarationBlock,
 
-        pub fn format(this: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-            _ = fmt; // autofix
-            _ = options; // autofix
-            var arraylist = ArrayList(u8){};
-            const w = arraylist.writer(bun.default_allocator);
-            defer arraylist.deinit(bun.default_allocator);
+        pub fn format(this: @This(), writer: *std.Io.Writer) !void {
+            var arraylist = std.Io.Writer.Allocating.init(bun.default_allocator);
+            const w = &arraylist.writer;
+            defer arraylist.deinit();
             var symbols = bun.ast.Symbol.Map{};
-            var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null, null, &symbols);
+            var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.array_list.Managed(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null, null, &symbols);
             defer printer.deinit();
             this.self.toCss(@TypeOf(w), &printer) catch |e| return try writer.print("<error writing declaration block: {s}>\n", .{@errorName(e)});
-            try writer.writeAll(arraylist.items);
+            try writer.writeAll(arraylist.written());
         }
     };
 

@@ -2897,12 +2897,12 @@ pub const api = struct {
                 // Token
                 if (url.username.len == 0 and url.password.len > 0) {
                     registry.token = url.password;
-                    registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+                    registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{f}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
                 } else if (url.username.len > 0 and url.password.len > 0) {
                     registry.username = url.username;
                     registry.password = url.password;
 
-                    registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+                    registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{f}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
                 } else {
                     // Do not include a trailing slash. There might be parameters at the end.
                     registry.url = url.href;

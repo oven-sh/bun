@@ -43,7 +43,7 @@ pub fn start(this: *Export) Yield {
     if (args.len == 0) {
         var arena = this.bltn().arena;
 
-        var keys = std.ArrayList(Entry).init(arena.allocator());
+        var keys = std.array_list.Managed(Entry).init(arena.allocator());
         var iter = this.bltn().export_env.iterator();
         while (iter.next()) |entry| {
             keys.append(.{

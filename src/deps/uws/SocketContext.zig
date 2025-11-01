@@ -59,35 +59,35 @@ pub const SocketContext = opaque {
         const ssl_int: i32 = @intFromBool(is_ssl);
         // replace callbacks with dummy ones
         const DummyCallbacks = struct {
-            fn open(socket: *us_socket_t, _: i32, _: [*c]u8, _: i32) callconv(.C) ?*us_socket_t {
+            fn open(socket: *us_socket_t, _: i32, _: [*c]u8, _: i32) callconv(.c) ?*us_socket_t {
                 return socket;
             }
-            fn close(socket: *us_socket_t, _: i32, _: ?*anyopaque) callconv(.C) ?*us_socket_t {
+            fn close(socket: *us_socket_t, _: i32, _: ?*anyopaque) callconv(.c) ?*us_socket_t {
                 return socket;
             }
-            fn data(socket: *us_socket_t, _: [*c]u8, _: i32) callconv(.C) ?*us_socket_t {
+            fn data(socket: *us_socket_t, _: [*c]u8, _: i32) callconv(.c) ?*us_socket_t {
                 return socket;
             }
-            fn fd(socket: *us_socket_t, _: c_int) callconv(.C) ?*us_socket_t {
+            fn fd(socket: *us_socket_t, _: c_int) callconv(.c) ?*us_socket_t {
                 return socket;
             }
-            fn writable(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
+            fn writable(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
                 return socket;
             }
-            fn timeout(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
+            fn timeout(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
                 return socket;
             }
-            fn connect_error(socket: *ConnectingSocket, _: i32) callconv(.C) ?*ConnectingSocket {
+            fn connect_error(socket: *ConnectingSocket, _: i32) callconv(.c) ?*ConnectingSocket {
                 return socket;
             }
-            fn socket_connect_error(socket: *us_socket_t, _: i32) callconv(.C) ?*us_socket_t {
+            fn socket_connect_error(socket: *us_socket_t, _: i32) callconv(.c) ?*us_socket_t {
                 return socket;
             }
-            fn end(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
+            fn end(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
                 return socket;
             }
-            fn handshake(_: *us_socket_t, _: i32, _: us_bun_verify_error_t, _: ?*anyopaque) callconv(.C) void {}
-            fn long_timeout(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
+            fn handshake(_: *us_socket_t, _: i32, _: us_bun_verify_error_t, _: ?*anyopaque) callconv(.c) void {}
+            fn long_timeout(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
                 return socket;
             }
         };
@@ -140,51 +140,51 @@ pub const SocketContext = opaque {
         return @as(*align(alignment) ContextType, @ptrCast(@alignCast(ptr)));
     }
 
-    pub fn onOpen(this: *SocketContext, ssl: bool, on_open: ?*const fn (*us_socket_t, i32, [*c]u8, i32) callconv(.C) ?*us_socket_t) void {
+    pub fn onOpen(this: *SocketContext, ssl: bool, on_open: ?*const fn (*us_socket_t, i32, [*c]u8, i32) callconv(.c) ?*us_socket_t) void {
         c.us_socket_context_on_open(@intFromBool(ssl), this, on_open);
     }
 
-    pub fn onClose(this: *SocketContext, ssl: bool, on_close: ?*const fn (*us_socket_t, i32, ?*anyopaque) callconv(.C) ?*us_socket_t) void {
+    pub fn onClose(this: *SocketContext, ssl: bool, on_close: ?*const fn (*us_socket_t, i32, ?*anyopaque) callconv(.c) ?*us_socket_t) void {
         c.us_socket_context_on_close(@intFromBool(ssl), this, on_close);
     }
 
-    pub fn onData(this: *SocketContext, ssl: bool, on_data: ?*const fn (*us_socket_t, [*c]u8, i32) callconv(.C) ?*us_socket_t) void {
+    pub fn onData(this: *SocketContext, ssl: bool, on_data: ?*const fn (*us_socket_t, [*c]u8, i32) callconv(.c) ?*us_socket_t) void {
         c.us_socket_context_on_data(@intFromBool(ssl), this, on_data);
     }
 
-    pub fn onFd(this: *SocketContext, ssl: bool, on_fd: ?*const fn (*us_socket_t, c_int) callconv(.C) ?*us_socket_t) void {
+    pub fn onFd(this: *SocketContext, ssl: bool, on_fd: ?*const fn (*us_socket_t, c_int) callconv(.c) ?*us_socket_t) void {
         c.us_socket_context_on_fd(@intFromBool(ssl), this, on_fd);
     }
 
-    pub fn onHandshake(this: *SocketContext, ssl: bool, on_handshake: ?*const fn (*us_socket_t, i32, us_bun_verify_error_t, ?*anyopaque) callconv(.C) void) void {
+    pub fn onHandshake(this: *SocketContext, ssl: bool, on_handshake: ?*const fn (*us_socket_t, i32, us_bun_verify_error_t, ?*anyopaque) callconv(.c) void) void {
         c.us_socket_context_on_handshake(@intFromBool(ssl), this, on_handshake, null);
     }
 
-    pub fn onLongTimeout(this: *SocketContext, ssl: bool, on_timeout: ?*const fn (*us_socket_t) callconv(.C) ?*us_socket_t) void {
+    pub fn onLongTimeout(this: *SocketContext, ssl: bool, on_timeout: ?*const fn (*us_socket_t) callconv(.c) ?*us_socket_t) void {
         c.us_socket_context_on_long_timeout(@intFromBool(ssl), this, on_timeout);
     }
 
-    pub fn onWritable(this: *SocketContext, ssl: bool, on_writable: ?*const fn (*us_socket_t) callconv(.C) ?*us_socket_t) void {
+    pub fn onWritable(this: *SocketContext, ssl: bool, on_writable: ?*const fn (*us_socket_t) callconv(.c) ?*us_socket_t) void {
         c.us_socket_context_on_writable(@intFromBool(ssl), this, on_writable);
     }
 
-    pub fn onTimeout(this: *SocketContext, ssl: bool, on_timeout: ?*const fn (*us_socket_t) callconv(.C) ?*us_socket_t) void {
+    pub fn onTimeout(this: *SocketContext, ssl: bool, on_timeout: ?*const fn (*us_socket_t) callconv(.c) ?*us_socket_t) void {
         c.us_socket_context_on_timeout(@intFromBool(ssl), this, on_timeout);
     }
 
-    pub fn onConnectError(this: *SocketContext, ssl: bool, on_connect_error: ?*const fn (*ConnectingSocket, i32) callconv(.C) ?*ConnectingSocket) void {
+    pub fn onConnectError(this: *SocketContext, ssl: bool, on_connect_error: ?*const fn (*ConnectingSocket, i32) callconv(.c) ?*ConnectingSocket) void {
         c.us_socket_context_on_connect_error(@intFromBool(ssl), this, on_connect_error);
     }
 
-    pub fn onSocketConnectError(this: *SocketContext, ssl: bool, on_connect_error: ?*const fn (*us_socket_t, i32) callconv(.C) ?*us_socket_t) void {
+    pub fn onSocketConnectError(this: *SocketContext, ssl: bool, on_connect_error: ?*const fn (*us_socket_t, i32) callconv(.c) ?*us_socket_t) void {
         c.us_socket_context_on_socket_connect_error(@intFromBool(ssl), this, on_connect_error);
     }
 
-    pub fn onEnd(this: *SocketContext, ssl: bool, on_end: ?*const fn (*us_socket_t) callconv(.C) ?*us_socket_t) void {
+    pub fn onEnd(this: *SocketContext, ssl: bool, on_end: ?*const fn (*us_socket_t) callconv(.c) ?*us_socket_t) void {
         c.us_socket_context_on_end(@intFromBool(ssl), this, on_end);
     }
 
-    pub fn onServerName(this: *SocketContext, ssl: bool, on_server_name: ?*const fn (*SocketContext, [*c]const u8) callconv(.C) void) void {
+    pub fn onServerName(this: *SocketContext, ssl: bool, on_server_name: ?*const fn (*SocketContext, [*c]const u8) callconv(.c) void) void {
         c.us_socket_context_on_server_name(@intFromBool(ssl), this, on_server_name);
     }
 
@@ -262,18 +262,18 @@ pub const c = struct {
     pub extern fn us_socket_context_listen(ssl: i32, context: *SocketContext, host: ?[*:0]const u8, port: i32, options: i32, socket_ext_size: i32, err: *c_int) ?*ListenSocket;
     pub extern fn us_socket_context_listen_unix(ssl: i32, context: *SocketContext, path: [*:0]const u8, pathlen: usize, options: i32, socket_ext_size: i32, err: *c_int) ?*ListenSocket;
     pub extern fn us_socket_context_loop(ssl: i32, context: *SocketContext) ?*Loop;
-    pub extern fn us_socket_context_on_close(ssl: i32, context: *SocketContext, on_close: ?*const fn (*us_socket_t, i32, ?*anyopaque) callconv(.C) ?*us_socket_t) void;
-    pub extern fn us_socket_context_on_connect_error(ssl: i32, context: *SocketContext, on_connect_error: ?*const fn (*uws.ConnectingSocket, i32) callconv(.C) ?*uws.ConnectingSocket) void;
-    pub extern fn us_socket_context_on_data(ssl: i32, context: *SocketContext, on_data: ?*const fn (*us_socket_t, [*c]u8, i32) callconv(.C) ?*us_socket_t) void;
-    pub extern fn us_socket_context_on_end(ssl: i32, context: *SocketContext, on_end: ?*const fn (*us_socket_t) callconv(.C) ?*us_socket_t) void;
-    pub extern fn us_socket_context_on_fd(ssl: i32, context: *SocketContext, on_fd: ?*const fn (*us_socket_t, c_int) callconv(.C) ?*us_socket_t) void;
-    pub extern fn us_socket_context_on_handshake(ssl: i32, context: *SocketContext, on_handshake: ?*const fn (*us_socket_t, i32, us_bun_verify_error_t, ?*anyopaque) callconv(.C) void, ?*anyopaque) void;
-    pub extern fn us_socket_context_on_long_timeout(ssl: i32, context: *SocketContext, on_timeout: ?*const fn (*us_socket_t) callconv(.C) ?*us_socket_t) void;
-    pub extern fn us_socket_context_on_open(ssl: i32, context: *SocketContext, on_open: ?*const fn (*us_socket_t, i32, [*c]u8, i32) callconv(.C) ?*us_socket_t) void;
-    pub extern fn us_socket_context_on_server_name(ssl: i32, context: *SocketContext, cb: ?*const fn (?*SocketContext, [*c]const u8) callconv(.C) void) void;
-    pub extern fn us_socket_context_on_socket_connect_error(ssl: i32, context: *SocketContext, on_connect_error: ?*const fn (*us_socket_t, i32) callconv(.C) ?*us_socket_t) void;
-    pub extern fn us_socket_context_on_timeout(ssl: i32, context: *SocketContext, on_timeout: ?*const fn (*us_socket_t) callconv(.C) ?*us_socket_t) void;
-    pub extern fn us_socket_context_on_writable(ssl: i32, context: *SocketContext, on_writable: ?*const fn (*us_socket_t) callconv(.C) ?*us_socket_t) void;
+    pub extern fn us_socket_context_on_close(ssl: i32, context: *SocketContext, on_close: ?*const fn (*us_socket_t, i32, ?*anyopaque) callconv(.c) ?*us_socket_t) void;
+    pub extern fn us_socket_context_on_connect_error(ssl: i32, context: *SocketContext, on_connect_error: ?*const fn (*uws.ConnectingSocket, i32) callconv(.c) ?*uws.ConnectingSocket) void;
+    pub extern fn us_socket_context_on_data(ssl: i32, context: *SocketContext, on_data: ?*const fn (*us_socket_t, [*c]u8, i32) callconv(.c) ?*us_socket_t) void;
+    pub extern fn us_socket_context_on_end(ssl: i32, context: *SocketContext, on_end: ?*const fn (*us_socket_t) callconv(.c) ?*us_socket_t) void;
+    pub extern fn us_socket_context_on_fd(ssl: i32, context: *SocketContext, on_fd: ?*const fn (*us_socket_t, c_int) callconv(.c) ?*us_socket_t) void;
+    pub extern fn us_socket_context_on_handshake(ssl: i32, context: *SocketContext, on_handshake: ?*const fn (*us_socket_t, i32, us_bun_verify_error_t, ?*anyopaque) callconv(.c) void, ?*anyopaque) void;
+    pub extern fn us_socket_context_on_long_timeout(ssl: i32, context: *SocketContext, on_timeout: ?*const fn (*us_socket_t) callconv(.c) ?*us_socket_t) void;
+    pub extern fn us_socket_context_on_open(ssl: i32, context: *SocketContext, on_open: ?*const fn (*us_socket_t, i32, [*c]u8, i32) callconv(.c) ?*us_socket_t) void;
+    pub extern fn us_socket_context_on_server_name(ssl: i32, context: *SocketContext, cb: ?*const fn (?*SocketContext, [*c]const u8) callconv(.c) void) void;
+    pub extern fn us_socket_context_on_socket_connect_error(ssl: i32, context: *SocketContext, on_connect_error: ?*const fn (*us_socket_t, i32) callconv(.c) ?*us_socket_t) void;
+    pub extern fn us_socket_context_on_timeout(ssl: i32, context: *SocketContext, on_timeout: ?*const fn (*us_socket_t) callconv(.c) ?*us_socket_t) void;
+    pub extern fn us_socket_context_on_writable(ssl: i32, context: *SocketContext, on_writable: ?*const fn (*us_socket_t) callconv(.c) ?*us_socket_t) void;
     pub extern fn us_socket_context_ref(ssl: i32, context: *SocketContext) void;
     pub extern fn us_socket_context_remove_server_name(ssl: i32, context: *SocketContext, hostname_pattern: [*c]const u8) void;
     pub extern fn us_socket_context_unref(ssl: i32, context: *SocketContext) void;

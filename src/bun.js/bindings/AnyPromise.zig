@@ -53,7 +53,7 @@ pub const AnyPromise = union(enum) {
         };
     }
 
-    extern fn JSC__AnyPromise__wrap(*jsc.JSGlobalObject, JSValue, *anyopaque, *const fn (*anyopaque, *jsc.JSGlobalObject) callconv(.C) jsc.JSValue) void;
+    extern fn JSC__AnyPromise__wrap(*jsc.JSGlobalObject, JSValue, *anyopaque, *const fn (*anyopaque, *jsc.JSGlobalObject) callconv(.c) jsc.JSValue) void;
 
     pub fn wrap(
         this: AnyPromise,

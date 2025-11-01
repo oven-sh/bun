@@ -50,7 +50,7 @@ pub const FileSystem = struct {
     pub fn tmpname(extname: string, buf: []u8, hash: u64) std.fmt.BufPrintError![:0]u8 {
         const hex_value = @as(u64, @truncate(@as(u128, @intCast(hash)) | @as(u128, @intCast(std.time.nanoTimestamp()))));
 
-        return try std.fmt.bufPrintZ(buf, ".{any}-{any}.{s}", .{
+        return try std.fmt.bufPrintZ(buf, ".{f}-{f}.{s}", .{
             bun.fmt.hexIntLower(hex_value),
             bun.fmt.hexIntUpper(tmpname_id_number.fetchAdd(1, .monotonic)),
             extname,
@@ -726,7 +726,7 @@ pub const FileSystem = struct {
                 else
                     bun.strings.toWPathNormalized(&existing_buf, name);
                 if (comptime Environment.allow_assert) {
-                    debug("moveFileExW({s}, {s})", .{ bun.fmt.utf16(existing), bun.fmt.utf16(new) });
+                    debug("moveFileExW({f}, {f})", .{ bun.fmt.utf16(existing), bun.fmt.utf16(new) });
                 }
 
                 if (bun.windows.kernel32.MoveFileExW(existing.ptr, new.ptr, bun.windows.MOVEFILE_COPY_ALLOWED | bun.windows.MOVEFILE_REPLACE_EXISTING | bun.windows.MOVEFILE_WRITE_THROUGH) == bun.windows.FALSE) {
@@ -856,7 +856,7 @@ pub const FileSystem = struct {
 
                 return try std.fmt.bufPrint(
                     &hash_name_buf,
-                    "{s}-{any}",
+                    "{s}-{f}",
                     .{
                         basename,
                         bun.fmt.hexIntLower(hex_int),
@@ -916,7 +916,7 @@ pub const FileSystem = struct {
         }
 
         pub fn modKey(fs: *RealFS, path: string) anyerror!ModKey {
-            var file = try std.fs.openFileAbsolute(path, std.fs.File.OpenFlags{ .mode = .read_only });
+            var file = try std.fs.cwd().openFile(path, std.fs.File.OpenFlags{ .mode = .read_only });
             defer {
                 if (fs.needToCloseFiles()) {
                     file.close();
@@ -981,7 +981,7 @@ pub const FileSystem = struct {
                 try dir.addEntry(prev_map, _entry, allocator, Iterator, iterator);
             }
 
-            debug("readdir({d}, {s}) = {d}", .{ handle.fd, _dir, dir.data.count() });
+            debug("readdir({f}, {s}) = {d}", .{ printHandle(handle.fd), _dir, dir.data.count() });
 
             return dir;
         }
@@ -1276,7 +1276,7 @@ pub const FileSystem = struct {
                     fs.readFileError(path, err);
                     return err;
                 });
-                debug("stat({}) = {d}", .{ file.handle, size });
+                debug("stat({f}) = {d}", .{ file.handle, size });
 
                 var buf = try allocator.alloc(u8, size + 1);
                 @memcpy(buf[0..initial_read.len], initial_read);
@@ -1293,7 +1293,7 @@ pub const FileSystem = struct {
                     return err;
                 };
                 file_contents = buf[0 .. read_count + initial_read.len];
-                debug("read({}, {d}) = {d}", .{ file.handle, size, read_count });
+                debug("read({f}, {d}) = {d}", .{ file.handle, size, read_count });
 
                 if (strings.BOM.detect(file_contents)) |bom| {
                     debug("Convert {s} BOM", .{@tagName(bom)});
@@ -1994,6 +1994,24 @@ pub const Path = struct {
 //     var opened = try std.posix.open(path, if (Environment.isLinux) bun.O.PATH else bun.O.RDONLY, 0);
 //     defer std.posix.close(opened);
 // }
+
+pub fn printHandle(handle: anytype) std.fmt.Alt(@TypeOf(handle), FmtHandleFnGenerator(@TypeOf(handle)).fmtHandle) {
+    return .{ .data = handle };
+}
+fn FmtHandleFnGenerator(comptime T: type) type {
+    return struct {
+        fn fmtHandle(handle: T, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            switch (@TypeOf(handle)) {
+                i32, c_int => try writer.print("{d}", .{handle}),
+                *anyopaque => try writer.print("{*}", .{handle}),
+                FD => try writer.print("{f}", .{handle}),
+                else => {
+                    @compileError("unsupported type for fmtHandle: " ++ @typeName(T));
+                },
+            }
+        }
+    };
+}
 
 pub const StatHash = @import("./fs/stat_hash.zig");
 

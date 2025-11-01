@@ -72,7 +72,7 @@ pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFi
             // EXT4 does not support FICLONE.
             const rc = bun.linux.ioctl_ficlone(out, in);
             // the ordering is flipped but it is consistent with other system calls.
-            bun.sys.syslog("ioctl_ficlone({}, {}) = {d}", .{ in, out, rc });
+            bun.sys.syslog("ioctl_ficlone({f}, {f}) = {d}", .{ in, out, rc });
             switch (bun.sys.getErrno(rc)) {
                 .SUCCESS => return CopyFileReturnType.success,
                 .XDEV => {

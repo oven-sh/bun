@@ -34,18 +34,18 @@ pub const Header = struct {
         return self.name.len == 0;
     }
 
-    pub fn format(self: Header, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: Header, writer: *std.Io.Writer) !void {
         if (Output.enable_ansi_colors_stderr) {
             if (self.isMultiline()) {
-                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{s}", true), .{self.value});
+                try writer.print(comptime Output.prettyFmt("<r><cyan>{s}", true), .{self.value});
             } else {
-                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{s}<r><d>: <r>{s}", true), .{ self.name, self.value });
+                try writer.print(comptime Output.prettyFmt("<r><cyan>{s}<r><d>: <r>{s}", true), .{ self.name, self.value });
             }
         } else {
             if (self.isMultiline()) {
-                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{s}", false), .{self.value});
+                try writer.print(comptime Output.prettyFmt("<r><cyan>{s}", false), .{self.value});
             } else {
-                try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{s}<r><d>: <r>{s}", false), .{ self.name, self.value });
+                try writer.print(comptime Output.prettyFmt("<r><cyan>{s}<r><d>: <r>{s}", false), .{ self.name, self.value });
             }
         }
     }
@@ -70,12 +70,12 @@ pub const Header = struct {
     pub const CURLFormatter = struct {
         header: *const Header,
 
-        pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             const header = self.header;
             if (header.value.len > 0) {
-                try fmt.format(writer, "-H \"{s}: {s}\"", .{ header.name, header.value });
+                try writer.print("-H \"{s}: {s}\"", .{ header.name, header.value });
             } else {
-                try fmt.format(writer, "-H \"{s}\"", .{header.name});
+                try writer.print("-H \"{s}\"", .{header.name});
             }
         }
     };
@@ -106,18 +106,18 @@ pub const Request = struct {
                 bun.strings.hasPrefixComptime(content_type, "application/x-www-form-urlencoded");
         }
 
-        pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             const request = self.request;
             if (Output.enable_ansi_colors_stderr) {
                 _ = try writer.write(Output.prettyFmt("<r><d>[fetch] $<r> ", true));
 
-                try fmt.format(writer, Output.prettyFmt("<b><cyan>curl<r> <d>--http1.1<r> <b>\"{s}\"<r>", true), .{request.path});
+                try writer.print(Output.prettyFmt("<b><cyan>curl<r> <d>--http1.1<r> <b>\"{s}\"<r>", true), .{request.path});
             } else {
-                try fmt.format(writer, "curl --http1.1 \"{s}\"", .{request.path});
+                try writer.print("curl --http1.1 \"{s}\"", .{request.path});
             }
 
             if (!bun.strings.eqlComptime(request.method, "GET")) {
-                try fmt.format(writer, " -X {s}", .{request.method});
+                try writer.print(" -X {s}", .{request.method});
             }
 
             if (self.ignore_insecure) {
@@ -134,7 +134,7 @@ pub const Request = struct {
                     }
                 }
 
-                try header.curl().format("", .{}, writer);
+                try header.curl().format(writer);
 
                 if (bun.strings.eqlCaseInsensitiveASCII("accept-encoding", header.name, true)) {
                     _ = try writer.writeAll(" --compressed");
@@ -170,17 +170,17 @@ pub const Request = struct {
         };
     }
 
-    pub fn format(self: Request, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: Request, writer: *std.Io.Writer) !void {
         if (Output.enable_ansi_colors_stderr) {
             _ = try writer.write(Output.prettyFmt("<r><d>[fetch]<r> ", true));
         }
-        try fmt.format(writer, "> HTTP/1.1 {s} {s}\n", .{ self.method, self.path });
+        try writer.print("> HTTP/1.1 {s} {s}\n", .{ self.method, self.path });
         for (self.headers) |header| {
             if (Output.enable_ansi_colors_stderr) {
                 _ = try writer.write(Output.prettyFmt("<r><d>[fetch]<r> ", true));
             }
             _ = try writer.write("> ");
-            try fmt.format(writer, "{s}\n", .{header});
+            try writer.print("{f}\n", .{header});
         }
     }
 
@@ -223,15 +223,15 @@ pub const Request = struct {
 const StatusCodeFormatter = struct {
     code: usize,
 
-    pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         if (Output.enable_ansi_colors_stderr) {
             switch (self.code) {
-                101, 200...299 => try fmt.format(writer, comptime Output.prettyFmt("<r><green>{d}<r>", true), .{self.code}),
-                300...399 => try fmt.format(writer, comptime Output.prettyFmt("<r><yellow>{d}<r>", true), .{self.code}),
-                else => try fmt.format(writer, comptime Output.prettyFmt("<r><red>{d}<r>", true), .{self.code}),
+                101, 200...299 => try writer.print(comptime Output.prettyFmt("<r><green>{d}<r>", true), .{self.code}),
+                300...399 => try writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", true), .{self.code}),
+                else => try writer.print(comptime Output.prettyFmt("<r><red>{d}<r>", true), .{self.code}),
             }
         } else {
-            try fmt.format(writer, "{d}", .{self.code});
+            try writer.print("{d}", .{self.code});
         }
     }
 };
@@ -243,14 +243,13 @@ pub const Response = struct {
     headers: Header.List = .{},
     bytes_read: c_int = 0,
 
-    pub fn format(self: Response, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: Response, writer: *std.Io.Writer) !void {
         if (Output.enable_ansi_colors_stderr) {
             _ = try writer.write(Output.prettyFmt("<r><d>[fetch]<r> ", true));
         }
 
-        try fmt.format(
-            writer,
-            "< {} {s}\n",
+        try writer.print(
+            "< {f} {s}\n",
             .{
                 StatusCodeFormatter{
                     .code = self.status_code,
@@ -264,7 +263,7 @@ pub const Response = struct {
             }
 
             _ = try writer.write("< ");
-            try fmt.format(writer, "{s}\n", .{header});
+            try writer.print("{f}\n", .{header});
         }
     }
 
@@ -337,9 +336,9 @@ pub const Response = struct {
 pub const Headers = struct {
     headers: []const Header,
 
-    pub fn format(self: Headers, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: Headers, writer: *std.Io.Writer) !void {
         for (self.headers) |header| {
-            try fmt.format(writer, "{s}: {s}\r\n", .{ header.name, header.value });
+            try writer.print("{s}: {s}\r\n", .{ header.name, header.value });
         }
     }
 
@@ -377,6 +376,7 @@ pub const phr_decode_chunked_is_in_data = c.phr_decode_chunked_is_in_data;
 const string = []const u8;
 
 const c = @import("./picohttpparser.zig");
+const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -384,6 +384,3 @@ const Output = bun.Output;
 const StringBuilder = bun.StringBuilder;
 const assert = bun.assert;
 const strings = bun.strings;
-
-const std = @import("std");
-const fmt = std.fmt;

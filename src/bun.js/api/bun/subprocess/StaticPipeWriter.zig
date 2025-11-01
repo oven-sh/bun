@@ -90,7 +90,7 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
         }
 
         pub fn onError(this: *This, err: bun.sys.Error) void {
-            log("StaticPipeWriter(0x{x}) onError(err={any})", .{ @intFromPtr(this), err });
+            log("StaticPipeWriter(0x{x}) onError(err={f})", .{ @intFromPtr(this), err });
             this.source.detach();
         }
 

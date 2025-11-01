@@ -150,7 +150,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 const globalThis: *jsc.JSGlobalObject = server.globalThis;
 
                 Output.enableBuffering();
-                var writer = Output.errorWriter();
+                const writer = Output.errorWriter();
 
                 if (bun.strings.eqlComptime(class_name, "Response")) {
                     Output.errGeneric("Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.", .{});
@@ -160,14 +160,14 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                         .quote_strings = true,
                     };
                     defer formatter.deinit();
-                    Output.errGeneric("Expected a Response object, but received '{}'", .{value.toFmt(&formatter)});
+                    Output.errGeneric("Expected a Response object, but received '{f}'", .{value.toFmt(&formatter)});
                 } else {
                     Output.errGeneric("Expected a Response object", .{});
                 }
 
                 Output.flush();
                 if (!globalThis.hasException()) {
-                    jsc.ConsoleObject.writeTrace(@TypeOf(&writer), &writer, globalThis);
+                    jsc.ConsoleObject.writeTrace(@TypeOf(writer), writer, globalThis);
                 }
                 Output.flush();
             }
@@ -428,7 +428,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             Output.flush();
 
             // Explicitly use `this.allocator` and *not* the arena
-            var bb = std.ArrayList(u8).init(this.allocator);
+            var bb = std.array_list.Managed(u8).init(this.allocator);
             const bb_writer = bb.writer();
 
             Fallback.renderBackend(
@@ -696,7 +696,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             const globalThis = this.server.?.globalThis;
 
             if (comptime Environment.isDebug) {
-                ctxLog("finalizeWithoutDeinit: has_finalized {any}", .{this.flags.has_finalized});
+                ctxLog("finalizeWithoutDeinit: has_finalized {}", .{this.flags.has_finalized});
                 this.flags.has_finalized = true;
             }
 
@@ -1675,7 +1675,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 return;
             }
 
-            streamLog("onResolve({any})", .{wrote_anything});
+            streamLog("onResolve({})", .{wrote_anything});
             if (!req.flags.has_written_status) {
                 req.renderMetadata();
             }
@@ -1741,7 +1741,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             if (comptime debug_mode) {
                 if (req.server) |server| {
                     if (!err.isEmptyOrUndefinedOrNull()) {
-                        var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(req.allocator);
+                        var exception_list: std.array_list.Managed(Api.JsException) = std.array_list.Managed(Api.JsException).init(req.allocator);
                         defer exception_list.deinit();
                         server.vm.runErrorHandler(err, &exception_list);
 
@@ -1776,7 +1776,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                                 },
                             };
 
-                            var bb = std.ArrayList(u8).init(allocator);
+                            var bb = std.array_list.Managed(u8).init(allocator);
                             defer bb.clearAndFree();
                             const bb_writer = bb.writer();
 
@@ -2039,11 +2039,11 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         const PathnameFormatter = struct {
             ctx: *RequestContext,
 
-            pub fn format(formatter: @This(), comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(formatter: @This(), writer: *std.Io.Writer) !void {
                 var this = formatter.ctx;
 
                 if (!this.pathname.isEmpty()) {
-                    try this.pathname.format(fmt, opts, writer);
+                    try this.pathname.format(writer);
                     return;
                 }
 
@@ -2077,7 +2077,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                 var arena = std.heap.ArenaAllocator.init(this.allocator);
                 defer arena.deinit();
                 const allocator = arena.allocator();
-                var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(allocator);
+                var exception_list: std.array_list.Managed(Api.JsException) = std.array_list.Managed(Api.JsException).init(allocator);
                 defer exception_list.deinit();
                 const prev_exception_list = vm.onUnhandledRejectionExceptionList;
                 vm.onUnhandledRejectionExceptionList = &exception_list;
@@ -2089,7 +2089,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     vm.log,
                     error.ExceptionOcurred,
                     exception_list.items,
-                    "<r><red>{s}<r> - <b>{}<r> failed",
+                    "<r><red>{s}<r> - <b>{f}<r> failed",
                     .{ @as(string, @tagName(this.method)), this.ensurePathname() },
                 );
             } else {

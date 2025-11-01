@@ -45,11 +45,11 @@ pub const TransformList = struct {
         // TODO: Re-enable with a better solution
         //       See: https://github.com/parcel-bundler/lightningcss/issues/288
         if (dest.minify) {
-            var base = ArrayList(u8){};
-            const base_writer = base.writer(dest.allocator);
+            var base = std.Io.Writer.Allocating.init(dest.allocator);
+            const base_writer = &base.writer;
             const WW = @TypeOf(base_writer);
 
-            var scratchbuf = std.ArrayList(u8).init(dest.allocator);
+            var scratchbuf = std.array_list.Managed(u8).init(dest.allocator);
             defer scratchbuf.deinit();
             var p = Printer(WW).new(
                 dest.allocator,
@@ -64,7 +64,7 @@ pub const TransformList = struct {
 
             try this.toCssBase(WW, &p);
 
-            return dest.writeStr(base.items);
+            return dest.writeStr(base.written());
         }
 
         return this.toCssBase(W, dest);

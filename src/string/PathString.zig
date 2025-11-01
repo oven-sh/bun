@@ -44,7 +44,7 @@ pub const PathString = packed struct(PathStringBackingIntType) {
         return this.len == 0;
     }
 
-    pub fn format(self: PathString, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: PathString, writer: *std.Io.Writer) !void {
         try writer.writeAll(self.slice());
     }
 

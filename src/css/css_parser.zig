@@ -3138,7 +3138,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
         ) PrintResult(ToCssResultInternal) {
             const W = @TypeOf(writer);
 
-            var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_info, local_names, symbols);
+            var printer = Printer(@TypeOf(writer)).new(allocator, std.array_list.Managed(u8).init(allocator), writer, options, import_info, local_names, symbols);
             const result = this.toCssWithWriterImpl(allocator, W, &printer, options) catch {
                 bun.assert(printer.error_kind != null);
                 return .{
@@ -3208,8 +3208,8 @@ pub fn StyleSheet(comptime AtRule: type) type {
         ) PrintResult(ToCssResult) {
             // TODO: this is not necessary
             // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
-            var dest = ArrayList(u8).initCapacity(allocator, 1) catch unreachable;
-            const writer = dest.writer(allocator);
+            var dest = std.Io.Writer.Allocating.initCapacity(allocator, 1) catch unreachable;
+            const writer = &dest.writer;
             const result = switch (toCssWithWriter(
                 this,
                 allocator,
@@ -3224,7 +3224,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
             };
             return .{
                 .result = ToCssResult{
-                    .code = dest.items,
+                    .code = dest.written(),
                     .dependencies = result.dependencies,
                     .exports = result.exports,
                     .references = result.references,
@@ -3490,11 +3490,11 @@ pub const StyleAttribute = struct {
         // );
 
         var symbols = bun.ast.Symbol.Map{};
-        var dest = ArrayList(u8){};
-        const writer = dest.writer(allocator);
+        var dest = std.Io.Writer.Allocating.init(allocator);
+        const writer = &dest.writer;
         var printer = Printer(@TypeOf(writer)).new(
             allocator,
-            std.ArrayList(u8).init(allocator),
+            std.array_list.Managed(u8).init(allocator),
             writer,
             options,
             import_info,
@@ -3507,7 +3507,7 @@ pub const StyleAttribute = struct {
 
         return ToCssResult{
             .dependencies = printer.dependencies,
-            .code = dest.items,
+            .code = dest.written(),
             .exports = null,
             .references = null,
         };
@@ -3705,7 +3705,7 @@ pub const ParserOptions = struct {
                 warning.location.line,
                 warning.location.column,
                 this.allocator,
-                "{}",
+                "{f}",
                 .{warning.kind},
             ) catch unreachable;
         }
@@ -4367,7 +4367,7 @@ pub const Parser = struct {
             .result => |t| .{ .err = start.sourceLocation().newUnexpectedTokenError(t.*) },
             .err => |e| brk: {
                 if (e.kind == .basic and e.kind.basic == .end_of_input) break :brk .success;
-                bun.unreachablePanic("Unexpected error encountered: {}", .{e.kind});
+                bun.unreachablePanic("Unexpected error encountered: {f}", .{e.kind});
             },
         };
         this.reset(&start);
@@ -5022,7 +5022,7 @@ const Tokenizer = struct {
                 break :brk .{ .delim = '~' };
             },
             else => brk: {
-                if (!std.ascii.isASCII(b)) {
+                if (!std.ascii.isAscii(b)) {
                     break :brk this.consumeIdentLike();
                 }
                 this.advance(1);
@@ -5803,10 +5803,10 @@ const Tokenizer = struct {
             '-' => this.hasAtLeast(1) and switch (this.byteAt(1)) {
                 'a'...'z', 'A'...'Z', '-', '_', 0 => true,
                 '\\' => !this.hasNewlineAt(1),
-                else => |b| !std.ascii.isASCII(b),
+                else => |b| !std.ascii.isAscii(b),
             },
             '\\' => !this.hasNewlineAt(1),
-            else => |b| !std.ascii.isASCII(b),
+            else => |b| !std.ascii.isAscii(b),
         };
     }
 
@@ -5837,7 +5837,7 @@ const Tokenizer = struct {
             // rejected.
             for (0..n) |i| {
                 const b = this.byteAt(i);
-                std.debug.assert(std.ascii.isASCII(b) or (b & 0xF0 != 0xF0 and b & 0xC0 != 0x80));
+                std.debug.assert(std.ascii.isAscii(b) or (b & 0xF0 != 0xF0 and b & 0xC0 != 0x80));
                 std.debug.assert(b != '\r' and b != '\n' and b != '\x0C');
             }
         }
@@ -6129,9 +6129,7 @@ pub const Token = union(TokenKind) {
 
     pub fn format(
         this: *const Token,
-        comptime _: []const u8,
-        _: std.fmt.FormatOptions,
-        writer: anytype,
+        writer: *std.Io.Writer,
     ) !void {
         return switch (this.*) {
             .ident => |value| try serializer.serializeIdentifier(value, writer),
@@ -6446,12 +6444,12 @@ const Dimension = struct {
 
 const CopyOnWriteStr = union(enum) {
     borrowed: []const u8,
-    owned: std.ArrayList(u8),
+    owned: std.array_list.Managed(u8),
 
     pub fn append(this: *@This(), allocator: Allocator, slice: []const u8) void {
         switch (this.*) {
             .borrowed => {
-                var list = bun.handleOom(std.ArrayList(u8).initCapacity(allocator, this.borrowed.len + slice.len));
+                var list = bun.handleOom(std.array_list.Managed(u8).initCapacity(allocator, this.borrowed.len + slice.len));
                 list.appendSliceAssumeCapacity(this.borrowed);
                 list.appendSliceAssumeCapacity(slice);
                 this.* = .{ .owned = list };
@@ -6749,7 +6747,7 @@ pub const serializer = struct {
                 '0'...'9', 'A'...'Z', 'a'...'z', '_', '-' => continue,
                 // the unicode replacement character
                 0 => bun.strings.encodeUTF8Comptime(0xFFD),
-                else => if (!std.ascii.isASCII(b)) continue else null,
+                else => if (!std.ascii.isAscii(b)) continue else null,
             };
 
             try writer.writeAll(value[chunk_start..i]);
@@ -7000,18 +6998,18 @@ pub const to_css = struct {
         local_names: ?*const LocalsResultsMap,
         symbols: *const bun.ast.Symbol.Map,
     ) PrintErr![]const u8 {
-        var s = ArrayList(u8){};
-        errdefer s.deinit(allocator);
-        const writer = s.writer(allocator);
+        var s = std.Io.Writer.Allocating.init(allocator);
+        errdefer s.deinit();
+        const writer = &s.writer;
         const W = @TypeOf(writer);
         // PERF: think about how cheap this is to create
-        var printer = Printer(W).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_info, local_names, symbols);
+        var printer = Printer(W).new(allocator, std.array_list.Managed(u8).init(allocator), writer, options, import_info, local_names, symbols);
         defer printer.deinit();
         switch (T) {
             CSSString => try CSSStringFns.toCss(this, W, &printer),
             else => try this.toCss(W, &printer),
         }
-        return s.items;
+        return s.written();
     }
 
     pub fn fromList(comptime T: type, this: []const T, comptime W: type, dest: *Printer(W)) PrintErr!void {

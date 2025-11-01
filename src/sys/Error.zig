@@ -43,7 +43,7 @@ pub fn fromCodeInt(errno: anytype, syscall_tag: sys.Tag) Error {
     };
 }
 
-pub fn format(self: Error, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(self: Error, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     // We want to reuse the code from SystemError for formatting.
     // But, we do not want to call String.createUTF8 on the path/dest strings
     // because we're intending to pass them to writer.print()
@@ -56,7 +56,7 @@ pub fn format(self: Error, comptime fmt: []const u8, opts: std.fmt.FormatOptions
     bun.debugAssert(that.path.tag != .WTFStringImpl);
     bun.debugAssert(that.dest.tag != .WTFStringImpl);
 
-    return that.format(fmt, opts, writer);
+    return that.format(writer);
 }
 
 pub inline fn getErrno(this: Error) E {

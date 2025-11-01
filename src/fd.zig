@@ -156,7 +156,7 @@ pub const FD = packed struct(backing_int) {
                     if (isStdioHandle(std.os.windows.STD_OUTPUT_HANDLE, handle)) return 1;
                     if (isStdioHandle(std.os.windows.STD_ERROR_HANDLE, handle)) return 2;
                     std.debug.panic(
-                        \\Cast bun.FD.uv({}) makes closing impossible!
+                        \\Cast bun.FD.uv({f}) makes closing impossible!
                         \\
                         \\The supplier of fd FD should call 'FD.makeLibUVOwned',
                         \\probably where open() was called.
@@ -235,7 +235,7 @@ pub const FD = packed struct(backing_int) {
     /// Prefer asserting that EBADF does not happen with `.close()`
     pub fn closeAllowingBadFileDescriptor(fd: FD, return_address: ?usize) ?bun.sys.Error {
         if (fd.stdioTag() != null) {
-            log("close({}) SKIPPED", .{fd});
+            log("close({f}) SKIPPED", .{fd});
             return null;
         }
         return fd.closeAllowingStandardIo(return_address orelse @returnAddress());
@@ -249,7 +249,7 @@ pub const FD = packed struct(backing_int) {
         // Format the file descriptor for logging BEFORE closing it.
         // Otherwise the file descriptor is always invalid after closing it.
         var buf: if (Environment.isDebug) [1050]u8 else void = undefined;
-        const fd_fmt = if (Environment.isDebug) std.fmt.bufPrint(&buf, "{}", .{fd}) catch buf[0..];
+        const fd_fmt = if (Environment.isDebug) std.fmt.bufPrint(&buf, "{f}", .{fd}) catch buf[0..];
 
         const result: ?bun.sys.Error = switch (os) {
             .linux => result: {
@@ -295,7 +295,7 @@ pub const FD = packed struct(backing_int) {
                     bun.Output.debugWarn("close({s}) = EBADF. This is an indication of a file descriptor UAF", .{fd_fmt});
                     bun.crash_handler.dumpCurrentStackTrace(return_address orelse @returnAddress(), .{ .frame_count = 4, .stop_at_jsc_llint = true });
                 } else {
-                    log("close({s}) = {}", .{ fd_fmt, err });
+                    log("close({s}) = {f}", .{ fd_fmt, err });
                 }
             } else {
                 log("close({s})", .{fd_fmt});
@@ -435,24 +435,10 @@ pub const FD = packed struct(backing_int) {
         };
     };
 
-    pub fn format(fd: FD, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(fd: FD, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         if (!fd.isValid()) {
             try writer.writeAll("[invalid_fd]");
             return;
-        }
-
-        if (fmt.len != 0) {
-            // The reason for fd error is because formatting FD as an integer on windows is
-            // ambiguous and almost certainly a mistake. You probably meant to format fd.cast().
-            //
-            // Remember fd formatter will
-            // - on posix, print the number
-            // - on windows, print if it is a handle or a libuv file descriptor
-            // - in debug on all platforms, print the path of the file descriptor
-            //
-            // Not having fd error caused a linux+debug only crash in bun.sys.getFdPath because
-            // we forgot to change the thing being printed to "fd.native()" when the FD was introduced.
-            @compileError("invalid format string for bun.FD.format. must be empty like '{}'");
         }
 
         switch (os) {
@@ -496,7 +482,7 @@ pub const FD = packed struct(backing_int) {
                         } else print_with_path: {
                             var fd_path: bun.WPathBuffer = undefined;
                             const path = std.os.windows.GetFinalPathNameByHandle(handle, .{ .volume_name = .Nt }, &fd_path) catch break :print_with_path;
-                            return try writer.print("{d}[{}]", .{
+                            return try writer.print("{d}[{f}]", .{
                                 fd.value.as_system,
                                 bun.fmt.utf16(path),
                             });
@@ -715,13 +701,13 @@ pub const MovableIfWindowsFd = union(enum) {
         return result;
     }
 
-    pub fn format(self: *const Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
         if (comptime bun.Environment.isPosix) {
-            try writer.print("{}", .{self.get().?});
+            try writer.print("{f}", .{self.get().?});
             return;
         }
         if (self._inner) |fd| {
-            try writer.print("{}", .{fd});
+            try writer.print("{f}", .{fd});
             return;
         }
         try writer.print("[moved]", .{});

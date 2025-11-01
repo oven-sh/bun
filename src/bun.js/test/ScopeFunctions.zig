@@ -68,7 +68,7 @@ pub fn fnEach(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *Ca
     if (array.isUndefinedOrNull() or !array.isArray()) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
         defer formatter.deinit();
-        return globalThis.throw("Expected array, got {}", .{array.toFmt(&formatter)});
+        return globalThis.throw("Expected array, got {f}", .{array.toFmt(&formatter)});
     }
 
     if (this.each != .zero) return globalThis.throw("Cannot {s} on {f}", .{ "each", this });
@@ -100,14 +100,14 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
         if (this.each.isUndefinedOrNull() or !this.each.isArray()) {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
             defer formatter.deinit();
-            return globalThis.throw("Expected array, got {}", .{this.each.toFmt(&formatter)});
+            return globalThis.throw("Expected array, got {f}", .{this.each.toFmt(&formatter)});
         }
         var iter = try this.each.arrayIterator(globalThis);
         var test_idx: usize = 0;
         while (try iter.next()) |item| : (test_idx += 1) {
             if (item == .zero) break;
 
-            var args_list: std.ArrayList(Strong) = .init(bunTest.gpa);
+            var args_list: std.array_list.Managed(Strong) = .init(bunTest.gpa);
             defer args_list.deinit();
             defer for (args_list.items) |*arg| arg.deinit();
 
@@ -124,7 +124,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
                 bun.handleOom(args_list.append(.init(bunTest.gpa, item)));
             }
 
-            var args_list_raw = bun.handleOom(std.ArrayList(jsc.JSValue).initCapacity(bunTest.gpa, args_list.items.len)); // safe because the items are held strongly in args_list
+            var args_list_raw = bun.handleOom(std.array_list.Managed(jsc.JSValue).initCapacity(bunTest.gpa, args_list.items.len)); // safe because the items are held strongly in args_list
             defer args_list_raw.deinit();
             for (args_list.items) |arg| bun.handleOom(args_list_raw.append(arg.get()));
 
@@ -176,8 +176,8 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
     // only allow in collection phase
     switch (bunTest.phase) {
         .collection => {}, // ok
-        .execution => return globalThis.throw("Cannot call {}() inside a test. Call it inside describe() instead.", .{this}),
-        .done => return globalThis.throw("Cannot call {}() after the test run has completed", .{this}),
+        .execution => return globalThis.throw("Cannot call {f}() inside a test. Call it inside describe() instead.", .{this}),
+        .done => return globalThis.throw("Cannot call {f}() after the test run has completed", .{this}),
     }
 
     // handle test reporter agent for debugger
@@ -235,7 +235,7 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
                 bun.debugAssert(rem.buf.len == 0);
 
                 const str = bun.String.fromBytes(bunTest.collection.filter_buffer.items);
-                groupLog.log("matches_filter \"{}\"", .{std.zig.fmtEscapes(bunTest.collection.filter_buffer.items)});
+                groupLog.log("matches_filter \"{f}\"", .{std.zig.fmtString(bunTest.collection.filter_buffer.items)});
                 matches_filter = filter_regex.matches(str);
             };
 
@@ -327,7 +327,7 @@ fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, descr
         return slice.intoOwnedSlice(gpa);
     }
 
-    return globalThis.throwPretty("{s}() expects first argument to be a named class, named function, number, or string", .{signature});
+    return globalThis.throwPretty("{f}() expects first argument to be a named class, named function, number, or string", .{signature});
 }
 
 pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, gpa: std.mem.Allocator, cfg: struct { callback: CallbackMode, kind: FunctionKind = .test_or_describe }) bun.JSError!ParseArgumentsResult {
@@ -355,7 +355,7 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
         break :blk callback.withAsyncContextIfNeeded(globalThis);
     } else {
         const ordinal = if (cfg.kind == .hook) "first" else "second";
-        return globalThis.throw("{s} expects a function as the {s} argument", .{ signature, ordinal });
+        return globalThis.throw("{f} expects a function as the {s} argument", .{ signature, ordinal });
     };
 
     var result: ParseArgumentsResult = .{
@@ -370,30 +370,30 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
     if (options.isNumber()) {
         timeout_option = options.asNumber();
     } else if (options.isFunction()) {
-        return globalThis.throw("{}() expects options to be a number or object, not a function", .{signature});
+        return globalThis.throw("{f}() expects options to be a number or object, not a function", .{signature});
     } else if (options.isObject()) {
         if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
-                return globalThis.throwPretty("{}() expects timeout to be a number", .{signature});
+                return globalThis.throwPretty("{f}() expects timeout to be a number", .{signature});
             }
             timeout_option = timeout.asNumber();
         }
         if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
-                return globalThis.throwPretty("{}() expects retry to be a number", .{signature});
+                return globalThis.throwPretty("{f}() expects retry to be a number", .{signature});
             }
             result.options.retry = retries.asNumber();
         }
         if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
-                return globalThis.throwPretty("{}() expects repeats to be a number", .{signature});
+                return globalThis.throwPretty("{f}() expects repeats to be a number", .{signature});
             }
             result.options.repeats = repeats.asNumber();
         }
     } else if (options.isUndefinedOrNull()) {
         // no options
     } else {
-        return globalThis.throw("{}() expects a number, object, or undefined as the third argument", .{signature});
+        return globalThis.throw("{f}() expects a number, object, or undefined as the third argument", .{signature});
     }
 
     result.description = if (description.isUndefinedOrNull()) null else try getDescription(gpa, globalThis, description, signature);
@@ -411,7 +411,7 @@ pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 
-pub fn format(this: ScopeFunctions, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: ScopeFunctions, writer: *std.Io.Writer) !void {
     try writer.print("{s}", .{@tagName(this.mode)});
     switch (this.cfg.self_concurrent) {
         .yes => try writer.print(".concurrent", .{}),
@@ -425,7 +425,7 @@ pub fn format(this: ScopeFunctions, comptime _: []const u8, _: std.fmt.FormatOpt
 
 pub fn finalize(
     this: *ScopeFunctions,
-) callconv(.C) void {
+) callconv(.c) void {
     groupLog.begin(@src());
     defer groupLog.end();
 

@@ -170,10 +170,10 @@ pub const IdentOrRef = packed struct(u128) {
         return this.asIdent().?.v;
     }
 
-    pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) !void {
         if (this.__ref_bit) {
             const ref = this.asRef().?;
-            return writer.print("Ref({})", .{ref});
+            return writer.print("Ref({f})", .{ref});
         }
         return writer.print("Ident({s})", .{this.asIdent().?.v});
     }

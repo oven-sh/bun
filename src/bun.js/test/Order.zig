@@ -1,15 +1,15 @@
 //! take Collection phase output and convert to Execution phase input
 
-groups: std.ArrayList(ConcurrentGroup),
-sequences: std.ArrayList(ExecutionSequence),
+groups: std.array_list.Managed(ConcurrentGroup),
+sequences: std.array_list.Managed(ExecutionSequence),
 arena: std.mem.Allocator,
 previous_group_was_concurrent: bool = false,
 cfg: Config,
 
 pub fn init(gpa: std.mem.Allocator, arena: std.mem.Allocator, cfg: Config) Order {
     return .{
-        .groups = std.ArrayList(ConcurrentGroup).init(gpa),
-        .sequences = std.ArrayList(ExecutionSequence).init(gpa),
+        .groups = std.array_list.Managed(ConcurrentGroup).init(gpa),
+        .sequences = std.array_list.Managed(ExecutionSequence).init(gpa),
         .cfg = cfg,
         .arena = arena,
     };

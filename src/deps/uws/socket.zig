@@ -150,7 +150,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     return (TLSSocket.from(socket)).ext(ContextType);
                 }
 
-                pub fn on_open(socket: *us_socket_t, is_client: i32, _: [*c]u8, _: i32) callconv(.C) ?*us_socket_t {
+                pub fn on_open(socket: *us_socket_t, is_client: i32, _: [*c]u8, _: i32) callconv(.c) ?*us_socket_t {
                     if (comptime @hasDecl(Fields, "onCreate")) {
                         if (is_client == 0) {
                             Fields.onCreate(
@@ -167,7 +167,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_close(socket: *us_socket_t, code: i32, reason: ?*anyopaque) callconv(.C) ?*us_socket_t {
+                pub fn on_close(socket: *us_socket_t, code: i32, reason: ?*anyopaque) callconv(.c) ?*us_socket_t {
                     const res = Fields.onClose(
                         getValue(socket),
                         TLSSocket.from(socket),
@@ -179,7 +179,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_data(socket: *us_socket_t, buf: ?[*]u8, len: i32) callconv(.C) ?*us_socket_t {
+                pub fn on_data(socket: *us_socket_t, buf: ?[*]u8, len: i32) callconv(.c) ?*us_socket_t {
                     const res = Fields.onData(
                         getValue(socket),
                         TLSSocket.from(socket),
@@ -190,7 +190,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_writable(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
+                pub fn on_writable(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
                     const res = Fields.onWritable(
                         getValue(socket),
                         TLSSocket.from(socket),
@@ -200,7 +200,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_timeout(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
+                pub fn on_timeout(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
                     const res = Fields.onTimeout(
                         getValue(socket),
                         TLSSocket.from(socket),
@@ -210,7 +210,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_long_timeout(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
+                pub fn on_long_timeout(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
                     const res = Fields.onLongTimeout(
                         getValue(socket),
                         TLSSocket.from(socket),
@@ -220,7 +220,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_connect_error(socket: *us_socket_t, code: i32) callconv(.C) ?*us_socket_t {
+                pub fn on_connect_error(socket: *us_socket_t, code: i32) callconv(.c) ?*us_socket_t {
                     const res = Fields.onConnectError(
                         TLSSocket.from(socket).ext(ContextType).?.*,
                         TLSSocket.from(socket),
@@ -231,7 +231,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_connect_error_connecting_socket(socket: *ConnectingSocket, code: i32) callconv(.C) ?*ConnectingSocket {
+                pub fn on_connect_error_connecting_socket(socket: *ConnectingSocket, code: i32) callconv(.c) ?*ConnectingSocket {
                     const res = Fields.onConnectError(
                         @as(*align(alignment) ContextType, @ptrCast(@alignCast(socket.ext(comptime is_ssl)))).*,
                         TLSSocket.fromConnecting(socket),
@@ -242,7 +242,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_end(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
+                pub fn on_end(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
                     const res = Fields.onEnd(
                         getValue(socket),
                         TLSSocket.from(socket),
@@ -252,7 +252,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_handshake(socket: *us_socket_t, success: i32, verify_error: us_bun_verify_error_t, _: ?*anyopaque) callconv(.C) void {
+                pub fn on_handshake(socket: *us_socket_t, success: i32, verify_error: us_bun_verify_error_t, _: ?*anyopaque) callconv(.c) void {
                     const res = Fields.onHandshake(
                         getValue(socket),
                         TLSSocket.from(socket),
@@ -698,7 +698,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     return (SocketHandlerType.from(socket)).ext(ContextType);
                 }
 
-                pub fn on_open(socket: *us_socket_t, is_client: i32, _: [*c]u8, _: i32) callconv(.C) ?*us_socket_t {
+                pub fn on_open(socket: *us_socket_t, is_client: i32, _: [*c]u8, _: i32) callconv(.c) ?*us_socket_t {
                     if (comptime @hasDecl(Fields, "onCreate")) {
                         if (is_client == 0) {
                             Fields.onCreate(
@@ -715,7 +715,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_close(socket: *us_socket_t, code: i32, reason: ?*anyopaque) callconv(.C) ?*us_socket_t {
+                pub fn on_close(socket: *us_socket_t, code: i32, reason: ?*anyopaque) callconv(.c) ?*us_socket_t {
                     const res = Fields.onClose(
                         getValue(socket),
                         SocketHandlerType.from(socket),
@@ -727,7 +727,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_data(socket: *us_socket_t, buf: ?[*]u8, len: i32) callconv(.C) ?*us_socket_t {
+                pub fn on_data(socket: *us_socket_t, buf: ?[*]u8, len: i32) callconv(.c) ?*us_socket_t {
                     const res = Fields.onData(
                         getValue(socket),
                         SocketHandlerType.from(socket),
@@ -738,7 +738,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_writable(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
+                pub fn on_writable(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
                     const res = Fields.onWritable(
                         getValue(socket),
                         SocketHandlerType.from(socket),
@@ -748,7 +748,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_timeout(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
+                pub fn on_timeout(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
                     const res = Fields.onTimeout(
                         getValue(socket),
                         SocketHandlerType.from(socket),
@@ -758,7 +758,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_connect_error_connecting_socket(socket: *ConnectingSocket, code: i32) callconv(.C) ?*ConnectingSocket {
+                pub fn on_connect_error_connecting_socket(socket: *ConnectingSocket, code: i32) callconv(.c) ?*ConnectingSocket {
                     const val = if (comptime ContextType == anyopaque)
                         socket.ext(comptime is_ssl)
                     else if (comptime deref_)
@@ -775,7 +775,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_connect_error(socket: *us_socket_t, code: i32) callconv(.C) ?*us_socket_t {
+                pub fn on_connect_error(socket: *us_socket_t, code: i32) callconv(.c) ?*us_socket_t {
                     const val = if (comptime ContextType == anyopaque)
                         socket.ext(is_ssl)
                     else if (comptime deref_)
@@ -792,7 +792,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_end(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
+                pub fn on_end(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
                     const res = Fields.onEnd(
                         getValue(socket),
                         SocketHandlerType.from(socket),
@@ -802,7 +802,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_handshake(socket: *us_socket_t, success: i32, verify_error: us_bun_verify_error_t, _: ?*anyopaque) callconv(.C) void {
+                pub fn on_handshake(socket: *us_socket_t, success: i32, verify_error: us_bun_verify_error_t, _: ?*anyopaque) callconv(.c) void {
                     const res = Fields.onHandshake(
                         getValue(socket),
                         SocketHandlerType.from(socket),
@@ -864,7 +864,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     return (ThisSocket.from(socket)).ext(ContextType);
                 }
 
-                pub fn on_open(socket: *us_socket_t, is_client: i32, _: [*c]u8, _: i32) callconv(.C) ?*us_socket_t {
+                pub fn on_open(socket: *us_socket_t, is_client: i32, _: [*c]u8, _: i32) callconv(.c) ?*us_socket_t {
                     if (comptime @hasDecl(Fields, "onCreate")) {
                         if (is_client == 0) {
                             Fields.onCreate(
@@ -881,7 +881,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_close(socket: *us_socket_t, code: i32, reason: ?*anyopaque) callconv(.C) ?*us_socket_t {
+                pub fn on_close(socket: *us_socket_t, code: i32, reason: ?*anyopaque) callconv(.c) ?*us_socket_t {
                     const res = Fields.onClose(
                         getValue(socket),
                         ThisSocket.from(socket),
@@ -893,7 +893,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_data(socket: *us_socket_t, buf: ?[*]u8, len: i32) callconv(.C) ?*us_socket_t {
+                pub fn on_data(socket: *us_socket_t, buf: ?[*]u8, len: i32) callconv(.c) ?*us_socket_t {
                     const res = Fields.onData(
                         getValue(socket),
                         ThisSocket.from(socket),
@@ -904,7 +904,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_fd(socket: *us_socket_t, file_descriptor: c_int) callconv(.C) ?*us_socket_t {
+                pub fn on_fd(socket: *us_socket_t, file_descriptor: c_int) callconv(.c) ?*us_socket_t {
                     const res = Fields.onFd(
                         getValue(socket),
                         ThisSocket.from(socket),
@@ -915,7 +915,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_writable(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
+                pub fn on_writable(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
                     const res = Fields.onWritable(
                         getValue(socket),
                         ThisSocket.from(socket),
@@ -925,7 +925,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_timeout(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
+                pub fn on_timeout(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
                     const res = Fields.onTimeout(
                         getValue(socket),
                         ThisSocket.from(socket),
@@ -935,7 +935,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_long_timeout(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
+                pub fn on_long_timeout(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
                     const res = Fields.onLongTimeout(
                         getValue(socket),
                         ThisSocket.from(socket),
@@ -945,7 +945,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_connect_error_connecting_socket(socket: *ConnectingSocket, code: i32) callconv(.C) ?*ConnectingSocket {
+                pub fn on_connect_error_connecting_socket(socket: *ConnectingSocket, code: i32) callconv(.c) ?*ConnectingSocket {
                     const val = if (comptime ContextType == anyopaque)
                         socket.ext(comptime is_ssl)
                     else if (comptime deref_)
@@ -962,7 +962,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_connect_error(socket: *us_socket_t, code: i32) callconv(.C) ?*us_socket_t {
+                pub fn on_connect_error(socket: *us_socket_t, code: i32) callconv(.c) ?*us_socket_t {
                     const val = if (comptime ContextType == anyopaque)
                         socket.ext(is_ssl)
                     else if (comptime deref_)
@@ -985,7 +985,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_end(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
+                pub fn on_end(socket: *us_socket_t) callconv(.c) ?*us_socket_t {
                     const res = Fields.onEnd(
                         getValue(socket),
                         ThisSocket.from(socket),
@@ -995,7 +995,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     };
                     return socket;
                 }
-                pub fn on_handshake(socket: *us_socket_t, success: i32, verify_error: us_bun_verify_error_t, _: ?*anyopaque) callconv(.C) void {
+                pub fn on_handshake(socket: *us_socket_t, success: i32, verify_error: us_bun_verify_error_t, _: ?*anyopaque) callconv(.c) void {
                     const res = Fields.onHandshake(
                         getValue(socket),
                         ThisSocket.from(socket),
@@ -1301,17 +1301,17 @@ fn NativeSocketHandleType(comptime ssl: bool) type {
 
 const c = struct {
     pub const us_socket_events_t = extern struct {
-        on_open: ?*const fn (*us_socket_t, i32, [*c]u8, i32) callconv(.C) ?*us_socket_t = null,
-        on_data: ?*const fn (*us_socket_t, [*c]u8, i32) callconv(.C) ?*us_socket_t = null,
-        on_writable: ?*const fn (*us_socket_t) callconv(.C) ?*us_socket_t = null,
-        on_close: ?*const fn (*us_socket_t, i32, ?*anyopaque) callconv(.C) ?*us_socket_t = null,
+        on_open: ?*const fn (*us_socket_t, i32, [*c]u8, i32) callconv(.c) ?*us_socket_t = null,
+        on_data: ?*const fn (*us_socket_t, [*c]u8, i32) callconv(.c) ?*us_socket_t = null,
+        on_writable: ?*const fn (*us_socket_t) callconv(.c) ?*us_socket_t = null,
+        on_close: ?*const fn (*us_socket_t, i32, ?*anyopaque) callconv(.c) ?*us_socket_t = null,
 
-        on_timeout: ?*const fn (*us_socket_t) callconv(.C) ?*us_socket_t = null,
-        on_long_timeout: ?*const fn (*us_socket_t) callconv(.C) ?*us_socket_t = null,
-        on_end: ?*const fn (*us_socket_t) callconv(.C) ?*us_socket_t = null,
-        on_connect_error: ?*const fn (*us_socket_t, i32) callconv(.C) ?*us_socket_t = null,
-        on_connect_error_connecting_socket: ?*const fn (*ConnectingSocket, i32) callconv(.C) ?*ConnectingSocket = null,
-        on_handshake: ?*const fn (*us_socket_t, i32, uws.us_bun_verify_error_t, ?*anyopaque) callconv(.C) void = null,
+        on_timeout: ?*const fn (*us_socket_t) callconv(.c) ?*us_socket_t = null,
+        on_long_timeout: ?*const fn (*us_socket_t) callconv(.c) ?*us_socket_t = null,
+        on_end: ?*const fn (*us_socket_t) callconv(.c) ?*us_socket_t = null,
+        on_connect_error: ?*const fn (*us_socket_t, i32) callconv(.c) ?*us_socket_t = null,
+        on_connect_error_connecting_socket: ?*const fn (*ConnectingSocket, i32) callconv(.c) ?*ConnectingSocket = null,
+        on_handshake: ?*const fn (*us_socket_t, i32, uws.us_bun_verify_error_t, ?*anyopaque) callconv(.c) void = null,
     };
     pub extern fn us_socket_wrap_with_tls(ssl: i32, s: *uws.us_socket_t, options: uws.SocketContext.BunSocketContextOptions, events: c.us_socket_events_t, socket_ext_size: i32) ?*uws.us_socket_t;
 };

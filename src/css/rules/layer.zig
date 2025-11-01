@@ -126,7 +126,7 @@ pub const LayerName = struct {
         }
     }
 
-    pub fn format(this: *const LayerName, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: *const LayerName, writer: *std.Io.Writer) !void {
         var first = true;
         for (this.v.slice()) |name| {
             if (first) {

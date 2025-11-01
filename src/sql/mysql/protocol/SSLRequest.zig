@@ -16,7 +16,7 @@ pub fn writeInternal(this: *SSLRequest, comptime Context: type, writer: NewWrite
     // Write client capabilities flags (4 bytes)
     const caps = this.capability_flags.toInt();
     try writer.int4(caps);
-    debug("Client capabilities: [{}] 0x{x:0>8}", .{ this.capability_flags, caps });
+    debug("Client capabilities: [{f}] 0x{x:0>8}", .{ this.capability_flags, caps });
 
     // Write max packet size (4 bytes)
     try writer.int4(this.max_packet_size);

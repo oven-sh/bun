@@ -74,8 +74,8 @@ pub const RequestBodyBuffer = union(enum) {
         };
     }
 
-    pub fn toArrayList(this: *@This()) std.ArrayList(u8) {
-        var arraylist = std.ArrayList(u8).fromOwnedSlice(this.allocator(), this.allocatedSlice());
+    pub fn toArrayList(this: *@This()) std.array_list.Managed(u8) {
+        var arraylist = std.array_list.Managed(u8).fromOwnedSlice(this.allocator(), this.allocatedSlice());
         arraylist.items.len = 0;
         return arraylist;
     }
@@ -478,7 +478,7 @@ fn processEvents(this: *@This()) noreturn {
         // this.loop.run();
         if (comptime Environment.isDebug) {
             const end = std.time.nanoTimestamp();
-            threadlog("Waited {any}\n", .{std.fmt.fmtDurationSigned(@as(i64, @truncate(end - start_time)))});
+            threadlog("Waited {D}\n", .{@as(i64, @truncate(end - start_time))});
             Output.flush();
         }
     }

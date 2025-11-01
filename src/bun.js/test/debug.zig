@@ -7,7 +7,7 @@ pub fn dumpSub(current: TestScheduleEntry) bun.JSError!void {
 }
 pub fn dumpDescribe(describe: *DescribeScope) bun.JSError!void {
     if (!group.getLogEnabled()) return;
-    group.beginMsg("describe \"{}\" (concurrent={}, mode={s}, only={s}, has_callback={})", .{ std.zig.fmtEscapes(describe.base.name orelse "(unnamed)"), describe.base.concurrent, @tagName(describe.base.mode), @tagName(describe.base.only), describe.base.has_callback });
+    group.beginMsg("describe \"{f}\" (concurrent={}, mode={s}, only={s}, has_callback={})", .{ std.zig.fmtString(describe.base.name orelse "(unnamed)"), describe.base.concurrent, @tagName(describe.base.mode), @tagName(describe.base.only), describe.base.has_callback });
     defer group.end();
 
     for (describe.beforeAll.items) |entry| try dumpTest(entry, "beforeAll");
@@ -18,7 +18,7 @@ pub fn dumpDescribe(describe: *DescribeScope) bun.JSError!void {
 }
 pub fn dumpTest(current: *ExecutionEntry, label: []const u8) bun.JSError!void {
     if (!group.getLogEnabled()) return;
-    group.beginMsg("{s} \"{}\" (concurrent={}, only={})", .{ label, std.zig.fmtEscapes(current.base.name orelse "(unnamed)"), current.base.concurrent, current.base.only });
+    group.beginMsg("{s} \"{f}\" (concurrent={}, only={})", .{ label, std.zig.fmtString(current.base.name orelse "(unnamed)"), current.base.concurrent, current.base.only });
     defer group.end();
 }
 pub fn dumpOrder(this: *Execution) bun.JSError!void {
@@ -36,19 +36,19 @@ pub fn dumpOrder(this: *Execution) bun.JSError!void {
 
             var current_entry = sequence.first_entry;
             while (current_entry) |entry| : (current_entry = entry.next) {
-                group.log("ExecutionEntry \"{}\" (concurrent={}, mode={s}, only={s}, has_callback={})", .{ std.zig.fmtEscapes(entry.base.name orelse "(unnamed)"), entry.base.concurrent, @tagName(entry.base.mode), @tagName(entry.base.only), entry.base.has_callback });
+                group.log("ExecutionEntry \"{f}\" (concurrent={}, mode={s}, only={s}, has_callback={})", .{ std.zig.fmtString(entry.base.name orelse "(unnamed)"), entry.base.concurrent, @tagName(entry.base.mode), @tagName(entry.base.only), entry.base.has_callback });
             }
         }
     }
 }
 
 pub const group = struct {
-    fn printIndent() void {
-        std.io.getStdOut().writer().print("\x1b[90m", .{}) catch {};
+    fn printIndent(writer: *std.Io.Writer) void {
+        writer.print("\x1b[90m", .{}) catch {};
         for (0..indent) |_| {
-            std.io.getStdOut().writer().print("│ ", .{}) catch {};
+            writer.print("│ ", .{}) catch {};
         }
-        std.io.getStdOut().writer().print("\x1b[m", .{}) catch {};
+        writer.print("\x1b[m", .{}) catch {};
     }
     var indent: usize = 0;
     var last_was_start = false;
@@ -64,9 +64,14 @@ pub const group = struct {
     }
     pub fn beginMsg(comptime fmtt: []const u8, args: anytype) void {
         if (!getLogEnabled()) return;
-        printIndent();
-        std.io.getStdOut().writer().print("\x1b[32m++ \x1b[0m", .{}) catch {};
-        std.io.getStdOut().writer().print(fmtt ++ "\n", args) catch {};
+
+        var buf: [64]u8 = undefined;
+        var writer = std.fs.File.stdout().writerStreaming(&buf);
+
+        printIndent(&writer.interface);
+        writer.interface.print("\x1b[32m++ \x1b[0m", .{}) catch {};
+        writer.interface.print(fmtt ++ "\n", args) catch {};
+        writer.interface.flush() catch {};
         indent += 1;
         last_was_start = true;
     }
@@ -74,14 +79,21 @@ pub const group = struct {
         if (!getLogEnabled()) return;
         indent -= 1;
         defer last_was_start = false;
-        if (last_was_start) return; //std.io.getStdOut().writer().print("\x1b[A", .{}) catch {};
-        printIndent();
-        std.io.getStdOut().writer().print("\x1b[32m{s}\x1b[m\n", .{if (last_was_start) "+-" else "--"}) catch {};
+        if (last_was_start) return; //std.fs.File.stdout().writer().print("\x1b[A", .{}) catch {};
+
+        var buf: [64]u8 = undefined;
+        var writer = std.fs.File.stdout().writerStreaming(&buf);
+        printIndent(&writer.interface);
+        writer.interface.print("\x1b[32m{s}\x1b[m\n", .{if (last_was_start) "+-" else "--"}) catch {};
+        writer.interface.flush() catch {};
     }
     pub fn log(comptime fmtt: []const u8, args: anytype) void {
         if (!getLogEnabled()) return;
-        printIndent();
-        std.io.getStdOut().writer().print(fmtt ++ "\n", args) catch {};
+        var buf: [64]u8 = undefined;
+        var writer = std.fs.File.stdout().writerStreaming(&buf);
+        printIndent(&writer.interface);
+        writer.interface.print(fmtt ++ "\n", args) catch {};
+        writer.interface.flush() catch {};
         last_was_start = false;
     }
 };

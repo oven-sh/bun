@@ -1,7 +1,7 @@
 pub const socklen_t = c.socklen_t;
 pub const ares_ssize_t = isize;
 pub const ares_socket_t = if (bun.Environment.isWindows) std.os.windows.ws2_32.SOCKET else c_int;
-pub const ares_sock_state_cb = ?*const fn (?*anyopaque, ares_socket_t, c_int, c_int) callconv(.C) void;
+pub const ares_sock_state_cb = ?*const fn (?*anyopaque, ares_socket_t, c_int, c_int) callconv(.c) void;
 pub const struct_apattern = opaque {};
 
 pub const AF = std.posix.AF;
@@ -232,7 +232,7 @@ pub const struct_hostent = extern struct {
         comptime function: Callback(Type),
     ) ares_host_callback {
         return &struct {
-            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, hostent: ?*struct_hostent) callconv(.C) void {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, hostent: ?*struct_hostent) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -249,7 +249,7 @@ pub const struct_hostent = extern struct {
         comptime function: Callback(Type),
     ) ares_callback {
         return &struct {
-            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -340,7 +340,7 @@ pub const hostent_with_ttls = struct {
         comptime function: Callback(Type),
     ) ares_host_callback {
         return &struct {
-            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, hostent: ?*hostent_with_ttls) callconv(.C) void {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, hostent: ?*hostent_with_ttls) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -357,7 +357,7 @@ pub const hostent_with_ttls = struct {
         comptime function: Callback(Type),
     ) ares_callback {
         return &struct {
-            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -451,7 +451,7 @@ pub const struct_nameinfo = extern struct {
         comptime function: Callback(Type),
     ) ares_nameinfo_callback {
         return &struct {
-            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, node: [*c]u8, service: [*c]u8) callconv(.C) void {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, node: [*c]u8, service: [*c]u8) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -546,7 +546,7 @@ pub const AddrInfo = extern struct {
         comptime function: Callback(Type),
     ) ares_addrinfo_callback {
         return &struct {
-            pub fn handleAddrInfo(ctx: ?*anyopaque, status: c_int, timeouts: c_int, addr_info: ?*AddrInfo) callconv(.C) void {
+            pub fn handleAddrInfo(ctx: ?*anyopaque, status: c_int, timeouts: c_int, addr_info: ?*AddrInfo) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
 
                 function(this, Error.get(status), timeouts, addr_info);
@@ -584,7 +584,7 @@ pub const Channel = opaque {
             return err;
         }
         const SockStateWrap = struct {
-            pub fn onSockState(ctx: ?*anyopaque, socket: ares_socket_t, readable: c_int, writable: c_int) callconv(.C) void {
+            pub fn onSockState(ctx: ?*anyopaque, socket: ares_socket_t, readable: c_int, writable: c_int) callconv(.c) void {
                 const container = bun.cast(*Container, ctx.?);
                 Container.onDNSSocketState(container, socket, readable != 0, writable != 0);
             }
@@ -780,19 +780,19 @@ fn libraryInit() void {
         bun.mimalloc.mi_realloc,
     );
     if (rc != ARES_SUCCESS) {
-        std.debug.panic("ares_library_init_mem failed: {any}", .{rc});
+        std.debug.panic("ares_library_init_mem failed: {d}", .{rc});
         unreachable;
     }
 }
 
-pub const ares_callback = ?*const fn (?*anyopaque, c_int, c_int, [*c]u8, c_int) callconv(.C) void;
-pub const ares_host_callback = ?*const fn (?*anyopaque, c_int, c_int, ?*struct_hostent) callconv(.C) void;
-pub const ares_nameinfo_callback = ?*const fn (?*anyopaque, c_int, c_int, [*c]u8, [*c]u8) callconv(.C) void;
-pub const ares_sock_create_callback = ?*const fn (ares_socket_t, c_int, ?*anyopaque) callconv(.C) c_int;
-pub const ares_sock_config_callback = ?*const fn (ares_socket_t, c_int, ?*anyopaque) callconv(.C) c_int;
-pub const ares_addrinfo_callback = *const fn (?*anyopaque, c_int, c_int, ?*AddrInfo) callconv(.C) void;
+pub const ares_callback = ?*const fn (?*anyopaque, c_int, c_int, [*c]u8, c_int) callconv(.c) void;
+pub const ares_host_callback = ?*const fn (?*anyopaque, c_int, c_int, ?*struct_hostent) callconv(.c) void;
+pub const ares_nameinfo_callback = ?*const fn (?*anyopaque, c_int, c_int, [*c]u8, [*c]u8) callconv(.c) void;
+pub const ares_sock_create_callback = ?*const fn (ares_socket_t, c_int, ?*anyopaque) callconv(.c) c_int;
+pub const ares_sock_config_callback = ?*const fn (ares_socket_t, c_int, ?*anyopaque) callconv(.c) c_int;
+pub const ares_addrinfo_callback = *const fn (?*anyopaque, c_int, c_int, ?*AddrInfo) callconv(.c) void;
 pub extern fn ares_library_init(flags: c_int) c_int;
-pub extern fn ares_library_init_mem(flags: c_int, amalloc: ?*const fn (usize) callconv(.C) ?*anyopaque, afree: ?*const fn (?*anyopaque) callconv(.C) void, arealloc: ?*const fn (?*anyopaque, usize) callconv(.C) ?*anyopaque) c_int;
+pub extern fn ares_library_init_mem(flags: c_int, amalloc: ?*const fn (usize) callconv(.c) ?*anyopaque, afree: ?*const fn (?*anyopaque) callconv(.c) void, arealloc: ?*const fn (?*anyopaque, usize) callconv(.c) ?*anyopaque) c_int;
 pub extern fn ares_library_initialized() c_int;
 pub extern fn ares_library_cleanup() void;
 pub extern fn ares_version(version: [*c]c_int) [*c]const u8;
@@ -812,11 +812,11 @@ pub extern fn ares_set_sortlist(channel: *Channel, sortstr: [*c]const u8) c_int;
 pub extern fn ares_getaddrinfo(channel: *Channel, node: ?[*:0]const u8, service: ?[*:0]const u8, hints: [*c]const AddrInfo_hints, callback: ares_addrinfo_callback, arg: ?*anyopaque) void;
 pub extern fn ares_freeaddrinfo(ai: *AddrInfo) void;
 pub const ares_socket_functions = extern struct {
-    socket: ?*const fn (c_int, c_int, c_int, ?*anyopaque) callconv(.C) ares_socket_t = null,
-    close: ?*const fn (ares_socket_t, ?*anyopaque) callconv(.C) c_int = null,
-    connect: ?*const fn (ares_socket_t, [*c]const struct_sockaddr, ares_socklen_t, ?*anyopaque) callconv(.C) c_int = null,
-    recvfrom: ?*const fn (ares_socket_t, ?*anyopaque, usize, c_int, [*c]struct_sockaddr, [*c]ares_socklen_t, ?*anyopaque) callconv(.C) ares_ssize_t = null,
-    sendv: ?*const fn (ares_socket_t, [*c]const iovec, c_int, ?*anyopaque) callconv(.C) ares_ssize_t = null,
+    socket: ?*const fn (c_int, c_int, c_int, ?*anyopaque) callconv(.c) ares_socket_t = null,
+    close: ?*const fn (ares_socket_t, ?*anyopaque) callconv(.c) c_int = null,
+    connect: ?*const fn (ares_socket_t, [*c]const struct_sockaddr, ares_socklen_t, ?*anyopaque) callconv(.c) c_int = null,
+    recvfrom: ?*const fn (ares_socket_t, ?*anyopaque, usize, c_int, [*c]struct_sockaddr, [*c]ares_socklen_t, ?*anyopaque) callconv(.c) ares_ssize_t = null,
+    sendv: ?*const fn (ares_socket_t, [*c]const iovec, c_int, ?*anyopaque) callconv(.c) ares_ssize_t = null,
 };
 pub extern fn ares_set_socket_functions(channel: *Channel, funcs: ?*const ares_socket_functions, user_data: ?*anyopaque) void;
 pub extern fn ares_send(channel: *Channel, qbuf: [*c]const u8, qlen: c_int, callback: ares_callback, arg: ?*anyopaque) void;
@@ -907,7 +907,7 @@ pub const struct_ares_caa_reply = extern struct {
         comptime function: Callback(Type),
     ) ares_callback {
         return &struct {
-            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -992,7 +992,7 @@ pub const struct_ares_srv_reply = extern struct {
         comptime function: Callback(Type),
     ) ares_callback {
         return &struct {
-            pub fn handleSrv(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+            pub fn handleSrv(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -1066,7 +1066,7 @@ pub const struct_ares_mx_reply = extern struct {
         comptime function: Callback(Type),
     ) ares_callback {
         return &struct {
-            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -1158,7 +1158,7 @@ pub const struct_ares_txt_reply = extern struct {
         comptime function: Callback(Type),
     ) ares_callback {
         return &struct {
-            pub fn handleTxt(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+            pub fn handleTxt(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -1256,7 +1256,7 @@ pub const struct_ares_naptr_reply = extern struct {
         comptime function: Callback(Type),
     ) ares_callback {
         return &struct {
-            pub fn handleNaptr(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+            pub fn handleNaptr(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -1327,7 +1327,7 @@ pub const struct_ares_soa_reply = extern struct {
         comptime function: Callback(Type),
     ) ares_callback {
         return &struct {
-            pub fn handleSoa(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+            pub fn handleSoa(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -1451,7 +1451,7 @@ pub const struct_any_reply = struct {
         comptime function: Callback(Type),
     ) ares_callback {
         return &struct {
-            pub fn handleAny(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+            pub fn handleAny(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -1687,7 +1687,7 @@ pub const Error = enum(i32) {
                 .errno = @intFromEnum(this.errno),
                 .code = bun.String.static(this.errno.code()),
                 .message = if (this.hostname) |hostname|
-                    bun.handleOom(bun.String.createFormat("{s} {s} {s}", .{ this.syscall, this.errno.code()[4..], hostname }))
+                    bun.handleOom(bun.String.createFormat("{s} {s} {f}", .{ this.syscall, this.errno.code()[4..], hostname }))
                 else
                     bun.handleOom(bun.String.createFormat("{s} {s}", .{ this.syscall, this.errno.code()[4..] })),
                 .syscall = bun.String.cloneUTF8(this.syscall),
@@ -2059,7 +2059,7 @@ pub fn getSockaddr(addr: []const u8, port: u16, sa: *std.posix.sockaddr) c_int {
     };
 
     {
-        const in: *std.posix.sockaddr.in = @alignCast(@ptrCast(sa));
+        const in: *std.posix.sockaddr.in = @ptrCast(@alignCast(sa));
         if (ares_inet_pton(AF.INET, addr_ptr, &in.addr) == 1) {
             in.*.family = AF.INET;
             in.*.port = std.mem.nativeToBig(u16, port);
@@ -2067,7 +2067,7 @@ pub fn getSockaddr(addr: []const u8, port: u16, sa: *std.posix.sockaddr) c_int {
         }
     }
     {
-        const in6: *std.posix.sockaddr.in6 = @alignCast(@ptrCast(sa));
+        const in6: *std.posix.sockaddr.in6 = @ptrCast(@alignCast(sa));
         if (ares_inet_pton(AF.INET6, addr_ptr, &in6.addr) == 1) {
             in6.*.family = AF.INET6;
             in6.*.port = std.mem.nativeToBig(u16, port);

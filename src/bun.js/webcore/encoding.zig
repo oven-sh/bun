@@ -77,7 +77,7 @@ export fn Bun__encoding__toString(input: [*]const u8, len: usize, globalObject: 
     return toString(input[0..len], globalObject, @enumFromInt(encoding));
 }
 
-// pub fn writeUTF16AsUTF8(utf16: [*]const u16, len: usize, to: [*]u8, to_len: usize) callconv(.C) i32 {
+// pub fn writeUTF16AsUTF8(utf16: [*]const u16, len: usize, to: [*]u8, to_len: usize) callconv(.c) i32 {
 //     return @intCast(i32, strings.copyUTF16IntoUTF8(to[0..to_len], []const u16, utf16[0..len]).written);
 // }
 pub fn toString(input: []const u8, globalObject: *JSGlobalObject, encoding: Encoding) JSValue {

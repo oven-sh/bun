@@ -92,7 +92,7 @@ pub fn getFormDataEncoding(this: *Response) bun.JSError!?*bun.FormData.AsyncForm
     return bun.handleOom(bun.FormData.AsyncFormData.init(bun.default_allocator, encoding));
 }
 
-pub fn estimatedSize(this: *Response) callconv(.C) usize {
+pub fn estimatedSize(this: *Response) callconv(.c) usize {
     return this.#reported_estimated_size;
 }
 
@@ -249,7 +249,7 @@ pub const Props = struct {};
 
 pub fn writeFormat(this: *Response, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
     const Writer = @TypeOf(writer);
-    try writer.print("Response ({}) {{\n", .{bun.fmt.size(this.#body.len(), .{})});
+    try writer.print("Response ({f}) {{\n", .{bun.fmt.size(this.#body.len(), .{})});
 
     {
         formatter.indent += 1;
@@ -263,7 +263,7 @@ pub fn writeFormat(this: *Response, comptime Formatter: type, formatter: *Format
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>url<d>:<r> \"", enable_ansi_colors));
-        try writer.print(comptime Output.prettyFmt("<r><b>{}<r>", enable_ansi_colors), .{this.#url});
+        try writer.print(comptime Output.prettyFmt("<r><b>{f}<r>", enable_ansi_colors), .{this.#url});
         try writer.writeAll("\"");
         try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
@@ -276,7 +276,7 @@ pub fn writeFormat(this: *Response, comptime Formatter: type, formatter: *Format
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>statusText<d>:<r> ", enable_ansi_colors));
-        try writer.print(comptime Output.prettyFmt("<r>\"<b>{}<r>\"", enable_ansi_colors), .{this.#init.status_text});
+        try writer.print(comptime Output.prettyFmt("<r>\"<b>{f}<r>\"", enable_ansi_colors), .{this.#init.status_text});
         try formatter.printComma(Writer, writer, enable_ansi_colors);
         try writer.writeAll("\n");
 
@@ -466,7 +466,7 @@ pub fn unref(this: *Response) void {
 
 pub fn finalize(
     this: *Response,
-) callconv(.C) void {
+) callconv(.c) void {
     this.#js_ref.finalize();
     this.unref();
 }
@@ -540,7 +540,7 @@ pub fn constructJSON(
                 defer str.deref();
                 response.#body.value = .{
                     .InternalBlob = InternalBlob{
-                        .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(bytes.slice())),
+                        .bytes = std.array_list.Managed(u8).fromOwnedSlice(bun.default_allocator, @constCast(bytes.slice())),
                         .was_string = true,
                     },
                 };

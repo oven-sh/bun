@@ -125,7 +125,7 @@ pub const ZigException = extern struct {
 
     pub fn addToErrorList(
         this: *ZigException,
-        error_list: *std.ArrayList(api.JsException),
+        error_list: *std.array_list.Managed(api.JsException),
         root_path: string,
         origin: ?*const ZigURL,
     ) !void {

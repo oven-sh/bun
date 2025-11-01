@@ -105,9 +105,9 @@ fn makeChild(this: *Binary, left: bool) ?ChildPtr {
             const condexpr = CondExpr.init(this.base.interpreter, this.base.shell, node.condexpr, CondExpr.ParentPtr.init(this), this.io.copy());
             return ChildPtr.init(condexpr);
         },
-        .@"async" => {
-            const @"async" = Async.init(this.base.interpreter, this.base.shell, node.@"async", Async.ParentPtr.init(this), this.io.copy());
-            return ChildPtr.init(@"async");
+        .async => {
+            const async = Async.init(this.base.interpreter, this.base.shell, node.async, Async.ParentPtr.init(this), this.io.copy());
+            return ChildPtr.init(async);
         },
     }
 }

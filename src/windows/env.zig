@@ -22,8 +22,8 @@ pub fn convertEnvToWTF8() bun.OOM!void {
 
     var num_vars: usize = 0;
     const wtf8_buf: []u8 = blk: {
-        var wtf16_buf: [*:0]u16 = try std.os.windows.GetEnvironmentStringsW();
-        defer std.os.windows.FreeEnvironmentStringsW(wtf16_buf);
+        var wtf16_buf: [*:0]u16 = try bun.windows.GetEnvironmentStringsW();
+        defer bun.windows.FreeEnvironmentStringsW(wtf16_buf);
         var len: usize = 0;
         while (true) {
             const str_len = std.mem.len(wtf16_buf[len..]);

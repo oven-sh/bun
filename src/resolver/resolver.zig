@@ -227,7 +227,7 @@ pub const Result = struct {
     }
 
     pub const DebugMeta = struct {
-        notes: std.ArrayList(logger.Data),
+        notes: std.array_list.Managed(logger.Data),
         suggestion_text: string = "",
         suggestion_message: string = "",
         suggestion_range: SuggestionRange,
@@ -235,7 +235,7 @@ pub const Result = struct {
         pub const SuggestionRange = enum { full, end };
 
         pub fn init(allocator: std.mem.Allocator) DebugMeta {
-            return DebugMeta{ .notes = std.ArrayList(logger.Data).init(allocator) };
+            return DebugMeta{ .notes = std.array_list.Managed(logger.Data).init(allocator) };
         }
 
         pub fn logErrorMsg(m: *DebugMeta, log: *logger.Log, _source: ?*const logger.Source, r: logger.Range, comptime fmt: string, args: anytype) !void {
@@ -280,7 +280,7 @@ pub const DirEntryResolveQueueItem = struct {
 pub const DebugLogs = struct {
     what: string = "",
     indent: MutableString,
-    notes: std.ArrayList(logger.Data),
+    notes: std.array_list.Managed(logger.Data),
 
     pub const FlushMode = enum { fail, success };
 
@@ -288,7 +288,7 @@ pub const DebugLogs = struct {
         const mutable = try MutableString.init(allocator, 0);
         return DebugLogs{
             .indent = mutable,
-            .notes = std.ArrayList(logger.Data).init(allocator),
+            .notes = std.array_list.Managed(logger.Data).init(allocator),
         };
     }
 
@@ -879,7 +879,7 @@ pub const Resolver = struct {
                 if (comptime Environment.enable_logs) {
                     if (result.path_pair.secondary) |secondary| {
                         debuglog(
-                            "resolve({}, from: {}, {s}) = {} (secondary: {})",
+                            "resolve({f}, from: {f}, {s}) = {f} (secondary: {f})",
                             .{
                                 bun.fmt.fmtPath(u8, import_path, .{}),
                                 bun.fmt.fmtPath(u8, source_dir, .{}),
@@ -890,7 +890,7 @@ pub const Resolver = struct {
                         );
                     } else {
                         debuglog(
-                            "resolve({}, from: {}, {s}) = {}",
+                            "resolve({f}, from: {f}, {s}) = {f}",
                             .{
                                 bun.fmt.fmtPath(u8, import_path, .{}),
                                 bun.fmt.fmtPath(u8, source_dir, .{}),
@@ -2246,7 +2246,7 @@ pub const Resolver = struct {
                 dir_entries_ptr.fd = open_dir;
             }
 
-            bun.fs.debug("readdir({}, {s}) = {d}", .{ open_dir, dir_path, dir_entries_ptr.data.count() });
+            bun.fs.debug("readdir({f}, {s}) = {d}", .{ open_dir, dir_path, dir_entries_ptr.data.count() });
 
             dir_entries_option = rfs.entries.put(&cached_dir_entry_result, .{
                 .entries = dir_entries_ptr,
@@ -2818,7 +2818,7 @@ pub const Resolver = struct {
                     }
                 };
 
-                bun.fs.debug("open({s}) = {any}", .{ sentinel, open_req });
+                bun.fs.debug("open({s})", .{sentinel});
 
                 break :open_dir open_req catch |err| switch (@as(anyerror, err)) {
                     // Ignore "ENOTDIR" here so that calling "ReadDirectory" on a file behaves
@@ -2938,7 +2938,7 @@ pub const Resolver = struct {
                 dir_entries_option = try rfs.entries.put(&cached_dir_entry_result, .{
                     .entries = dir_entries_ptr,
                 });
-                bun.fs.debug("readdir({}, {s}) = {d}", .{ open_dir, dir_path, dir_entries_ptr.data.count() });
+                bun.fs.debug("readdir({f}, {s}) = {d}", .{ open_dir, dir_path, dir_entries_ptr.data.count() });
             }
 
             // We must initialize it as empty so that the result index is correct.
@@ -3421,20 +3421,20 @@ pub const Resolver = struct {
         return nodeModulePathsJSValue(in_str, globalThis, false);
     }
 
-    pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+    pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
         bun.jsc.markBinding(@src());
 
         const in_str = bun.String.init(".");
         return nodeModulePathsJSValue(in_str, globalThis, false);
     }
 
-    pub fn nodeModulePathsJSValue(in_str: bun.String, globalObject: *bun.jsc.JSGlobalObject, use_dirname: bool) callconv(.C) bun.jsc.JSValue {
+    pub fn nodeModulePathsJSValue(in_str: bun.String, globalObject: *bun.jsc.JSGlobalObject, use_dirname: bool) callconv(.c) bun.jsc.JSValue {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var stack_fallback_allocator = std.heap.stackFallback(1024, arena.allocator());
         const alloc = stack_fallback_allocator.get();
 
-        var list = std.ArrayList(bun.String).init(alloc);
+        var list = std.array_list.Managed(bun.String).init(alloc);
         defer list.deinit();
 
         const sliced = in_str.toUTF8(bun.default_allocator);
@@ -4183,9 +4183,9 @@ pub const Resolver = struct {
                 ) catch |err| brk: {
                     const pretty = tsconfigpath;
                     if (err == error.ENOENT or err == error.FileNotFound) {
-                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot find tsconfig file {}", .{bun.fmt.QuotedFormatter{ .text = pretty }}) catch {};
+                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot find tsconfig file {f}", .{bun.fmt.QuotedFormatter{ .text = pretty }}) catch {};
                     } else if (err != error.ParseErrorAlreadyLogged and err != error.IsDir and err != error.EISDIR) {
-                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file {}: {s}", .{ bun.fmt.QuotedFormatter{ .text = pretty }, @errorName(err) }) catch {};
+                        r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot read file {f}: {s}", .{ bun.fmt.QuotedFormatter{ .text = pretty }, @errorName(err) }) catch {};
                     }
                     break :brk null;
                 };
@@ -4197,7 +4197,7 @@ pub const Resolver = struct {
                         const ts_dir_name = Dirname.dirname(current.abs_path);
                         const abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, bufs(.tsconfig_path_abs), &[_]string{ ts_dir_name, current.extends }, .auto);
                         const parent_config_maybe = r.parseTSConfig(abs_path, bun.invalid_fd) catch |err| {
-                            r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {}", .{
+                            r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json extends {f}", .{
                                 @errorName(err),
                                 bun.fmt.QuotedFormatter{
                                     .text = abs_path,

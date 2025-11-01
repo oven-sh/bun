@@ -27,7 +27,10 @@ pub const Stringifier = struct {
     //     _ = this;
     // }
 
-    pub fn saveFromBinary(allocator: std.mem.Allocator, lockfile: *BinaryLockfile, load_result: *const LoadResult, writer: anytype) @TypeOf(writer).Error!void {
+    pub fn saveFromBinary(allocator: std.mem.Allocator, lockfile: *BinaryLockfile, load_result: *const LoadResult, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        return bun.handleOom(saveFromBinary_inner(allocator, lockfile, load_result, writer));
+    }
+    pub fn saveFromBinary_inner(allocator: std.mem.Allocator, lockfile: *BinaryLockfile, load_result: *const LoadResult, writer: *std.Io.Writer) !void {
         const buf = lockfile.buffers.string_bytes.items;
         const extern_strings = lockfile.buffers.extern_strings.items;
         const deps_buf = lockfile.buffers.dependencies.items;
@@ -54,7 +57,7 @@ pub const Stringifier = struct {
         defer found_patched_dependencies.deinit(allocator);
         try found_patched_dependencies.ensureTotalCapacity(allocator, @truncate(lockfile.patched_dependencies.count()));
 
-        var optional_peers_buf = std.ArrayList(String).init(allocator);
+        var optional_peers_buf = std.array_list.Managed(String).init(allocator);
         defer optional_peers_buf.deinit();
 
         var pkg_map = PkgMap(void).init(allocator);
@@ -208,11 +211,11 @@ pub const Stringifier = struct {
                         switch (res.tag) {
                             .workspace => {
                                 if (lockfile.workspace_versions.get(pkg_name_hash)) |workspace_version| {
-                                    try temp_writer.print("{}", .{workspace_version.fmt(buf)});
+                                    try temp_writer.print("{f}", .{workspace_version.fmt(buf)});
                                 }
                             },
                             else => {
-                                try temp_writer.print("{}", .{res.fmt(buf, .posix)});
+                                try temp_writer.print("{f}", .{res.fmt(buf, .posix)});
                             },
                         }
                         defer temp_buf.clearRetainingCapacity();
@@ -281,7 +284,7 @@ pub const Stringifier = struct {
                     const name_and_version, const patch_path = value.*;
                     try writeIndent(writer, indent);
                     try writer.print(
-                        \\{}: {},
+                        \\{f}: {f},
                         \\
                     , .{ bun.fmt.formatJSONStringUTF8(name_and_version, .{}), patch_path.fmtJson(buf, .{}) });
                 }
@@ -305,7 +308,7 @@ pub const Stringifier = struct {
                 for (lockfile.overrides.map.values()) |override_dep| {
                     try writeIndent(writer, indent);
                     try writer.print(
-                        \\{}: {},
+                        \\{f}: {f},
                         \\
                     , .{ override_dep.name.fmtJson(buf, .{}), override_dep.version.literal.fmtJson(buf, .{}) });
                 }
@@ -330,7 +333,7 @@ pub const Stringifier = struct {
                 for (lockfile.catalogs.default.values()) |catalog_dep| {
                     try writeIndent(writer, indent);
                     try writer.print(
-                        \\{}: {},
+                        \\{f}: {f},
                         \\
                     , .{ catalog_dep.name.fmtJson(buf, .{}), catalog_dep.version.literal.fmtJson(buf, .{}) });
                 }
@@ -353,13 +356,13 @@ pub const Stringifier = struct {
                     const catalog_deps = entry.value_ptr;
 
                     try writeIndent(writer, indent);
-                    try writer.print("{}: {{\n", .{catalog_name.fmtJson(buf, .{})});
+                    try writer.print("{f}: {{\n", .{catalog_name.fmtJson(buf, .{})});
                     indent.* += 1;
 
                     for (catalog_deps.values()) |catalog_dep| {
                         try writeIndent(writer, indent);
                         try writer.print(
-                            \\{}: {},
+                            \\{f}: {f},
                             \\
                         , .{ catalog_dep.name.fmtJson(buf, .{}), catalog_dep.version.literal.fmtJson(buf, .{}) });
                     }
@@ -417,7 +420,7 @@ pub const Stringifier = struct {
 
                     try writer.writeByte('"');
                     // relative_path is empty string for root resolutions
-                    try writer.print("{}", .{
+                    try writer.print("{f}", .{
                         bun.fmt.formatJSONStringUTF8(relative_path, .{ .quote = false }),
                     });
 
@@ -428,7 +431,7 @@ pub const Stringifier = struct {
                     const dep = deps_buf[dep_id];
                     const dep_name = dep.name.slice(buf);
 
-                    try writer.print("{}\": ", .{
+                    try writer.print("{f}\": ", .{
                         bun.fmt.formatJSONStringUTF8(dep_name, .{ .quote = false }),
                     });
 
@@ -467,7 +470,7 @@ pub const Stringifier = struct {
 
                     switch (res.tag) {
                         .root => {
-                            try writer.print("[\"{}@root:\", ", .{
+                            try writer.print("[\"{f}@root:\", ", .{
                                 pkg_name.fmtJson(buf, .{ .quote = false }),
                                 // we don't read the root package version into the binary lockfile
                             });
@@ -485,7 +488,7 @@ pub const Stringifier = struct {
                             }
                         },
                         .folder => {
-                            try writer.print("[\"{}@file:{}\", ", .{
+                            try writer.print("[\"{f}@file:{f}\", ", .{
                                 pkg_name.fmtJson(buf, .{ .quote = false }),
                                 res.value.folder.fmtJson(buf, .{ .quote = false }),
                             });
@@ -508,7 +511,7 @@ pub const Stringifier = struct {
                             try writer.writeByte(']');
                         },
                         .local_tarball => {
-                            try writer.print("[\"{}@{}\", ", .{
+                            try writer.print("[\"{f}@{f}\", ", .{
                                 pkg_name.fmtJson(buf, .{ .quote = false }),
                                 res.value.local_tarball.fmtJson(buf, .{ .quote = false }),
                             });
@@ -531,7 +534,7 @@ pub const Stringifier = struct {
                             try writer.writeByte(']');
                         },
                         .remote_tarball => {
-                            try writer.print("[\"{}@{}\", ", .{
+                            try writer.print("[\"{f}@{f}\", ", .{
                                 pkg_name.fmtJson(buf, .{ .quote = false }),
                                 res.value.remote_tarball.fmtJson(buf, .{ .quote = false }),
                             });
@@ -554,7 +557,7 @@ pub const Stringifier = struct {
                             try writer.writeByte(']');
                         },
                         .symlink => {
-                            try writer.print("[\"{}@link:{}\", ", .{
+                            try writer.print("[\"{f}@link:{f}\", ", .{
                                 pkg_name.fmtJson(buf, .{ .quote = false }),
                                 res.value.symlink.fmtJson(buf, .{ .quote = false }),
                             });
@@ -577,7 +580,7 @@ pub const Stringifier = struct {
                             try writer.writeByte(']');
                         },
                         .npm => {
-                            try writer.print("[\"{}@{}\", ", .{
+                            try writer.print("[\"{f}@{f}\", ", .{
                                 pkg_name.fmtJson(buf, .{ .quote = false }),
                                 res.value.npm.version.fmt(buf),
                             });
@@ -605,19 +608,19 @@ pub const Stringifier = struct {
                                 &path_buf,
                             );
 
-                            try writer.print(", \"{}\"]", .{
+                            try writer.print(", \"{f}\"]", .{
                                 pkg_meta.integrity,
                             });
                         },
                         .workspace => {
-                            try writer.print("[\"{}@workspace:{}\"]", .{
+                            try writer.print("[\"{f}@workspace:{f}\"]", .{
                                 pkg_name.fmtJson(buf, .{ .quote = false }),
                                 res.value.workspace.fmtJson(buf, .{ .quote = false }),
                             });
                         },
                         inline .git, .github => |tag| {
                             const repo: Repository = @field(res.value, @tagName(tag));
-                            try writer.print("[\"{}@{}\", ", .{
+                            try writer.print("[\"{f}@{f}\", ", .{
                                 pkg_name.fmtJson(buf, .{ .quote = false }),
                                 repo.fmt(if (comptime tag == .git) "git+" else "github:", buf),
                             });
@@ -637,7 +640,7 @@ pub const Stringifier = struct {
                                 &path_buf,
                             );
 
-                            try writer.print(", {}]", .{
+                            try writer.print(", {f}]", .{
                                 repo.resolved.fmtJson(buf, .{}),
                             });
                         },
@@ -659,19 +662,19 @@ pub const Stringifier = struct {
     /// Writes a single line object. Contains dependencies, os, cpu, libc (soon), and bin
     /// { "devDependencies": { "one": "1.1.1", "two": "2.2.2" }, "os": "none" }
     fn writePackageInfoObject(
-        writer: anytype,
+        writer: *std.Io.Writer,
         dep_behavior: Dependency.Behavior,
         deps_buf: []const Dependency,
         pkg_dep_ids: []const DependencyID,
         meta: *const Meta,
         bin: *const Install.Bin,
         buf: string,
-        optional_peers_buf: *std.ArrayList(String),
+        optional_peers_buf: *std.array_list.Managed(String),
         extern_strings: []const ExternalString,
         pkg_map: *const PkgMap(void),
         relative_path: string,
         path_buf: []u8,
-    ) OOM!void {
+    ) error{ OutOfMemory, WriteFailed }!void {
         defer optional_peers_buf.clearRetainingCapacity();
 
         try writer.writeByte('{');
@@ -703,7 +706,7 @@ pub const Stringifier = struct {
                     try writer.writeAll(", ");
                 }
 
-                try writer.print("{}: {}", .{
+                try writer.print("{f}: {f}", .{
                     bun.fmt.formatJSONStringUTF8(dep.name.slice(buf), .{}),
                     bun.fmt.formatJSONStringUTF8(dep.version.literal.slice(buf), .{}),
                 });
@@ -728,7 +731,7 @@ pub const Stringifier = struct {
 
             for (optional_peers_buf.items, 0..) |optional_peer, i| {
                 try writer.print(
-                    \\{s}{}{s}
+                    \\{s}{f}{s}
                 , .{
                     if (i != 0) " " else "",
                     bun.fmt.formatJSONStringUTF8(optional_peer.slice(buf), .{}),
@@ -810,11 +813,11 @@ pub const Stringifier = struct {
         extern_strings: []const ExternalString,
         deps_buf: []const Dependency,
         workspace_versions: BinaryLockfile.VersionHashMap,
-        optional_peers_buf: *std.ArrayList(String),
+        optional_peers_buf: *std.array_list.Managed(String),
         pkg_map: *const PkgMap(void),
         relative_path: string,
         path_buf: []u8,
-    ) OOM!void {
+    ) error{ OutOfMemory, WriteFailed }!void {
         defer optional_peers_buf.clearRetainingCapacity();
         // any - have any properties been written
         var any = false;
@@ -827,7 +830,7 @@ pub const Stringifier = struct {
             if (root_name.len > 0) {
                 try writer.writeByte('\n');
                 try incIndent(writer, indent);
-                try writer.print("\"name\": {}", .{
+                try writer.print("\"name\": {f}", .{
                     bun.fmt.formatJSONStringUTF8(root_name, .{}),
                 });
 
@@ -835,19 +838,19 @@ pub const Stringifier = struct {
                 any = true;
             }
         } else {
-            try writer.print("{}: {{", .{
+            try writer.print("{f}: {{", .{
                 bun.fmt.formatJSONStringUTF8(res.slice(buf), .{}),
             });
             try writer.writeByte('\n');
             try incIndent(writer, indent);
-            try writer.print("\"name\": {}", .{
+            try writer.print("\"name\": {f}", .{
                 bun.fmt.formatJSONStringUTF8(pkg_names[pkg_id].slice(buf), .{}),
             });
 
             if (workspace_versions.get(pkg_name_hashes[pkg_id])) |version| {
                 try writer.writeAll(",\n");
                 try writeIndent(writer, indent);
-                try writer.print("\"version\": \"{}\"", .{
+                try writer.print("\"version\": \"{f}\"", .{
                     version.fmt(buf),
                 });
             }
@@ -902,7 +905,7 @@ pub const Stringifier = struct {
                 const name = dep.name.slice(buf);
                 const version = dep.version.literal.slice(buf);
 
-                try writer.print("{}: {}", .{
+                try writer.print("{f}: {f}", .{
                     bun.fmt.formatJSONStringUTF8(name, .{}),
                     bun.fmt.formatJSONStringUTF8(version, .{}),
                 });
@@ -937,7 +940,7 @@ pub const Stringifier = struct {
             for (optional_peers_buf.items) |optional_peer| {
                 try writeIndent(writer, indent);
                 try writer.print(
-                    \\{},
+                    \\{f},
                     \\
                 , .{
                     bun.fmt.formatJSONStringUTF8(optional_peer.slice(buf), .{}),
@@ -954,20 +957,20 @@ pub const Stringifier = struct {
         try writer.writeAll("},");
     }
 
-    fn writeIndent(writer: anytype, indent: *const u32) OOM!void {
+    fn writeIndent(writer: *std.Io.Writer, indent: *const u32) std.Io.Writer.Error!void {
         for (0..indent.*) |_| {
             try writer.writeAll(" " ** indent_scalar);
         }
     }
 
-    fn incIndent(writer: anytype, indent: *u32) OOM!void {
+    fn incIndent(writer: *std.Io.Writer, indent: *u32) std.Io.Writer.Error!void {
         indent.* += 1;
         for (0..indent.*) |_| {
             try writer.writeAll(" " ** indent_scalar);
         }
     }
 
-    fn decIndent(writer: anytype, indent: *u32) OOM!void {
+    fn decIndent(writer: *std.Io.Writer, indent: *u32) std.Io.Writer.Error!void {
         indent.* -= 1;
         for (0..indent.*) |_| {
             try writer.writeAll(" " ** indent_scalar);

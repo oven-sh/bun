@@ -2155,7 +2155,7 @@ fn QuoteEscapeFormat(comptime flags: QuoteEscapeFormatFlags) type {
     return struct {
         data: []const u8,
 
-        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             try bun.js_printer.writePreQuotedString(self.data, @TypeOf(writer), writer, flags.quote_char, false, flags.json, flags.str_encoding);
         }
     };
@@ -2223,7 +2223,7 @@ pub fn splitFirstWithExpected(self: string, comptime expected: u8) ?[]const u8 {
 
 pub fn percentEncodeWrite(
     utf8_input: []const u8,
-    writer: *std.ArrayList(u8),
+    writer: *std.array_list.Managed(u8),
 ) error{ OutOfMemory, IncompleteUTF8 }!void {
     var remaining = utf8_input;
     while (indexOfNeedsURLEncode(remaining)) |j| {

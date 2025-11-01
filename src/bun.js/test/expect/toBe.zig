@@ -32,14 +32,14 @@ pub fn toBe(
         inline else => |has_custom_label| {
             if (not) {
                 const signature = comptime getSignature("toBe", "<green>expected<r>", true);
-                return this.throw(globalThis, signature, "\n\nExpected: not <green>{any}<r>\n", .{right.toFmt(&formatter)});
+                return this.throw(globalThis, signature, "\n\nExpected: not <green>{f}<r>\n", .{right.toFmt(&formatter)});
             }
 
             const signature = comptime getSignature("toBe", "<green>expected<r>", false);
             if (try left.deepEquals(right, globalThis) or try left.strictDeepEquals(right, globalThis)) {
                 const fmt =
                     (if (!has_custom_label) "\n\n<d>If this test should pass, replace \"toBe\" with \"toEqual\" or \"toStrictEqual\"<r>" else "") ++
-                    "\n\nExpected: <green>{any}<r>\n" ++
+                    "\n\nExpected: <green>{f}<r>\n" ++
                     "Received: serializes to the same string\n";
                 return this.throw(globalThis, signature, fmt, .{right.toFmt(&formatter)});
             }
@@ -51,10 +51,10 @@ pub fn toBe(
                     .globalThis = globalThis,
                     .not = not,
                 };
-                return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_format});
+                return this.throw(globalThis, signature, "\n\n{f}\n", .{diff_format});
             }
 
-            return this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>\n", .{
+            return this.throw(globalThis, signature, "\n\nExpected: <green>{f}<r>\nReceived: <red>{f}<r>\n", .{
                 right.toFmt(&formatter),
                 left.toFmt(&formatter),
             });

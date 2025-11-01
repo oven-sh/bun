@@ -74,11 +74,11 @@ pub fn toBeTypeOf(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFr
 
     if (not) {
         const signature = comptime getSignature("toBeTypeOf", "", true);
-        return this.throw(globalThis, signature, "\n\n" ++ "Expected type: not <green>{any}<r>\n" ++ "Received type: <red>\"{s}\"<r>\nReceived value: <red>{any}<r>\n", .{ expected_str, whatIsTheType, received });
+        return this.throw(globalThis, signature, "\n\n" ++ "Expected type: not <green>{f}<r>\n" ++ "Received type: <red>\"{s}\"<r>\nReceived value: <red>{f}<r>\n", .{ expected_str, whatIsTheType, received });
     }
 
     const signature = comptime getSignature("toBeTypeOf", "", false);
-    return this.throw(globalThis, signature, "\n\n" ++ "Expected type: <green>{any}<r>\n" ++ "Received type: <red>\"{s}\"<r>\nReceived value: <red>{any}<r>\n", .{ expected_str, whatIsTheType, received });
+    return this.throw(globalThis, signature, "\n\n" ++ "Expected type: <green>{f}<r>\n" ++ "Received type: <red>\"{s}\"<r>\nReceived value: <red>{f}<r>\n", .{ expected_str, whatIsTheType, received });
 }
 
 const bun = @import("bun");

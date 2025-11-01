@@ -4,7 +4,7 @@ pub const BufferVectorized = struct {
         buf_ptr: [*]u8,
         fill_length: usize,
         encoding: jsc.Node.Encoding,
-    ) callconv(.C) bool {
+    ) callconv(.c) bool {
         if (str.len == 0) return true;
 
         var buf = buf_ptr[0..fill_length];

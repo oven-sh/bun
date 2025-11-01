@@ -18,14 +18,14 @@ pub fn toMatch(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
 
     const expected_value = arguments[0];
     if (!expected_value.isString() and !expected_value.isRegExp()) {
-        return globalThis.throw("Expected value must be a string or regular expression: {any}", .{expected_value.toFmt(&formatter)});
+        return globalThis.throw("Expected value must be a string or regular expression: {f}", .{expected_value.toFmt(&formatter)});
     }
     expected_value.ensureStillAlive();
 
     const value: JSValue = try this.getValue(globalThis, thisValue, "toMatch", "<green>expected<r>");
 
     if (!value.isString()) {
-        return globalThis.throw("Received value must be a string: {any}", .{value.toFmt(&formatter)});
+        return globalThis.throw("Received value must be a string: {f}", .{value.toFmt(&formatter)});
     }
 
     const not = this.flags.not;
@@ -46,14 +46,14 @@ pub fn toMatch(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
     const value_fmt = value.toFmt(&formatter);
 
     if (not) {
-        const expected_line = "Expected substring or pattern: not <green>{any}<r>\n";
-        const received_line = "Received: <red>{any}<r>\n";
+        const expected_line = "Expected substring or pattern: not <green>{f}<r>\n";
+        const received_line = "Received: <red>{f}<r>\n";
         const signature = comptime getSignature("toMatch", "<green>expected<r>", true);
         return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
     }
 
-    const expected_line = "Expected substring or pattern: <green>{any}<r>\n";
-    const received_line = "Received: <red>{any}<r>\n";
+    const expected_line = "Expected substring or pattern: <green>{f}<r>\n";
+    const received_line = "Received: <red>{f}<r>\n";
     const signature = comptime getSignature("toMatch", "<green>expected<r>", false);
     return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
 }

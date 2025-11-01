@@ -10,7 +10,7 @@ const has_empty_trusted_dependencies_tag: u64 = @bitCast(@as([8]u8, "eMpTrUsT".*
 const has_overrides_tag: u64 = @bitCast(@as([8]u8, "oVeRriDs".*));
 const has_catalogs_tag: u64 = @bitCast(@as([8]u8, "cAtAlOgS".*));
 
-pub fn save(this: *Lockfile, verbose_log: bool, bytes: *std.ArrayList(u8), total_size: *usize, end_pos: *usize) !void {
+pub fn save(this: *Lockfile, verbose_log: bool, bytes: *std.array_list.Managed(u8), total_size: *usize, end_pos: *usize) !void {
 
     // we clone packages with the z_allocator to make sure bytes are zeroed.
     // TODO: investigate if we still need this now that we have `padding_checker.zig`
@@ -28,7 +28,7 @@ pub fn save(this: *Lockfile, verbose_log: bool, bytes: *std.ArrayList(u8), total
     try writer.writeInt(u64, 0, .little);
 
     const StreamType = struct {
-        bytes: *std.ArrayList(u8),
+        bytes: *std.array_list.Managed(u8),
         pub inline fn getPos(s: @This()) anyerror!usize {
             return s.bytes.items.len;
         }

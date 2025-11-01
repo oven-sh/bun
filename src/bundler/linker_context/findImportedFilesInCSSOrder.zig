@@ -618,14 +618,14 @@ fn debugCssOrderImpl(this: *LinkerContext, order: *const BabyList(Chunk.CssImpor
         defer arena.deinit();
         for (order.slice(), 0..) |entry, i| {
             const conditions_str = if (entry.conditions.len > 0) conditions_str: {
-                var arrlist = std.ArrayListUnmanaged(u8){};
-                const writer = arrlist.writer(arena.allocator());
+                var arrlist = std.Io.Writer.Allocating.init(arena.allocator());
+                const writer = &arrlist.writer;
                 const W = @TypeOf(writer);
-                arrlist.appendSlice(arena.allocator(), "[") catch unreachable;
+                writer.writeAll("[") catch unreachable;
                 var symbols = Symbol.Map{};
                 for (entry.conditions.sliceConst(), 0..) |*condition_, j| {
                     const condition: *const bun.css.ImportConditions = condition_;
-                    const scratchbuf = std.ArrayList(u8).init(arena.allocator());
+                    const scratchbuf = std.array_list.Managed(u8).init(arena.allocator());
                     var printer = bun.css.Printer(W).new(
                         arena.allocator(),
                         scratchbuf,
@@ -642,14 +642,14 @@ fn debugCssOrderImpl(this: *LinkerContext, order: *const BabyList(Chunk.CssImpor
 
                     condition.toCss(W, &printer) catch unreachable;
                     if (j != entry.conditions.len - 1) {
-                        arrlist.appendSlice(arena.allocator(), ", ") catch unreachable;
+                        writer.writeAll(", ") catch unreachable;
                     }
                 }
-                arrlist.appendSlice(arena.allocator(), " ]") catch unreachable;
-                break :conditions_str arrlist.items;
+                writer.writeAll(" ]") catch unreachable;
+                break :conditions_str arrlist.written();
             } else "[]";
 
-            debug("  {d}: {} {s}\n", .{ i, entry.fmt(this), conditions_str });
+            debug("  {d}: {f} {s}\n", .{ i, entry.fmt(this), conditions_str });
         }
     }
 }

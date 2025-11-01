@@ -78,12 +78,31 @@ pub const PostinstallOptimizer = enum {
             return true;
         }
 
-        pub fn shouldIgnoreLifecycleScripts(this: *const @This(), name_hash: PackageNameHash) bool {
+        pub fn shouldIgnoreLifecycleScripts(
+            this: *const @This(),
+            name_hash: PackageNameHash,
+            resolutions: []const PackageID,
+            metas: []const Meta,
+            target_cpu: Npm.Architecture,
+            target_os: Npm.OperatingSystem,
+        ) bool {
             if (bun.env_var.feature_flag.BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS.get()) {
                 return false;
             }
 
-            return this.get(name_hash) != null;
+            const mode = this.get(name_hash) orelse return false;
+
+            return switch (mode) {
+                // It's not as simple as checking `get(name_hash) != null` because if the
+                // specific versions of the package do not have optional
+                // dependencies then we cannot do this optimization without
+                // breaking the code.
+                //
+                // This shows up in test/integration/esbuild/esbuild.test.ts
+                .native_binlink => getNativeBinlinkReplacementPackageID(resolutions, metas, target_cpu, target_os) != null,
+
+                .ignore => true,
+            };
         }
 
         fn fromDefault(name_hash: PackageNameHash) ?PostinstallOptimizer {

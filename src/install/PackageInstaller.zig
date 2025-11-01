@@ -1154,7 +1154,13 @@ pub const PackageInstaller = struct {
                         folder_path.append(alias.slice(this.lockfile.buffers.string_bytes.items));
 
                         enqueueLifecycleScripts: {
-                            if (this.manager.postinstall_optimizer.shouldIgnoreLifecycleScripts(pkg_name_hash)) {
+                            if (this.manager.postinstall_optimizer.shouldIgnoreLifecycleScripts(
+                                pkg_name_hash,
+                                this.lockfile.packages.items(.resolutions)[package_id].get(this.lockfile.buffers.resolutions.items),
+                                this.lockfile.packages.items(.meta),
+                                this.manager.options.cpu,
+                                this.manager.options.os,
+                            )) {
                                 if (PackageManager.verbose_install) {
                                     Output.prettyErrorln("<d>[Lifecycle Scripts]<r> ignoring {s} lifecycle scripts", .{
                                         pkg_name.slice(this.lockfile.buffers.string_bytes.items),
@@ -1337,7 +1343,13 @@ pub const PackageInstaller = struct {
                 folder_path.append(alias.slice(this.lockfile.buffers.string_bytes.items));
 
                 enqueueLifecycleScripts: {
-                    if (this.manager.postinstall_optimizer.shouldIgnoreLifecycleScripts(pkg_name_hash)) {
+                    if (this.manager.postinstall_optimizer.shouldIgnoreLifecycleScripts(
+                        pkg_name_hash,
+                        this.lockfile.packages.items(.resolutions)[package_id].get(this.lockfile.buffers.resolutions.items),
+                        this.lockfile.packages.items(.meta),
+                        this.manager.options.cpu,
+                        this.manager.options.os,
+                    )) {
                         if (PackageManager.verbose_install) {
                             Output.prettyErrorln("<d>[Lifecycle Scripts]<r> ignoring {s} lifecycle scripts", .{
                                 pkg_name.slice(this.lockfile.buffers.string_bytes.items),

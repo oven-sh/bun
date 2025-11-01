@@ -326,11 +326,11 @@ fn refreshWithHeldLock(self: *Progress) void {
                 }
                 if (eti > 0) {
                     if (need_ellipse) self.bufWrite(&end, " ", .{});
-                    self.bufWrite(&end, "[{d}/{d}{s}] ", .{ current_item, eti, node.unit });
+                    self.bufWrite(&end, "[{f}/{f}{s}] ", .{ std.fmt.fmtIntSizeBin(current_item), std.fmt.fmtIntSizeBin(eti), node.unit });
                     need_ellipse = false;
                 } else if (completed_items != 0) {
                     if (need_ellipse) self.bufWrite(&end, " ", .{});
-                    self.bufWrite(&end, "[{d}{s}] ", .{ current_item, node.unit });
+                    self.bufWrite(&end, "[{f}{s}] ", .{ std.fmt.fmtIntSizeBin(current_item), node.unit });
                     need_ellipse = false;
                 }
             }

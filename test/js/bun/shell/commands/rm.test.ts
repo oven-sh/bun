@@ -25,10 +25,15 @@ const BUN = process.argv0;
 const DEV_NULL = process.platform === "win32" ? "NUL" : "/dev/null";
 
 describe.concurrent("bunshell rm", () => {
-  TestBuilder.command`echo ${packagejson()} > package.json; ${BUN} install &> ${DEV_NULL}; rm -rf node_modules/`
+  TestBuilder.command`echo ${hoistedPackageJson()} > package.json; ${BUN} install --linker hoisted &> ${DEV_NULL}; rm -rf node_modules/`
     .ensureTempDir()
     .doesNotExist("node_modules")
-    .runAsTest("node_modules");
+    .runAsTest("hoisted node_modules");
+
+  TestBuilder.command`echo ${isolatedPackageJson()} > package.json; ${BUN} install --linker isolated &> ${DEV_NULL}; rm -rf node_modules/`
+    .ensureTempDir()
+    .doesNotExist("node_modules")
+    .runAsTest("isolated node_modules");
 
   test("force", async () => {
     const files = {
@@ -146,7 +151,7 @@ foo/
   });
 });
 
-function packagejson() {
+function hoistedPackageJson() {
   return `{
   "name": "dummy",
   "dependencies": {
@@ -169,5 +174,14 @@ function packagejson() {
     "@typescript-eslint/parser": "^5.31.0"
   },
   "version": "0.0.0"
+}`;
+}
+
+function isolatedPackageJson() {
+  return `{
+  "name": "pkg",
+  "dependencies": {
+    "react": "next"
+  }
 }`;
 }

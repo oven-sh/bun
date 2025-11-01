@@ -1409,6 +1409,7 @@ pub const Formatter = struct {
         o, // o
         O, // O
         c, // c
+        j, // j (JSON.stringify)
     };
 
     fn writeWithFormatting(
@@ -1450,6 +1451,7 @@ pub const Formatter = struct {
                         'O' => .O,
                         'd', 'i' => .i,
                         'c' => .c,
+                        'j' => .j,
                         '%' => {
                             // print up to and including the first %
                             const end = slice[0..i];
@@ -1608,6 +1610,35 @@ pub const Formatter = struct {
 
                         .c => {
                             // TODO: Implement %c
+                        },
+
+                        .j => {
+                            // JSON.stringify the value
+                            // If circular or other error, print [Circular] like Node.js does
+                            var str = bun.String.empty;
+                            defer str.deref();
+
+                            next_value.jsonStringify(global, 0, &str) catch |err| {
+                                // Clear any exception that occurred
+                                if (global.hasException()) {
+                                    _ = global.takeException(err);
+                                }
+
+                                // For circular references and other JSON stringify errors,
+                                // print [Circular] to match Node.js behavior
+                                this.addForNewLine("[Circular]".len);
+                                writer.writeAll("[Circular]");
+                                continue;
+                            };
+
+                            // JSON.stringify(undefined) produces empty string, but Node prints "undefined"
+                            if (str.isEmpty()) {
+                                this.addForNewLine("undefined".len);
+                                writer.writeAll("undefined");
+                            } else {
+                                this.addForNewLine(str.length());
+                                writer.print("{}", .{str});
+                            }
                         },
                     }
                     if (this.remaining_values.len == 0) break;

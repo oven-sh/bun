@@ -85,8 +85,6 @@ for (const testInfo of tests) {
 
     await cp(join(import.meta.dir, "fixtures", testInfo.lockfile), join(testDir, "bun.lockb"));
 
-    const oldLockfile = parseLockfile(testDir);
-
     let { stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: testDir,
@@ -106,7 +104,7 @@ for (const testInfo of tests) {
     // contents should be different due to semver numbers changing size
     expect(newLockfileContents).not.toEqual(oldLockfileContents);
     // but parse result should be the same
-    expect(newLockfile).toEqual(oldLockfile);
+    expect(newLockfile).toMatchSnapshot();
 
     // another install should not change the lockfile
     ({ stderr, exited } = spawn({

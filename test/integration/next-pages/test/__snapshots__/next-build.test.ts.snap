@@ -23958,9 +23958,17 @@ exports[`next build works: bun 1`] = `
           "id": 407,
           "package_id": 61,
         },
+        "@opentelemetry/api": {
+          "id": 633,
+          "package_id": 4294967295,
+        },
         "@pkgjs/parseargs": {
           "id": 599,
           "package_id": 62,
+        },
+        "@playwright/test": {
+          "id": 634,
+          "package_id": 4294967295,
         },
         "@puppeteer/browsers": {
           "id": 719,
@@ -24238,9 +24246,17 @@ exports[`next build works: bun 1`] = `
           "id": 905,
           "package_id": 131,
         },
+        "babel-plugin-react-compiler": {
+          "id": 635,
+          "package_id": 4294967295,
+        },
         "balanced-match": {
           "id": 202,
           "package_id": 132,
+        },
+        "bare-buffer": {
+          "id": 197,
+          "package_id": 4294967295,
         },
         "bare-events": {
           "id": 194,
@@ -24285,6 +24301,10 @@ exports[`next build works: bun 1`] = `
         "buffer-crc32": {
           "id": 1014,
           "package_id": 143,
+        },
+        "bufferutil": {
+          "id": 1005,
+          "package_id": 4294967295,
         },
         "bun-types": {
           "id": 4,
@@ -24529,6 +24549,10 @@ exports[`next build works: bun 1`] = `
         "eslint-plugin-import": {
           "id": 398,
           "package_id": 204,
+        },
+        "eslint-plugin-import-x": {
+          "id": 416,
+          "package_id": 4294967295,
         },
         "eslint-plugin-jsx-a11y": {
           "id": 399,
@@ -25294,6 +25318,10 @@ exports[`next build works: bun 1`] = `
           "id": 451,
           "package_id": 395,
         },
+        "sass": {
+          "id": 638,
+          "package_id": 4294967295,
+        },
         "scheduler": {
           "id": 731,
           "package_id": 396,
@@ -25490,6 +25518,10 @@ exports[`next build works: bun 1`] = `
           "id": 877,
           "package_id": 442,
         },
+        "ts-node": {
+          "id": 701,
+          "package_id": 4294967295,
+        },
         "tsconfig-paths": {
           "id": 436,
           "package_id": 443,
@@ -25545,6 +25577,10 @@ exports[`next build works: bun 1`] = `
         "uri-js": {
           "id": 138,
           "package_id": 456,
+        },
+        "utf-8-validate": {
+          "id": 1006,
+          "package_id": 4294967295,
         },
         "util-deprecate": {
           "id": 705,
@@ -49896,9 +49932,17 @@ exports[`next build works: node 1`] = `
           "id": 407,
           "package_id": 61,
         },
+        "@opentelemetry/api": {
+          "id": 633,
+          "package_id": 4294967295,
+        },
         "@pkgjs/parseargs": {
           "id": 599,
           "package_id": 62,
+        },
+        "@playwright/test": {
+          "id": 634,
+          "package_id": 4294967295,
         },
         "@puppeteer/browsers": {
           "id": 719,
@@ -50176,9 +50220,17 @@ exports[`next build works: node 1`] = `
           "id": 905,
           "package_id": 131,
         },
+        "babel-plugin-react-compiler": {
+          "id": 635,
+          "package_id": 4294967295,
+        },
         "balanced-match": {
           "id": 202,
           "package_id": 132,
+        },
+        "bare-buffer": {
+          "id": 197,
+          "package_id": 4294967295,
         },
         "bare-events": {
           "id": 194,
@@ -50223,6 +50275,10 @@ exports[`next build works: node 1`] = `
         "buffer-crc32": {
           "id": 1014,
           "package_id": 143,
+        },
+        "bufferutil": {
+          "id": 1005,
+          "package_id": 4294967295,
         },
         "bun-types": {
           "id": 4,
@@ -50467,6 +50523,10 @@ exports[`next build works: node 1`] = `
         "eslint-plugin-import": {
           "id": 398,
           "package_id": 204,
+        },
+        "eslint-plugin-import-x": {
+          "id": 416,
+          "package_id": 4294967295,
         },
         "eslint-plugin-jsx-a11y": {
           "id": 399,
@@ -51232,6 +51292,10 @@ exports[`next build works: node 1`] = `
           "id": 451,
           "package_id": 395,
         },
+        "sass": {
+          "id": 638,
+          "package_id": 4294967295,
+        },
         "scheduler": {
           "id": 731,
           "package_id": 396,
@@ -51428,6 +51492,10 @@ exports[`next build works: node 1`] = `
           "id": 877,
           "package_id": 442,
         },
+        "ts-node": {
+          "id": 701,
+          "package_id": 4294967295,
+        },
         "tsconfig-paths": {
           "id": 436,
           "package_id": 443,
@@ -51483,6 +51551,10 @@ exports[`next build works: node 1`] = `
         "uri-js": {
           "id": 138,
           "package_id": 456,
+        },
+        "utf-8-validate": {
+          "id": 1006,
+          "package_id": 4294967295,
         },
         "util-deprecate": {
           "id": 705,

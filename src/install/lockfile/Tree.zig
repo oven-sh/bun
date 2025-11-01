@@ -797,3 +797,4 @@ const PackageIDSlice = Lockfile.PackageIDSlice;
 
 const PackageManager = bun.install.PackageManager;
 const WorkspaceFilter = install.PackageManager.WorkspaceFilter;
+const PackageNameHash = install.PackageNameHash;

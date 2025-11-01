@@ -1,12 +1,6 @@
 const net = require("node:net");
 const EventEmitter = require("node:events");
-const {
-  parseProxyConfigFromEnv,
-  kProxyConfig,
-  checkShouldUseProxy,
-  kWaitForProxyTunnel,
-  filterEnvForProxies,
-} = require("internal/http");
+const { parseProxyConfigFromEnv, kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
 const { getLazy, kEmptyObject, once } = require("internal/shared");
 const { validateNumber, validateOneOf, validateString } = require("internal/validators");
 
@@ -327,7 +321,7 @@ function installListeners(agent, s, options) {
   }
   s.on("free", onFree);
 
-  function onClose(err) {
+  function onClose() {
     $debug("CLIENT socket onClose");
     // This is the only place where sockets get removed from the Agent.
     // If you want to remove a socket from the pool, just close it.

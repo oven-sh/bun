@@ -39,7 +39,7 @@ describe("HTTP Server Header Capture (Bun.serve)", () => {
       captureAttributes: {
         requestHeaders: ["content-type", "x-custom-header", "user-agent"],
       },
-    };
+    } as const;
 
     using ref = Bun.telemetry.attach(instrument);
 
@@ -84,7 +84,7 @@ describe("HTTP Server Header Capture (Bun.serve)", () => {
       },
       onOperationEnd() {},
       onOperationError() {},
-    };
+    } as const;
 
     using ref = Bun.telemetry.attach(instrument);
 
@@ -129,7 +129,7 @@ describe("HTTP Server Header Capture (Bun.serve)", () => {
       },
       onOperationEnd() {},
       onOperationError() {},
-    };
+    } as const;
 
     using ref = Bun.telemetry.attach(instrument);
 
@@ -173,7 +173,7 @@ describe("HTTP Server Header Capture (Bun.serve)", () => {
       },
       onOperationEnd() {},
       onOperationError() {},
-    };
+    } as const;
 
     using ref = Bun.telemetry.attach(instrument);
 
@@ -211,7 +211,7 @@ describe("Fetch Client Header Capture", () => {
       },
       onOperationEnd() {},
       onOperationError() {},
-    };
+    } as const;
 
     using ref = Bun.telemetry.attach(instrument);
 
@@ -259,7 +259,7 @@ describe("Fetch Client Header Capture", () => {
         Object.assign(capturedAttrs, attributes);
       },
       onOperationError() {},
-    };
+    } as const;
 
     using ref = Bun.telemetry.attach(instrument);
 
@@ -307,7 +307,7 @@ describe("Fetch Client Header Capture", () => {
         Object.assign(fetchResponseAttrs, attributes);
       },
       onOperationError() {},
-    };
+    } as const;
 
     using ref = Bun.telemetry.attach(instrument);
 
@@ -365,7 +365,7 @@ describe("AttributeKey Pointer Optimization Validation", () => {
       },
       onOperationEnd() {},
       onOperationError() {},
-    };
+    } as const;
 
     using ref = Bun.telemetry.attach(instrument);
 
@@ -453,7 +453,7 @@ describe("AttributeKey Pointer Optimization Validation", () => {
         Object.assign(serverEndAttrs, attributes);
       },
       onOperationError() {},
-    };
+    } as const;
 
     using ref = Bun.telemetry.attach(instrument);
 

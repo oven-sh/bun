@@ -1,22 +1,16 @@
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { Resource } from "@opentelemetry/resources";
-import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
-import { BunSDK } from "../../../packages/bun-otel";
+import { BunSDK } from "bun-otel";
 
-// Initialize telemetry
 const sdk = new BunSDK({
-  resource: new Resource({
-    [ATTR_SERVICE_NAME]: "integration-test-service",
-  }),
-  traceExporter: new OTLPTraceExporter({
-    url: "http://localhost:4318/v1/traces",
-  }),
-  autoStart: false, // We'll use startAndRegisterSystemShutdownHooks instead
+  serviceName: "integration-test-service",
+  autoStart: false,
 });
 
-// Simple HTTP server
+console.log("✓ SDK created");
+
+// Simple HTTP server on dynamic port to avoid conflicts
 const server = Bun.serve({
-  port: 0, // Use ephemeral port to avoid collisions
+  port: 0, // Use dynamic port assignment
+  hostname: "0.0.0.0", // Listen on all interfaces
   async fetch(req) {
     const url = new URL(req.url);
 
@@ -52,9 +46,26 @@ const server = Bun.serve({
   },
 });
 
-console.log(`Server running at http://localhost:${server.port}`);
+console.log(`PORT=${server.port}`);
 
-// Graceful shutdown using SDK's built-in signal handlers
-await sdk.startAndRegisterSystemShutdownHooks(async () => {
-  server.stop();
-});
+// Start SDK and register shutdown handlers
+if (process.argv.includes("--no-otel")) {
+  console.log("✓ SDK start skipped via --no-sdk-start");
+} else {
+  try {
+    await sdk.startAndRegisterSystemShutdownHooks(async () => {
+      console.log("✓ Shutting down server...");
+      server.stop();
+    });
+  } catch (e) {
+    console.error("Failed to start SDK: (old bun?)", e);
+  }
+}
+console.log("✓ SDK started and signal handlers registered");
+console.log("");
+console.log("=== Test with oha ===");
+console.log(`  oha -n 1000 -c 10 http://localhost:${server.port}/api/test`);
+console.log(`  oha -n 100 -c 10 http://localhost:${server.port}/api/test?downstream=true`);
+console.log(`  oha -n 50 -c 5 http://localhost:${server.port}/api/error`);
+console.log("");
+console.log(`Health check: http://localhost:${server.port}/health`);

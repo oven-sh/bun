@@ -1,3 +1,4 @@
 reviews:
+  high_level_summary: false
   path_filters:
     - "!test/js/node/test"

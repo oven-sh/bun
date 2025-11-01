@@ -586,7 +586,10 @@ static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
     }
 
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    return JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args));
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* array = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args));
+    RETURN_IF_EXCEPTION(scope, {});
+    return array;
 }
 
 static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
@@ -614,9 +617,13 @@ static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
 
 static JSValue getGlobalPathsObject(VM& vm, JSObject* moduleObject)
 {
-    return JSC::constructEmptyArray(
-        moduleObject->globalObject(),
+    auto* globalObject = moduleObject->globalObject();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* array = JSC::constructEmptyArray(
+        globalObject,
         static_cast<ArrayAllocationProfile*>(nullptr), 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    return array;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSetCJSWrapperItem, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

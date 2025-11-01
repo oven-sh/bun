@@ -368,7 +368,6 @@ pub const FetchTasklet = struct {
             const sink = ResumableSink.initExactRefs(globalThis, stream, this, 2);
             this.sink = sink;
             // sink now owns the stream; drop the transferred Strong
-            stream_ref.deinit();
         }
         // in any other cases we will drop the transferred Strong anyways
     }

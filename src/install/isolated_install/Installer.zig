@@ -503,7 +503,7 @@ pub const Installer = struct {
                                 .hardlink => {
                                     var src: bun.AbsPath(.{ .unit = .os, .sep = .auto }) = .initTopLevelDirLongPath();
                                     defer src.deinit();
-                                    src.appendJoin(pkg_res.value.folder.slice(string_buf));
+                                    src.appendJoin(path);
 
                                     var dest: bun.RelPath(.{ .unit = .os, .sep = .auto }) = .init();
                                     defer dest.deinit();

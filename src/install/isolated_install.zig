@@ -73,19 +73,19 @@ pub fn installIsolatedPackages(
                         // skip the new node, and add the previously added node to parent so it appears in
                         // 'node_modules/.bun/parent@version/node_modules'.
 
-                        const dep_id = node_dep_ids[curr_id.get()];
-                        if (dep_id == invalid_dependency_id and entry.dep_id == invalid_dependency_id) {
+                        const curr_dep_id = node_dep_ids[curr_id.get()];
+                        if (curr_dep_id == invalid_dependency_id and entry.dep_id == invalid_dependency_id) {
                             node_nodes[entry.parent_id.get()].appendAssumeCapacity(curr_id);
                             continue :next_node;
                         }
 
-                        if (dep_id == invalid_dependency_id or entry.dep_id == invalid_dependency_id) {
+                        if (curr_dep_id == invalid_dependency_id or entry.dep_id == invalid_dependency_id) {
                             // one is the root package, one is a dependency on the root package (it has a valid dep_id)
                             // create a new node for it.
                             break :check_cycle;
                         }
 
-                        const curr_dep = dependencies[dep_id];
+                        const curr_dep = dependencies[curr_dep_id];
                         const entry_dep = dependencies[entry.dep_id];
 
                         // ensure the dependency name is the same before skipping the cycle. if they aren't
@@ -154,6 +154,7 @@ pub fn installIsolatedPackages(
                 .parent_id = entry.parent_id,
                 .nodes = if (skip_dependencies) .empty else try .initCapacity(lockfile.allocator, pkg_deps.len),
                 .dependencies = if (skip_dependencies) .empty else try .initCapacity(lockfile.allocator, pkg_deps.len),
+                .peers = .init(lockfile.allocator),
             });
 
             const nodes_slice = nodes.slice();
@@ -365,7 +366,7 @@ pub fn installIsolatedPackages(
                         .pkg_id = resolved_pkg_id,
                         .auto_installed = auto_installed,
                     };
-                    try node_peers[visited_parent_id.get()].insert(lockfile.allocator, peer, &ctx);
+                    try node_peers[visited_parent_id.get()].insert(peer, &ctx);
                 }
 
                 if (visited_parent_node_ids.items.len != 0) {
@@ -437,19 +438,41 @@ pub fn installIsolatedPackages(
                 const curr_dep_id = node_dep_ids[entry.node_id.get()];
 
                 for (dedupe_entry.value_ptr.items) |info| {
-                    if (info.dep_id == invalid_dependency_id or curr_dep_id == invalid_dependency_id) {
-                        if (info.dep_id != curr_dep_id) {
-                            continue;
-                        }
+                    if (info.dep_id == invalid_dependency_id and curr_dep_id == invalid_dependency_id) {
+                        try store.items(.dependencies)[entry.entry_parent_id.get()].insert(
+                            .{ .entry_id = info.entry_id, .dep_id = curr_dep_id },
+                            &.{ .string_buf = string_buf, .dependencies = dependencies },
+                        );
+                        try store.items(.parents)[info.entry_id.get()].append(lockfile.allocator, entry.entry_parent_id);
+                        continue :next_entry;
                     }
-                    if (info.dep_id != invalid_dependency_id and curr_dep_id != invalid_dependency_id) {
-                        const curr_dep = dependencies[curr_dep_id];
-                        const existing_dep = dependencies[info.dep_id];
 
-                        if (existing_dep.version.tag == .workspace and curr_dep.version.tag == .workspace) {
-                            if (existing_dep.behavior.isWorkspace() != curr_dep.behavior.isWorkspace()) {
-                                continue;
-                            }
+                    if (info.dep_id == invalid_dependency_id or curr_dep_id == invalid_dependency_id) {
+                        if ((info.dep_id != invalid_dependency_id and dependencies[info.dep_id].version.tag == .workspace) or
+                            (curr_dep_id != invalid_dependency_id and dependencies[curr_dep_id].version.tag == .workspace))
+                        {
+                            // if the root dependency originates from a "workspace:" dependency and isn't injected
+                            // dedupe. this means it becomes a dependency symlink in the existing entry node_modules
+                            // but it does not become an entry
+                            try store.items(.dependencies)[entry.entry_parent_id.get()].insert(
+                                .{ .entry_id = info.entry_id, .dep_id = curr_dep_id },
+                                &.{ .string_buf = string_buf, .dependencies = dependencies },
+                            );
+                            try store.items(.parents)[info.entry_id.get()].append(lockfile.allocator, entry.entry_parent_id);
+                            continue :next_entry;
+                        }
+
+                        // one doesn't or both don't have a dependency (originates from the root package). assume
+                        // it's injected and create a new entry
+                        continue;
+                    }
+
+                    const curr_dep = dependencies[curr_dep_id];
+                    const existing_dep = dependencies[info.dep_id];
+
+                    if (existing_dep.version.tag == .workspace and curr_dep.version.tag == .workspace) {
+                        if (existing_dep.behavior.isWorkspace() != curr_dep.behavior.isWorkspace()) {
+                            continue;
                         }
                     }
 
@@ -476,7 +499,6 @@ pub fn installIsolatedPackages(
                             .dependencies = dependencies,
                         };
                         try entry_dependencies[entry.entry_parent_id.get()].insert(
-                            lockfile.allocator,
                             .{ .entry_id = info.entry_id, .dep_id = curr_dep_id },
                             &ctx,
                         );
@@ -511,7 +533,7 @@ pub fn installIsolatedPackages(
             const new_entry_is_workspace = !new_entry_is_root and dependencies[new_entry_dep_id].version.tag == .workspace;
 
             const new_entry_dependencies: Store.Entry.Dependencies = if (dedupe_entry.found_existing and new_entry_is_workspace)
-                .empty
+                .init(lockfile.allocator)
             else
                 try .initCapacity(lockfile.allocator, node_nodes[entry.node_id.get()].items.len);
 
@@ -562,7 +584,6 @@ pub fn installIsolatedPackages(
                     .dependencies = dependencies,
                 };
                 try entry_dependencies[entry_parent_id].insert(
-                    lockfile.allocator,
                     .{ .entry_id = new_entry_id, .dep_id = new_entry_dep_id },
                     &ctx,
                 );
@@ -580,7 +601,6 @@ pub fn installIsolatedPackages(
                                 const hoist_entry = try public_hoisted.getOrPut(dep_name);
                                 if (!hoist_entry.found_existing) {
                                     try entry_dependencies[0].insert(
-                                        lockfile.allocator,
                                         .{ .entry_id = new_entry_id, .dep_id = new_entry_dep_id },
                                         &ctx,
                                     );

@@ -433,357 +433,405 @@ it("process.exit", () => {
   expect(stdout.toString().trim()).toBe("PASS");
 });
 
-describe("process.onBeforeExit", () => {
-  it("emitted", () => {
-    const { exitCode, stdout } = spawnSync({
-      cmd: [bunExe(), join(import.meta.dir, "process-onBeforeExit-fixture.js")],
+describe.concurrent(() => {
+  it.todoIf(isMacOS)("should be the node version on the host that we expect", async () => {
+    const subprocess = Bun.spawn({
+      cmd: ["node", "--version"],
+      stdout: "pipe",
+      stdin: "inherit",
+      stderr: "pipe",
       env: bunEnv,
     });
-    expect(exitCode).toBe(0);
-    expect(stdout.toString().trim()).toBe("beforeExit\nexit");
+
+    let [out, exited] = await Promise.all([new Response(subprocess.stdout).text(), subprocess.exited]);
+    expect(out.trim()).toEqual("v24.3.0");
+    expect(exited).toBe(0);
   });
 
-  it("works with explicit process.exit", () => {
-    const { exitCode, stdout } = spawnSync({
-      cmd: [bunExe(), join(import.meta.dir, "process-onBeforeExit-keepAlive.js")],
+  it("process.mainModule (CJS)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "process-mainModule-fixture.js")],
       env: bunEnv,
-    });
-    expect(exitCode).toBe(0);
-    expect(stdout.toString().trim()).toBe("beforeExit: 0\nbeforeExit: 1\nexit: 2");
-  });
-
-  it("throwing inside preserves exit code", async () => {
-    const proc = Bun.spawnSync({
-      cmd: [bunExe(), "-e", `process.on("beforeExit", () => {throw new Error("boom")});`],
-      env: bunEnv,
-      stdio: ["inherit", "pipe", "pipe"],
-    });
-    expect(proc.exitCode).toBe(1);
-    expect(proc.stderr.toString("utf8")).toInclude("error: boom");
-    expect(proc.stdout.toString("utf8")).toBeEmpty();
-  });
-});
-
-describe("process.onExit", () => {
-  it("throwing inside preserves exit code", async () => {
-    const proc = Bun.spawnSync({
-      cmd: [bunExe(), "-e", `process.on("exit", () => {throw new Error("boom")});`],
-      env: bunEnv,
-      stdio: ["inherit", "pipe", "pipe"],
-    });
-    expect(proc.exitCode).toBe(1);
-    expect(proc.stderr.toString("utf8")).toInclude("error: boom");
-    expect(proc.stdout.toString("utf8")).toBeEmpty();
-  });
-});
-
-it("process.memoryUsage", () => {
-  expect(process.memoryUsage()).toEqual({
-    rss: expect.any(Number),
-    heapTotal: expect.any(Number),
-    heapUsed: expect.any(Number),
-    external: expect.any(Number),
-    arrayBuffers: expect.any(Number),
-  });
-});
-
-it("process.memoryUsage.rss", () => {
-  expect(process.memoryUsage.rss()).toEqual(expect.any(Number));
-});
-
-describe("process.cpuUsage", () => {
-  it("works", () => {
-    expect(process.cpuUsage()).toEqual({
-      user: expect.any(Number),
-      system: expect.any(Number),
-    });
-  });
-
-  it("throws for negative input", () => {
-    expect(() =>
-      process.cpuUsage({
-        user: -1,
-        system: 100,
-      }),
-    ).toThrow("The property 'prevValue.user' is invalid. Received -1");
-    expect(() =>
-      process.cpuUsage({
-        user: 100,
-        system: -1,
-      }),
-    ).toThrow("The property 'prevValue.system' is invalid. Received -1");
-  });
-
-  // Skipped on Windows because it seems UV returns { user: 15000, system: 0 } constantly
-  it.skipIf(process.platform === "win32")("works with diff", () => {
-    const init = process.cpuUsage();
-    init.system = 0;
-    init.user = 0;
-    const delta = process.cpuUsage(init);
-    expect(delta.user).toBeGreaterThan(0);
-    expect(delta.system).toBeGreaterThanOrEqual(0);
-  });
-
-  it.skipIf(process.platform === "win32")("works with diff of different structure", () => {
-    const init = {
-      system: 0,
-      user: 0,
-    };
-    const delta = process.cpuUsage(init);
-    expect(delta.user).toBeGreaterThan(0);
-    expect(delta.system).toBeGreaterThanOrEqual(0);
-  });
-
-  it("throws on invalid property", () => {
-    const fixtures = [
-      {},
-      { user: null },
-      { user: {} },
-      { user: "potato" },
-
-      { user: 123 },
-      { user: 123, system: null },
-      { user: 123, system: "potato" },
-    ];
-    for (const fixture of fixtures) {
-      expect(() => process.cpuUsage(fixture)).toThrow();
-    }
-  });
-
-  // Skipped on Linux/Windows because it seems to not change as often as on macOS
-  it.skipIf(process.platform !== "darwin")("increases monotonically", () => {
-    const init = process.cpuUsage();
-    let start = performance.now();
-    while (performance.now() - start < 10) {}
-    const another = process.cpuUsage();
-    expect(another.user).toBeGreaterThan(init.user);
-    expect(another.system).toBeGreaterThan(init.system);
-  });
-});
-
-if (process.platform !== "win32") {
-  it("process.getegid", () => {
-    expect(typeof process.getegid()).toBe("number");
-  });
-  it("process.geteuid", () => {
-    expect(typeof process.geteuid()).toBe("number");
-  });
-  it("process.getgid", () => {
-    expect(typeof process.getgid()).toBe("number");
-  });
-  it("process.getgroups", () => {
-    expect(process.getgroups()).toBeInstanceOf(Array);
-    expect(process.getgroups().length).toBeGreaterThan(0);
-  });
-  it("process.getuid", () => {
-    expect(typeof process.getuid()).toBe("number");
-  });
-  it("process.getuid", () => {
-    expect(typeof process.getuid()).toBe("number");
-  });
-} else {
-  it("process.getegid, process.geteuid, process.getgid, process.getgroups, process.getuid, process.getuid are not implemented on Windows", () => {
-    expect(process.getegid).toBeUndefined();
-    expect(process.geteuid).toBeUndefined();
-    expect(process.getgid).toBeUndefined();
-    expect(process.getgroups).toBeUndefined();
-    expect(process.getuid).toBeUndefined();
-    expect(process.getuid).toBeUndefined();
-  });
-}
-
-describe("signal", () => {
-  const fixture = join(import.meta.dir, "./process-signal-handler.fixture.js");
-  it.skipIf(isWindows)("simple case works", async () => {
-    const child = Bun.spawn({
-      cmd: [bunExe(), fixture, "SIGUSR1"],
-      env: bunEnv,
+      stdout: "inherit",
       stderr: "inherit",
+      stdin: "inherit",
     });
 
-    expect(await child.exited).toBe(0);
-    expect(await new Response(child.stdout).text()).toBe("PASS\n");
+    expect(await proc.exited).toBe(0);
   });
-  it.skipIf(isWindows)("process.emit will call signal events", async () => {
-    const child = Bun.spawn({
-      cmd: [bunExe(), fixture, "SIGUSR2"],
+
+  it("process.mainModule (ESM)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "process-mainModule-fixture.esm.mjs")],
       env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+      stdin: "inherit",
     });
 
-    expect(await child.exited).toBe(0);
-    expect(await new Response(child.stdout).text()).toBe("PASS\n");
+    expect(await proc.exited).toBe(0);
   });
 
-  it("process.kill(2) works", async () => {
-    const child = Bun.spawn({
-      cmd: [bunExe(), process_sleep, "1000000"],
-      stdout: "pipe",
-      env: bunEnv,
+  describe("process.onBeforeExit", () => {
+    it("emitted", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "process-onBeforeExit-fixture.js")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(exitCode).toBe(0);
+      expect(stdout.trim()).toBe("beforeExit\nexit");
     });
-    const prom = child.exited;
-    const ret = process.kill(child.pid, "SIGTERM");
-    expect(ret).toBe(true);
-    await prom;
-    if (process.platform === "win32") {
-      expect(child.exitCode).toBe(1);
-    } else {
-      expect(child.signalCode).toBe("SIGTERM");
-    }
-  });
 
-  it("process._kill(2) works", async () => {
-    const child = Bun.spawn({
-      cmd: [bunExe(), process_sleep, "1000000"],
-      stdout: "pipe",
-      env: bunEnv,
+    it("works with explicit process.exit", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "process-onBeforeExit-keepAlive.js")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(exitCode).toBe(0);
+      expect(stdout.trim()).toBe("beforeExit: 0\nbeforeExit: 1\nexit: 2");
     });
-    const prom = child.exited;
-    // SIGKILL as a number
-    const SIGKILL = 9;
-    process._kill(child.pid, SIGKILL);
-    await prom;
 
-    if (process.platform === "win32") {
-      expect(child.exitCode).toBe(1);
-    } else {
-      expect(child.signalCode).toBe("SIGKILL");
-    }
+    it("throwing inside preserves exit code", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `process.on("beforeExit", () => {throw new Error("boom")});`],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(exitCode).toBe(1);
+      expect(stderr).toInclude("error: boom");
+      expect(stdout).toBeEmpty();
+    });
   });
 
-  it("process.kill(2) throws on invalid input", async () => {
-    expect(() => process.kill(2147483640, "SIGPOOP")).toThrow();
-    expect(() => process.kill(2147483640, 456)).toThrow();
+  describe("process.onExit", () => {
+    it("throwing inside preserves exit code", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `process.on("exit", () => {throw new Error("boom")});`],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(exitCode).toBe(1);
+      expect(stderr).toInclude("error: boom");
+      expect(stdout).toBeEmpty();
+    });
   });
-});
 
-const undefinedStubs = [
-  "_debugEnd",
-  "_debugProcess",
-  "_fatalException",
-  "_linkedBinding",
-  "_rawDebug",
-  "_startProfilerIdleNotifier",
-  "_stopProfilerIdleNotifier",
-  "_tickCallback",
-];
-
-for (const stub of undefinedStubs) {
-  it(`process.${stub}`, () => {
-    expect(process[stub]()).toBeUndefined();
+  it("process.memoryUsage", () => {
+    expect(process.memoryUsage()).toEqual({
+      rss: expect.any(Number),
+      heapTotal: expect.any(Number),
+      heapUsed: expect.any(Number),
+      external: expect.any(Number),
+      arrayBuffers: expect.any(Number),
+    });
   });
-}
 
-const arrayStubs = ["getActiveResourcesInfo", "_getActiveRequests", "_getActiveHandles"];
-
-for (const stub of arrayStubs) {
-  it(`process.${stub}`, () => {
-    expect(process[stub]()).toBeInstanceOf(Array);
+  it("process.memoryUsage.rss", () => {
+    expect(process.memoryUsage.rss()).toEqual(expect.any(Number));
   });
-}
 
-const emptyObjectStubs = [];
-const emptySetStubs = ["allowedNodeEnvironmentFlags"];
-const emptyArrayStubs = ["moduleLoadList", "_preload_modules"];
+  describe("process.cpuUsage", () => {
+    it("works", () => {
+      expect(process.cpuUsage()).toEqual({
+        user: expect.any(Number),
+        system: expect.any(Number),
+      });
+    });
 
-for (const stub of emptyObjectStubs) {
-  it(`process.${stub}`, () => {
-    expect(process[stub]).toEqual({});
+    it("throws for negative input", () => {
+      expect(() =>
+        process.cpuUsage({
+          user: -1,
+          system: 100,
+        }),
+      ).toThrow("The property 'prevValue.user' is invalid. Received -1");
+      expect(() =>
+        process.cpuUsage({
+          user: 100,
+          system: -1,
+        }),
+      ).toThrow("The property 'prevValue.system' is invalid. Received -1");
+    });
+
+    // Skipped on Windows because it seems UV returns { user: 15000, system: 0 } constantly
+    it.skipIf(process.platform === "win32")("works with diff", () => {
+      const init = process.cpuUsage();
+      init.system = 0;
+      init.user = 0;
+      const delta = process.cpuUsage(init);
+      expect(delta.user).toBeGreaterThan(0);
+      expect(delta.system).toBeGreaterThanOrEqual(0);
+    });
+
+    it.skipIf(process.platform === "win32")("works with diff of different structure", () => {
+      const init = {
+        system: 0,
+        user: 0,
+      };
+      const delta = process.cpuUsage(init);
+      expect(delta.user).toBeGreaterThan(0);
+      expect(delta.system).toBeGreaterThanOrEqual(0);
+    });
+
+    it("throws on invalid property", () => {
+      const fixtures = [
+        {},
+        { user: null },
+        { user: {} },
+        { user: "potato" },
+
+        { user: 123 },
+        { user: 123, system: null },
+        { user: 123, system: "potato" },
+      ];
+      for (const fixture of fixtures) {
+        expect(() => process.cpuUsage(fixture)).toThrow();
+      }
+    });
+
+    // Skipped on Linux/Windows because it seems to not change as often as on macOS
+    it.skipIf(process.platform !== "darwin")("increases monotonically", () => {
+      const init = process.cpuUsage();
+      let start = performance.now();
+      while (performance.now() - start < 10) {}
+      const another = process.cpuUsage();
+      expect(another.user).toBeGreaterThan(init.user);
+      expect(another.system).toBeGreaterThan(init.system);
+    });
   });
-}
 
-for (const stub of emptySetStubs) {
-  it(`process.${stub}`, () => {
-    expect(process[stub]).toBeInstanceOf(Set);
-    expect(process[stub].size).toBe(0);
-  });
-}
-
-for (const stub of emptyArrayStubs) {
-  it(`process.${stub}`, () => {
-    expect(process[stub]).toBeInstanceOf(Array);
-    expect(process[stub]).toHaveLength(0);
-  });
-}
-
-it("dlopen args parsing", () => {
-  const notFound = join(tmpdirSync(), "not-found.so");
-  expect(() => process.dlopen({ module: "42" }, notFound)).toThrow();
-  expect(() => process.dlopen({ module: 42 }, notFound)).toThrow();
-  expect(() => process.dlopen({ module: { exports: "42" } }, notFound)).toThrow();
-  expect(() => process.dlopen({ module: { exports: 42 } }, notFound)).toThrow();
-  expect(() => process.dlopen({ module: Symbol() }, notFound)).toThrow();
-  expect(() => process.dlopen({ module: { exports: Symbol("123") } }, notFound)).toThrow();
-  expect(() => process.dlopen({ module: { exports: Symbol("123") } }, Symbol("badddd"))).toThrow();
-});
-
-it("dlopen accepts file: URLs", () => {
-  const mod = { exports: {} };
-  try {
-    process.dlopen(mod, import.meta.url);
-    throw "Expected error";
-  } catch (e) {
-    expect(e.message).not.toContain("file:");
+  if (process.platform !== "win32") {
+    it("process.getegid", () => {
+      expect(typeof process.getegid()).toBe("number");
+    });
+    it("process.geteuid", () => {
+      expect(typeof process.geteuid()).toBe("number");
+    });
+    it("process.getgid", () => {
+      expect(typeof process.getgid()).toBe("number");
+    });
+    it("process.getgroups", () => {
+      expect(process.getgroups()).toBeInstanceOf(Array);
+      expect(process.getgroups().length).toBeGreaterThan(0);
+    });
+    it("process.getuid", () => {
+      expect(typeof process.getuid()).toBe("number");
+    });
+    it("process.getuid", () => {
+      expect(typeof process.getuid()).toBe("number");
+    });
+  } else {
+    it("process.getegid, process.geteuid, process.getgid, process.getgroups, process.getuid, process.getuid are not implemented on Windows", () => {
+      expect(process.getegid).toBeUndefined();
+      expect(process.geteuid).toBeUndefined();
+      expect(process.getgid).toBeUndefined();
+      expect(process.getgroups).toBeUndefined();
+      expect(process.getuid).toBeUndefined();
+      expect(process.getuid).toBeUndefined();
+    });
   }
 
-  expect(() => process.dlopen(mod, "file://asd[kasd[po@[p1o23]1po!-10923-095-@$@8123=-9123=-0==][pc;!")).toThrow(
-    "invalid file: URL passed to dlopen",
-  );
-});
+  describe("signal", () => {
+    const fixture = join(import.meta.dir, "./process-signal-handler.fixture.js");
+    it.skipIf(isWindows)("simple case works", async () => {
+      const child = Bun.spawn({
+        cmd: [bunExe(), fixture, "SIGUSR1"],
+        env: bunEnv,
+        stderr: "inherit",
+      });
 
-it("process.constrainedMemory()", () => {
-  expect(process.constrainedMemory() >= 0).toBe(true);
-});
+      expect(await child.exited).toBe(0);
+      expect(await new Response(child.stdout).text()).toBe("PASS\n");
+    });
+    it.skipIf(isWindows)("process.emit will call signal events", async () => {
+      const child = Bun.spawn({
+        cmd: [bunExe(), fixture, "SIGUSR2"],
+        env: bunEnv,
+      });
 
-it("process.report", () => {
-  // TODO: write better tests
-  JSON.stringify(process.report.getReport(), null, 2);
-});
+      expect(await child.exited).toBe(0);
+      expect(await new Response(child.stdout).text()).toBe("PASS\n");
+    });
 
-it("process.exit with jsDoubleNumber that is an integer", () => {
-  expect([join(import.meta.dir, "./process-exit-decimal-fixture.js")]).toRun();
-});
+    it("process.kill(2) works", async () => {
+      const child = Bun.spawn({
+        cmd: [bunExe(), process_sleep, "1000000"],
+        stdout: "pipe",
+        env: bunEnv,
+      });
+      const prom = child.exited;
+      const ret = process.kill(child.pid, "SIGTERM");
+      expect(ret).toBe(true);
+      await prom;
+      if (process.platform === "win32") {
+        expect(child.exitCode).toBe(1);
+      } else {
+        expect(child.signalCode).toBe("SIGTERM");
+      }
+    });
 
-if (isWindows) {
-  it("ownKeys trap windows process.env", () => {
-    expect(() => Object.keys(process.env)).not.toThrow();
-    expect(() => Object.getOwnPropertyDescriptors(process.env)).not.toThrow();
+    it("process._kill(2) works", async () => {
+      const child = Bun.spawn({
+        cmd: [bunExe(), process_sleep, "1000000"],
+        stdout: "pipe",
+        env: bunEnv,
+      });
+      const prom = child.exited;
+      // SIGKILL as a number
+      const SIGKILL = 9;
+      process._kill(child.pid, SIGKILL);
+      await prom;
+
+      if (process.platform === "win32") {
+        expect(child.exitCode).toBe(1);
+      } else {
+        expect(child.signalCode).toBe("SIGKILL");
+      }
+    });
+
+    it("process.kill(2) throws on invalid input", async () => {
+      expect(() => process.kill(2147483640, "SIGPOOP")).toThrow();
+      expect(() => process.kill(2147483640, 456)).toThrow();
+    });
   });
-}
 
-it("catches exceptions with process.setUncaughtExceptionCaptureCallback", async () => {
-  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-uncaughtExceptionCaptureCallback.js")]);
-  expect(await proc.exited).toBe(42);
-});
+  const undefinedStubs = [
+    "_debugEnd",
+    "_debugProcess",
+    "_fatalException",
+    "_linkedBinding",
+    "_rawDebug",
+    "_startProfilerIdleNotifier",
+    "_stopProfilerIdleNotifier",
+    "_tickCallback",
+  ];
 
-it("catches exceptions with process.on('uncaughtException', fn)", async () => {
-  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtException.js")]);
-  expect(await proc.exited).toBe(42);
-});
+  for (const stub of undefinedStubs) {
+    it(`process.${stub}`, () => {
+      expect(process[stub]()).toBeUndefined();
+    });
+  }
 
-it("catches exceptions with process.on('uncaughtException', fn) from setTimeout", async () => {
-  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionSetTimeout.js")]);
-  expect(await proc.exited).toBe(42);
-});
+  const arrayStubs = ["getActiveResourcesInfo", "_getActiveRequests", "_getActiveHandles"];
 
-it("catches exceptions with process.on('unhandledRejection', fn)", async () => {
-  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUnhandledRejection.js")]);
-  expect(await proc.exited).toBe(42);
-});
+  for (const stub of arrayStubs) {
+    it(`process.${stub}`, () => {
+      expect(process[stub]()).toBeInstanceOf(Array);
+    });
+  }
 
-it("aborts when the uncaughtException handler throws", async () => {
-  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
-    stderr: "pipe",
+  const emptyObjectStubs = [];
+  const emptySetStubs = ["allowedNodeEnvironmentFlags"];
+  const emptyArrayStubs = ["moduleLoadList", "_preload_modules"];
+
+  for (const stub of emptyObjectStubs) {
+    it(`process.${stub}`, () => {
+      expect(process[stub]).toEqual({});
+    });
+  }
+
+  for (const stub of emptySetStubs) {
+    it(`process.${stub}`, () => {
+      expect(process[stub]).toBeInstanceOf(Set);
+      expect(process[stub].size).toBe(0);
+    });
+  }
+
+  for (const stub of emptyArrayStubs) {
+    it(`process.${stub}`, () => {
+      expect(process[stub]).toBeInstanceOf(Array);
+      expect(process[stub]).toHaveLength(0);
+    });
+  }
+
+  it("dlopen args parsing", () => {
+    const notFound = join(tmpdirSync(), "not-found.so");
+    expect(() => process.dlopen({ module: "42" }, notFound)).toThrow();
+    expect(() => process.dlopen({ module: 42 }, notFound)).toThrow();
+    expect(() => process.dlopen({ module: { exports: "42" } }, notFound)).toThrow();
+    expect(() => process.dlopen({ module: { exports: 42 } }, notFound)).toThrow();
+    expect(() => process.dlopen({ module: Symbol() }, notFound)).toThrow();
+    expect(() => process.dlopen({ module: { exports: Symbol("123") } }, notFound)).toThrow();
+    expect(() => process.dlopen({ module: { exports: Symbol("123") } }, Symbol("badddd"))).toThrow();
   });
-  expect(await proc.exited).toBe(7);
-  expect(await proc.stderr.text()).toContain("bar");
-});
 
-it("aborts when the uncaughtExceptionCaptureCallback throws", async () => {
-  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-uncaughtExceptionCaptureCallbackAbort.js")], {
-    stderr: "pipe",
+  it("dlopen accepts file: URLs", () => {
+    const mod = { exports: {} };
+    try {
+      process.dlopen(mod, import.meta.url);
+      throw "Expected error";
+    } catch (e) {
+      expect(e.message).not.toContain("file:");
+    }
+
+    expect(() => process.dlopen(mod, "file://asd[kasd[po@[p1o23]1po!-10923-095-@$@8123=-9123=-0==][pc;!")).toThrow(
+      "invalid file: URL passed to dlopen",
+    );
   });
-  expect(await proc.exited).toBe(1);
-  expect(await proc.stderr.text()).toContain("bar");
+
+  it("process.constrainedMemory()", () => {
+    expect(process.constrainedMemory() >= 0).toBe(true);
+  });
+
+  it("process.report", () => {
+    // TODO: write better tests
+    JSON.stringify(process.report.getReport(), null, 2);
+  });
+
+  it("process.exit with jsDoubleNumber that is an integer", () => {
+    expect([join(import.meta.dir, "./process-exit-decimal-fixture.js")]).toRun();
+  });
+
+  if (isWindows) {
+    it("ownKeys trap windows process.env", () => {
+      expect(() => Object.keys(process.env)).not.toThrow();
+      expect(() => Object.getOwnPropertyDescriptors(process.env)).not.toThrow();
+    });
+  }
+
+  it("catches exceptions with process.setUncaughtExceptionCaptureCallback", async () => {
+    const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-uncaughtExceptionCaptureCallback.js")]);
+    expect(await proc.exited).toBe(42);
+  });
+
+  it("catches exceptions with process.on('uncaughtException', fn)", async () => {
+    const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtException.js")]);
+    expect(await proc.exited).toBe(42);
+  });
+
+  it("catches exceptions with process.on('uncaughtException', fn) from setTimeout", async () => {
+    const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionSetTimeout.js")]);
+    expect(await proc.exited).toBe(42);
+  });
+
+  it("catches exceptions with process.on('unhandledRejection', fn)", async () => {
+    const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUnhandledRejection.js")]);
+    expect(await proc.exited).toBe(42);
+  });
+
+  it("aborts when the uncaughtException handler throws", async () => {
+    const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
+      stderr: "pipe",
+    });
+    expect(await proc.exited).toBe(7);
+    expect(await proc.stderr.text()).toContain("bar");
+  });
+
+  it("aborts when the uncaughtExceptionCaptureCallback throws", async () => {
+    const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-uncaughtExceptionCaptureCallbackAbort.js")], {
+      stderr: "pipe",
+    });
+    expect(await proc.exited).toBe(1);
+    expect(await proc.stderr.text()).toContain("bar");
+  });
 });
 
 it("process.hasUncaughtExceptionCaptureCallback", () => {
@@ -1142,18 +1190,4 @@ it("process.versions", () => {
   expect(process.versions.v8).toEqual("13.6.233.10-node.18");
   expect(process.versions.napi).toEqual("10");
   expect(process.versions.modules).toEqual("137");
-});
-
-it.todoIf(isMacOS)("should be the node version on the host that we expect", async () => {
-  const subprocess = Bun.spawn({
-    cmd: ["node", "--version"],
-    stdout: "pipe",
-    stdin: "inherit",
-    stderr: "pipe",
-    env: bunEnv,
-  });
-
-  let [out, exited] = await Promise.all([new Response(subprocess.stdout).text(), subprocess.exited]);
-  expect(out.trim()).toEqual("v24.3.0");
-  expect(exited).toBe(0);
 });

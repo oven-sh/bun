@@ -935,6 +935,7 @@ pub const Installer = struct {
                             pkg_metas,
                             manager.options.cpu,
                             manager.options.os,
+                            null,
                         )) {
                             break :enqueueLifecycleScripts;
                         }

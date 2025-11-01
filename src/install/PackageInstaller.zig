@@ -279,8 +279,10 @@ pub const PackageInstaller = struct {
             const package_name_ = strings.StringOrTinyString.init(alias);
             var target_package_name = package_name_;
             var can_retry_without_native_binlink_optimization = false;
+            var target_node_modules_path_opt: ?bun.AbsPath(.{}) = null;
+            defer if (target_node_modules_path_opt) |*path| path.deinit();
 
-            if (manager.postinstall_optimizer.isNativeBinlinkEnabled()) {
+            if (manager.postinstall_optimizer.isNativeBinlinkEnabled()) native_binlink_optimization: {
                 // Check for native binlink optimization
                 const name_hash = pkg_name_hashes[package_id];
                 if (manager.postinstall_optimizer.get(name_hash)) |optimizer| {
@@ -294,6 +296,13 @@ pub const PackageInstaller = struct {
                                 target_cpu,
                                 target_os,
                             )) |replacement_pkg_id| {
+                                if (tree_id != 0) {
+                                    // TODO: support this optimization in nested node_modules
+                                    // It's tricky to get the hoisting right.
+                                    // So we leave this out for now.
+                                    break :native_binlink_optimization;
+                                }
+
                                 const replacement_name = pkg_names[replacement_pkg_id].slice(string_buf);
                                 target_package_name = strings.StringOrTinyString.init(replacement_name);
                                 can_retry_without_native_binlink_optimization = true;
@@ -329,7 +338,7 @@ pub const PackageInstaller = struct {
                     .extern_string_buf = lockfile.buffers.extern_strings.items,
                     .seen = &this.seen_bin_links,
                     .node_modules_path = &node_modules_path,
-                    .target_node_modules_path = &node_modules_path,
+                    .target_node_modules_path = if (target_node_modules_path_opt) |*path| path else &node_modules_path,
                     .abs_target_buf = link_target_buf,
                     .abs_dest_buf = link_dest_buf,
                     .rel_buf = link_rel_buf,
@@ -1160,6 +1169,7 @@ pub const PackageInstaller = struct {
                                 this.lockfile.packages.items(.meta),
                                 this.manager.options.cpu,
                                 this.manager.options.os,
+                                this.current_tree_id,
                             )) {
                                 if (PackageManager.verbose_install) {
                                     Output.prettyErrorln("<d>[Lifecycle Scripts]<r> ignoring {s} lifecycle scripts", .{
@@ -1349,6 +1359,7 @@ pub const PackageInstaller = struct {
                         this.lockfile.packages.items(.meta),
                         this.manager.options.cpu,
                         this.manager.options.os,
+                        this.current_tree_id,
                     )) {
                         if (PackageManager.verbose_install) {
                             Output.prettyErrorln("<d>[Lifecycle Scripts]<r> ignoring {s} lifecycle scripts", .{

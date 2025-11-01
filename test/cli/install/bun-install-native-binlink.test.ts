@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { rm, writeFile } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, VerdaccioRegistry } from "harness";
 import { join } from "path";
 
 let verdaccio: VerdaccioRegistry;
@@ -16,7 +16,7 @@ afterAll(() => {
   verdaccio.stop();
 });
 
-describe.concurrent("native binlink optimization", () => {
+describe.skipIf(isWindows).concurrent("native binlink optimization", () => {
   for (const linker of ["hoisted", "isolated"]) {
     test(`uses platform-specific bin instead of main package bin with linker ${linker}`, async () => {
       let env = { ...bunEnv };

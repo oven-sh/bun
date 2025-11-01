@@ -43,6 +43,11 @@ pub const PostinstallOptimizer = enum {
         target_cpu: Npm.Architecture,
         target_os: Npm.OperatingSystem,
     ) ?PackageID {
+        // Windows needs file extensions.
+        if (target_os.isMatch(@enumFromInt(Npm.OperatingSystem.win32))) {
+            return null;
+        }
+
         // Loop through the list of optional dependencies with platform-specific constraints
         // Find a matching target-specific dependency.
         for (resolutions) |resolution| {
@@ -85,6 +90,7 @@ pub const PostinstallOptimizer = enum {
             metas: []const Meta,
             target_cpu: Npm.Architecture,
             target_os: Npm.OperatingSystem,
+            tree_id: ?Lockfile.Tree.Id,
         ) bool {
             if (bun.env_var.feature_flag.BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS.get()) {
                 return false;
@@ -93,13 +99,17 @@ pub const PostinstallOptimizer = enum {
             const mode = this.get(name_hash) orelse return false;
 
             return switch (mode) {
-                // It's not as simple as checking `get(name_hash) != null` because if the
-                // specific versions of the package do not have optional
-                // dependencies then we cannot do this optimization without
-                // breaking the code.
-                //
-                // This shows up in test/integration/esbuild/esbuild.test.ts
-                .native_binlink => getNativeBinlinkReplacementPackageID(resolutions, metas, target_cpu, target_os) != null,
+                .native_binlink =>
+                // TODO: support hoisted.
+                (tree_id == null or tree_id.? == 0) and
+
+                    // It's not as simple as checking `get(name_hash) != null` because if the
+                    // specific versions of the package do not have optional
+                    // dependencies then we cannot do this optimization without
+                    // breaking the code.
+                    //
+                    // This shows up in test/integration/esbuild/esbuild.test.ts
+                    getNativeBinlinkReplacementPackageID(resolutions, metas, target_cpu, target_os) != null,
 
                 .ignore => true,
             };

@@ -298,6 +298,11 @@ pub const FetchTasklet = struct {
             this.request_body.detach();
         }
 
+        // if sink exists, it owns any request ReadableStream - but if not then detach the request body
+        if (this.sink == null) {
+            this.request_body.detach();
+        }
+
         this.abort_reason.deinit();
         this.check_server_identity.deinit();
         this.clearAbortSignal();
@@ -341,10 +346,18 @@ pub const FetchTasklet = struct {
     pub fn startRequestStream(this: *FetchTasklet) void {
         this.is_waiting_request_stream_start = false;
         bun.assert(this.request_body == .ReadableStream);
-        if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
+
+        // Making sure the stream doesn't retain twice -transfer ownership out of the union to avoid double-Strong retention
+        var stream_ref = &this.request_body.ReadableStream;
+        this.request_body = HTTPRequestBody.Empty;
+
+        if (stream_ref.get(this.global_this)) |stream| {
             if (this.signal) |signal| {
                 if (signal.aborted()) {
+                    // match what was happenign earlier but owning the Strong in current scope
                     stream.abort(this.global_this);
+                    // drop transferred strong
+                    stream_ref.deinit();
                     return;
                 }
             }
@@ -354,7 +367,11 @@ pub const FetchTasklet = struct {
             // +1 because the task refs the sink
             const sink = ResumableSink.initExactRefs(globalThis, stream, this, 2);
             this.sink = sink;
+            // sink now owns the stream; drop the transferred Strong
+            stream_ref.deinit();
         }
+        // in any other cases we will drop the transferred Strong anyways
+        stream_ref.deinit();
     }
 
     pub fn onBodyReceived(this: *FetchTasklet) bun.JSTerminated!void {

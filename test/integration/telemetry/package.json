@@ -1,0 +1,8 @@
+{
+  "name": "bun-telemetry-integration-test",
+  "version": "0.0.1",
+  "private": true,
+  "dependencies": {
+    "bun-otel": "../../../packages/bun-otel"
+  }
+}

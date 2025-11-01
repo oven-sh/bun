@@ -6,6 +6,7 @@ const { validateObject, validateLinkHeaderValue, validateBoolean, validateIntege
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { throwOnInvalidTLSArray } = require("internal/tls");
+
 const {
   kInternalSocketData,
   serverSymbol,
@@ -464,6 +465,8 @@ Server.prototype.listen = function () {
   return this;
 };
 
+let _alsCleanup: Disposable | undefined = undefined;
+
 Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, onListen) {
   {
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
@@ -551,6 +554,12 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           [kHandle]: handle,
           [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
         });
+
+        // Notify telemetry of request start - this sets ALS context via enterWith()
+        // which is captured by AsyncContextFrame for async operations
+        try {
+          Bun.telemetry?.nativeHooks()?.notifyStart(6, 0, { http_req, http_res }); // InstrumentType.Node = 6
+        } catch {}
 
         setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
         handle.onabort = onServerRequestEvent.bind(socket);
@@ -741,11 +750,13 @@ Server.prototype.setTimeout = function (msecs, callback) {
 
 function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPResponseAbortEvent) {
   const socket: NodeHTTPServerSocket = this;
+
   switch (event) {
     case NodeHTTPResponseAbortEvent.abort: {
       if (!socket.destroyed) {
         socket.destroy();
       }
+
       break;
     }
     case NodeHTTPResponseAbortEvent.timeout: {
@@ -1189,6 +1200,14 @@ function _writeHead(statusCode, reason, obj, response) {
   }
 
   updateHasBody(response, statusCode);
+
+  // Telemetry: notify about response headers
+  try {
+    Bun.telemetry?.nativeHooks()?.notifyInject(6, response._telemetry_op_id ?? 0, {
+      http_req: response.req,
+      http_res: response,
+    });
+  } catch {}
 }
 
 Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });

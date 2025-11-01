@@ -333,6 +333,9 @@ extern "C" void* Bun__getVM();
 
 extern "C" void Bun__setDefaultGlobalObject(Zig::GlobalObject* globalObject);
 
+extern "C" int Bun__Telemetry__init(JSC::JSGlobalObject*);
+extern "C" void Bun__Telemetry__deinit();
+
 // Declare the Zig functions for LazyProperty initializers
 extern "C" JSC::EncodedJSValue BunObject__createBunStdin(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStderr(JSC::JSGlobalObject*);
@@ -552,6 +555,16 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         if (auto* worker = static_cast<WebCore::Worker*>(worker_ptr)) {
             initializeWorker(*worker);
         }
+    }
+
+    // Initialize telemetry system (non-fatal - spec: telemetry failures should not impact runtime)
+    // Returns 0 on success, 1 on error. Errors are logged once but runtime continues.
+    if (auto telemetryInitResult = Bun__Telemetry__init(globalObject); telemetryInitResult != 0) {
+        // Telemetry init failed - log once for debugging but continue execution
+        // Per spec: telemetry is optional and should never break the application
+#if !defined(NDEBUG)
+        WTF::dataLogLn("Bun telemetry initialization failed (non-fatal)");
+#endif
     }
 
     return globalObject;

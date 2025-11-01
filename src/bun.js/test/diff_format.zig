@@ -11,7 +11,7 @@ pub const DiffFormatter = struct {
         // defer scope.deinit(); // TODO: fix leaks
         const allocator = scope.allocator();
 
-        const diff_config: DiffConfig = .default(Output.isAIAgent(), Output.enable_ansi_colors);
+        const diff_config: DiffConfig = .default(Output.isAIAgent(), Output.enable_ansi_colors_stderr);
 
         if (this.expected_string != null and this.received_string != null) {
             const received = this.received_string.?;

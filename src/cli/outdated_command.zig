@@ -69,7 +69,7 @@ pub const OutdatedCommand = struct {
             .ok => |ok| ok.lockfile,
         };
 
-        switch (Output.enable_ansi_colors) {
+        switch (Output.enable_ansi_colors_stdout) {
             inline else => |enable_ansi_colors| {
                 if (manager.options.filter_patterns.len > 0) {
                     const filters = manager.options.filter_patterns;

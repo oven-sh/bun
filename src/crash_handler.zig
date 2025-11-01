@@ -256,11 +256,11 @@ pub fn crashHandler(
                         has_printed_message = true;
                     }
                 } else {
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.writeAll(Output.prettyFmt("<red>", true)) catch std.posix.abort();
                     }
                     writer.writeAll("oh no") catch std.posix.abort();
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.writeAll(Output.prettyFmt("<r><d>: multiple threads are crashing<r>\n", true)) catch std.posix.abort();
                     } else {
                         writer.writeAll(Output.prettyFmt(": multiple threads are crashing\n", true)) catch std.posix.abort();
@@ -268,13 +268,13 @@ pub fn crashHandler(
                 }
 
                 if (reason != .out_of_memory or debug_trace) {
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.writeAll(Output.prettyFmt("<red>", true)) catch std.posix.abort();
                     }
 
                     writer.writeAll("panic") catch std.posix.abort();
 
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.writeAll(Output.prettyFmt("<r><d>", true)) catch std.posix.abort();
                     }
 
@@ -295,7 +295,7 @@ pub fn crashHandler(
                     }
 
                     writer.writeAll(": ") catch std.posix.abort();
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.writeAll(Output.prettyFmt("<r>", true)) catch std.posix.abort();
                     }
                     writer.print("{f}\n", .{reason}) catch std.posix.abort();
@@ -386,7 +386,7 @@ pub fn crashHandler(
                     if (!has_printed_message) {
                         has_printed_message = true;
                         writer.writeAll("oh no") catch std.posix.abort();
-                        if (Output.enable_ansi_colors) {
+                        if (Output.enable_ansi_colors_stderr) {
                             writer.writeAll(Output.prettyFmt("<r><d>:<r> ", true)) catch std.posix.abort();
                         } else {
                             writer.writeAll(Output.prettyFmt(": ", true)) catch std.posix.abort();
@@ -436,7 +436,7 @@ pub fn crashHandler(
                         }
                     }
 
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.print(Output.prettyFmt("<cyan>", true), .{}) catch std.posix.abort();
                     }
 
@@ -453,7 +453,7 @@ pub fn crashHandler(
                     writer.writeAll("\n") catch std.posix.abort();
                 }
 
-                if (Output.enable_ansi_colors) {
+                if (Output.enable_ansi_colors_stderr) {
                     writer.writeAll(Output.prettyFmt("<r>\n", true)) catch std.posix.abort();
                 } else {
                     writer.writeAll("\n") catch std.posix.abort();
@@ -959,7 +959,7 @@ pub fn printMetadata(writer: anytype) !void {
         }
     }
 
-    if (Output.enable_ansi_colors) {
+    if (Output.enable_ansi_colors_stderr) {
         try writer.writeAll(Output.prettyFmt("<r><d>", true));
     }
 
@@ -1047,7 +1047,7 @@ pub fn printMetadata(writer: anytype) !void {
         try writer.writeAll("\n");
     }
 
-    if (Output.enable_ansi_colors) {
+    if (Output.enable_ansi_colors_stderr) {
         try writer.writeAll(Output.prettyFmt("<r>", true));
     }
     try writer.writeAll("\n");

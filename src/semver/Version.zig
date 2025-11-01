@@ -90,8 +90,8 @@ pub fn VersionType(comptime IntType: type) type {
             other: This,
             other_buf: string,
 
-            pub fn format(this: DiffFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-                if (!Output.enable_ansi_colors) {
+            pub fn format(this: DiffFormatter, writer: *std.Io.Writer) !void {
+                if (!Output.enable_ansi_colors_stdout) {
                     // print normally if no colors
                     const formatter: Formatter = .{ .version = this.version, .input = this.buf };
                     return Formatter.format(formatter, writer);

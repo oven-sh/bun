@@ -1636,7 +1636,7 @@ pub const PackCommand = struct {
             var node: *Progress.Node = undefined;
             if (log_level.showProgress()) {
                 progress = .{};
-                progress.supports_ansi_escape_codes = Output.enable_ansi_colors;
+                progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
                 node = progress.start("", pack_queue.count() + bundled_pack_queue.count() + 1);
                 node.unit = " files";
             }

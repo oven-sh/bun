@@ -160,6 +160,8 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_close(us_internal_ssl_so
 
 int us_internal_handle_dns_results(us_loop_r loop);
 
+size_t us_internal_ssl_socket_size();
+
 /* Sockets are polls */
 
 struct us_socket_flags {
@@ -446,11 +448,11 @@ void us_internal_ssl_socket_shutdown(us_internal_ssl_socket_r s);
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_adopt_socket(
     us_internal_ssl_socket_context_r context,
-    us_internal_ssl_socket_r s, int ext_size);
+    us_internal_ssl_socket_r s, int new_ext_size, unsigned int old_ext_size);
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
     us_socket_r s, struct us_bun_socket_context_options_t options,
-    struct us_socket_events_t events, int socket_ext_size);
+    struct us_socket_events_t events, int new_socket_ext_size, unsigned int old_socket_ext_size);
 struct us_internal_ssl_socket_context_t *
 us_internal_create_child_ssl_socket_context(
     us_internal_ssl_socket_context_r context, int context_ext_size);

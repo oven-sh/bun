@@ -302,6 +302,7 @@ public:
     TemplatedApp &&closeIdle() {
         auto context = (struct us_socket_context_t *)this->httpContext;
         struct us_socket_t *s = context->head_sockets;
+        context->head_sockets = 0;
         while (s) {
             // no matter the type of socket will always contain the AsyncSocketData
             auto *data = ((AsyncSocket<SSL> *) s)->getAsyncSocketData();

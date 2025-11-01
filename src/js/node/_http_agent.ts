@@ -278,7 +278,6 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
     options.keepAliveInitialDelay = this.keepAliveMsecs;
   }
 
-  console.log(options);
   const newSocket = this.createConnection(options, oncreate);
   if (newSocket && !newSocket[kWaitForProxyTunnel]) oncreate(null, newSocket);
 };

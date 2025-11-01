@@ -11,8 +11,8 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Default to format mode (modify files)
 MODE="${1:-format}"
 
-# Use LLVM_VERSION_MAJOR from environment or default to 19
-LLVM_VERSION="${LLVM_VERSION_MAJOR:-19}"
+# Use LLVM_VERSION_MAJOR from environment or default to 20
+LLVM_VERSION="${LLVM_VERSION_MAJOR:-20}"
 
 # Ensure we have the specific clang-format version
 CLANG_FORMAT="clang-format-${LLVM_VERSION}"
@@ -88,13 +88,13 @@ if [ "$MODE" = "check" ]; then
             fi
             dir=$(dirname "$dir")
         done
-        
+
         if ! $CLANG_FORMAT --dry-run --Werror "$file" 2>/dev/null; then
             echo "Format check failed: $file"
             FAILED=1
         fi
     done
-    
+
     if [ $FAILED -eq 1 ]; then
         echo "Some files need formatting. Run 'bun run clang-format' to fix."
         exit 1

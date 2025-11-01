@@ -120,18 +120,18 @@ function Refresh-Path {
 function Add-To-Path {
   $absolutePath = Resolve-Path $args[0]
   $currentPath = [Environment]::GetEnvironmentVariable("Path", "Machine")
-  if ($currentPath -like "*$absolutePath*") {  
+  if ($currentPath -like "*$absolutePath*") {
     return
   }
 
   $newPath = $currentPath.TrimEnd(";") + ";" + $absolutePath
   if ($newPath.Length -ge 2048) {
     Write-Warning "PATH is too long, removing duplicate and old entries..."
-    
-    $paths = $currentPath.Split(';', [StringSplitOptions]::RemoveEmptyEntries) | 
+
+    $paths = $currentPath.Split(';', [StringSplitOptions]::RemoveEmptyEntries) |
       Where-Object { $_ -and (Test-Path $_) } |
       Select-Object -Unique
-    
+
     $paths += $absolutePath
     $newPath = $paths -join ';'
     while ($newPath.Length -ge 2048 -and $paths.Count -gt 1) {
@@ -351,7 +351,7 @@ function Install-PdbAddr2line {
 function Install-Llvm {
   Install-Package llvm `
     -Command clang-cl `
-    -Version "19.1.7"
+    -Version "20.1.8"
   Add-To-Path "$env:ProgramFiles\LLVM\bin"
 }
 

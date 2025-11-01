@@ -1,5 +1,5 @@
-ARG LLVM_VERSION="19"
-ARG REPORTED_LLVM_VERSION="19.1.7"
+ARG LLVM_VERSION="20"
+ARG REPORTED_LLVM_VERSION="20.1.8"
 ARG OLD_BUN_VERSION="1.1.38"
 ARG BUILDKITE_AGENT_TAGS="queue=linux,os=linux,arch=${TARGETARCH}"
 
@@ -110,14 +110,14 @@ ARG BUILDKITE_AGENT_TAGS
 
 
 # Install Rust nightly
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \ 
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && export PATH=$HOME/.cargo/bin:$PATH \
     && rustup install nightly \
     && rustup default nightly
 
 
 RUN ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "amd64"; fi) && \
-    echo "Downloading buildkite" && \ 
+    echo "Downloading buildkite" && \
     curl -fsSL "https://github.com/buildkite/agent/releases/download/v3.87.0/buildkite-agent-linux-${ARCH}-3.87.0.tar.gz" -o /tmp/buildkite-agent.tar.gz && \
     mkdir -p /tmp/buildkite-agent && \
     tar -xzf /tmp/buildkite-agent.tar.gz -C /tmp/buildkite-agent && \
@@ -147,7 +147,7 @@ COPY . /workspace/bun
 
 
 # Install Rust nightly
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \ 
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && export PATH=$HOME/.cargo/bin:$PATH \
     && rustup install nightly \
     && rustup default nightly

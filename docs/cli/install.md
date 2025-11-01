@@ -223,19 +223,19 @@ For complete documentation refer to [Package manager > Global cache](https://bun
 
 ## Minimum release age
 
-To protect against supply chain attacks where malicious packages are quickly published, you can configure a minimum age requirement for npm packages. Package versions published more recently than the specified threshold (in seconds) will be filtered out during installation.
+To protect against supply chain attacks where malicious packages are quickly published, you can configure a minimum age requirement for npm packages. Package versions published more recently than the specified threshold will be filtered out during installation.
 
 ```bash
 # Only install package versions published at least 3 days ago
-$ bun add @types/bun --minimum-release-age 259200 # seconds
+$ bun add @types/bun --minimum-release-age 3d
 ```
 
 You can also configure this in `bunfig.toml`:
 
-```toml
+```toml#bunfig.toml
 [install]
 # Only install package versions published at least 3 days ago
-minimumReleaseAge = 259200 # seconds
+minimumReleaseAge = "3d"
 
 # Exclude trusted packages from the age gate
 minimumReleaseAgeExcludes = ["@types/node", "typescript"]
@@ -257,7 +257,7 @@ For more advanced security scanning, including integration with services & custo
 
 The default behavior of `bun install` can be configured in `bunfig.toml`. The default values are shown below.
 
-```toml
+```toml#bunfig.toml
 [install]
 
 # whether to install optionalDependencies
@@ -289,7 +289,7 @@ concurrentScripts = 16 # (cpu count or GOMAXPROCS) x2
 linker = "hoisted"
 
 # minimum age config
-minimumReleaseAge = 259200 # seconds
+minimumReleaseAge = "3d"
 minimumReleaseAgeExcludes = ["@types/node", "typescript"]
 ```
 

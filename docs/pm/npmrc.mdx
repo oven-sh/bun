@@ -1,0 +1,111 @@
+---
+title: .npmrc support
+description:
+---
+
+Bun supports loading configuration options from [`.npmrc`](https://docs.npmjs.com/cli/v10/configuring-npm/npmrc) files, allowing you to reuse existing registry/scope configurations.
+
+<Note>
+  We recommend migrating your `.npmrc` file to Bun's [`bunfig.toml`](/runtime/bunfig) format, as it provides more
+  flexible options and can let you configure Bun-specific options.
+</Note>
+
+---
+
+## Supported options
+
+### Set the default registry
+
+The default registry is used to resolve packages, its default value is `npm`'s official registry (`https://registry.npmjs.org/`).
+
+To change it, you can set the `registry` option in `.npmrc`:
+
+```ini .npmrc icon="npm"
+registry=http://localhost:4873/
+```
+
+The equivalent `bunfig.toml` option is [`install.registry`](/runtime/bunfig#install-registry):
+
+```toml bunfig.toml icon="settings"
+install.registry = "http://localhost:4873/"
+```
+
+### Set the registry for a specific scope
+
+`@<scope>:registry` allows you to set the registry for a specific scope:
+
+```ini .npmrc icon="npm"
+@myorg:registry=http://localhost:4873/
+```
+
+The equivalent `bunfig.toml` option is to add a key in [`install.scopes`](/runtime/bunfig#install-registry):
+
+```toml bunfig.toml icon="settings"
+[install.scopes]
+myorg = "http://localhost:4873/"
+```
+
+### Configure options for a specific registry
+
+`//<registry_url>/:<key>=<value>` allows you to set options for a specific registry:
+
+```ini .npmrc icon="npm"
+# set an auth token for the registry
+# ${...} is a placeholder for environment variables
+//http://localhost:4873/:_authToken=${NPM_TOKEN}
+
+
+# or you could set a username and password
+# note that the password is base64 encoded
+//http://localhost:4873/:username=myusername
+
+//http://localhost:4873/:_password=${NPM_PASSWORD}
+
+# or use _auth, which is your username and password
+# combined into a single string, which is then base 64 encoded
+//http://localhost:4873/:_auth=${NPM_AUTH}
+```
+
+The following options are supported:
+
+- `_authToken`
+- `username`
+- `_password` (base64 encoded password)
+- `_auth` (base64 encoded username:password, e.g. `btoa(username + ":" + password)`)
+
+The equivalent `bunfig.toml` option is to add a key in [`install.scopes`](/runtime/bunfig#install-registry):
+
+```toml bunfig.toml icon="settings"
+[install.scopes]
+myorg = { url = "http://localhost:4873/", username = "myusername", password = "$NPM_PASSWORD" }
+```
+
+### `link-workspace-packages`: Control workspace package installation
+
+Controls how workspace packages are installed when available locally:
+
+```ini .npmrc icon="npm"
+link-workspace-packages=true
+```
+
+The equivalent `bunfig.toml` option is [`install.linkWorkspacePackages`](/runtime/bunfig#install-linkworkspacepackages):
+
+```toml bunfig.toml icon="settings"
+[install]
+linkWorkspacePackages = true
+```
+
+### `save-exact`: Save exact versions
+
+Always saves exact versions without the `^` prefix:
+
+```ini .npmrc icon="npm"
+save-exact=true
+```
+
+The equivalent `bunfig.toml` option is [`install.exact`](/runtime/bunfig#install-exact):
+
+```toml bunfig.toml icon="settings"
+[install]
+exact = true
+```

@@ -4,7 +4,7 @@ declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
-const { Readable } = require("node:stream");
+const Readable = require("internal/streams/readable");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
 
 const {

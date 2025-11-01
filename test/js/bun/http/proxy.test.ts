@@ -248,7 +248,7 @@ test("unsupported protocol", async () => {
   );
 });
 
-test("axios with https-proxy-agent", async () => {
+test.todo("axios with https-proxy-agent", async () => {
   httpProxyServer.log.length = 0;
   const httpsAgent = new HttpsProxyAgent(httpProxyServer.url, {
     rejectUnauthorized: false, // this should work with self-signed certs

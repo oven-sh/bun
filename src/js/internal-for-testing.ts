@@ -210,3 +210,6 @@ export const structuredCloneAdvanced: (
 ) => any = $newCppFunction("StructuredClone.cpp", "jsFunctionStructuredCloneAdvanced", 5);
 
 export const lsanDoLeakCheck = $newCppFunction("InternalForTesting.cpp", "jsFunction_lsanDoLeakCheck", 1);
+
+export const getEventLoopStats: () => { activeTasks: number; concurrentRef: number; numPolls: number } =
+  $newZigFunction("event_loop.zig", "getActiveTasks", 0);

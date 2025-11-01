@@ -48,6 +48,14 @@ RUN --mount=type=tmpfs,target=/tmp \
     wget -O /tmp/cmake.sh "$cmake_url" && \
     sh /tmp/cmake.sh --skip-license --prefix=/usr
 
+RUN --mount=type=tmpfs,target=/tmp \
+    sccache_version="0.12.0" && \
+    arch=$(uname -m) && \
+    sccache_url="https://github.com/mozilla/sccache/releases/download/v${sccache_version}/sccache-v${sccache_version}-${arch}-unknown-linux-musl.tar.gz" && \
+    wget -O /tmp/sccache.tar.gz "$sccache_url" && \
+    tar -xzf /tmp/sccache.tar.gz -C /tmp && \
+    install -m755 /tmp/sccache-v${sccache_version}-${arch}-unknown-linux-musl/sccache /usr/local/bin
+
 RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
    --slave /usr/bin/g++ g++ /usr/bin/g++-13 \
    --slave /usr/bin/gcc-ar gcc-ar /usr/bin/gcc-ar-13 \
@@ -110,14 +118,14 @@ ARG BUILDKITE_AGENT_TAGS
 
 
 # Install Rust nightly
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \ 
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && export PATH=$HOME/.cargo/bin:$PATH \
     && rustup install nightly \
     && rustup default nightly
 
 
 RUN ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "amd64"; fi) && \
-    echo "Downloading buildkite" && \ 
+    echo "Downloading buildkite" && \
     curl -fsSL "https://github.com/buildkite/agent/releases/download/v3.87.0/buildkite-agent-linux-${ARCH}-3.87.0.tar.gz" -o /tmp/buildkite-agent.tar.gz && \
     mkdir -p /tmp/buildkite-agent && \
     tar -xzf /tmp/buildkite-agent.tar.gz -C /tmp/buildkite-agent && \
@@ -147,7 +155,7 @@ COPY . /workspace/bun
 
 
 # Install Rust nightly
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \ 
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
     && export PATH=$HOME/.cargo/bin:$PATH \
     && rustup install nightly \
     && rustup default nightly

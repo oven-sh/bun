@@ -67,7 +67,6 @@ After Visual Studio, you need the following:
 - Perl
 - Ruby
 - Node.js
-- Ccache
 
 {% callout %}
 **Note** – The Zig compiler is automatically downloaded, installed, and updated by the building process.
@@ -79,7 +78,7 @@ After Visual Studio, you need the following:
 
 ```ps1#Scoop
 > irm https://get.scoop.sh | iex
-> scoop install nodejs-lts go rust nasm ruby perl ccache
+> scoop install nodejs-lts go rust nasm ruby perl
 # scoop seems to be buggy if you install llvm and the rest at the same time
 > scoop install llvm@19.1.7
 ```
@@ -111,6 +110,14 @@ To verify, you can check for an MSVC-only command line such as `mt.exe`
 {% callout %}
 It is not recommended to install `ninja` / `cmake` into your global path, because you may run into a situation where you try to build bun without .\scripts\vs-shell.ps1 sourced.
 {% /callout %}
+
+### Optional: Install `sccache`
+
+sccache is used to cache compilation artifacts, significantly speeding up builds. The easiest way to install `sccache` is either through [chocolatey](https://community.chocolatey.org/packages/sccache) or [scoop](https://scoop.sh/#/apps?q=sccache).
+
+Our build scripts will automatically detect and use `sccache` with our shared S3 cache. **Note**: Not all versions of `sccache` are compiled with S3 support, hence we recommend installing it via `cargo`.
+
+For more information on how to use the cache as a Core Team Member, please refer to the [CONTRIBUTING.md](https://github.com/oven-sh/bun/blob/main/CONTRIBUTING.md) document.
 
 ## Building
 

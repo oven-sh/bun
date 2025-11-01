@@ -23,19 +23,19 @@ Using your system's package manager, install Bun's dependencies:
 {% codetabs group="os" %}
 
 ```bash#macOS (Homebrew)
-$ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rust ruby
+$ brew install automake cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rust ruby sccache
 ```
 
 ```bash#Ubuntu/Debian
-$ sudo apt install curl wget lsb-release software-properties-common cargo ccache cmake git golang libtool ninja-build pkg-config rustc ruby-full xz-utils
+$ sudo apt install curl wget lsb-release software-properties-common cargo cmake git golang libtool ninja-build pkg-config rustc ruby-full xz-utils
 ```
 
 ```bash#Arch
-$ sudo pacman -S base-devel ccache cmake git go libiconv libtool make ninja pkg-config python rust sed unzip ruby
+$ sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config python rust sed unzip ruby
 ```
 
 ```bash#Fedora
-$ sudo dnf install cargo clang19 llvm19 lld19 ccache cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
+$ sudo dnf install cargo clang19 llvm19 lld19 cmake git golang libtool ninja-build pkg-config rustc ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
 ```bash#openSUSE Tumbleweed
@@ -64,6 +64,44 @@ $ brew install bun
 ```
 
 {% /codetabs %}
+
+### Optional: Install `sccache`
+
+sccache is used to cache compilation artifacts, significantly speeding up builds. It must be installed with S3 support:
+
+```bash
+# For macOS
+$ brew install sccache
+
+# For Linux. Note that the version in your package manager may not have S3 support.
+$ cargo install sccache --features=s3
+```
+
+This will install `sccache` with S3 support. Our build scripts will automatically detect and use `sccache` with our shared S3 cache. **Note**: Not all versions of `sccache` are compiled with S3 support, hence we recommend installing it via `cargo`.
+
+#### Registering AWS Credentials for `sccache` (Core Developers Only)
+
+Core developers have write access to the shared S3 cache. To enable write access, you must log in with AWS credentials. The easiest way to do this is to use the [`aws` CLI](https://aws.amazon.com/cli/) and invoke [`aws configure` to provide your AWS security info](https://docs.aws.amazon.com/cli/latest/reference/configure/).
+
+The `cmake` scripts should automatically detect your AWS credentials from the environment or the `~/.aws/credentials` file.
+
+<details>
+    <summary>Logging in to the `aws` CLI</summary>
+
+    1. Install the AWS CLI by following [the official guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html).
+    2. Log in to your AWS account console. A team member should provide you with your credentials.
+    3. Click your name in the top right > Security credentials.
+    4. Scroll to "Access keys" and create a new access key.
+    5. Run `aws configure` in your terminal and provide the access key ID and secret access key when prompted.
+</details>
+
+<details>
+    <summary>Common Issues You May Encounter</summary>
+
+    - To confirm that the cache is being used, you can use the `sccache --show-stats` command right after a build. This will expose very useful statistics, including cache hits/misses.
+    - If you have multiple AWS profiles configured, ensure that the correct profile is set in the `AWS_PROFILE` environment variable.
+    - `sccache` follows a server-client model. If you run into weird issues where `sccache` refuses to use S3, even though you have AWS credentials configured, try killing any running `sccache` servers with `sccache --stop-server` and then re-running the build.
+</details>
 
 ## Install LLVM
 
@@ -330,15 +368,6 @@ $ bun run build -DUSE_STATIC_LIBATOMIC=OFF
 ```
 
 The built version of Bun may not work on other systems if compiled this way.
-
-### ccache conflicts with building TinyCC on macOS
-
-If you run into issues with `ccache` when building TinyCC, try reinstalling ccache
-
-```bash
-brew uninstall ccache
-brew install ccache
-```
 
 ## Using bun-debug
 

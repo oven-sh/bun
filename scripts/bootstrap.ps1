@@ -120,18 +120,18 @@ function Refresh-Path {
 function Add-To-Path {
   $absolutePath = Resolve-Path $args[0]
   $currentPath = [Environment]::GetEnvironmentVariable("Path", "Machine")
-  if ($currentPath -like "*$absolutePath*") {  
+  if ($currentPath -like "*$absolutePath*") {
     return
   }
 
   $newPath = $currentPath.TrimEnd(";") + ";" + $absolutePath
   if ($newPath.Length -ge 2048) {
     Write-Warning "PATH is too long, removing duplicate and old entries..."
-    
-    $paths = $currentPath.Split(';', [StringSplitOptions]::RemoveEmptyEntries) | 
+
+    $paths = $currentPath.Split(';', [StringSplitOptions]::RemoveEmptyEntries) |
       Where-Object { $_ -and (Test-Path $_) } |
       Select-Object -Unique
-    
+
     $paths += $absolutePath
     $newPath = $paths -join ';'
     while ($newPath.Length -ge 2048 -and $paths.Count -gt 1) {
@@ -274,7 +274,6 @@ function Install-Build-Essentials {
     cmake `
     make `
     ninja `
-    ccache `
     python `
     golang `
     nasm `
@@ -282,6 +281,7 @@ function Install-Build-Essentials {
     strawberryperl `
     mingw
   Install-Rust
+  Install-Sccache
   # Needed to remap stack traces
   Install-PdbAddr2line
   Install-Llvm
@@ -342,6 +342,77 @@ function Install-Rust {
   Set-Env "CARGO_HOME" "$rustPath\cargo"
   Set-Env "RUSTUP_HOME" "$rustPath\rustup"
   Add-To-Path "$rustPath\cargo\bin"
+}
+
+function Install-Sccache {
+  # Unfortunately the chocolatey package doesn't have support for aarch64 so we have to install
+  # sccache ourselves.
+  if (Which sccache) {
+    Write-Output "sccache is already installed"
+    return
+  }
+
+  Write-Output "Installing sccache..."
+
+  # Detect architecture
+  $arch = $env:PROCESSOR_ARCHITECTURE
+  $sccacheVersion = "0.12.0"
+
+  switch ($arch) {
+    "AMD64" {
+      $sccacheArch = "x86_64-pc-windows-msvc"
+    }
+    "ARM64" {
+      $sccacheArch = "aarch64-pc-windows-msvc"
+    }
+    default {
+      Write-Error "Unsupported architecture: $arch"
+      return
+    }
+  }
+
+  $sccacheUrl = "https://github.com/mozilla/sccache/releases/download/v$sccacheVersion/sccache-v$sccacheVersion-$sccacheArch.tar.gz"
+
+  $tempDir = [System.IO.Path]::GetTempPath()
+  $downloadPath = Join-Path $tempDir "sccache.tar.gz"
+
+  Write-Output "Downloading sccache for $sccacheArch from $sccacheUrl..."
+  Invoke-WebRequest -Uri $sccacheUrl -OutFile $downloadPath
+
+  # Extract the tar.gz file
+  $extractDir = Join-Path $tempDir "sccache-extract"
+  if (Test-Path $extractDir) {
+    Remove-Item -Recurse -Force $extractDir
+  }
+  New-Item -ItemType Directory -Path $extractDir | Out-Null
+
+  # Use tar (available in Windows 10+) to extract
+  Execute-Command tar -xzf $downloadPath -C $extractDir
+
+  # Find and move sccache.exe to a directory in PATH
+  $sccacheExe = Get-ChildItem -Path $extractDir -Recurse -Filter "sccache.exe" | Select-Object -First 1
+  if ($sccacheExe) {
+    $installDir = "C:\Program Files\sccache"
+    if (-not (Test-Path $installDir)) {
+      New-Item -ItemType Directory -Path $installDir | Out-Null
+    }
+    Copy-Item $sccacheExe.FullName -Destination $installDir -Force
+
+    # Add to PATH if not already there
+    $currentPath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    if ($currentPath -notlike "*$installDir*") {
+      [Environment]::SetEnvironmentVariable("Path", "$currentPath;$installDir", "Machine")
+      $env:Path += ";$installDir"
+    }
+
+    Write-Output "sccache installed successfully to $installDir"
+  } else {
+    Write-Error "Failed to find sccache.exe in downloaded archive"
+  }
+
+  # Clean up
+  Remove-Item $downloadPath -Force
+  Remove-Item -Recurse -Force $extractDir
 }
 
 function Install-PdbAddr2line {

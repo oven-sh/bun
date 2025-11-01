@@ -26,10 +26,11 @@ error() {
 }
 
 execute() {
-	print "$ $@" >&2
+    set -x
 	if ! "$@"; then
 		error "Command failed: $@"
 	fi
+    set +x
 }
 
 execute_sudo() {
@@ -1035,7 +1036,7 @@ install_build_essentials() {
 	install_llvm
 	install_osxcross
 	install_gcc
-	install_ccache
+	install_sccache
 	install_rust
 	install_docker
 }
@@ -1146,12 +1147,23 @@ install_gcc() {
 	execute_sudo ln -sf $(which llvm-symbolizer-$llvm_v) /usr/bin/llvm-symbolizer
 }
 
-install_ccache() {
-	case "$pm" in
-	apt | apk | brew)
-		install_packages ccache
-		;;
-	esac
+install_sccache() {
+    # Alright, look, this function is cobbled together but it's only as cobbled
+    # together as this whole script is.
+    #
+    # For some reason, move_to_bin doesn't work here due to permissions so I'm
+    # avoiding that function. It's also wrong with permissions and so on.
+    set -e
+    set -f
+
+    local sccache_http="https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-$(uname -m)-unknown-linux-musl.tar.gz"
+    local file=$(download_file "$sccache_http")
+    local tmpdir=$(mktemp -d)
+    execute tar -xzf "$file" -C "$tmpdir"
+    execute_sudo install -m755 "$tmpdir/sccache-v0.12.0-$(uname -m)-unknown-linux-musl/sccache" "/usr/local/bin"
+
+    set +f
+    set +e
 }
 
 install_rust() {

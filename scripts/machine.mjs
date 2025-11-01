@@ -485,6 +485,12 @@ const aws = {
       });
     }
 
+    // Attach IAM instance profile for CI builds to enable S3 build cache access
+    let iamInstanceProfile;
+    if (options.ci) {
+      iamInstanceProfile = JSON.stringify({ Name: "buildkite-build-agent" });
+    }
+
     const [instance] = await aws.runInstances({
       ["image-id"]: ImageId,
       ["instance-type"]: instanceType || (arch === "aarch64" ? "t4g.large" : "t3.large"),
@@ -499,6 +505,7 @@ const aws = {
       ["tag-specifications"]: JSON.stringify(tagSpecification),
       ["key-name"]: keyName,
       ["instance-market-options"]: marketOptions,
+      ["iam-instance-profile"]: iamInstanceProfile,
     });
 
     const machine = aws.toMachine(instance, { ...options, username, keyPath });
@@ -1191,6 +1198,9 @@ async function main() {
   const tags = {
     "robobun": "true",
     "robobun2": "true",
+    // This tag controls the IAM role required to be able to write to the shared S3 build cache.
+    // Don't want accidental polution from non-CI runs.
+    "Service": args["ci"] ? "buildkite-agent" : undefined,
     "buildkite:token": args["buildkite-token"],
     "tailscale:authkey": args["tailscale-authkey"],
     ...Object.fromEntries(args["tag"]?.map(tag => tag.split("=")) ?? []),

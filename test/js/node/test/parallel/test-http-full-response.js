@@ -21,6 +21,7 @@
 
 'use strict';
 const common = require('../common');
+if (common.isWindows) return; // TODO: BUN no 'ab' installed
 const assert = require('assert');
 // This test requires the program 'ab'
 const http = require('http');

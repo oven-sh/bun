@@ -109,7 +109,7 @@ pub const Expect = struct {
     }
 
     pub fn throwPrettyMatcherError(globalThis: *JSGlobalObject, custom_label: bun.String, matcher_name: anytype, matcher_params: anytype, flags: Flags, comptime message_fmt: string, message_args: anytype) bun.JSError {
-        switch (Output.enable_ansi_colors) {
+        switch (Output.enable_ansi_colors_stderr) {
             inline else => |colors| {
                 const chain = switch (flags.promise) {
                     .resolves => if (flags.not) Output.prettyFmt("resolves<d>.<r>not<d>.<r>", colors) else Output.prettyFmt("resolves<d>.<r>", colors),
@@ -164,7 +164,7 @@ pub const Expect = struct {
         };
         value.ensureStillAlive();
 
-        const matcher_params = switch (Output.enable_ansi_colors) {
+        const matcher_params = switch (Output.enable_ansi_colors_stderr) {
             inline else => |colors| comptime Output.prettyFmt(matcher_params_fmt, colors),
         };
         return processPromise(this.custom_label, this.flags, globalThis, value, matcher_name, matcher_params, false);
@@ -1026,7 +1026,7 @@ pub const Expect = struct {
             "Matcher functions should return an object in the following format:\n" ++
             "  {{message?: string | function, pass: boolean}}\n" ++
             "'{any}' was returned";
-        const err = switch (Output.enable_ansi_colors) {
+        const err = switch (Output.enable_ansi_colors_stderr) {
             inline else => |colors| globalThis.createErrorInstance(Output.prettyFmt(fmt, colors), .{ matcher_name, result.toFmt(&formatter) }),
         };
         err.put(globalThis, ZigString.static("name"), bun.String.static("InvalidMatcherError").toJS(globalThis));
@@ -1112,7 +1112,7 @@ pub const Expect = struct {
         }
 
         const matcher_params = CustomMatcherParamsFormatter{
-            .colors = Output.enable_ansi_colors,
+            .colors = Output.enable_ansi_colors_stderr,
             .globalThis = globalThis,
             .matcher_fn = matcher_fn,
         };
@@ -1146,7 +1146,7 @@ pub const Expect = struct {
         const matcher_name = try matcher_fn.getName(globalThis);
 
         const matcher_params = CustomMatcherParamsFormatter{
-            .colors = Output.enable_ansi_colors,
+            .colors = Output.enable_ansi_colors_stderr,
             .globalThis = globalThis,
             .matcher_fn = matcher_fn,
         };
@@ -1855,7 +1855,7 @@ pub const ExpectMatcherUtils = struct {
         var writer = buffered_writer.writer();
 
         if (comptime color_or_null) |color| {
-            if (Output.enable_ansi_colors) {
+            if (Output.enable_ansi_colors_stderr) {
                 try writer.writeAll(Output.prettyFmt(color, true));
             }
         }
@@ -1865,7 +1865,7 @@ pub const ExpectMatcherUtils = struct {
         try writer.print("{}", .{value.toFmt(&formatter)});
 
         if (comptime color_or_null) |_| {
-            if (Output.enable_ansi_colors) {
+            if (Output.enable_ansi_colors_stderr) {
                 try writer.writeAll(Output.prettyFmt("<r>", true));
             }
         }

@@ -370,7 +370,6 @@ pub fn autoTick(this: *EventLoop) void {
             loop.unrefCount(pending_unref);
         }
     }
-
     ctx.timer.updateDateHeaderTimerIfNecessary(loop, ctx);
 
     this.runImminentGCTimer();
@@ -451,13 +450,11 @@ pub fn autoTickActive(this: *EventLoop) void {
             loop.unrefCount(pending_unref);
         }
     }
-
     ctx.timer.updateDateHeaderTimerIfNecessary(loop, ctx);
 
     if (loop.isActive()) {
         this.processGCTimer();
         var timespec: bun.timespec = undefined;
-
         loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
     } else {
         loop.tickWithoutIdle();

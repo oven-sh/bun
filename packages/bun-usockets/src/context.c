@@ -48,6 +48,7 @@ void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls) {
         struct us_loop_t* loop = context->loop;
         us_internal_socket_context_unlink_listen_socket(ssl, context, ls);
         us_poll_stop((struct us_poll_t *) s, loop);
+        us_remove_socket_from_pending_read_list(loop, s);
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
 
         /* Link this socket to the close-list and let it be deleted after this iteration */
@@ -386,7 +387,9 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     s->flags.low_prio_state = 0;
     s->flags.is_paused = 0;
     s->flags.is_ipc = 0;
+    s->flags.is_pending_read = 0;
     s->next = 0;
+    s->next_to_read = NULL;
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     us_internal_socket_context_link_listen_socket(ssl, context, ls);
 
@@ -422,7 +425,9 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     s->flags.is_paused = 0;
     s->flags.is_ipc = 0;
+    s->flags.is_pending_read = 0;
     s->next = 0;
+    s->next_to_read = NULL;
     us_internal_socket_context_link_listen_socket(ssl, context, ls);
 
     ls->socket_ext_size = socket_ext_size;
@@ -453,8 +458,10 @@ struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_cont
     socket->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     socket->flags.is_paused = 0;
     socket->flags.is_ipc = 0;
+    socket->flags.is_pending_read = 0;
     socket->connect_state = NULL;
     socket->connect_next = NULL;
+    socket->next_to_read = NULL;
 
     us_internal_socket_context_link_socket(0, context, socket);
 
@@ -583,6 +590,8 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         flags->allow_half_open = (c->options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
         flags->is_paused = 0;
         flags->is_ipc = 0;
+        flags->is_pending_read = 0;
+        s->next_to_read = NULL;
         /* Link it into context so that timeout fires properly */
         us_internal_socket_context_link_socket(0, context, s);
 
@@ -760,8 +769,10 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_con
     connect_socket->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     connect_socket->flags.is_paused = 0;
     connect_socket->flags.is_ipc = 0;
+    connect_socket->flags.is_pending_read = 0;
     connect_socket->connect_state = NULL;
     connect_socket->connect_next = NULL;
+    connect_socket->next_to_read = NULL;
     us_internal_socket_context_link_socket(ssl, context, connect_socket);
 
     return connect_socket;
@@ -803,11 +814,20 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
         us_socket_context_unref(ssl, old_context);
     }
 
+    
+
     struct us_connecting_socket_t *c = s->connect_state;
     struct us_socket_t *new_s = s;
     if (ext_size != -1) {
         struct us_poll_t *pool_ref = &s->p;
+        
+        us_remove_socket_from_pending_read_list(loop, s);
+        
         new_s = (struct us_socket_t *) us_poll_resize(pool_ref, loop, sizeof(struct us_socket_t) + ext_size);
+        
+        // we always add the new ptr to the pending read list so we can read again in the next tick if needed
+        us_add_socket_to_pending_read_list(loop, new_s);
+        
         if (c) {
             c->connecting_head = new_s;
             c->context = context;

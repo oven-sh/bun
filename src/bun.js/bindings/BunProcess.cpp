@@ -1101,7 +1101,14 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
 
     auto uncaughtExceptionMonitor = Identifier::fromString(JSC::getVM(globalObject), "uncaughtExceptionMonitor"_s);
     if (wrapped.listenerCount(uncaughtExceptionMonitor) > 0) {
+        auto scope = DECLARE_CATCH_SCOPE(vm);
         wrapped.emit(uncaughtExceptionMonitor, args);
+        if (auto ex = scope.exception()) {
+            scope.clearException();
+            // if an exception is thrown in the uncaughtExceptionMonitor handler, we abort
+            Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
+            Bun__Process__exit(lexicalGlobalObject, 1);
+        }
     }
 
     auto uncaughtExceptionIdent = Identifier::fromString(JSC::getVM(globalObject), "uncaughtException"_s);
@@ -1118,7 +1125,14 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
             Bun__Process__exit(lexicalGlobalObject, 1);
         }
     } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
+        auto scope = DECLARE_CATCH_SCOPE(vm);
         wrapped.emit(uncaughtExceptionIdent, args);
+        if (auto ex = scope.exception()) {
+            scope.clearException();
+            // if an exception is thrown in the uncaughtException handler, we abort
+            Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
+            Bun__Process__exit(lexicalGlobalObject, 1);
+        }
     } else {
         return false;
     }

@@ -1450,6 +1450,65 @@ Process::~Process()
 }
 
 extern "C" bool Bun__NODE_NO_WARNINGS();
+extern "C" bool Bun__NODE_TRACE_WARNINGS();
+
+// Track whether we've shown the hint message about --trace-warnings
+static bool hasShownTraceWarningsHint = false;
+
+static void printWarningToStderr(JSC::JSGlobalObject* globalObject, JSValue errorInstance, bool traceWarnings)
+{
+    auto& vm = JSC::getVM(globalObject);
+
+    // Get the warning name (e.g., "Warning", "DeprecationWarning")
+    auto warningName = errorInstance.get(globalObject, vm.propertyNames->name);
+    String nameStr = "Warning"_s;
+    if (warningName.isString()) {
+        nameStr = warningName.getString(globalObject);
+    }
+
+    // Get the warning message
+    auto warningMessage = errorInstance.get(globalObject, vm.propertyNames->message);
+    String messageStr = ""_s;
+    if (warningMessage.isString()) {
+        messageStr = warningMessage.getString(globalObject);
+    }
+
+    // Get PID
+    pid_t pid = getpid();
+
+    // Format: (bun:PID) WarningName: message
+    auto firstLine = makeString("(bun:"_s, String::number(pid), ") "_s, nameStr);
+    if (!messageStr.isEmpty()) {
+        firstLine = makeString(firstLine, ": "_s, messageStr);
+    }
+
+    fprintf(stderr, "%s\n", firstLine.utf8().data());
+
+    if (traceWarnings) {
+        // Show stack trace
+        auto stackValue = errorInstance.get(globalObject, vm.propertyNames->stack);
+        if (stackValue.isString()) {
+            String stackStr = stackValue.getString(globalObject);
+            // The stack typically includes the error name and message as first line,
+            // so we need to extract just the stack frames
+            auto lines = stackStr.split('\n');
+            bool firstLine = true;
+            for (const auto& line : lines) {
+                // Skip the first line if it looks like an error message line
+                if (firstLine && (line.startsWith(nameStr) || line.contains(messageStr))) {
+                    firstLine = false;
+                    continue;
+                }
+                firstLine = false;
+                fprintf(stderr, "%s\n", line.utf8().data());
+            }
+        }
+    } else if (!hasShownTraceWarningsHint) {
+        // Show the hint about --trace-warnings only once per process
+        fprintf(stderr, "(Use `bun --trace-warnings ...` to show where the warning was created)\n");
+        hasShownTraceWarningsHint = true;
+    }
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -1466,8 +1525,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (JSC::JSGlobalObject * lexicalG
         process->wrapped().emit(ident, args);
         return JSValue::encode(jsUndefined());
     } else if (!Bun__NODE_NO_WARNINGS()) {
-        auto jsArgs = JSValue::encode(value);
-        Bun__ConsoleObject__messageWithTypeAndLevel(reinterpret_cast<Bun::ConsoleObject*>(globalObject->consoleClient().get())->m_client, static_cast<uint32_t>(MessageType::Log), static_cast<uint32_t>(MessageLevel::Warning), globalObject, &jsArgs, 1);
+        // Use Node.js-compatible warning formatting
+        printWarningToStderr(globalObject, value, Bun__NODE_TRACE_WARNINGS());
         RETURN_IF_EXCEPTION(scope, {});
     }
     return JSValue::encode(jsUndefined());

@@ -69,3 +69,60 @@ describe("BUN_OPTIONS environment variable", () => {
     expect(result.stdout.toString()).toContain("NORMAL");
   });
 });
+
+describe("NODE_OPTIONS environment variable", () => {
+  test("basic usage - passes options to bun command", () => {
+    const result = spawnSync({
+      cmd: [bunExe()],
+      env: {
+        ...bunEnv,
+        NODE_OPTIONS: "--print='NODE_OPTIONS WAS A SUCCESS'",
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("NODE_OPTIONS WAS A SUCCESS");
+  });
+
+  test("multiple options - passes all options to bun command", () => {
+    const result = spawnSync({
+      cmd: [bunExe()],
+      env: {
+        ...bunEnv,
+        NODE_OPTIONS: "--print='MULTIPLE OPTIONS' --quiet",
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("MULTIPLE OPTIONS");
+  });
+
+  test("BUN_OPTIONS takes precedence over NODE_OPTIONS", () => {
+    const result = spawnSync({
+      cmd: [bunExe()],
+      env: {
+        ...bunEnv,
+        NODE_OPTIONS: "--print='NODE'",
+        BUN_OPTIONS: "--print='BUN'",
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("BUN");
+    expect(result.stdout.toString()).not.toContain("NODE");
+  });
+
+  test("NODE_OPTIONS works when BUN_OPTIONS is not set", () => {
+    const result = spawnSync({
+      cmd: [bunExe()],
+      env: {
+        ...bunEnv,
+        NODE_OPTIONS: "--print='FALLBACK TO NODE_OPTIONS'",
+        BUN_OPTIONS: undefined,
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("FALLBACK TO NODE_OPTIONS");
+  });
+});

@@ -1584,7 +1584,7 @@ pub fn Package(comptime SemverIntType: type) type {
                 // might process them later if no catalogs were found in workspaces
                 lockfile.catalogs.parseCount(lockfile, json, &string_builder);
 
-                try install.PostinstallOptimizer.fromPackageJSON(&lockfile.postinstall_optimizer, &json, allocator);
+                try install.PostinstallOptimizer.fromPackageJSON(&pm.postinstall_optimizer, &json, allocator);
             }
 
             try string_builder.allocate();

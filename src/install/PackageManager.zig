@@ -89,6 +89,7 @@ lockfile: *Lockfile = undefined,
 
 options: Options,
 preinstall_state: std.ArrayListUnmanaged(PreinstallState) = .{},
+postinstall_optimizer: PostinstallOptimizer.List = .{},
 
 global_link_dir: ?std.fs.Dir = null,
 global_dir: ?std.fs.Dir = null,
@@ -1321,3 +1322,4 @@ const initializeStore = bun.install.initializeStore;
 
 const Lockfile = bun.install.Lockfile;
 const Package = Lockfile.Package;
+const PostinstallOptimizer = bun.install.PostinstallOptimizer;

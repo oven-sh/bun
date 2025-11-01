@@ -256,6 +256,7 @@ pub const PackageInstaller = struct {
         log_level: Options.LogLevel,
     ) void {
         const lockfile = this.lockfile;
+        const manager = this.manager;
         const string_buf = lockfile.buffers.string_bytes.items;
         var node_modules_path: bun.AbsPath(.{}) = .from(this.node_modules.path.items);
         defer node_modules_path.deinit();
@@ -279,14 +280,14 @@ pub const PackageInstaller = struct {
             var target_package_name = package_name_;
             var can_retry_without_native_binlink_optimization = false;
 
-            if (lockfile.postinstall_optimizer.isNativeBinlinkEnabled()) {
+            if (manager.postinstall_optimizer.isNativeBinlinkEnabled()) {
                 // Check for native binlink optimization
                 const name_hash = pkg_name_hashes[package_id];
-                if (lockfile.postinstall_optimizer.get(name_hash)) |optimizer| {
+                if (manager.postinstall_optimizer.get(name_hash)) |optimizer| {
                     switch (optimizer) {
                         .native_binlink => {
-                            const target_cpu = this.manager.options.cpu;
-                            const target_os = this.manager.options.os;
+                            const target_cpu = manager.options.cpu;
+                            const target_os = manager.options.os;
                             if (PostinstallOptimizer.getNativeBinlinkReplacementPackageID(
                                 pkg_resolutions_lists[package_id].get(pkg_resolutions_buffer),
                                 pkg_metas,
@@ -304,12 +305,12 @@ pub const PackageInstaller = struct {
             }
             // globally linked packages shouls always belong to the root
             // tree (0).
-            const global = if (!this.manager.options.global)
+            const global = if (!manager.options.global)
                 false
             else if (tree_id != 0)
                 false
             else global: {
-                for (this.manager.update_requests) |request| {
+                for (manager.update_requests) |request| {
                     if (request.package_id == package_id) {
                         break :global true;
                     }
@@ -336,17 +337,22 @@ pub const PackageInstaller = struct {
 
                 bin_linker.link(global);
 
-                if (bin_linker.err) |err| {
-                    if (can_retry_without_native_binlink_optimization) {
-                        can_retry_without_native_binlink_optimization = false;
-                        bin_linker.err = null;
-                        target_package_name = package_name_;
-                        continue;
+                if (can_retry_without_native_binlink_optimization and (bin_linker.skipped_due_to_missing_bin or bin_linker.err != null)) {
+                    can_retry_without_native_binlink_optimization = false;
+                    if (PackageManager.verbose_install) {
+                        Output.prettyErrorln("[Bin Linker] {s} -> {s} retrying without native bin link", .{
+                            package_name_.slice(),
+                            target_package_name.slice(),
+                        });
                     }
+                    target_package_name = package_name_;
+                    continue;
+                }
 
+                if (bin_linker.err) |err| {
                     if (log_level != .silent) {
-                        this.manager.log.addErrorFmtOpts(
-                            this.manager.allocator,
+                        manager.log.addErrorFmtOpts(
+                            manager.allocator,
                             "Failed to link <b>{s}<r>: {s}",
                             .{ alias, @errorName(err) },
                             .{},
@@ -354,7 +360,7 @@ pub const PackageInstaller = struct {
                     }
 
                     if (this.options.enable.fail_early) {
-                        this.manager.crash();
+                        manager.crash();
                     }
                 }
 
@@ -1148,7 +1154,12 @@ pub const PackageInstaller = struct {
                         folder_path.append(alias.slice(this.lockfile.buffers.string_bytes.items));
 
                         enqueueLifecycleScripts: {
-                            if (this.lockfile.postinstall_optimizer.shouldIgnoreLifecycleScripts(pkg_name_hash)) {
+                            if (this.manager.postinstall_optimizer.shouldIgnoreLifecycleScripts(pkg_name_hash)) {
+                                if (PackageManager.verbose_install) {
+                                    Output.prettyErrorln("<d>[Lifecycle Scripts]<r> ignoring {s} lifecycle scripts", .{
+                                        pkg_name.slice(this.lockfile.buffers.string_bytes.items),
+                                    });
+                                }
                                 break :enqueueLifecycleScripts;
                             }
 
@@ -1326,7 +1337,12 @@ pub const PackageInstaller = struct {
                 folder_path.append(alias.slice(this.lockfile.buffers.string_bytes.items));
 
                 enqueueLifecycleScripts: {
-                    if (this.lockfile.postinstall_optimizer.shouldIgnoreLifecycleScripts(pkg_name_hash)) {
+                    if (this.manager.postinstall_optimizer.shouldIgnoreLifecycleScripts(pkg_name_hash)) {
+                        if (PackageManager.verbose_install) {
+                            Output.prettyErrorln("<d>[Lifecycle Scripts]<r> ignoring {s} lifecycle scripts", .{
+                                pkg_name.slice(this.lockfile.buffers.string_bytes.items),
+                            });
+                        }
                         break :enqueueLifecycleScripts;
                     }
 

@@ -1035,16 +1035,21 @@ pub const Installer = struct {
 
                         bin_linker.link(false);
 
-                        if (bin_linker.err) |err| {
-                            if (can_retry_without_native_binlink_optimization) {
-                                bin_linker.err = null;
-                                debug("retrying without native bin link", .{});
-                                can_retry_without_native_binlink_optimization = false;
-                                target_node_modules_path.?.deinit();
-                                target_node_modules_path = null;
-                                target_package_name = strings.StringOrTinyString.init(dep_name);
-                                continue;
+                        if (can_retry_without_native_binlink_optimization and (bin_linker.skipped_due_to_missing_bin or bin_linker.err != null)) {
+                            can_retry_without_native_binlink_optimization = false;
+                            target_node_modules_path.?.deinit();
+                            target_node_modules_path = null;
+                            target_package_name = strings.StringOrTinyString.init(dep_name);
+                            if (PackageManager.verbose_install) {
+                                Output.prettyErrorln("<d>[Bin Linker]<r> {s} -> {s} retrying without native bin link", .{
+                                    dep_name,
+                                    target_package_name.slice(),
+                                });
                             }
+                            continue;
+                        }
+
+                        if (bin_linker.err) |err| {
                             return .failure(.{ .binaries = err });
                         }
 
@@ -1284,7 +1289,7 @@ pub const Installer = struct {
         pkg_id: PackageID,
         target_node_modules_path: *?bun.AbsPath(.{}),
     ) ?bun.strings.StringOrTinyString {
-        const postinstall_optimizer = &this.lockfile.postinstall_optimizer;
+        const postinstall_optimizer = &this.manager.postinstall_optimizer;
         if (!postinstall_optimizer.isNativeBinlinkEnabled()) {
             return null;
         }
@@ -1401,17 +1406,20 @@ pub const Installer = struct {
 
                 bin_linker.link(false);
 
-                if (bin_linker.err) |err| {
-                    if (can_retry_without_native_binlink_optimization) {
-                        debug("retrying without native bin link", .{});
-                        can_retry_without_native_binlink_optimization = false;
-                        target_node_modules_path.?.deinit();
-                        target_node_modules_path = null;
-
-                        bin_linker.err = null;
-                        continue;
+                if (can_retry_without_native_binlink_optimization and (bin_linker.skipped_due_to_missing_bin or bin_linker.err != null)) {
+                    can_retry_without_native_binlink_optimization = false;
+                    target_node_modules_path.?.deinit();
+                    target_node_modules_path = null;
+                    if (PackageManager.verbose_install) {
+                        Output.prettyErrorln("<d>[Bin Linker]<r> {s} -> {s} retrying without native bin link", .{
+                            package_name.slice(),
+                            target_package_name.slice(),
+                        });
                     }
+                    continue;
+                }
 
+                if (bin_linker.err) |err| {
                     return err;
                 }
 

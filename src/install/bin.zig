@@ -531,6 +531,7 @@ pub const Bin = extern struct {
         rel_buf: []u8,
 
         err: ?anyerror = null,
+        skipped_due_to_missing_bin: bool = false,
 
         pub var umask: bun.Mode = 0;
 
@@ -578,6 +579,7 @@ pub const Bin = extern struct {
             // Skip if the target does not exist. This is important because placing a dangling
             // shim in path might break a postinstall
             if (!bun.sys.exists(abs_target)) {
+                this.skipped_due_to_missing_bin = true;
                 return;
             }
 

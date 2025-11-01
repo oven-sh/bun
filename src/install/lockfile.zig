@@ -27,7 +27,6 @@ trusted_dependencies: ?TrustedDependenciesSet = null,
 patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 catalogs: CatalogMap = .{},
-postinstall_optimizer: PostinstallOptimizer.List = .{},
 
 pub const DepSorter = struct {
     lockfile: *const Lockfile,
@@ -808,9 +807,6 @@ pub fn cleanWithLogger(
             bun.fmt.fmtDurationOneDecimal(timer.read()),
         });
     }
-
-    // Keep it around.
-    new.postinstall_optimizer = old.postinstall_optimizer;
 
     return new;
 }

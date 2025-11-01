@@ -44,6 +44,7 @@
     macro(createParsedShellScript) \
     macro(createShellInterpreter) \
     macro(deflateSync) \
+    macro(extract) \
     macro(file) \
     macro(fs) \
     macro(gc) \
@@ -68,6 +69,7 @@
     macro(spawn) \
     macro(spawnSync) \
     macro(stringWidth) \
+    macro(tarball) \
     macro(udpSocket) \
     macro(which) \
     macro(write) \

@@ -2260,11 +2260,13 @@ pub const Formatter = struct {
                     this.max_depth,
                     enable_ansi_colors,
                 });
-                // Strings are printed directly, otherwise we recurse. It is possible to end up in an infinite loop.
+                // Strings are printed directly, otherwise we recurse
+                // Disable custom inspect when formatting the result to prevent infinite recursion
+                // if the custom inspect returns the same object or an object with its own custom inspect
                 if (result.isString()) {
                     writer.print("{}", .{result.fmtString(this.globalThis)});
                 } else {
-                    try this.format(try ConsoleObject.Formatter.Tag.get(result, this.globalThis), Writer, writer_, result, this.globalThis, enable_ansi_colors);
+                    try this.format(try ConsoleObject.Formatter.Tag.getAdvanced(result, this.globalThis, .{ .disable_inspect_custom = true }), Writer, writer_, result, this.globalThis, enable_ansi_colors);
                 }
             },
             .Symbol => {

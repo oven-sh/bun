@@ -899,8 +899,6 @@ pub const FetchTasklet = struct {
         if (scheduled_response_buffer.items.len > 0) {
             // make own copy first
             const owned = scheduled_response_buffer.toManaged(bun.default_allocator);
-            // and now it's safer to discard
-            bun.default_allocator.free(scheduled_response_buffer.allocatedSlice());
             // reinitialize the buffer for future chunks
             this.scheduled_response_buffer = .{
                 .allocator = bun.default_allocator,

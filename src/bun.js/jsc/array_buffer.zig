@@ -672,7 +672,6 @@ pub const JSCArrayBuffer = opaque {
 
     pub fn asArrayBuffer(self: *Self) ArrayBuffer {
         var out: ArrayBuffer = undefined;
-        out.ptr = null; // `ptr` might not get set if the ArrayBuffer is empty
         JSC__ArrayBuffer__asBunArrayBuffer(self, &out);
         return out;
     }

@@ -225,7 +225,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     .hashes = this.hashes,
                     .concurrent_task = undefined,
                 });
-                that.concurrent_task = .{ .task = jsc.Task.init(that), .auto_delete = false };
+                that.concurrent_task = .{ .task = jsc.Task.init(that), .next = .{} };
+                that.concurrent_task.next.setAutoDelete(false);
                 that.reloader.enqueueTaskConcurrent(&that.concurrent_task);
                 this.count = 0;
             }

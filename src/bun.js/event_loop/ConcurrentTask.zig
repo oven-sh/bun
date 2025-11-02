@@ -11,10 +11,45 @@
 const ConcurrentTask = @This();
 
 task: Task = undefined,
-next: ?*ConcurrentTask = null,
-auto_delete: bool = false,
+next: PackedNext = .{},
 
-pub const Queue = UnboundedQueue(ConcurrentTask, .next);
+pub const PackedNext = packed struct(u64) {
+    ptr_bits: u63 = 0,
+    auto_delete: bool = false,
+
+    pub fn init(ptr: ?*ConcurrentTask) PackedNext {
+        if (ptr) |p| {
+            const addr = @intFromPtr(p);
+            return .{
+                .ptr_bits = @as(u63, @truncate(addr)),
+                .auto_delete = false,
+            };
+        }
+        return .{};
+    }
+
+    pub fn get(self: PackedNext) ?*ConcurrentTask {
+        if (self.ptr_bits == 0) return null;
+        const ptr: u64 = @as(u64, self.ptr_bits);
+        return @as(?*ConcurrentTask, @ptrFromInt(ptr));
+    }
+
+    pub fn autoDelete(self: PackedNext) bool {
+        return self.auto_delete;
+    }
+
+    pub fn setAutoDelete(self: *PackedNext, value: bool) void {
+        self.auto_delete = value;
+    }
+
+    comptime {
+        if (@sizeOf(PackedNext) != @sizeOf(u64)) {
+            @compileError("PackedNext must be the same size as a u64");
+        }
+    }
+};
+
+pub const Queue = bun.threading.UnboundedQueuePacked(ConcurrentTask, .next, .@"packed");
 pub const new = bun.TrivialNew(@This());
 pub const deinit = bun.TrivialDeinit(@This());
 
@@ -23,11 +58,12 @@ pub const AutoDeinit = enum {
     auto_deinit,
 };
 pub fn create(task: Task) *ConcurrentTask {
-    return ConcurrentTask.new(.{
+    var concurrent_task = ConcurrentTask.new(.{
         .task = task,
-        .next = null,
-        .auto_delete = true,
+        .next = .{},
     });
+    concurrent_task.next.setAutoDelete(true);
+    return concurrent_task;
 }
 
 pub fn createFrom(task: anytype) *ConcurrentTask {
@@ -46,9 +82,9 @@ pub fn from(this: *ConcurrentTask, of: anytype, auto_deinit: AutoDeinit) *Concur
 
     this.* = .{
         .task = Task.init(of),
-        .next = null,
-        .auto_delete = auto_deinit == .auto_deinit,
+        .next = .{},
     };
+    this.next.setAutoDelete(auto_deinit == .auto_deinit);
     return this;
 }
 
@@ -60,3 +96,11 @@ const UnboundedQueue = bun.threading.UnboundedQueue;
 const jsc = bun.jsc;
 const ManagedTask = jsc.ManagedTask;
 const Task = jsc.Task;
+
+comptime {
+    // Verify that ConcurrentTask is 16 bytes (not 24)
+    // Task is 8 bytes (u64), PackedNext is 8 bytes (u64) = 16 bytes total
+    if (@sizeOf(ConcurrentTask) != 16) {
+        @compileError(bun.fmt.comptimePrint("ConcurrentTask should be 16 bytes, but it's {d} bytes", .{@sizeOf(ConcurrentTask)}));
+    }
+}

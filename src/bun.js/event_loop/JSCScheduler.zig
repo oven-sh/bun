@@ -25,11 +25,12 @@ export fn Bun__eventLoop__incrementRefConcurrently(jsc_vm: *VirtualMachine, delt
 export fn Bun__queueJSCDeferredWorkTaskConcurrently(jsc_vm: *VirtualMachine, task: *JSCScheduler.JSCDeferredWorkTask) void {
     jsc.markBinding(@src());
     var loop = jsc_vm.eventLoop();
-    loop.enqueueTaskConcurrent(ConcurrentTask.new(.{
+    const concurrent_task = ConcurrentTask.new(.{
         .task = Task.init(task),
-        .next = null,
-        .auto_delete = true,
-    }));
+        .next = .{},
+    });
+    concurrent_task.next.setAutoDelete(true);
+    loop.enqueueTaskConcurrent(concurrent_task);
 }
 
 export fn Bun__tickWhilePaused(paused: *bool) void {

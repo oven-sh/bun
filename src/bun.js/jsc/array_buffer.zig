@@ -319,6 +319,9 @@ pub const ArrayBuffer = extern struct {
     ///    new ArrayBuffer(view.buffer, view.byteOffset, view.byteLength)
     /// ```
     pub inline fn byteSlice(this: *const @This()) []u8 {
+        if (this.isDetached()) {
+            return &.{};
+        }
         return this.ptr.?[0..this.byte_len];
     }
 
@@ -334,6 +337,9 @@ pub const ArrayBuffer = extern struct {
     }
 
     pub inline fn asU16Unaligned(this: *const @This()) []align(1) u16 {
+        if (this.isDetached()) {
+            return &.{};
+        }
         return @ptrCast(this.ptr.?[0 .. this.byte_len / @sizeOf(u16) * @sizeOf(u16)]);
     }
 
@@ -342,6 +348,9 @@ pub const ArrayBuffer = extern struct {
     }
 
     pub inline fn asU32Unaligned(this: *const @This()) []align(1) u32 {
+        if (this.isDetached()) {
+            return &.{};
+        }
         return @ptrCast(this.ptr.?[0 .. this.byte_len / @sizeOf(u32) * @sizeOf(u32)]);
     }
 

@@ -164,9 +164,6 @@ pub fn decode(this: *TextDecoder, globalThis: *jsc.JSGlobalObject, callframe: *j
         }
 
         if (arguments[0].asArrayBuffer(globalThis)) |array_buffer| {
-            if (array_buffer.isDetached()) {
-                break :input_slice "";
-            }
             break :input_slice array_buffer.slice();
         }
 

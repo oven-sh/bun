@@ -361,12 +361,13 @@ const bun = @import("bun");
 const std = @import("std");
 const uws_app_t = @import("./App.zig").uws_app_t;
 
+const JSGlobalObject = bun.jsc.JSGlobalObject;
+const JSValue = bun.jsc.JSValue;
+
 const uws = bun.uws;
 const NewApp = uws.NewApp;
 const Opcode = uws.Opcode;
 const Request = uws.Request;
 const SendStatus = uws.SendStatus;
 const SocketContext = uws.SocketContext;
-const JSValue = bun.jsc.JSValue;
-const JSGlobalObject = bun.jsc.JSGlobalObject;
 const uws_res = uws.uws_res;

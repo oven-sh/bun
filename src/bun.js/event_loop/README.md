@@ -9,25 +9,32 @@ Bun's event loop is built on top of **uSockets** (a cross-platform event loop ba
 ## Core Components
 
 ### 1. Task Queue (`src/bun.js/event_loop/Task.zig`)
+
 A tagged pointer union containing various async task types (file I/O, network requests, timers, etc.). Tasks are queued by various subsystems and drained by the main event loop.
 
 ### 2. Immediate Tasks (`event_loop.zig:14-15`)
+
 Two separate queues for `setImmediate()`:
+
 - **`immediate_tasks`**: Tasks to run on the current tick
 - **`next_immediate_tasks`**: Tasks to run on the next tick
 
 This prevents infinite loops when `setImmediate` is called within a `setImmediate` callback.
 
 ### 3. Concurrent Task Queue (`event_loop.zig:17`)
+
 Thread-safe queue for tasks enqueued from worker threads or async operations. These are moved to the main task queue before processing.
 
 ### 4. Deferred Task Queue (`src/bun.js/event_loop/DeferredTaskQueue.zig`)
+
 For operations that should be batched and deferred until after microtasks drain (e.g., buffered HTTP response writes, file sink flushes). This avoids excessive system calls while maintaining responsiveness.
 
 ### 5. Process.nextTick Queue (`src/bun.js/bindings/JSNextTickQueue.cpp`)
+
 Node.js-compatible implementation of `process.nextTick()`, which runs before microtasks but after each task.
 
 ### 6. Microtask Queue (JavaScriptCore VM)
+
 Built-in JSC microtask queue for promises and queueMicrotask.
 
 ## Event Loop Flow
@@ -152,17 +159,18 @@ For each task dequeued from the task queue:
 #### Process.nextTick Ordering (`ZigGlobalObject.cpp:2818-2829`)
 
 The process.nextTick queue is special:
+
 - It runs **before** microtasks
 - After processing **all** nextTick callbacks in the current batch, microtasks are drained
 - This creates batched processing with interleaving between nextTick generations and promises:
 
 ```javascript
-Promise.resolve().then(() => console.log('promise 1'));
+Promise.resolve().then(() => console.log("promise 1"));
 process.nextTick(() => {
-  console.log('nextTick 1');
-  Promise.resolve().then(() => console.log('promise 2'));
+  console.log("nextTick 1");
+  Promise.resolve().then(() => console.log("promise 2"));
 });
-process.nextTick(() => console.log('nextTick 2'));
+process.nextTick(() => console.log("nextTick 2"));
 
 // Output:
 // nextTick 1
@@ -175,12 +183,12 @@ If a nextTick callback schedules another nextTick, it goes to the next batch:
 
 ```javascript
 process.nextTick(() => {
-  console.log('nextTick 1');
-  process.nextTick(() => console.log('nextTick 3'));
-  Promise.resolve().then(() => console.log('promise 2'));
+  console.log("nextTick 1");
+  process.nextTick(() => console.log("nextTick 3"));
+  Promise.resolve().then(() => console.log("promise 2"));
 });
-process.nextTick(() => console.log('nextTick 2'));
-Promise.resolve().then(() => console.log('promise 1'));
+process.nextTick(() => console.log("nextTick 2"));
+Promise.resolve().then(() => console.log("promise 1"));
 
 // Output:
 // nextTick 1
@@ -191,6 +199,7 @@ Promise.resolve().then(() => console.log('promise 1'));
 ```
 
 The implementation (`ProcessObjectInternals.ts:295-335`):
+
 ```typescript
 function processTicksAndRejections() {
   var tock;
@@ -212,6 +221,7 @@ function processTicksAndRejections() {
 #### Deferred Task Queue (`DeferredTaskQueue.zig:44-61`)
 
 Runs after microtasks to batch operations:
+
 - Used for buffered HTTP writes, file sink flushes
 - Prevents re-entrancy issues
 - Balances latency vs. throughput
@@ -256,6 +266,7 @@ The I/O poll is integrated into the event loop via `us_loop_run_bun_tick()`:
 ### I/O Events Handling
 
 When I/O becomes ready (socket readable/writable, file descriptor ready):
+
 1. The poll is dispatched via `us_internal_dispatch_ready_poll()` or `Bun__internal_dispatch_ready_poll()`
 2. This triggers the appropriate callback **synchronously during the I/O poll phase**
 3. The callback may:
@@ -271,23 +282,26 @@ When I/O becomes ready (socket readable/writable, file descriptor ready):
 Timers are handled differently based on platform:
 
 ### POSIX (`event_loop.zig:396`)
+
 ```zig
 ctx.timer.drainTimers(ctx);
 ```
 
 Timers are drained after I/O polling. Each timer callback:
+
 1. Is wrapped in `enter()`/`exit()`
 2. Triggers microtask draining after execution
 3. Can enqueue new tasks
 
 ### Windows
+
 Uses the uv_timer_t mechanism integrated into the uSockets loop.
 
 ### Timer vs. setImmediate Ordering
 
 ```javascript
-setTimeout(() => console.log('timeout'), 0);
-setImmediate(() => console.log('immediate'));
+setTimeout(() => console.log("timeout"), 0);
+setImmediate(() => console.log("immediate"));
 
 // Output is typically:
 // immediate
@@ -295,6 +309,7 @@ setImmediate(() => console.log('immediate'));
 ```
 
 This is because:
+
 - `setImmediate` runs in `tickImmediateTasks()` before I/O polling
 - `setTimeout` fires after I/O polling (even with 0ms)
 - However, this can vary based on timing and event loop state
@@ -337,6 +352,7 @@ The Bun event loop processes work in this order:
 5. **Handle rejected promises**
 
 This architecture ensures:
+
 - ✅ Correct Node.js semantics for process.nextTick vs. promises
 - ✅ Efficient batching of I/O operations
 - ✅ Minimal microtask latency

@@ -444,6 +444,10 @@ pub const JSBundler = struct {
                 this.code_splitting = hot;
             }
 
+            if (try config.getBooleanLoose(globalThis, "cssChunking")) |css_chunking| {
+                this.css_chunking = css_chunking;
+            }
+
             if (try config.getTruthy(globalThis, "minify")) |minify| {
                 if (minify.isBoolean()) {
                     const value = minify.toBoolean();

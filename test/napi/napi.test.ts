@@ -266,6 +266,16 @@ describe.concurrent("napi", () => {
     });
   });
 
+  describe("napi_create_external_buffer", () => {
+    it("handles empty/null data without throwing", async () => {
+      const result = await checkSameOutput("test_napi_create_external_buffer_empty", []);
+      expect(result).toContain("PASS: napi_create_external_buffer with nullptr and zero length");
+      expect(result).toContain("PASS: napi_create_external_buffer with non-null data and zero length");
+      expect(result).toContain("PASS: napi_create_external_buffer with nullptr finalizer");
+      expect(result).not.toContain("FAIL");
+    });
+  });
+
   describe("napi_async_work", () => {
     it("null checks execute callbacks", async () => {
       const output = await checkSameOutput("test_napi_async_work_execute_null_check", []);

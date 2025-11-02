@@ -195,7 +195,7 @@ int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_re
         *nchars_ref = read;
     }
 
-    return written;
+    RELEASE_AND_RETURN(throwScope, written);
 }
 
 int String::Length() const

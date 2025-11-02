@@ -1684,6 +1684,7 @@ pub const ThreadSafeFunction = struct {
                 .env = this.env,
                 .fun = fun,
                 .data = this.finalizer_data,
+                .hint = this.ctx,
             };
             finalizer.enqueue();
         } else {

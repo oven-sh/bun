@@ -617,7 +617,7 @@ pub fn processSubtree(
                         builder.resolutions[unresolved_dep_id] = pkg_id;
                     }
                 }
-                for (dependency_lists[replace.id].items) |*placed_dep_id| {
+                for (dependency_lists[replace.id.get()].items) |*placed_dep_id| {
                     if (placed_dep_id.* == replace.dep_id) {
                         placed_dep_id.* = dep_id;
                     }

@@ -1239,6 +1239,103 @@ test_napi_freeze_seal_indexed(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// Test for napi_create_external_buffer with empty/null data
+static void empty_buffer_finalizer(napi_env env, void *data, void *hint) {
+  // No-op finalizer for empty buffers
+}
+
+static napi_value
+test_napi_create_external_buffer_empty(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  // Test 1: nullptr data with zero length
+  {
+    napi_value buffer;
+    napi_status status = napi_create_external_buffer(
+        env, 0, nullptr, empty_buffer_finalizer, nullptr, &buffer);
+
+    if (status != napi_ok) {
+      printf("FAIL: napi_create_external_buffer with nullptr and zero length "
+             "failed with status %d\n",
+             status);
+      return env.Undefined();
+    }
+
+    // Verify it's a buffer
+    bool is_buffer;
+    NODE_API_CALL(env, napi_is_buffer(env, buffer, &is_buffer));
+    if (!is_buffer) {
+      printf("FAIL: Created value is not a buffer\n");
+      return env.Undefined();
+    }
+
+    // Verify length is 0
+    size_t length;
+    void *data;
+    NODE_API_CALL(env, napi_get_buffer_info(env, buffer, &data, &length));
+    if (length != 0) {
+      printf("FAIL: Buffer length is %zu instead of 0\n", length);
+      return env.Undefined();
+    }
+
+    printf("PASS: napi_create_external_buffer with nullptr and zero length\n");
+  }
+
+  // Test 2: non-null data with zero length
+  {
+    char dummy = 0;
+    napi_value buffer;
+    napi_status status = napi_create_external_buffer(
+        env, 0, &dummy, empty_buffer_finalizer, nullptr, &buffer);
+
+    if (status != napi_ok) {
+      printf("FAIL: napi_create_external_buffer with non-null data and zero "
+             "length failed with status %d\n",
+             status);
+      return env.Undefined();
+    }
+
+    // Verify it's a buffer
+    bool is_buffer;
+    NODE_API_CALL(env, napi_is_buffer(env, buffer, &is_buffer));
+    if (!is_buffer) {
+      printf("FAIL: Created value is not a buffer\n");
+      return env.Undefined();
+    }
+
+    // Verify length is 0
+    size_t length;
+    void *data;
+    NODE_API_CALL(env, napi_get_buffer_info(env, buffer, &data, &length));
+    if (length != 0) {
+      printf("FAIL: Buffer length is %zu instead of 0\n", length);
+      return env.Undefined();
+    }
+
+    printf("PASS: napi_create_external_buffer with non-null data and zero "
+           "length\n");
+  }
+
+  // Test 3: nullptr finalizer
+  {
+    char dummy = 0;
+    napi_value buffer;
+    napi_status status =
+        napi_create_external_buffer(env, 0, &dummy, nullptr, nullptr, &buffer);
+
+    if (status != napi_ok) {
+      printf("FAIL: napi_create_external_buffer with nullptr finalizer failed "
+             "with status %d\n",
+             status);
+      return env.Undefined();
+    }
+
+    printf("PASS: napi_create_external_buffer with nullptr finalizer\n");
+  }
+
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_issue_7685);
   REGISTER_FUNCTION(env, exports, test_issue_11949);
@@ -1267,6 +1364,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_dataview_bounds_errors);
   REGISTER_FUNCTION(env, exports, test_napi_typeof_empty_value);
   REGISTER_FUNCTION(env, exports, test_napi_freeze_seal_indexed);
+  REGISTER_FUNCTION(env, exports, test_napi_create_external_buffer_empty);
 }
 
 } // namespace napitests

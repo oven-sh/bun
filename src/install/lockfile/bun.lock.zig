@@ -2231,6 +2231,7 @@ fn parseAppendDependencies(
 const string = []const u8;
 
 const ExtractTarball = @import("../extract_tarball.zig");
+const PackageManagerResolution = @import("../PackageManager/PackageManagerResolution.zig");
 const std = @import("std");
 const Integrity = @import("../integrity.zig").Integrity;
 
@@ -2252,7 +2253,6 @@ const Dependency = Install.Dependency;
 const DependencyID = Install.DependencyID;
 const PackageID = Install.PackageID;
 const PackageManager = bun.install.PackageManager;
-const PackageManagerResolution = @import("../PackageManager/PackageManagerResolution.zig");
 const PackageNameHash = Install.PackageNameHash;
 const Repository = Install.Repository;
 const Resolution = Install.Resolution;

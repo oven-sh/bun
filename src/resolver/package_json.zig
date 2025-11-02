@@ -1721,7 +1721,7 @@ pub const ESModule = struct {
         if (resolution.status != .Exact and resolution.status != .ExactEndsWithStar) {
             return true; // Not a file path, so assume valid
         }
-        
+
         if (resolution.path.len == 0 or resolution.path[0] != std.fs.path.sep) {
             return true; // Invalid path format
         }
@@ -1738,7 +1738,7 @@ pub const ESModule = struct {
         const base = bun.path.basename(abs_esm_path);
         const dir_path = bun.path.dirname(abs_esm_path, .auto);
         if (dir_path.len == 0) return false;
-        
+
         const dir_info = (r.resolver.readDirInfo(dir_path) catch null) orelse return false;
         const entries = dir_info.getEntries(r.resolver.generation) orelse return false;
         const entry_query = entries.get(base) orelse return false;
@@ -1846,7 +1846,7 @@ pub const ESModule = struct {
                     const status: Status = if (strings.endsWithCharOrIsZeroLength(result, '*') and strings.indexOfChar(result, '*').? == result.len - 1)
                         .ExactEndsWithStar
                     else
-                        .Exact; 
+                        .Exact;
                     return Resolution{ .path = result, .status = status, .debug = .{ .token = target.first_token } };
                 } else {
                     const parts2 = [_]string{ package_url, str, subpath };
@@ -1995,7 +1995,7 @@ pub const ESModule = struct {
                             continue;
                         }
                     }
-                    
+
                     return result;
                 }
 

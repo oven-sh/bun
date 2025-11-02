@@ -16,8 +16,9 @@ describe("fetch with Request body lifecycle", () => {
     const originalRequest = new Request(server.url, {
       method: "POST",
       body: new ReadableStream({
-        start(controller) {
+        async start(controller) {
           controller.enqueue(chunk);
+          await Promise.resolve();
           controller.close();
         },
       }),
@@ -39,13 +40,16 @@ describe("fetch with Request body lifecycle", () => {
       },
     });
 
-    const encoder = new TextEncoder();
     const makeStream = () =>
       new ReadableStream({
         async start(controller) {
-          const parts = ["original ", "data"];
+          // use raw Uint8Array to avoid string optimization
+          const parts = [
+            new Uint8Array([111, 114, 105, 103, 105, 110, 97, 108, 32]), // "original "
+            new Uint8Array([100, 97, 116, 97]), // "data"
+          ];
           for (const part of parts) {
-            controller.enqueue(encoder.encode(part));
+            controller.enqueue(part);
             await Promise.resolve();
           }
           controller.close();
@@ -84,12 +88,13 @@ describe("fetch with Request body lifecycle", () => {
       type: "direct",
       async pull(controller) {
         resolve_pull();
+        // what happened before
         // aborting inside pull triggers a cascade:
         // 1. abort signal fires
         // 2. fetch cancels the request stream (ResumableSink.cancel)
         // 3. cancel calls writeEndRequest on the fetch context
         // 4. writeEndRequest calls deref on the fetch context
-        // 5. panic: the reference count is already 0, indicating a double-deref bug
+        // 5. panic: if the reference count is already 0, indicating a double-deref bug
         //
         // this happens because the stream is both:
         // - retained by the fetch request body

@@ -2922,6 +2922,11 @@ extern "C" bool NapiEnv__getAndClearPendingException(napi_env env, JSC::EncodedJ
     return false;
 }
 
+extern "C" void NapiEnv__doFinalizer(napi_env env, napi_finalize finalize_cb, void* finalize_data, void* finalize_hint)
+{
+    env->doFinalizer(finalize_cb, finalize_data, finalize_hint);
+}
+
 extern "C" void NapiEnv__ref(napi_env env)
 {
     env->ref();

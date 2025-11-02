@@ -137,6 +137,17 @@ pub const BuildCommand = struct {
             }
         }
 
+        if (ctx.bundler_options.transform_only) {
+            // Check if any entry point is an HTML file
+            for (this_transpiler.options.entry_points) |entry_point| {
+                if (strings.hasSuffixComptime(entry_point, ".html")) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> HTML imports are only supported when bundling", .{});
+                    Global.exit(1);
+                    return;
+                }
+            }
+        }
+
         if (ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile and fetcher == null) {
             if (this_transpiler.options.entry_points.len > 1) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> Must use <b>--outdir<r> when specifying more than one entry point.", .{});
@@ -190,18 +201,18 @@ pub const BuildCommand = struct {
         try this_transpiler.configureDefines();
         this_transpiler.configureLinker();
 
-        if (ctx.bundler_options.production) {
-            bun.assert(!this_transpiler.options.jsx.development);
-        }
-
         if (!this_transpiler.options.production) {
             try this_transpiler.options.conditions.appendSlice(&.{"development"});
         }
 
         this_transpiler.resolver.opts = this_transpiler.options;
         this_transpiler.resolver.env_loader = this_transpiler.env;
-        this_transpiler.options.jsx.development = !this_transpiler.options.production;
-        this_transpiler.resolver.opts.jsx.development = this_transpiler.options.jsx.development;
+
+        // Allow tsconfig.json overriding, but always set it to false if --production is passed.
+        if (ctx.bundler_options.production) {
+            this_transpiler.options.jsx.development = false;
+            this_transpiler.resolver.opts.jsx.development = false;
+        }
 
         switch (ctx.debug.macros) {
             .disable => {

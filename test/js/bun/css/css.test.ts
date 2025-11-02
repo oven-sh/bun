@@ -5575,6 +5575,9 @@ describe("css tests", () => {
       minify_test(`:root::${name}(*) {position: fixed}`, `:root::${name}(*){position:fixed}`);
       minify_test(`:root::${name}(foo) {position: fixed}`, `:root::${name}(foo){position:fixed}`);
       minify_test(`:root::${name}(foo):only-child {position: fixed}`, `:root::${name}(foo):only-child{position:fixed}`);
+      // Test class selector syntax (.class-name)
+      minify_test(`:root::${name}(.slide-out) {position: fixed}`, `:root::${name}(.slide-out){position:fixed}`);
+      minify_test(`:root::${name}(.fade-in) {animation-name: fade}`, `:root::${name}(.fade-in){animation-name:fade}`);
       error_test(
         `:root::${name}(foo):first-child {position: fixed}`,
         "ParserError::SelectorError(SelectorError::InvalidPseudoClassAfterPseudoElement)",
@@ -7301,6 +7304,68 @@ describe("css tests", () => {
       ".foo { color: color-mix(in srgb, light-dark(yellow, red), light-dark(red, pink)); }",
       `.foo {
           color: var(--buncss-light, #ff8000) var(--buncss-dark, #ff6066);
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+
+    // Test color-scheme inside @layer blocks (issue #20689)
+    prefix_test(
+      `@layer colors {
+        .foo { color-scheme: dark; }
+      }`,
+      `@layer colors {
+          .foo {
+            --buncss-light: ;
+            --buncss-dark: initial;
+            color-scheme: dark;
+          }
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      `@layer shm.colors {
+        body.theme-dark {
+          color-scheme: dark;
+        }
+        body.theme-light {
+          color-scheme: light;
+        }
+      }`,
+      `@layer shm.colors {
+          body.theme-dark {
+            --buncss-light: ;
+            --buncss-dark: initial;
+            color-scheme: dark;
+          }
+
+          body.theme-light {
+            --buncss-light: initial;
+            --buncss-dark: ;
+            color-scheme: light;
+          }
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      `@layer {
+        .foo { color-scheme: light dark; }
+      }`,
+      `@layer {
+          .foo {
+            --buncss-light: initial;
+            --buncss-dark: ;
+            color-scheme: light dark;
+          }
+
+          @media (prefers-color-scheme: dark) {
+            .foo {
+              --buncss-light: ;
+              --buncss-dark: initial;
+            }
+          }
         }
         `,
       { chrome: Some(90 << 16) },

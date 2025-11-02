@@ -1016,7 +1016,9 @@ pub const Installer = struct {
                     var target_node_modules_path: ?bun.AbsPath(.{}) = null;
                     defer if (target_node_modules_path) |*path| path.deinit();
 
-                    var target_package_name = installer.maybeReplaceNodeModulesPath(
+                    var target_package_name: strings.StringOrTinyString = strings.StringOrTinyString.init(dep_name);
+
+                    if (installer.maybeReplaceNodeModulesPath(
                         entry_node_ids,
                         node_pkg_ids,
                         pkg_name_hashes,
@@ -1024,47 +1026,51 @@ pub const Installer = struct {
                         installer.lockfile.buffers.resolutions.items,
                         installer.lockfile.packages.items(.meta),
                         pkg_id,
-                        &target_node_modules_path,
-                    ) orelse strings.StringOrTinyString.init(dep_name);
-                    var can_retry_without_native_binlink_optimization = target_node_modules_path != null;
+                    )) |replacement_entry_id| {
+                        target_node_modules_path = bun.AbsPath(.{}).initTopLevelDir();
+                        installer.appendStoreNodeModulesPath(&target_node_modules_path.?, replacement_entry_id);
 
-                    while (true) {
-                        var bin_linker: Bin.Linker = .{
-                            .bin = bin,
-                            .global_bin_path = installer.manager.options.bin_path,
-                            .package_name = strings.StringOrTinyString.init(dep_name),
-                            .target_package_name = target_package_name,
-                            .string_buf = string_buf,
-                            .extern_string_buf = installer.lockfile.buffers.extern_strings.items,
-                            .seen = &seen,
-                            .target_node_modules_path = if (target_node_modules_path) |*path| path else &node_modules_path,
-                            .node_modules_path = &node_modules_path,
-                            .abs_target_buf = abs_target_buf,
-                            .abs_dest_buf = abs_dest_buf,
-                            .rel_buf = rel_buf,
-                        };
+                        const replacement_node_id = entry_node_ids[replacement_entry_id.get()];
+                        const replacement_pkg_id = node_pkg_ids[replacement_node_id.get()];
+                        target_package_name = strings.StringOrTinyString.init(installer.lockfile.str(&pkg_names[replacement_pkg_id]));
+                    }
+
+                    var bin_linker: Bin.Linker = .{
+                        .bin = bin,
+                        .global_bin_path = installer.manager.options.bin_path,
+                        .package_name = strings.StringOrTinyString.init(dep_name),
+                        .target_package_name = target_package_name,
+                        .string_buf = string_buf,
+                        .extern_string_buf = installer.lockfile.buffers.extern_strings.items,
+                        .seen = &seen,
+                        .target_node_modules_path = if (target_node_modules_path) |*path| path else &node_modules_path,
+                        .node_modules_path = &node_modules_path,
+                        .abs_target_buf = abs_target_buf,
+                        .abs_dest_buf = abs_dest_buf,
+                        .rel_buf = rel_buf,
+                    };
+
+                    bin_linker.link(false);
+
+                    if (target_node_modules_path != null and (bin_linker.skipped_due_to_missing_bin or bin_linker.err != null)) {
+                        target_node_modules_path.?.deinit();
+                        target_node_modules_path = null;
+
+                        bin_linker.target_node_modules_path = &node_modules_path;
+                        bin_linker.target_package_name = strings.StringOrTinyString.init(dep_name);
+
+                        if (this.installer.manager.options.log_level.isVerbose()) {
+                            Output.prettyErrorln("<d>[Bin Linker]<r> {s} -> {s} retrying without native bin link", .{
+                                dep_name,
+                                bin_linker.target_package_name.slice(),
+                            });
+                        }
 
                         bin_linker.link(false);
+                    }
 
-                        if (can_retry_without_native_binlink_optimization and (bin_linker.skipped_due_to_missing_bin or bin_linker.err != null)) {
-                            can_retry_without_native_binlink_optimization = false;
-                            target_node_modules_path.?.deinit();
-                            target_node_modules_path = null;
-                            target_package_name = strings.StringOrTinyString.init(dep_name);
-                            if (PackageManager.verbose_install) {
-                                Output.prettyErrorln("<d>[Bin Linker]<r> {s} -> {s} retrying without native bin link", .{
-                                    dep_name,
-                                    target_package_name.slice(),
-                                });
-                            }
-                            continue;
-                        }
-
-                        if (bin_linker.err) |err| {
-                            return .failure(.{ .binaries = err });
-                        }
-
-                        break;
+                    if (bin_linker.err) |err| {
+                        return .failure(.{ .binaries = err });
                     }
 
                     continue :next_step this.nextStep(current_step);
@@ -1298,8 +1304,7 @@ pub const Installer = struct {
         pkg_resolutions_buffer: []const PackageID,
         pkg_metas: []const Package.Meta,
         pkg_id: PackageID,
-        target_node_modules_path: *?bun.AbsPath(.{}),
-    ) ?bun.strings.StringOrTinyString {
+    ) ?Store.Entry.Id {
         const postinstall_optimizer = &this.manager.postinstall_optimizer;
         if (!postinstall_optimizer.isNativeBinlinkEnabled()) {
             return null;
@@ -1320,11 +1325,8 @@ pub const Installer = struct {
                     )) |replacement_pkg_id| {
                         for (entry_node_ids, 0..) |new_node_id, new_entry_id| {
                             if (node_pkg_ids[new_node_id.get()] == replacement_pkg_id) {
-                                target_node_modules_path.* = bun.AbsPath(.{}).initTopLevelDir();
-                                const buf: *bun.AbsPath(.{}) = &target_node_modules_path.*.?;
-                                this.appendStoreNodeModulesPath(buf, .from(@intCast(new_entry_id)));
                                 debug("native bin link {d} -> {d}", .{ pkg_id, replacement_pkg_id });
-                                return strings.StringOrTinyString.init(this.lockfile.str(&this.lockfile.packages.items(.name)[replacement_pkg_id]));
+                                return .from(@intCast(new_entry_id));
                             }
                         }
                     }
@@ -1387,7 +1389,9 @@ pub const Installer = struct {
             defer if (target_node_modules_path) |*path| path.deinit();
             const package_name = strings.StringOrTinyString.init(alias.slice(string_buf));
 
-            const target_package_name = this.maybeReplaceNodeModulesPath(
+            var target_package_name = package_name;
+
+            if (this.maybeReplaceNodeModulesPath(
                 entry_node_ids,
                 node_pkg_ids,
                 pkg_name_hashes,
@@ -1395,46 +1399,52 @@ pub const Installer = struct {
                 pkg_resolutions_buffer,
                 pkg_metas,
                 pkg_id,
-                &target_node_modules_path,
-            ) orelse package_name;
+            )) |replacement_entry_id| {
+                target_node_modules_path = bun.AbsPath(.{}).initTopLevelDir();
+                this.appendStoreNodeModulesPath(&target_node_modules_path.?, replacement_entry_id);
 
-            var can_retry_without_native_binlink_optimization = target_node_modules_path != null;
-            while (true) {
-                var bin_linker: Bin.Linker = .{
-                    .bin = bin,
-                    .global_bin_path = this.manager.options.bin_path,
-                    .package_name = package_name,
-                    .string_buf = string_buf,
-                    .extern_string_buf = extern_string_buf,
-                    .seen = &seen,
-                    .node_modules_path = &node_modules_path,
-                    .target_node_modules_path = if (target_node_modules_path) |*path| path else &node_modules_path,
-                    .target_package_name = if (target_node_modules_path != null) target_package_name else package_name,
-                    .abs_target_buf = link_target_buf,
-                    .abs_dest_buf = link_dest_buf,
-                    .rel_buf = link_rel_buf,
-                };
+                const replacement_node_id = entry_node_ids[replacement_entry_id.get()];
+                const replacement_pkg_id = node_pkg_ids[replacement_node_id.get()];
+                const pkg_names = pkgs.items(.name);
+                target_package_name = strings.StringOrTinyString.init(this.lockfile.str(&pkg_names[replacement_pkg_id]));
+            }
+
+            var bin_linker: Bin.Linker = .{
+                .bin = bin,
+                .global_bin_path = this.manager.options.bin_path,
+                .package_name = package_name,
+                .string_buf = string_buf,
+                .extern_string_buf = extern_string_buf,
+                .seen = &seen,
+                .node_modules_path = &node_modules_path,
+                .target_node_modules_path = if (target_node_modules_path) |*path| path else &node_modules_path,
+                .target_package_name = if (target_node_modules_path != null) target_package_name else package_name,
+                .abs_target_buf = link_target_buf,
+                .abs_dest_buf = link_dest_buf,
+                .rel_buf = link_rel_buf,
+            };
+
+            bin_linker.link(false);
+
+            if (target_node_modules_path != null and (bin_linker.skipped_due_to_missing_bin or bin_linker.err != null)) {
+                target_node_modules_path.?.deinit();
+                target_node_modules_path = null;
+
+                bin_linker.target_node_modules_path = &node_modules_path;
+                bin_linker.target_package_name = package_name;
+
+                if (this.manager.options.log_level.isVerbose()) {
+                    Output.prettyErrorln("<d>[Bin Linker]<r> {s} -> {s} retrying without native bin link", .{
+                        package_name.slice(),
+                        target_package_name.slice(),
+                    });
+                }
 
                 bin_linker.link(false);
+            }
 
-                if (can_retry_without_native_binlink_optimization and (bin_linker.skipped_due_to_missing_bin or bin_linker.err != null)) {
-                    can_retry_without_native_binlink_optimization = false;
-                    target_node_modules_path.?.deinit();
-                    target_node_modules_path = null;
-                    if (PackageManager.verbose_install) {
-                        Output.prettyErrorln("<d>[Bin Linker]<r> {s} -> {s} retrying without native bin link", .{
-                            package_name.slice(),
-                            target_package_name.slice(),
-                        });
-                    }
-                    continue;
-                }
-
-                if (bin_linker.err) |err| {
-                    return err;
-                }
-
-                break;
+            if (bin_linker.err) |err| {
+                return err;
             }
         }
     }

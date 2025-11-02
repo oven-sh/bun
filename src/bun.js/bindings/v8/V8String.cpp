@@ -158,22 +158,31 @@ extern "C" size_t TextEncoder__encodeInto16(const char16_t* stringPtr, size_t st
 
 int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_ref, int options) const
 {
+    auto& vm = isolate->vm();
+    auto globalObject = isolate->globalObject();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
     RELEASE_ASSERT(options == 0);
     auto jsString = localToObjectPointer<JSString>();
-    WTF::String string = jsString->getString(isolate->globalObject());
+    JSC::EnsureStillAliveScope scope(jsString);
+    auto string = jsString->view(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, 0);
 
-    size_t unsigned_length = length < 0 ? SIZE_MAX : length;
+    // When length < 0, the V8 API expects the caller to have allocated a buffer large enough
+    // for the entire string. We must trust the caller and pass a very large capacity.
+    // The encoder will write as much as needed to encode the full string.
+    // NOTE: This is unsafe - the caller MUST provide sufficient buffer space.
+    size_t unsigned_length = length < 0 ? SIZE_MAX : static_cast<size_t>(length);
 
-    uint64_t result = string.is8Bit() ? TextEncoder__encodeInto8(string.span8().data(), string.span8().size(), buffer, unsigned_length)
-                                      : TextEncoder__encodeInto16(string.span16().data(), string.span16().size(), buffer, unsigned_length);
+    uint64_t result = string->is8Bit() ? TextEncoder__encodeInto8(string->span8().data(), string->span8().size(), buffer, unsigned_length)
+                                       : TextEncoder__encodeInto16(string->span16().data(), string->span16().size(), buffer, unsigned_length);
     uint32_t read = static_cast<uint32_t>(result);
     uint32_t written = static_cast<uint32_t>(result >> 32);
 
-    if (written < length && read == string.length()) {
+    if (written < length && read == string->length()) {
         buffer[written] = 0;
         written++;
     }
-    if (read < string.length() && U16_IS_SURROGATE(string[read]) && written + 3 <= length) {
+    if (read < string->length() && U16_IS_SURROGATE(string[read]) && written + 3 <= length) {
         // encode unpaired surrogate
         char16_t surrogate = string[read];
         buffer[written + 0] = 0xe0 | (surrogate >> 12);

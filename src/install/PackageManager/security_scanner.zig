@@ -982,7 +982,7 @@ pub const SecurityScanSubprocess = struct {
                 },
             }
         } else if (this.manager.options.log_level != .silent and duration >= 1000) {
-            const maybeHourglass = if (Output.isEmojiEnabled()) "⏳" else "";
+            const maybeHourglass = if (Output.enable_ansi_colors_stderr) "⏳" else "";
             if (packages_scanned == 1) {
                 Output.prettyErrorln("<d>{s}[{s}] Scanning 1 package took {d}ms<r>", .{ maybeHourglass, security_scanner, duration });
             } else {

@@ -512,65 +512,6 @@ describe.concurrent("WebSocket", () => {
     await Promise.all([promise, promise2]);
   });
 
-  it("instances should be finalized when GC'd", async () => {
-    let current_websocket_count = 0;
-    let initial_websocket_count = 0;
-    function getWebSocketCount() {
-      Bun.gc(true);
-      const objectTypeCounts = require("bun:jsc").heapStats().objectTypeCounts || {
-        WebSocket: 0,
-      };
-      return objectTypeCounts.WebSocket || 0;
-    }
-
-    async function run() {
-      using server = Bun.serve({
-        port: 0,
-        fetch(req, server) {
-          return server.upgrade(req);
-        },
-        websocket: {
-          open() {},
-          data() {},
-          message() {},
-          drain() {},
-        },
-      });
-
-      function onOpen(sock, resolve) {
-        sock.addEventListener("close", resolve, { once: true });
-        sock.close();
-      }
-
-      function openAndCloseWS() {
-        const { promise, resolve } = Promise.withResolvers();
-        const sock = new WebSocket(server.url.href.replace("http", "ws"));
-        sock.addEventListener("open", onOpen.bind(undefined, sock, resolve), {
-          once: true,
-        });
-
-        return promise;
-      }
-
-      for (let i = 0; i < 1000; i++) {
-        await openAndCloseWS();
-        if (i % 100 === 0) {
-          if (initial_websocket_count === 0) {
-            initial_websocket_count = getWebSocketCount();
-          }
-        }
-      }
-    }
-    await run();
-
-    // wait next tick to run the last time
-    await Bun.sleep(100);
-    current_websocket_count = getWebSocketCount();
-    console.log({ current_websocket_count, initial_websocket_count });
-    // expect that current and initial websocket be close to the same (normaly 1 or 2 difference)
-    expect(Math.abs(current_websocket_count - initial_websocket_count)).toBeLessThanOrEqual(50);
-  });
-
   it("should be able to send big messages", async () => {
     using serve = Bun.serve({
       port: 0,
@@ -864,4 +805,63 @@ it.concurrent("#16995", async () => {
     const socket = new WebSocket(publicAddress.toString());
     socket.close();
   }
+});
+
+it.serial("instances should be finalized when GC'd", async () => {
+  let current_websocket_count = 0;
+  let initial_websocket_count = 0;
+  function getWebSocketCount() {
+    Bun.gc(true);
+    const objectTypeCounts = require("bun:jsc").heapStats().objectTypeCounts || {
+      WebSocket: 0,
+    };
+    return objectTypeCounts.WebSocket || 0;
+  }
+
+  async function run() {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        return server.upgrade(req);
+      },
+      websocket: {
+        open() {},
+        data() {},
+        message() {},
+        drain() {},
+      },
+    });
+
+    function onOpen(sock, resolve) {
+      sock.addEventListener("close", resolve, { once: true });
+      sock.close();
+    }
+
+    function openAndCloseWS() {
+      const { promise, resolve } = Promise.withResolvers();
+      const sock = new WebSocket(server.url.href.replace("http", "ws"));
+      sock.addEventListener("open", onOpen.bind(undefined, sock, resolve), {
+        once: true,
+      });
+
+      return promise;
+    }
+
+    for (let i = 0; i < 1000; i++) {
+      await openAndCloseWS();
+      if (i % 100 === 0) {
+        if (initial_websocket_count === 0) {
+          initial_websocket_count = getWebSocketCount();
+        }
+      }
+    }
+  }
+  await run();
+
+  // wait next tick to run the last time
+  await Bun.sleep(100);
+  current_websocket_count = getWebSocketCount();
+  console.log({ current_websocket_count, initial_websocket_count });
+  // expect that current and initial websocket be close to the same (normaly 1 or 2 difference)
+  expect(Math.abs(current_websocket_count - initial_websocket_count)).toBeLessThanOrEqual(50);
 });

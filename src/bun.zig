@@ -683,7 +683,6 @@ pub const MimallocArena = allocators.MimallocArena;
 pub const AllocationScope = allocators.AllocationScope;
 pub const NullableAllocator = allocators.NullableAllocator;
 pub const MaxHeapAllocator = allocators.MaxHeapAllocator;
-pub const MemoryReportingAllocator = allocators.MemoryReportingAllocator;
 
 pub const isSliceInBuffer = allocators.isSliceInBuffer;
 pub const isSliceInBufferT = allocators.isSliceInBufferT;
@@ -1488,8 +1487,8 @@ pub fn concat(comptime T: type, dest: []T, src: []const []const T) void {
 }
 
 pub const renamer = @import("./renamer.zig");
-// TODO: Rename to SourceMap as this is a struct.
-pub const sourcemap = @import("./sourcemap/sourcemap.zig");
+
+pub const SourceMap = @import("./sourcemap/sourcemap.zig");
 
 /// Attempt to coerce some value into a byte slice.
 pub fn asByteSlice(buffer: anytype) []const u8 {
@@ -3765,6 +3764,9 @@ pub fn getUseSystemCA(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFra
     const Arguments = @import("./cli/Arguments.zig");
     return jsc.JSValue.jsBoolean(Arguments.Bun__Node__UseSystemCA);
 }
+
+// Claude thinks its bun.JSC when we renamed it to bun.jsc months ago.
+pub const JSC = @compileError("Deprecated: Use @import(\"bun\").jsc instead");
 
 const CopyFile = @import("./copy_file.zig");
 const builtin = @import("builtin");

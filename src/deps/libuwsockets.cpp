@@ -25,7 +25,7 @@ using TCPWebSocket = uWS::WebSocket<false, true, void *>;
 
 // Template helpers (must be outside extern "C")
 template<bool isSSL>
-static void* uws_ws_get_topics_as_js_array_impl(uws_websocket_t *ws, void* globalObject) {
+static JSC::EncodedJSValue uws_ws_get_topics_as_js_array_impl(uws_websocket_t *ws, void* globalObject) {
   JSC::JSGlobalObject* global = reinterpret_cast<JSC::JSGlobalObject*>(globalObject);
   JSC::VM& vm = global->vm();
 
@@ -34,7 +34,7 @@ static void* uws_ws_get_topics_as_js_array_impl(uws_websocket_t *ws, void* globa
 
   size_t count = uws->getTopicsCount();
   if (count == 0) {
-    return JSC::constructEmptyArray(global, nullptr, 0);
+    return JSC::JSValue::encode(JSC::constructEmptyArray(global, nullptr, 0));
   }
 
   JSC::MarkedArgumentBuffer args;
@@ -49,7 +49,7 @@ static void* uws_ws_get_topics_as_js_array_impl(uws_websocket_t *ws, void* globa
     });
   }
 
-  return JSC::constructArray(global, static_cast<JSC::ArrayAllocationProfile*>(nullptr), args);
+  return JSC::JSValue::encode(JSC::constructArray(global, static_cast<JSC::ArrayAllocationProfile*>(nullptr), args));
 }
 
 extern "C"
@@ -1083,7 +1083,7 @@ extern "C"
     }
   }
 
-  void* uws_ws_get_topics_as_js_array(int ssl, uws_websocket_t *ws, void* globalObject) {
+  JSC::EncodedJSValue uws_ws_get_topics_as_js_array(int ssl, uws_websocket_t *ws, void* globalObject) {
     if (ssl) {
       return uws_ws_get_topics_as_js_array_impl<true>(ws, globalObject);
     } else {

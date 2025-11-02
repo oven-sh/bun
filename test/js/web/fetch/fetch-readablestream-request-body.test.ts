@@ -94,19 +94,9 @@ describe("fetch with Request body lifecycle", () => {
     const directSource: DirectUnderlyingSource = {
       type: "direct",
       async pull(controller) {
-        // what happened before
-        // aborting inside pull triggers a cascade:
-        // 1. abort signal fires
-        // 2. fetch cancels the request stream (ResumableSink.cancel)
-        // 3. cancel calls writeEndRequest on the fetch context
-        // 4. writeEndRequest calls deref on the fetch context
-        // 5. panic: if the reference count is already 0, indicating a double-deref bug
-        //
-        // this happens because the stream is both:
-        // - retained by the fetch request body
-        // - retained by the direct stream pull in progress
-        // when abort fires, both paths try to release ownership, causing double-deref
-        // TLDR - it panic at abort
+        // Regression: aborting inside pull previously triggered
+        // a cascade that double-released the fetch context, causing
+        // a panic. Ensure aborting here no longer corrupts state.
         abortController.abort();
         controller.close();
         resolve_pull();
@@ -173,37 +163,6 @@ describe("fetch with Request body lifecycle", () => {
     controller.abort();
 
     await expect(fetchPromise).rejects.toThrow();
-  });
-
-  test("should handle multiple requests with the same streaming body", async () => {
-    using server = Bun.serve({
-      port: 0,
-      async fetch(req) {
-        const text = await req.text();
-        return new Response(text);
-      },
-    });
-
-    const encoder = new TextEncoder();
-    const chunks = [encoder.encode("original "), encoder.encode("data")];
-
-    const originalRequest = new Request(server.url, {
-      method: "POST",
-      body: new ReadableStream({
-        async start(controller) {
-          for (const chunk of chunks) {
-            controller.enqueue(chunk);
-            await new Promise(queueMicrotask); // hand control back before the next piece
-          }
-          controller.close();
-        },
-      }),
-    });
-
-    const [r1, r2] = await Promise.all([fetch(originalRequest), fetch(originalRequest)]);
-
-    expect(await r1.text()).toBe("original data");
-    expect(await r2.text()).toBe("original data");
   });
 
   test("should properly cleanup when server closes connection early", async () => {

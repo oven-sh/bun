@@ -157,7 +157,7 @@ userRateLimit:
 # max_body_size: 10mb
 
 # https://verdaccio.org/docs/configuration#listen-port
-# listen:
+listen: 0.0.0.0:4873
 # - localhost:4873            # default value
 # - http://localhost:4873     # same thing
 # - 0.0.0.0:4873              # listen on all addresses (INADDR_ANY)

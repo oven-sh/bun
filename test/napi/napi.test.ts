@@ -274,6 +274,14 @@ describe.concurrent("napi", () => {
       expect(result).toContain("PASS: napi_create_external_buffer with nullptr finalizer");
       expect(result).not.toContain("FAIL");
     });
+
+    it("empty buffer returns null pointer and 0 length from napi_get_buffer_info and napi_get_typedarray_info", async () => {
+      const result = await checkSameOutput("test_napi_empty_buffer_info", []);
+      expect(result).toContain("PASS: napi_get_buffer_info returns null pointer and 0 length for empty buffer");
+      expect(result).toContain("PASS: napi_get_typedarray_info returns null pointer and 0 length for empty buffer");
+      expect(result).toContain("PASS: napi_is_detached_arraybuffer returns true for empty buffer's arraybuffer");
+      expect(result).not.toContain("FAIL");
+    });
   });
 
   describe("napi_async_work", () => {

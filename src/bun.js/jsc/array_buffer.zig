@@ -1,10 +1,14 @@
 pub const ArrayBuffer = extern struct {
-    ptr: [*]u8 = &[0]u8{},
+    ptr: ?[*]u8 = null,
     len: usize = 0,
     byte_len: usize = 0,
     value: jsc.JSValue = jsc.JSValue.zero,
     typed_array_type: jsc.JSValue.JSType = .Cell,
     shared: bool = false,
+
+    pub fn isDetached(this: *const ArrayBuffer) bool {
+        return this.ptr == null;
+    }
 
     // require('buffer').kMaxLength.
     // keep in sync with Bun::Buffer::kMaxLength
@@ -315,7 +319,7 @@ pub const ArrayBuffer = extern struct {
     ///    new ArrayBuffer(view.buffer, view.byteOffset, view.byteLength)
     /// ```
     pub inline fn byteSlice(this: *const @This()) []u8 {
-        return this.ptr[0..this.byte_len];
+        return this.ptr.?[0..this.byte_len];
     }
 
     /// The equivalent of
@@ -330,7 +334,7 @@ pub const ArrayBuffer = extern struct {
     }
 
     pub inline fn asU16Unaligned(this: *const @This()) []align(1) u16 {
-        return @ptrCast(this.ptr[0 .. this.byte_len / @sizeOf(u16) * @sizeOf(u16)]);
+        return @ptrCast(this.ptr.?[0 .. this.byte_len / @sizeOf(u16) * @sizeOf(u16)]);
     }
 
     pub inline fn asU32(this: *const @This()) []u32 {
@@ -338,7 +342,7 @@ pub const ArrayBuffer = extern struct {
     }
 
     pub inline fn asU32Unaligned(this: *const @This()) []align(1) u32 {
-        return @ptrCast(this.ptr[0 .. this.byte_len / @sizeOf(u32) * @sizeOf(u32)]);
+        return @ptrCast(this.ptr.?[0 .. this.byte_len / @sizeOf(u32) * @sizeOf(u32)]);
     }
 
     pub const BinaryType = enum(u4) {
@@ -668,7 +672,7 @@ pub const JSCArrayBuffer = opaque {
 
     pub fn asArrayBuffer(self: *Self) ArrayBuffer {
         var out: ArrayBuffer = undefined;
-        out.ptr = &.{}; // `ptr` might not get set if the ArrayBuffer is empty
+        out.ptr = null; // `ptr` might not get set if the ArrayBuffer is empty
         JSC__ArrayBuffer__asBunArrayBuffer(self, &out);
         return out;
     }

@@ -1138,7 +1138,7 @@ pub const JSValue = enum(i64) {
         var out: ArrayBuffer = undefined;
         // `ptr` might not get set if the ArrayBuffer is empty, so make sure it starts out with a
         // defined value.
-        out.ptr = &.{};
+        out.ptr = null;
         if (JSC__JSValue__asArrayBuffer(this, global, &out)) {
             return out;
         }

@@ -283,7 +283,7 @@ describe("Server", () => {
           ws.close();
         },
         close(ws) {
-          // After close, should return empty array (or null/undefined based on implementation)
+          // After close, should return empty array
           const subsAfterClose = ws.subscriptions;
           resolve(subsAfterClose);
           onClose();
@@ -295,8 +295,7 @@ describe("Server", () => {
     ws.onclose = () => onClose();
 
     const [subscriptions] = await Promise.all([promise, onClosePromise]);
-    // After close, WebSocket should return null or empty array
-    expect(subscriptions === null || (Array.isArray(subscriptions) && subscriptions.length === 0)).toBeTrue();
+    expect(subscriptions).toStrictEqual([]);
   });
 
   it("subscriptions - duplicate subscriptions", async () => {

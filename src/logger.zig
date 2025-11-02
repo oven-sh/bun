@@ -851,7 +851,7 @@ pub const Log = struct {
     }
 
     pub inline fn allocPrint(allocator: std.mem.Allocator, comptime fmt: string, args: anytype) OOM!string {
-        return switch (Output.enable_ansi_colors) {
+        return switch (Output.enable_ansi_colors_stderr) {
             inline else => |enable_ansi_colors| std.fmt.allocPrint(allocator, Output.prettyFmt(fmt, enable_ansi_colors), args),
         };
     }
@@ -1283,7 +1283,7 @@ pub const Log = struct {
     }
 
     pub fn print(self: *const Log, to: anytype) !void {
-        return switch (Output.enable_ansi_colors) {
+        return switch (Output.enable_ansi_colors_stderr) {
             inline else => |enable_ansi_colors| self.printWithEnableAnsiColors(to, enable_ansi_colors),
         };
     }

@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBroken, isMusl, isWindows, nodeExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isBroken, isMusl, isWindows, nodeExe, tmpdirSync } from "harness";
 import assert from "node:assert";
 import fs from "node:fs/promises";
 import { basename, join } from "path";
@@ -113,17 +113,18 @@ describe.concurrent.todoIf(isBroken && isMusl)("node:v8", () => {
       directories.badModules = tmpdirSync();
 
       await Promise.all([
-        install(srcDir, directories.bunRelease, Runtime.bun),
-        install(srcDir, directories.bunDebug, Runtime.bun),
-        install(srcDir, directories.node, Runtime.node),
-        install(join(__dirname, "bad-modules"), directories.badModules, Runtime.node),
-      ]);
-
-      await Promise.all([
-        build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release),
-        build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug),
-        build(srcDir, directories.node, Runtime.node, BuildMode.release),
-        build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release),
+        install(srcDir, directories.bunRelease, Runtime.bun).then(() =>
+          build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release),
+        ),
+        install(srcDir, directories.bunDebug, Runtime.bun).then(() =>
+          build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug),
+        ),
+        install(srcDir, directories.node, Runtime.node).then(() =>
+          build(srcDir, directories.node, Runtime.node, BuildMode.release),
+        ),
+        install(join(__dirname, "bad-modules"), directories.badModules, Runtime.node).then(() =>
+          build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release),
+        ),
       ]);
     },
     {
@@ -268,9 +269,13 @@ describe.concurrent.todoIf(isBroken && isMusl)("node:v8", () => {
     it("can hold a lot of locals", async () => {
       await checkSameOutput("test_many_v8_locals", []);
     });
-    it("keeps GC objects alive", async () => {
-      await checkSameOutput("test_handle_scope_gc", []);
-    }, 10000);
+    it(
+      "keeps GC objects alive",
+      async () => {
+        await checkSameOutput("test_handle_scope_gc", []);
+      },
+      10000 * (isASAN ? 6 : 1),
+    );
   });
 
   describe("EscapableHandleScope", () => {

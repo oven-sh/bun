@@ -1336,6 +1336,115 @@ test_napi_create_external_buffer_empty(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static napi_value test_napi_empty_buffer_info(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  // Test: Create an empty external buffer and verify napi_get_buffer_info and
+  // napi_get_typedarray_info
+  {
+    napi_value buffer;
+    napi_status status =
+        napi_create_external_buffer(env, 0, nullptr, nullptr, nullptr, &buffer);
+
+    if (status != napi_ok) {
+      printf("FAIL: napi_create_external_buffer with nullptr and zero length "
+             "failed with status %d\n",
+             status);
+      return env.Undefined();
+    }
+
+    // Test napi_get_buffer_info
+    void *buffer_data = reinterpret_cast<void *>(
+        0xDEADBEEF); // Initialize to non-null to ensure it's set to null
+    size_t buffer_length =
+        999; // Initialize to non-zero to ensure it's set to 0
+
+    status = napi_get_buffer_info(env, buffer, &buffer_data, &buffer_length);
+    if (status != napi_ok) {
+      printf("FAIL: napi_get_buffer_info failed with status %d\n", status);
+      return env.Undefined();
+    }
+
+    if (buffer_data != nullptr) {
+      printf("FAIL: napi_get_buffer_info returned non-null data pointer: %p\n",
+             buffer_data);
+      return env.Undefined();
+    }
+
+    if (buffer_length != 0) {
+      printf("FAIL: napi_get_buffer_info returned non-zero length: %zu\n",
+             buffer_length);
+      return env.Undefined();
+    }
+
+    printf("PASS: napi_get_buffer_info returns null pointer and 0 length for "
+           "empty buffer\n");
+
+    // Test napi_get_typedarray_info
+    napi_typedarray_type type;
+    size_t typedarray_length = 999; // Initialize to non-zero
+    void *typedarray_data =
+        reinterpret_cast<void *>(0xDEADBEEF); // Initialize to non-null
+    napi_value arraybuffer;
+    size_t byte_offset;
+
+    status =
+        napi_get_typedarray_info(env, buffer, &type, &typedarray_length,
+                                 &typedarray_data, &arraybuffer, &byte_offset);
+    if (status != napi_ok) {
+      printf("FAIL: napi_get_typedarray_info failed with status %d\n", status);
+      return env.Undefined();
+    }
+
+    if (typedarray_data != nullptr) {
+      printf(
+          "FAIL: napi_get_typedarray_info returned non-null data pointer: %p\n",
+          typedarray_data);
+      return env.Undefined();
+    }
+
+    if (typedarray_length != 0) {
+      printf("FAIL: napi_get_typedarray_info returned non-zero length: %zu\n",
+             typedarray_length);
+      return env.Undefined();
+    }
+
+    printf("PASS: napi_get_typedarray_info returns null pointer and 0 length "
+           "for empty buffer\n");
+
+    // Test napi_is_detached_arraybuffer
+    // First get the underlying arraybuffer from the buffer
+    napi_value arraybuffer_from_buffer;
+    status = napi_get_typedarray_info(env, buffer, nullptr, nullptr, nullptr,
+                                      &arraybuffer_from_buffer, nullptr);
+    if (status != napi_ok) {
+      printf("FAIL: Could not get arraybuffer from buffer, status %d\n",
+             status);
+      return env.Undefined();
+    }
+
+    bool is_detached = false;
+    status = napi_is_detached_arraybuffer(env, arraybuffer_from_buffer,
+                                          &is_detached);
+    if (status != napi_ok) {
+      printf("FAIL: napi_is_detached_arraybuffer failed with status %d\n",
+             status);
+      return env.Undefined();
+    }
+
+    if (!is_detached) {
+      printf("FAIL: napi_is_detached_arraybuffer returned false for empty "
+             "buffer's arraybuffer, expected true\n");
+      return env.Undefined();
+    }
+
+    printf("PASS: napi_is_detached_arraybuffer returns true for empty buffer's "
+           "arraybuffer\n");
+  }
+
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_issue_7685);
   REGISTER_FUNCTION(env, exports, test_issue_11949);
@@ -1365,6 +1474,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_typeof_empty_value);
   REGISTER_FUNCTION(env, exports, test_napi_freeze_seal_indexed);
   REGISTER_FUNCTION(env, exports, test_napi_create_external_buffer_empty);
+  REGISTER_FUNCTION(env, exports, test_napi_empty_buffer_info);
 }
 
 } // namespace napitests

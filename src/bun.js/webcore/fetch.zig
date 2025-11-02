@@ -487,6 +487,7 @@ pub const FetchTasklet = struct {
             buffer_reset = false;
             if (!this.result.has_more) {
                 var scheduled_response_buffer = this.scheduled_response_buffer.list;
+
                 const body = response.getBodyValue();
                 // done resolve body
                 var old = body.*;
@@ -498,6 +499,9 @@ pub const FetchTasklet = struct {
                 body.* = body_value;
                 log("onBodyReceived body_value length={}", .{body_value.InternalBlob.bytes.items.len});
 
+                // now probably safer to discard the old buffer backing memory
+                bun.default_allocator.free(scheduled_response_buffer.allocatedSlice());
+                // and the reinitialize using the same allocator as the Tasklet
                 this.scheduled_response_buffer = .{
                     .allocator = bun.default_allocator,
                     .list = .{
@@ -518,7 +522,7 @@ pub const FetchTasklet = struct {
         jsc.markBinding(@src());
         log("onProgressUpdate", .{});
         this.mutex.lock();
-        this.has_schedule_callback.store(false, .monotonic);
+        this.has_schedule_callback.store(false, .release);
         const is_done = !this.result.has_more;
 
         const vm = this.javascript_vm;
@@ -893,6 +897,11 @@ pub const FetchTasklet = struct {
         var scheduled_response_buffer = this.scheduled_response_buffer.list;
         // This means we have received part of the body but not the whole thing
         if (scheduled_response_buffer.items.len > 0) {
+            // make own copy first
+            const owned = scheduled_response_buffer.toManaged(bun.default_allocator);
+            // and now it's safer to discard
+            bun.default_allocator.free(scheduled_response_buffer.allocatedSlice());
+            // reinitialize the buffer for future chunks
             this.scheduled_response_buffer = .{
                 .allocator = bun.default_allocator,
                 .list = .{
@@ -900,10 +909,9 @@ pub const FetchTasklet = struct {
                     .capacity = 0,
                 },
             };
-
             return .{
                 .owned = .{
-                    .list = scheduled_response_buffer.toManaged(bun.default_allocator),
+                    .list = owned,
                     .size_hint = size_hint,
                 },
             };
@@ -1398,12 +1406,9 @@ pub const FetchTasklet = struct {
             task.response_buffer.reset();
         }
 
-        if (task.has_schedule_callback.cmpxchgStrong(false, true, .acquire, .monotonic)) |has_schedule_callback| {
-            if (has_schedule_callback) {
-                return;
-            }
+        if (task.has_schedule_callback.load(.acquire)) {
+            return;
         }
-
         task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
     }
 };

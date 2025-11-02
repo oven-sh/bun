@@ -75,46 +75,53 @@ describe("fetch with Request body lifecycle", () => {
     expect(await r2.text()).toBe("original data");
   });
 
-  test("should abort direct streaming body inside pull", async () => {
-    using server = Bun.serve({
-      port: 0,
-      async fetch(req) {
-        try {
-          await req.text();
-        } catch {
-          // ignore abort from client
-        }
-        return new Response("ok");
-      },
-    });
+  test.only("should abort direct streaming body inside pull", async () => {
+    for (let i = 0; i < 1000; i++) {
+      using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          try {
+            await req.text();
+          } catch {
+            // ignore abort from client
+          }
+          return new Response("ok");
+        },
+      });
 
-    const abortController = new AbortController();
-    const { promise: pull_called, resolve: resolve_pull } = Promise.withResolvers<void>();
+      const abortController = new AbortController();
+      const { promise: pull_called, resolve: resolve_pull } = Promise.withResolvers<void>();
 
-    const directSource: DirectUnderlyingSource = {
-      type: "direct",
-      async pull(controller) {
-        // Regression: aborting inside pull previously triggered
-        // a cascade that double-released the fetch context, causing
-        // a panic. Ensure aborting here no longer corrupts state.
-        abortController.abort();
-        controller.close();
-        resolve_pull();
-      },
-    };
+      const directSource: DirectUnderlyingSource = {
+        type: "direct",
+        async pull(controller) {
+          // Regression: aborting inside pull previously triggered
+          // a cascade that double-released the fetch context, causing
+          // a panic. Ensure aborting here no longer corrupts state.
+          abortController.abort();
+          controller.close();
+          resolve_pull();
+        },
+      };
 
-    const stream = new ReadableStream(directSource as any);
+      const stream = new ReadableStream(directSource as any);
 
-    const request = new Request(server.url, {
-      method: "POST",
-      body: stream,
-      signal: abortController.signal,
-    });
+      const request = new Request(server.url, {
+        method: "POST",
+        body: stream,
+        signal: abortController.signal,
+      });
 
-    const fetchPromise = fetch(request);
+      const fetchPromise = fetch(request);
 
-    await pull_called;
-    await expect(fetchPromise).rejects.toThrow();
+      await pull_called;
+      try {
+        await fetchPromise;
+        expect.unreachable();
+      } catch (e) {
+        expect(e).toThrowErrorMatchingInlineSnapshot();
+      }
+    }
   });
 
   // Tests memory cleanup with large payloads and mid-stream abort

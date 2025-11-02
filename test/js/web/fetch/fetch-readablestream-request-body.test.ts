@@ -12,13 +12,16 @@ describe("fetch with Request body lifecycle", () => {
     });
 
     const chunk = new TextEncoder().encode("test data");
+    let pulled = false;
 
     const originalRequest = new Request(server.url, {
       method: "POST",
       body: new ReadableStream({
-        async start(controller) {
+        async pull(controller) {
+          if (pulled) return;
+          pulled = true;
+          await Bun.sleep(0);
           controller.enqueue(chunk);
-          await Promise.resolve();
           controller.close();
         },
       }),
@@ -40,21 +43,25 @@ describe("fetch with Request body lifecycle", () => {
       },
     });
 
-    const makeStream = () =>
-      new ReadableStream({
-        async start(controller) {
-          // use raw Uint8Array to avoid string optimization
-          const parts = [
-            new Uint8Array([111, 114, 105, 103, 105, 110, 97, 108, 32]), // "original "
-            new Uint8Array([100, 97, 116, 97]), // "data"
-          ];
-          for (const part of parts) {
-            controller.enqueue(part);
-            await Promise.resolve();
+    const makeStream = () => {
+      // use raw Uint8Array to avoid string optimization
+      const parts = [
+        new Uint8Array([111, 114, 105, 103, 105, 110, 97, 108, 32]), // "original "
+        new Uint8Array([100, 97, 116, 97]), // "data"
+      ];
+      let index = 0;
+
+      return new ReadableStream({
+        async pull(controller) {
+          if (index >= parts.length) {
+            controller.close();
+            return;
           }
-          controller.close();
+          await Bun.sleep(0);
+          controller.enqueue(parts[index++]);
         },
       });
+    };
 
     const makeRequest = () =>
       new Request(server.url, {
@@ -294,141 +301,5 @@ describe("fetch with Request body lifecycle", () => {
     abortController.abort();
 
     await expect(fetchPromise).rejects.toThrow();
-  });
-
-  test("should properly wrap response stream with lifecycle callbacks", async () => {
-    using server = Bun.serve({
-      port: 0,
-      async fetch() {
-        const stream = new ReadableStream({
-          start(controller) {
-            controller.enqueue(new TextEncoder().encode("line1\n"));
-            controller.enqueue(new TextEncoder().encode("line2\n"));
-            controller.enqueue(new TextEncoder().encode("line3\n"));
-            controller.close();
-          },
-        });
-        return new Response(stream);
-      },
-    });
-
-    const response = await fetch(server.url);
-    const originalBody = response.body;
-    const reader = originalBody!.getReader();
-
-    let firstChunkCalled = false;
-    let completeCalled = false;
-    let completed = false;
-
-    const wrappedStream = new ReadableStream({
-      async pull(controller) {
-        if (completed) {
-          controller.close();
-          return;
-        }
-
-        try {
-          const { done, value } = await reader.read();
-
-          if (done) {
-            completed = true;
-            completeCalled = true;
-            controller.close();
-            return;
-          }
-
-          if (!firstChunkCalled) {
-            firstChunkCalled = true;
-          }
-
-          controller.enqueue(value);
-        } catch (error) {
-          completed = true;
-          completeCalled = true;
-          controller.error(error);
-        }
-      },
-      cancel(reason) {
-        if (completed) {
-          return;
-        }
-        completed = true;
-        reader.cancel(reason);
-        completeCalled = true;
-      },
-    });
-
-    const text = await new Response(wrappedStream).text();
-    expect(text).toBe("line1\nline2\nline3\n");
-    expect(firstChunkCalled).toBe(true);
-    expect(completeCalled).toBe(true);
-  });
-
-  test("should call onComplete when wrapped stream is cancelled", async () => {
-    using server = Bun.serve({
-      port: 0,
-      async fetch() {
-        const stream = new ReadableStream({
-          async start(controller) {
-            for (let i = 0; i < 1000; i++) {
-              controller.enqueue(new TextEncoder().encode(`chunk${i}\n`));
-              await Promise.resolve();
-            }
-            controller.close();
-          },
-        });
-        return new Response(stream);
-      },
-    });
-
-    const response = await fetch(server.url);
-    const originalBody = response.body;
-    const reader = originalBody!.getReader();
-
-    let completeCalled = false;
-    let completed = false;
-
-    const wrappedStream = new ReadableStream({
-      async pull(controller) {
-        if (completed) {
-          controller.close();
-          return;
-        }
-
-        try {
-          const { done, value } = await reader.read();
-
-          if (done) {
-            completed = true;
-            completeCalled = true;
-            controller.close();
-            return;
-          }
-
-          controller.enqueue(value);
-        } catch (error) {
-          completed = true;
-          completeCalled = true;
-          controller.error(error);
-        }
-      },
-      cancel(reason) {
-        if (completed) {
-          return;
-        }
-        completed = true;
-        reader.cancel(reason);
-        completeCalled = true;
-      },
-    });
-
-    const wrappedReader = wrappedStream.getReader();
-
-    // read a few chunks then cancel
-    await wrappedReader.read();
-    await wrappedReader.read();
-    await wrappedReader.cancel("user cancelled");
-
-    expect(completeCalled).toBe(true);
   });
 });

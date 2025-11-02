@@ -168,7 +168,7 @@ describe("Server", () => {
     },
   }));
 
-  it("getSubscriptions", async () => {
+  it("getSubscriptions - basic usage", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
 
@@ -218,6 +218,174 @@ describe("Server", () => {
     expect(subscriptions).toContain("topic1");
     expect(subscriptions).toContain("topic3");
     expect(subscriptions).not.toContain("topic2");
+  });
+
+  it("getSubscriptions - all unsubscribed", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
+
+    using server = serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+        return new Response("Not a websocket");
+      },
+      websocket: {
+        open(ws) {
+          // Subscribe to topics
+          ws.subscribe("topic1");
+          ws.subscribe("topic2");
+          ws.subscribe("topic3");
+          expect(ws.getSubscriptions.length).toBe(3);
+
+          // Unsubscribe from all
+          ws.unsubscribe("topic1");
+          ws.unsubscribe("topic2");
+          ws.unsubscribe("topic3");
+          const finalSubs = ws.getSubscriptions;
+
+          resolve(finalSubs);
+          ws.close();
+        },
+        close() {
+          onClose();
+        },
+      },
+    });
+
+    const ws = new WebSocket(`ws://localhost:${server.port}`);
+    ws.onclose = () => onClose();
+
+    const [subscriptions] = await Promise.all([promise, onClosePromise]);
+    expect(subscriptions).toEqual([]);
+    expect(subscriptions.length).toBe(0);
+  });
+
+  it("getSubscriptions - after close", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
+
+    using server = serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+        return new Response("Not a websocket");
+      },
+      websocket: {
+        open(ws) {
+          ws.subscribe("topic1");
+          ws.subscribe("topic2");
+          expect(ws.getSubscriptions.length).toBe(2);
+          ws.close();
+        },
+        close(ws) {
+          // After close, should return empty array (or null/undefined based on implementation)
+          const subsAfterClose = ws.getSubscriptions;
+          resolve(subsAfterClose);
+          onClose();
+        },
+      },
+    });
+
+    const ws = new WebSocket(`ws://localhost:${server.port}`);
+    ws.onclose = () => onClose();
+
+    const [subscriptions] = await Promise.all([promise, onClosePromise]);
+    // After close, WebSocket should return null or empty array
+    expect(subscriptions === null || (Array.isArray(subscriptions) && subscriptions.length === 0)).toBeTrue();
+  });
+
+  it("getSubscriptions - duplicate subscriptions", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
+
+    using server = serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+        return new Response("Not a websocket");
+      },
+      websocket: {
+        open(ws) {
+          // Subscribe to same topic multiple times
+          ws.subscribe("topic1");
+          ws.subscribe("topic1");
+          ws.subscribe("topic1");
+          const subs = ws.getSubscriptions;
+
+          resolve(subs);
+          ws.close();
+        },
+        close() {
+          onClose();
+        },
+      },
+    });
+
+    const ws = new WebSocket(`ws://localhost:${server.port}`);
+    ws.onclose = () => onClose();
+
+    const [subscriptions] = await Promise.all([promise, onClosePromise]);
+    // Should only have one instance of topic1
+    expect(subscriptions.length).toBe(1);
+    expect(subscriptions).toContain("topic1");
+  });
+
+  it("getSubscriptions - multiple cycles", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
+
+    using server = serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+        return new Response("Not a websocket");
+      },
+      websocket: {
+        open(ws) {
+          // First cycle
+          ws.subscribe("topic1");
+          expect(ws.getSubscriptions).toEqual(["topic1"]);
+
+          ws.unsubscribe("topic1");
+          expect(ws.getSubscriptions.length).toBe(0);
+
+          // Second cycle with different topics
+          ws.subscribe("topic2");
+          ws.subscribe("topic3");
+          expect(ws.getSubscriptions.length).toBe(2);
+
+          ws.unsubscribe("topic2");
+          expect(ws.getSubscriptions).toEqual(["topic3"]);
+
+          // Third cycle - resubscribe to topic1
+          ws.subscribe("topic1");
+          const finalSubs = ws.getSubscriptions;
+
+          resolve(finalSubs);
+          ws.close();
+        },
+        close() {
+          onClose();
+        },
+      },
+    });
+
+    const ws = new WebSocket(`ws://localhost:${server.port}`);
+    ws.onclose = () => onClose();
+
+    const [subscriptions] = await Promise.all([promise, onClosePromise]);
+    expect(subscriptions.length).toBe(2);
+    expect(subscriptions).toContain("topic1");
+    expect(subscriptions).toContain("topic3");
   });
 
   describe("websocket", () => {

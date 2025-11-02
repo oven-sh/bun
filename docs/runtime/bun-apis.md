@@ -165,7 +165,7 @@ Click the link in the right column to jump to the associated documentation.
 ---
 
 - String & Text Processing
-- [`Bun.escapeHTML()`](https://bun.com/docs/api/utils#bun-escapehtml), [`Bun.stringWidth()`](https://bun.com/docs/api/utils#bun-stringwidth), `Bun.indexOfLine`
+- [`Bun.escapeHTML()`](https://bun.com/docs/api/utils#bun-escapehtml), [`Bun.stringWidth()`](https://bun.com/docs/api/utils#bun-stringwidth-6-756x-faster-string-width-alternative), `Bun.indexOfLine`
 
 ---
 

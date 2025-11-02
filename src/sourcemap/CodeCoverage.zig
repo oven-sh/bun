@@ -357,7 +357,7 @@ pub const Report = struct {
                 try writer.writeAll("    <packages>\n");
 
                 // Group reports by directory
-                var package_map = std.StringHashMap(std.ArrayListUnmanaged(*const Report)).init(this.allocator);
+                var package_map = bun.StringHashMap(std.ArrayListUnmanaged(*const Report)).init(this.allocator);
                 defer {
                     var iter = package_map.iterator();
                     while (iter.next()) |entry| {

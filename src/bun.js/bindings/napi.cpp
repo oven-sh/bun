@@ -1994,8 +1994,12 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
     if (data == nullptr || length == 0) {
-        auto* buffer = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, 0);
+
+        // TODO: is there a way to create a detached uint8 array?
+        auto arrayBuffer = JSC::ArrayBuffer::createUninitialized(0, 1);
+        auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTFMove(arrayBuffer), 0, 0);
         NAPI_RETURN_IF_EXCEPTION(env);
+        buffer->existingBuffer()->detach(vm);
 
         vm.heap.addFinalizer(buffer, [env = WTF::Ref<NapiEnv>(*env), finalize_cb, data, finalize_hint](JSCell* cell) -> void {
             NAPI_LOG("external buffer finalizer (empty buffer)");

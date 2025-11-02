@@ -1066,14 +1066,21 @@ extern "C"
         return JSC::constructEmptyArray(global, nullptr, 0);
       }
 
-      JSC::JSArray* array = JSC::constructEmptyArray(global, nullptr, count);
-      size_t i = 0;
-      auto callback = [&](std::string_view topic) {
-        auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const unsigned char*>(topic.data()), topic.length() });
+      // Collect topic names first, before allocating JS objects
+      // This avoids holding the iterator lock while doing JSC operations which could throw
+      std::vector<std::string> topics;
+      topics.reserve(count);
+      uws->iterateTopics([&](std::string_view topic) {
+        topics.emplace_back(topic);
+      });
+
+      // Now build the JS array without holding any locks
+      JSC::JSArray* array = JSC::constructEmptyArray(global, nullptr, topics.size());
+      for (size_t i = 0; i < topics.size(); i++) {
+        auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const unsigned char*>(topics[i].data()), topics[i].length() });
         JSC::JSValue topicString = JSC::jsString(vm, str);
-        array->putDirectIndex(global, i++, topicString);
-      };
-      uws->iterateTopics(callback);
+        array->putDirectIndex(global, i, topicString);
+      }
       return array;
     } else {
       TCPWebSocket *uws = (TCPWebSocket *)ws;
@@ -1082,14 +1089,20 @@ extern "C"
         return JSC::constructEmptyArray(global, nullptr, 0);
       }
 
-      JSC::JSArray* array = JSC::constructEmptyArray(global, nullptr, count);
-      size_t i = 0;
-      auto callback = [&](std::string_view topic) {
-        auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const unsigned char*>(topic.data()), topic.length() });
+      // Collect topic names first, before allocating JS objects
+      std::vector<std::string> topics;
+      topics.reserve(count);
+      uws->iterateTopics([&](std::string_view topic) {
+        topics.emplace_back(topic);
+      });
+
+      // Now build the JS array without holding any locks
+      JSC::JSArray* array = JSC::constructEmptyArray(global, nullptr, topics.size());
+      for (size_t i = 0; i < topics.size(); i++) {
+        auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const unsigned char*>(topics[i].data()), topics[i].length() });
         JSC::JSValue topicString = JSC::jsString(vm, str);
-        array->putDirectIndex(global, i++, topicString);
-      };
-      uws->iterateTopics(callback);
+        array->putDirectIndex(global, i, topicString);
+      }
       return array;
     }
   }

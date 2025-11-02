@@ -359,6 +359,28 @@ declare module "bun:test" {
     options?: HookOptions,
   ): void;
   /**
+   * Runs a function after a test finishes, including after all afterEach hooks.
+   *
+   * This is useful for cleanup tasks that need to run at the very end of a test,
+   * after all other hooks have completed.
+   *
+   * Can only be called inside a test, not in describe blocks.
+   *
+   * @example
+   * test("my test", () => {
+   *   onTestFinished(() => {
+   *     // This runs after all afterEach hooks
+   *     console.log("Test finished!");
+   *   });
+   * });
+   *
+   * @param fn the function to run
+   */
+  export function onTestFinished(
+    fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    options?: HookOptions,
+  ): void;
+  /**
    * Sets the default timeout for all tests in the current file. If a test specifies a timeout, it will
    * override this value. The default timeout is 5000ms (5 seconds).
    *

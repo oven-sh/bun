@@ -313,7 +313,7 @@ pub fn loadFromDir(
 
     switch (result) {
         .ok => {
-            if (bun.getenvZ("BUN_DEBUG_TEST_TEXT_LOCKFILE") != null and manager != null) {
+            if (bun.env_var.BUN_DEBUG_TEST_TEXT_LOCKFILE.get() and manager != null) {
 
                 // Convert the loaded binary lockfile into a text lockfile in memory, then
                 // parse it back into a binary lockfile.
@@ -912,7 +912,6 @@ pub fn hoist(
     var slice = lockfile.packages.slice();
 
     var builder = Tree.Builder(method){
-        .name_hashes = slice.items(.name_hash),
         .queue = .init(allocator),
         .resolution_lists = slice.items(.resolutions),
         .resolutions = lockfile.buffers.resolutions.items,
@@ -924,6 +923,7 @@ pub fn hoist(
         .install_root_dependencies = install_root_dependencies,
         .workspace_filters = workspace_filters,
         .packages_to_install = packages_to_install,
+        .pending_optional_peers = .init(bun.default_allocator),
     };
 
     try (Tree{}).processSubtree(

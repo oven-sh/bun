@@ -922,7 +922,7 @@ fn printInstallSummary(
             // We deliberately do not disable it after this.
             Output.enableBuffering();
             const writer = Output.writerBuffered();
-            switch (Output.enable_ansi_colors) {
+            switch (Output.enable_ansi_colors_stdout) {
                 inline else => |enable_ansi_colors| {
                     try Lockfile.Printer.Tree.print(&printer, this, @TypeOf(writer), writer, enable_ansi_colors, log_level);
                 },

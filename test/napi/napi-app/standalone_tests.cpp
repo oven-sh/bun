@@ -1239,6 +1239,212 @@ test_napi_freeze_seal_indexed(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// Test for napi_create_external_buffer with empty/null data
+static void empty_buffer_finalizer(napi_env env, void *data, void *hint) {
+  // No-op finalizer for empty buffers
+}
+
+static napi_value
+test_napi_create_external_buffer_empty(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  // Test 1: nullptr data with zero length
+  {
+    napi_value buffer;
+    napi_status status = napi_create_external_buffer(
+        env, 0, nullptr, empty_buffer_finalizer, nullptr, &buffer);
+
+    if (status != napi_ok) {
+      printf("FAIL: napi_create_external_buffer with nullptr and zero length "
+             "failed with status %d\n",
+             status);
+      return env.Undefined();
+    }
+
+    // Verify it's a buffer
+    bool is_buffer;
+    NODE_API_CALL(env, napi_is_buffer(env, buffer, &is_buffer));
+    if (!is_buffer) {
+      printf("FAIL: Created value is not a buffer\n");
+      return env.Undefined();
+    }
+
+    // Verify length is 0
+    size_t length;
+    void *data;
+    NODE_API_CALL(env, napi_get_buffer_info(env, buffer, &data, &length));
+    if (length != 0) {
+      printf("FAIL: Buffer length is %zu instead of 0\n", length);
+      return env.Undefined();
+    }
+
+    printf("PASS: napi_create_external_buffer with nullptr and zero length\n");
+  }
+
+  // Test 2: non-null data with zero length
+  {
+    char dummy = 0;
+    napi_value buffer;
+    napi_status status = napi_create_external_buffer(
+        env, 0, &dummy, empty_buffer_finalizer, nullptr, &buffer);
+
+    if (status != napi_ok) {
+      printf("FAIL: napi_create_external_buffer with non-null data and zero "
+             "length failed with status %d\n",
+             status);
+      return env.Undefined();
+    }
+
+    // Verify it's a buffer
+    bool is_buffer;
+    NODE_API_CALL(env, napi_is_buffer(env, buffer, &is_buffer));
+    if (!is_buffer) {
+      printf("FAIL: Created value is not a buffer\n");
+      return env.Undefined();
+    }
+
+    // Verify length is 0
+    size_t length;
+    void *data;
+    NODE_API_CALL(env, napi_get_buffer_info(env, buffer, &data, &length));
+    if (length != 0) {
+      printf("FAIL: Buffer length is %zu instead of 0\n", length);
+      return env.Undefined();
+    }
+
+    printf("PASS: napi_create_external_buffer with non-null data and zero "
+           "length\n");
+  }
+
+  // Test 3: nullptr finalizer
+  {
+    char dummy = 0;
+    napi_value buffer;
+    napi_status status =
+        napi_create_external_buffer(env, 0, &dummy, nullptr, nullptr, &buffer);
+
+    if (status != napi_ok) {
+      printf("FAIL: napi_create_external_buffer with nullptr finalizer failed "
+             "with status %d\n",
+             status);
+      return env.Undefined();
+    }
+
+    printf("PASS: napi_create_external_buffer with nullptr finalizer\n");
+  }
+
+  return ok(env);
+}
+
+static napi_value test_napi_empty_buffer_info(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  // Test: Create an empty external buffer and verify napi_get_buffer_info and
+  // napi_get_typedarray_info
+  {
+    napi_value buffer;
+    napi_status status =
+        napi_create_external_buffer(env, 0, nullptr, nullptr, nullptr, &buffer);
+
+    if (status != napi_ok) {
+      printf("FAIL: napi_create_external_buffer with nullptr and zero length "
+             "failed with status %d\n",
+             status);
+      return env.Undefined();
+    }
+
+    // Test napi_get_buffer_info
+    void *buffer_data = reinterpret_cast<void *>(
+        0xDEADBEEF); // Initialize to non-null to ensure it's set to null
+    size_t buffer_length =
+        999; // Initialize to non-zero to ensure it's set to 0
+
+    status = napi_get_buffer_info(env, buffer, &buffer_data, &buffer_length);
+    if (status != napi_ok) {
+      printf("FAIL: napi_get_buffer_info failed with status %d\n", status);
+      return env.Undefined();
+    }
+
+    if (buffer_data != nullptr) {
+      printf("FAIL: napi_get_buffer_info returned non-null data pointer: %p\n",
+             buffer_data);
+      return env.Undefined();
+    }
+
+    if (buffer_length != 0) {
+      printf("FAIL: napi_get_buffer_info returned non-zero length: %zu\n",
+             buffer_length);
+      return env.Undefined();
+    }
+
+    printf("PASS: napi_get_buffer_info returns null pointer and 0 length for "
+           "empty buffer\n");
+
+    // Test napi_get_typedarray_info
+    napi_typedarray_type type;
+    size_t typedarray_length = 999; // Initialize to non-zero
+    void *typedarray_data =
+        reinterpret_cast<void *>(0xDEADBEEF); // Initialize to non-null
+    napi_value arraybuffer;
+    size_t byte_offset;
+
+    status =
+        napi_get_typedarray_info(env, buffer, &type, &typedarray_length,
+                                 &typedarray_data, &arraybuffer, &byte_offset);
+    if (status != napi_ok) {
+      printf("FAIL: napi_get_typedarray_info failed with status %d\n", status);
+      return env.Undefined();
+    }
+
+    if (typedarray_data != nullptr) {
+      printf(
+          "FAIL: napi_get_typedarray_info returned non-null data pointer: %p\n",
+          typedarray_data);
+      return env.Undefined();
+    }
+
+    if (typedarray_length != 0) {
+      printf("FAIL: napi_get_typedarray_info returned non-zero length: %zu\n",
+             typedarray_length);
+      return env.Undefined();
+    }
+
+    printf("PASS: napi_get_typedarray_info returns null pointer and 0 length "
+           "for empty buffer\n");
+
+    // Test napi_is_detached_arraybuffer
+    // First get the underlying arraybuffer from the buffer
+    napi_value arraybuffer_from_buffer;
+    status = napi_get_typedarray_info(env, buffer, nullptr, nullptr, nullptr,
+                                      &arraybuffer_from_buffer, nullptr);
+    if (status != napi_ok) {
+      printf("FAIL: Could not get arraybuffer from buffer, status %d\n",
+             status);
+      return env.Undefined();
+    }
+
+    bool is_detached = false;
+    status = napi_is_detached_arraybuffer(env, arraybuffer_from_buffer,
+                                          &is_detached);
+    if (status != napi_ok) {
+      printf("FAIL: napi_is_detached_arraybuffer failed with status %d\n",
+             status);
+      return env.Undefined();
+    }
+
+    if (!is_detached) {
+      printf("FAIL: napi_is_detached_arraybuffer returned false for empty "
+             "buffer's arraybuffer, expected true\n");
+      return env.Undefined();
+    }
+
+    printf("PASS: napi_is_detached_arraybuffer returns true for empty buffer's "
+           "arraybuffer\n");
+  }
+
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_issue_7685);
   REGISTER_FUNCTION(env, exports, test_issue_11949);
@@ -1267,6 +1473,8 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_dataview_bounds_errors);
   REGISTER_FUNCTION(env, exports, test_napi_typeof_empty_value);
   REGISTER_FUNCTION(env, exports, test_napi_freeze_seal_indexed);
+  REGISTER_FUNCTION(env, exports, test_napi_create_external_buffer_empty);
+  REGISTER_FUNCTION(env, exports, test_napi_empty_buffer_info);
 }
 
 } // namespace napitests

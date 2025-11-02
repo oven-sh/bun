@@ -569,7 +569,7 @@ fn updatePackageJSONAndInstallAndCLI(
         if (manager.options.global) {
             if (manager.options.bin_path.len > 0 and manager.track_installed_bin == .basename) {
                 var path_buf: bun.PathBuffer = undefined;
-                const needs_to_print = if (bun.getenvZ("PATH")) |PATH|
+                const needs_to_print = if (bun.env_var.PATH.get()) |PATH|
                     // This is not perfect
                     //
                     // If you already have a different binary of the same
@@ -667,7 +667,7 @@ fn updatePackageJSONAndInstallAndCLI(
                     ,
                         .{
                             bun.fmt.quote(manager.track_installed_bin.basename),
-                            MoreInstructions{ .shell = bun.cli.ShellCompletions.Shell.fromEnv([]const u8, bun.getenvZ("SHELL") orelse ""), .folder = manager.options.bin_path },
+                            MoreInstructions{ .shell = bun.cli.ShellCompletions.Shell.fromEnv([]const u8, bun.env_var.SHELL.platformGet() orelse ""), .folder = manager.options.bin_path },
                         },
                     );
                     Output.flush();

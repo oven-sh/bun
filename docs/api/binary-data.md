@@ -420,6 +420,16 @@ console.log(buf.toString());
 // => Hello world
 ```
 
+When printing `Buffer` instances with `console.log()`, `Bun.inspect()`, or `node:util.inspect()`, the output format shows byte content in hexadecimal and additional properties:
+
+```ts
+let b = Buffer.allocUnsafe(4);
+b.fill("1234");
+b.specialnumber = 42;
+console.log(b);
+// => <Buffer 31 32 33 34, specialnumber: 42>
+```
+
 For complete documentation, refer to the [Node.js documentation](https://nodejs.org/api/buffer.html).
 
 ## `Blob`

@@ -206,7 +206,7 @@ pub export fn TextEncoder__encodeRopeString(
     if (array == .zero) {
         array = jsc.JSValue.createUninitializedUint8Array(globalThis, length) catch return .zero;
         array.ensureStillAlive();
-        @memcpy(array.asArrayBuffer(globalThis).?.ptr.?[0..length], buf_to_use[0..length]);
+        @memcpy(array.asArrayBuffer(globalThis).?.byteSlice(), buf_to_use[0..length]);
     }
 
     return array;

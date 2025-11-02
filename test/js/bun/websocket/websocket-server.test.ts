@@ -168,7 +168,7 @@ describe("Server", () => {
     },
   }));
 
-  it("getSubscriptions - basic usage", async () => {
+  it("subscriptions - basic usage", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
 
@@ -183,7 +183,7 @@ describe("Server", () => {
       websocket: {
         open(ws) {
           // Initially no subscriptions
-          const initialSubs = ws.getSubscriptions;
+          const initialSubs = ws.subscriptions;
           expect(Array.isArray(initialSubs)).toBeTrue();
           expect(initialSubs.length).toBe(0);
 
@@ -191,7 +191,7 @@ describe("Server", () => {
           ws.subscribe("topic1");
           ws.subscribe("topic2");
           ws.subscribe("topic3");
-          const threeSubs = ws.getSubscriptions;
+          const threeSubs = ws.subscriptions;
           expect(threeSubs.length).toBe(3);
           expect(threeSubs).toContain("topic1");
           expect(threeSubs).toContain("topic2");
@@ -199,7 +199,7 @@ describe("Server", () => {
 
           // Unsubscribe from one
           ws.unsubscribe("topic2");
-          const finalSubs = ws.getSubscriptions;
+          const finalSubs = ws.subscriptions;
 
           resolve(finalSubs);
           ws.close();
@@ -220,7 +220,7 @@ describe("Server", () => {
     expect(subscriptions).not.toContain("topic2");
   });
 
-  it("getSubscriptions - all unsubscribed", async () => {
+  it("subscriptions - all unsubscribed", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
 
@@ -238,13 +238,13 @@ describe("Server", () => {
           ws.subscribe("topic1");
           ws.subscribe("topic2");
           ws.subscribe("topic3");
-          expect(ws.getSubscriptions.length).toBe(3);
+          expect(ws.subscriptions.length).toBe(3);
 
           // Unsubscribe from all
           ws.unsubscribe("topic1");
           ws.unsubscribe("topic2");
           ws.unsubscribe("topic3");
-          const finalSubs = ws.getSubscriptions;
+          const finalSubs = ws.subscriptions;
 
           resolve(finalSubs);
           ws.close();
@@ -263,7 +263,7 @@ describe("Server", () => {
     expect(subscriptions.length).toBe(0);
   });
 
-  it("getSubscriptions - after close", async () => {
+  it("subscriptions - after close", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
 
@@ -279,12 +279,12 @@ describe("Server", () => {
         open(ws) {
           ws.subscribe("topic1");
           ws.subscribe("topic2");
-          expect(ws.getSubscriptions.length).toBe(2);
+          expect(ws.subscriptions.length).toBe(2);
           ws.close();
         },
         close(ws) {
           // After close, should return empty array (or null/undefined based on implementation)
-          const subsAfterClose = ws.getSubscriptions;
+          const subsAfterClose = ws.subscriptions;
           resolve(subsAfterClose);
           onClose();
         },
@@ -299,7 +299,7 @@ describe("Server", () => {
     expect(subscriptions === null || (Array.isArray(subscriptions) && subscriptions.length === 0)).toBeTrue();
   });
 
-  it("getSubscriptions - duplicate subscriptions", async () => {
+  it("subscriptions - duplicate subscriptions", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
 
@@ -317,7 +317,7 @@ describe("Server", () => {
           ws.subscribe("topic1");
           ws.subscribe("topic1");
           ws.subscribe("topic1");
-          const subs = ws.getSubscriptions;
+          const subs = ws.subscriptions;
 
           resolve(subs);
           ws.close();
@@ -337,7 +337,7 @@ describe("Server", () => {
     expect(subscriptions).toContain("topic1");
   });
 
-  it("getSubscriptions - multiple cycles", async () => {
+  it("subscriptions - multiple cycles", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
 
@@ -353,22 +353,22 @@ describe("Server", () => {
         open(ws) {
           // First cycle
           ws.subscribe("topic1");
-          expect(ws.getSubscriptions).toEqual(["topic1"]);
+          expect(ws.subscriptions).toEqual(["topic1"]);
 
           ws.unsubscribe("topic1");
-          expect(ws.getSubscriptions.length).toBe(0);
+          expect(ws.subscriptions.length).toBe(0);
 
           // Second cycle with different topics
           ws.subscribe("topic2");
           ws.subscribe("topic3");
-          expect(ws.getSubscriptions.length).toBe(2);
+          expect(ws.subscriptions.length).toBe(2);
 
           ws.unsubscribe("topic2");
-          expect(ws.getSubscriptions).toEqual(["topic3"]);
+          expect(ws.subscriptions).toEqual(["topic3"]);
 
           // Third cycle - resubscribe to topic1
           ws.subscribe("topic1");
-          const finalSubs = ws.getSubscriptions;
+          const finalSubs = ws.subscriptions;
 
           resolve(finalSubs);
           ws.close();

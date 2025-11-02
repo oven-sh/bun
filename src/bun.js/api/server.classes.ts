@@ -312,7 +312,7 @@ export default [
         fn: "isSubscribed",
         length: 1,
       },
-      getSubscriptions: {
+      subscriptions: {
         getter: "getSubscriptions",
       },
       remoteAddress: {

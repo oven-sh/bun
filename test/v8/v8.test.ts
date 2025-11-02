@@ -103,24 +103,33 @@ async function build(
   console.log(err);
 }
 
-describe.todoIf(isBroken && isMusl)("node:v8", () => {
-  beforeAll(async () => {
-    // set up clean directories for our 4 builds
-    directories.bunRelease = tmpdirSync();
-    directories.bunDebug = tmpdirSync();
-    directories.node = tmpdirSync();
-    directories.badModules = tmpdirSync();
+describe.concurrent.todoIf(isBroken && isMusl)("node:v8", () => {
+  beforeAll(
+    async () => {
+      // set up clean directories for our 4 builds
+      directories.bunRelease = tmpdirSync();
+      directories.bunDebug = tmpdirSync();
+      directories.node = tmpdirSync();
+      directories.badModules = tmpdirSync();
 
-    await install(srcDir, directories.bunRelease, Runtime.bun);
-    await install(srcDir, directories.bunDebug, Runtime.bun);
-    await install(srcDir, directories.node, Runtime.node);
-    await install(join(__dirname, "bad-modules"), directories.badModules, Runtime.node);
+      await Promise.all([
+        install(srcDir, directories.bunRelease, Runtime.bun),
+        install(srcDir, directories.bunDebug, Runtime.bun),
+        install(srcDir, directories.node, Runtime.node),
+        install(join(__dirname, "bad-modules"), directories.badModules, Runtime.node),
+      ]);
 
-    await build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release);
-    await build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug);
-    await build(srcDir, directories.node, Runtime.node, BuildMode.release);
-    await build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release);
-  });
+      await Promise.all([
+        build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release),
+        build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug),
+        build(srcDir, directories.node, Runtime.node, BuildMode.release),
+        build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release),
+      ]);
+    },
+    {
+      timeout: 1000000,
+    },
+  );
 
   describe("module lifecycle", () => {
     it("can call a basic native function", async () => {

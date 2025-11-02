@@ -115,7 +115,7 @@ describe("fetch with Request body lifecycle", () => {
       const fetchPromise = fetch(request);
 
       await pull_called;
-      await expect(fetchPromise).rejects.toThrowErrorMatchingInlineSnapshot();
+      await expect(fetchPromise).rejects.toThrow("just throw man");
     }
   });
 

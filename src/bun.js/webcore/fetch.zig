@@ -499,9 +499,7 @@ pub const FetchTasklet = struct {
                 body.* = body_value;
                 log("onBodyReceived body_value length={}", .{body_value.InternalBlob.bytes.items.len});
 
-                // now probably safer to discard the old buffer backing memory
-                bun.default_allocator.free(scheduled_response_buffer.allocatedSlice());
-                // and the reinitialize using the same allocator as the Tasklet
+                // reinitialize using the same allocator as the Tasklet
                 this.scheduled_response_buffer = .{
                     .allocator = bun.default_allocator,
                     .list = .{

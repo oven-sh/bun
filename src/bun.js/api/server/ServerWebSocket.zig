@@ -1232,6 +1232,19 @@ pub fn isSubscribed(
     return JSValue.jsBoolean(this.websocket().isSubscribed(topic.slice()));
 }
 
+pub fn getSubscriptions(
+    this: *ServerWebSocket,
+    globalThis: *jsc.JSGlobalObject,
+) JSValue {
+    if (this.isClosed()) {
+        return JSValue.jsNull();
+    }
+
+    // Get the JSArray directly from C++ which has already constructed it with JSC
+    const array_ptr = this.websocket().getTopicsAsJSArray(globalThis);
+    return JSValue.fromCell(@ptrCast(array_ptr));
+}
+
 pub fn getRemoteAddress(
     this: *ServerWebSocket,
     globalThis: *jsc.JSGlobalObject,

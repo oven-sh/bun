@@ -168,6 +168,50 @@ describe("Server", () => {
     },
   }));
 
+  test("getSubscriptions", done => ({
+    open(ws) {
+      // Initially no subscriptions
+      const initialSubs = ws.getSubscriptions;
+      expect(Array.isArray(initialSubs)).toBeTrue();
+      expect(initialSubs.length).toBe(0);
+
+      // Subscribe to one topic
+      ws.subscribe("topic1");
+      const oneSub = ws.getSubscriptions;
+      expect(oneSub.length).toBe(1);
+      expect(oneSub[0]).toBe("topic1");
+      expect(ws.isSubscribed("topic1")).toBeTrue();
+
+      // Subscribe to more topics
+      ws.subscribe("topic2");
+      ws.subscribe("topic3");
+      const threeSubs = ws.getSubscriptions;
+      expect(threeSubs.length).toBe(3);
+      expect(threeSubs).toContain("topic1");
+      expect(threeSubs).toContain("topic2");
+      expect(threeSubs).toContain("topic3");
+
+      // Unsubscribe from one
+      ws.unsubscribe("topic2");
+      const twoSubs = ws.getSubscriptions;
+      expect(twoSubs.length).toBe(2);
+      expect(twoSubs).toContain("topic1");
+      expect(twoSubs).toContain("topic3");
+      expect(twoSubs).not.toContain("topic2");
+
+      // Unsubscribe from all
+      ws.unsubscribe("topic1");
+      ws.unsubscribe("topic3");
+      const finalSubs = ws.getSubscriptions;
+      expect(finalSubs.length).toBe(0);
+
+      ws.close();
+    },
+    close(ws, code, reason) {
+      done();
+    },
+  }));
+
   describe("websocket", () => {
     test("open", done => ({
       open(ws) {

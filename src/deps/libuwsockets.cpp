@@ -5,6 +5,9 @@
 #include <bun-uws/src/AsyncSocket.h>
 #include <bun-usockets/src/internal/internal.h>
 #include <string_view>
+#include "JavaScriptCore/JSGlobalObject.h"
+#include "JavaScriptCore/JSArray.h"
+#include "JavaScriptCore/ObjectConstructor.h"
 
 extern "C" const char* ares_inet_ntop(int af, const char *src, char *dst, size_t size);
 
@@ -1048,6 +1051,46 @@ extern "C"
 
       uws->iterateTopics([callback, user_data](auto topic)
                          { callback(topic.data(), topic.length(), user_data); });
+    }
+  }
+
+  void* uws_ws_get_topics_as_js_array(int ssl, uws_websocket_t *ws, void* globalObject) {
+    JSC::JSGlobalObject* global = reinterpret_cast<JSC::JSGlobalObject*>(globalObject);
+    JSC::VM& vm = global->vm();
+
+    size_t count;
+    if (ssl) {
+      TLSWebSocket *uws = (TLSWebSocket *)ws;
+      count = uws->getTopicsCount();
+      if (count == 0) {
+        return JSC::constructEmptyArray(global, nullptr, 0);
+      }
+
+      JSC::JSArray* array = JSC::constructEmptyArray(global, nullptr, count);
+      size_t i = 0;
+      auto callback = [&](std::string_view topic) {
+        auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const unsigned char*>(topic.data()), topic.length() });
+        JSC::JSValue topicString = JSC::jsString(vm, str);
+        array->putDirectIndex(global, i++, topicString);
+      };
+      uws->iterateTopics(callback);
+      return array;
+    } else {
+      TCPWebSocket *uws = (TCPWebSocket *)ws;
+      count = uws->getTopicsCount();
+      if (count == 0) {
+        return JSC::constructEmptyArray(global, nullptr, 0);
+      }
+
+      JSC::JSArray* array = JSC::constructEmptyArray(global, nullptr, count);
+      size_t i = 0;
+      auto callback = [&](std::string_view topic) {
+        auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const unsigned char*>(topic.data()), topic.length() });
+        JSC::JSValue topicString = JSC::jsString(vm, str);
+        array->putDirectIndex(global, i++, topicString);
+      };
+      uws->iterateTopics(callback);
+      return array;
     }
   }
 

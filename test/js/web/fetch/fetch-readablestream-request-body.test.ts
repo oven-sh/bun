@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 describe("fetch with Request body lifecycle", () => {
-  test("should properly handle Request with cloned body", async () => {
+  test("should properly handle Request with streaming body", async () => {
     using server = Bun.serve({
       port: 0,
       async fetch(req) {
@@ -10,15 +10,19 @@ describe("fetch with Request body lifecycle", () => {
       },
     });
 
+    const chunk = new TextEncoder().encode("test data");
+
     const originalRequest = new Request(server.url, {
       method: "POST",
-      body: "test data",
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(chunk);
+          controller.close();
+        },
+      }),
     });
 
-    // clone creates a new request that might use ReadableStream internally
-    const clonedRequest = originalRequest.clone();
-
-    const response = await fetch(clonedRequest);
+    const response = await fetch(originalRequest);
     expect(await response.text()).toBe("test data");
 
     // original should still be usable
@@ -26,32 +30,50 @@ describe("fetch with Request body lifecycle", () => {
     expect(await response2.text()).toBe("test data");
   });
 
-  test("should handle aborted fetch with Request body", async () => {
+  test("should handle aborted fetch with streaming Request body", async () => {
     using server = Bun.serve({
       port: 0,
-      async fetch() {
-        await Bun.sleep(100);
+      async fetch(req) {
+        try {
+          await req.text();
+        } catch {
+          // ignore abort from client
+        }
         return new Response("ok");
+      },
+    });
+
+    const controller = new AbortController();
+    const { promise: pull_ready, resolve: resolve_pull } = Promise.withResolvers<void>();
+    const { promise: cancel_notified, resolve: resolve_cancel } = Promise.withResolvers<void>();
+
+    const stream = new ReadableStream({
+      pull(controller) {
+        resolve_pull();
+        controller.enqueue(new TextEncoder().encode("chunk"));
+      },
+      cancel() {
+        resolve_cancel();
       },
     });
 
     const request = new Request(server.url, {
       method: "POST",
-      body: "test data that might become a stream",
-    });
+      duplex: "half",
+      body: stream,
+    } as RequestInit & { duplex: "half" });
 
-    const controller = new AbortController();
     const fetchPromise = fetch(request, { signal: controller.signal });
+    const expect_rejection = expect(async () => await fetchPromise).toThrow();
 
-    // abort quickly
-    await Bun.sleep(1);
+    await pull_ready;
     controller.abort();
 
-    expect(fetchPromise).rejects.toThrow();
+    await cancel_notified;
+    await expect_rejection;
   });
 
-  // (request.clone()would create ReadableStream internally)
-  test("should handle multiple clones of the same Request", async () => {
+  test("should handle multiple requests with the same streaming body", async () => {
     using server = Bun.serve({
       port: 0,
       async fetch(req) {
@@ -60,21 +82,29 @@ describe("fetch with Request body lifecycle", () => {
       },
     });
 
-    const originalRequest = new Request(server.url, {
-      method: "POST",
-      body: "original data",
-    });
+    const encoder = new TextEncoder();
+    const makeStream = () =>
+      new ReadableStream({
+        async start(controller) {
+          const parts = ["original ", "data"];
+          for (const part of parts) {
+            controller.enqueue(encoder.encode(part));
+            await Promise.resolve();
+          }
+          controller.close();
+        },
+      });
 
-    const clone1 = originalRequest.clone();
-    const clone2 = originalRequest.clone();
-    const clone3 = clone1.clone();
+    const makeRequest = () =>
+      new Request(server.url, {
+        method: "POST",
+        body: makeStream(),
+      });
 
-    const [r1, r2, r3, r4] = await Promise.all([fetch(originalRequest), fetch(clone1), fetch(clone2), fetch(clone3)]);
+    const [r1, r2] = await Promise.all([fetch(makeRequest()), fetch(makeRequest())]);
 
     expect(await r1.text()).toBe("original data");
     expect(await r2.text()).toBe("original data");
-    expect(await r3.text()).toBe("original data");
-    expect(await r4.text()).toBe("original data");
   });
 
   // Tests memory cleanup with large payloads and mid-stream abort
@@ -107,7 +137,7 @@ describe("fetch with Request body lifecycle", () => {
     await Bun.sleep(20);
     controller.abort();
 
-    expect(fetchPromise).rejects.toThrow();
+    expect(async () => await fetchPromise).toThrow();
   });
 
   test("should properly cleanup when server closes connection early", async () => {

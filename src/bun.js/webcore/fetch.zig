@@ -293,13 +293,13 @@ pub const FetchTasklet = struct {
 
         this.readable_stream_ref.deinit();
 
-        this.scheduled_response_buffer.deinit();
-        if (this.request_body != .ReadableStream or this.is_waiting_request_stream_start) {
-            this.request_body.detach();
-        }
-
         // if sink exists, it owns any request ReadableStream - but if not then detach the request body
         if (this.sink == null) {
+            this.request_body.detach();
+        }
+        this.scheduled_response_buffer.deinit();
+
+        if (this.request_body != .ReadableStream or this.is_waiting_request_stream_start) {
             this.request_body.detach();
         }
 
@@ -349,6 +349,8 @@ pub const FetchTasklet = struct {
 
         // Making sure the stream doesn't retain twice -transfer ownership out of the union to avoid double-Strong retention
         var stream_ref = this.request_body.ReadableStream;
+        // drop the strong ref on each path because the sink will take ownership
+        defer stream_ref.deinit();
         this.request_body = HTTPRequestBody.Empty;
 
         if (stream_ref.get(this.global_this)) |stream| {
@@ -356,8 +358,6 @@ pub const FetchTasklet = struct {
                 if (signal.aborted()) {
                     // match what was happenign earlier but owning the Strong in current scope
                     stream.abort(this.global_this);
-                    // drop transferred strong
-                    stream_ref.deinit();
                     return;
                 }
             }
@@ -367,9 +367,7 @@ pub const FetchTasklet = struct {
             // +1 because the task refs the sink
             const sink = ResumableSink.initExactRefs(globalThis, stream, this, 2);
             this.sink = sink;
-            // sink now owns the stream; drop the transferred Strong
         }
-        // in any other cases we will drop the transferred Strong anyways
     }
 
     pub fn onBodyReceived(this: *FetchTasklet) bun.JSTerminated!void {

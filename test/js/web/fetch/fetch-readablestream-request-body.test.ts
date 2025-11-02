@@ -31,7 +31,10 @@ describe("fetch with Request body lifecycle", () => {
     expect(await response.text()).toBe("test data");
 
     // attempting to reuse the request should throw
-    await expect(fetch(originalRequest)).rejects.toThrow("Stream already used");
+    await expect(fetch(originalRequest)).rejects.toMatchObject({
+      name: "TypeError",
+      message: expect.stringContaining("Stream already used"),
+    });
   });
 
   test("should handle multiple requests with the same streaming body", async () => {
@@ -115,7 +118,7 @@ describe("fetch with Request body lifecycle", () => {
       const fetchPromise = fetch(request);
 
       await pull_called;
-      await expect(fetchPromise).rejects.toThrow("just throw man");
+      await expect(fetchPromise).rejects.toHaveProperty("name", "AbortError");
     }
   });
 
@@ -164,7 +167,7 @@ describe("fetch with Request body lifecycle", () => {
     await firstChunkSent;
     controller.abort();
 
-    await expect(fetchPromise).rejects.toThrow();
+    await expect(fetchPromise).rejects.toHaveProperty("name", "AbortError");
   });
 
   test("should properly cleanup when server closes connection early", async () => {
@@ -300,6 +303,6 @@ describe("fetch with Request body lifecycle", () => {
     await firstChunkSent;
     abortController.abort();
 
-    await expect(fetchPromise).rejects.toThrow();
+    await expect(fetchPromise).rejects.toHaveProperty("name", "AbortError");
   });
 });

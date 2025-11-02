@@ -32,11 +32,6 @@ static JSC::EncodedJSValue uws_ws_get_topics_as_js_array_impl(uws_websocket_t *w
   using WebSocketType = typename std::conditional<isSSL, TLSWebSocket, TCPWebSocket>::type;
   WebSocketType *uws = reinterpret_cast<WebSocketType*>(ws);
 
-  size_t count = uws->getTopicsCount();
-  if (count == 0) {
-    return JSC::JSValue::encode(JSC::constructEmptyArray(global, nullptr, 0));
-  }
-
   JSC::MarkedArgumentBuffer args;
   {
     // Scope ensures the iterator lock is released before constructArray

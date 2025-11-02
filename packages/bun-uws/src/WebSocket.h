@@ -350,35 +350,6 @@ public:
         }
     }
 
-    /* Gets the number of topics this WebSocket is subscribed to */
-    size_t getTopicsCount() {
-        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext(SSL, (us_socket_t *) this);
-        if (!webSocketData->subscriber) {
-            return 0;
-        }
-        return webSocketData->subscriber->topics.size();
-    }
-
-    /* Gets all topics this WebSocket is subscribed to. The caller must provide a buffer
-     * with sufficient space. Returns the number of topics copied. */
-    size_t getTopics(char **topics, size_t *lengths, size_t maxTopics) {
-        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext(SSL, (us_socket_t *) this);
-        if (!webSocketData->subscriber) {
-            return 0;
-        }
-
-        size_t i = 0;
-        for (Topic *topicPtr : webSocketData->subscriber->topics) {
-            if (i >= maxTopics) {
-                break;
-            }
-            topics[i] = const_cast<char*>(topicPtr->name.data());
-            lengths[i] = topicPtr->name.length();
-            i++;
-        }
-        return i;
-    }
-
     /* Publish a message to a topic according to MQTT rules and syntax. Returns success.
      * We, the WebSocket, must be subscribed to the topic itself and if so - no message will be sent to ourselves.
      * Use App::publish for an unconditional publish that simply publishes to whomever might be subscribed. */

@@ -112,20 +112,36 @@ describe.concurrent.todoIf(isBroken && isMusl)("node:v8", () => {
       directories.node = tmpdirSync();
       directories.badModules = tmpdirSync();
 
-      await Promise.all([
-        install(srcDir, directories.bunRelease, Runtime.bun).then(() =>
-          build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release),
-        ),
-        install(srcDir, directories.bunDebug, Runtime.bun).then(() =>
-          build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug),
-        ),
-        install(srcDir, directories.node, Runtime.node).then(() =>
-          build(srcDir, directories.node, Runtime.node, BuildMode.release),
-        ),
-        install(join(__dirname, "bad-modules"), directories.badModules, Runtime.node).then(() =>
-          build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release),
-        ),
-      ]);
+      if (isWindows) {
+        let queue = [
+          () => install(srcDir, directories.bunRelease, Runtime.bun),
+          () => build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release),
+          () => install(srcDir, directories.bunDebug, Runtime.bun),
+          () => build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug),
+          () => install(srcDir, directories.node, Runtime.node),
+          () => build(srcDir, directories.node, Runtime.node, BuildMode.release),
+          () => install(join(__dirname, "bad-modules"), directories.badModules, Runtime.node),
+          () => build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release),
+        ];
+        for (const task of queue) {
+          await task();
+        }
+      } else {
+        await Promise.all([
+          install(srcDir, directories.bunRelease, Runtime.bun).then(() =>
+            build(srcDir, directories.bunRelease, Runtime.bun, BuildMode.release),
+          ),
+          install(srcDir, directories.bunDebug, Runtime.bun).then(() =>
+            build(srcDir, directories.bunDebug, Runtime.bun, BuildMode.debug),
+          ),
+          install(srcDir, directories.node, Runtime.node).then(() =>
+            build(srcDir, directories.node, Runtime.node, BuildMode.release),
+          ),
+          install(join(__dirname, "bad-modules"), directories.badModules, Runtime.node).then(() =>
+            build(join(__dirname, "bad-modules"), directories.badModules, Runtime.node, BuildMode.release),
+          ),
+        ]);
+      }
     },
     {
       timeout: 1000000,

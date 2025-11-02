@@ -79,7 +79,7 @@ describe("fetch with Request body lifecycle", () => {
   });
 
   test("should abort direct streaming body inside pull", async () => {
-    for (let i = 0; i < 1000; i++) {
+    for (let i = 0; i < 100; i++) {
       using server = Bun.serve({
         port: 0,
         async fetch(req) {

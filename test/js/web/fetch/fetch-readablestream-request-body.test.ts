@@ -75,7 +75,7 @@ describe("fetch with Request body lifecycle", () => {
     expect(await r2.text()).toBe("original data");
   });
 
-  test.only("should abort direct streaming body inside pull", async () => {
+  test("should abort direct streaming body inside pull", async () => {
     for (let i = 0; i < 1000; i++) {
       using server = Bun.serve({
         port: 0,

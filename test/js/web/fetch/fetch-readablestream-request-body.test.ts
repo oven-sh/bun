@@ -87,7 +87,6 @@ describe("fetch with Request body lifecycle", () => {
     const directSource: DirectUnderlyingSource = {
       type: "direct",
       async pull(controller) {
-        resolve_pull();
         // what happened before
         // aborting inside pull triggers a cascade:
         // 1. abort signal fires
@@ -100,8 +99,10 @@ describe("fetch with Request body lifecycle", () => {
         // - retained by the fetch request body
         // - retained by the direct stream pull in progress
         // when abort fires, both paths try to release ownership, causing double-deref
+        // TLDR - it panic at abort
         abortController.abort();
         controller.close();
+        resolve_pull();
       },
     };
 

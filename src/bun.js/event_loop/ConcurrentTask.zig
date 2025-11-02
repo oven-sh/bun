@@ -104,15 +104,6 @@ pub fn from(this: *ConcurrentTask, of: anytype, auto_deinit: AutoDeinit) *Concur
     return this;
 }
 
-const std = @import("std");
-
-const bun = @import("bun");
-const UnboundedQueue = bun.threading.UnboundedQueue;
-
-const jsc = bun.jsc;
-const ManagedTask = jsc.ManagedTask;
-const Task = jsc.Task;
-
 comptime {
     // Verify that ConcurrentTask is 16 bytes (not 24)
     // Task is 8 bytes (u64), PackedNext is 8 bytes (u64) = 16 bytes total
@@ -120,3 +111,10 @@ comptime {
         @compileError(bun.fmt.comptimePrint("ConcurrentTask should be 16 bytes, but it's {d} bytes", .{@sizeOf(ConcurrentTask)}));
     }
 }
+
+const bun = @import("bun");
+const std = @import("std");
+
+const jsc = bun.jsc;
+const ManagedTask = jsc.ManagedTask;
+const Task = jsc.Task;

@@ -321,7 +321,7 @@ pub fn tickConcurrentWithCount(this: *EventLoop) usize {
             dest.deinit();
         }
 
-        if (task.next.autoDelete()) {
+        if (task.auto_delete()) {
             to_destroy = task;
         }
 

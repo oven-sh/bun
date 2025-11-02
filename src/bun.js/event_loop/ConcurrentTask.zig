@@ -44,7 +44,8 @@ pub const PackedNext = packed struct(u64) {
 
     pub fn get(self: PackedNext) ?*ConcurrentTask {
         if (self.ptr_bits == 0) return null;
-        const ptr: u64 = @as(u64, self.ptr_bits);
+        // Explicitly zero out bit 63 to avoid any UB
+        const ptr: u64 = @as(u64, self.ptr_bits) & 0x7FFFFFFFFFFFFFFF;
         return @as(?*ConcurrentTask, @ptrFromInt(ptr));
     }
 
@@ -68,6 +69,12 @@ pub const PackedNext = packed struct(u64) {
 pub const Queue = bun.threading.UnboundedQueuePacked(ConcurrentTask, .next, .@"packed");
 pub const new = bun.TrivialNew(@This());
 pub const deinit = bun.TrivialDeinit(@This());
+
+/// Returns whether this task should be automatically deleted after completion.
+/// The auto_delete flag being stored in the next field is an implementation detail.
+pub inline fn auto_delete(this: *const ConcurrentTask) bool {
+    return this.next.autoDelete();
+}
 
 pub const AutoDeinit = enum {
     manual_deinit,

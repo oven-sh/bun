@@ -28,6 +28,20 @@ pub const PackedNext = packed struct(u64) {
         return .{};
     }
 
+    pub fn initPreserveAutoDelete(self: PackedNext, ptr: ?*ConcurrentTask) PackedNext {
+        if (ptr) |p| {
+            const addr = @intFromPtr(p);
+            return .{
+                .ptr_bits = @as(u63, @truncate(addr)),
+                .auto_delete = self.auto_delete,
+            };
+        }
+        return .{
+            .ptr_bits = 0,
+            .auto_delete = self.auto_delete,
+        };
+    }
+
     pub fn get(self: PackedNext) ?*ConcurrentTask {
         if (self.ptr_bits == 0) return null;
         const ptr: u64 = @as(u64, self.ptr_bits);
@@ -39,6 +53,8 @@ pub const PackedNext = packed struct(u64) {
     }
 
     pub fn setAutoDelete(self: *PackedNext, value: bool) void {
+        // Non-atomic write is safe because this is only called during initialization
+        // before the task is shared with other threads
         self.auto_delete = value;
     }
 

@@ -24,8 +24,7 @@ pub fn UnboundedQueuePacked(comptime T: type, comptime next_field: meta.FieldEnu
 
         fn setter(instance: *T, value: ?*T) void {
             if (packed_or_unpacked == .@"packed") {
-                const FieldType = @TypeOf(@field(instance, next_name));
-                @field(instance, next_name) = FieldType.init(value);
+                @field(instance, next_name) = @field(instance, next_name).initPreserveAutoDelete(value);
             } else {
                 @field(instance, next_name) = value;
             }
@@ -72,26 +71,23 @@ pub fn UnboundedQueuePacked(comptime T: type, comptime next_field: meta.FieldEnu
                 }
                 assertf(item == last, "`last` should be reachable from `first`", .{});
             }
-            const prev_next_ptr = if (self.back.swap(last, .acq_rel)) |old_back| blk: {
-                if (packed_or_unpacked == .@"packed") {
-                    break :blk @as(*u64, @ptrCast(&@field(old_back, next)));
-                } else {
-                    break :blk &@field(old_back, next);
-                }
-            } else blk: {
-                if (packed_or_unpacked == .@"packed") {
-                    break :blk @as(*u64, @ptrCast(&self.front.raw));
-                } else {
-                    break :blk &self.front.raw;
-                }
-            };
 
-            if (packed_or_unpacked == .@"packed") {
-                const FieldType = @TypeOf(@field(first, next_name));
-                const packed_val = FieldType.init(first);
-                @atomicStore(u64, @as(*u64, @ptrCast(prev_next_ptr)), @bitCast(packed_val), .release);
+            if (self.back.swap(last, .acq_rel)) |old_back| {
+                // There was a previous back item - set its `next` field to point to `first`
+                if (packed_or_unpacked == .@"packed") {
+                    // We need to preserve old_back's auto_delete flag while updating the pointer
+                    const prev_next_ptr = @as(*u64, @ptrCast(&@field(old_back, next)));
+                    const current_packed = @atomicLoad(u64, prev_next_ptr, .monotonic);
+                    const current_typed = @as(@TypeOf(@field(first, next_name)), @bitCast(current_packed));
+                    const new_packed = current_typed.initPreserveAutoDelete(first);
+                    @atomicStore(u64, prev_next_ptr, @bitCast(new_packed), .release);
+                } else {
+                    @atomicStore(?*T, &@field(old_back, next), first, .release);
+                }
             } else {
-                @atomicStore(?*T, prev_next_ptr, first, .release);
+                // Queue was empty - set front to point to `first`
+                // front/back atomics hold plain pointers, not PackedNext
+                @atomicStore(?*T, &self.front.raw, first, .release);
             }
         }
 

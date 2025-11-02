@@ -1856,6 +1856,19 @@ pub fn startAsyncBundle(
     var ast_scope = ast_memory_allocator.enter(alloc);
     defer ast_scope.exit();
 
+    // Update JSX development mode based on server config
+    if (dev.server) |server| {
+        const is_development = server.config().development.isDevelopment();
+        dev.server_transpiler.options.jsx.development = is_development;
+        dev.client_transpiler.options.jsx.development = is_development;
+        dev.ssr_transpiler.options.jsx.development = is_development;
+        // Also set force_node_env to ensure proper override of tsconfig settings
+        const force_mode: bun.options.BundleOptions.ForceNodeEnv = if (is_development) .development else .production;
+        dev.server_transpiler.options.force_node_env = force_mode;
+        dev.client_transpiler.options.force_node_env = force_mode;
+        dev.ssr_transpiler.options.force_node_env = force_mode;
+    }
+
     const bv2 = try BundleV2.init(
         &dev.server_transpiler,
         .{

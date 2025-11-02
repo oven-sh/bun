@@ -115,12 +115,7 @@ describe("fetch with Request body lifecycle", () => {
       const fetchPromise = fetch(request);
 
       await pull_called;
-      try {
-        await fetchPromise;
-        expect.unreachable();
-      } catch (e) {
-        expect(e).toThrowErrorMatchingInlineSnapshot();
-      }
+      await expect(fetchPromise).rejects.toThrowErrorMatchingInlineSnapshot();
     }
   });
 
@@ -183,8 +178,16 @@ describe("fetch with Request body lifecycle", () => {
 
     const request = new Request(server.url, {
       method: "POST",
-      body: Buffer.alloc(1024 * 100, "x").toString(), // 100KB
-    });
+      body: new ReadableStream({
+        async pull(controller) {
+          controller.enqueue(Buffer.alloc(1024 * 50, "x"));
+          await Bun.sleep(0);
+          controller.enqueue(Buffer.alloc(1024 * 50, "x"));
+          controller.close();
+        },
+      }),
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
 
     // should not crash or hang
     const response = await fetch(request);

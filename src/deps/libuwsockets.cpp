@@ -23,6 +23,35 @@ static inline std::string_view stringViewFromC(const char* message, size_t lengt
 using TLSWebSocket = uWS::WebSocket<true, true, void *>;
 using TCPWebSocket = uWS::WebSocket<false, true, void *>;
 
+// Template helpers (must be outside extern "C")
+template<bool isSSL>
+static void* uws_ws_get_topics_as_js_array_impl(uws_websocket_t *ws, void* globalObject) {
+  JSC::JSGlobalObject* global = reinterpret_cast<JSC::JSGlobalObject*>(globalObject);
+  JSC::VM& vm = global->vm();
+
+  using WebSocketType = typename std::conditional<isSSL, TLSWebSocket, TCPWebSocket>::type;
+  WebSocketType *uws = reinterpret_cast<WebSocketType*>(ws);
+
+  size_t count = uws->getTopicsCount();
+  if (count == 0) {
+    return JSC::constructEmptyArray(global, nullptr, 0);
+  }
+
+  JSC::MarkedArgumentBuffer args;
+  {
+    // Scope ensures the iterator lock is released before constructArray
+    uws->iterateTopics([&](std::string_view topic) {
+      auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span {
+        reinterpret_cast<const unsigned char*>(topic.data()),
+        topic.length()
+      });
+      args.append(JSC::jsString(vm, str));
+    });
+  }
+
+  return JSC::constructArray(global, static_cast<JSC::ArrayAllocationProfile*>(nullptr), args);
+}
+
 extern "C"
 {
 
@@ -1055,55 +1084,10 @@ extern "C"
   }
 
   void* uws_ws_get_topics_as_js_array(int ssl, uws_websocket_t *ws, void* globalObject) {
-    JSC::JSGlobalObject* global = reinterpret_cast<JSC::JSGlobalObject*>(globalObject);
-    JSC::VM& vm = global->vm();
-
-    size_t count;
     if (ssl) {
-      TLSWebSocket *uws = (TLSWebSocket *)ws;
-      count = uws->getTopicsCount();
-      if (count == 0) {
-        return JSC::constructEmptyArray(global, nullptr, 0);
-      }
-
-      // Collect topic names first, before allocating JS objects
-      // This avoids holding the iterator lock while doing JSC operations which could throw
-      std::vector<std::string> topics;
-      topics.reserve(count);
-      uws->iterateTopics([&](std::string_view topic) {
-        topics.emplace_back(topic);
-      });
-
-      // Now build the JS array without holding any locks
-      JSC::JSArray* array = JSC::constructEmptyArray(global, nullptr, topics.size());
-      for (size_t i = 0; i < topics.size(); i++) {
-        auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const unsigned char*>(topics[i].data()), topics[i].length() });
-        JSC::JSValue topicString = JSC::jsString(vm, str);
-        array->putDirectIndex(global, i, topicString);
-      }
-      return array;
+      return uws_ws_get_topics_as_js_array_impl<true>(ws, globalObject);
     } else {
-      TCPWebSocket *uws = (TCPWebSocket *)ws;
-      count = uws->getTopicsCount();
-      if (count == 0) {
-        return JSC::constructEmptyArray(global, nullptr, 0);
-      }
-
-      // Collect topic names first, before allocating JS objects
-      std::vector<std::string> topics;
-      topics.reserve(count);
-      uws->iterateTopics([&](std::string_view topic) {
-        topics.emplace_back(topic);
-      });
-
-      // Now build the JS array without holding any locks
-      JSC::JSArray* array = JSC::constructEmptyArray(global, nullptr, topics.size());
-      for (size_t i = 0; i < topics.size(); i++) {
-        auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const unsigned char*>(topics[i].data()), topics[i].length() });
-        JSC::JSValue topicString = JSC::jsString(vm, str);
-        array->putDirectIndex(global, i, topicString);
-      }
-      return array;
+      return uws_ws_get_topics_as_js_array_impl<false>(ws, globalObject);
     }
   }
 

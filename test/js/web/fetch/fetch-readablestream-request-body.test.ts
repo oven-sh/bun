@@ -175,6 +175,37 @@ describe("fetch with Request body lifecycle", () => {
     await expect(fetchPromise).rejects.toThrow();
   });
 
+  test("should handle multiple requests with the same streaming body", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const text = await req.text();
+        return new Response(text);
+      },
+    });
+
+    const encoder = new TextEncoder();
+    const chunks = [encoder.encode("original "), encoder.encode("data")];
+
+    const originalRequest = new Request(server.url, {
+      method: "POST",
+      body: new ReadableStream({
+        async start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(chunk);
+            await new Promise(queueMicrotask); // hand control back before the next piece
+          }
+          controller.close();
+        },
+      }),
+    });
+
+    const [r1, r2] = await Promise.all([fetch(originalRequest), fetch(originalRequest)]);
+
+    expect(await r1.text()).toBe("original data");
+    expect(await r2.text()).toBe("original data");
+  });
+
   test("should properly cleanup when server closes connection early", async () => {
     using server = Bun.serve({
       port: 0,

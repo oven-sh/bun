@@ -334,12 +334,12 @@ pub const FetchTasklet = struct {
             bun.assert(self.#signal == null);
 
             // Ref the signal (we now own a reference)
-            signal.ref();
+            _ = signal.ref();
             self.#signal = signal;
 
             // Listen for abort event
-            const listener = signal.listen(FetchTasklet, fetch, onAbortCallback);
-            self.#has_listener = (listener != null);
+            _ = signal.listen(FetchTasklet, fetch, onAbortCallback);
+            self.#has_listener = true;
 
             // Add pending activity ref (keeps signal alive)
             signal.pendingActivityRef();
@@ -356,7 +356,7 @@ pub const FetchTasklet = struct {
             // (matches original code order - defer runs in reverse registration order)
             defer {
                 // Unref the signal (release our reference)
-                signal.unref();
+                _ = signal.unref();
             }
             defer {
                 // Remove pending activity ref if we added one
@@ -420,15 +420,13 @@ pub const FetchTasklet = struct {
     }
 
     /// Computed property: Should we ignore remaining body data?
-    /// Replaces: ignore_data boolean flag
+    /// Determined by checking if abort was requested or lifecycle is in aborted state.
     fn shouldIgnoreBodyData(this: *FetchTasklet) bool {
         // Ignore data if:
-        // 1. Abort was requested (via signal_store)
-        // 2. Already in aborted state
-        // 3. ignore_data flag is set (for backwards compatibility during transition)
+        // 1. Abort was requested (via signal_store) - atomic check, fast without locking
+        // 2. Already in aborted state - state machine check for consistency
         return this.signal_store.aborted.load(.monotonic) or
-            this.lifecycle == .aborted or
-            this.ignore_data;
+            this.lifecycle == .aborted;
     }
 
     // ============================================================================
@@ -634,7 +632,6 @@ pub const FetchTasklet = struct {
     response: jsc.Weak(FetchTasklet) = .{},
     /// native response ref if we still need it when JS is discarted
     native_response: ?*Response = null,
-    ignore_data: bool = false,
     /// stream strong ref if any is available
     readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
     request_headers: RequestHeaders = undefined,
@@ -663,7 +660,6 @@ pub const FetchTasklet = struct {
     upgraded_connection: bool = false,
     // Custom Hostname
     hostname: ?[]u8 = null,
-    is_waiting_body: bool = false,
     is_waiting_abort: bool = false,
     is_waiting_request_stream_start: bool = false,
     mutex: Mutex,
@@ -1114,7 +1110,10 @@ pub const FetchTasklet = struct {
             this.startRequestStream();
         }
         // if we already respond the metadata and still need to process the body
-        if (this.is_waiting_body) {
+        if (this.lifecycle == .response_awaiting_body_access or
+            this.lifecycle == .response_body_streaming or
+            this.lifecycle == .response_body_buffering)
+        {
             try this.onBodyReceived();
             return;
         }
@@ -1504,7 +1503,10 @@ pub const FetchTasklet = struct {
         if (this.getAbortError()) |err| {
             return .{ .Error = err };
         }
-        if (this.is_waiting_body) {
+        if (this.lifecycle == .response_awaiting_body_access or
+            this.lifecycle == .response_body_streaming or
+            this.lifecycle == .response_body_buffering)
+        {
             const response = Body.Value{
                 .Locked = .{
                     .size_hint = this.getSizeHint(),
@@ -1540,8 +1542,7 @@ pub const FetchTasklet = struct {
         // at this point we always should have metadata
         const metadata = this.metadata.?;
         const http_response = metadata.response;
-        this.is_waiting_body = this.result.has_more;
-        // Dual tracking: update both flag and state
+        // State machine handles "waiting for body" - no boolean flag needed
         // Only transition if not already in a more advanced or terminal state
         if (this.result.has_more) {
             if (this.lifecycle == .http_receiving_body or
@@ -1587,8 +1588,7 @@ pub const FetchTasklet = struct {
             this.native_response = null;
         }
 
-        this.ignore_data = true;
-        // Dual tracking: transition to aborted state
+        // Transition to aborted state
         if (!this.lifecycle.isTerminal()) {
             transitionLifecycle(this, this.lifecycle, .aborted);
         }
@@ -1938,7 +1938,7 @@ pub const FetchTasklet = struct {
         task.http.?.* = async_http.*;
         task.http.?.response_buffer = async_http.response_buffer;
 
-        log("callback success={} ignore_data={} has_more={} bytes={}", .{ result.isSuccess(), task.ignore_data, result.has_more, result.body.?.list.items.len });
+        log("callback success={} ignore_data={} has_more={} bytes={}", .{ result.isSuccess(), task.shouldIgnoreBodyData(), result.has_more, result.body.?.list.items.len });
 
         // Dual tracking: update lifecycle state
         // Only transition if not already in a terminal or later state
@@ -1996,7 +1996,7 @@ pub const FetchTasklet = struct {
             }
         }
 
-        if (task.ignore_data) {
+        if (task.shouldIgnoreBodyData()) {
             task.response_buffer.reset();
 
             if (task.scheduled_response_buffer.list.capacity > 0) {

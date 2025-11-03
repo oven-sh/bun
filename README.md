@@ -51,10 +51,10 @@ Bun supports Linux (x64 & arm64), macOS (x64 & Apple Silicon) and Windows (x64).
 
 ```sh
 # with install script (recommended)
-curl -fsSL https://bun.com/install | bash
+curl -fsSL https://bun.sh/install | bash
 
 # on windows
-powershell -c "irm bun.com/install.ps1 | iex"
+powershell -c "irm bun.sh/install.ps1 | iex"
 
 # with npm
 npm install -g bun

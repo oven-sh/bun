@@ -789,6 +789,237 @@ const FetchError = union(enum) {
     }
 };
 
+// ============================================================================
+// FETCHTASKLET - TARGET ARCHITECTURE DOCUMENTATION
+// ============================================================================
+//
+// This comment block documents the PLANNED final structure of FetchTasklet
+// after completing Phase 7 of the refactoring plan. The wrapper types
+// (RequestHeaders, ResponseMetadataHolder, HTTPRequestBodyV2, AbortHandling,
+// FetchError) have been built and are defined above. The next phase will
+// migrate FetchTasklet to use these wrappers.
+//
+// DESIGN GOALS:
+// 1. Clear ownership - Each field has explicit ownership semantics
+// 2. Thread safety - Separate MainThreadData and SharedData
+// 3. Single cleanup path - One deinit() method, no scattered cleanup
+// 4. No vestigial fields - Remove unused/deprecated fields during migration
+// 5. Lifecycle clarity - State machine replaces scattered boolean flags
+//
+// TARGET STRUCTURE (Phase 7):
+// ```zig
+// pub const FetchTasklet = struct {
+//     //! ================================================================
+//     //! ALLOCATOR - Single allocator for all owned resources
+//     //! ================================================================
+//     allocator: std.mem.Allocator,
+//
+//     //! ================================================================
+//     //! THREAD SAFETY - Data split by access pattern
+//     //! ================================================================
+//     //! Fields accessed only on main JS thread (no mutex needed)
+//     main_thread: MainThreadData,
+//
+//     //! Fields shared between main thread and HTTP thread (mutex required)
+//     shared: SharedData,
+//
+//     //! ================================================================
+//     //! OWNED RESOURCES - Cleaned up in deinit()
+//     //! ================================================================
+//     //! All use new wrapper types with explicit ownership tracking.
+//     //! Order doesn't matter - no interdependencies between these.
+//
+//     /// Request body with ownership tracking
+//     /// - Empty: No resources
+//     /// - AnyBlob: Manages blob store refs
+//     /// - Sendfile: Manages file descriptor ownership
+//     /// - ReadableStream: Tracks if transferred to sink
+//     request_body: HTTPRequestBodyV2,
+//
+//     /// Request headers with ownership flag
+//     /// - From FetchHeaders: owned (must free)
+//     /// - Empty: not owned (no cleanup)
+//     request_headers: RequestHeaders,
+//
+//     /// Abort signal handling with ref counting
+//     /// - Manages signal ref/unref lifecycle
+//     /// - Tracks pending activity refs
+//     /// - Tracks listener registration
+//     abort_handling: AbortHandling,
+//
+//     /// Response metadata with take semantics
+//     /// - HTTPResponseMetadata: headers, status code, etc.
+//     /// - CertificateInfo: TLS certificate details
+//     /// - Take methods transfer ownership to Response
+//     response_metadata_holder: ResponseMetadataHolder,
+//
+//     /// Unified error storage with precedence
+//     /// Precedence: abort > js_error > tls_error > http_error
+//     /// - abort_error: User-initiated abort (Strong ref)
+//     /// - js_error: Callback errors (Strong ref)
+//     /// - tls_error: Certificate validation (Strong ref)
+//     /// - http_error: Network errors (anyerror enum)
+//     error: FetchError,
+//
+//     //! ================================================================
+//     //! REQUEST STREAMING - Only present when streaming request body
+//     //! ================================================================
+//     /// Sink for resumable request streaming
+//     /// Only set when request has streaming body
+//     sink: ?*ResumableSink = null,
+//
+//     /// Thread-safe buffer for request body streaming
+//     /// Only set when request has streaming body
+//     request_body_streaming_buffer: ?*http.ThreadSafeStreamBuffer = null,
+//
+//     //! ================================================================
+//     //! RESPONSE BUFFERING - Used by AsyncHTTP and streaming to JS
+//     //! ================================================================
+//     /// Buffer being actively used by AsyncHTTP to receive response
+//     response_buffer: MutableString,
+//
+//     /// Buffer used to stream response data to JavaScript
+//     /// Separate from response_buffer to avoid data races
+//     scheduled_response_buffer: MutableString,
+//
+//     /// Response body size tracking
+//     /// - .known: Content-Length provided
+//     /// - .chunked: Chunked encoding (tracks received size)
+//     /// - .unknown: No Content-Length, not chunked
+//     body_size: http.HTTPClientResult.BodySize = .unknown,
+//
+//     //! ================================================================
+//     //! IMMUTABLE CONFIG - Set at init, never modified
+//     //! ================================================================
+//     /// URL + Proxy buffer with explicit ownership (RAII via bun.ptr.Owned)
+//     /// Buffer layout: [url_string][proxy_string (optional)]
+//     /// Automatically freed in deinit() via bun.ptr.Owned wrapper
+//     url_proxy_buffer: bun.ptr.Owned([]const u8),
+//
+//     /// TLS certificate validation setting
+//     reject_unauthorized: bool,
+//
+//     /// Hostname for custom checkServerIdentity validation
+//     /// Only allocated when custom checkServerIdentity is provided
+//     /// Automatically freed via bun.ptr.Owned wrapper
+//     hostname: ?bun.ptr.Owned([]u8) = null,
+//
+//     //! ================================================================
+//     //! HTTP CLIENT - Reference to AsyncHTTP (owned by HTTP thread)
+//     //! ================================================================
+//     /// Reference to AsyncHTTP instance
+//     /// Created during fetch, owned by HTTP thread pool
+//     /// Set to null on completion
+//     http: ?*http.AsyncHTTP = null,
+//
+//     /// HTTP result from AsyncHTTP
+//     /// Contains success/failure state, metadata, body chunks
+//     result: http.HTTPClientResult = .{},
+//
+//     /// Signal handlers for AsyncHTTP callbacks
+//     signals: http.Signals = .{},
+//
+//     /// Signal store for atomic abort flag
+//     signal_store: http.Signals.Store = .{},
+//
+//     /// Atomic flag for scheduling callbacks (prevents double-scheduling)
+//     has_schedule_callback: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+//
+//     //! ================================================================
+//     //! REFERENCE COUNTING - Thread-safe refcount for lifecycle
+//     //! ================================================================
+//     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+//
+//     //! ================================================================
+//     //! LIFECYCLE METHODS
+//     //! ================================================================
+//
+//     /// Initialize new fetch tasklet
+//     pub fn init(allocator: std.mem.Allocator, opts: InitOptions) !*FetchTasklet {
+//         const self = try allocator.create(FetchTasklet);
+//         errdefer allocator.destroy(self);
+//
+//         self.* = .{
+//             .allocator = allocator,
+//             .main_thread = try MainThreadData.init(opts),
+//             .shared = SharedData.init(),
+//             .request_body = opts.request_body,
+//             .request_headers = opts.request_headers,
+//             .abort_handling = .{},
+//             .response_metadata_holder = ResponseMetadataHolder.init(allocator),
+//             .error = .none,
+//             .url_proxy_buffer = opts.url_proxy_buffer,
+//             .reject_unauthorized = opts.reject_unauthorized,
+//             .hostname = opts.hostname,
+//             // ... other fields
+//         };
+//
+//         return self;
+//     }
+//
+//     /// Single cleanup path - must be called on main thread
+//     pub fn deinit(this: *FetchTasklet) void {
+//         this.main_thread.assertMainThread();
+//
+//         // Cleanup owned resources (order independent - no dependencies)
+//         this.request_body.deinit();
+//         this.request_headers.deinit(this.allocator);
+//         this.abort_handling.deinit();
+//         this.response_metadata_holder.deinit();
+//         this.error.deinit();
+//
+//         // Clear streaming resources if present
+//         if (this.sink != null or this.request_body_streaming_buffer != null) {
+//             this.clearRequestStreaming();
+//         }
+//
+//         // Cleanup response buffers
+//         this.response_buffer.deinit();
+//         this.scheduled_response_buffer.deinit();
+//
+//         // Cleanup thread-specific data
+//         this.main_thread.deinit();
+//         this.shared.deinit();
+//
+//         // Free immutable config buffers (RAII handles cleanup)
+//         this.url_proxy_buffer.deinit();
+//         if (this.hostname) |*host| {
+//             host.deinit();
+//         }
+//
+//         // Finally, destroy self
+//         this.allocator.destroy(this);
+//     }
+//
+//     /// Reference counting for thread-safe lifecycle
+//     pub fn ref(this: *FetchTasklet) void {
+//         const count = this.ref_count.fetchAdd(1, .monotonic);
+//         bun.debugAssert(count > 0);
+//     }
+//
+//     pub fn deref(this: *FetchTasklet) void {
+//         const count = this.ref_count.fetchSub(1, .monotonic);
+//         bun.debugAssert(count > 0);
+//
+//         if (count == 1) {
+//             // Last ref - ensure deinit runs on main thread
+//             this.deinitFromMainThread();
+//         }
+//     }
+//
+//     // ... rest of implementation
+// };
+// ```
+//
+// MIGRATION NOTES:
+// - Current FetchTasklet (below) still uses old structure
+// - Phase 7 will incrementally migrate to target structure
+// - Each step adds new fields alongside old ones
+// - Old fields removed once fully migrated to new equivalents
+// - Tests must pass at each step
+//
+// ============================================================================
+
 pub const FetchTasklet = struct {
     pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
 

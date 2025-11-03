@@ -8616,7 +8616,7 @@ registry = "http://localhost:${port}/"
     "",
     "+ bunx-bins@1.0.0",
     "",
-    "1 package installed",
+    "2 packages installed",
   ]);
   expect(await exited).toBe(0);
 

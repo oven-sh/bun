@@ -312,27 +312,42 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
         JSC::JSValue moduleName = callFrame->argument(0);
         JSC::JSValue fromValue = callFrame->argument(1);
         JSC::JSValue optionsValue = callFrame->argument(3); // 4th argument is options
+        auto& names = builtinNames(vm);
 
         if (moduleName.isUndefinedOrNull()) {
             JSC::throwTypeError(globalObject, scope, "Module._resolveFilename expects a string"_s);
             return {};
         }
 
-        if (
-            // fast path: it's a real CommonJS module object.
-            auto* cjs = jsDynamicCast<Bun::JSCommonJSModule*>(fromValue)) {
-            fromValue = cjs->filename();
-        } else if
-            // slow path: userland code did something weird. lets let them do that
-            // weird thing.
-            (fromValue.isObject()) {
+        // Extract filename string from fromValue
+        // Follows pattern: typeof this === "string" ? this : (this?.filename ?? this?.id ?? "")
+        if (!fromValue.isString()) {
+            if (
+                // fast path: it's a real CommonJS module object.
+                auto* cjs = jsDynamicCast<Bun::JSCommonJSModule*>(fromValue)) {
+                fromValue = cjs->filename();
+            } else if (fromValue.isObject()) {
+                // slow path: userland code did something weird. Try filename first, then id
+                auto* obj = fromValue.getObject();
+                auto filenameValue = obj->getIfPropertyExists(globalObject, names.filenamePublicName());
+                RETURN_IF_EXCEPTION(scope, {});
 
-            auto idValue = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).filenamePublicName());
-            RETURN_IF_EXCEPTION(scope, {});
-            if (idValue) {
-                if (idValue.isString()) {
-                    fromValue = idValue;
+                if (filenameValue && filenameValue.isString()) {
+                    fromValue = filenameValue;
+                } else {
+                    auto idValue = obj->getIfPropertyExists(globalObject, vm.propertyNames->id);
+                    RETURN_IF_EXCEPTION(scope, {});
+
+                    if (idValue && idValue.isString()) {
+                        fromValue = idValue;
+                    } else {
+                        // Fallback to empty string if no valid filename or id
+                        fromValue = jsEmptyString(vm);
+                    }
                 }
+            } else {
+                // Not a string, not an object - use empty string
+                fromValue = jsEmptyString(vm);
             }
         }
 

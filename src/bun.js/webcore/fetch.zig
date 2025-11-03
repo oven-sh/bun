@@ -292,17 +292,16 @@ pub const FetchTasklet = struct {
     };
 
     // ---- Refactored ownership groups ----
-    // TODO Phase 2: Populate these during initialization and migrate all accessors
-    // js: JsRefs = undefined,
-    // net: NetRefs = undefined,
-    // buffers: Buffers = undefined,
-    // req_body: RequestBodyOwner = .None,
-    // abort: AbortState = .{},
+    js: JsRefs = undefined,
+    net: NetRefs = undefined,
+    buffers: Buffers = undefined,
+    req_body: RequestBodyOwner = .None,
+    abort_state: AbortState = .{},
     state: State = .Scheduled,
-    // schedule_guard: ScheduleGuard = .{},
+    schedule_guard: ScheduleGuard = .{},
 
     // ---- OLD fields retained for compatibility during migration ----
-    // TODO: Remove these as we migrate all accessors
+    // TODO: Remove these as we migrate all accessors to use bags
     sink: ?*ResumableSink = null,
     http: ?*http.AsyncHTTP = null,
     request_body: HTTPRequestBody = undefined,
@@ -1300,6 +1299,39 @@ pub const FetchTasklet = struct {
         var fetch_tasklet = try allocator.create(FetchTasklet);
 
         fetch_tasklet.* = .{
+            // Initialize ownership bags
+            .js = .{
+                .global_this = globalThis,
+                .vm = jsc_vm,
+                .promise = promise,
+                .tracker = jsc.Debugger.AsyncTaskTracker.init(jsc_vm),
+                .check_server_identity = fetch_options.check_server_identity,
+            },
+            .net = .{
+                .http = try allocator.create(http.AsyncHTTP),
+            },
+            .buffers = .{
+                .scheduled = .{
+                    .allocator = bun.default_allocator,
+                    .list = .{
+                        .items = &.{},
+                        .capacity = 0,
+                    },
+                },
+                .scratch = .{
+                    .allocator = bun.default_allocator,
+                    .list = .{
+                        .items = &.{},
+                        .capacity = 0,
+                    },
+                },
+                .url_proxy = fetch_options.url_proxy_buffer,
+                .hostname = fetch_options.hostname,
+                .request_headers = fetch_options.headers,
+            },
+            .req_body = RequestBodyOwner.fromHTTPRequestBody(fetch_options.body),
+
+            // Old fields for compatibility
             .mutex = .{},
             .scheduled_response_buffer = .{
                 .allocator = bun.default_allocator,

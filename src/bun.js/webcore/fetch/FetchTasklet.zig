@@ -926,15 +926,34 @@ pub const FetchTasklet = struct {
         return FetchTasklet{};
     }
 
+    /// Clear sink and buffer when request streaming is done.
+    /// Single cleanup path with documented ref count operations.
+    ///
+    /// REF COUNTING PROTOCOL:
+    /// - Sink has 2 refs at creation:
+    ///   - Ref 1: We hold via this.sink (released here)
+    ///   - Ref 2: Stream pipeline holds (may still be active)
+    /// - Buffer has 2 refs:
+    ///   - Ref 1: We hold via this.request_body_streaming_buffer (released here)
+    ///   - Ref 2: HTTP thread holds (released when HTTP completes)
+    ///
+    /// CALL SITES:
+    /// - clearData(): Called during FetchTasklet cleanup
+    /// - writeEndRequest(): Called when request stream ends (with or without error)
     fn clearSink(this: *FetchTasklet) void {
+        // Clear sink (drop our ref - stream pipeline might still hold one)
         if (this.sink) |sink| {
             this.sink = null;
-            sink.deref();
+            sink.deref(); // Drop Ref 1 (we held this via this.sink)
+            // Stream pipeline still holds Ref 2 until it finishes
         }
+
+        // Clear buffer (drop our ref - HTTP thread might still hold one)
         if (this.request_body_streaming_buffer) |buffer| {
             this.request_body_streaming_buffer = null;
-            buffer.clearDrainCallback();
-            buffer.deref();
+            buffer.clearDrainCallback(); // Unhook from HTTP thread callbacks
+            buffer.deref(); // Drop Ref 1 (we held this)
+            // HTTP thread still holds its ref until request completes
         }
     }
 
@@ -1028,10 +1047,21 @@ pub const FetchTasklet = struct {
         return null;
     }
 
+    /// Start streaming request body to server.
+    /// Uses explicit ownership transfer to avoid double-retain bugs.
+    ///
+    /// REF COUNTING PROTOCOL:
+    /// - Before: request_body owns 1 ref to stream
+    /// - During: sink created with 2 refs
+    ///   - Ref 1: FetchTasklet.sink field (we hold this)
+    ///   - Ref 2: Streaming pipeline (consumed when stream pipes data to sink)
+    /// - After: stream ownership transferred to sink, we hold sink ref
     pub fn startRequestStream(this: *FetchTasklet) void {
         this.is_waiting_request_stream_start = false;
         bun.assert(this.request_body == .ReadableStream);
+
         if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
+            // Check for abort before starting stream
             if (this.signal) |signal| {
                 if (signal.aborted()) {
                     stream.abort(this.global_this);
@@ -1040,19 +1070,232 @@ pub const FetchTasklet = struct {
             }
 
             const globalThis = this.global_this;
-            this.ref(); // lets only unref when sink is done
-            // +1 because the task refs the sink
+
+            // Keep FetchTasklet alive until sink completes
+            // This ref is released in writeEndRequest or clearSink
+            this.ref();
+
+            // Create sink with explicit ref count of 2:
+            // - Ref 1: We hold via this.sink (released in clearSink)
+            // - Ref 2: Stream pipeline holds (released when stream finishes)
             const sink = ResumableSink.initExactRefs(globalThis, stream, this, 2);
+
+            // Store sink - we now hold Ref 1
             this.sink = sink;
+
+            // Final state:
+            // - FetchTasklet has extra ref (from this.ref() above)
+            // - sink has 2 refs as documented
+            // - stream ownership transferred to sink (via initExactRefs)
+        }
+    }
+
+    /// Process initial body data before Response object exists.
+    /// Decides whether to buffer or stream based on timing.
+    /// Phase 4.1: State-based body streaming dispatch
+    fn processBodyDataInitial(this: *FetchTasklet) bun.JSTerminated!void {
+        log("processBodyDataInitial", .{});
+
+        // Check if we have a readable stream yet
+        const has_stream = this.readable_stream_ref.held.has();
+
+        if (has_stream) {
+            // Stream exists - transition to streaming mode
+            log("processBodyDataInitial: transitioning to streaming", .{});
+            try this.streamBodyToJS();
+        } else {
+            // No stream yet - buffer the data
+            log("processBodyDataInitial: buffering data", .{});
+            this.bufferBodyData();
+        }
+    }
+
+    /// Stream body data to JS ReadableStream.
+    /// Phase 4.1: Focused streaming logic
+    fn streamBodyToJS(this: *FetchTasklet) bun.JSTerminated!void {
+        log("streamBodyToJS", .{});
+        const globalThis = this.global_this;
+
+        // Get data from scheduled_response_buffer
+        const data = this.scheduled_response_buffer.list.items;
+        const has_more = this.result.has_more;
+
+        // Early exit if nothing to do
+        if (data.len == 0 and has_more) {
+            return;
+        }
+
+        // Get stream
+        const stream = this.readable_stream_ref.get(globalThis) orelse {
+            // Stream gone - switch to buffering mode
+            log("streamBodyToJS: stream gone, switching to buffering", .{});
+            // Data already in scheduled_response_buffer, just return
+            return;
+        };
+
+        if (stream.ptr != .Bytes) {
+            log("streamBodyToJS: stream is not Bytes type", .{});
+            return;
+        }
+
+        // Update size hint
+        stream.ptr.Bytes.size_hint = this.getSizeHint();
+
+        // Write chunk to stream
+        if (has_more) {
+            try stream.ptr.Bytes.onData(
+                .{
+                    .temporary = bun.ByteList.fromBorrowedSliceDangerous(data),
+                },
+                bun.default_allocator,
+            );
+        } else {
+            // Final chunk - close stream
+            var prev = this.readable_stream_ref;
+            this.readable_stream_ref = .{};
+            defer prev.deinit();
+
+            try stream.ptr.Bytes.onData(
+                .{
+                    .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(data),
+                },
+                bun.default_allocator,
+            );
+        }
+    }
+
+    /// Stream body data to Response's ReadableStream.
+    /// Phase 4.1: Handle streaming when Response exists
+    fn streamBodyToResponse(this: *FetchTasklet, response: *Response) bun.JSTerminated!void {
+        log("streamBodyToResponse", .{});
+        const globalThis = this.global_this;
+        const sizeHint = this.getSizeHint();
+        response.setSizeHint(sizeHint);
+
+        const readable = response.getBodyReadableStream(globalThis) orelse {
+            log("streamBodyToResponse: no readable stream on response", .{});
+            return;
+        };
+
+        if (readable.ptr != .Bytes) {
+            log("streamBodyToResponse: stream is not Bytes type", .{});
+            return;
+        }
+
+        const data = this.scheduled_response_buffer.list.items;
+        const has_more = this.result.has_more;
+
+        if (has_more) {
+            try readable.ptr.Bytes.onData(
+                .{
+                    .temporary = bun.ByteList.fromBorrowedSliceDangerous(data),
+                },
+                bun.default_allocator,
+            );
+        } else {
+            readable.value.ensureStillAlive();
+            response.detachReadableStream(globalThis);
+            try readable.ptr.Bytes.onData(
+                .{
+                    .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(data),
+                },
+                bun.default_allocator,
+            );
+        }
+    }
+
+    /// Buffer body data in memory (no stream yet).
+    /// Phase 4.1: Simple buffering logic
+    fn bufferBodyData(this: *FetchTasklet) void {
+        log("bufferBodyData", .{});
+        // Data is already in scheduled_response_buffer from the HTTP thread callback
+        // Nothing to do here - just keep accumulating
+    }
+
+    /// Finalize buffered body data into Response.
+    /// Phase 4.1: Complete buffering and resolve body
+    fn finalizeBufferedBody(this: *FetchTasklet, response: *Response) bun.JSTerminated!void {
+        log("finalizeBufferedBody", .{});
+
+        if (this.result.has_more) {
+            // Not done yet, keep buffering
+            return;
+        }
+
+        // Transfer buffered data to body
+        var scheduled_response_buffer = this.scheduled_response_buffer.list;
+        const body = response.getBodyValue();
+        var old = body.*;
+        const body_value = Body.Value{
+            .InternalBlob = .{
+                .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
+            },
+        };
+        body.* = body_value;
+        log("finalizeBufferedBody: body_value length={}", .{body_value.InternalBlob.bytes.items.len});
+
+        this.scheduled_response_buffer = .{
+            .allocator = bun.default_allocator,
+            .list = .{
+                .items = &.{},
+                .capacity = 0,
+            },
+        };
+
+        if (old == .Locked) {
+            log("finalizeBufferedBody: resolving locked body", .{});
+            try old.resolve(body, this.global_this, response.getFetchHeaders());
+        }
+    }
+
+    /// Handle error case for body reception.
+    /// Phase 4.1: Centralized error handling
+    fn handleBodyError(this: *FetchTasklet) bun.JSTerminated!void {
+        log("handleBodyError", .{});
+        const globalThis = this.global_this;
+
+        var err = this.onReject();
+        var need_deinit = true;
+        defer if (need_deinit) err.deinit();
+        var js_err = JSValue.zero;
+
+        // if we are streaming update with error
+        if (this.readable_stream_ref.get(globalThis)) |readable| {
+            if (readable.ptr == .Bytes) {
+                js_err = err.toJS(globalThis);
+                js_err.ensureStillAlive();
+                try readable.ptr.Bytes.onData(
+                    .{
+                        .err = .{ .JSValue = js_err },
+                    },
+                    bun.default_allocator,
+                );
+            }
+        }
+
+        if (this.sink) |sink| {
+            if (js_err == .zero) {
+                js_err = err.toJS(globalThis);
+                js_err.ensureStillAlive();
+            }
+            sink.cancel(js_err);
+            return;
+        }
+
+        // if we are buffering resolve the promise
+        if (this.getCurrentResponse()) |response| {
+            need_deinit = false; // body value now owns the error
+            const body = response.getBodyValue();
+            try body.toErrorInstance(err, globalThis);
         }
     }
 
     /// Called from main thread (from onProgressUpdate) when body data is received.
     /// Caller must hold the mutex when calling this function.
+    /// Phase 4.1: State-based dispatch - simplified top-level logic
     pub fn onBodyReceived(this: *FetchTasklet) bun.JSTerminated!void {
         const success = this.result.isSuccess();
-        const globalThis = this.global_this;
-        // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
+        // reset the buffer if we are streaming or if we are not waiting for buffering anymore
         var buffer_reset = true;
         log("onBodyReceived success={} has_more={}", .{ success, this.result.has_more });
         defer {
@@ -1061,135 +1304,26 @@ pub const FetchTasklet = struct {
             }
         }
 
+        // Handle error case first
         if (!success) {
-            var err = this.onReject();
-            var need_deinit = true;
-            defer if (need_deinit) err.deinit();
-            var js_err = JSValue.zero;
-            // if we are streaming update with error
-            if (this.readable_stream_ref.get(globalThis)) |readable| {
-                if (readable.ptr == .Bytes) {
-                    js_err = err.toJS(globalThis);
-                    js_err.ensureStillAlive();
-                    try readable.ptr.Bytes.onData(
-                        .{
-                            .err = .{ .JSValue = js_err },
-                        },
-                        bun.default_allocator,
-                    );
-                }
-            }
-            if (this.sink) |sink| {
-                if (js_err == .zero) {
-                    js_err = err.toJS(globalThis);
-                    js_err.ensureStillAlive();
-                }
-                sink.cancel(js_err);
-                return;
-            }
-            // if we are buffering resolve the promise
-            if (this.getCurrentResponse()) |response| {
-                need_deinit = false; // body value now owns the error
-                const body = response.getBodyValue();
-                try body.toErrorInstance(err, globalThis);
-            }
+            try this.handleBodyError();
             return;
         }
 
-        if (this.readable_stream_ref.get(globalThis)) |readable| {
-            log("onBodyReceived readable_stream_ref", .{});
-            if (readable.ptr == .Bytes) {
-                readable.ptr.Bytes.size_hint = this.getSizeHint();
-                // body can be marked as used but we still need to pipe the data
-                const scheduled_response_buffer = &this.scheduled_response_buffer.list;
-
-                const chunk = scheduled_response_buffer.items;
-
-                if (this.result.has_more) {
-                    try readable.ptr.Bytes.onData(
-                        .{
-                            .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
-                        },
-                        bun.default_allocator,
-                    );
-                } else {
-                    var prev = this.readable_stream_ref;
-                    this.readable_stream_ref = .{};
-                    defer prev.deinit();
-                    buffer_reset = false;
-
-                    try readable.ptr.Bytes.onData(
-                        .{
-                            .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
-                        },
-                        bun.default_allocator,
-                    );
-                }
-                return;
-            }
-        }
-
+        // Check if we have a Response object yet
         if (this.getCurrentResponse()) |response| {
-            log("onBodyReceived Current Response", .{});
-            const sizeHint = this.getSizeHint();
-            response.setSizeHint(sizeHint);
-            if (response.getBodyReadableStream(globalThis)) |readable| {
-                log("onBodyReceived CurrentResponse BodyReadableStream", .{});
-                if (readable.ptr == .Bytes) {
-                    const scheduled_response_buffer = this.scheduled_response_buffer.list;
-
-                    const chunk = scheduled_response_buffer.items;
-
-                    if (this.result.has_more) {
-                        try readable.ptr.Bytes.onData(
-                            .{
-                                .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
-                            },
-                            bun.default_allocator,
-                        );
-                    } else {
-                        readable.value.ensureStillAlive();
-                        response.detachReadableStream(globalThis);
-                        try readable.ptr.Bytes.onData(
-                            .{
-                                .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
-                            },
-                            bun.default_allocator,
-                        );
-                    }
-
-                    return;
-                }
+            // Response exists - check if it has a stream
+            if (response.getBodyReadableStream(this.global_this)) |_| {
+                // Response has its own stream - use it
+                try this.streamBodyToResponse(response);
+            } else {
+                // Response exists but no stream - we're buffering
+                buffer_reset = false;
+                try this.finalizeBufferedBody(response);
             }
-
-            // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
-            buffer_reset = false;
-            if (!this.result.has_more) {
-                var scheduled_response_buffer = this.scheduled_response_buffer.list;
-                const body = response.getBodyValue();
-                // done resolve body
-                var old = body.*;
-                const body_value = Body.Value{
-                    .InternalBlob = .{
-                        .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
-                    },
-                };
-                body.* = body_value;
-                log("onBodyReceived body_value length={}", .{body_value.InternalBlob.bytes.items.len});
-
-                this.scheduled_response_buffer = .{
-                    .allocator = bun.default_allocator,
-                    .list = .{
-                        .items = &.{},
-                        .capacity = 0,
-                    },
-                };
-
-                if (old == .Locked) {
-                    log("onBodyReceived old.resolve", .{});
-                    try old.resolve(body, this.global_this, response.getFetchHeaders());
-                }
-            }
+        } else {
+            // No Response yet - initial body data
+            try this.processBodyDataInitial();
         }
     }
 
@@ -1844,12 +1978,16 @@ pub const FetchTasklet = struct {
         fetch_tasklet.http.?.client.flags.is_streaming_request_body = isStream;
         fetch_tasklet.is_waiting_request_stream_start = isStream;
         if (isStream) {
+            // Create buffer for request body streaming
+            // REF COUNTING: Buffer created with 1 ref, will gain second ref when HTTP thread starts using it
+            // - Ref 1: FetchTasklet.request_body_streaming_buffer (released in clearSink)
+            // - Ref 2: HTTP thread holds while streaming (released when request completes)
             const buffer = http.ThreadSafeStreamBuffer.new(.{});
             buffer.setDrainCallback(FetchTasklet, FetchTasklet.onWriteRequestDataDrain, fetch_tasklet);
-            fetch_tasklet.request_body_streaming_buffer = buffer;
+            fetch_tasklet.request_body_streaming_buffer = buffer; // We hold Ref 1
             fetch_tasklet.http.?.request_body = .{
                 .stream = .{
-                    .buffer = buffer,
+                    .buffer = buffer, // HTTP thread will hold Ref 2 when started
                     .ended = false,
                 },
             };
@@ -1889,17 +2027,23 @@ pub const FetchTasklet = struct {
         }
     }
 
-    /// This is ALWAYS called from the http thread and we cannot touch the buffer here because is locked
+    /// Callback from HTTP thread when request buffer is drained and ready for more data.
+    /// THREAD: HTTP thread
+    /// REF COUNTING: Adds temporary ref for cross-thread handoff (released in resumeRequestDataStream)
     pub fn onWriteRequestDataDrain(this: *FetchTasklet) void {
-        // ref until the main thread callback is called
+        // Keep FetchTasklet alive during cross-thread handoff
+        // Released in resumeRequestDataStream() on main thread
         this.ref();
         this.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.resumeRequestDataStream));
     }
 
-    /// This is ALWAYS called from the main thread
+    /// Resume request data streaming on main thread.
+    /// Called after HTTP thread signals buffer is drained.
+    /// THREAD: Main thread
+    /// REF COUNTING: Releases ref added in onWriteRequestDataDrain()
     // XXX: 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void' but 'fn (*FetchTasklet) void' does not
     pub fn resumeRequestDataStream(this: *FetchTasklet) error{}!void {
-        // deref when done because we ref inside onWriteRequestDataDrain
+        // Release ref from onWriteRequestDataDrain() (cross-thread handoff complete)
         defer this.deref();
         log("resumeRequestDataStream", .{});
         if (this.sink) |sink| {
@@ -1961,9 +2105,13 @@ pub const FetchTasklet = struct {
 
     /// Called from main thread to end the request body stream.
     /// Thread-safe: Uses atomic operations and ThreadSafeStreamBuffer.
+    ///
+    /// REF COUNTING:
+    /// - Releases the FetchTasklet ref added in startRequestStream()
+    /// - This is the matching deref() for the ref() call when sink was created
     pub fn writeEndRequest(this: *FetchTasklet, err: ?jsc.JSValue) void {
         log("writeEndRequest hasError? {}", .{err != null});
-        defer this.deref();
+        defer this.deref(); // Release ref from startRequestStream()
         if (err) |jsError| {
             // Atomic check - safe without lock
             if (this.signal_store.aborted.load(.monotonic) or this.abort_reason.has()) {

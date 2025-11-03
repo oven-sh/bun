@@ -1232,6 +1232,16 @@ pub const FetchTasklet = struct {
         const metadata = this.metadata.?;
         const http_response = metadata.response;
         this.is_waiting_body = this.result.has_more;
+
+        // Transition to appropriate state based on body handling
+        if (this.is_waiting_body) {
+            // We're either buffering or streaming - will be determined in onResolve
+            // For now, mark that we have headers
+            if (this.state == .Scheduled) {
+                this.setState(.HaveHeaders);
+            }
+        }
+
         return Response.init(
             .{
                 .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
@@ -1248,6 +1258,10 @@ pub const FetchTasklet = struct {
 
     fn ignoreRemainingResponseBody(this: *FetchTasklet) void {
         log("ignoreRemainingResponseBody", .{});
+
+        // Transition to Ignored state
+        this.setState(.Ignored);
+
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
         if (this.http) |http_| {
@@ -1265,6 +1279,7 @@ pub const FetchTasklet = struct {
             this.native_response = null;
         }
 
+        // Note: ignore_data flag kept for now for HTTP callback compatibility
         this.ignore_data = true;
     }
 

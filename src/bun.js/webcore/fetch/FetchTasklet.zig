@@ -661,7 +661,6 @@ pub const FetchTasklet = struct {
     // Custom Hostname
     hostname: ?[]u8 = null,
     is_waiting_abort: bool = false,
-    is_waiting_request_stream_start: bool = false,
     mutex: Mutex,
 
     // === NEW STATE MACHINE FIELDS (Phase 7 Step 1) ===
@@ -853,7 +852,7 @@ pub const FetchTasklet = struct {
         this.readable_stream_ref.deinit();
 
         this.scheduled_response_buffer.deinit();
-        if (this.request_body != .ReadableStream or this.is_waiting_request_stream_start) {
+        if (this.request_body != .ReadableStream or this.request_stream_state == .waiting_start) {
             this.request_body.detach();
         }
 
@@ -899,8 +898,7 @@ pub const FetchTasklet = struct {
     }
 
     pub fn startRequestStream(this: *FetchTasklet) void {
-        this.is_waiting_request_stream_start = false;
-        // Dual tracking: update both flag and state
+        // Transition request stream state to active
         this.request_stream_state = .active;
         bun.assert(this.request_body == .ReadableStream);
         if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
@@ -1105,7 +1103,7 @@ pub const FetchTasklet = struct {
                 this.deref();
             }
         }
-        if (this.is_waiting_request_stream_start and this.result.can_stream) {
+        if (this.request_stream_state == .waiting_start and this.result.can_stream) {
             // start streaming
             this.startRequestStream();
         }
@@ -1733,8 +1731,7 @@ pub const FetchTasklet = struct {
         // enable streaming the write side
         const isStream = fetch_tasklet.request_body == .ReadableStream;
         fetch_tasklet.http.?.client.flags.is_streaming_request_body = isStream;
-        fetch_tasklet.is_waiting_request_stream_start = isStream;
-        // Dual tracking: set request stream state
+        // Set request stream state
         fetch_tasklet.request_stream_state = if (isStream) .waiting_start else .none;
         if (isStream) {
             const buffer = http.ThreadSafeStreamBuffer.new(.{});

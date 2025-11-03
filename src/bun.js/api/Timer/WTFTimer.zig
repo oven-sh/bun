@@ -71,19 +71,11 @@ pub fn cancel(this: *WTFTimer) void {
     }
 }
 
-pub fn fire(this: *WTFTimer, _: *const bun.timespec, _: *VirtualMachine) EventLoopTimer.Arm {
+pub fn fire(this: *WTFTimer, _: *const bun.timespec, _: *VirtualMachine) void {
     this.event_loop_timer.state = .FIRED;
     // Only clear imminent if this timer was the one that set it
     _ = this.imminent.cmpxchgStrong(this, null, .seq_cst, .seq_cst);
-    // Read `repeat` and `next` before calling runWithoutRemoving(), because the callback
-    // might destroy `this` (e.g., when Atomics.waitAsync creates a one-shot DispatchTimer).
-    const should_repeat = this.repeat;
-    const next_time = this.event_loop_timer.next;
     this.runWithoutRemoving();
-    return if (should_repeat)
-        .{ .rearm = next_time }
-    else
-        .disarm;
 }
 
 pub fn deinit(this: *WTFTimer) void {

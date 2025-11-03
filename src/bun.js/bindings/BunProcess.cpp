@@ -27,6 +27,7 @@
 #include "ScriptExecutionContext.h"
 #include "headers-handwritten.h"
 #include "ZigGlobalObject.h"
+#include "FormatStackTraceForJS.h"
 #include "headers.h"
 #include "JSEnvironmentVariableMap.h"
 #include "ImportMetaObject.h"
@@ -371,7 +372,7 @@ extern "C" bool Bun__VM__allowAddons(void* vm);
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
+    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);
     auto callCountAtStart = globalObject->napiModuleRegisterCallCount;
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     auto& vm = JSC::getVM(globalObject);
@@ -636,7 +637,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     auto env = globalObject->makeNapiEnv(nmodule);
     env->filename = filename_cstr;
 
-    auto encoded = reinterpret_cast<EncodedJSValue>(napi_register_module_v1(env, reinterpret_cast<napi_value>(exportsValue)));
+    auto encoded = reinterpret_cast<EncodedJSValue>(napi_register_module_v1(env.ptr(), reinterpret_cast<napi_value>(exportsValue)));
     if (env->throwPendingException()) {
         return {};
     }
@@ -655,7 +656,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
             // TODO: think about the finalizer here
             // currently we do not dealloc napi modules so we don't have to worry about it right now
             auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
-            Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, env, nullptr);
+            Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr, env.ptr());
             bool success = resultObject->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
             ASSERT(success);
             RETURN_IF_EXCEPTION(scope, {});
@@ -775,7 +776,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObje
 
 JSC_DEFINE_HOST_FUNCTION(Process_setUncaughtExceptionCaptureCallback, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto arg0 = callFrame->argument(0);
@@ -813,7 +814,7 @@ extern "C" uint64_t Bun__readOriginTimer(void*);
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
+    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
@@ -865,7 +866,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalOb
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionHRTimeBigInt, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
+    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);
     return JSC::JSValue::encode(JSValue(JSC::JSBigInt::createFrom(globalObject, Bun__readOriginTimer(globalObject->bunVM()))));
 }
 
@@ -2105,7 +2106,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
 static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    // auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    // auto* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto process = jsCast<Process*>(processObject);
 
     auto* report = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 10);
@@ -3429,14 +3430,23 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& ar
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue nextTick;
     if (!this->m_nextTickFunction) {
-        this->get(globalObject, Identifier::fromString(vm, "nextTick"_s));
+        nextTick = this->get(globalObject, Identifier::fromString(vm, "nextTick"_s));
         RETURN_IF_EXCEPTION(scope, void());
     }
 
     ASSERT(!args.isEmpty());
     JSObject* nextTickFn = this->m_nextTickFunction.get();
-    ASSERT(nextTickFn);
+    if (!nextTickFn) [[unlikely]] {
+        if (nextTick && nextTick.isObject())
+            nextTickFn = asObject(nextTick);
+        else {
+            throwVMError(globalObject, scope, "Failed to call nextTick"_s);
+            return;
+        }
+    }
     ASSERT_WITH_MESSAGE(!args.at(0).inherits<AsyncContextFrame>(), "queueNextTick must not pass an AsyncContextFrame. This will cause a crash.");
     JSC::call(globalObject, nextTickFn, args, "Failed to call nextTick"_s);
     RELEASE_AND_RETURN(scope, void());
@@ -3500,6 +3510,24 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
     JSValue function = JSValue::decode(func);
 
     process->queueNextTick<2>(globalObject, function, { JSValue::decode(arg1), JSValue::decode(arg2) });
+}
+
+// This does the equivalent of
+// return require.cache.get(Bun.main)
+static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(processObject->globalObject());
+    auto* bun = globalObject->bunObject();
+    RETURN_IF_EXCEPTION(scope, {});
+    auto& builtinNames = Bun::builtinNames(vm);
+    JSValue mainValue = bun->get(globalObject, builtinNames.mainPublicName());
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* requireMap = globalObject->requireMap();
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue mainModule = requireMap->get(globalObject, mainValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    return mainModule;
 }
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
@@ -3615,19 +3643,25 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort, (JSC::JSGlobalObject * globalObjec
 
 JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-#if !OS(WINDOWS)
-    ZigString str;
-    Bun__Process__getTitle(globalObject, &str);
-    return JSValue::encode(Zig::toJSString(str, globalObject));
-#else
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+#if !OS(WINDOWS)
+    BunString str;
+    Bun__Process__getTitle(globalObject, &str);
+    auto value = str.transferToWTFString();
+    auto* result = jsString(globalObject->vm(), WTFMove(value));
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(result));
+#else
     char title[1024];
     title[0] = '\0'; // Initialize buffer to empty string
     if (uv_get_process_title(title, sizeof(title)) != 0 || title[0] == '\0') {
-        return JSValue::encode(jsString(vm, String("bun"_s)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, String("bun"_s))));
     }
 
-    return JSValue::encode(jsString(vm, WTF::String::fromUTF8(title)));
+    auto* result = jsString(vm, WTF::String::fromUTF8(title));
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(result));
 #endif
 }
 
@@ -3641,7 +3675,7 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
         return false;
     }
 #if !OS(WINDOWS)
-    ZigString str = Zig::toZigString(jsString, globalObject);
+    BunString str = Bun::toStringRef(globalObject, jsString);
     Bun__Process__setTitle(globalObject, &str);
     return true;
 #else
@@ -3892,7 +3926,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   hrtime                           constructProcessHrtimeObject                        PropertyCallback
   isBun                            constructIsBun                                      PropertyCallback
   kill                             Process_functionKill                                Function 2
-  mainModule                       processObjectInternalsMainModuleCodeGenerator       Builtin|Accessor
+  mainModule                       constructMainModuleProperty                         PropertyCallback
   memoryUsage                      constructMemoryUsage                                PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                              PropertyCallback
   nextTick                         constructProcessNextTickFn                          PropertyCallback

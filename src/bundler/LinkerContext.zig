@@ -129,7 +129,7 @@ pub const LinkerContext = struct {
 
         pub fn computeLineOffsets(this: *LinkerContext, alloc: std.mem.Allocator, source_index: Index.Int) void {
             debug("Computing LineOffsetTable: {d}", .{source_index});
-            const line_offset_table: *bun.sourcemap.LineOffsetTable.List = &this.graph.files.items(.line_offset_table)[source_index];
+            const line_offset_table: *bun.SourceMap.LineOffsetTable.List = &this.graph.files.items(.line_offset_table)[source_index];
 
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
             const loader: options.Loader = this.parse_graph.input_files.items(.loader)[source_index];
@@ -142,7 +142,7 @@ pub const LinkerContext = struct {
 
             const approximate_line_count = this.graph.ast.items(.approximate_newline_count)[source_index];
 
-            line_offset_table.* = bun.sourcemap.LineOffsetTable.generate(
+            line_offset_table.* = bun.SourceMap.LineOffsetTable.generate(
                 alloc,
                 source.contents,
 
@@ -686,7 +686,7 @@ pub const LinkerContext = struct {
         results: std.MultiArrayList(CompileResultForSourceMap),
         chunk_abs_dir: string,
         can_have_shifts: bool,
-    ) !sourcemap.SourceMapPieces {
+    ) !SourceMap.SourceMapPieces {
         const trace = bun.perf.trace("Bundler.generateSourceMapForChunk");
         defer trace.end();
 
@@ -721,7 +721,7 @@ pub const LinkerContext = struct {
                 try source_id_map.putNoClobber(index, 0);
 
                 if (path.isFile()) {
-                    const rel_path = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
+                    const rel_path = try bun.path.relativeAlloc(worker.allocator, chunk_abs_dir, path.text);
                     path.pretty = rel_path;
                 }
 
@@ -741,7 +741,7 @@ pub const LinkerContext = struct {
                 var path = sources[index].path;
 
                 if (path.isFile()) {
-                    const rel_path = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
+                    const rel_path = try bun.path.relativeAlloc(worker.allocator, chunk_abs_dir, path.text);
                     path.pretty = rel_path;
                 }
 
@@ -776,7 +776,7 @@ pub const LinkerContext = struct {
         );
 
         const mapping_start = j.len;
-        var prev_end_state = sourcemap.SourceMapState{};
+        var prev_end_state = SourceMap.SourceMapState{};
         var prev_column_offset: i32 = 0;
         const source_map_chunks = results.items(.source_map_chunk);
         const offsets = results.items(.generated_offset);
@@ -784,7 +784,7 @@ pub const LinkerContext = struct {
             const mapping_source_index = source_id_map.get(current_source_index) orelse
                 unreachable; // the pass above during printing of "sources" must add the index
 
-            var start_state = sourcemap.SourceMapState{
+            var start_state = SourceMap.SourceMapState{
                 .source_index = mapping_source_index,
                 .generated_line = offset.lines.zeroBased(),
                 .generated_column = offset.columns.zeroBased(),
@@ -794,7 +794,7 @@ pub const LinkerContext = struct {
                 start_state.generated_column += prev_column_offset;
             }
 
-            try sourcemap.appendSourceMapChunk(&j, worker.allocator, prev_end_state, start_state, chunk.buffer.list.items);
+            try SourceMap.appendSourceMapChunk(&j, worker.allocator, prev_end_state, start_state, chunk.buffer.list.items);
 
             prev_end_state = chunk.end_state;
             prev_end_state.source_index = mapping_source_index;
@@ -810,7 +810,7 @@ pub const LinkerContext = struct {
         if (comptime FeatureFlags.source_map_debug_id) {
             j.pushStatic("\",\n  \"debugId\": \"");
             j.push(
-                try std.fmt.allocPrint(worker.allocator, "{}", .{bun.sourcemap.DebugIDFormatter{ .id = isolated_hash }}),
+                try std.fmt.allocPrint(worker.allocator, "{}", .{bun.SourceMap.DebugIDFormatter{ .id = isolated_hash }}),
                 worker.allocator,
             );
             j.pushStatic("\",\n  \"names\": []\n}");
@@ -821,7 +821,7 @@ pub const LinkerContext = struct {
         const done = try j.done(worker.allocator);
         bun.assert(done[0] == '{');
 
-        var pieces = sourcemap.SourceMapPieces.init(worker.allocator);
+        var pieces = SourceMap.SourceMapPieces.init(worker.allocator);
         if (can_have_shifts) {
             try pieces.prefix.appendSlice(done[0..mapping_start]);
             try pieces.mappings.appendSlice(done[mapping_start..mapping_end]);
@@ -1324,6 +1324,7 @@ pub const LinkerContext = struct {
 
             .minify_whitespace = c.options.minify_whitespace,
             .minify_syntax = c.options.minify_syntax,
+            .input_module_type = ast.exports_kind.toModuleType(),
             .module_type = c.options.output_format,
             .print_dce_annotations = c.options.emit_dce_annotations,
             .has_run_symbol_renamer = true,
@@ -1410,7 +1411,7 @@ pub const LinkerContext = struct {
 
     const SubstituteChunkFinalPathResult = struct {
         j: StringJoiner,
-        shifts: []sourcemap.SourceMapShifts,
+        shifts: []SourceMap.SourceMapShifts,
     };
 
     pub fn mangleLocalCss(c: *LinkerContext) void {
@@ -1963,7 +1964,7 @@ pub const LinkerContext = struct {
                         // "undefined" instead of emitting an error.
                         symbol.import_item_status = .missing;
 
-                        if (c.resolver.opts.target == .browser and jsc.ModuleLoader.HardcodedModule.Alias.has(next_source.path.pretty, .bun)) {
+                        if (c.resolver.opts.target == .browser and jsc.ModuleLoader.HardcodedModule.Alias.has(next_source.path.pretty, .bun, .{})) {
                             c.log.addRangeWarningFmtWithNote(
                                 source,
                                 r,
@@ -2683,11 +2684,11 @@ const MultiArrayList = bun.MultiArrayList;
 const MutableString = bun.MutableString;
 const OOM = bun.OOM;
 const Output = bun.Output;
+const SourceMap = bun.SourceMap;
 const StringJoiner = bun.StringJoiner;
 const bake = bun.bake;
 const base64 = bun.base64;
 const renamer = bun.renamer;
-const sourcemap = bun.sourcemap;
 const strings = bun.strings;
 const sync = bun.threading;
 const AutoBitSet = bun.bit_set.AutoBitSet;

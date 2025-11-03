@@ -624,6 +624,22 @@ extern "C" BunString URL__getHrefJoin(BunString* baseStr, BunString* relativeStr
     return Bun::toStringRef(url.string());
 }
 
+extern "C" BunString URL__hash(WTF::URL* url)
+{
+    const auto& fragment = url->fragmentIdentifier().isEmpty()
+        ? emptyString()
+        : url->fragmentIdentifierWithLeadingNumberSign().toStringWithoutCopying();
+    return Bun::toStringRef(fragment);
+}
+
+extern "C" BunString URL__fragmentIdentifier(WTF::URL* url)
+{
+    const auto& fragment = url->fragmentIdentifier().isEmpty()
+        ? emptyString()
+        : url->fragmentIdentifier().toStringWithoutCopying();
+    return Bun::toStringRef(fragment);
+}
+
 extern "C" WTF::URL* URL__fromString(BunString* input)
 {
     auto&& str = input->toWTFString();
@@ -664,10 +680,25 @@ extern "C" BunString URL__search(WTF::URL* url)
     return Bun::toStringRef(url->query().toStringWithoutCopying());
 }
 
+/// Returns the host WITHOUT the port.
+///
+/// Note that this does NOT match JS behavior, which returns the host with the port.
+///
+/// ```
+/// URL("http://example.com:8080").host() => "example.com"
+/// ```
 extern "C" BunString URL__host(WTF::URL* url)
 {
     return Bun::toStringRef(url->host().toStringWithoutCopying());
 }
+
+/// Returns the host WITH the port.
+///
+/// Note that this does NOT match JS behavior which returns the host without the port.
+///
+/// ```
+/// URL("http://example.com:8080").hostname() => "example.com:8080"
+/// ```
 extern "C" BunString URL__hostname(WTF::URL* url)
 {
     return Bun::toStringRef(url->hostAndPort());

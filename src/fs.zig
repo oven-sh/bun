@@ -536,8 +536,8 @@ pub const FileSystem = struct {
             return switch (Environment.os) {
                 // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
                 .windows => win_tempdir_cache orelse {
-                    const value = bun.getenvZ("TEMP") orelse bun.getenvZ("TMP") orelse brk: {
-                        if (bun.getenvZ("SystemRoot") orelse bun.getenvZ("windir")) |windir| {
+                    const value = bun.env_var.TEMP.get() orelse bun.env_var.TMP.get() orelse brk: {
+                        if (bun.env_var.SYSTEMROOT.get() orelse bun.env_var.WINDIR.get()) |windir| {
                             break :brk std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}\\Temp",
@@ -545,7 +545,7 @@ pub const FileSystem = struct {
                             ) catch |err| bun.handleOom(err);
                         }
 
-                        if (bun.getenvZ("USERPROFILE")) |profile| {
+                        if (bun.env_var.HOME.get()) |profile| {
                             var buf: bun.PathBuffer = undefined;
                             var parts = [_]string{"AppData\\Local\\Temp"};
                             const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
@@ -578,7 +578,7 @@ pub const FileSystem = struct {
         pub var tmpdir_path_set = false;
         pub fn tmpdirPath(_: *const @This()) []const u8 {
             if (!tmpdir_path_set) {
-                tmpdir_path = bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse platformTempDir();
+                tmpdir_path = bun.env_var.BUN_TMPDIR.get() orelse platformTempDir();
                 tmpdir_path_set = true;
             }
 
@@ -587,7 +587,7 @@ pub const FileSystem = struct {
 
         pub fn openTmpDir(_: *const RealFS) !std.fs.Dir {
             if (!tmpdir_path_set) {
-                tmpdir_path = bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse platformTempDir();
+                tmpdir_path = bun.env_var.BUN_TMPDIR.get() orelse platformTempDir();
                 tmpdir_path_set = true;
             }
 
@@ -636,7 +636,7 @@ pub const FileSystem = struct {
         }
 
         pub fn getDefaultTempDir() string {
-            return bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse platformTempDir();
+            return bun.env_var.BUN_TMPDIR.get() orelse platformTempDir();
         }
 
         pub fn setTempdir(path: ?string) void {
@@ -989,11 +989,22 @@ pub const FileSystem = struct {
         fn readDirectoryError(fs: *RealFS, dir: string, err: anyerror) OOM!*EntriesOption {
             if (comptime FeatureFlags.enable_entry_cache) {
                 var get_or_put_result = try fs.entries.getOrPut(dir);
-                const opt = try fs.entries.put(&get_or_put_result, EntriesOption{
-                    .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
-                });
+                switch (err) {
+                    error.ENOENT, error.FileNotFound => {
+                        fs.entries.markNotFound(get_or_put_result);
+                        temp_entries_option = EntriesOption{
+                            .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
+                        };
+                        return &temp_entries_option;
+                    },
+                    else => {
+                        const opt = try fs.entries.put(&get_or_put_result, EntriesOption{
+                            .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
+                        });
 
-                return opt;
+                        return opt;
+                    },
+                }
             }
 
             temp_entries_option = EntriesOption{
@@ -1057,11 +1068,18 @@ pub const FileSystem = struct {
                         }
 
                         in_place = cached_result.entries;
+                    } else if (cache_result.?.status == .not_found and generation == 0) {
+                        temp_entries_option = EntriesOption{
+                            .err = DirEntry.Err{ .original_err = error.ENOENT, .canonical_error = error.ENOENT },
+                        };
+                        return &temp_entries_option;
                     }
                 }
             }
 
-            var handle = maybe_handle orelse try fs.openDir(dir);
+            var handle = maybe_handle orelse (fs.openDir(dir) catch |err| {
+                return try fs.readDirectoryError(dir, err);
+            });
 
             defer {
                 if (maybe_handle == null and (!store_fd or fs.needToCloseFiles())) {
@@ -1543,6 +1561,18 @@ pub const PathName = struct {
     /// extensionless files report ""
     ext: string,
     filename: string,
+
+    pub fn findExtname(_path: string) string {
+        var start: usize = 0;
+        if (bun.path.lastIndexOfSep(_path)) |i| {
+            start = i + 1;
+        }
+        const base = _path[start..];
+        if (bun.strings.lastIndexOfChar(base, '.')) |dot| {
+            if (dot > 0) return base[dot..];
+        }
+        return "";
+    }
 
     pub fn extWithoutLeadingDot(self: *const PathName) string {
         return if (self.ext.len > 0 and self.ext[0] == '.') self.ext[1..] else self.ext;

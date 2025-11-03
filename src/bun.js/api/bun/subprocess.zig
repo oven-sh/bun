@@ -28,8 +28,7 @@ observable_getters: std.enums.EnumSet(enum {
     stdio,
 }) = .{},
 closed: std.enums.EnumSet(StdioKind) = .{},
-has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
-this_jsvalue: jsc.JSValue = .zero,
+this_value: jsc.JSRef = jsc.JSRef.empty(),
 
 /// `null` indicates all of the IPC data is uninitialized.
 ipc_data: ?IPC.SendQueue,
@@ -169,7 +168,7 @@ pub fn hasExited(this: *const Subprocess) bool {
     return this.process.hasExited();
 }
 
-pub fn hasPendingActivityNonThreadsafe(this: *const Subprocess) bool {
+pub fn computeHasPendingActivity(this: *const Subprocess) bool {
     if (this.ipc_data != null) {
         return true;
     }
@@ -186,16 +185,19 @@ pub fn hasPendingActivityNonThreadsafe(this: *const Subprocess) bool {
 }
 
 pub fn updateHasPendingActivity(this: *Subprocess) void {
+    if (this.flags.is_sync) return;
+
+    const has_pending = this.computeHasPendingActivity();
     if (comptime Environment.isDebug) {
-        log("updateHasPendingActivity() {any} -> {any}", .{
-            this.has_pending_activity.raw,
-            this.hasPendingActivityNonThreadsafe(),
-        });
+        log("updateHasPendingActivity() -> {any}", .{has_pending});
     }
-    this.has_pending_activity.store(
-        this.hasPendingActivityNonThreadsafe(),
-        .monotonic,
-    );
+
+    // Upgrade or downgrade the reference based on pending activity
+    if (has_pending) {
+        this.this_value.upgrade(this.globalThis);
+    } else {
+        this.this_value.downgrade();
+    }
 }
 
 pub fn hasPendingActivityStdio(this: *const Subprocess) bool {
@@ -245,10 +247,6 @@ pub fn onCloseIO(this: *Subprocess, kind: StdioKind) void {
             }
         },
     }
-}
-
-pub fn hasPendingActivity(this: *Subprocess) callconv(.C) bool {
-    return this.has_pending_activity.load(.acquire);
 }
 
 pub fn jsRef(this: *Subprocess) void {
@@ -350,16 +348,15 @@ fn setEventLoopTimerRefd(this: *Subprocess, refd: bool) void {
     }
 }
 
-pub fn timeoutCallback(this: *Subprocess) bun.api.Timer.EventLoopTimer.Arm {
+pub fn timeoutCallback(this: *Subprocess) void {
     this.setEventLoopTimerRefd(false);
-    if (this.event_loop_timer.state == .CANCELLED) return .disarm;
+    if (this.event_loop_timer.state == .CANCELLED) return;
     if (this.hasExited()) {
         this.event_loop_timer.state = .CANCELLED;
-        return .disarm;
+        return;
     }
     this.event_loop_timer.state = .FIRED;
     _ = this.tryKill(this.killSignal);
-    return .disarm;
 }
 
 pub fn onMaxBuffer(this: *Subprocess, kind: MaxBuf.Kind) void {
@@ -407,7 +404,9 @@ pub fn kill(
     globalThis: *JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
-    this.this_jsvalue = callframe.this();
+    // Safe: this method can only be called while the object is alive (reachable from JS)
+    // The finalizer only runs when the object becomes unreachable
+    this.this_value.update(globalThis, callframe.this());
 
     const arguments = callframe.arguments_old(1);
     // If signal is 0, then no actual signal is sent, but error checking
@@ -607,7 +606,7 @@ fn consumeOnDisconnectCallback(this_jsvalue: JSValue, globalThis: *jsc.JSGlobalO
 
 pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Status, rusage: *const Rusage) void {
     log("onProcessExit()", .{});
-    const this_jsvalue = this.this_jsvalue;
+    const this_jsvalue = this.this_value.tryGet() orelse .zero;
     const globalThis = this.globalThis;
     const jsc_vm = globalThis.bunVM();
     this_jsvalue.ensureStillAlive();
@@ -697,9 +696,9 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
                 }
 
                 switch (status) {
-                    .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)),
-                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis)),
-                    .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))),
+                    .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)) catch {}, // TODO: properly propagate exception upwards
+                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis)) catch {}, // TODO: properly propagate exception upwards
+                    .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))) catch {}, // TODO: properly propagate exception upwards
                     else => {
                         // crash in debug mode
                         if (comptime Environment.allow_assert)
@@ -810,11 +809,11 @@ pub fn finalize(this: *Subprocess) callconv(.C) void {
     // Ensure any code which references the "this" value doesn't attempt to
     // access it after it's been freed We cannot call any methods which
     // access GC'd values during the finalizer
-    this.this_jsvalue = .zero;
+    this.this_value.finalize();
 
     this.clearAbortSignal();
 
-    bun.assert(!this.hasPendingActivity() or jsc.VirtualMachine.get().isShuttingDown());
+    bun.assert(!this.computeHasPendingActivity() or jsc.VirtualMachine.get().isShuttingDown());
     this.finalizeStreams();
 
     this.process.detach();
@@ -1352,7 +1351,7 @@ pub fn spawnMaybeSync(
         !jsc_vm.auto_killer.enabled and
         !jsc_vm.jsc_vm.hasExecutionTimeLimit() and
         !jsc_vm.isInspectorEnabled() and
-        !bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH);
+        !bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH.get();
 
     const spawn_options = bun.spawn.SpawnOptions{
         .cwd = cwd,
@@ -1568,7 +1567,11 @@ pub fn spawnMaybeSync(
         subprocess.toJS(globalThis)
     else
         JSValue.zero;
-    subprocess.this_jsvalue = out;
+    if (out != .zero) {
+        subprocess.this_value.setWeak(out);
+        // Immediately upgrade to strong if there's pending activity to prevent premature GC
+        subprocess.updateHasPendingActivity();
+    }
 
     var send_exit_notification = false;
 
@@ -1704,7 +1707,7 @@ pub fn spawnMaybeSync(
         defer {
             jsc_vm.uwsLoop().internal_loop_data.jsc_vm = old_vm;
         }
-        while (subprocess.hasPendingActivityNonThreadsafe()) {
+        while (subprocess.computeHasPendingActivity()) {
             if (subprocess.stdin == .buffer) {
                 subprocess.stdin.buffer.watch();
             }
@@ -1779,7 +1782,7 @@ pub fn handleIPCMessage(
         },
         .data => |data| {
             IPC.log("Received IPC message from child", .{});
-            const this_jsvalue = this.this_jsvalue;
+            const this_jsvalue = this.this_value.tryGet() orelse .zero;
             defer this_jsvalue.ensureStillAlive();
             if (this_jsvalue != .zero) {
                 if (jsc.Codegen.JSSubprocess.ipcCallbackGetCached(this_jsvalue)) |cb| {
@@ -1802,7 +1805,7 @@ pub fn handleIPCMessage(
 
 pub fn handleIPCClose(this: *Subprocess) void {
     IPClog("Subprocess#handleIPCClose", .{});
-    const this_jsvalue = this.this_jsvalue;
+    const this_jsvalue = this.this_value.tryGet() orelse .zero;
     defer this_jsvalue.ensureStillAlive();
     const globalThis = this.globalThis;
     this.updateHasPendingActivity();

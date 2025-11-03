@@ -494,6 +494,58 @@ document: 2
       expect(YAML.parse(yaml)).toEqual([{ document: 1 }, { document: 2 }]);
     });
 
+    test("document markers in quoted strings", () => {
+      const inputs = [
+        { expected: "hi ... hello", input: '"hi ... hello"' },
+        { expected: "hi ... hello", input: "'hi ... hello'" },
+        { expected: { foo: "hi ... hello" }, input: 'foo: "hi ... hello"' },
+        { expected: { foo: "hi ... hello" }, input: "foo: 'hi ... hello'" },
+        {
+          expected: "hi ... hello",
+          input: `"hi
+  ...
+  hello"`,
+        },
+        {
+          expected: "hi ... hello",
+          input: `'hi
+  ...
+  hello'`,
+        },
+        {
+          expected: { foo: "hi ... hello" },
+          input: `foo: "hi
+  ...
+  hello"`,
+        },
+        {
+          expected: { foo: "hi ... hello" },
+          input: `foo: 'hi
+  ...
+  hello'`,
+        },
+        {
+          expected: { foo: { bar: "hi ... hello" } },
+          input: `foo:
+  bar: "hi
+    ...
+    hello"`,
+        },
+        {
+          expected: { foo: { bar: "hi ... hello" } },
+          input: `foo:
+  bar: 'hi
+    ...
+    hello'`,
+        },
+      ];
+
+      for (const { input, expected } of inputs) {
+        expect(YAML.parse(input)).toEqual(expected);
+        expect(YAML.parse(YAML.stringify(YAML.parse(input)))).toEqual(expected);
+      }
+    });
+
     test("handles multiline strings", () => {
       const yaml = `
 literal: |
@@ -1037,6 +1089,40 @@ my_config:
         expect(YAML.parse(YAML.stringify(config))).toEqual(config);
       });
     });
+
+    const indicatorQuotingTests = [
+      "-",
+      "?",
+      ":",
+      ",",
+      "[",
+      "]",
+      "{",
+      "}",
+      "#",
+      "&",
+      "*",
+      "!",
+      "|",
+      ">",
+      "'",
+      '"',
+      "%",
+      "@",
+      "`",
+      " ",
+      "\t",
+      "\n",
+      "\r",
+    ];
+
+    for (const indicatorOrWhitespace of indicatorQuotingTests) {
+      test(`round-trip string starting with '${indicatorOrWhitespace}'`, () => {
+        const array = [{ key: indicatorOrWhitespace }];
+        expect(YAML.parse(YAML.stringify(array))).toEqual(array);
+        expect(YAML.parse(YAML.stringify(array, null, 2))).toEqual(array);
+      });
+    }
 
     test("strings are properly referenced", () => {
       const config = {

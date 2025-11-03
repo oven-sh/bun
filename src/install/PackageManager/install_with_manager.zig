@@ -574,7 +574,14 @@ pub fn installWithManager(
             try waitForEverythingExceptPeers(manager);
         }
 
-        try waitForPeers(manager);
+        if (manager.peer_dependencies.readableLength() > 0) {
+            try manager.processPeerDependencyList();
+            manager.drainDependencyList();
+        }
+
+        if (manager.pendingTaskCount() > 0) {
+            try waitForPeers(manager);
+        }
 
         if (log_level.showProgress()) {
             manager.endProgressBar();
@@ -940,7 +947,7 @@ fn printInstallSummary(
             // We deliberately do not disable it after this.
             Output.enableBuffering();
             const writer = Output.writerBuffered();
-            switch (Output.enable_ansi_colors) {
+            switch (Output.enable_ansi_colors_stdout) {
                 inline else => |enable_ansi_colors| {
                     try Lockfile.Printer.Tree.print(&printer, this, @TypeOf(writer), writer, enable_ansi_colors, log_level);
                 },

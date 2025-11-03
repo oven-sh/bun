@@ -306,7 +306,7 @@ pub const ZigString = extern struct {
 
     pub const Slice = struct {
         allocator: NullableAllocator = .{},
-        ptr: [*]const u8 = undefined,
+        ptr: [*]const u8 = &.{},
         len: u32 = 0,
 
         pub fn reportExtraMemory(this: *const Slice, vm: *jsc.VM) void {
@@ -328,6 +328,10 @@ pub const ZigString = extern struct {
                 .len = @as(u32, @truncate(input.len)),
                 .allocator = NullableAllocator.init(allocator),
             };
+        }
+
+        pub fn initDupe(allocator: std.mem.Allocator, input: []const u8) OOM!Slice {
+            return .init(allocator, try allocator.dupe(u8, input));
         }
 
         pub fn byteLength(this: *const Slice) usize {
@@ -365,7 +369,36 @@ pub const ZigString = extern struct {
             return .{ .allocator = .init(allocator), .ptr = duped.ptr, .len = this.len };
         }
 
-        pub fn cloneIfNeeded(this: Slice, allocator: std.mem.Allocator) !Slice {
+        /// Converts this `ZigString.Slice` into a `[]const u8`, guaranteed to be allocated by
+        /// `allocator`.
+        ///
+        /// This method sets `this` to an empty string. If you don't need the original string,
+        /// this method may be more efficient than `toOwned`, which always allocates memory.
+        pub fn intoOwnedSlice(this: *Slice, allocator: std.mem.Allocator) OOM![]const u8 {
+            defer this.* = .{};
+            if (this.allocator.get()) |this_allocator| blk: {
+                if (allocator.vtable != this_allocator.vtable) break :blk;
+                // Can add support for more allocators here
+                if (allocator.vtable == bun.default_allocator.vtable) {
+                    return this.slice();
+                }
+            }
+            defer this.deinit();
+            return (try this.toOwned(allocator)).slice();
+        }
+
+        /// Same as `intoOwnedSlice`, but creates `[:0]const u8`
+        pub fn intoOwnedSliceZ(this: *Slice, allocator: std.mem.Allocator) OOM![:0]const u8 {
+            defer {
+                this.deinit();
+                this.* = .{};
+            }
+            // always clones
+            return allocator.dupeZ(u8, this.slice());
+        }
+
+        /// Note that the returned slice is not guaranteed to be allocated by `allocator`.
+        pub fn cloneIfBorrowed(this: Slice, allocator: std.mem.Allocator) bun.OOM!Slice {
             if (this.isAllocated()) {
                 return this;
             }
@@ -379,21 +412,13 @@ pub const ZigString = extern struct {
             return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = buf.ptr, .len = @as(u32, @truncate(buf.len)) };
         }
 
-        pub fn cloneZ(this: Slice, allocator: std.mem.Allocator) !Slice {
-            if (this.isAllocated() or this.len == 0) {
-                return this;
-            }
-
-            const duped = try allocator.dupeZ(u8, this.ptr[0..this.len]);
-            return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = duped.ptr, .len = this.len };
-        }
-
         pub fn slice(this: *const Slice) []const u8 {
             return this.ptr[0..this.len];
         }
 
         pub fn mut(this: Slice) []u8 {
-            return @as([*]u8, @ptrFromInt(@intFromPtr(this.ptr)))[0..this.len];
+            bun.assertf(!this.allocator.isNull(), "cannot mutate a borrowed ZigString.Slice", .{});
+            return @constCast(this.ptr)[0..this.len];
         }
 
         /// Does nothing if the slice is not allocated
@@ -617,15 +642,11 @@ pub const ZigString = extern struct {
         return untagged(this._unsafe_ptr_do_not_use)[0..@min(this.len, std.math.maxInt(u32))];
     }
 
-    pub fn dupe(this: ZigString, allocator: std.mem.Allocator) ![]const u8 {
-        return try allocator.dupe(u8, this.slice());
-    }
-
     pub fn toSliceFast(this: ZigString, allocator: std.mem.Allocator) Slice {
         if (this.len == 0)
             return Slice.empty;
         if (is16Bit(&this)) {
-            const buffer = this.toOwnedSlice(allocator) catch unreachable;
+            const buffer = bun.handleOom(this.toOwnedSlice(allocator));
             return Slice{
                 .allocator = NullableAllocator.init(allocator),
                 .ptr = buffer.ptr,
@@ -645,7 +666,7 @@ pub const ZigString = extern struct {
         if (this.len == 0)
             return Slice.empty;
         if (is16Bit(&this)) {
-            const buffer = this.toOwnedSlice(allocator) catch unreachable;
+            const buffer = bun.handleOom(this.toOwnedSlice(allocator));
             return Slice{
                 .allocator = NullableAllocator.init(allocator),
                 .ptr = buffer.ptr,
@@ -654,7 +675,7 @@ pub const ZigString = extern struct {
         }
 
         if (!this.isUTF8() and !strings.isAllASCII(untagged(this._unsafe_ptr_do_not_use)[0..this.len])) {
-            const buffer = this.toOwnedSlice(allocator) catch unreachable;
+            const buffer = bun.handleOom(this.toOwnedSlice(allocator));
             return Slice{
                 .allocator = NullableAllocator.init(allocator),
                 .ptr = buffer.ptr,
@@ -668,6 +689,7 @@ pub const ZigString = extern struct {
         };
     }
 
+    /// The returned slice is always allocated by `allocator`.
     pub fn toSliceClone(this: ZigString, allocator: std.mem.Allocator) OOM!Slice {
         if (this.len == 0)
             return Slice.empty;
@@ -676,25 +698,6 @@ pub const ZigString = extern struct {
             .allocator = NullableAllocator.init(allocator),
             .ptr = buffer.ptr,
             .len = @as(u32, @truncate(buffer.len)),
-        };
-    }
-
-    pub fn toSliceZ(this: ZigString, allocator: std.mem.Allocator) Slice {
-        if (this.len == 0)
-            return Slice.empty;
-
-        if (is16Bit(&this)) {
-            const buffer = this.toOwnedSliceZ(allocator) catch unreachable;
-            return Slice{
-                .ptr = buffer.ptr,
-                .len = @as(u32, @truncate(buffer.len)),
-                .allocator = NullableAllocator.init(allocator),
-            };
-        }
-
-        return Slice{
-            .ptr = untagged(this._unsafe_ptr_do_not_use),
-            .len = @as(u32, @truncate(this.len)),
         };
     }
 

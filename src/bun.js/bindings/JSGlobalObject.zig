@@ -376,7 +376,7 @@ pub const JSGlobalObject = opaque {
     }
 
     pub fn throwPretty(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
-        const instance = switch (Output.enable_ansi_colors) {
+        const instance = switch (Output.enable_ansi_colors_stderr) {
             inline else => |enabled| this.createErrorInstance(Output.prettyFmt(fmt, enabled), args),
         };
         bun.assert(instance != .zero);
@@ -506,6 +506,7 @@ pub const JSGlobalObject = opaque {
         switch (proof) {
             error.JSError => {},
             error.OutOfMemory => this.throwOutOfMemory() catch {},
+            error.JSTerminated => {},
         }
 
         return this.tryTakeException() orelse {
@@ -517,6 +518,7 @@ pub const JSGlobalObject = opaque {
         switch (proof) {
             error.JSError => {},
             error.OutOfMemory => this.throwOutOfMemory() catch {},
+            error.JSTerminated => {},
         }
 
         return (this.tryTakeException() orelse {

@@ -241,7 +241,7 @@ pub fn crashHandler(
                     } else if (bun.analytics.Features.unsupported_uv_function > 0) {
                         const name = unsupported_uv_function orelse "<unknown>";
                         const fmt =
-                            \\Bun encountered a crash when running a NAPI module that tried to call 
+                            \\Bun encountered a crash when running a NAPI module that tried to call
                             \\the <red>{s}<r> libuv function.
                             \\
                             \\Bun is actively working on supporting all libuv functions for POSIX
@@ -255,11 +255,11 @@ pub fn crashHandler(
                         has_printed_message = true;
                     }
                 } else {
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.writeAll(Output.prettyFmt("<red>", true)) catch std.posix.abort();
                     }
                     writer.writeAll("oh no") catch std.posix.abort();
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.writeAll(Output.prettyFmt("<r><d>: multiple threads are crashing<r>\n", true)) catch std.posix.abort();
                     } else {
                         writer.writeAll(Output.prettyFmt(": multiple threads are crashing\n", true)) catch std.posix.abort();
@@ -267,13 +267,13 @@ pub fn crashHandler(
                 }
 
                 if (reason != .out_of_memory or debug_trace) {
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.writeAll(Output.prettyFmt("<red>", true)) catch std.posix.abort();
                     }
 
                     writer.writeAll("panic") catch std.posix.abort();
 
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.writeAll(Output.prettyFmt("<r><d>", true)) catch std.posix.abort();
                     }
 
@@ -294,7 +294,7 @@ pub fn crashHandler(
                     }
 
                     writer.writeAll(": ") catch std.posix.abort();
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.writeAll(Output.prettyFmt("<r>", true)) catch std.posix.abort();
                     }
                     writer.print("{}\n", .{reason}) catch std.posix.abort();
@@ -319,7 +319,55 @@ pub fn crashHandler(
                         .index = 0,
                         .instruction_addresses = &addr_buf,
                     };
-                    std.debug.captureStackTrace(begin_addr orelse @returnAddress(), &trace_buf);
+                    const desired_begin_addr = begin_addr orelse @returnAddress();
+
+                    // On Linux with glibc, always use backtrace() instead of Zig's StackIterator
+                    // because Zig's frame pointer-based unwinding doesn't work reliably,
+                    // especially on aarch64. glibc's backtrace() uses DWARF unwinding.
+                    if (bun.Environment.isLinux and !bun.Environment.isMusl) {
+                        const backtrace_fn = struct {
+                            extern "c" fn backtrace(buffer: [*]?*anyopaque, size: c_int) c_int;
+                        }.backtrace;
+                        const count = backtrace_fn(@ptrCast(&addr_buf), addr_buf.len);
+                        if (count > 0) {
+                            trace_buf.index = @intCast(count);
+
+                            // Skip frames until we find begin_addr (or close to it)
+                            // backtrace() captures everything including crash handler frames
+                            var skip: usize = 0;
+                            var found_begin = false;
+                            const tolerance: usize = 128;
+                            for (addr_buf[0..trace_buf.index], 0..) |addr, i| {
+                                // Check if this address is close to begin_addr (within tolerance)
+                                const delta = if (addr >= desired_begin_addr)
+                                    addr - desired_begin_addr
+                                else
+                                    desired_begin_addr - addr;
+                                if (delta <= tolerance) {
+                                    skip = i;
+                                    found_begin = true;
+                                    break;
+                                }
+                                // Give up searching after 8 frames
+                                if (i >= 8) break;
+                            }
+
+                            // Shift the addresses to skip crash handler frames
+                            // If begin_addr was not found, use the complete backtrace
+                            if (found_begin and skip > 0 and skip < trace_buf.index) {
+                                const remaining = trace_buf.index - skip;
+                                var j: usize = 0;
+                                while (j < remaining) : (j += 1) {
+                                    addr_buf[j] = addr_buf[skip + j];
+                                }
+                                trace_buf.index = remaining;
+                            }
+                        }
+                    } else {
+                        // Fall back to Zig's stack capture on other platforms
+                        std.debug.captureStackTrace(desired_begin_addr, &trace_buf);
+                    }
+
                     break :get_backtrace &trace_buf;
                 };
 
@@ -337,7 +385,7 @@ pub fn crashHandler(
                     if (!has_printed_message) {
                         has_printed_message = true;
                         writer.writeAll("oh no") catch std.posix.abort();
-                        if (Output.enable_ansi_colors) {
+                        if (Output.enable_ansi_colors_stderr) {
                             writer.writeAll(Output.prettyFmt("<r><d>:<r> ", true)) catch std.posix.abort();
                         } else {
                             writer.writeAll(Output.prettyFmt(": ", true)) catch std.posix.abort();
@@ -355,7 +403,7 @@ pub fn crashHandler(
                         } else if (bun.analytics.Features.unsupported_uv_function > 0) {
                             const name = unsupported_uv_function orelse "<unknown>";
                             const fmt =
-                                \\Bun encountered a crash when running a NAPI module that tried to call 
+                                \\Bun encountered a crash when running a NAPI module that tried to call
                                 \\the <red>{s}<r> libuv function.
                                 \\
                                 \\Bun is actively working on supporting all libuv functions for POSIX
@@ -387,7 +435,7 @@ pub fn crashHandler(
                         }
                     }
 
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.print(Output.prettyFmt("<cyan>", true), .{}) catch std.posix.abort();
                     }
 
@@ -404,7 +452,7 @@ pub fn crashHandler(
                     writer.writeAll("\n") catch std.posix.abort();
                 }
 
-                if (Output.enable_ansi_colors) {
+                if (Output.enable_ansi_colors_stderr) {
                     writer.writeAll(Output.prettyFmt("<r>\n", true)) catch std.posix.abort();
                 } else {
                     writer.writeAll("\n") catch std.posix.abort();
@@ -535,7 +583,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                         },
                     );
 
-                    if (bun.getenvZ("USER")) |user| {
+                    if (bun.env_var.USER.get()) |user| {
                         if (user.len > 0) {
                             Output.prettyError(
                                 \\
@@ -604,7 +652,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                         },
                     );
 
-                    if (bun.getenvZ("USER")) |user| {
+                    if (bun.env_var.USER.get()) |user| {
                         if (user.len > 0) {
                             Output.prettyError(
                                 \\
@@ -651,7 +699,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                     );
 
                     if (bun.Environment.isLinux) {
-                        if (bun.getenvZ("USER")) |user| {
+                        if (bun.env_var.USER.get()) |user| {
                             if (user.len > 0) {
                                 Output.prettyError(
                                     \\
@@ -756,7 +804,7 @@ pub fn reportBaseUrl() []const u8 {
     };
     return static.base_url orelse {
         const computed = computed: {
-            if (bun.getenvZ("BUN_CRASH_REPORT_URL")) |url| {
+            if (bun.env_var.BUN_CRASH_REPORT_URL.get()) |url| {
                 break :computed bun.strings.withoutTrailingSlash(url);
             }
             break :computed default_report_base_url;
@@ -909,7 +957,7 @@ pub fn printMetadata(writer: anytype) !void {
         }
     }
 
-    if (Output.enable_ansi_colors) {
+    if (Output.enable_ansi_colors_stderr) {
         try writer.writeAll(Output.prettyFmt("<r><d>", true));
     }
 
@@ -997,7 +1045,7 @@ pub fn printMetadata(writer: anytype) !void {
         try writer.writeAll("\n");
     }
 
-    if (Output.enable_ansi_colors) {
+    if (Output.enable_ansi_colors_stderr) {
         try writer.writeAll(Output.prettyFmt("<r>", true));
     }
     try writer.writeAll("\n");
@@ -1364,18 +1412,13 @@ fn isReportingEnabled() bool {
     if (suppress_reporting) return false;
 
     // If trying to test the crash handler backend, implicitly enable reporting
-    if (bun.getenvZ("BUN_CRASH_REPORT_URL")) |value| {
+    if (bun.env_var.BUN_CRASH_REPORT_URL.get()) |value| {
         return value.len > 0;
     }
 
     // Environment variable to specifically enable or disable reporting
-    if (bun.getenvZ("BUN_ENABLE_CRASH_REPORTING")) |value| {
-        if (value.len > 0) {
-            if (bun.strings.eqlComptime(value, "1")) {
-                return true;
-            }
-            return false;
-        }
+    if (bun.env_var.BUN_ENABLE_CRASH_REPORTING.get()) |enable_crash_reporting| {
+        return enable_crash_reporting;
     }
 
     // Debug builds shouldn't report to the default url by default
@@ -1464,7 +1507,7 @@ fn report(url: []const u8) void {
             var buf2: bun.PathBuffer = undefined;
             const curl = bun.which(
                 &buf,
-                bun.getenvZ("PATH") orelse return,
+                bun.env_var.PATH.get() orelse return,
                 bun.getcwd(&buf2) catch return,
                 "curl",
             ) orelse return;
@@ -1635,12 +1678,12 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace, limits: WriteStackTraceLimi
             return;
         },
         .linux => {
+            // In non-debug builds, use WTF's stack trace printer and return early
             if (!bun.Environment.isDebug) {
-                // Linux doesnt seem to be able to decode it's own debug info.
-                // TODO(@paperclover): see if zig 0.14 fixes this
-                WTF__DumpStackTrace(trace.instruction_addresses.ptr, trace.instruction_addresses.len);
+                WTF__DumpStackTrace(trace.instruction_addresses.ptr, trace.index);
                 return;
             }
+            // Otherwise fall through to llvm-symbolizer for debug builds
         },
         else => {
             // Assume debug symbol tooling is reliable.
@@ -2217,7 +2260,7 @@ export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C)
 export fn CrashHandler__unsupportedUVFunction(name: ?[*:0]const u8) callconv(.C) void {
     bun.analytics.Features.unsupported_uv_function += 1;
     unsupported_uv_function = name;
-    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB)) {
+    if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB.get()) {
         suppressReporting();
     }
     std.debug.panic("unsupported uv function: {s}", .{name.?});

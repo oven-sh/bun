@@ -1712,8 +1712,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionEmitHelper, (JSGlobalObject * globalObj
     return JSValue::encode(ret);
 }
 
-
-
 // Helper functions extracted from BunProcess.cpp
 
 static char* toFileURI(std::string_view path)
@@ -2366,7 +2364,6 @@ static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSVal
 
     return process;
 }
-
 
 // Additional helper functions from BunProcess.cpp
 

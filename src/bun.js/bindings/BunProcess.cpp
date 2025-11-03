@@ -427,8 +427,6 @@ extern "C" void Bun__unlink(const char*, size_t);
 extern "C" void CrashHandler__setDlOpenAction(const char* action);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 
-
-
 extern "C" uint64_t Bun__readOriginTimer(void*);
 extern "C" double Bun__readOriginTimerStart(void*);
 extern "C" void Bun__VirtualMachine__exitDuringUncaughtException(void*);
@@ -465,14 +463,7 @@ extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t
     dispatchExitInternal(globalObject, process, exitCode);
 }
 
-
-
-
-
 extern "C" uint64_t Bun__readOriginTimer(void*);
-
-
-
 
 static HashMap<int, String>* signalNumberToNameMap = nullptr;
 static HashMap<String, int>* signalNameToNumberMap = nullptr;
@@ -1037,9 +1028,6 @@ Process::~Process()
 
 extern "C" bool Bun__NODE_NO_WARNINGS();
 
-
-
-
 static bool isJSValueEqualToASCIILiteral(JSC::JSGlobalObject* globalObject, JSC::JSValue value, const ASCIILiteral literal)
 {
     if (!value.isString()) {
@@ -1177,10 +1165,6 @@ JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue w
 
     RELEASE_AND_RETURN(scope, emitWarningErrorInstance(lexicalGlobalObject, errorInstance));
 }
-
-
-
-
 
 static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalObject, const String& fileName)
 {
@@ -1569,8 +1553,6 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
 #endif
 }
 
-
-
 static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
@@ -1799,8 +1781,6 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     return result;
 }
 
-
-
 static JSValue constructProcessSend(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
@@ -1810,7 +1790,6 @@ static JSValue constructProcessSend(VM& vm, JSObject* processObject)
         return jsUndefined();
     }
 }
-
 
 static JSValue constructProcessDisconnect(VM& vm, JSObject* processObject)
 {
@@ -1902,7 +1881,6 @@ void Process::setArgv(JSGlobalObject* globalObject, JSValue value)
     m_argv.set(vm, this, value);
 }
 
-
 extern "C" EncodedJSValue Bun__Process__getExecArgv(JSGlobalObject* lexicalGlobalObject)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -1913,7 +1891,6 @@ extern "C" EncodedJSValue Bun__Process__getExecArgv(JSGlobalObject* lexicalGloba
 
     return JSValue::encode(process->getExecArgv(globalObject));
 }
-
 
 JSValue Process::getExecArgv(JSGlobalObject* globalObject)
 {
@@ -1931,9 +1908,6 @@ void Process::setExecArgv(JSGlobalObject* globalObject, JSValue value)
     auto& vm = globalObject->vm();
     m_execArgv.set(vm, this, value);
 }
-
-
-
 
 static JSValue constructBrowser(VM& vm, JSObject* processObject)
 {
@@ -1962,11 +1936,6 @@ static JSValue constructEnv(VM& vm, JSObject* processObject)
 }
 
 #if !OS(WINDOWS)
-
-
-
-
-
 
 static JSValue maybe_uid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* globalObject, JSValue value)
 {
@@ -2012,13 +1981,7 @@ static JSValue maybe_gid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* gl
     return {};
 }
 
-
-
-
-
-
 #endif
-
 
 extern "C" uint64_t Bun__Os__getFreeMemory(void);
 
@@ -2065,8 +2028,6 @@ JSValue createCryptoX509Object(JSGlobalObject* globalObject)
     cryptoX509->putDirect(vm, JSC::Identifier::fromString(vm, "isX509Certificate"_s), JSC::JSFunction::create(vm, globalObject, 1, String("isX509Certificate"_s), jsIsX509Certificate, ImplementationVisibility::Public), 0);
     return cryptoX509;
 }
-
-
 
 template<typename Visitor>
 void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
@@ -2165,9 +2126,6 @@ static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSVal
     return process;
 }
 
-
-
-
 extern "C" int getRSS(size_t* rss)
 {
 #if defined(__APPLE__)
@@ -2253,14 +2211,6 @@ err:
 #endif
 }
 
-
-
-
-
-
-
-
-
 static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)
 {
     return JSC::constructEmptyArray(processObject->globalObject(), nullptr);
@@ -2282,8 +2232,6 @@ static JSValue constructMemoryUsage(VM& vm, JSObject* processObject)
     memoryUsage->putDirect(vm, JSC::Identifier::fromString(vm, "rss"_s), rss, 0);
     return memoryUsage;
 }
-
-
 
 void Process::queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& args)
 {
@@ -2422,8 +2370,6 @@ static JSValue constructProcessNextTickFn(VM& vm, JSObject* processObject)
     return jsCast<Process*>(processObject)->constructNextTickFn(JSC::getVM(globalObject), globalObject);
 }
 
-
-
 static JSValue constructFeatures(VM& vm, JSObject* processObject)
 {
     // {
@@ -2462,11 +2408,6 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     return object;
 }
 
-
-
-
-
-
 static inline JSValue getCachedCwd(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2489,11 +2430,6 @@ extern "C" EncodedJSValue Process__getCachedCwd(JSC::JSGlobalObject* globalObjec
 {
     return JSValue::encode(getCachedCwd(globalObject));
 }
-
-
-
-
-
 
 extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSValue value, EncodedJSValue handle)
 {

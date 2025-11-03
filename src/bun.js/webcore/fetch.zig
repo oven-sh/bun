@@ -62,6 +62,246 @@ pub const FetchTasklet = struct {
     pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
 
     const log = Output.scoped(.FetchTasklet, .visible);
+
+    /// State machine for explicit lifecycle tracking
+    pub const State = enum {
+        Scheduled, // queued on HTTP thread; no headers yet
+        HaveHeaders, // metadata set; decide buffering vs streaming
+        Streaming, // streaming to JS ReadableStream or sink
+        Buffering, // buffering body in-memory (promise pending)
+        Completed, // success (body fully delivered)
+        Aborted, // user abort or cert/transport failure
+        Ignored, // response finalized & body intentionally dropped
+        Destroying, // final main-thread teardown is scheduled
+    };
+
+    /// Helper to prevent duplicate event loop callbacks
+    pub const ScheduleGuard = struct {
+        flag: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+        pub fn trySet(self: *ScheduleGuard) bool {
+            return self.flag.cmpxchgStrong(false, true, .acquire, .monotonic) == null;
+        }
+
+        pub fn clear(self: *ScheduleGuard) void {
+            self.flag.store(false, .monotonic);
+        }
+    };
+
+    /// Abort signal state with single owner semantics
+    pub const AbortState = struct {
+        signal: ?*jsc.WebCore.AbortSignal = null,
+
+        pub fn attach(self: *AbortState, signal: *jsc.WebCore.AbortSignal) void {
+            self.signal = signal;
+            signal.pendingActivityRef();
+        }
+
+        pub fn takeReason(self: *AbortState, global: *JSGlobalObject) ?Body.Value.ValueError {
+            defer if (self.signal) |s| {
+                s.pendingActivityUnref();
+                s.unref();
+                self.signal = null;
+            };
+            if (self.signal) |s| {
+                if (s.reasonIfAborted(global)) |r| {
+                    return Body.Value.ValueError{ .JSValue = r };
+                }
+            }
+            return null;
+        }
+
+        pub fn clear(self: *AbortState) void {
+            if (self.signal) |s| {
+                s.pendingActivityUnref();
+                s.unref();
+                self.signal = null;
+            }
+        }
+    };
+
+    /// JS-side owned resources (main-thread only)
+    pub const JsRefs = struct {
+        global_this: *JSGlobalObject,
+        vm: *VirtualMachine,
+        promise: jsc.JSPromise.Strong,
+        response_weak: jsc.Weak(FetchTasklet) = .{},
+        native_response: ?*Response = null,
+        readable_stream: jsc.WebCore.ReadableStream.Strong = .{},
+        sink: ?*ResumableSink = null,
+        abort_reason: jsc.Strong.Optional = .empty,
+        check_server_identity: jsc.Strong.Optional = .empty,
+        poll_ref: Async.KeepAlive = .{},
+        tracker: jsc.Debugger.AsyncTaskTracker,
+
+        pub fn deinit(self: *JsRefs) void {
+            if (self.sink) |s| {
+                self.sink = null;
+                s.deref();
+            }
+            self.readable_stream.deinit();
+            self.response_weak.deinit();
+            if (self.native_response) |r| {
+                self.native_response = null;
+                r.unref();
+            }
+            self.abort_reason.deinit();
+            self.check_server_identity.deinit();
+            // poll_ref unref is done by owner on terminal transition
+        }
+    };
+
+    /// Network-side owned resources (http-thread owner, dropped on main thread)
+    pub const NetRefs = struct {
+        http: ?*http.AsyncHTTP = null,
+        req_stream_buf: ?*http.ThreadSafeStreamBuffer = null,
+
+        pub fn deinit(self: *NetRefs) void {
+            if (self.req_stream_buf) |b| {
+                self.req_stream_buf = null;
+                b.clearDrainCallback();
+                b.deref();
+            }
+            if (self.http) |h| {
+                self.http = null;
+                bun.default_allocator.destroy(h);
+            }
+        }
+    };
+
+    /// Buffers and metadata owned by task
+    pub const Buffers = struct {
+        // bytes HTTP->JS
+        scheduled: MutableString,
+        scratch: MutableString,
+
+        // metadata & allocs owned by task
+        metadata: ?http.HTTPResponseMetadata = null,
+        url_proxy: []const u8 = "",
+        hostname: ?[]u8 = null,
+        request_headers: Headers = Headers{ .allocator = undefined },
+
+        pub fn deinit(self: *Buffers) void {
+            if (self.url_proxy.len > 0) {
+                bun.default_allocator.free(self.url_proxy);
+                self.url_proxy = "";
+            }
+            if (self.hostname) |hn| {
+                bun.default_allocator.free(hn);
+                self.hostname = null;
+            }
+            if (self.metadata) |*m| {
+                m.deinit(bun.default_allocator);
+                self.metadata = null;
+            }
+            self.request_headers.entries.deinit(bun.default_allocator);
+            self.request_headers.buf.deinit(bun.default_allocator);
+            self.scheduled.deinit();
+            self.scratch.deinit();
+        }
+    };
+
+    /// Request body with move-once semantics
+    pub const RequestBodyOwner = union(enum) {
+        None,
+        AnyBlob: AnyBlob,
+        Sendfile: http.SendFile,
+        ReadableStream: jsc.WebCore.ReadableStream.Strong,
+
+        pub fn moveToSink(self: *RequestBodyOwner, sink: *ResumableSink) void {
+            if (self.* == .ReadableStream) {
+                // sink takes ownership; nothing else may detach later
+                _ = sink;
+                // TODO: implement sink.adoptReadableStream when ready
+                self.* = .None;
+            }
+        }
+
+        pub fn moveToHttp(self: *RequestBodyOwner, http_: *http.AsyncHTTP) void {
+            switch (self.*) {
+                .AnyBlob => |b| http_.request_body = .{ .bytes = b.slice() },
+                .Sendfile => |sf| http_.request_body = .{ .sendfile = sf },
+                .ReadableStream => {
+                    // HTTP will pull from ThreadSafeStreamBuffer; stream stays None here
+                },
+                .None => {},
+            }
+            // After move, task doesn't own/detach it anymore
+            self.* = .None;
+        }
+
+        pub fn deinit(self: *RequestBodyOwner) void {
+            switch (self.*) {
+                .AnyBlob => |*b| b.detach(),
+                .Sendfile => |*sf| {
+                    if (@max(sf.offset, sf.remain) > 0) sf.fd.close();
+                    sf.offset = 0;
+                    sf.remain = 0;
+                },
+                .ReadableStream => |*s| s.deinit(),
+                .None => {},
+            }
+            self.* = .None;
+        }
+
+        // Helper methods to maintain compatibility with existing code
+        pub fn fromHTTPRequestBody(body: HTTPRequestBody) RequestBodyOwner {
+            return switch (body) {
+                .AnyBlob => |b| .{ .AnyBlob = b },
+                .Sendfile => |sf| .{ .Sendfile = sf },
+                .ReadableStream => |s| .{ .ReadableStream = s },
+            };
+        }
+
+        pub fn needsToReadFile(self: *const RequestBodyOwner) bool {
+            return switch (self.*) {
+                .AnyBlob => |*blob| blob.needsToReadFile(),
+                else => false,
+            };
+        }
+
+        pub fn isS3(self: *const RequestBodyOwner) bool {
+            return switch (self.*) {
+                .AnyBlob => |*blob| blob.isS3(),
+                else => false,
+            };
+        }
+
+        pub fn hasContentTypeFromUser(self: *const RequestBodyOwner) bool {
+            return switch (self.*) {
+                .AnyBlob => |*blob| blob.hasContentTypeFromUser(),
+                else => false,
+            };
+        }
+
+        pub fn slice(self: *const RequestBodyOwner) []const u8 {
+            return switch (self.*) {
+                .AnyBlob => |*blob| blob.slice(),
+                else => "",
+            };
+        }
+
+        pub fn hasBody(self: *const RequestBodyOwner) bool {
+            return switch (self.*) {
+                .AnyBlob => |*blob| blob.size() > 0,
+                .ReadableStream => |*stream| stream.has(),
+                .Sendfile => true,
+                .None => false,
+            };
+        }
+    };
+
+    // ---- NEW: Refactored ownership groups ----
+    // TODO: Migrate all uses to these bags
+    // js: JsRefs,
+    // net: NetRefs,
+    // buffers: Buffers,
+    // req_body: RequestBodyOwner = .None,
+    // abort: AbortState = .{},
+    // state: State = .Scheduled,
+    // schedule_guard: ScheduleGuard = .{},
+
+    // ---- OLD fields (to be migrated) ----
     sink: ?*ResumableSink = null,
     http: ?*http.AsyncHTTP = null,
     result: http.HTTPClientResult = .{},
@@ -118,6 +358,9 @@ pub const FetchTasklet = struct {
     tracker: jsc.Debugger.AsyncTaskTracker,
 
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+
+    // NEW: State machine (added incrementally)
+    state: State = .Scheduled,
 
     pub fn ref(this: *FetchTasklet) void {
         const count = this.ref_count.fetchAdd(1, .monotonic);
@@ -240,6 +483,23 @@ pub const FetchTasklet = struct {
         return FetchTasklet{};
     }
 
+    fn setState(this: *FetchTasklet, next: State) void {
+        // Debug builds assert legal transitions
+        if (Environment.isDebug) {
+            switch (this.state) {
+                .Scheduled => bun.assert(next == .HaveHeaders or next == .Aborted or next == .Destroying),
+                .HaveHeaders => bun.assert(next == .Streaming or next == .Buffering or next == .Aborted or next == .Ignored or next == .Destroying),
+                .Streaming => bun.assert(next == .Completed or next == .Aborted or next == .Ignored or next == .Destroying),
+                .Buffering => bun.assert(next == .Completed or next == .Aborted or next == .Ignored or next == .Destroying),
+                .Completed => bun.assert(next == .Destroying),
+                .Aborted, .Ignored => bun.assert(next == .Destroying),
+                .Destroying => {}, // terminal
+            }
+        }
+        log("setState: {s} -> {s}", .{ @tagName(this.state), @tagName(next) });
+        this.state = next;
+    }
+
     fn clearSink(this: *FetchTasklet) void {
         if (this.sink) |sink| {
             this.sink = null;
@@ -310,6 +570,7 @@ pub const FetchTasklet = struct {
         log("deinit", .{});
 
         bun.assert(this.ref_count.load(.monotonic) == 0);
+        this.setState(.Destroying);
 
         this.clearData();
 

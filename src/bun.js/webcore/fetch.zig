@@ -871,6 +871,11 @@ pub const FetchTasklet = struct {
             this.promise.deinit();
         }
         const success = this.result.isSuccess();
+
+        // Transition to Completed state on success, stay in current state on error
+        if (success and is_done) {
+            this.setState(.Completed);
+        }
         const result = switch (success) {
             true => jsc.Strong.Optional.create(this.onResolve(), globalThis),
             false => brk: {
@@ -1135,6 +1140,11 @@ pub const FetchTasklet = struct {
     pub fn onReadableStreamAvailable(ctx: *anyopaque, globalThis: *jsc.JSGlobalObject, readable: jsc.WebCore.ReadableStream) void {
         const this = bun.cast(*FetchTasklet, ctx);
         this.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis);
+
+        // Transition to Streaming state when ReadableStream is created
+        if (this.state == .HaveHeaders) {
+            this.setState(.Streaming);
+        }
     }
 
     pub fn onStartStreamingHTTPResponseBodyCallback(ctx: *anyopaque) jsc.WebCore.DrainResult {
@@ -1693,7 +1703,10 @@ pub const FetchTasklet = struct {
         const success = result.isSuccess();
         task.response_buffer = result.body.?.*;
 
-        if (task.ignore_data) {
+        // Check state instead of ignore_data flag (though flag is kept for now for compatibility)
+        const should_ignore = task.state == .Ignored or task.ignore_data;
+
+        if (should_ignore) {
             task.response_buffer.reset();
 
             if (task.scheduled_response_buffer.list.capacity > 0) {

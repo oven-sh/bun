@@ -147,6 +147,197 @@ pub const FetchTasklet = struct {
     pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
 
     const log = Output.scoped(.FetchTasklet, .visible);
+
+    // ============================================================================
+    // THREAD SAFETY ARCHITECTURE (Phase 7 Step 2)
+    // ============================================================================
+    //
+    // TODO (Phase 7 Step 4): The following structs will organize FetchTasklet's
+    // fields into two thread-safety categories:
+    //
+    // 1. MainThreadData - Only accessed from JavaScript main thread (no lock)
+    //    Will contain: global_this, javascript_vm, promise, response_weak,
+    //    native_response, readable_stream_ref, abort_signal, abort_reason,
+    //    check_server_identity, poll_ref, concurrent_task, tracker
+    //
+    // 2. SharedData - Accessed from both threads (mutex protected)
+    //    Will contain: mutex, lifecycle, request_stream_state, abort_requested,
+    //    upgraded_connection, ref_count, http, result, metadata, response_buffer,
+    //    scheduled_response_buffer, body_size, has_schedule_callback, signals,
+    //    signal_store
+    //
+    // These structs are commented out in Step 2 and will be enabled in Step 4
+    // when we migrate the actual field storage into them.
+
+    // NOTE (Phase 7 Step 2): Will be enabled in Step 4
+    //
+    // /// Data that can ONLY be accessed from the main JavaScript thread.
+    // /// No mutex needed - thread confinement enforced by assertions in debug builds.
+    // const MainThreadData = struct {
+    //     /// Global object (non-owning pointer)
+    //     global_this: *JSGlobalObject,
+    //
+    //     /// VM (non-owning pointer)
+    //     javascript_vm: *VirtualMachine,
+    //
+    //     /// Promise to resolve/reject (owned)
+    //     promise: jsc.JSPromise.Strong,
+    //
+    //     /// Weak reference to Response JS object for finalization tracking.
+    //     /// Can become null if GC collects the Response.
+    //     response_weak: jsc.Weak(FetchTasklet) = .{},
+    //
+    //     /// Native Response object for finalization tracking.
+    //     /// INTENTIONAL DUAL OWNERSHIP with response_weak:
+    //     /// - Allows tracking when Response JS object is finalized
+    //     /// - Signals we should stop processing body data
+    //     /// - See Bun__FetchResponse_finalize for usage
+    //     native_response: ?*Response = null,
+    //
+    //     /// Strong reference to response ReadableStream (owned)
+    //     readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
+    //
+    //     /// Abort signal (ref-counted via AbortSignal's API)
+    //     /// Managed by AbortHandling wrapper
+    //     abort_signal: ?*jsc.WebCore.AbortSignal = null,
+    //
+    //     /// Abort reason (owned)
+    //     abort_reason: jsc.Strong.Optional = .empty,
+    //
+    //     /// Custom TLS check function (owned)
+    //     check_server_identity: jsc.Strong.Optional = .empty,
+    //
+    //     /// Keep VM alive during fetch
+    //     poll_ref: Async.KeepAlive = .{},
+    //
+    //     /// Task for cross-thread callbacks
+    //     concurrent_task: jsc.ConcurrentTask = .{},
+    //
+    //     /// Debug tracker
+    //     tracker: jsc.Debugger.AsyncTaskTracker,
+    //
+    //     fn assertMainThread(self: *const MainThreadData) void {
+    //         if (bun.Environment.isDebug) {
+    //             // Thread confinement assertion
+    //             // Could add actual thread ID check if available
+    //             _ = self;
+    //         }
+    //     }
+    //
+    //     fn deinit(self: *MainThreadData) void {
+    //         self.promise.deinit();
+    //         self.readable_stream_ref.deinit();
+    //         self.abort_reason.deinit();
+    //         self.check_server_identity.deinit();
+    //         self.poll_ref.unref(self.javascript_vm);
+    //         // abort_signal handled by AbortHandling wrapper
+    //     }
+    // };
+    //
+    // /// Data shared between main thread and HTTP thread.
+    // /// ALL access must be protected by mutex.
+    // const SharedData = struct {
+    //     /// Mutex protecting all mutable fields below
+    //     mutex: bun.Mutex,
+    //
+    //     /// === STATE TRACKING (protected by mutex) ===
+    //     /// Main fetch lifecycle (mutually exclusive)
+    //     lifecycle: FetchLifecycle,
+    //
+    //     /// Request body streaming state (orthogonal)
+    //     request_stream_state: RequestStreamState,
+    //
+    //     /// Abort requested? (atomic for fast-path check from HTTP thread)
+    //     abort_requested: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    //
+    //     /// Connection upgraded to WebSocket? (one-time flag)
+    //     upgraded_connection: bool = false,
+    //
+    //     /// === REFERENCE COUNTING (atomic) ===
+    //     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+    //
+    //     /// === HTTP CLIENT DATA (owned by HTTP thread after queue) ===
+    //     http: ?*http.AsyncHTTP = null,
+    //     result: http.HTTPClientResult = .{},
+    //     metadata: ?http.HTTPResponseMetadata = null,
+    //
+    //     /// === BUFFERS (ownership documented) ===
+    //     /// Response buffer written by HTTP thread.
+    //     /// Ownership: HTTP thread writes, main thread reads under lock, then transfers.
+    //     response_buffer: MutableString,
+    //
+    //     /// Response buffer for JS (accumulated data before creating Response).
+    //     /// Ownership: Main thread only, but guarded by mutex for consistency.
+    //     scheduled_response_buffer: MutableString,
+    //
+    //     /// Body size tracking
+    //     body_size: http.HTTPClientResult.BodySize = .unknown,
+    //
+    //     /// === COORDINATION FLAGS (atomic) ===
+    //     /// Has callback been scheduled to main thread?
+    //     /// Prevents duplicate enqueues from HTTP thread.
+    //     has_schedule_callback: std.atomic.Value(bool),
+    //
+    //     /// Signal storage for HTTP thread
+    //     signals: http.Signals = .{},
+    //     signal_store: http.Signals.Store = .{},
+    //
+    //     fn init(allocator: std.mem.Allocator) !SharedData {
+    //         return SharedData{
+    //             .mutex = bun.Mutex.init(),
+    //             .lifecycle = .created,
+    //             .request_stream_state = .none,
+    //             .response_buffer = try MutableString.init(allocator, 0),
+    //             .scheduled_response_buffer = try MutableString.init(allocator, 0),
+    //             .has_schedule_callback = std.atomic.Value(bool).init(false),
+    //         };
+    //     }
+    //
+    //     fn deinit(self: *SharedData) void {
+    //         self.response_buffer.deinit();
+    //         self.scheduled_response_buffer.deinit();
+    //         if (self.metadata) |*metadata| {
+    //             metadata.deinit(self.response_buffer.allocator);
+    //         }
+    //     }
+    //
+    //     /// Lock the shared data for exclusive access.
+    //     /// Returns RAII wrapper that auto-unlocks on scope exit.
+    //     fn lock(self: *SharedData) LockedSharedData {
+    //         self.mutex.lock();
+    //         return LockedSharedData{ .shared = self };
+    //     }
+    // };
+    //
+    // /// RAII wrapper for locked shared data.
+    // /// Automatically unlocks on scope exit.
+    // const LockedSharedData = struct {
+    //     shared: *SharedData,
+    //
+    //     fn unlock(self: LockedSharedData) void {
+    //         self.shared.mutex.unlock();
+    //     }
+    //
+    //     /// Convenience: Get current lifecycle
+    //     fn lifecycle(self: LockedSharedData) FetchLifecycle {
+    //         return self.shared.lifecycle;
+    //     }
+    //
+    //     /// Convenience: Transition lifecycle with validation
+    //     fn transitionTo(self: LockedSharedData, new_state: FetchLifecycle) void {
+    //         if (bun.Environment.isDebug) {
+    //             bun.assert(self.shared.lifecycle.canTransitionTo(new_state));
+    //         }
+    //         self.shared.lifecycle = new_state;
+    //     }
+    //
+    //     /// Convenience: Should ignore body data?
+    //     fn shouldIgnoreBody(self: LockedSharedData) bool {
+    //         const abort_requested = self.shared.abort_requested.load(.acquire);
+    //         return abort_requested or self.shared.lifecycle == .aborted;
+    //     }
+    // };
+
     sink: ?*ResumableSink = null,
     http: ?*http.AsyncHTTP = null,
     result: http.HTTPClientResult = .{},

@@ -345,6 +345,58 @@ const LockedSharedData = struct {
     }
 };
 
+/// Request headers with explicit ownership tracking.
+/// Encapsulates the "do I need to free this?" logic that was previously
+/// scattered across clearData() and other cleanup paths.
+///
+/// OWNERSHIP MODEL:
+/// - Headers created from FetchHeaders are OWNED (must be freed)
+/// - Empty headers are NOT OWNED (no allocation, no cleanup)
+/// - The #owned field tracks this distinction
+const RequestHeaders = struct {
+    headers: Headers,
+    /// Private: true if we must deinit the headers
+    /// Only modified through factory methods to ensure correct initialization
+    #owned: bool,
+
+    /// Create empty headers (not owned - no cleanup needed).
+    /// Use this when no headers are provided.
+    fn initEmpty(allocator: std.mem.Allocator) RequestHeaders {
+        return .{
+            .headers = .{ .allocator = allocator },
+            .#owned = false,
+        };
+    }
+
+    /// Extract headers from FetchHeaders (owned - we must cleanup).
+    /// Use this when headers come from JavaScript fetch() call.
+    fn initFromFetchHeaders(
+        fetch_headers: *FetchHeaders,
+        allocator: std.mem.Allocator,
+    ) !RequestHeaders {
+        return .{
+            .headers = try Headers.from(fetch_headers, allocator),
+            .#owned = true,
+        };
+    }
+
+    /// Single cleanup path - checks ownership flag internally.
+    /// Safe to call multiple times or on unowned headers.
+    fn deinit(self: *RequestHeaders, allocator: std.mem.Allocator) void {
+        if (self.#owned) {
+            self.headers.entries.deinit(allocator);
+            self.headers.buf.deinit(allocator);
+            self.#owned = false;
+        }
+    }
+
+    /// Borrow the underlying headers for passing to HTTP client.
+    /// The RequestHeaders wrapper still owns the headers after this call.
+    fn borrow(self: *RequestHeaders) *Headers {
+        return &self.headers;
+    }
+};
+
 pub const FetchTasklet = struct {
     pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
 

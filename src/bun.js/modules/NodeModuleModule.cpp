@@ -362,9 +362,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
         JSC::EncodedJSValue result;
 
         // If paths are provided, use Bun__resolveSyncWithPaths
-        if (!pathsValue.isUndefinedOrNull() && hasIteratorMethod(globalObject, pathsValue)) {
+        if (!pathsValue.isUndefinedOrNull()) {
+            // Node.js requires options.paths to be an array
+            if (!JSC::isArray(globalObject, pathsValue)) {
+                Bun::throwError(globalObject, scope,
+                    Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+                    "options.paths must be an array"_s);
+                return {};
+            }
+
             WTF::Vector<BunString> paths;
 
+            // Iterate through the array using forEachInIterable
             forEachInIterable(globalObject, pathsValue, [&](JSC::VM&, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue item) {
                 if (scope.exception())
                     return;

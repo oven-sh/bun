@@ -182,3 +182,20 @@ test("require.resolve with relative path and options.paths (Next.js use case)", 
     cleanup();
   }
 });
+
+test("Module._resolveFilename throws ERR_INVALID_ARG_TYPE if options.paths is not an array", () => {
+  // Test with string (which is iterable but not an array)
+  expect(() => {
+    Module._resolveFilename("path", __filename, false, { paths: "/some/path" });
+  }).toThrow();
+
+  // Test with Set (which is iterable but not an array)
+  expect(() => {
+    Module._resolveFilename("path", __filename, false, { paths: new Set(["/some/path"]) });
+  }).toThrow();
+
+  // Test with object (not iterable)
+  expect(() => {
+    Module._resolveFilename("path", __filename, false, { paths: { 0: "/some/path" } });
+  }).toThrow();
+});

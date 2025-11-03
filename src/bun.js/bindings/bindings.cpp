@@ -3086,11 +3086,7 @@ bool JSC__JSValue__asArrayBuffer(
     }
     }
     out->_value = JSValue::encode(value);
-    if (data) {
-        // Avoid setting `ptr` to null; the corresponding Zig field is a non-optional pointer.
-        // The caller should have already set `ptr` to a zero-length array.
-        out->ptr = static_cast<char*>(data);
-    }
+    out->ptr = static_cast<char*>(data);
     return true;
 }
 
@@ -3397,7 +3393,14 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, err)));
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, result)));
+    JSValue resolved = JSC::JSPromise::resolvedPromise(globalObject, result);
+    if (scope.exception()) [[unlikely]] {
+        auto* exception = scope.exception();
+        scope.clearException();
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, exception->value())));
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(resolved));
 }
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSPromise__reject(JSC::JSPromise* arg0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue JSValue2)
@@ -6064,10 +6067,7 @@ extern "C" void JSC__ArrayBuffer__deref(JSC::ArrayBuffer* self) { self->deref();
 extern "C" void JSC__ArrayBuffer__asBunArrayBuffer(JSC::ArrayBuffer* self, Bun__ArrayBuffer* out)
 {
     const std::size_t byteLength = self->byteLength();
-    if (void* data = self->data()) {
-        // Avoid setting `ptr` to null; it's a non-optional pointer in Zig.
-        out->ptr = static_cast<char*>(data);
-    }
+    out->ptr = static_cast<char*>(self->data());
     out->len = byteLength;
     out->byte_len = byteLength;
     out->_value = 0;

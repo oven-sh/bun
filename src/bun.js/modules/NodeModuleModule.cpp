@@ -311,6 +311,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
     default: {
         JSC::JSValue moduleName = callFrame->argument(0);
         JSC::JSValue fromValue = callFrame->argument(1);
+        JSC::JSValue optionsValue = callFrame->argument(3); // 4th argument is options
 
         if (moduleName.isUndefinedOrNull()) {
             JSC::throwTypeError(globalObject, scope, "Module._resolveFilename expects a string"_s);
@@ -335,7 +336,46 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
             }
         }
 
-        auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true);
+        // Handle options.paths if provided
+        JSC::JSValue pathsValue = JSC::jsUndefined();
+        if (optionsValue.isObject()) {
+            pathsValue = optionsValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+
+        JSC::EncodedJSValue result;
+
+        // If paths are provided, use Bun__resolveSyncWithPaths
+        if (pathsValue.isCell() && pathsValue.isObject()) {
+            if (JSC::JSArray* pathsArray = jsDynamicCast<JSC::JSArray*>(pathsValue)) {
+                WTF::Vector<BunString> paths;
+                for (size_t i = 0; i < pathsArray->length(); ++i) {
+                    JSC::JSValue path = pathsArray->getIndex(globalObject, i);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    WTF::String pathStr = path.toWTFString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    paths.append(Bun::toStringRef(pathStr));
+                }
+
+                result = Bun__resolveSyncWithPaths(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true, paths.begin(), paths.size());
+
+                for (auto& path : paths) {
+                    path.deref();
+                }
+
+                RETURN_IF_EXCEPTION(scope, {});
+
+                if (!JSC::JSValue::decode(result).isString()) {
+                    JSC::throwException(globalObject, scope, JSC::JSValue::decode(result));
+                    return {};
+                }
+
+                return result;
+            }
+        }
+
+        // No paths provided, use regular resolution
+        result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true);
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!JSC::JSValue::decode(result).isString()) {

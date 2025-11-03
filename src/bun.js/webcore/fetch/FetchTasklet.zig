@@ -633,7 +633,7 @@ const AbortHandling = struct {
         // Set atomic abort flag for HTTP thread fast-path
         fetch.shared.signal_store.aborted.store(true, .release);
 
-        // Transition lifecycle state under lock (FIXED: Issue 1 & 3)
+        // Transition lifecycle state under lock
         fetch.shared.mutex.lock();
         const old_lifecycle = fetch.shared.lifecycle;
         if (!old_lifecycle.isTerminal()) {
@@ -641,8 +641,8 @@ const AbortHandling = struct {
         }
         fetch.shared.mutex.unlock();
 
-        // Schedule abort handling on main thread (if not already there)
-        fetch.scheduleAbortHandling();
+        // Abort the HTTP request
+        fetch.abortTask();
     }
 };
 

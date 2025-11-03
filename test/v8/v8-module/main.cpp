@@ -439,7 +439,7 @@ static Local<Object> setup_object_with_string_field(Isolate *isolate,
 
 static void examine_object_fields(Isolate *isolate, Local<Object> o,
                                   int expected_field0, int expected_field1) {
-  char buf[16];
+  char buf[32] = {0};
   HandleScope hs(isolate);
   o->GetInternalField(0).As<String>()->WriteUtf8(isolate, buf, sizeof(buf));
   assert(atoi(buf) == expected_field0);
@@ -503,7 +503,7 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
 
     // try to use all mini strings
     for (size_t j = 0; j < num_small_allocs; j++) {
-      char buf[16];
+      char buf[32] = {0};
       mini_strings[j]->WriteUtf8(isolate, buf, sizeof(buf));
       assert(atoi(buf) == (int)j);
     }

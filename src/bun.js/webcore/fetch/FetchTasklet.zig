@@ -272,6 +272,46 @@ const FetchError = union(enum) {
     }
 };
 
+/// Request headers with explicit ownership tracking.
+/// Encapsulates the "do I need to free this?" logic.
+const RequestHeaders = struct {
+    headers: Headers,
+    #owned: bool, // Private: true if we must deinit
+
+    /// Create empty headers (not owned - no cleanup needed)
+    fn initEmpty(allocator: std.mem.Allocator) RequestHeaders {
+        return .{
+            .headers = .{ .allocator = allocator },
+            .#owned = false,
+        };
+    }
+
+    /// Extract headers from FetchHeaders (owned - we must cleanup)
+    fn initFromFetchHeaders(
+        fetch_headers: *FetchHeaders,
+        allocator: std.mem.Allocator,
+        body: ?*const AnyBlob,
+    ) !RequestHeaders {
+        return .{
+            .headers = try Headers.from(fetch_headers, allocator, .{ .body = body }),
+            .#owned = true,
+        };
+    }
+
+    /// Single cleanup path
+    fn deinit(self: *RequestHeaders) void {
+        if (self.#owned) {
+            self.headers.entries.deinit(self.headers.allocator);
+            self.headers.buf.deinit(self.headers.allocator);
+        }
+    }
+
+    /// Borrow headers for HTTP request
+    fn borrow(self: *RequestHeaders) *Headers {
+        return &self.headers;
+    }
+};
+
 /// Helper for validated state transitions (in debug builds)
 fn transitionLifecycle(this: *FetchTasklet, old_state: FetchLifecycle, new_state: FetchLifecycle) void {
     if (bun.Environment.isDebug) {
@@ -503,7 +543,7 @@ pub const FetchTasklet = struct {
     ignore_data: bool = false,
     /// stream strong ref if any is available
     readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
-    request_headers: Headers = Headers{ .allocator = undefined },
+    request_headers: RequestHeaders = undefined,
     promise: jsc.JSPromise.Strong,
     concurrent_task: jsc.ConcurrentTask = .{},
     poll_ref: Async.KeepAlive = .{},
@@ -700,9 +740,7 @@ pub const FetchTasklet = struct {
             this.result.certificate_info = null;
         }
 
-        this.request_headers.entries.deinit(allocator);
-        this.request_headers.buf.deinit(allocator);
-        this.request_headers = Headers{ .allocator = undefined };
+        this.request_headers.deinit();
 
         if (this.http) |http_| {
             http_.clearData();
@@ -1541,7 +1579,10 @@ pub const FetchTasklet = struct {
             .request_body = fetch_options.body,
             .global_this = globalThis,
             .promise = promise,
-            .request_headers = fetch_options.headers,
+            .request_headers = .{
+                .headers = fetch_options.headers,
+                .#owned = true, // We own these headers and must clean them up
+            },
             .url_proxy_buffer = fetch_options.url_proxy_buffer,
             .signal = fetch_options.signal,
             .hostname = fetch_options.hostname,
@@ -1579,8 +1620,8 @@ pub const FetchTasklet = struct {
             bun.default_allocator,
             fetch_options.method,
             fetch_options.url,
-            fetch_options.headers.entries,
-            fetch_options.headers.buf.items,
+            fetch_tasklet.request_headers.borrow().entries,
+            fetch_tasklet.request_headers.borrow().buf.items,
             &fetch_tasklet.response_buffer,
             fetch_tasklet.request_body.slice(),
             http.HTTPClientResult.Callback.New(

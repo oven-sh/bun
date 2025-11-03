@@ -544,6 +544,49 @@ const HTTPRequestBody = union(enum) {
     }
 };
 
+/// Unified error storage with explicit precedence rules.
+/// Replaces scattered error tracking across multiple fields (result.fail, abort_reason, body error).
+const FetchError = union(enum) {
+    none: void,
+    http_error: http.HTTPClientResult.Fail,
+    abort_error: jsc.Strong, // From AbortSignal
+    js_error: jsc.Strong, // From JS callback (e.g., checkServerIdentity)
+    tls_error: jsc.Strong, // From TLS validation
+
+    /// Set new error, freeing old error if present
+    fn set(self: *FetchError, new_error: FetchError) void {
+        self.deinit();
+        self.* = new_error;
+    }
+
+    /// Convert error to JavaScript value for promise rejection
+    fn toJS(self: FetchError, global: *JSGlobalObject) JSValue {
+        return switch (self) {
+            .none => .jsUndefined(),
+            .http_error => |fail| fail.toJS(global),
+            .abort_error => |strong| strong.get() orelse .jsUndefined(),
+            .js_error => |strong| strong.get() orelse .jsUndefined(),
+            .tls_error => |strong| strong.get() orelse .jsUndefined(),
+        };
+    }
+
+    /// Check if this is an abort error (for special handling)
+    fn isAbort(self: FetchError) bool {
+        return self == .abort_error;
+    }
+
+    /// Single cleanup path
+    fn deinit(self: *FetchError) void {
+        switch (self.*) {
+            .none, .http_error => {},
+            .abort_error => |*strong| strong.deinit(),
+            .js_error => |*strong| strong.deinit(),
+            .tls_error => |*strong| strong.deinit(),
+        }
+        self.* = .none;
+    }
+};
+
 // ============================================================================
 // URL/PROXY BUFFER PATTERN
 // ============================================================================

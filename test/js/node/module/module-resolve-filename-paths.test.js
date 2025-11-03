@@ -1,5 +1,5 @@
 // Use bun:test in Bun, or node:test in Node.js
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
 import Module from "module";
 import { tmpdir } from "os";
 import { dirname, join, resolve } from "path";
@@ -34,8 +34,8 @@ if (isBun) {
 
 // Helper to create temp directory - works in both Bun and Node
 function createTempDir(prefix, files) {
-  // Use resolve to get the canonical path (handles /tmp -> /private/tmp on macOS)
-  const dir = resolve(mkdtempSync(join(tmpdir(), prefix + "-")));
+  // Use realpathSync to resolve symlinks (handles /tmp -> /private/tmp on macOS)
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix + "-")));
 
   for (const [filePath, content] of Object.entries(files)) {
     const fullPath = join(dir, filePath);

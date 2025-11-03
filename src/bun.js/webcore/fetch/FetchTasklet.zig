@@ -312,30 +312,124 @@ const RequestHeaders = struct {
     }
 };
 
-/// Helper for validated state transitions (in debug builds)
-fn transitionLifecycle(this: *FetchTasklet, old_state: FetchLifecycle, new_state: FetchLifecycle) void {
-    if (bun.Environment.isDebug) {
-        bun.assert(old_state.canTransitionTo(new_state));
-    }
-    this.lifecycle = new_state;
-}
-
-/// Computed property: Should we ignore remaining body data?
-/// Replaces: ignore_data boolean flag
-fn shouldIgnoreBodyData(this: *FetchTasklet) bool {
-    // Ignore data if:
-    // 1. Abort was requested (via signal_store)
-    // 2. Already in aborted state
-    // 3. ignore_data flag is set (for backwards compatibility during transition)
-    return this.signal_store.aborted.load(.monotonic) or
-        this.lifecycle == .aborted or
-        this.ignore_data;
-}
-
 pub const FetchTasklet = struct {
     pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
 
     const log = Output.scoped(.FetchTasklet, .visible);
+
+    /// Abort signal handling with centralized lifecycle management.
+    /// Ensures all ref/unref operations are paired correctly.
+    const AbortHandling = struct {
+        #signal: ?*jsc.WebCore.AbortSignal = null,
+        #has_pending_activity_ref: bool = false,
+        #has_listener: bool = false,
+
+        /// Attach abort signal and set up listener.
+        /// Takes ownership of signal ref.
+        fn attachSignal(
+            self: *AbortHandling,
+            signal: *jsc.WebCore.AbortSignal,
+            fetch: *FetchTasklet,
+        ) !void {
+            bun.assert(self.#signal == null);
+
+            // Ref the signal (we now own a reference)
+            signal.ref();
+            self.#signal = signal;
+
+            // Listen for abort event
+            const listener = signal.listen(FetchTasklet, fetch, onAbortCallback);
+            self.#has_listener = (listener != null);
+
+            // Add pending activity ref (keeps signal alive)
+            signal.pendingActivityRef();
+            self.#has_pending_activity_ref = true;
+        }
+
+        /// Detach signal and clean up all references.
+        /// Must be called with FetchTasklet reference for cleanNativeBindings.
+        fn detach(self: *AbortHandling, fetch: *FetchTasklet) void {
+            const signal = self.#signal orelse return;
+            self.#signal = null;
+
+            // Defer unref operations to happen at end of scope
+            // (matches original code order - defer runs in reverse registration order)
+            defer {
+                // Unref the signal (release our reference)
+                signal.unref();
+            }
+            defer {
+                // Remove pending activity ref if we added one
+                if (self.#has_pending_activity_ref) {
+                    signal.pendingActivityUnref();
+                    self.#has_pending_activity_ref = false;
+                }
+            }
+
+            // Clean native bindings (removes listener)
+            // Always call this, even if we think we don't have a listener
+            // The signal may have a binding we don't know about
+            signal.cleanNativeBindings(fetch);
+            self.#has_listener = false;
+        }
+
+        /// Single cleanup path
+        fn deinit(self: *AbortHandling, fetch: *FetchTasklet) void {
+            self.detach(fetch);
+        }
+
+        /// Get the signal if attached
+        fn get(self: *const AbortHandling) ?*jsc.WebCore.AbortSignal {
+            return self.#signal;
+        }
+
+        /// Callback invoked when abort signal fires
+        fn onAbortCallback(fetch: *FetchTasklet, reason: JSValue) void {
+            log("AbortHandling.onAbortCallback", .{});
+            reason.ensureStillAlive();
+
+            // Store error in unified storage
+            fetch.fetch_error.set(.{ .abort_error = jsc.Strong.Optional.create(reason, fetch.global_this) });
+
+            // Set atomic abort flag for HTTP thread fast-path
+            fetch.signal_store.aborted.store(true, .monotonic);
+
+            // Transition to aborted state
+            if (!fetch.lifecycle.isTerminal()) {
+                transitionLifecycle(fetch, fetch.lifecycle, .aborted);
+            }
+
+            fetch.tracker.didCancel(fetch.global_this);
+
+            // Abort the HTTP request
+            fetch.abortTask();
+
+            // Cancel sink if present
+            if (fetch.sink) |sink| {
+                sink.cancel(reason);
+            }
+        }
+    };
+
+    /// Helper for validated state transitions (in debug builds)
+    fn transitionLifecycle(this: *FetchTasklet, old_state: FetchLifecycle, new_state: FetchLifecycle) void {
+        if (bun.Environment.isDebug) {
+            bun.assert(old_state.canTransitionTo(new_state));
+        }
+        this.lifecycle = new_state;
+    }
+
+    /// Computed property: Should we ignore remaining body data?
+    /// Replaces: ignore_data boolean flag
+    fn shouldIgnoreBodyData(this: *FetchTasklet) bool {
+        // Ignore data if:
+        // 1. Abort was requested (via signal_store)
+        // 2. Already in aborted state
+        // 3. ignore_data flag is set (for backwards compatibility during transition)
+        return this.signal_store.aborted.load(.monotonic) or
+            this.lifecycle == .aborted or
+            this.ignore_data;
+    }
 
     // ============================================================================
     // THREAD SAFETY ARCHITECTURE (Phase 7 Step 2)
@@ -557,7 +651,8 @@ pub const FetchTasklet = struct {
     /// We always clone url and proxy (if informed)
     url_proxy_buffer: []const u8 = "",
 
-    signal: ?*jsc.WebCore.AbortSignal = null,
+    /// Centralized abort signal lifecycle management
+    abort_handling: AbortHandling = .{},
     signals: http.Signals = .{},
     signal_store: http.Signals.Store = .{},
     has_schedule_callback: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
@@ -767,7 +862,7 @@ pub const FetchTasklet = struct {
         }
 
         this.check_server_identity.deinit();
-        this.clearAbortSignal();
+        this.abort_handling.deinit(this);
         // Clear unified error storage
         this.fetch_error.deinit();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
@@ -813,7 +908,7 @@ pub const FetchTasklet = struct {
         this.request_stream_state = .active;
         bun.assert(this.request_body == .ReadableStream);
         if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
-            if (this.signal) |signal| {
+            if (this.abort_handling.get()) |signal| {
                 if (signal.aborted()) {
                     stream.abort(this.global_this);
                     return;
@@ -1212,7 +1307,7 @@ pub const FetchTasklet = struct {
         }
 
         // Fallback: check signal directly (for errors not yet captured)
-        if (this.signal) |signal| {
+        if (this.abort_handling.get()) |signal| {
             if (signal.reasonIfAborted(this.global_this)) |reason| {
                 defer this.clearAbortSignal();
                 return reason.toBodyValueError(this.global_this);
@@ -1223,14 +1318,7 @@ pub const FetchTasklet = struct {
     }
 
     fn clearAbortSignal(this: *FetchTasklet) void {
-        const signal = this.signal orelse return;
-        this.signal = null;
-        defer {
-            signal.pendingActivityUnref();
-            signal.unref();
-        }
-
-        signal.cleanNativeBindings(this);
+        this.abort_handling.detach(this);
     }
 
     pub fn onReject(this: *FetchTasklet) Body.Value.ValueError {
@@ -1584,7 +1672,6 @@ pub const FetchTasklet = struct {
                 .#owned = true, // We own these headers and must clean them up
             },
             .url_proxy_buffer = fetch_options.url_proxy_buffer,
-            .signal = fetch_options.signal,
             .hostname = fetch_options.hostname,
             .tracker = jsc.Debugger.AsyncTaskTracker.init(jsc_vm),
             .check_server_identity = fetch_options.check_server_identity,
@@ -1675,27 +1762,10 @@ pub const FetchTasklet = struct {
             fetch_tasklet.http.?.request_body = .{ .sendfile = fetch_tasklet.request_body.Sendfile };
         }
 
-        if (fetch_tasklet.signal) |signal| {
-            signal.pendingActivityRef();
-            fetch_tasklet.signal = signal.listen(FetchTasklet, fetch_tasklet, FetchTasklet.abortListener);
+        if (fetch_options.signal) |signal| {
+            try fetch_tasklet.abort_handling.attachSignal(signal, fetch_tasklet);
         }
         return fetch_tasklet;
-    }
-
-    pub fn abortListener(this: *FetchTasklet, reason: JSValue) void {
-        log("abortListener", .{});
-        reason.ensureStillAlive();
-        // Store error in unified storage
-        this.fetch_error.set(.{ .abort_error = jsc.Strong.Optional.create(reason, this.global_this) });
-        // Dual tracking: transition to aborted state
-        if (!this.lifecycle.isTerminal()) {
-            transitionLifecycle(this, this.lifecycle, .aborted);
-        }
-        this.abortTask();
-        if (this.sink) |sink| {
-            sink.cancel(reason);
-            return;
-        }
     }
 
     /// This is ALWAYS called from the http thread and we cannot touch the buffer here because is locked
@@ -1712,7 +1782,7 @@ pub const FetchTasklet = struct {
         defer this.deref();
         log("resumeRequestDataStream", .{});
         if (this.sink) |sink| {
-            if (this.signal) |signal| {
+            if (this.abort_handling.get()) |signal| {
                 if (signal.aborted()) {
                     // already aborted; nothing to drain
                     return;
@@ -1724,7 +1794,7 @@ pub const FetchTasklet = struct {
 
     pub fn writeRequestData(this: *FetchTasklet, data: []const u8) ResumableSinkBackpressure {
         log("writeRequestData {}", .{data.len});
-        if (this.signal) |signal| {
+        if (this.abort_handling.get()) |signal| {
             if (signal.aborted()) {
                 return .done;
             }

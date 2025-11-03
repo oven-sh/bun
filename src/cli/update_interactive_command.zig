@@ -1981,10 +1981,39 @@ fn updateNamedCatalog(
 }
 
 fn preserveVersionPrefix(original_version: string, new_version: string, allocator: std.mem.Allocator) !string {
-    if (original_version.len > 0) {
-        const first_char = original_version[0];
+    if (original_version.len > 1) {
+        var orig_version = original_version;
+        var alias: ?string = null;
+
+        // Preserve npm: prefix
+        if (strings.withoutPrefixIfPossibleComptime(original_version, "npm:")) |after_npm| {
+            if (strings.lastIndexOfChar(after_npm, '@')) |i| {
+                alias = after_npm[0..i];
+                if (i + 2 < after_npm.len) {
+                    orig_version = after_npm[i + 1 ..];
+                }
+            } else {
+                alias = after_npm;
+            }
+        }
+
+        // Preserve other version prefixes
+        const first_char = orig_version[0];
         if (first_char == '^' or first_char == '~' or first_char == '>' or first_char == '<' or first_char == '=') {
+            const second_char = orig_version[1];
+            if ((first_char == '>' or first_char == '<') and second_char == '=') {
+                if (alias) |a| {
+                    return try std.fmt.allocPrint(allocator, "npm:{s}@{c}={s}", .{ a, first_char, new_version });
+                }
+                return try std.fmt.allocPrint(allocator, "{c}={s}", .{ first_char, new_version });
+            }
+            if (alias) |a| {
+                return try std.fmt.allocPrint(allocator, "npm:{s}@{c}{s}", .{ a, first_char, new_version });
+            }
             return try std.fmt.allocPrint(allocator, "{c}{s}", .{ first_char, new_version });
+        }
+        if (alias) |a| {
+            return try std.fmt.allocPrint(allocator, "npm:{s}@{s}", .{ a, new_version });
         }
     }
     return try allocator.dupe(u8, new_version);

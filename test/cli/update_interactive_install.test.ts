@@ -54,8 +54,6 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
     });
 
     try {
-      // Wait for UI to render
-
       // Select first package and confirm
       updateProc.stdin.write(" "); // space to select
       updateProc.stdin.write("\r"); // enter to confirm
@@ -148,8 +146,6 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
     });
 
     try {
-      // Wait for UI to render
-
       updateProc.stdin.write("l"); // toggle latest
       updateProc.stdin.write(" "); // select
       updateProc.stdin.write("\r"); // confirm

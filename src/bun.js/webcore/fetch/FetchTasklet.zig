@@ -952,16 +952,38 @@ pub const FetchTasklet = struct {
         return FetchTasklet{};
     }
 
-    fn clearSink(this: *FetchTasklet) void {
+    /// Clear sink and buffer when request streaming is done.
+    /// Single cleanup path with documented ref count operations.
+    ///
+    /// Ref counting behavior:
+    /// - Sink: We hold 1 ref, stream holds another. We drop our ref here.
+    /// - Buffer: We hold 1 ref, sink may hold another. We drop our ref here.
+    ///
+    /// This is called from:
+    /// 1. clearData() - Normal cleanup path when request completes
+    /// 2. Error paths - When streaming needs to be aborted
+    fn clearRequestStreaming(this: *FetchTasklet) void {
+        // Clear sink (drop our ref - stream might still hold one)
         if (this.sink) |sink| {
             this.sink = null;
-            sink.deref();
+            sink.deref(); // Drop ref 1 (we held this)
+            // Stream still holds ref 2 until it finishes
         }
+
+        // Clear buffer (drop our ref - sink might still hold one)
         if (this.request_body_streaming_buffer) |buffer| {
             this.request_body_streaming_buffer = null;
-            buffer.clearDrainCallback();
-            buffer.deref();
+            buffer.clearDrainCallback(); // Unhook from HTTP thread
+            buffer.deref(); // Drop our ref
+            // Sink still holds its ref until it finishes
         }
+    }
+
+    /// Legacy name for clearRequestStreaming().
+    /// Kept for compatibility with existing callsites.
+    /// TODO: Remove this alias once all callsites are updated.
+    fn clearSink(this: *FetchTasklet) void {
+        this.clearRequestStreaming();
     }
 
     /// Cleanup function that frees all owned resources.
@@ -1061,10 +1083,28 @@ pub const FetchTasklet = struct {
         return null;
     }
 
+    /// Start streaming request body to server.
+    /// Sets up sink with explicit ref counting to avoid double-retain bugs.
+    ///
+    /// Ownership and ref counting:
+    /// - request_body.ReadableStream: We own 1 strong ref (will be consumed by sink)
+    /// - Sink created with initExactRefs(2):
+    ///   - Ref 1: FetchTasklet.sink field (we hold this)
+    ///   - Ref 2: Stream pipe (consumed when stream pipes to sink)
+    /// - FetchTasklet: We add 1 ref (will be released when sink finishes)
+    ///
+    /// The "initExactRefs(2)" pattern is documented here:
+    /// - Before: request_body owns stream with 1 ref
+    /// - After: sink has 2 refs (us + stream pipe), we hold FetchTasklet ref
+    ///
+    /// Cleanup happens via clearRequestStreaming() which drops our sink ref.
     pub fn startRequestStream(this: *FetchTasklet) void {
         this.is_waiting_request_stream_start = false;
         bun.assert(this.request_body == .ReadableStream);
+
+        // Get the stream from request_body
         if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
+            // Check if request was already aborted
             if (this.signal) |signal| {
                 if (signal.aborted()) {
                     stream.abort(this.global_this);
@@ -1073,10 +1113,23 @@ pub const FetchTasklet = struct {
             }
 
             const globalThis = this.global_this;
-            this.ref(); // lets only unref when sink is done
-            // +1 because the task refs the sink
+
+            // Increment FetchTasklet ref count
+            // This ref will be released when sink finishes (via sink callbacks)
+            this.ref();
+
+            // Create sink with 2 refs:
+            // - Ref 1: We hold via this.sink field
+            // - Ref 2: Stream will consume when piping
             const sink = ResumableSink.initExactRefs(globalThis, stream, this, 2);
+
+            // Store sink (we now hold ref 1)
             this.sink = sink;
+
+            // Final ref counts:
+            // - sink: 2 refs (us + stream pipe)
+            // - this: +1 ref (will be released by sink callbacks)
+            // - stream: ownership transferred to sink
         }
     }
 

@@ -103,6 +103,9 @@ pub const Store = struct {
         parents: std.ArrayListUnmanaged(Id) = .empty,
         step: std.atomic.Value(Installer.Task.Step) = .init(.link_package),
 
+        // if true this entry gets symlinked to `node_modules/.bun/node_modules`
+        hoisted: bool,
+
         peer_hash: PeerHash,
 
         scripts: ?*Package.Scripts.List = null,

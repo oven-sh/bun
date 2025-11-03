@@ -249,6 +249,41 @@ This is useful for:
 
 The `--concurrent` CLI flag will override this setting when specified.
 
+### `test.onlyFailures`
+
+When enabled, only failed tests are displayed in the output. This helps reduce noise in large test suites by hiding passing tests. Default `false`.
+
+```toml
+[test]
+onlyFailures = true
+```
+
+This is equivalent to using the `--only-failures` flag when running `bun test`.
+
+### `test.reporter`
+
+Configure the test reporter settings.
+
+#### `test.reporter.dots`
+
+Enable the dots reporter, which displays a compact output showing a dot for each test. Default `false`.
+
+```toml
+[test.reporter]
+dots = true
+```
+
+#### `test.reporter.junit`
+
+Enable JUnit XML reporting and specify the output file path.
+
+```toml
+[test.reporter]
+junit = "test-results.xml"
+```
+
+This generates a JUnit XML report that can be consumed by CI systems and other tools.
+
 ### `test.randomize`
 
 Run tests in random order. Default `false`.

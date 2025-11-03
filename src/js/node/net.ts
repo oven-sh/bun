@@ -653,8 +653,6 @@ function kConnectTcp(self, addressType, req, address, port) {
     ipv6Only: addressType === 6,
     allowHalfOpen: self.allowHalfOpen,
     tls: req.tls,
-    localAddress: req.localAddress,
-    localPort: req.localPort,
     data: { self, req },
     socket: self[khandlers],
   });
@@ -1720,9 +1718,13 @@ function internalConnect(self, options, address, port, addressType, localAddress
   if (localAddress || localPort) {
     if (addressType === 4) {
       localAddress ||= "0.0.0.0";
+      // TODO:
+      // err = self._handle.bind(localAddress, localPort);
     } else {
       // addressType === 6
       localAddress ||= "::";
+      // TODO:
+      // err = self._handle.bind6(localAddress, localPort, flags);
     }
     $debug(
       "connect: binding to localAddress: %s and localPort: %d (addressType: %d)",
@@ -1730,6 +1732,13 @@ function internalConnect(self, options, address, port, addressType, localAddress
       localPort,
       addressType,
     );
+
+    err = checkBindError(err, localPort, self._handle);
+    if (err) {
+      const ex = new ExceptionWithHostPort(err, "bind", localAddress, localPort);
+      self.destroy(ex);
+      return;
+    }
   }
 
   //TLS
@@ -1837,9 +1846,13 @@ function internalConnectMultiple(context, canceled?) {
   if (localPort) {
     if (addressType === 4) {
       localAddress = DEFAULT_IPV4_ADDR;
+      // TODO:
+      // err = self._handle.bind(localAddress, localPort);
     } else {
       // addressType === 6
       localAddress = DEFAULT_IPV6_ADDR;
+      // TODO:
+      // err = self._handle.bind6(localAddress, localPort, flags);
     }
 
     $debug(
@@ -1848,6 +1861,13 @@ function internalConnectMultiple(context, canceled?) {
       localPort,
       addressType,
     );
+
+    err = checkBindError(err, localPort, self._handle);
+    if (err) {
+      ArrayPrototypePush.$call(context.errors, new ExceptionWithHostPort(err, "bind", localAddress, localPort));
+      internalConnectMultiple(context);
+      return;
+    }
   }
 
   if (self.blockList?.check(address, `ipv${addressType}`)) {

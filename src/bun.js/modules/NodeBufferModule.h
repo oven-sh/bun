@@ -139,13 +139,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplemented,
 
 JSC_DEFINE_CUSTOM_GETTER(jsGetter_INSPECT_MAX_BYTES, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
-    auto globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     return JSValue::encode(jsNumber(globalObject->INSPECT_MAX_BYTES));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsSetter_INSPECT_MAX_BYTES, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
-    auto globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto val = JSValue::decode(value);
@@ -178,7 +178,8 @@ DEFINE_NATIVE_MODULE(NodeBuffer)
         auto attributes = PropertyAttribute::DontDelete | PropertyAttribute::CustomAccessor;
         defaultObject->putDirectCustomAccessor(vm, name, value, (unsigned)attributes);
         exportNames.append(name);
-        exportValues.append(value);
+        // We cannot assign a custom getter/setter to ESM exports.
+        exportValues.append(jsNumber(defaultGlobalObject(lexicalGlobalObject)->INSPECT_MAX_BYTES));
         __NATIVE_MODULE_ASSERT_INCR;
     }
 

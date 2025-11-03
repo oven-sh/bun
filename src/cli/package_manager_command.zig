@@ -103,7 +103,7 @@ pub const PackageManagerCommand = struct {
             \\  <d>└<r> <cyan>--quiet<r>                   only output the tarball filename
             \\  <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder
             \\  <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder
-            \\  <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile
+            \\  <b><green>bun<r> <blue>list<r>                  list the dependency tree according to the current lockfile
             \\  <d>└<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
             \\  <b><green>bun pm<r> <blue>why<r> <d>\<pkg\><r>            show dependency tree explaining why a package is installed
             \\  <b><green>bun pm<r> <blue>whoami<r>               print the current npm username
@@ -111,7 +111,7 @@ pub const PackageManagerCommand = struct {
             \\  <b><green>bun pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag
             \\  <d>└<r> <cyan>increment<r>                 patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific version
             \\  <b><green>bun pm<r> <blue>pkg<r>                  manage data in package.json
-            \\  <d>├<r> <cyan>get<r> <d>[key ...]<r> 
+            \\  <d>├<r> <cyan>get<r> <d>[key ...]<r>
             \\  <d>├<r> <cyan>set<r> <d>key=value ...<r>
             \\  <d>├<r> <cyan>delete<r> <d>key ...<r>
             \\  <d>└<r> <cyan>fix<r>                       auto-correct common package.json errors
@@ -158,7 +158,13 @@ pub const PackageManagerCommand = struct {
         };
         defer ctx.allocator.free(cwd);
 
-        const subcommand = if (is_direct_whoami) "whoami" else getSubcommand(&pm.options.positionals);
+        var subcommand = if (is_direct_whoami) "whoami" else getSubcommand(&pm.options.positionals);
+
+        // Normalize "list" to "ls" (handles both "bun list" and "bun pm list")
+        if (strings.eqlComptime(subcommand, "list")) {
+            subcommand = "ls";
+        }
+
         if (pm.options.global) {
             try pm.setupGlobalDir(ctx);
         }
@@ -200,7 +206,7 @@ pub const PackageManagerCommand = struct {
             if (pm.options.global) {
                 warner: {
                     if (Output.enable_ansi_colors_stderr) {
-                        if (bun.getenvZ("PATH")) |path| {
+                        if (bun.env_var.PATH.get()) |path| {
                             var path_iter = std.mem.tokenizeScalar(u8, path, std.fs.path.delimiter);
                             while (path_iter.next()) |entry| {
                                 if (strings.eql(entry, output_path)) {

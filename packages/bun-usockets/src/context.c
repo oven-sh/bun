@@ -430,8 +430,8 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     return ls;
 }
 
-struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_context_t *context, struct sockaddr_storage* addr, int options, int socket_ext_size, struct sockaddr_storage* local_addr) {
-    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(addr, options, local_addr);
+struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_context_t *context, struct sockaddr_storage* addr, int options, int socket_ext_size) {
+    LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(addr, options);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
         return NULL;
     }
@@ -501,39 +501,20 @@ static bool try_parse_ip(const char *ip_str, int port, struct sockaddr_storage *
     return 0;
 }
 
-/* Helper function to parse local address for binding */
-static struct sockaddr_storage *parse_local_address(const char *local_host, unsigned short local_port, struct sockaddr_storage *storage) {
-    if (local_host == NULL) {
-        return NULL;
-    }
-    if (try_parse_ip(local_host, local_port, storage)) {
-        return storage;
-    }
-    errno = EINVAL;
-    return NULL;
-}
-
-void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, const char *local_host, unsigned short local_port, int options, int socket_ext_size, int* has_dns_resolved) {
+void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size, int* has_dns_resolved) {
 #ifndef LIBUS_NO_SSL
     if (ssl == 1) {
-        return us_internal_ssl_socket_context_connect((struct us_internal_ssl_socket_context_t *) context, host, port, local_host, local_port, options, socket_ext_size, has_dns_resolved);
+        return us_internal_ssl_socket_context_connect((struct us_internal_ssl_socket_context_t *) context, host, port, options, socket_ext_size, has_dns_resolved);
     }
 #endif
 
     struct us_loop_t* loop = us_socket_context_loop(ssl, context);
 
-    // Parse local address if provided
-    struct sockaddr_storage local_addr_storage;
-    struct sockaddr_storage *local_addr = parse_local_address(local_host, local_port, &local_addr_storage);
-    if (local_host != NULL && local_addr == NULL) {
-        return NULL;
-    }
-
     // fast path for IP addresses in text form
     struct sockaddr_storage addr;
     if (try_parse_ip(host, port, &addr)) {
         *has_dns_resolved = 1;
-        return us_socket_context_connect_resolved_dns(context, &addr, options, socket_ext_size, local_addr);
+        return us_socket_context_connect_resolved_dns(context, &addr, options, socket_ext_size);
     }
 
     struct addrinfo_request* ai_req;
@@ -553,7 +534,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
             struct sockaddr_storage addr;
             init_addr_with_port(&entries->info, port, &addr);
             *has_dns_resolved = 1;
-            struct us_socket_t *s = us_socket_context_connect_resolved_dns(context, &addr, options, socket_ext_size, local_addr);
+            struct us_socket_t *s = us_socket_context_connect_resolved_dns(context, &addr, options, socket_ext_size);
             Bun__addrinfo_freeRequest(ai_req, s == NULL);
             return s;
         }
@@ -567,9 +548,6 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
     c->long_timeout = 255;
     c->pending_resolve_callback = 1;
     c->port = port;
-    // Duplicate local_host string so it persists after Zig frees its buffer
-    c->local_host = local_host ? strdup(local_host) : NULL;
-    c->local_port = local_port;
     us_internal_socket_context_link_connecting_socket(ssl, context, c);
 
 #ifdef _WIN32
@@ -584,15 +562,11 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
 }
 
 int start_connections(struct us_connecting_socket_t *c, int count) {
-    // Parse local address if provided
-    struct sockaddr_storage local_addr_storage;
-    struct sockaddr_storage *local_addr = parse_local_address(c->local_host, c->local_port, &local_addr_storage);
-
     int opened = 0;
     for (; c->addrinfo_head != NULL && opened < count; c->addrinfo_head = c->addrinfo_head->ai_next) {
         struct sockaddr_storage addr;
         init_addr_with_port(c->addrinfo_head, c->port, &addr);
-        LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, c->options, local_addr);
+        LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, c->options);
         if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
             continue;
         }

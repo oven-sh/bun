@@ -86,7 +86,6 @@ pub const FetchTasklet = struct {
     promise: jsc.JSPromise.Strong,
     concurrent_task: jsc.ConcurrentTask = .{},
     poll_ref: Async.KeepAlive = .{},
-    memory_reporter: *bun.MemoryReportingAllocator,
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the request
     /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
@@ -130,7 +129,7 @@ pub const FetchTasklet = struct {
         bun.debugAssert(count > 0);
 
         if (count == 1) {
-            this.deinit();
+            this.deinit() catch |err| switch (err) {};
         }
     }
 
@@ -255,7 +254,7 @@ pub const FetchTasklet = struct {
 
     fn clearData(this: *FetchTasklet) void {
         log("clearData ", .{});
-        const allocator = this.memory_reporter.allocator();
+        const allocator = bun.default_allocator;
         if (this.url_proxy_buffer.len > 0) {
             allocator.free(this.url_proxy_buffer);
             this.url_proxy_buffer.len = 0;
@@ -306,23 +305,21 @@ pub const FetchTasklet = struct {
         this.clearSink();
     }
 
-    pub fn deinit(this: *FetchTasklet) void {
+    // XXX: 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void' but 'fn (*FetchTasklet) void' does not
+    pub fn deinit(this: *FetchTasklet) error{}!void {
         log("deinit", .{});
 
         bun.assert(this.ref_count.load(.monotonic) == 0);
 
         this.clearData();
 
-        var reporter = this.memory_reporter;
-        const allocator = reporter.allocator();
+        const allocator = bun.default_allocator;
 
         if (this.http) |http_| {
             this.http = null;
             allocator.destroy(http_);
         }
         allocator.destroy(this);
-        // reporter.assert();
-        bun.default_allocator.destroy(reporter);
     }
 
     fn getCurrentResponse(this: *FetchTasklet) ?*Response {
@@ -360,7 +357,7 @@ pub const FetchTasklet = struct {
         }
     }
 
-    pub fn onBodyReceived(this: *FetchTasklet) void {
+    pub fn onBodyReceived(this: *FetchTasklet) bun.JSTerminated!void {
         const success = this.result.isSuccess();
         const globalThis = this.global_this;
         // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
@@ -382,7 +379,7 @@ pub const FetchTasklet = struct {
                 if (readable.ptr == .Bytes) {
                     js_err = err.toJS(globalThis);
                     js_err.ensureStillAlive();
-                    readable.ptr.Bytes.onData(
+                    try readable.ptr.Bytes.onData(
                         .{
                             .err = .{ .JSValue = js_err },
                         },
@@ -402,7 +399,7 @@ pub const FetchTasklet = struct {
             if (this.getCurrentResponse()) |response| {
                 need_deinit = false; // body value now owns the error
                 const body = response.getBodyValue();
-                body.toErrorInstance(err, globalThis);
+                try body.toErrorInstance(err, globalThis);
             }
             return;
         }
@@ -417,7 +414,7 @@ pub const FetchTasklet = struct {
                 const chunk = scheduled_response_buffer.items;
 
                 if (this.result.has_more) {
-                    readable.ptr.Bytes.onData(
+                    try readable.ptr.Bytes.onData(
                         .{
                             .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                         },
@@ -428,10 +425,10 @@ pub const FetchTasklet = struct {
                     this.readable_stream_ref = .{};
                     defer prev.deinit();
                     buffer_reset = false;
-                    this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
-                    readable.ptr.Bytes.onData(
+
+                    try readable.ptr.Bytes.onData(
                         .{
-                            .owned_and_done = bun.ByteList.moveFromList(scheduled_response_buffer),
+                            .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                         },
                         bun.default_allocator,
                     );
@@ -452,7 +449,7 @@ pub const FetchTasklet = struct {
                     const chunk = scheduled_response_buffer.items;
 
                     if (this.result.has_more) {
-                        readable.ptr.Bytes.onData(
+                        try readable.ptr.Bytes.onData(
                             .{
                                 .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                             },
@@ -461,7 +458,7 @@ pub const FetchTasklet = struct {
                     } else {
                         readable.value.ensureStillAlive();
                         response.detachReadableStream(globalThis);
-                        readable.ptr.Bytes.onData(
+                        try readable.ptr.Bytes.onData(
                             .{
                                 .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
                             },
@@ -477,7 +474,6 @@ pub const FetchTasklet = struct {
             buffer_reset = false;
             if (!this.result.has_more) {
                 var scheduled_response_buffer = this.scheduled_response_buffer.list;
-                this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
                 const body = response.getBodyValue();
                 // done resolve body
                 var old = body.*;
@@ -490,7 +486,7 @@ pub const FetchTasklet = struct {
                 log("onBodyReceived body_value length={}", .{body_value.InternalBlob.bytes.items.len});
 
                 this.scheduled_response_buffer = .{
-                    .allocator = this.memory_reporter.allocator(),
+                    .allocator = bun.default_allocator,
                     .list = .{
                         .items = &.{},
                         .capacity = 0,
@@ -499,13 +495,13 @@ pub const FetchTasklet = struct {
 
                 if (old == .Locked) {
                     log("onBodyReceived old.resolve", .{});
-                    old.resolve(body, this.global_this, response.getFetchHeaders());
+                    try old.resolve(body, this.global_this, response.getFetchHeaders());
                 }
             }
         }
     }
 
-    pub fn onProgressUpdate(this: *FetchTasklet) void {
+    pub fn onProgressUpdate(this: *FetchTasklet) bun.JSTerminated!void {
         jsc.markBinding(@src());
         log("onProgressUpdate", .{});
         this.mutex.lock();
@@ -539,7 +535,7 @@ pub const FetchTasklet = struct {
         }
         // if we already respond the metadata and still need to process the body
         if (this.is_waiting_body) {
-            this.onBodyReceived();
+            try this.onBodyReceived();
             return;
         }
         if (this.metadata == null and this.result.isSuccess()) return;
@@ -572,7 +568,7 @@ pub const FetchTasklet = struct {
                 defer result.deinit();
 
                 promise_value.ensureStillAlive();
-                promise.reject(globalThis, result.toJS(globalThis));
+                try promise.reject(globalThis, result.toJS(globalThis));
 
                 tracker.didDispatch(globalThis);
                 this.promise.deinit();
@@ -613,7 +609,7 @@ pub const FetchTasklet = struct {
             globalObject: *jsc.JSGlobalObject,
             task: jsc.AnyTask,
 
-            pub fn resolve(self: *@This()) void {
+            pub fn resolve(self: *@This()) bun.JSTerminated!void {
                 // cleanup
                 defer bun.default_allocator.destroy(self);
                 defer self.held.deinit();
@@ -622,10 +618,10 @@ pub const FetchTasklet = struct {
                 var prom = self.promise.swap().asAnyPromise().?;
                 const res = self.held.swap();
                 res.ensureStillAlive();
-                prom.resolve(self.globalObject, res);
+                try prom.resolve(self.globalObject, res);
             }
 
-            pub fn reject(self: *@This()) void {
+            pub fn reject(self: *@This()) bun.JSTerminated!void {
                 // cleanup
                 defer bun.default_allocator.destroy(self);
                 defer self.held.deinit();
@@ -635,7 +631,7 @@ pub const FetchTasklet = struct {
                 var prom = self.promise.swap().asAnyPromise().?;
                 const res = self.held.swap();
                 res.ensureStillAlive();
-                prom.reject(self.globalObject, res);
+                try prom.reject(self.globalObject, res);
             }
         };
         var holder = bun.handleOom(bun.default_allocator.create(Holder));
@@ -668,6 +664,7 @@ pub const FetchTasklet = struct {
                         switch (err) {
                             error.JSError => {},
                             error.OutOfMemory => globalObject.throwOutOfMemory() catch {},
+                            error.JSTerminated => {},
                         }
                         const check_result = globalObject.tryTakeException().?;
                         // mark to wait until deinit
@@ -883,9 +880,8 @@ pub const FetchTasklet = struct {
         var scheduled_response_buffer = this.scheduled_response_buffer.list;
         // This means we have received part of the body but not the whole thing
         if (scheduled_response_buffer.items.len > 0) {
-            this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
             this.scheduled_response_buffer = .{
-                .allocator = this.memory_reporter.allocator(),
+                .allocator = bun.default_allocator,
                 .list = .{
                     .items = &.{},
                     .capacity = 0,
@@ -931,14 +927,13 @@ pub const FetchTasklet = struct {
         }
 
         var scheduled_response_buffer = this.scheduled_response_buffer.list;
-        this.memory_reporter.discard(scheduled_response_buffer.allocatedSlice());
         const response = Body.Value{
             .InternalBlob = .{
                 .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
             },
         };
         this.scheduled_response_buffer = .{
-            .allocator = this.memory_reporter.allocator(),
+            .allocator = bun.default_allocator,
             .list = .{
                 .items = &.{},
                 .capacity = 0,
@@ -1046,14 +1041,14 @@ pub const FetchTasklet = struct {
         fetch_tasklet.* = .{
             .mutex = .{},
             .scheduled_response_buffer = .{
-                .allocator = fetch_options.memory_reporter.allocator(),
+                .allocator = bun.default_allocator,
                 .list = .{
                     .items = &.{},
                     .capacity = 0,
                 },
             },
             .response_buffer = MutableString{
-                .allocator = fetch_options.memory_reporter.allocator(),
+                .allocator = bun.default_allocator,
                 .list = .{
                     .items = &.{},
                     .capacity = 0,
@@ -1069,7 +1064,6 @@ pub const FetchTasklet = struct {
             .signal = fetch_options.signal,
             .hostname = fetch_options.hostname,
             .tracker = jsc.Debugger.AsyncTaskTracker.init(jsc_vm),
-            .memory_reporter = fetch_options.memory_reporter,
             .check_server_identity = fetch_options.check_server_identity,
             .reject_unauthorized = fetch_options.reject_unauthorized,
             .upgraded_connection = fetch_options.upgraded_connection,
@@ -1100,7 +1094,7 @@ pub const FetchTasklet = struct {
 
         // This task gets queued on the HTTP thread.
         fetch_tasklet.http.?.* = http.AsyncHTTP.init(
-            fetch_options.memory_reporter.allocator(),
+            bun.default_allocator,
             fetch_options.method,
             fetch_options.url,
             fetch_options.headers.entries,
@@ -1182,7 +1176,8 @@ pub const FetchTasklet = struct {
     }
 
     /// This is ALWAYS called from the main thread
-    pub fn resumeRequestDataStream(this: *FetchTasklet) void {
+    // XXX: 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void' but 'fn (*FetchTasklet) void' does not
+    pub fn resumeRequestDataStream(this: *FetchTasklet) error{}!void {
         // deref when done because we ref inside onWriteRequestDataDrain
         defer this.deref();
         log("resumeRequestDataStream", .{});
@@ -1292,7 +1287,6 @@ pub const FetchTasklet = struct {
         globalThis: ?*JSGlobalObject,
         // Custom Hostname
         hostname: ?[]u8 = null,
-        memory_reporter: *bun.MemoryReportingAllocator,
         check_server_identity: jsc.Strong.Optional = .empty,
         unix_socket_path: ZigString.Slice,
         ssl_config: ?*SSLConfig = null,
@@ -1372,7 +1366,7 @@ pub const FetchTasklet = struct {
             if (task.scheduled_response_buffer.list.capacity > 0) {
                 task.scheduled_response_buffer.deinit();
                 task.scheduled_response_buffer = .{
-                    .allocator = task.memory_reporter.allocator(),
+                    .allocator = bun.default_allocator,
                     .list = .{
                         .items = &.{},
                         .capacity = 0,
@@ -1513,17 +1507,10 @@ pub fn Bun__fetch_(
     bun.analytics.Features.fetch += 1;
     const vm = jsc.VirtualMachine.get();
 
-    var memory_reporter = bun.handleOom(bun.default_allocator.create(bun.MemoryReportingAllocator));
     // used to clean up dynamically allocated memory on error (a poor man's errdefer)
     var is_error = false;
     var upgraded_connection = false;
-    var allocator = memory_reporter.wrap(bun.default_allocator);
-    errdefer bun.default_allocator.destroy(memory_reporter);
-    defer {
-        memory_reporter.report(globalThis.vm());
-
-        if (is_error) bun.default_allocator.destroy(memory_reporter);
-    }
+    var allocator = bun.default_allocator;
 
     if (arguments.len == 0) {
         const err = ctx.toTypeError(.MISSING_ARGS, fetch_error_no_args, .{});
@@ -2528,8 +2515,10 @@ pub fn Bun__fetch_(
 
                 pub const new = bun.TrivialNew(@This());
 
-                pub fn resolve(result: s3.S3UploadResult, self: *@This()) void {
+                pub fn resolve(result: s3.S3UploadResult, self: *@This()) bun.JSTerminated!void {
                     const global = self.global;
+                    defer bun.destroy(self);
+                    defer bun.default_allocator.free(self.url_proxy_buffer);
                     switch (result) {
                         .success => {
                             const response = bun.new(Response, Response.init(
@@ -2545,7 +2534,7 @@ pub fn Bun__fetch_(
                             ));
                             const response_js = Response.makeMaybePooled(@as(*jsc.JSGlobalObject, global), response);
                             response_js.ensureStillAlive();
-                            self.promise.resolve(global, response_js);
+                            try self.promise.resolve(global, response_js);
                         },
                         .failure => |err| {
                             const response = bun.new(Response, Response.init(
@@ -2568,11 +2557,9 @@ pub fn Bun__fetch_(
 
                             const response_js = Response.makeMaybePooled(@as(*jsc.JSGlobalObject, global), response);
                             response_js.ensureStillAlive();
-                            self.promise.resolve(global, response_js);
+                            try self.promise.resolve(global, response_js);
                         },
                     }
-                    bun.default_allocator.free(self.url_proxy_buffer);
-                    bun.destroy(self);
                 }
             };
             if (method != .PUT and method != .POST) {
@@ -2589,7 +2576,7 @@ pub fn Bun__fetch_(
 
             const promise_value = promise.value();
             const proxy_url = if (proxy) |p| p.href else "";
-            _ = bun.S3.uploadStream(
+            _ = try bun.S3.uploadStream(
                 credentialsWithOptions.credentials.dupe(),
                 url.s3Path(),
                 body.ReadableStream.get(globalThis).?,
@@ -2693,7 +2680,6 @@ pub fn Bun__fetch_(
             .globalThis = globalThis,
             .ssl_config = ssl_config,
             .hostname = hostname,
-            .memory_reporter = memory_reporter,
             .upgraded_connection = upgraded_connection,
             .check_server_identity = if (check_server_identity.isEmptyOrUndefinedOrNull()) .empty else .create(check_server_identity, globalThis),
             .unix_socket_path = unix_socket_path,

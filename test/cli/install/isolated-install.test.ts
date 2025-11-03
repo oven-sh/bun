@@ -416,6 +416,187 @@ describe("isolated workspaces", () => {
       version: "1.0.0",
     });
   });
+
+  test("workspace self dependencies create symlinks", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { isolated: true },
+      files: {
+        "package.json": JSON.stringify({
+          name: "monorepo-workspace-self-dep",
+          workspaces: ["packages/*"],
+        }),
+        "packages/pkg1/package.json": JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            pkg1: "workspace:*",
+          },
+        }),
+        "packages/pkg2/package.json": JSON.stringify({
+          name: "pkg2",
+          dependencies: {
+            "pkg1": "workspace:*",
+            "pkg2": "workspace:*",
+          },
+        }),
+        "packages/pkg3/package.json": JSON.stringify({
+          name: "pkg3",
+          dependencies: {
+            "different-name": "workspace:.",
+          },
+        }),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(
+      await Promise.all([
+        readdirSorted(join(packageDir, "node_modules")),
+        file(join(packageDir, "packages", "pkg1", "node_modules", "pkg1", "package.json")).json(),
+        file(join(packageDir, "packages", "pkg2", "node_modules", "pkg1", "package.json")).json(),
+        file(join(packageDir, "packages", "pkg2", "node_modules", "pkg2", "package.json")).json(),
+        file(join(packageDir, "packages", "pkg3", "node_modules", "different-name", "package.json")).json(),
+      ]),
+    ).toEqual([
+      [".bun"],
+      { name: "pkg1", dependencies: { pkg1: "workspace:*" } },
+      { name: "pkg1", dependencies: { pkg1: "workspace:*" } },
+      { name: "pkg2", dependencies: { pkg1: "workspace:*", pkg2: "workspace:*" } },
+      { name: "pkg3", dependencies: { "different-name": "workspace:." } },
+    ]);
+  });
+});
+
+describe("optional peers", () => {
+  const tests = [
+    // non-optional versions
+    {
+      name: "non-optional transitive only",
+      deps: [{ "one-optional-peer-dep": "1.0.1" }, { "one-optional-peer-dep": "1.0.1" }],
+      expected: ["no-deps@1.1.0", "node_modules", "one-optional-peer-dep@1.0.1+7ff199101204a65d"],
+    },
+    {
+      name: "non-optional direct pkg1",
+      deps: [{ "one-optional-peer-dep": "1.0.1", "no-deps": "1.0.1" }, { "one-optional-peer-dep": "1.0.1" }],
+      expected: ["no-deps@1.0.1", "node_modules", "one-optional-peer-dep@1.0.1+f8a822eca018d0a1"],
+    },
+    {
+      name: "non-optional direct pkg2",
+      deps: [{ "one-optional-peer-dep": "1.0.1" }, { "one-optional-peer-dep": "1.0.1", "no-deps": "1.0.1" }],
+      expected: ["no-deps@1.0.1", "node_modules", "one-optional-peer-dep@1.0.1+f8a822eca018d0a1"],
+    },
+    // optional versions
+    {
+      name: "optional transitive only",
+      deps: [{ "one-optional-peer-dep": "1.0.2" }, { "one-optional-peer-dep": "1.0.2" }],
+      expected: ["node_modules", "one-optional-peer-dep@1.0.2"],
+    },
+    {
+      name: "optional direct pkg1",
+      deps: [{ "one-optional-peer-dep": "1.0.2", "no-deps": "1.0.1" }, { "one-optional-peer-dep": "1.0.2" }],
+      expected: ["no-deps@1.0.1", "node_modules", "one-optional-peer-dep@1.0.2+f8a822eca018d0a1"],
+    },
+    {
+      name: "optional direct pkg2",
+      deps: [{ "one-optional-peer-dep": "1.0.2" }, { "one-optional-peer-dep": "1.0.2", "no-deps": "1.0.1" }],
+      expected: ["no-deps@1.0.1", "node_modules", "one-optional-peer-dep@1.0.2+f8a822eca018d0a1"],
+    },
+  ];
+
+  for (const { deps, expected, name } of tests) {
+    test(`will resolve if available through another importer (${name})`, async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { isolated: true },
+        files: {
+          "package.json": JSON.stringify({
+            name: "optional-peers",
+            workspaces: ["packages/*"],
+          }),
+          "packages/pkg1/package.json": JSON.stringify({
+            name: "pkg1",
+            dependencies: deps[0],
+          }),
+          "packages/pkg2/package.json": JSON.stringify({
+            name: "pkg2",
+            dependencies: deps[1],
+          }),
+        },
+      });
+
+      async function checkInstall() {
+        const { exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+
+        expect(await exited).toBe(0);
+        expect(await readdirSorted(join(packageDir, "node_modules/.bun"))).toEqual(expected);
+      }
+
+      // without lockfile
+      // without node_modules
+      await checkInstall();
+
+      // with lockfile
+      // without node_modules
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await checkInstall();
+
+      // without lockfile
+      // with node_modules
+      await rm(join(packageDir, "bun.lock"), { force: true });
+      await checkInstall();
+
+      // with lockfile
+      // with node_modules
+      await checkInstall();
+    });
+  }
+
+  test("successfully resolves optional peer with nested package", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { isolated: true },
+      files: {
+        "package.json": JSON.stringify({
+          name: "optional-peer-nested-resolve",
+          dependencies: {
+            "one-one-dep": "1.0.0",
+          },
+          peerDependencies: {
+            "one-dep": "1.0.0",
+          },
+          peerDependenciesMeta: {
+            "one-dep": {
+              optional: true,
+            },
+          },
+        }),
+      },
+    });
+
+    async function checkInstall() {
+      let { exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        env: bunEnv,
+      });
+      expect(await exited).toBe(0);
+
+      expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "one-dep", "one-one-dep"]);
+      expect(await readdirSorted(join(packageDir, "node_modules/.bun"))).toEqual([
+        "no-deps@1.0.1",
+        "node_modules",
+        "one-dep@1.0.0",
+        "one-one-dep@1.0.0",
+      ]);
+    }
+
+    await checkInstall();
+    await checkInstall();
+  });
 });
 
 for (const backend of ["clonefile", "hardlink", "copyfile"]) {

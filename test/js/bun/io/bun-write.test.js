@@ -1,9 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
-import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isWindows, withoutAggressiveGC } from "harness";
-import { tmpdir } from "os";
+import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isWindows, tempDir, withoutAggressiveGC } from "harness";
 import path, { join } from "path";
-const tmpbase = tmpdir() + path.sep;
 
 let i = 0;
 const IS_UV_FS_COPYFILE_DISABLED =
@@ -13,16 +11,17 @@ const IS_UV_FS_COPYFILE_DISABLED =
   process.platform === "win32" && process.env.BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE === "1";
 
   it("Bun.write blob", async () => {
+    using tmpbase = tempDir("bun-write-blob", {});
     await Bun.write(
-      Bun.file(join(tmpdir(), "response-file.test.txt")),
+      Bun.file(join(tmpbase, "response-file.test.txt")),
       Bun.file(path.resolve(import.meta.dir, "fetch.js.txt")),
     );
     await gcTick();
-    await Bun.write(Bun.file(join(tmpdir(), "response-file.test.txt")), "blah blah blha");
+    await Bun.write(Bun.file(join(tmpbase, "response-file.test.txt")), "blah blah blha");
     await gcTick();
-    await Bun.write(Bun.file(join(tmpdir(), "response-file.test.txt")), new Uint32Array(1024));
+    await Bun.write(Bun.file(join(tmpbase, "response-file.test.txt")), new Uint32Array(1024));
     await gcTick();
-    await Bun.write(join(tmpdir(), "response-file.test.txt"), new Uint32Array(1024));
+    await Bun.write(join(tmpbase, "response-file.test.txt"), new Uint32Array(1024));
     await gcTick();
     expect(await Bun.write(new TextEncoder().encode(tmpbase + "response-file.test.txt"), new Uint32Array(1024))).toBe(
       new Uint32Array(1024).byteLength,
@@ -31,53 +30,56 @@ const IS_UV_FS_COPYFILE_DISABLED =
   });
 
   describe("large file", () => {
-    const fixtures = [
-      [
-        tmpbase + `bun-test-large-file-${Date.now()}.txt`,
-        "https://www.iana.org/assignments/media-types/media-types.xhtml,".repeat(10000),
-      ],
-    ];
+    it("write large file (text)", async () => {
+      using tmpbase = tempDir("large-file-text", {});
+      const filename = tmpbase + `bun-test-large-file-${Date.now()}.txt`;
+      const content = "https://www.iana.org/assignments/media-types/media-types.xhtml,".repeat(10000);
 
-    for (const [filename, content] of fixtures) {
-      it(`write ${filename} ${content.length} (text)`, async () => {
-        try {
-          unlinkSync(filename);
-        } catch (e) {}
-        await Bun.write(filename, content);
-        expect(await Bun.file(filename).text()).toBe(content);
+      try {
+        unlinkSync(filename);
+      } catch (e) {}
+      await Bun.write(filename, content);
+      expect(await Bun.file(filename).text()).toBe(content);
 
-        try {
-          unlinkSync(filename);
-        } catch (e) {}
-      });
+      try {
+        unlinkSync(filename);
+      } catch (e) {}
+    });
 
-      it(`write ${filename}.bytes ${content.length} (bytes)`, async () => {
-        try {
-          unlinkSync(filename + ".bytes");
-        } catch (e) {}
-        var bytes = new TextEncoder().encode(content);
-        const written = await Bun.write(filename + ".bytes", bytes);
-        expect(written).toBe(bytes.byteLength);
-        expect(new Buffer(await Bun.file(filename + ".bytes").arrayBuffer()).equals(bytes)).toBe(true);
+    it("write large file (bytes)", async () => {
+      using tmpbase = tempDir("large-file-bytes", {});
+      const filename = tmpbase + `bun-test-large-file-${Date.now()}.txt`;
+      const content = "https://www.iana.org/assignments/media-types/media-types.xhtml,".repeat(10000);
 
-        try {
-          unlinkSync(filename + ".bytes");
-        } catch (e) {}
-      });
+      try {
+        unlinkSync(filename + ".bytes");
+      } catch (e) {}
+      var bytes = new TextEncoder().encode(content);
+      const written = await Bun.write(filename + ".bytes", bytes);
+      expect(written).toBe(bytes.byteLength);
+      expect(new Buffer(await Bun.file(filename + ".bytes").arrayBuffer()).equals(bytes)).toBe(true);
 
-      it(`write ${filename}.blob ${content.length} (Blob)`, async () => {
-        try {
-          unlinkSync(filename + ".blob");
-        } catch (e) {}
-        var bytes = new Blob([content]);
-        await Bun.write(filename + ".blob", bytes);
-        expect(await Bun.file(filename + ".blob").text()).toBe(content);
+      try {
+        unlinkSync(filename + ".bytes");
+      } catch (e) {}
+    });
 
-        try {
-          unlinkSync(filename + ".blob");
-        } catch (e) {}
-      });
-    }
+    it("write large file (Blob)", async () => {
+      using tmpbase = tempDir("large-file-blob", {});
+      const filename = tmpbase + `bun-test-large-file-${Date.now()}.txt`;
+      const content = "https://www.iana.org/assignments/media-types/media-types.xhtml,".repeat(10000);
+
+      try {
+        unlinkSync(filename + ".blob");
+      } catch (e) {}
+      var bytes = new Blob([content]);
+      await Bun.write(filename + ".blob", bytes);
+      expect(await Bun.file(filename + ".blob").text()).toBe(content);
+
+      try {
+        unlinkSync(filename + ".blob");
+      } catch (e) {}
+    });
   });
 
   it("Bun.file not found returns ENOENT", async () => {
@@ -92,8 +94,9 @@ const IS_UV_FS_COPYFILE_DISABLED =
   });
 
   it("Bun.write file not found returns ENOENT, issue#6336", async () => {
-    const dst = Bun.file(path.join(tmpdir(), join("does", "not", "exist.txt")));
-    fs.rmSync(join(tmpdir(), "does"), { force: true, recursive: true });
+    using tmpbase = tempDir("bun-write-enoent", {});
+    const dst = Bun.file(path.join(tmpbase, join("does", "not", "exist.txt")));
+    fs.rmSync(join(tmpbase, "does"), { force: true, recursive: true });
 
     try {
       await gcTick();
@@ -107,7 +110,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
       }
     }
 
-    const src = Bun.file(path.join(tmpdir(), `test-bun-write-${Date.now()}.txt`));
+    const src = Bun.file(path.join(tmpbase, `test-bun-write-${Date.now()}.txt`));
 
     await Bun.write(src, "");
     try {
@@ -125,7 +128,8 @@ const IS_UV_FS_COPYFILE_DISABLED =
   });
 
   it("Bun.write('out.txt', 'string')", async () => {
-    const outpath = path.join(tmpdir(), "out." + ((Math.random() * 102400) | 0).toString(32) + "txt");
+    using tmpbase = tempDir("bun-write-string", {});
+    const outpath = path.join(tmpbase, "out." + ((Math.random() * 102400) | 0).toString(32) + "txt");
     for (let erase of [true, false]) {
       if (erase) {
         try {
@@ -145,12 +149,13 @@ const IS_UV_FS_COPYFILE_DISABLED =
   });
 
   it("Bun.file -> Bun.file", async () => {
+    using tmpbase = tempDir("bun-file-to-file", {});
     try {
-      fs.unlinkSync(path.join(tmpdir(), "fetch.js.in"));
+      fs.unlinkSync(path.join(tmpbase, "fetch.js.in"));
     } catch (e) {}
     await gcTick();
     try {
-      fs.unlinkSync(path.join(tmpdir(), "fetch.js.out"));
+      fs.unlinkSync(path.join(tmpbase, "fetch.js.out"));
     } catch (e) {}
     await gcTick();
 
@@ -197,7 +202,8 @@ const IS_UV_FS_COPYFILE_DISABLED =
   });
 
   it("Bun.file lastModified update", async () => {
-    const file = Bun.file(tmpdir() + "/bun.test.lastModified.txt");
+    using tmpbase = tempDir("bun-file-lastmodified", {});
+    const file = Bun.file(tmpbase + "/bun.test.lastModified.txt");
     await gcTick();
     // setup
     await Bun.write(file, "test text.");
@@ -266,6 +272,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
   });
 
   it("Bun.file -> Response", async () => {
+    using tmpbase = tempDir("bun-file-to-response", {});
     using server = exampleSite("https");
     // ensure the file doesn't already exist
     try {
@@ -296,6 +303,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
   });
 
   it("Bun.write('output.html', '')", async () => {
+    using tmpbase = tempDir("bun-write-output-html", {});
     await Bun.write(tmpbase + "output.html", "lalalala");
     expect(await Bun.write(tmpbase + "output.html", "")).toBe(0);
     await Bun.write(tmpbase + "output.html", "lalalala");
@@ -338,6 +346,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
   // FLAKY TEST
   // Since Bun.file is resolved lazily, this needs to specifically be checked
   it("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async done => {
+    using tmpbase = tempDir("html-rewriter", {});
     var rewriter = new HTMLRewriter();
 
     rewriter.on("div", {
@@ -355,7 +364,8 @@ const IS_UV_FS_COPYFILE_DISABLED =
   });
 
   it("length should be limited by file size #5080", async () => {
-    const filename = tmpdir() + "/bun.test.offset2.txt";
+    using tmpbase = tempDir("file-size-limit", {});
+    const filename = tmpbase + "/bun.test.offset2.txt";
     await Bun.write(filename, "contents");
     const file = Bun.file(filename);
     const slice = file.slice(2, 1024);
@@ -384,7 +394,8 @@ const IS_UV_FS_COPYFILE_DISABLED =
   if (process.platform === "linux") {
     describe("should work when copyFileRange is not available", () => {
       it("on large files", () => {
-        var tempdir = `${tmpdir()}/fs.test.js/${Date.now()}-1/bun-write/large`;
+        using tmpbase = tempDir("copy-file-range-large", {});
+        var tempdir = `${tmpbase}/fs.test.js/${Date.now()}-1/bun-write/large`;
         expect(fs.existsSync(tempdir)).toBe(false);
         expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(true);
         var buffer = new Int32Array(1024 * 1024 * 64);
@@ -419,7 +430,8 @@ const IS_UV_FS_COPYFILE_DISABLED =
       });
 
       it("on small files", () => {
-        const tempdir = `${tmpdir()}/fs.test.js/${Date.now()}-1/bun-write/small`;
+        using tmpbase = tempDir("copy-file-range-small", {});
+        const tempdir = `${tmpbase}/fs.test.js/${Date.now()}-1/bun-write/small`;
         expect(fs.existsSync(tempdir)).toBe(false);
         expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(true);
         var buffer = new Int32Array(1 * 1024);
@@ -458,7 +470,8 @@ const IS_UV_FS_COPYFILE_DISABLED =
   describe("ENOENT", () => {
     const creates = (...opts) => {
       it("creates the directory", async () => {
-        const dir = `${tmpdir()}/fs.test.js/${Date.now()}-1/bun-write/ENOENT/${i++}`;
+        using tmpbase = tempDir("enoent-creates-dir", {});
+        const dir = `${tmpbase}/fs.test.js/${Date.now()}-1/bun-write/ENOENT/${i++}`;
         const file = join(dir, "file");
         try {
           await Bun.write(file, "contents", ...opts);
@@ -476,7 +489,8 @@ const IS_UV_FS_COPYFILE_DISABLED =
 
     describe("with { createPath: false }", () => {
       it("does not create the directory", async () => {
-        const dir = `${tmpdir()}/fs.test.js/${performance.now()}-1/bun-write/ENOENT`;
+        using tmpbase = tempDir("enoent-no-create-dir", {});
+        const dir = `${tmpbase}/fs.test.js/${performance.now()}-1/bun-write/ENOENT`;
         const file = join(dir, "file");
         try {
           expect(async () => await Bun.write(file, "contents", { createPath: false })).toThrow(

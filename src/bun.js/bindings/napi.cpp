@@ -698,7 +698,7 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject)
     ASSERT(globalObject->m_pendingNapiModule);
 
     auto& mod = *globalObject->m_pendingNapiModule;
-    napi_env env = globalObject->makeNapiEnv(mod);
+    Ref<NapiEnv> env = globalObject->makeNapiEnv(mod);
     auto keyStr = WTF::String::fromUTF8(mod.nm_modname);
     JSValue pendingNapiModule = globalObject->m_pendingNapiModuleAndExports[0].get();
     JSObject* object = (pendingNapiModule && pendingNapiModule.isObject()) ? pendingNapiModule.getObject()
@@ -727,7 +727,7 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject)
     JSValue resultValue;
 
     if (mod.nm_register_func) {
-        resultValue = toJS(mod.nm_register_func(env, toNapi(object, globalObject)));
+        resultValue = toJS(mod.nm_register_func(env.ptr(), toNapi(object, globalObject)));
     } else {
         JSValue errorInstance = createError(globalObject, makeString("Module has no declared entry point."_s));
         globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, errorInstance);
@@ -751,7 +751,7 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject)
     auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
 
     // TODO: think about the finalizer here
-    Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, env, nullptr);
+    Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr, env.ptr());
 
     bool success = resultValue.getObject()->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     ASSERT(success);
@@ -791,7 +791,7 @@ static void wrap_cleanup(napi_env env, void* data, void* hint)
 {
     auto* ref = reinterpret_cast<NapiRef*>(data);
     ASSERT(ref->boundCleanup != nullptr);
-    ref->boundCleanup->deactivate(env);
+    ref->boundCleanup->deactivate(*env);
     ref->boundCleanup = nullptr;
     ref->callFinalizer();
 }
@@ -842,7 +842,7 @@ extern "C" napi_status napi_wrap(napi_env env,
     NAPI_RETURN_EARLY_IF_FALSE(env, existing_wrap == nullptr, napi_invalid_arg);
 
     // create a new weak reference (refcount 0)
-    auto* ref = new NapiRef(env, 0, Bun::NapiFinalizer { finalize_cb, finalize_hint });
+    auto* ref = new NapiRef(*env, 0, Bun::NapiFinalizer { finalize_cb, finalize_hint });
     // In case the ref's finalizer is never called, we'll add a finalizer to execute on exit.
     const auto& bound_cleanup = env->addFinalizer(wrap_cleanup, native_object, ref);
     ref->boundCleanup = &bound_cleanup;
@@ -852,7 +852,7 @@ extern "C" napi_status napi_wrap(napi_env env,
         napi_instance->napiRef = ref;
     } else {
         // wrap the ref in an external so that it can serve as a JSValue
-        auto* external = Bun::NapiExternal::create(JSC::getVM(globalObject), globalObject->NapiExternalStructure(), ref, nullptr, env, nullptr);
+        auto* external = Bun::NapiExternal::create(JSC::getVM(globalObject), globalObject->NapiExternalStructure(), ref, nullptr, nullptr, env);
         jsc_object->putDirect(vm, propertyName, JSValue(external));
     }
 
@@ -1082,7 +1082,7 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
         can_be_weak = false;
     }
 
-    auto* ref = new NapiRef(env, initial_refcount, Bun::NapiFinalizer {});
+    auto* ref = new NapiRef(*env, initial_refcount, Bun::NapiFinalizer {});
     ref->setValueInitial(val, can_be_weak);
 
     *result = toNapi(ref);
@@ -1119,14 +1119,14 @@ extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
 
     if (result) {
         // If they're expecting a Ref, use the ref.
-        auto* ref = new NapiRef(env, 0, Bun::NapiFinalizer { finalize_cb, finalize_hint });
+        auto* ref = new NapiRef(*env, 0, Bun::NapiFinalizer { finalize_cb, finalize_hint });
         // TODO(@heimskr): consider detecting whether the value can't be weak, as we do in napi_create_reference.
         ref->setValueInitial(object, true);
         ref->nativeObject = native_object;
         *result = toNapi(ref);
     } else {
         // Otherwise, it's cheaper to just call .addFinalizer.
-        vm.heap.addFinalizer(object, [env, finalize_cb, native_object, finalize_hint](JSCell* cell) -> void {
+        vm.heap.addFinalizer(object, [env = WTF::Ref<NapiEnv>(*env), finalize_cb, native_object, finalize_hint](JSCell* cell) -> void {
             NAPI_LOG("finalizer %p", finalize_hint);
             env->doFinalizer(finalize_cb, native_object, finalize_hint);
         });
@@ -1990,15 +1990,39 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     NAPI_CHECK_ARG(env, result);
 
     Zig::GlobalObject* globalObject = toJS(env);
-
-    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(data), length }, createSharedTask<void(void*)>([env, finalize_hint, finalize_cb](void* p) {
-        NAPI_LOG("external buffer finalizer");
-        env->doFinalizer(finalize_cb, p, finalize_hint);
-    }));
+    JSC::VM& vm = JSC::getVM(globalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+
+    if (data == nullptr || length == 0) {
+
+        // TODO: is there a way to create a detached uint8 array?
+        auto arrayBuffer = JSC::ArrayBuffer::createUninitialized(0, 1);
+        auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTFMove(arrayBuffer), 0, 0);
+        NAPI_RETURN_IF_EXCEPTION(env);
+        buffer->existingBuffer()->detach(vm);
+
+        vm.heap.addFinalizer(buffer, [env = WTF::Ref<NapiEnv>(*env), finalize_cb, data, finalize_hint](JSCell* cell) -> void {
+            NAPI_LOG("external buffer finalizer (empty buffer)");
+            env->doFinalizer(finalize_cb, data, finalize_hint);
+        });
+
+        *result = toNapi(buffer, globalObject);
+        NAPI_RETURN_SUCCESS(env);
+    }
+
+    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(data), length }, createSharedTask<void(void*)>([](void*) {
+        // do nothing
+    }));
 
     auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTFMove(arrayBuffer), 0, length);
     NAPI_RETURN_IF_EXCEPTION(env);
+
+    // setup finalizer after creating the array. if it throws callers of napi_create_external_buffer are expected
+    // to free input
+    vm.heap.addFinalizer(buffer, [env = WTF::Ref<NapiEnv>(*env), finalize_cb, data, finalize_hint](JSCell* cell) -> void {
+        NAPI_LOG("external buffer finalizer");
+        env->doFinalizer(finalize_cb, data, finalize_hint);
+    });
 
     *result = toNapi(buffer, globalObject);
     NAPI_RETURN_SUCCESS(env);
@@ -2303,7 +2327,7 @@ extern "C" napi_status napi_create_external(napi_env env, void* data,
     JSC::VM& vm = JSC::getVM(globalObject);
 
     auto* structure = globalObject->NapiExternalStructure();
-    JSValue value = Bun::NapiExternal::create(vm, structure, data, finalize_hint, env, finalize_cb);
+    JSValue value = Bun::NapiExternal::create(vm, structure, data, finalize_hint, finalize_cb, env);
     JSC::EnsureStillAliveScope ensureStillAlive(value);
     *result = toNapi(value, globalObject);
     NAPI_RETURN_SUCCESS(env);
@@ -2900,6 +2924,16 @@ extern "C" bool NapiEnv__getAndClearPendingException(napi_env env, JSC::EncodedJ
     }
 
     return false;
+}
+
+extern "C" void NapiEnv__ref(napi_env env)
+{
+    env->ref();
+}
+
+extern "C" void NapiEnv__deref(napi_env env)
+{
+    env->deref();
 }
 
 }

@@ -180,6 +180,7 @@ int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_re
 
     if (written < unsigned_length && read == string->length()) {
         buffer[written] = 0;
+        written++;
     }
     if (read < string->length() && U16_IS_SURROGATE(string[read]) && written + 3 <= unsigned_length) {
         // encode unpaired surrogate

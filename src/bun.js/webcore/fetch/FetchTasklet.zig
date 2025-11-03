@@ -914,8 +914,12 @@ pub const FetchTasklet = struct {
         }
 
         // Clear buffer (drop our ref - HTTP thread might still hold one)
-        if (this.shared.request_body_streaming_buffer) |buffer| {
-            this.shared.request_body_streaming_buffer = null;
+        // PHASE 7.5: Lock access to request_body_streaming_buffer
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
+        if (locked.shared.request_body_streaming_buffer) |buffer| {
+            locked.shared.request_body_streaming_buffer = null;
             buffer.clearDrainCallback(); // Unhook from HTTP thread callbacks
             buffer.deref(); // Drop Ref 1 (we held this)
             // HTTP thread still holds its ref until request completes
@@ -930,23 +934,35 @@ pub const FetchTasklet = struct {
         // url_proxy_buffer and hostname are now in shared data and cleaned up in shared.deinit()
         // No longer need to clean them up here
 
-        if (this.shared.result.certificate_info) |*certificate| {
-            certificate.deinit(bun.default_allocator);
-            this.shared.result.certificate_info = null;
-        }
+        // PHASE 7.5: Lock access to shared mutable state during cleanup
+        // Read request_stream_state early for later use
+        const request_stream_waiting = blk: {
+            var locked = this.shared.lock();
+            defer locked.unlock();
 
-        // request_headers is now in shared data and cleaned up in shared.deinit()
+            if (locked.shared.result.certificate_info) |*certificate| {
+                certificate.deinit(bun.default_allocator);
+                locked.shared.result.certificate_info = null;
+            }
 
-        if (this.shared.http) |http_| {
-            http_.clearData();
-        }
+            // request_headers is now in shared data and cleaned up in shared.deinit()
 
-        if (this.shared.metadata != null) {
-            this.shared.metadata.?.deinit(allocator);
-            this.shared.metadata = null;
-        }
+            if (locked.shared.http) |http_| {
+                http_.clearData();
+            }
 
-        this.shared.response_buffer.deinit();
+            if (locked.shared.metadata != null) {
+                locked.shared.metadata.?.deinit(allocator);
+                locked.shared.metadata = null;
+            }
+
+            locked.shared.response_buffer.deinit();
+            locked.shared.scheduled_response_buffer.deinit();
+
+            // Check request_stream_state while locked
+            break :blk locked.shared.request_stream_state == .waiting_start;
+        };
+
         this.main_thread.response_weak.deinit();
         if (this.main_thread.native_response) |response| {
             this.main_thread.native_response = null;
@@ -956,11 +972,10 @@ pub const FetchTasklet = struct {
 
         this.main_thread.readable_stream_ref.deinit();
 
-        this.shared.scheduled_response_buffer.deinit();
         // MIGRATION (Phase 7.3): Replaced is_waiting_request_stream_start with request_stream_state check
         // Old: if (this.request_body != .ReadableStream or this.is_waiting_request_stream_start)
         // New: Detach if not a stream, or if stream hasn't started yet (waiting_start state)
-        if (this.request_body != .ReadableStream or this.shared.request_stream_state == .waiting_start) {
+        if (this.request_body != .ReadableStream or request_stream_waiting) {
             this.request_body.detach();
         }
 
@@ -987,8 +1002,17 @@ pub const FetchTasklet = struct {
         this.main_thread.deinit();
         this.shared.deinit(allocator);
 
-        if (this.shared.http) |http_| {
-            this.shared.http = null;
+        // PHASE 7.5: Lock access to http pointer for final cleanup
+        const http_to_destroy = blk: {
+            var locked = this.shared.lock();
+            defer locked.unlock();
+
+            const http_ = locked.shared.http;
+            locked.shared.http = null;
+            break :blk http_;
+        };
+
+        if (http_to_destroy) |http_| {
             allocator.destroy(http_);
         }
         allocator.destroy(this);
@@ -1015,9 +1039,13 @@ pub const FetchTasklet = struct {
     /// Old: this.ignore_data
     /// New: this.shouldIgnoreData()
     fn shouldIgnoreData(this: *FetchTasklet) bool {
+        // PHASE 7.5: Lock access to lifecycle state
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
         return shouldIgnoreBodyData(
-            this.shared.lifecycle,
-            this.shared.signal_store.aborted.load(.monotonic),
+            locked.shared.lifecycle,
+            locked.shared.signal_store.aborted.load(.monotonic),
         );
     }
 
@@ -1034,7 +1062,12 @@ pub const FetchTasklet = struct {
         // MIGRATION (Phase 7.3): Replaced is_waiting_request_stream_start flag with request_stream_state transition
         // Old: this.is_waiting_request_stream_start = false;
         // New: Transition from waiting_start to active
-        this.shared.request_stream_state = .active;
+        // PHASE 7.5: Lock access to request_stream_state
+        {
+            var locked = this.shared.lock();
+            defer locked.unlock();
+            locked.shared.request_stream_state = .active;
+        }
         bun.assert(this.request_body == .ReadableStream);
 
         if (this.request_body.ReadableStream.get(this.main_thread.global_this)) |stream| {
@@ -1093,9 +1126,13 @@ pub const FetchTasklet = struct {
         log("streamBodyToJS", .{});
         const globalThis = this.main_thread.global_this;
 
+        // PHASE 7.5: Lock access to scheduled_response_buffer and result
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
         // Get data from scheduled_response_buffer
-        const data = this.shared.scheduled_response_buffer.list.items;
-        const has_more = this.shared.result.has_more;
+        const data = locked.shared.scheduled_response_buffer.list.items;
+        const has_more = locked.shared.result.has_more;
 
         // Early exit if nothing to do
         if (data.len == 0 and has_more) {
@@ -1146,6 +1183,11 @@ pub const FetchTasklet = struct {
     fn streamBodyToResponse(this: *FetchTasklet, response: *Response) bun.JSTerminated!void {
         log("streamBodyToResponse", .{});
         const globalThis = this.main_thread.global_this;
+
+        // PHASE 7.5: Lock access to body_size, scheduled_response_buffer and result
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
         const sizeHint = this.getSizeHint();
         response.setSizeHint(sizeHint);
 
@@ -1159,8 +1201,8 @@ pub const FetchTasklet = struct {
             return;
         }
 
-        const data = this.shared.scheduled_response_buffer.list.items;
-        const has_more = this.shared.result.has_more;
+        const data = locked.shared.scheduled_response_buffer.list.items;
+        const has_more = locked.shared.result.has_more;
 
         if (has_more) {
             try readable.ptr.Bytes.onData(
@@ -1195,13 +1237,17 @@ pub const FetchTasklet = struct {
     fn finalizeBufferedBody(this: *FetchTasklet, response: *Response) bun.JSTerminated!void {
         log("finalizeBufferedBody", .{});
 
-        if (this.shared.result.has_more) {
+        // PHASE 7.5: Lock access to result and scheduled_response_buffer
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
+        if (locked.shared.result.has_more) {
             // Not done yet, keep buffering
             return;
         }
 
         // Transfer buffered data to body
-        var scheduled_response_buffer = this.shared.scheduled_response_buffer.list;
+        var scheduled_response_buffer = locked.shared.scheduled_response_buffer.list;
         const body = response.getBodyValue();
         var old = body.*;
         const body_value = Body.Value{
@@ -1212,7 +1258,7 @@ pub const FetchTasklet = struct {
         body.* = body_value;
         log("finalizeBufferedBody: body_value length={}", .{body_value.InternalBlob.bytes.items.len});
 
-        this.shared.scheduled_response_buffer = .{
+        locked.shared.scheduled_response_buffer = .{
             .allocator = bun.default_allocator,
             .list = .{
                 .items = &.{},
@@ -1318,9 +1364,9 @@ pub const FetchTasklet = struct {
         // vm is shutting down we cannot touch JS
         if (vm.isShuttingDown()) {
             // Still need to check if we're done for cleanup
-            this.shared.mutex.lock();
-            const is_done = !this.shared.result.has_more;
-            this.shared.mutex.unlock();
+            var locked = this.shared.lock();
+            const is_done = !locked.shared.result.has_more;
+            locked.unlock();
             if (is_done) {
                 this.deref();
             }
@@ -1328,12 +1374,12 @@ pub const FetchTasklet = struct {
         }
 
         // Acquire lock to read shared state
-        this.shared.mutex.lock();
-        const is_done = !this.shared.result.has_more;
+        var locked = this.shared.lock();
+        const is_done = !locked.shared.result.has_more;
 
         const globalThis = this.main_thread.global_this;
         defer {
-            this.shared.mutex.unlock();
+            locked.unlock();
             // if we are not done we wait until the next call
             if (is_done) {
                 var poll_ref = this.main_thread.poll_ref;
@@ -1345,7 +1391,7 @@ pub const FetchTasklet = struct {
         // MIGRATION (Phase 7.3): Replaced is_waiting_request_stream_start with request_stream_state check
         // Old: if (this.is_waiting_request_stream_start and this.result.can_stream)
         // New: Check if request stream is in waiting_start state
-        if (this.shared.request_stream_state == .waiting_start and this.shared.result.can_stream) {
+        if (locked.shared.request_stream_state == .waiting_start and locked.shared.result.can_stream) {
             // start streaming
             this.startRequestStream();
         }
@@ -1353,11 +1399,11 @@ pub const FetchTasklet = struct {
         // MIGRATION (Phase 7.3): Replaced is_waiting_body with lifecycle state check
         // Old: if (this.is_waiting_body)
         // New: Check if we're awaiting body access or actively receiving body
-        if (this.shared.lifecycle == .response_awaiting_body_access) {
+        if (locked.shared.lifecycle == .response_awaiting_body_access) {
             try this.onBodyReceived();
             return;
         }
-        if (this.shared.metadata == null and this.shared.result.isSuccess()) return;
+        if (locked.shared.metadata == null and locked.shared.result.isSuccess()) return;
 
         // if we abort because of cert error
         // we wait the Http Client because we already have the response
@@ -1366,7 +1412,7 @@ pub const FetchTasklet = struct {
         // Old: if (this.is_waiting_abort)
         // New: Check atomic abort flag - this indicates abort pending but waiting for HTTP thread cleanup
         // Note: The original logic set is_waiting_abort = has_more, so we wait if aborted AND has_more
-        if (this.shared.signal_store.aborted.load(.monotonic) and this.shared.result.has_more) {
+        if (locked.shared.signal_store.aborted.load(.monotonic) and locked.shared.result.has_more) {
             return;
         }
 
@@ -1396,12 +1442,12 @@ pub const FetchTasklet = struct {
             return;
         }
 
-        if (this.shared.result.certificate_info) |certificate_info| {
-            this.shared.result.certificate_info = null;
+        if (locked.shared.result.certificate_info) |certificate_info| {
+            locked.shared.result.certificate_info = null;
             defer certificate_info.deinit(bun.default_allocator);
 
             // we receive some error
-            if (this.shared.reject_unauthorized and !this.checkServerIdentity(certificate_info)) {
+            if (locked.shared.reject_unauthorized and !this.checkServerIdentity(certificate_info)) {
                 log("onProgressUpdate: aborted due certError", .{});
                 // we need to abort the request
                 const promise = promise_value.asAnyPromise().?;
@@ -1417,7 +1463,7 @@ pub const FetchTasklet = struct {
                 return;
             }
             // everything ok
-            if (this.shared.metadata == null) {
+            if (locked.shared.metadata == null) {
                 log("onProgressUpdate: metadata is null", .{});
                 return;
             }
@@ -1430,7 +1476,7 @@ pub const FetchTasklet = struct {
             tracker.didDispatch(globalThis);
             this.main_thread.promise.deinit();
         }
-        const success = this.shared.result.isSuccess();
+        const success = locked.shared.result.isSuccess();
         const result = switch (success) {
             true => jsc.Strong.Optional.create(this.onResolve(), globalThis),
             false => brk: {
@@ -1592,31 +1638,35 @@ pub const FetchTasklet = struct {
     }
 
     pub fn onReject(this: *FetchTasklet) Body.Value.ValueError {
-        bun.assert(this.shared.result.fail != null);
+        // PHASE 7.5: Lock access to result, metadata, and http
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
+        bun.assert(locked.shared.result.fail != null);
         log("onReject", .{});
 
         if (this.getAbortError()) |err| {
             return err;
         }
 
-        if (this.shared.result.abortReason()) |reason| {
+        if (locked.shared.result.abortReason()) |reason| {
             return .{ .AbortReason = reason };
         }
 
         // some times we don't have metadata so we also check http.url
-        const path = if (this.shared.metadata) |metadata|
+        const path = if (locked.shared.metadata) |metadata|
             bun.String.cloneUTF8(metadata.url)
-        else if (this.shared.http) |http_|
+        else if (locked.shared.http) |http_|
             bun.String.cloneUTF8(http_.url.href)
         else
             bun.String.empty;
 
         const fetch_error = jsc.SystemError{
-            .code = bun.String.static(switch (this.shared.result.fail.?) {
+            .code = bun.String.static(switch (locked.shared.result.fail.?) {
                 error.ConnectionClosed => "ECONNRESET",
                 else => |e| @errorName(e),
             }),
-            .message = switch (this.shared.result.fail.?) {
+            .message = switch (locked.shared.result.fail.?) {
                 error.ConnectionClosed => bun.String.static("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
                 error.FailedToOpenSocket => bun.String.static("Was there a typo in the url or port?"),
                 error.TooManyRedirects => bun.String.static("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
@@ -1719,7 +1769,11 @@ pub const FetchTasklet = struct {
             };
         }
 
-        if (this.shared.http) |http_| {
+        // PHASE 7.5: Lock access to http pointer before using it
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
+        if (locked.shared.http) |http_| {
             http_.enableResponseBodyStreaming();
 
             // If the server sent the headers and the response body in two separate socket writes
@@ -1728,15 +1782,12 @@ pub const FetchTasklet = struct {
             // then we must make sure the HTTP thread flushes.
             bun.http.http_thread.scheduleResponseBodyDrain(http_.async_http_id);
         }
-
-        this.shared.mutex.lock();
-        defer this.shared.mutex.unlock();
         const size_hint = this.getSizeHint();
 
-        var scheduled_response_buffer = this.shared.scheduled_response_buffer.list;
+        var scheduled_response_buffer = locked.shared.scheduled_response_buffer.list;
         // This means we have received part of the body but not the whole thing
         if (scheduled_response_buffer.items.len > 0) {
-            this.shared.scheduled_response_buffer = .{
+            locked.shared.scheduled_response_buffer = .{
                 .allocator = bun.default_allocator,
                 .list = .{
                     .items = &.{},
@@ -1757,6 +1808,8 @@ pub const FetchTasklet = struct {
         };
     }
 
+    /// Get size hint for body streaming.
+    /// PHASE 7.5: Caller must hold mutex when calling this function.
     fn getSizeHint(this: *FetchTasklet) Blob.SizeType {
         return switch (this.shared.body_size) {
             .content_length => @truncate(this.shared.body_size.content_length),
@@ -1765,6 +1818,8 @@ pub const FetchTasklet = struct {
         };
     }
 
+    /// Convert response to Body.Value.
+    /// PHASE 7.5: Caller must hold mutex when calling this function.
     fn toBodyValue(this: *FetchTasklet) Body.Value {
         if (this.getAbortError()) |err| {
             return .{ .Error = err };
@@ -1804,18 +1859,25 @@ pub const FetchTasklet = struct {
 
     fn toResponse(this: *FetchTasklet) Response {
         log("toResponse", .{});
-        bun.assert(this.shared.metadata != null);
+
+        // PHASE 7.5: Lock access to metadata, result, and lifecycle
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
+        bun.assert(locked.shared.metadata != null);
         // at this point we always should have metadata
-        const metadata = this.shared.metadata.?;
+        const metadata = locked.shared.metadata.?;
         const http_response = metadata.response;
         // MIGRATION (Phase 7.3): Replaced is_waiting_body flag with lifecycle state transition
         // Old: this.is_waiting_body = this.result.has_more;
         // New: Set lifecycle based on whether we're still receiving body data
-        if (this.shared.result.has_more) {
-            this.shared.lifecycle = .response_awaiting_body_access;
+        if (locked.shared.result.has_more) {
+            locked.shared.lifecycle = .response_awaiting_body_access;
         } else {
-            this.shared.lifecycle = .completed;
+            locked.shared.lifecycle = .completed;
         }
+        const redirected = locked.shared.result.redirected;
+
         return Response.init(
             .{
                 .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
@@ -1826,7 +1888,7 @@ pub const FetchTasklet = struct {
                 .value = this.toBodyValue(),
             },
             bun.String.createAtomIfPossible(metadata.url),
-            this.shared.result.redirected,
+            redirected,
         );
     }
 
@@ -1865,8 +1927,8 @@ pub const FetchTasklet = struct {
         // The Response JS object was garbage collected. This can race with the HTTP thread
         // calling `callback()` which writes to `ignore_data` and `scheduled_response_buffer`.
         // We must lock before checking/modifying any shared state.
-        this.shared.mutex.lock();
-        defer this.shared.mutex.unlock();
+        var locked = this.shared.lock();
+        defer locked.unlock();
 
         if (this.main_thread.native_response) |response| {
             const body = response.getBodyValue();
@@ -2115,22 +2177,30 @@ pub const FetchTasklet = struct {
                 return .done;
             }
         }
-        const thread_safe_stream_buffer = this.shared.request_body_streaming_buffer orelse return .done;
+
+        // PHASE 7.5: Lock access to request_body_streaming_buffer, http, and upgraded_connection
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
+        const thread_safe_stream_buffer = locked.shared.request_body_streaming_buffer orelse return .done;
         // acquire/release provides thread-safe access to the buffer
         const stream_buffer = thread_safe_stream_buffer.acquire();
         defer thread_safe_stream_buffer.release();
         const highWaterMark = if (this.main_thread.sink) |sink| sink.highWaterMark else 16384;
 
+        const http_ptr = locked.shared.http.?;
+        const upgraded_connection = locked.shared.upgraded_connection;
+
         var needs_schedule = false;
         defer if (needs_schedule) {
             // wakeup the http thread to write the data
-            http.http_thread.scheduleRequestWrite(this.shared.http.?, .data);
+            http.http_thread.scheduleRequestWrite(http_ptr, .data);
         };
 
         // dont have backpressure so we will schedule the data to be written
         // if we have backpressure the onWritable will drain the buffer
         needs_schedule = stream_buffer.isEmpty();
-        if (this.shared.upgraded_connection) {
+        if (upgraded_connection) {
             bun.handleOom(stream_buffer.write(data));
         } else {
             //16 is the max size of a hex number size that represents 64 bits + 2 for the \r\n
@@ -2171,14 +2241,18 @@ pub const FetchTasklet = struct {
             }
             this.abortTask();
         } else {
-            if (!this.shared.upgraded_connection) {
+            // PHASE 7.5: Lock access to upgraded_connection, request_body_streaming_buffer, and http
+            var locked = this.shared.lock();
+            defer locked.unlock();
+
+            if (!locked.shared.upgraded_connection) {
                 // If is not upgraded we need to send the terminating chunk
-                const thread_safe_stream_buffer = this.shared.request_body_streaming_buffer orelse return;
+                const thread_safe_stream_buffer = locked.shared.request_body_streaming_buffer orelse return;
                 const stream_buffer = thread_safe_stream_buffer.acquire();
                 defer thread_safe_stream_buffer.release();
                 bun.handleOom(stream_buffer.write(http.end_of_chunked_http1_1_encoding_response_body));
             }
-            if (this.shared.http) |http_| {
+            if (locked.shared.http) |http_| {
                 // just tell to write the end of the chunked encoding aka 0\r\n\r\n
                 http.http_thread.scheduleRequestWrite(http_, .end);
             }
@@ -2193,7 +2267,11 @@ pub const FetchTasklet = struct {
         this.shared.signal_store.aborted.store(true, .monotonic);
         this.main_thread.tracker.didCancel(this.main_thread.global_this);
 
-        if (this.shared.http) |http_| {
+        // PHASE 7.5: Lock access to http pointer
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
+        if (locked.shared.http) |http_| {
             http.http_thread.scheduleShutdown(http_);
         }
     }
@@ -2267,33 +2345,33 @@ pub const FetchTasklet = struct {
         if (task.shared.has_schedule_callback.swap(true, .acq_rel)) {
             // Already scheduled - data will be picked up on next progress update
             // Still need to store the data under lock for the main thread to process
-            task.shared.mutex.lock();
-            defer task.shared.mutex.unlock();
+            var locked = task.shared.lock();
+            defer locked.unlock();
 
-            task.shared.http.?.* = async_http.*;
-            task.shared.http.?.response_buffer = async_http.response_buffer;
+            locked.shared.http.?.* = async_http.*;
+            locked.shared.http.?.response_buffer = async_http.response_buffer;
 
-            const prev_metadata = task.shared.result.metadata;
-            const prev_cert_info = task.shared.result.certificate_info;
-            task.shared.result = result;
+            const prev_metadata = locked.shared.result.metadata;
+            const prev_cert_info = locked.shared.result.certificate_info;
+            locked.shared.result = result;
 
             // Preserve pending certificate info
-            if (task.shared.result.certificate_info == null) {
+            if (locked.shared.result.certificate_info == null) {
                 if (prev_cert_info) |cert_info| {
-                    task.shared.result.certificate_info = cert_info;
+                    locked.shared.result.certificate_info = cert_info;
                 }
             }
 
             // metadata should be provided only once
             if (result.metadata orelse prev_metadata) |metadata| {
-                if (task.shared.metadata == null) {
-                    task.shared.metadata = metadata;
+                if (locked.shared.metadata == null) {
+                    locked.shared.metadata = metadata;
                 }
-                task.shared.result.metadata = null;
+                locked.shared.result.metadata = null;
             }
 
-            task.shared.body_size = result.body_size;
-            task.shared.response_buffer = result.body.?.*;
+            locked.shared.body_size = result.body_size;
+            locked.shared.response_buffer = result.body.?.*;
 
             // Copy data to scheduled buffer if not ignoring
             // MIGRATION (Phase 7.3): Replaced ignore_data flag with shouldIgnoreData() method call
@@ -2302,61 +2380,61 @@ pub const FetchTasklet = struct {
             if (!task.shouldIgnoreData()) {
                 const success = result.isSuccess();
                 if (success) {
-                    _ = bun.handleOom(task.shared.scheduled_response_buffer.write(task.shared.response_buffer.list.items));
+                    _ = bun.handleOom(locked.shared.scheduled_response_buffer.write(locked.shared.response_buffer.list.items));
                 }
             }
-            task.shared.response_buffer.reset();
+            locked.shared.response_buffer.reset();
             return;
         }
 
         // Copy data to shared state under lock
         {
-            task.shared.mutex.lock();
-            defer task.shared.mutex.unlock();
+            var locked = task.shared.lock();
+            defer locked.unlock();
 
-            task.shared.http.?.* = async_http.*;
-            task.shared.http.?.response_buffer = async_http.response_buffer;
+            locked.shared.http.?.* = async_http.*;
+            locked.shared.http.?.response_buffer = async_http.response_buffer;
 
             // MIGRATION (Phase 7.3): Replaced ignore_data in log with shouldIgnoreData() call
             // Old: task.ignore_data
             // New: task.shouldIgnoreData()
             log("callback success={} ignore_data={} has_more={} bytes={}", .{ result.isSuccess(), task.shouldIgnoreData(), result.has_more, result.body.?.list.items.len });
 
-            const prev_metadata = task.shared.result.metadata;
-            const prev_cert_info = task.shared.result.certificate_info;
-            task.shared.result = result;
+            const prev_metadata = locked.shared.result.metadata;
+            const prev_cert_info = locked.shared.result.certificate_info;
+            locked.shared.result = result;
 
             // Preserve pending certificate info if it was provided in the previous update.
-            if (task.shared.result.certificate_info == null) {
+            if (locked.shared.result.certificate_info == null) {
                 if (prev_cert_info) |cert_info| {
-                    task.shared.result.certificate_info = cert_info;
+                    locked.shared.result.certificate_info = cert_info;
                 }
             }
 
             // metadata should be provided only once
             if (result.metadata orelse prev_metadata) |metadata| {
                 log("added callback metadata", .{});
-                if (task.shared.metadata == null) {
-                    task.shared.metadata = metadata;
+                if (locked.shared.metadata == null) {
+                    locked.shared.metadata = metadata;
                 }
 
-                task.shared.result.metadata = null;
+                locked.shared.result.metadata = null;
             }
 
-            task.shared.body_size = result.body_size;
+            locked.shared.body_size = result.body_size;
 
             const success = result.isSuccess();
-            task.shared.response_buffer = result.body.?.*;
+            locked.shared.response_buffer = result.body.?.*;
 
             // MIGRATION (Phase 7.3): Replaced ignore_data flag with shouldIgnoreData() method call
             // Old: if (task.ignore_data)
             // New: if (task.shouldIgnoreData())
             if (task.shouldIgnoreData()) {
-                task.shared.response_buffer.reset();
+                locked.shared.response_buffer.reset();
 
-                if (task.shared.scheduled_response_buffer.list.capacity > 0) {
-                    task.shared.scheduled_response_buffer.deinit();
-                    task.shared.scheduled_response_buffer = .{
+                if (locked.shared.scheduled_response_buffer.list.capacity > 0) {
+                    locked.shared.scheduled_response_buffer.deinit();
+                    locked.shared.scheduled_response_buffer = .{
                         .allocator = bun.default_allocator,
                         .list = .{
                             .items = &.{},
@@ -2367,16 +2445,16 @@ pub const FetchTasklet = struct {
                 if (success and result.has_more) {
                     // we are ignoring the body so we should not receive more data, so will only signal when result.has_more = true
                     // Reset the flag since we're not enqueueing
-                    _ = task.shared.has_schedule_callback.swap(false, .release);
+                    _ = locked.shared.has_schedule_callback.swap(false, .release);
                     return;
                 }
             } else {
                 if (success) {
                     // Append new data to scheduled response buffer
-                    _ = bun.handleOom(task.shared.scheduled_response_buffer.write(task.shared.response_buffer.list.items));
+                    _ = bun.handleOom(locked.shared.scheduled_response_buffer.write(locked.shared.response_buffer.list.items));
                 }
                 // reset for reuse
-                task.shared.response_buffer.reset();
+                locked.shared.response_buffer.reset();
             }
         }
 

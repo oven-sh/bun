@@ -6589,7 +6589,7 @@ describeValkey(
 
       const testKeyUniquePerDb = crypto.randomUUID();
       // TODO(markovejnovic): Don't skip this.
-      test.skip.each([...Array(16).keys()])("Connecting to database with url $url succeeds", async (dbId: number) => {
+      test.skip.each([...Array(16).keys()])("Connecting to database with url %s succeeds", async (dbId: number) => {
         const redis = createClient(connectionType, {}, dbId);
 
         const testValue = await redis.get(testKeyUniquePerDb);
@@ -6614,11 +6614,23 @@ describeValkey(
 
         await ctx.restartServer();
 
-        const valueAfterStop = await ctx.connectedClient().get(TEST_KEY);
+        const valueAfterStop = (await ctx.connectedClient()).get(TEST_KEY);
         expect(valueAfterStop).toBe(TEST_VALUE);
       });
     });
 
+    describe("Pub/Sub", () => {
+      test.each(ValkeyFaker.channels(randomEngine, 4))("publishing to channel %s does not fail", async (channel: string) => {
+        const client = await ctx.connectedClient();
+        expect(await client.publish(channel, ValkeyFaker.publishMessage(randomEngine))).toBe(0);
+      });
+
+      test.each(ValkeyFaker.channels(randomEngine, 4))("subscribing to %s does not fail", async (channel: string) => {
+        const client = await ctx.connectedClient();
+        await client.subscribe(channel);
+        await client.unsubscribe(channel);
+      });
+    });
   },
   { server: "redis://localhost:6379" },
 );

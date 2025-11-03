@@ -20,36 +20,25 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
     const SubscriptionHandlerId = u64;
     const SubscriptionChannelId = u64;
 
-    const _SubscribePushHandler = *const fn (
-        /// The unique identifier of the listener.
-        handler_id: SubscriptionHandlerId,
-        /// The listener instance.
-        listener: *ValkeyListener,
-        /// The channel on which the message was received.
-        channel: []const u8,
-        /// The payload of the message.
-        payload: protocol.RESPValue,
-    ) void;
-
     const SubscriptionTracker = struct {
         const Self = @This();
         /// Object stored to track an active Pub/Sub subscription.
         const SubscriptionVectorEntry = struct {
             /// The listener ID associated with this subscription.
             handler_id: SubscriptionHandlerId,
-            /// The listener function associated with this subscription.
-            listener: _SubscribePushHandler,
         };
 
         map: std.AutoHashMap(SubscriptionChannelId, SubscriptionMapEntry),
-        channel_map: std.StringHashMap(SubscriptionChannelId),
+        channel_map: std.StringArrayHashMap(SubscriptionChannelId),
         _next_channel_id: SubscriptionChannelId,
+        _allocator: std.mem.Allocator,
 
         pub fn init(allocator: std.mem.Allocator) Self {
             return Self{
                 .map = .init(allocator),
                 .channel_map = .init(allocator),
                 ._next_channel_id = 0,
+                ._allocator = allocator,
             };
         }
 
@@ -59,13 +48,13 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             self: *Self,
             channel: []const u8,
             entry: SubscriptionVectorEntry,
-        ) !void {
+        ) !SubscriptionChannelId {
             const channel_id = self.channel_map.get(channel) orelse get_id_blk: {
                 const new_id = self._next_channel_id;
                 try self.channel_map.put(channel, new_id);
 
                 self._next_channel_id += 1;
-                while (self.channel_map.get(self._next_channel_id)) {
+                while (self.map.get(self._next_channel_id) != null) {
                     @branchHint(.cold);
                     self._next_channel_id += 1;
                 }
@@ -73,37 +62,29 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
                 break :get_id_blk new_id;
             };
 
-            const map_vecs = self.map.getPtr(channel_id) orelse {
+            const map_vecs = self.map.getPtr(channel_id) orelse insert_blk: {
                 try self.map.put(
                     channel_id,
-                    .{ .active = .init(), .pending = .init() },
+                    .{ .active = .init(self._allocator), .pending = .init(self._allocator) },
                 );
+                break :insert_blk self.map.getPtr(channel_id).?;
             };
 
             try map_vecs.pending.append(entry);
+
+            return channel_id;
         }
 
-        // TODO(markovejnovic): It's kind of weird that channel is passed in again here. The
-        // handler_id is unique after all.
         pub fn promotePendingListenerToActive(
             self: *Self,
-            channel: []const u8,
-            handler_id: u64,
+            channel_id: SubscriptionChannelId,
+            handler_id: SubscriptionHandlerId,
         ) !void {
-            const channel_id = self.channel_map.get(channel) orelse {
-                bun.Output.debugPanic(
-                    "SubscriptionTracker.promotePendingListenerToActive did not find a " ++
-                        "channel: {s}",
-                    .{channel},
-                );
-                return;
-            };
-
             const map_entry = self.map.getPtr(channel_id) orelse {
                 bun.Output.debugPanic(
                     "SubscriptionTracker.promotePendingListenerToActive did not find an " ++
-                        "entry: {s}",
-                    .{channel},
+                        "entry for channel_id {}",
+                    .{channel_id},
                 );
                 return;
             };
@@ -117,34 +98,25 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             if (pending_idx == null) {
                 bun.Output.debugPanic(
                     "SubscriptionTracker.promotePendingListenerToActive did not find pending " ++
-                        "handler_id {d} on channel {s}",
-                    .{ handler_id, channel },
+                        "handler_id {d} on channel_id {}",
+                    .{ handler_id, channel_id },
                 );
                 return;
             }
 
             const listener = map_entry.pending.swapRemove(pending_idx.?);
-            map_entry.active.append(listener);
+            try map_entry.active.append(listener);
         }
 
         fn removeActiveHandler(
             self: *Self,
-            channel: []const u8,
-            handler_id: u64,
+            channel_id: SubscriptionChannelId,
+            handler_id: SubscriptionHandlerId,
         ) !void {
-            const channel_id = self.channel_map.get(channel) orelse {
-                bun.Output.debugPanic(
-                    "SubscriptionTracker.removeActiveHandler did not find a " ++
-                        "channel: {s}",
-                    .{channel},
-                );
-                return;
-            };
-
             const map_entry = self.map.getPtr(channel_id) orelse {
                 bun.Output.debugPanic(
-                    "SubscriptionTracker.removeActiveHandler did not find a channel {s}",
-                    .{channel},
+                    "SubscriptionTracker.removeActiveHandler did not find a channel_id {}",
+                    .{channel_id},
                 );
                 return;
             };
@@ -157,9 +129,9 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
 
             if (active_idx == null) {
                 bun.Output.debugPanic(
-                    "SubscriptionTracker.removeActiveHandler did not find pending handler_id " ++
-                        "on channel {s}",
-                    .{ handler_id, channel },
+                    "SubscriptionTracker.removeActiveHandler did not find pending handler_id {}" ++
+                        "on channel_id {}",
+                    .{ handler_id, channel_id },
                 );
                 return;
             }
@@ -171,7 +143,13 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
                 map_entry.pending.deinit();
 
                 _ = self.map.remove(channel_id);
-                _ = self.channel_map.remove(channel);
+                var it = self.channel_map.iterator();
+                while (it.next()) |entry| {
+                    if (entry.value_ptr.* == channel_id) {
+                        _ = self.channel_map.swapRemove(entry.key_ptr.*);
+                        break;
+                    }
+                }
             }
         }
 
@@ -251,10 +229,16 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
         };
 
         const SubscriptionUpdateRequestContext = struct {
-            handler_id: u64,
-            channel_id: u64,
-
             user_context: UserRequestContext,
+
+            handler_id: u64,
+            channel_ids: std.ArrayList(SubscriptionChannelId),
+
+            request_type: enum { subscribe, unsubscribe },
+
+            pub fn deinit(self: SubscriptionUpdateRequestContext) void {
+                self.channel_ids.deinit();
+            }
         };
 
         /// Each message sent or received by the client has a context which is private to this
@@ -278,6 +262,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
                     },
                     .subscription_context => |*ctx| {
                         ctx.user_context.failOom(listener);
+                        ctx.deinit();
                     },
                 }
             }
@@ -289,6 +274,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
                     },
                     .subscription_context => |*ctx| {
                         callbacks.onRequestDropped(&ctx.user_context, reason);
+                        ctx.deinit();
                     },
                 }
             }
@@ -300,7 +286,10 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             ) !void {
                 return switch (self.*) {
                     .user_context => |*ctx| callbacks.onResponse(ctx, value),
-                    .subscription_context => |*ctx| callbacks.onResponse(&ctx.user_context, value),
+                    .subscription_context => |*ctx| {
+                        try callbacks.onResponse(&ctx.user_context, value);
+                        ctx.deinit();
+                    },
                 };
             }
         };
@@ -311,9 +300,6 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
 
         /// All responses are paired with the original request context.
         pub const ResponseType = Response(UserRequestContext);
-
-        /// Type of function invoked whenever a subscription message is received.
-        pub const SubscribePushHandler = _SubscribePushHandler;
 
         /// Types internal to the ValkeyClient implementation which encode a request pending to be
         /// sent to the server.
@@ -645,15 +631,17 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             const l_state = &self._state.linked;
 
             switch (l_state.state) {
-                .normal => {
+                // The reason we couple both states together is because we don't really know if
+                // what we're looking at is a SUBSCRIBE/UNSUBSCRIBE response or whether it is a
+                // normal response we want to pass to the user.
+                //
+                // Consequently, onNormalPacket will handle both normal responses and subscription
+                // responses, and will delegate behavior.
+                .normal, .subscriber => {
                     try self.onNormalPacket(value);
                 },
                 .authenticating => {
                     try self.onAuthenticatingPacket(value);
-                },
-                .subscriber => {
-                    // TODO(markovejnovic): Enable this
-                    //try self.onSubscriberPacket(value);
                 },
             }
         }
@@ -667,8 +655,30 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
                 return;
             };
 
-            if (req.returns_bool and value.* == .Integer) {
-                value.* = .{ .Boolean = value.Integer > 0 };
+            switch (req.context) {
+                .user_context => {
+                    if (req.returns_bool and value.* == .Integer) {
+                        value.* = .{ .Boolean = value.Integer > 0 };
+                    }
+                },
+                .subscription_context => |*ctx| {
+                    for (ctx.channel_ids.items) |channel_id| {
+                        switch (ctx.request_type) {
+                            .subscribe => {
+                                try self._subscriptions.promotePendingListenerToActive(
+                                    channel_id,
+                                    ctx.handler_id,
+                                );
+                            },
+                            .unsubscribe => {
+                                try self._subscriptions.removeActiveHandler(
+                                    channel_id,
+                                    ctx.handler_id,
+                                );
+                            },
+                        }
+                    }
+                },
             }
 
             try req.context.succeed(value, self._callbacks);
@@ -728,68 +738,74 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
         ///
         /// Args:
         ///
-        ///   - `channel`: The channel to subscribe to.
+        ///   - `channels`: The channels to subscribe to.
         ///   - `handler_id`: Unique identifier for this listener. This identifier can be used to
         ///                    remove the listener later. See `unsubscribeListener`.
         ///   - `handler`: The function to invoke whenever a message is received on this channel.
         pub fn subscribe(
             self: *Self,
-            channel: []const u8,
-            handler_id: u64,
-            handler: SubscribePushHandler,
+            channels: []const []const u8,
+            handler_id: SubscriptionHandlerId,
+            ctx: *const UserRequestContext,
         ) !void {
-            Self.debug("{*}.subscribe({s}, handler_id={}, ...)", .{ self, channel, handler_id });
+            Self.debug("{*}.subscribe({s}, handler_id={}, ...)", .{ self, channels, handler_id });
 
             // Before we do anything, we populate the active subscriptions vector. The
             // subscriptions vector is what tracks all active subscriptions. Note that this vector
-            // may contain subscriptions which are not  yet confirmed by the server. When the
-            // server confirms them, we will promote them from "pending" to "active".
-            try self._subscriptions.addPendingHandler(channel, .{
-                .handler = handler,
-                .handler_id = handler_id,
-            });
+            // may contain subscriptions which are not yet confirmed by the server. When the server
+            // confirms them, we will promote them from "pending" to "active".
+            var channel_ids = try std.ArrayList(SubscriptionChannelId).initCapacity(
+                self._allocator,
+                channels.len,
+            );
+            for (channels) |channel| {
+                const channel_id = try self._subscriptions.addPendingHandler(channel, .{
+                    .handler_id = handler_id,
+                });
 
-            // Now we need to send out the request.
+                channel_ids.appendAssumeCapacity(channel_id);
+            }
 
-            //switch (self._state) {
-            //    .linked => |*l_state| {
-            //        switch (l_state.state) {
-            //            .subscriber, .authenticating, .normal => {
-            //                // Great, this state can send requests.
-            //                //
-            //                // Note that subscribers CAN, in-fact, send requests, since RESP3
-            //                // permits that.
-            //                try self.enqueueRequest(req);
-            //            },
-            //        }
-            //    },
-            //    .closed => {
-            //        // We're closed, we can't send requests until the user asks for us to
-            //        // reconnect, explicitly.
-            //        return error.ConnectionClosed;
-            //    },
-            //    else => {
-            //        Self.debug(
-            //            "{*} Received an unexpected request in {s} state.",
-            //            .{ self, @tagName(self._state) },
-            //        );
+            var req: InternalRequestType = .{
+                .command = .initById(.SUBSCRIBE, .{ .raw = channels }),
+                .context = .{
+                    .subscription_context = .{
+                        .user_context = ctx.*,
+                        .handler_id = handler_id,
+                        .channel_ids = channel_ids,
+                        .request_type = .subscribe,
+                    },
+                },
+            };
 
-            //        // Okay, we're not currently in the linked state. What we can do is enqueue the
-            //        // request and attempt to start the connection.
-            //        try self.enqueueRequest(req);
-            //        self.startConnecting() catch |err| {
-            //            switch (err) {
-            //                Error.InvalidState => {
-            //                    self._state.warnIllegalState("request-start-connecting");
-            //                    // No-op, we're already connecting or connected.
-            //                },
-            //                Error.FailedToOpenSocket => {
-            //                    return error.ConnectionClosed;
-            //                },
-            //            }
-            //        };
-            //    },
-            //}
+            return self.submitInternalRequest(&req);
+        }
+
+        fn submitInternalRequest(self: *Self, req_internal: *InternalRequestType) !void {
+            switch (self._state) {
+                .closed => {
+                    // We're closed, we can't send requests until the user asks for us to
+                    // reconnect, explicitly.
+                    return error.ConnectionClosed;
+                },
+                else => {
+                    try self.enqueueRequest(req_internal);
+
+                    if (self._state != .linked) {
+                        self.startConnecting() catch |err| {
+                            switch (err) {
+                                Error.InvalidState => {
+                                    self._state.warnIllegalState("request-start-connecting");
+                                    // No-op, we're already connecting or connected.
+                                },
+                                Error.FailedToOpenSocket => {
+                                    return error.ConnectionClosed;
+                                },
+                            }
+                        };
+                    }
+                },
+            }
         }
 
         /// Unsubscribe a previously registered handler.
@@ -1051,6 +1067,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
 
         /// Invoked when transitioning out of the linked state to any other state.
         fn onStateLinkedToAny(self: *Self, from_state: *State) !void {
+            self.unregisterAutoFlusher();
             from_state.*.linked._egress_buffer.deinit(self._allocator);
             from_state.*.linked._ingress_buffer.deinit(self._allocator);
         }
@@ -1066,8 +1083,6 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
 
             self.unregisterAutoFlusher();
             self._socket_io.close();
-
-            // We also want to fail all the pending requests.
             self.dropAllQueuedMessages(.{ .closing = {} });
 
             self._callbacks.onClose();
@@ -1195,6 +1210,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
         /// This will drop all queued messages and transition the client into the disconnected
         /// state.
         fn failIrrecoverably(self: *Self, reason: IrrecoverableFailureReason) void {
+            self.unregisterAutoFlusher();
             self.dropAllQueuedMessages(.{ .irrecoverable_failure = reason });
         }
 
@@ -1203,6 +1219,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
         /// If the state transition fails, this will forcibly set the state to the disconnected
         /// mode.
         fn dangerouslyForceClientIntoDisconnectedState(self: *Self) void {
+            self.unregisterAutoFlusher();
             self.dropAllQueuedMessages(.{ .closing = {} });
             self._state.transition(.{ .disconnected = {} }) catch |err| {
                 // In the case that we observe an error to transition to closed, that's a bug in
@@ -1255,36 +1272,13 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
                 req.command.args.len(),
             });
 
-            switch (self._state) {
-                .closed => {
-                    // We're closed, we can't send requests until the user asks for us to
-                    // reconnect, explicitly.
-                    return error.ConnectionClosed;
+            var req_internal = Self.InternalRequestType{
+                .command = req.command,
+                .context = .{
+                    .user_context = req.context,
                 },
-                else => {
-                    var req_internal = Self.InternalRequestType{
-                        .command = req.command,
-                        .context = .{
-                            .user_context = req.context,
-                        },
-                    };
-                    try self.enqueueRequest(&req_internal);
-
-                    if (self._state != .linked) {
-                        self.startConnecting() catch |err| {
-                            switch (err) {
-                                Error.InvalidState => {
-                                    self._state.warnIllegalState("request-start-connecting");
-                                    // No-op, we're already connecting or connected.
-                                },
-                                Error.FailedToOpenSocket => {
-                                    return error.ConnectionClosed;
-                                },
-                            }
-                        };
-                    }
-                },
-            }
+            };
+            try self.submitInternalRequest(&req_internal);
         }
 
         /// Attempt to enqueue a request for sending to the server. This may choose to skip the

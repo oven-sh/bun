@@ -15,6 +15,9 @@ pub const JsValkey = struct {
     /// The context object passed with each request. Keep it small.
     const RequestContext = union(enum) {
         /// The JS user requested this command and an associated promise is present.
+        ///
+        /// TODO(markovejnovic):
+        /// Remove this type, it's stupid. All requests are user requests in our use-case
         pub const UserRequest = struct {
             _promise: bun.jsc.JSPromise.Strong,
             // TODO(markovejnovic): This gives array-of-struct vibes instead of struct-of-array.
@@ -90,6 +93,7 @@ pub const JsValkey = struct {
             ctx: *RequestContext,
             value: *protocol.RESPValue,
         ) !void {
+            Self.debug("{*}.onResponse(...)", .{self});
             const go = self.parent()._global_obj;
 
             switch (ctx.*) {
@@ -124,6 +128,10 @@ pub const JsValkey = struct {
         }
 
         pub fn onClose(self: *@This()) void {
+            _ = self;
+        }
+
+        pub fn onDisconnect(self: *@This()) void {
             _ = self;
         }
 
@@ -902,6 +910,72 @@ pub const JsValkey = struct {
         return promise.toJS();
     }
 
+    pub fn subscribe(
+        self: *Self,
+        go: *bun.jsc.JSGlobalObject,
+        cf: *bun.jsc.CallFrame,
+    ) bun.JSError!bun.jsc.JSValue {
+        const channel_or_many, const handler_callback = cf.argumentsAsArray(2);
+        var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+        var redis_channels = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), 1);
+        defer {
+            for (redis_channels.items) |*item| {
+                item.deinit();
+            }
+            redis_channels.deinit();
+        }
+
+        if (!handler_callback.isCallable()) {
+            return go.throwInvalidArgumentType("subscribe", "listener", "function");
+        }
+
+        if (channel_or_many.isArray()) {
+            if ((try channel_or_many.getLength(go)) == 0) {
+                return go.throwInvalidArguments("subscribe requires at least one channel", .{});
+            }
+            try redis_channels.ensureTotalCapacity(try channel_or_many.getLength(go));
+
+            var array_iter = try channel_or_many.arrayIterator(go);
+            while (try array_iter.next()) |channel_arg| {
+                const channel = (try jsValueToJsArgument(go, channel_arg)) orelse {
+                    return go.throwInvalidArgumentType("subscribe", "channel", "string");
+                };
+                redis_channels.appendAssumeCapacity(channel);
+            }
+        } else if (channel_or_many.isString()) {
+            // It is a single string channel
+            const channel = (try jsValueToJsArgument(go, channel_or_many)) orelse {
+                return go.throwInvalidArgumentType("subscribe", "channel", "string");
+            };
+            redis_channels.appendAssumeCapacity(channel);
+        } else {
+            return go.throwInvalidArgumentType("subscribe", "channel", "string or array");
+        }
+
+        var channel_slices = try std.ArrayList([]const u8).initCapacity(
+            stack_fallback.get(),
+            redis_channels.items.len,
+        );
+        defer channel_slices.deinit();
+        for (redis_channels.items) |*channel_arg| {
+            channel_slices.appendAssumeCapacity(channel_arg.slice());
+        }
+
+        var ctx: RequestContext = .{ .user_request = .init(go, false) };
+        self._client.subscribe(
+            channel_slices.items,
+            handler_callback.asPtrAddress(),
+            &ctx,
+        ) catch |err| {
+            // Synchronous error: swap() gives us the promise and destroys the Strong
+            const promise = ctx.user_request._promise.swap();
+            const error_value = protocol.valkeyErrorToJS(go, err, null, .{});
+            promise.reject(go, error_value);
+            return promise.toJS();
+        };
+        return ctx.user_request.promise().toJS();
+    }
+
     pub fn unsubscribe(
         self: *Self,
         go: *bun.jsc.JSGlobalObject,
@@ -1085,7 +1159,6 @@ pub const JsValkey = struct {
     pub const scard = MetFactory.@"(key: RedisKey)"("scard", .SCARD, "key").fxn;
     pub const script = MetFactory.@"(...strings: string[])"("script", .SCRIPT).fxn;
     pub const sdiff = MetFactory.@"(...strings: string[])"("sdiff", .SDIFF).fxn;
-    pub const subscribe = MetFactory.@"(...strings: string[])"("subscribe", .SUBSCRIBE).fxn;
     pub const sdiffstore = MetFactory.@"(...strings: string[])"("sdiffstore", .SDIFFSTORE).fxn;
     pub const select = MetFactory.@"(...strings: string[])"("select", .SELECT).fxn;
     pub const setbit = MetFactory.@"(key: RedisKey, value: RedisValue, value2: RedisValue)"("setbit", .SETBIT, "key", "offset", "value").fxn;
@@ -1273,7 +1346,7 @@ const MetFactory = struct {
     ) type {
         return struct {
             pub fn fxn(
-                this: *JsValkey,
+                self: *JsValkey,
                 go: *bun.jsc.JSGlobalObject,
                 cf: *bun.jsc.CallFrame,
             ) bun.JSError!bun.jsc.JSValue {
@@ -1299,7 +1372,7 @@ const MetFactory = struct {
                     try args.append(another);
                 }
 
-                const promise = this.request(
+                const promise = self.request(
                     go,
                     cf.this(),
                     Command.initById(command, .{ .args = args.items }),

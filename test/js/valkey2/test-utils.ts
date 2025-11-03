@@ -170,4 +170,16 @@ export namespace ValkeyFaker {
     // Use 1 KB max size for regular values to keep tests fast. 1kB is still a reasonably large value.
     return Array.from({ length: count }, () => value(randomEngine, 1024));
   }
+
+  export function channel(randomEngine: random.RandomEngine, maxSize: number = 256): string {
+    return random.dirtyLatin1String(randomEngine, maxSize);
+  }
+
+  export function channels(randomEngine: random.RandomEngine, count: number): string[] {
+    return Array.from({ length: count }, () => channel(randomEngine, 256));
+  }
+
+  export function publishMessage(randomEngine: random.RandomEngine, maxSize: number = 1024 * 1024): string {
+    return ValkeyFaker.value(randomEngine, maxSize);
+  }
 }

@@ -457,6 +457,135 @@ const ResponseMetadataHolder = struct {
     }
 };
 
+/// Request body with explicit ownership and lifecycle management.
+/// Encapsulates the "do I own this resource?" logic that was previously
+/// scattered across clearData() and other cleanup paths.
+///
+/// NOTE: This is the new implementation with explicit ownership tracking.
+/// The old HTTPRequestBody is still in use inside FetchTasklet.
+/// This will eventually replace the old implementation in Phase 3, Step 3.4.
+///
+/// OWNERSHIP MODEL:
+/// - Empty: No resources to manage
+/// - AnyBlob: Tracks blob store refs via private #store_ref field
+/// - Sendfile: Tracks if we own the file descriptor via #owns_fd
+/// - ReadableStream: Tracks if stream was transferred to sink via #transferred_to_sink
+///
+/// This makes the "initExactRefs(2)" pattern for streams explicit:
+/// - Before transfer: we own 1 ref
+/// - After transfer to sink: sink owns 1 ref, stream owns 1 ref (total 2)
+const HTTPRequestBodyV2 = union(enum) {
+    /// No request body
+    Empty: void,
+
+    /// In-memory blob with explicit store ref tracking
+    AnyBlob: struct {
+        blob: AnyBlob,
+        /// Private: Tracks blob store reference if present.
+        /// The nested struct ensures we only deref if we incremented the ref.
+        #store_ref: ?struct {
+            store: *Blob.Store,
+            refed: bool,
+
+            fn ref(self: *@This()) void {
+                if (!self.refed) {
+                    self.store.ref();
+                    self.refed = true;
+                }
+            }
+
+            fn deref(self: *@This()) void {
+                if (self.refed) {
+                    self.store.deref();
+                    self.refed = false;
+                }
+            }
+        } = null,
+
+        /// Cleanup blob resources
+        fn deinit(self: *@This()) void {
+            if (self.#store_ref) |*store_ref| {
+                store_ref.deref();
+            }
+        }
+    },
+
+    /// File descriptor for sendfile optimization
+    Sendfile: struct {
+        sendfile: http.SendFile,
+        /// Private: Do we need to close the fd?
+        /// Only set to true if we opened the file ourselves.
+        #owns_fd: bool,
+
+        /// Cleanup file descriptor if we own it
+        fn deinit(self: *@This()) void {
+            if (self.#owns_fd) {
+                _ = bun.sys.close(self.sendfile.fd);
+            }
+        }
+    },
+
+    /// Streaming body from ReadableStream
+    ReadableStream: struct {
+        stream: jsc.WebCore.ReadableStream.Strong,
+        /// Private: Track if we've transferred ownership to sink.
+        /// This makes the "initExactRefs(2)" pattern explicit:
+        /// - Before transfer: we own 1 ref
+        /// - After transfer: sink owns 1 ref, stream owns 1 ref (total 2)
+        /// See FetchTasklet.startRequestStream() for usage.
+        #transferred_to_sink: bool = false,
+
+        /// Transfer stream to sink (consumes our reference).
+        /// After this call, sink owns the stream.
+        /// Can only be called once - asserts if already transferred.
+        fn transferToSink(self: *@This()) jsc.WebCore.ReadableStream.Strong {
+            bun.assert(!self.#transferred_to_sink);
+            self.#transferred_to_sink = true;
+            // Return stream without deiniting - ownership transferred
+            return self.stream;
+        }
+
+        /// Cleanup stream reference if we still own it
+        fn deinit(self: *@This()) void {
+            if (!self.#transferred_to_sink) {
+                // We still own it - deinit our ref
+                self.stream.deinit();
+            }
+            // If transferred, sink owns the ref - don't double-deref
+        }
+    },
+
+    /// Single deinit path for all variants.
+    /// Dispatches to variant-specific cleanup methods.
+    fn deinit(self: *HTTPRequestBodyV2) void {
+        switch (self.*) {
+            .Empty => {},
+            .AnyBlob => |*blob| blob.deinit(),
+            .Sendfile => |*sendfile| sendfile.deinit(),
+            .ReadableStream => |*stream| stream.deinit(),
+        }
+    }
+
+    /// Get blob store for ref counting (if applicable).
+    /// Returns null for non-blob variants.
+    fn store(self: *const HTTPRequestBodyV2) ?*Blob.Store {
+        return switch (self.*) {
+            .AnyBlob => |*blob| if (blob.#store_ref) |ref| ref.store else null,
+            else => null,
+        };
+    }
+
+    /// Increment store ref count (if applicable).
+    /// No-op for non-blob variants or blobs without stores.
+    fn refStore(self: *HTTPRequestBodyV2) void {
+        if (self.* == .AnyBlob) {
+            if (self.AnyBlob.#store_ref) |*store_ref| {
+                store_ref.ref();
+            }
+        }
+    }
+};
+
 pub const FetchTasklet = struct {
     pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
 

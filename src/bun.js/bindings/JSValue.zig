@@ -1130,9 +1130,6 @@ pub const JSValue = enum(i64) {
 
     pub fn asArrayBuffer(this: JSValue, global: *JSGlobalObject) ?ArrayBuffer {
         var out: ArrayBuffer = undefined;
-        // `ptr` might not get set if the ArrayBuffer is empty, so make sure it starts out with a
-        // defined value.
-        out.ptr = &.{};
         if (JSC__JSValue__asArrayBuffer(this, global, &out)) {
             return out;
         }

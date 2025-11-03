@@ -49,6 +49,9 @@ pub fn NewWebSocket(comptime ssl_flag: c_int) type {
         pub fn isSubscribed(this: *WebSocket, topic: []const u8) bool {
             return c.uws_ws_is_subscribed(ssl_flag, this.raw(), topic.ptr, topic.len);
         }
+        pub fn getTopicsAsJSArray(this: *WebSocket, globalObject: *JSGlobalObject) JSValue {
+            return c.uws_ws_get_topics_as_js_array(ssl_flag, this.raw(), globalObject);
+        }
 
         pub fn publish(this: *WebSocket, topic: []const u8, message: []const u8) bool {
             return c.uws_ws_publish(ssl_flag, this.raw(), topic.ptr, topic.len, message.ptr, message.len);
@@ -160,6 +163,12 @@ pub const AnyWebSocket = union(enum) {
         return switch (this) {
             .ssl => c.uws_ws_is_subscribed(1, this.raw(), topic.ptr, topic.len),
             .tcp => c.uws_ws_is_subscribed(0, this.raw(), topic.ptr, topic.len),
+        };
+    }
+    pub fn getTopicsAsJSArray(this: AnyWebSocket, globalObject: *JSGlobalObject) JSValue {
+        return switch (this) {
+            .ssl => c.uws_ws_get_topics_as_js_array(1, this.raw(), globalObject),
+            .tcp => c.uws_ws_get_topics_as_js_array(0, this.raw(), globalObject),
         };
     }
     // pub fn iterateTopics(this: AnyWebSocket) {
@@ -338,6 +347,7 @@ pub const c = struct {
     pub extern fn uws_ws_unsubscribe(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, length: usize) bool;
     pub extern fn uws_ws_is_subscribed(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, length: usize) bool;
     pub extern fn uws_ws_iterate_topics(ssl: i32, ws: ?*RawWebSocket, callback: ?*const fn ([*c]const u8, usize, ?*anyopaque) callconv(.c) void, user_data: ?*anyopaque) void;
+    pub extern fn uws_ws_get_topics_as_js_array(ssl: i32, ws: *RawWebSocket, globalObject: *JSGlobalObject) JSValue;
     pub extern fn uws_ws_publish(ssl: i32, ws: ?*RawWebSocket, topic: [*]const u8, topic_length: usize, message: [*]const u8, message_length: usize) bool;
     pub extern fn uws_ws_publish_with_options(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, topic_length: usize, message: [*c]const u8, message_length: usize, opcode: Opcode, compress: bool) bool;
     pub extern fn uws_ws_get_buffered_amount(ssl: i32, ws: ?*RawWebSocket) usize;
@@ -350,6 +360,9 @@ pub const c = struct {
 const bun = @import("bun");
 const std = @import("std");
 const uws_app_t = @import("./App.zig").uws_app_t;
+
+const JSGlobalObject = bun.jsc.JSGlobalObject;
+const JSValue = bun.jsc.JSValue;
 
 const uws = bun.uws;
 const NewApp = uws.NewApp;

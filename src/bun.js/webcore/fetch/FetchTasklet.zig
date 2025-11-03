@@ -703,18 +703,23 @@ pub const FetchTasklet = struct {
     // CORE FIELDS
     // ============================================================================
     sink: ?*ResumableSink = null,
-    http: ?*http.AsyncHTTP = null,
-    result: http.HTTPClientResult = .{},
-    metadata: ?http.HTTPResponseMetadata = null,
+    // PHASE 7.4: http migrated to shared.http
+    // http: ?*http.AsyncHTTP = null,
+    // PHASE 7.4: result migrated to shared.result
+    // result: http.HTTPClientResult = .{},
+    // PHASE 7.4: metadata migrated to shared.metadata
+    // metadata: ?http.HTTPResponseMetadata = null,
     // PHASE 7: javascript_vm migrated to main_thread.javascript_vm
     // PHASE 7: global_this migrated to main_thread.global_this
     request_body: HTTPRequestBody = undefined,
     request_body_streaming_buffer: ?*http.ThreadSafeStreamBuffer = null,
 
-    /// buffer being used by AsyncHTTP
-    response_buffer: MutableString = undefined,
-    /// buffer used to stream response to JS
-    scheduled_response_buffer: MutableString = undefined,
+    // PHASE 7.4: response_buffer migrated to shared.response_buffer
+    // /// buffer being used by AsyncHTTP
+    // response_buffer: MutableString = undefined,
+    // PHASE 7.4: scheduled_response_buffer migrated to shared.scheduled_response_buffer
+    // /// buffer used to stream response to JS
+    // scheduled_response_buffer: MutableString = undefined,
     /// response weak ref we need this to track the response JS lifetime
     response: jsc.Weak(FetchTasklet) = .{},
     /// native response ref if we still need it when JS is discarted
@@ -723,12 +728,14 @@ pub const FetchTasklet = struct {
     // Old: ignore_data: bool = false,
     // New: Computed from: shouldIgnoreBodyData(lifecycle, signal_store.aborted)
     // The helper checks: abort requested OR lifecycle == .aborted
-    /// stream strong ref if any is available
-    readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
+    // PHASE 7.4: readable_stream_ref migrated to main_thread.readable_stream_ref
+    // /// stream strong ref if any is available
+    // readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
     request_headers: Headers = Headers{ .allocator = undefined },
     // PHASE 7: promise migrated to main_thread.promise
     concurrent_task: jsc.ConcurrentTask = .{},
-    poll_ref: Async.KeepAlive = .{},
+    // PHASE 7.4: poll_ref migrated to main_thread.poll_ref
+    // poll_ref: Async.KeepAlive = .{},
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the request
     /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
@@ -744,11 +751,12 @@ pub const FetchTasklet = struct {
     signal_store: http.Signals.Store = .{},
     has_schedule_callback: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
-    // must be stored because AbortSignal stores reason weakly
-    abort_reason: jsc.Strong.Optional = .empty,
+    // PHASE 7.4: abort_reason migrated to main_thread.abort_reason
+    // // must be stored because AbortSignal stores reason weakly
+    // abort_reason: jsc.Strong.Optional = .empty,
 
-    // custom checkServerIdentity
-    check_server_identity: jsc.Strong.Optional = .empty,
+    // PHASE 7.4: check_server_identity migrated to main_thread.check_server_identity
+    // check_server_identity: jsc.Strong.Optional = .empty,
     reject_unauthorized: bool = true,
     upgraded_connection: bool = false,
     // Custom Hostname
@@ -760,7 +768,8 @@ pub const FetchTasklet = struct {
     //   - is_waiting_request_stream_start: bool = false → Check request_stream_state == .waiting_start
     mutex: Mutex,
 
-    tracker: jsc.Debugger.AsyncTaskTracker,
+    // PHASE 7.4: tracker migrated to main_thread.tracker
+    // tracker: jsc.Debugger.AsyncTaskTracker,
 
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
 
@@ -943,25 +952,25 @@ pub const FetchTasklet = struct {
             this.hostname = null;
         }
 
-        if (this.result.certificate_info) |*certificate| {
+        if (this.shared.result.certificate_info) |*certificate| {
             certificate.deinit(bun.default_allocator);
-            this.result.certificate_info = null;
+            this.shared.result.certificate_info = null;
         }
 
         this.request_headers.entries.deinit(allocator);
         this.request_headers.buf.deinit(allocator);
         this.request_headers = Headers{ .allocator = undefined };
 
-        if (this.http) |http_| {
+        if (this.shared.http) |http_| {
             http_.clearData();
         }
 
-        if (this.metadata != null) {
-            this.metadata.?.deinit(allocator);
-            this.metadata = null;
+        if (this.shared.metadata != null) {
+            this.shared.metadata.?.deinit(allocator);
+            this.shared.metadata = null;
         }
 
-        this.response_buffer.deinit();
+        this.shared.response_buffer.deinit();
         this.response.deinit();
         if (this.native_response) |response| {
             this.native_response = null;
@@ -969,9 +978,9 @@ pub const FetchTasklet = struct {
             response.unref();
         }
 
-        this.readable_stream_ref.deinit();
+        this.main_thread.readable_stream_ref.deinit();
 
-        this.scheduled_response_buffer.deinit();
+        this.shared.scheduled_response_buffer.deinit();
         // MIGRATION (Phase 7.3): Replaced is_waiting_request_stream_start with request_stream_state check
         // Old: if (this.request_body != .ReadableStream or this.is_waiting_request_stream_start)
         // New: Detach if not a stream, or if stream hasn't started yet (waiting_start state)
@@ -979,8 +988,8 @@ pub const FetchTasklet = struct {
             this.request_body.detach();
         }
 
-        this.abort_reason.deinit();
-        this.check_server_identity.deinit();
+        this.main_thread.abort_reason.deinit();
+        this.main_thread.check_server_identity.deinit();
         this.clearAbortSignal();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
         this.clearSink();
@@ -1002,8 +1011,8 @@ pub const FetchTasklet = struct {
 
         const allocator = bun.default_allocator;
 
-        if (this.http) |http_| {
-            this.http = null;
+        if (this.shared.http) |http_| {
+            this.shared.http = null;
             allocator.destroy(http_);
         }
         allocator.destroy(this);
@@ -1089,7 +1098,7 @@ pub const FetchTasklet = struct {
         log("processBodyDataInitial", .{});
 
         // Check if we have a readable stream yet
-        const has_stream = this.readable_stream_ref.held.has();
+        const has_stream = this.main_thread.readable_stream_ref.held.has();
 
         if (has_stream) {
             // Stream exists - transition to streaming mode
@@ -1109,8 +1118,8 @@ pub const FetchTasklet = struct {
         const globalThis = this.main_thread.global_this;
 
         // Get data from scheduled_response_buffer
-        const data = this.scheduled_response_buffer.list.items;
-        const has_more = this.result.has_more;
+        const data = this.shared.scheduled_response_buffer.list.items;
+        const has_more = this.shared.result.has_more;
 
         // Early exit if nothing to do
         if (data.len == 0 and has_more) {
@@ -1118,7 +1127,7 @@ pub const FetchTasklet = struct {
         }
 
         // Get stream
-        const stream = this.readable_stream_ref.get(globalThis) orelse {
+        const stream = this.main_thread.readable_stream_ref.get(globalThis) orelse {
             // Stream gone - switch to buffering mode
             log("streamBodyToJS: stream gone, switching to buffering", .{});
             // Data already in scheduled_response_buffer, just return
@@ -1143,8 +1152,8 @@ pub const FetchTasklet = struct {
             );
         } else {
             // Final chunk - close stream
-            var prev = this.readable_stream_ref;
-            this.readable_stream_ref = .{};
+            var prev = this.main_thread.readable_stream_ref;
+            this.main_thread.readable_stream_ref = .{};
             defer prev.deinit();
 
             try stream.ptr.Bytes.onData(
@@ -1174,8 +1183,8 @@ pub const FetchTasklet = struct {
             return;
         }
 
-        const data = this.scheduled_response_buffer.list.items;
-        const has_more = this.result.has_more;
+        const data = this.shared.scheduled_response_buffer.list.items;
+        const has_more = this.shared.result.has_more;
 
         if (has_more) {
             try readable.ptr.Bytes.onData(
@@ -1210,13 +1219,13 @@ pub const FetchTasklet = struct {
     fn finalizeBufferedBody(this: *FetchTasklet, response: *Response) bun.JSTerminated!void {
         log("finalizeBufferedBody", .{});
 
-        if (this.result.has_more) {
+        if (this.shared.result.has_more) {
             // Not done yet, keep buffering
             return;
         }
 
         // Transfer buffered data to body
-        var scheduled_response_buffer = this.scheduled_response_buffer.list;
+        var scheduled_response_buffer = this.shared.scheduled_response_buffer.list;
         const body = response.getBodyValue();
         var old = body.*;
         const body_value = Body.Value{
@@ -1227,7 +1236,7 @@ pub const FetchTasklet = struct {
         body.* = body_value;
         log("finalizeBufferedBody: body_value length={}", .{body_value.InternalBlob.bytes.items.len});
 
-        this.scheduled_response_buffer = .{
+        this.shared.scheduled_response_buffer = .{
             .allocator = bun.default_allocator,
             .list = .{
                 .items = &.{},
@@ -1253,7 +1262,7 @@ pub const FetchTasklet = struct {
         var js_err = JSValue.zero;
 
         // if we are streaming update with error
-        if (this.readable_stream_ref.get(globalThis)) |readable| {
+        if (this.main_thread.readable_stream_ref.get(globalThis)) |readable| {
             if (readable.ptr == .Bytes) {
                 js_err = err.toJS(globalThis);
                 js_err.ensureStillAlive();
@@ -1287,13 +1296,13 @@ pub const FetchTasklet = struct {
     /// Caller must hold the mutex when calling this function.
     /// Phase 4.1: State-based dispatch - simplified top-level logic
     pub fn onBodyReceived(this: *FetchTasklet) bun.JSTerminated!void {
-        const success = this.result.isSuccess();
+        const success = this.shared.result.isSuccess();
         // reset the buffer if we are streaming or if we are not waiting for buffering anymore
         var buffer_reset = true;
-        log("onBodyReceived success={} has_more={}", .{ success, this.result.has_more });
+        log("onBodyReceived success={} has_more={}", .{ success, this.shared.result.has_more });
         defer {
             if (buffer_reset) {
-                this.scheduled_response_buffer.reset();
+                this.shared.scheduled_response_buffer.reset();
             }
         }
 
@@ -1334,7 +1343,7 @@ pub const FetchTasklet = struct {
         if (vm.isShuttingDown()) {
             // Still need to check if we're done for cleanup
             this.mutex.lock();
-            const is_done = !this.result.has_more;
+            const is_done = !this.shared.result.has_more;
             this.mutex.unlock();
             if (is_done) {
                 this.deref();
@@ -1344,15 +1353,15 @@ pub const FetchTasklet = struct {
 
         // Acquire lock to read shared state
         this.mutex.lock();
-        const is_done = !this.result.has_more;
+        const is_done = !this.shared.result.has_more;
 
         const globalThis = this.main_thread.global_this;
         defer {
             this.mutex.unlock();
             // if we are not done we wait until the next call
             if (is_done) {
-                var poll_ref = this.poll_ref;
-                this.poll_ref = .{};
+                var poll_ref = this.main_thread.poll_ref;
+                this.main_thread.poll_ref = .{};
                 poll_ref.unref(vm);
                 this.deref();
             }
@@ -1360,7 +1369,7 @@ pub const FetchTasklet = struct {
         // MIGRATION (Phase 7.3): Replaced is_waiting_request_stream_start with request_stream_state check
         // Old: if (this.is_waiting_request_stream_start and this.result.can_stream)
         // New: Check if request stream is in waiting_start state
-        if (this.request_stream_state == .waiting_start and this.result.can_stream) {
+        if (this.request_stream_state == .waiting_start and this.shared.result.can_stream) {
             // start streaming
             this.startRequestStream();
         }
@@ -1372,7 +1381,7 @@ pub const FetchTasklet = struct {
             try this.onBodyReceived();
             return;
         }
-        if (this.metadata == null and this.result.isSuccess()) return;
+        if (this.shared.metadata == null and this.shared.result.isSuccess()) return;
 
         // if we abort because of cert error
         // we wait the Http Client because we already have the response
@@ -1381,7 +1390,7 @@ pub const FetchTasklet = struct {
         // Old: if (this.is_waiting_abort)
         // New: Check atomic abort flag - this indicates abort pending but waiting for HTTP thread cleanup
         // Note: The original logic set is_waiting_abort = has_more, so we wait if aborted AND has_more
-        if (this.signal_store.aborted.load(.monotonic) and this.result.has_more) {
+        if (this.signal_store.aborted.load(.monotonic) and this.shared.result.has_more) {
             return;
         }
         const promise_value = this.main_thread.promise.valueOrEmpty();
@@ -1392,8 +1401,8 @@ pub const FetchTasklet = struct {
             return;
         }
 
-        if (this.result.certificate_info) |certificate_info| {
-            this.result.certificate_info = null;
+        if (this.shared.result.certificate_info) |certificate_info| {
+            this.shared.result.certificate_info = null;
             defer certificate_info.deinit(bun.default_allocator);
 
             // we receive some error
@@ -1401,7 +1410,7 @@ pub const FetchTasklet = struct {
                 log("onProgressUpdate: aborted due certError", .{});
                 // we need to abort the request
                 const promise = promise_value.asAnyPromise().?;
-                const tracker = this.tracker;
+                const tracker = this.main_thread.tracker;
                 var result = this.onReject();
                 defer result.deinit();
 
@@ -1413,20 +1422,20 @@ pub const FetchTasklet = struct {
                 return;
             }
             // everything ok
-            if (this.metadata == null) {
+            if (this.shared.metadata == null) {
                 log("onProgressUpdate: metadata is null", .{});
                 return;
             }
         }
 
-        const tracker = this.tracker;
+        const tracker = this.main_thread.tracker;
         tracker.willDispatch(globalThis);
         defer {
             log("onProgressUpdate: promise_value is not null", .{});
             tracker.didDispatch(globalThis);
             this.main_thread.promise.deinit();
         }
-        const success = this.result.isSuccess();
+        const success = this.shared.result.isSuccess();
         const result = switch (success) {
             true => jsc.Strong.Optional.create(this.onResolve(), globalThis),
             false => brk: {
@@ -1493,7 +1502,7 @@ pub const FetchTasklet = struct {
     /// Caller must hold mutex when calling this function.
     /// Uses atomic operations to signal abort to HTTP thread.
     pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: http.CertificateInfo) bool {
-        if (this.check_server_identity.get()) |check_server_identity| {
+        if (this.main_thread.check_server_identity.get()) |check_server_identity| {
             check_server_identity.ensureStillAlive();
             if (certificate_info.cert.len > 0) {
                 const cert = certificate_info.cert;
@@ -1513,12 +1522,12 @@ pub const FetchTasklet = struct {
                         // Old: this.is_waiting_abort = this.result.has_more;
                         // New: signal_store.aborted atomic already stores abort state
                         // The combination of aborted=true + has_more is checked in onProgressUpdate
-                        this.abort_reason.set(globalObject, check_result);
+                        this.main_thread.abort_reason.set(globalObject, check_result);
                         this.signal_store.aborted.store(true, .monotonic);
-                        this.tracker.didCancel(this.main_thread.global_this);
+                        this.main_thread.tracker.didCancel(this.main_thread.global_this);
                         // we need to abort the request
-                        if (this.http) |http_| http.http_thread.scheduleShutdown(http_);
-                        this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+                        if (this.shared.http) |http_| http.http_thread.scheduleShutdown(http_);
+                        this.shared.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
                         return false;
                     };
                     var hostname: bun.String = bun.String.cloneUTF8(certificate_info.hostname);
@@ -1535,15 +1544,15 @@ pub const FetchTasklet = struct {
                         // Old: this.is_waiting_abort = this.result.has_more;
                         // New: signal_store.aborted atomic already stores abort state
                         // The combination of aborted=true + has_more is checked in onProgressUpdate
-                        this.abort_reason.set(globalObject, check_result);
+                        this.main_thread.abort_reason.set(globalObject, check_result);
                         this.signal_store.aborted.store(true, .monotonic);
-                        this.tracker.didCancel(this.main_thread.global_this);
+                        this.main_thread.tracker.didCancel(this.main_thread.global_this);
 
                         // we need to abort the request
-                        if (this.http) |http_| {
+                        if (this.shared.http) |http_| {
                             http.http_thread.scheduleShutdown(http_);
                         }
-                        this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+                        this.shared.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
                         return false;
                     }
 
@@ -1553,16 +1562,16 @@ pub const FetchTasklet = struct {
                 }
             }
         }
-        this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+        this.shared.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
         return false;
     }
 
     fn getAbortError(this: *FetchTasklet) ?Body.Value.ValueError {
-        if (this.abort_reason.has()) {
+        if (this.main_thread.abort_reason.has()) {
             defer this.clearAbortSignal();
-            const out = this.abort_reason;
+            const out = this.main_thread.abort_reason;
 
-            this.abort_reason = .empty;
+            this.main_thread.abort_reason = .empty;
             return Body.Value.ValueError{ .JSValue = out };
         }
 
@@ -1588,31 +1597,31 @@ pub const FetchTasklet = struct {
     }
 
     pub fn onReject(this: *FetchTasklet) Body.Value.ValueError {
-        bun.assert(this.result.fail != null);
+        bun.assert(this.shared.result.fail != null);
         log("onReject", .{});
 
         if (this.getAbortError()) |err| {
             return err;
         }
 
-        if (this.result.abortReason()) |reason| {
+        if (this.shared.result.abortReason()) |reason| {
             return .{ .AbortReason = reason };
         }
 
         // some times we don't have metadata so we also check http.url
-        const path = if (this.metadata) |metadata|
+        const path = if (this.shared.metadata) |metadata|
             bun.String.cloneUTF8(metadata.url)
-        else if (this.http) |http_|
+        else if (this.shared.http) |http_|
             bun.String.cloneUTF8(http_.url.href)
         else
             bun.String.empty;
 
         const fetch_error = jsc.SystemError{
-            .code = bun.String.static(switch (this.result.fail.?) {
+            .code = bun.String.static(switch (this.shared.result.fail.?) {
                 error.ConnectionClosed => "ECONNRESET",
                 else => |e| @errorName(e),
             }),
-            .message = switch (this.result.fail.?) {
+            .message = switch (this.shared.result.fail.?) {
                 error.ConnectionClosed => bun.String.static("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
                 error.FailedToOpenSocket => bun.String.static("Was there a typo in the url or port?"),
                 error.TooManyRedirects => bun.String.static("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
@@ -1701,7 +1710,7 @@ pub const FetchTasklet = struct {
     /// Main thread only - no locking needed.
     pub fn onReadableStreamAvailable(ctx: *anyopaque, globalThis: *jsc.JSGlobalObject, readable: jsc.WebCore.ReadableStream) void {
         const this = bun.cast(*FetchTasklet, ctx);
-        this.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis);
+        this.main_thread.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis);
     }
 
     /// Called from main thread when JS starts consuming the response body stream.
@@ -1715,7 +1724,7 @@ pub const FetchTasklet = struct {
             };
         }
 
-        if (this.http) |http_| {
+        if (this.shared.http) |http_| {
             http_.enableResponseBodyStreaming();
 
             // If the server sent the headers and the response body in two separate socket writes
@@ -1729,10 +1738,10 @@ pub const FetchTasklet = struct {
         defer this.mutex.unlock();
         const size_hint = this.getSizeHint();
 
-        var scheduled_response_buffer = this.scheduled_response_buffer.list;
+        var scheduled_response_buffer = this.shared.scheduled_response_buffer.list;
         // This means we have received part of the body but not the whole thing
         if (scheduled_response_buffer.items.len > 0) {
-            this.scheduled_response_buffer = .{
+            this.shared.scheduled_response_buffer = .{
                 .allocator = bun.default_allocator,
                 .list = .{
                     .items = &.{},
@@ -1781,13 +1790,13 @@ pub const FetchTasklet = struct {
             return response;
         }
 
-        var scheduled_response_buffer = this.scheduled_response_buffer.list;
+        var scheduled_response_buffer = this.shared.scheduled_response_buffer.list;
         const response = Body.Value{
             .InternalBlob = .{
                 .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
             },
         };
-        this.scheduled_response_buffer = .{
+        this.shared.scheduled_response_buffer = .{
             .allocator = bun.default_allocator,
             .list = .{
                 .items = &.{},
@@ -1800,14 +1809,14 @@ pub const FetchTasklet = struct {
 
     fn toResponse(this: *FetchTasklet) Response {
         log("toResponse", .{});
-        bun.assert(this.metadata != null);
+        bun.assert(this.shared.metadata != null);
         // at this point we always should have metadata
-        const metadata = this.metadata.?;
+        const metadata = this.shared.metadata.?;
         const http_response = metadata.response;
         // MIGRATION (Phase 7.3): Replaced is_waiting_body flag with lifecycle state transition
         // Old: this.is_waiting_body = this.result.has_more;
         // New: Set lifecycle based on whether we're still receiving body data
-        if (this.result.has_more) {
+        if (this.shared.result.has_more) {
             this.lifecycle = .response_awaiting_body_access;
         } else {
             this.lifecycle = .completed;
@@ -1822,7 +1831,7 @@ pub const FetchTasklet = struct {
                 .value = this.toBodyValue(),
             },
             bun.String.createAtomIfPossible(metadata.url),
-            this.result.redirected,
+            this.shared.result.redirected,
         );
     }
 
@@ -1832,14 +1841,14 @@ pub const FetchTasklet = struct {
         log("ignoreRemainingResponseBody", .{});
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
-        if (this.http) |http_| {
+        if (this.shared.http) |http_| {
             http_.enableResponseBodyStreaming();
         }
         // we should not keep the process alive if we are ignoring the body
         const vm = this.main_thread.javascript_vm;
-        this.poll_ref.unref(vm);
+        this.main_thread.poll_ref.unref(vm);
         // clean any remaining refereces
-        this.readable_stream_ref.deinit();
+        this.main_thread.readable_stream_ref.deinit();
         this.response.deinit();
 
         if (this.native_response) |response| {
@@ -1875,7 +1884,7 @@ pub const FetchTasklet = struct {
             // 3. We never started buffering, in which case we should ignore the body.
             //
             // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
-            if (body.* != .Locked or this.readable_stream_ref.held.has()) {
+            if (body.* != .Locked or this.main_thread.readable_stream_ref.held.has()) {
                 // Scenario 1 or 3.
                 return;
             }
@@ -1928,21 +1937,9 @@ pub const FetchTasklet = struct {
             .shared = try SharedData.init(bun.default_allocator),
             // Legacy fields (to be migrated)
             .mutex = .{},
-            .scheduled_response_buffer = .{
-                .allocator = bun.default_allocator,
-                .list = .{
-                    .items = &.{},
-                    .capacity = 0,
-                },
-            },
-            .response_buffer = MutableString{
-                .allocator = bun.default_allocator,
-                .list = .{
-                    .items = &.{},
-                    .capacity = 0,
-                },
-            },
-            .http = try allocator.create(http.AsyncHTTP),
+            // PHASE 7.4: scheduled_response_buffer now in shared container
+            // PHASE 7.4: response_buffer now in shared container
+            // PHASE 7.4: http now in shared container
             // PHASE 7: javascript_vm now in main_thread
             .request_body = fetch_options.body,
             // PHASE 7: global_this now in main_thread
@@ -1951,15 +1948,15 @@ pub const FetchTasklet = struct {
             .url_proxy_buffer = fetch_options.url_proxy_buffer,
             .signal = fetch_options.signal,
             .hostname = fetch_options.hostname,
-            .tracker = jsc.Debugger.AsyncTaskTracker.init(jsc_vm),
-            .check_server_identity = fetch_options.check_server_identity,
+            // PHASE 7.4: tracker now in main_thread container
+            // PHASE 7.4: check_server_identity now in main_thread container (initialized above)
             .reject_unauthorized = fetch_options.reject_unauthorized,
             .upgraded_connection = fetch_options.upgraded_connection,
         };
 
         fetch_tasklet.signals = fetch_tasklet.signal_store.to();
 
-        fetch_tasklet.tracker.didSchedule(globalThis);
+        fetch_tasklet.main_thread.tracker.didSchedule(globalThis);
 
         if (fetch_tasklet.request_body.store()) |store| {
             store.ref();
@@ -1974,20 +1971,23 @@ pub const FetchTasklet = struct {
             proxy = jsc_vm.transpiler.env.getHttpProxyFor(fetch_options.url);
         }
 
-        if (fetch_tasklet.check_server_identity.has() and fetch_tasklet.reject_unauthorized) {
+        if (fetch_tasklet.main_thread.check_server_identity.has() and fetch_tasklet.reject_unauthorized) {
             fetch_tasklet.signal_store.cert_errors.store(true, .monotonic);
         } else {
             fetch_tasklet.signals.cert_errors = null;
         }
 
+        // PHASE 7.4: Allocate http pointer in shared container
+        fetch_tasklet.shared.http = try allocator.create(http.AsyncHTTP);
+
         // This task gets queued on the HTTP thread.
-        fetch_tasklet.http.?.* = http.AsyncHTTP.init(
+        fetch_tasklet.shared.http.?.* = http.AsyncHTTP.init(
             bun.default_allocator,
             fetch_options.method,
             fetch_options.url,
             fetch_options.headers.entries,
             fetch_options.headers.buf.items,
-            &fetch_tasklet.response_buffer,
+            &fetch_tasklet.shared.response_buffer,
             fetch_tasklet.request_body.slice(),
             http.HTTPClientResult.Callback.New(
                 *FetchTasklet,
@@ -2010,7 +2010,7 @@ pub const FetchTasklet = struct {
         );
         // enable streaming the write side
         const isStream = fetch_tasklet.request_body == .ReadableStream;
-        fetch_tasklet.http.?.client.flags.is_streaming_request_body = isStream;
+        fetch_tasklet.shared.http.?.client.flags.is_streaming_request_body = isStream;
         // MIGRATION (Phase 7.3): Replaced is_waiting_request_stream_start flag with request_stream_state
         // Old: fetch_tasklet.is_waiting_request_stream_start = isStream;
         // New: Set request_stream_state to waiting_start if streaming, none otherwise
@@ -2023,7 +2023,7 @@ pub const FetchTasklet = struct {
             const buffer = http.ThreadSafeStreamBuffer.new(.{});
             buffer.setDrainCallback(FetchTasklet, FetchTasklet.onWriteRequestDataDrain, fetch_tasklet);
             fetch_tasklet.request_body_streaming_buffer = buffer; // We hold Ref 1
-            fetch_tasklet.http.?.request_body = .{
+            fetch_tasklet.shared.http.?.request_body = .{
                 .stream = .{
                     .buffer = buffer, // HTTP thread will hold Ref 2 when started
                     .ended = false,
@@ -2033,7 +2033,7 @@ pub const FetchTasklet = struct {
         // TODO is this necessary? the http client already sets the redirect type,
         // so manually setting it here seems redundant
         if (fetch_options.redirect_type != FetchRedirect.follow) {
-            fetch_tasklet.http.?.client.remaining_redirect_count = 0;
+            fetch_tasklet.shared.http.?.client.remaining_redirect_count = 0;
         }
 
         // we want to return after headers are received
@@ -2042,7 +2042,7 @@ pub const FetchTasklet = struct {
         if (fetch_tasklet.request_body == .Sendfile) {
             bun.assert(fetch_options.url.isHTTP());
             bun.assert(fetch_options.proxy == null);
-            fetch_tasklet.http.?.request_body = .{ .sendfile = fetch_tasklet.request_body.Sendfile };
+            fetch_tasklet.shared.http.?.request_body = .{ .sendfile = fetch_tasklet.request_body.Sendfile };
         }
 
         if (fetch_tasklet.signal) |signal| {
@@ -2057,7 +2057,7 @@ pub const FetchTasklet = struct {
     pub fn abortListener(this: *FetchTasklet, reason: JSValue) void {
         log("abortListener", .{});
         reason.ensureStillAlive();
-        this.abort_reason.set(this.main_thread.global_this, reason);
+        this.main_thread.abort_reason.set(this.main_thread.global_this, reason);
         this.abortTask();
         if (this.sink) |sink| {
             sink.cancel(reason);
@@ -2113,7 +2113,7 @@ pub const FetchTasklet = struct {
         var needs_schedule = false;
         defer if (needs_schedule) {
             // wakeup the http thread to write the data
-            http.http_thread.scheduleRequestWrite(this.http.?, .data);
+            http.http_thread.scheduleRequestWrite(this.shared.http.?, .data);
         };
 
         // dont have backpressure so we will schedule the data to be written
@@ -2152,11 +2152,11 @@ pub const FetchTasklet = struct {
         defer this.deref(); // Release ref from startRequestStream()
         if (err) |jsError| {
             // Atomic check - safe without lock
-            if (this.signal_store.aborted.load(.monotonic) or this.abort_reason.has()) {
+            if (this.signal_store.aborted.load(.monotonic) or this.main_thread.abort_reason.has()) {
                 return;
             }
             if (!jsError.isUndefinedOrNull()) {
-                this.abort_reason.set(this.main_thread.global_this, jsError);
+                this.main_thread.abort_reason.set(this.main_thread.global_this, jsError);
             }
             this.abortTask();
         } else {
@@ -2167,7 +2167,7 @@ pub const FetchTasklet = struct {
                 defer thread_safe_stream_buffer.release();
                 bun.handleOom(stream_buffer.write(http.end_of_chunked_http1_1_encoding_response_body));
             }
-            if (this.http) |http_| {
+            if (this.shared.http) |http_| {
                 // just tell to write the end of the chunked encoding aka 0\r\n\r\n
                 http.http_thread.scheduleRequestWrite(http_, .end);
             }
@@ -2180,9 +2180,9 @@ pub const FetchTasklet = struct {
     pub fn abortTask(this: *FetchTasklet) void {
         // Atomic store - safe from any thread
         this.signal_store.aborted.store(true, .monotonic);
-        this.tracker.didCancel(this.main_thread.global_this);
+        this.main_thread.tracker.didCancel(this.main_thread.global_this);
 
-        if (this.http) |http_| {
+        if (this.shared.http) |http_| {
             http.http_thread.scheduleShutdown(http_);
         }
     }
@@ -2225,8 +2225,8 @@ pub const FetchTasklet = struct {
         );
 
         var batch = bun.ThreadPool.Batch{};
-        node.http.?.schedule(allocator, &batch);
-        node.poll_ref.ref(global.bunVM());
+        node.shared.http.?.schedule(allocator, &batch);
+        node.main_thread.poll_ref.ref(global.bunVM());
 
         // increment ref so we can keep it alive until the http client is done
         node.ref();
@@ -2259,30 +2259,30 @@ pub const FetchTasklet = struct {
             task.mutex.lock();
             defer task.mutex.unlock();
 
-            task.http.?.* = async_http.*;
-            task.http.?.response_buffer = async_http.response_buffer;
+            task.shared.http.?.* = async_http.*;
+            task.shared.http.?.response_buffer = async_http.response_buffer;
 
-            const prev_metadata = task.result.metadata;
-            const prev_cert_info = task.result.certificate_info;
-            task.result = result;
+            const prev_metadata = task.shared.result.metadata;
+            const prev_cert_info = task.shared.result.certificate_info;
+            task.shared.result = result;
 
             // Preserve pending certificate info
-            if (task.result.certificate_info == null) {
+            if (task.shared.result.certificate_info == null) {
                 if (prev_cert_info) |cert_info| {
-                    task.result.certificate_info = cert_info;
+                    task.shared.result.certificate_info = cert_info;
                 }
             }
 
             // metadata should be provided only once
             if (result.metadata orelse prev_metadata) |metadata| {
-                if (task.metadata == null) {
-                    task.metadata = metadata;
+                if (task.shared.metadata == null) {
+                    task.shared.metadata = metadata;
                 }
-                task.result.metadata = null;
+                task.shared.result.metadata = null;
             }
 
             task.body_size = result.body_size;
-            task.response_buffer = result.body.?.*;
+            task.shared.response_buffer = result.body.?.*;
 
             // Copy data to scheduled buffer if not ignoring
             // MIGRATION (Phase 7.3): Replaced ignore_data flag with shouldIgnoreData() method call
@@ -2291,10 +2291,10 @@ pub const FetchTasklet = struct {
             if (!task.shouldIgnoreData()) {
                 const success = result.isSuccess();
                 if (success) {
-                    _ = bun.handleOom(task.scheduled_response_buffer.write(task.response_buffer.list.items));
+                    _ = bun.handleOom(task.shared.scheduled_response_buffer.write(task.shared.response_buffer.list.items));
                 }
             }
-            task.response_buffer.reset();
+            task.shared.response_buffer.reset();
             return;
         }
 
@@ -2303,49 +2303,49 @@ pub const FetchTasklet = struct {
             task.mutex.lock();
             defer task.mutex.unlock();
 
-            task.http.?.* = async_http.*;
-            task.http.?.response_buffer = async_http.response_buffer;
+            task.shared.http.?.* = async_http.*;
+            task.shared.http.?.response_buffer = async_http.response_buffer;
 
             // MIGRATION (Phase 7.3): Replaced ignore_data in log with shouldIgnoreData() call
             // Old: task.ignore_data
             // New: task.shouldIgnoreData()
             log("callback success={} ignore_data={} has_more={} bytes={}", .{ result.isSuccess(), task.shouldIgnoreData(), result.has_more, result.body.?.list.items.len });
 
-            const prev_metadata = task.result.metadata;
-            const prev_cert_info = task.result.certificate_info;
-            task.result = result;
+            const prev_metadata = task.shared.result.metadata;
+            const prev_cert_info = task.shared.result.certificate_info;
+            task.shared.result = result;
 
             // Preserve pending certificate info if it was provided in the previous update.
-            if (task.result.certificate_info == null) {
+            if (task.shared.result.certificate_info == null) {
                 if (prev_cert_info) |cert_info| {
-                    task.result.certificate_info = cert_info;
+                    task.shared.result.certificate_info = cert_info;
                 }
             }
 
             // metadata should be provided only once
             if (result.metadata orelse prev_metadata) |metadata| {
                 log("added callback metadata", .{});
-                if (task.metadata == null) {
-                    task.metadata = metadata;
+                if (task.shared.metadata == null) {
+                    task.shared.metadata = metadata;
                 }
 
-                task.result.metadata = null;
+                task.shared.result.metadata = null;
             }
 
             task.body_size = result.body_size;
 
             const success = result.isSuccess();
-            task.response_buffer = result.body.?.*;
+            task.shared.response_buffer = result.body.?.*;
 
             // MIGRATION (Phase 7.3): Replaced ignore_data flag with shouldIgnoreData() method call
             // Old: if (task.ignore_data)
             // New: if (task.shouldIgnoreData())
             if (task.shouldIgnoreData()) {
-                task.response_buffer.reset();
+                task.shared.response_buffer.reset();
 
-                if (task.scheduled_response_buffer.list.capacity > 0) {
-                    task.scheduled_response_buffer.deinit();
-                    task.scheduled_response_buffer = .{
+                if (task.shared.scheduled_response_buffer.list.capacity > 0) {
+                    task.shared.scheduled_response_buffer.deinit();
+                    task.shared.scheduled_response_buffer = .{
                         .allocator = bun.default_allocator,
                         .list = .{
                             .items = &.{},
@@ -2362,10 +2362,10 @@ pub const FetchTasklet = struct {
             } else {
                 if (success) {
                     // Append new data to scheduled response buffer
-                    _ = bun.handleOom(task.scheduled_response_buffer.write(task.response_buffer.list.items));
+                    _ = bun.handleOom(task.shared.scheduled_response_buffer.write(task.shared.response_buffer.list.items));
                 }
                 // reset for reuse
-                task.response_buffer.reset();
+                task.shared.response_buffer.reset();
             }
         }
 

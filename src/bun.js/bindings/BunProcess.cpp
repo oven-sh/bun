@@ -232,7 +232,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
 #if OS(WINDOWS)
     object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsOwnedString(vm, String::fromLatin1(uv_version_string()))), 0);
 #else
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsOwnedString(vm, String("1.48.0"_s))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsOwnedString(vm, String("1.51.0"_s))), 0);
 #endif
     object->putDirect(vm, JSC::Identifier::fromString(vm, "napi"_s), JSValue(JSC::jsOwnedString(vm, String("10"_s))), 0);
 
@@ -3161,7 +3161,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * 
 
 #elif OS(LINUX)
     struct rusage rusage;
-#ifdef RUSAGE_THREAD
+#if defined(RUSAGE_THREAD)
     int status = getrusage(RUSAGE_THREAD, &rusage);
 #elifdef RUSAGE_LWP
     int status = getrusage(RUSAGE_LWP, &rusage);

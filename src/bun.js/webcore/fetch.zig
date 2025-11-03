@@ -291,41 +291,44 @@ pub const FetchTasklet = struct {
         }
     };
 
-    // ---- NEW: Refactored ownership groups ----
-    // TODO: Migrate all uses to these bags
-    // js: JsRefs,
-    // net: NetRefs,
-    // buffers: Buffers,
+    // ---- Refactored ownership groups ----
+    // TODO Phase 2: Populate these during initialization and migrate all accessors
+    // js: JsRefs = undefined,
+    // net: NetRefs = undefined,
+    // buffers: Buffers = undefined,
     // req_body: RequestBodyOwner = .None,
     // abort: AbortState = .{},
-    // state: State = .Scheduled,
+    state: State = .Scheduled,
     // schedule_guard: ScheduleGuard = .{},
 
-    // ---- OLD fields (to be migrated) ----
+    // ---- OLD fields retained for compatibility during migration ----
+    // TODO: Remove these as we migrate all accessors
     sink: ?*ResumableSink = null,
     http: ?*http.AsyncHTTP = null,
-    result: http.HTTPClientResult = .{},
-    metadata: ?http.HTTPResponseMetadata = null,
-    javascript_vm: *VirtualMachine = undefined,
-    global_this: *JSGlobalObject = undefined,
     request_body: HTTPRequestBody = undefined,
     request_body_streaming_buffer: ?*http.ThreadSafeStreamBuffer = null,
 
-    /// buffer being used by AsyncHTTP
+    /// buffer being used by AsyncHTTP (kept for now, will move to buffers.scratch)
     response_buffer: MutableString = undefined,
-    /// buffer used to stream response to JS
+    /// buffer used to stream response to JS (maps to buffers.scheduled)
     scheduled_response_buffer: MutableString = undefined,
-    /// response weak ref we need this to track the response JS lifetime
+    /// response weak ref (maps to js.response_weak)
     response: jsc.Weak(FetchTasklet) = .{},
-    /// native response ref if we still need it when JS is discarted
+    /// native response ref (maps to js.native_response)
     native_response: ?*Response = null,
     ignore_data: bool = false,
-    /// stream strong ref if any is available
+    /// stream strong ref (maps to js.readable_stream)
     readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
     request_headers: Headers = Headers{ .allocator = undefined },
     promise: jsc.JSPromise.Strong,
     concurrent_task: jsc.ConcurrentTask = .{},
     poll_ref: Async.KeepAlive = .{},
+
+    // Shared fields (not in bags)
+    result: http.HTTPClientResult = .{},
+    metadata: ?http.HTTPResponseMetadata = null,
+    javascript_vm: *VirtualMachine = undefined,
+    global_this: *JSGlobalObject = undefined,
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the request
     /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
@@ -358,9 +361,6 @@ pub const FetchTasklet = struct {
     tracker: jsc.Debugger.AsyncTaskTracker,
 
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
-
-    // NEW: State machine (added incrementally)
-    state: State = .Scheduled,
 
     pub fn ref(this: *FetchTasklet) void {
         const count = this.ref_count.fetchAdd(1, .monotonic);

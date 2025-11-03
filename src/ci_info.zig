@@ -67,17 +67,17 @@ const CI = enum {
     woodpecker,
     @"xcode-cloud",
     @"xcode-server",
+    unknown,
 
     pub var once = std.once(struct {
         pub fn once() void {
             var name: []const u8 = "";
             defer ci_name = name;
 
-            if (bun.env_var.CI.get()) |ci| {
-                if (!ci) {
-                    return;
-                }
-            }
+            if (bun.env_var.CI.get()) |ci| switch (ci) {
+                false => return,
+                true => name = "unknown", // don't immediately return so we can still determine the CI name
+            };
 
             // Special case Heroku
             if (bun.env_var.NODE.get()) |node| {
@@ -412,6 +412,10 @@ const CI = enum {
             &.{
                 .{ "XCS", "" },
             },
+        },
+        .unknown = .{
+            false,
+            &.{},
         },
     });
 };

@@ -578,74 +578,6 @@ const FetchError = union(enum) {
 
 /// Abort signal handling with centralized lifecycle management.
 /// Ensures all ref/unref operations are paired correctly.
-const AbortHandling = struct {
-    #signal: ?*jsc.WebCore.AbortSignal = null,
-    #has_pending_activity_ref: bool = false,
-    #has_listener: bool = false,
-
-    /// Attach abort signal and set up listener.
-    /// Takes ownership of signal ref.
-    fn attachSignal(
-        self: *AbortHandling,
-        signal: *jsc.WebCore.AbortSignal,
-        fetch: *FetchTasklet,
-    ) !void {
-        bun.assert(self.#signal == null);
-
-        // Ref the signal (we now own a reference)
-        signal.ref();
-        self.#signal = signal;
-
-        // Listen for abort event
-        const listener = signal.listen(FetchTasklet, fetch, onAbortCallback);
-        self.#has_listener = (listener != null);
-
-        // Add pending activity ref (keeps signal alive)
-        signal.pendingActivityRef();
-        self.#has_pending_activity_ref = true;
-    }
-
-    /// Detach signal and clean up all references.
-    fn detach(self: *AbortHandling) void {
-        if (self.#signal) |signal| {
-            // Remove pending activity ref if we added one
-            if (self.#has_pending_activity_ref) {
-                signal.pendingActivityUnref();
-                self.#has_pending_activity_ref = false;
-            }
-
-            // Listener is automatically removed by signal
-            self.#has_listener = false;
-
-            // Unref the signal (release our reference)
-            signal.unref();
-            self.#signal = null;
-        }
-    }
-
-    /// Single cleanup path
-    fn deinit(self: *AbortHandling) void {
-        self.detach();
-    }
-
-    /// Callback invoked when abort signal fires
-    fn onAbortCallback(fetch: *FetchTasklet) void {
-        // Set atomic abort flag for HTTP thread fast-path
-        fetch.shared.signal_store.aborted.store(true, .release);
-
-        // Transition lifecycle state under lock
-        fetch.shared.mutex.lock();
-        const old_lifecycle = fetch.shared.lifecycle;
-        if (!old_lifecycle.isTerminal()) {
-            fetch.shared.lifecycle = .aborted;
-        }
-        fetch.shared.mutex.unlock();
-
-        // Abort the HTTP request
-        fetch.abortTask();
-    }
-};
-
 // ============================================================================
 // HOSTNAME BUFFER PATTERN
 // ============================================================================
@@ -1437,6 +1369,25 @@ pub const FetchTasklet = struct {
         if (this.shared.signal_store.aborted.load(.monotonic) and this.shared.result.has_more) {
             return;
         }
+
+        // Check if we have an abort error to reject with
+        if (this.getAbortError()) |abort_error| {
+            const promise_value = this.main_thread.promise.valueOrEmpty();
+            if (!promise_value.isEmptyOrUndefinedOrNull()) {
+                const promise = promise_value.asAnyPromise().?;
+                const tracker = this.main_thread.tracker;
+                var result = abort_error;
+                defer result.deinit();
+
+                promise_value.ensureStillAlive();
+                try promise.reject(globalThis, result.toJS(globalThis));
+
+                tracker.didDispatch(globalThis);
+                this.main_thread.promise.deinit();
+            }
+            return;
+        }
+
         const promise_value = this.main_thread.promise.valueOrEmpty();
 
         if (promise_value.isEmptyOrUndefinedOrNull()) {
@@ -2117,6 +2068,12 @@ pub const FetchTasklet = struct {
             sink.cancel(reason);
             return;
         }
+
+        // When there's no sink, we must manually schedule promise rejection.
+        // The HTTP thread callback returns early when aborted (line 2303),
+        // so onProgressUpdate won't be called otherwise.
+        this.ref(); // Keep alive during cross-thread handoff
+        this.main_thread.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.onProgressUpdate));
     }
 
     /// Callback from HTTP thread when request buffer is drained and ready for more data.

@@ -178,10 +178,7 @@ int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_re
     uint32_t read = static_cast<uint32_t>(result);
     uint32_t written = static_cast<uint32_t>(result >> 32);
 
-    if (written < unsigned_length && read == string->length()) {
-        buffer[written] = 0;
-        written++;
-    }
+    // Handle unpaired surrogate before adding null terminator
     if (read < string->length() && U16_IS_SURROGATE(string[read]) && written + 3 <= unsigned_length) {
         // encode unpaired surrogate
         char16_t surrogate = string[read];
@@ -190,6 +187,11 @@ int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_re
         buffer[written + 2] = 0x80 | (surrogate & 0x3f);
         written += 3;
         read += 1;
+    }
+
+    if (written < unsigned_length && read == string->length()) {
+        buffer[written] = 0;
+        written++;
     }
     if (nchars_ref) {
         *nchars_ref = read;

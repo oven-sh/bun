@@ -11,57 +11,71 @@
 const ConcurrentTask = @This();
 
 task: Task = undefined,
-next: PackedNext = .{},
+next: PackedNext = .zero,
 
-pub const PackedNext = packed struct(u64) {
-    ptr_bits: u63 = 0,
-    auto_delete: bool = false,
+pub const PackedNext = enum(usize) {
+    // Store the full usize pointer with auto_delete flag in the low alignment bit
+    // ConcurrentTask contains a u64 Task field, so it's at least 8-byte aligned
+    // This preserves all pointer metadata (ARM TBI/PAC/MTE tags, etc.)
+    zero = 0,
+    _,
+
+    const AUTO_DELETE_MASK: usize = 0x1;
+    const POINTER_MASK: usize = ~AUTO_DELETE_MASK;
 
     pub fn init(ptr: ?*ConcurrentTask) PackedNext {
         if (ptr) |p| {
             const addr = @intFromPtr(p);
-            return .{
-                .ptr_bits = @as(u63, @truncate(addr)),
-                .auto_delete = false,
-            };
+            // Pointer should be aligned, verify low bit is zero
+            if (bun.Environment.allow_assert) {
+                bun.assertf((addr & AUTO_DELETE_MASK) == 0, "ConcurrentTask pointer must be aligned", .{});
+            }
+            // Store pointer with auto_delete = false (low bit = 0)
+            return @enumFromInt(addr);
         }
-        return .{};
+        return @enumFromInt(0);
     }
 
     pub fn initPreserveAutoDelete(self: PackedNext, ptr: ?*ConcurrentTask) PackedNext {
+        const self_val = @intFromEnum(self);
         if (ptr) |p| {
             const addr = @intFromPtr(p);
-            return .{
-                .ptr_bits = @as(u63, @truncate(addr)),
-                .auto_delete = self.auto_delete,
-            };
+            // Pointer should be aligned, verify low bit is zero
+            if (bun.Environment.allow_assert) {
+                bun.assertf((addr & AUTO_DELETE_MASK) == 0, "ConcurrentTask pointer must be aligned", .{});
+            }
+            // Combine new pointer with existing auto_delete flag
+            return @enumFromInt(addr | (self_val & AUTO_DELETE_MASK));
         }
-        return .{
-            .ptr_bits = 0,
-            .auto_delete = self.auto_delete,
-        };
+        // Null pointer but preserve auto_delete flag
+        return @enumFromInt(self_val & AUTO_DELETE_MASK);
     }
 
     pub fn get(self: PackedNext) ?*ConcurrentTask {
-        if (self.ptr_bits == 0) return null;
-        // Explicitly zero out bit 63 to avoid any UB
-        const ptr: u64 = @as(u64, self.ptr_bits) & 0x7FFFFFFFFFFFFFFF;
-        return @as(?*ConcurrentTask, @ptrFromInt(ptr));
+        // Mask out the auto_delete bit to get the original pointer
+        const addr = @intFromEnum(self) & POINTER_MASK;
+        if (addr == 0) return null;
+        return @ptrFromInt(addr);
     }
 
     pub fn autoDelete(self: PackedNext) bool {
-        return self.auto_delete;
+        return (@intFromEnum(self) & AUTO_DELETE_MASK) != 0;
     }
 
     pub fn setAutoDelete(self: *PackedNext, value: bool) void {
         // Non-atomic write is safe because this is only called during initialization
         // before the task is shared with other threads
-        self.auto_delete = value;
+        const self_val = @intFromEnum(self.*);
+        if (value) {
+            self.* = @enumFromInt(self_val | AUTO_DELETE_MASK);
+        } else {
+            self.* = @enumFromInt(self_val & POINTER_MASK);
+        }
     }
 
     comptime {
-        if (@sizeOf(PackedNext) != @sizeOf(u64)) {
-            @compileError("PackedNext must be the same size as a u64");
+        if (@sizeOf(PackedNext) != @sizeOf(usize)) {
+            @compileError("PackedNext must be the same size as a usize");
         }
     }
 };
@@ -83,7 +97,7 @@ pub const AutoDeinit = enum {
 pub fn create(task: Task) *ConcurrentTask {
     var concurrent_task = ConcurrentTask.new(.{
         .task = task,
-        .next = .{},
+        .next = .zero,
     });
     concurrent_task.next.setAutoDelete(true);
     return concurrent_task;
@@ -105,7 +119,7 @@ pub fn from(this: *ConcurrentTask, of: anytype, auto_deinit: AutoDeinit) *Concur
 
     this.* = .{
         .task = Task.init(of),
-        .next = .{},
+        .next = .zero,
     };
     this.next.setAutoDelete(auto_deinit == .auto_deinit);
     return this;

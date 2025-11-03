@@ -132,7 +132,7 @@ pub fn watcherReleaseAndSubmitEvent(self: *Self, ev: *HotReloadEvent) void {
                 self.dbg_server_event = ev;
             }
             ev.concurrent_task = .{
-                .next = .{},
+                .next = .zero,
                 .task = jsc.Task.init(ev),
             };
             ev.concurrent_task.next.setAutoDelete(false);

@@ -76,11 +76,11 @@ pub fn UnboundedQueuePacked(comptime T: type, comptime next_field: meta.FieldEnu
                 // There was a previous back item - set its `next` field to point to `first`
                 if (packed_or_unpacked == .@"packed") {
                     // We need to preserve old_back's auto_delete flag while updating the pointer
-                    const prev_next_ptr = @as(*u64, @ptrCast(&@field(old_back, next)));
-                    const current_packed = @atomicLoad(u64, prev_next_ptr, .monotonic);
-                    const current_typed = @as(@TypeOf(@field(first, next_name)), @bitCast(current_packed));
+                    const prev_next_ptr = @as(*usize, @ptrCast(&@field(old_back, next)));
+                    const current_packed = @atomicLoad(usize, prev_next_ptr, .monotonic);
+                    const current_typed: @TypeOf(@field(first, next_name)) = @enumFromInt(current_packed);
                     const new_packed = current_typed.initPreserveAutoDelete(first);
-                    @atomicStore(u64, prev_next_ptr, @bitCast(new_packed), .release);
+                    @atomicStore(usize, prev_next_ptr, @intFromEnum(new_packed), .release);
                 } else {
                     @atomicStore(?*T, &@field(old_back, next), first, .release);
                 }
@@ -95,8 +95,8 @@ pub fn UnboundedQueuePacked(comptime T: type, comptime next_field: meta.FieldEnu
             var first = self.front.load(.acquire) orelse return null;
             const next_item = while (true) {
                 const next_item = if (packed_or_unpacked == .@"packed") blk: {
-                    const packed_val = @atomicLoad(u64, @as(*u64, @ptrCast(&@field(first, next))), .acquire);
-                    const packed_typed = @as(@TypeOf(@field(first, next_name)), @bitCast(packed_val));
+                    const packed_val = @atomicLoad(usize, @as(*usize, @ptrCast(&@field(first, next))), .acquire);
+                    const packed_typed: @TypeOf(@field(first, next_name)) = @enumFromInt(packed_val);
                     break :blk packed_typed.get();
                 } else @atomicLoad(?*T, &@field(first, next), .acquire);
 
@@ -124,8 +124,8 @@ pub fn UnboundedQueuePacked(comptime T: type, comptime next_field: meta.FieldEnu
             const new_first = while (true) : (atomic.spinLoopHint()) {
                 // Wait for push/pushBatch to set `next`.
                 if (packed_or_unpacked == .@"packed") {
-                    const packed_val = @atomicLoad(u64, @as(*u64, @ptrCast(&@field(first, next))), .acquire);
-                    const packed_typed = @as(@TypeOf(@field(first, next_name)), @bitCast(packed_val));
+                    const packed_val = @atomicLoad(usize, @as(*usize, @ptrCast(&@field(first, next))), .acquire);
+                    const packed_typed: @TypeOf(@field(first, next_name)) = @enumFromInt(packed_val);
                     break packed_typed.get() orelse continue;
                 } else {
                     break @atomicLoad(?*T, &@field(first, next), .acquire) orelse continue;
@@ -153,8 +153,8 @@ pub fn UnboundedQueuePacked(comptime T: type, comptime next_field: meta.FieldEnu
                 next_item = while (true) : (atomic.spinLoopHint()) {
                     // Wait for push/pushBatch to set `next`.
                     if (packed_or_unpacked == .@"packed") {
-                        const packed_val = @atomicLoad(u64, @as(*u64, @ptrCast(&@field(next_item, next))), .acquire);
-                        const packed_typed = @as(@TypeOf(@field(next_item, next_name)), @bitCast(packed_val));
+                        const packed_val = @atomicLoad(usize, @as(*usize, @ptrCast(&@field(next_item, next))), .acquire);
+                        const packed_typed: @TypeOf(@field(next_item, next_name)) = @enumFromInt(packed_val);
                         break packed_typed.get() orelse continue;
                     } else {
                         break @atomicLoad(?*T, &@field(next_item, next), .acquire) orelse continue;

@@ -1403,7 +1403,7 @@ async function installReactWithCache(root: string) {
     }
   } else {
     // Install fresh and populate cache
-    await Bun.$`${bunExe()} i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental && ${bunExe()} install`
+    await Bun.$`${bunExe()} i --linker=hoisted react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental && ${bunExe()} install --linker=hoisted`
       .cwd(root)
       .env({ ...bunEnv })
       .throws(true);
@@ -1452,7 +1452,7 @@ export async function ensureReactCache(): Promise<void> {
 
         try {
           // Install React packages
-          await Bun.$`${bunExe()} i --linker=hoisted react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental && ${bunExe()} install`
+          await Bun.$`${bunExe()} i --linker=hoisted react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental && ${bunExe()} install --linker=hoisted`
             .cwd(tempInstallDir)
             .env({ ...bunEnv })
             .throws(true);
@@ -1777,7 +1777,7 @@ function testImpl<T extends DevServerTest>(
         if (fs.existsSync(path.join(root, "bun.lock"))) {
           // run bun install
           Bun.spawnSync({
-            cmd: [process.execPath, "install"],
+            cmd: [process.execPath, "install", "--linker=hoisted"],
             cwd: root,
             stdio: ["inherit", "inherit", "inherit"],
             env: bunEnv,

@@ -787,12 +787,24 @@ pub const FetchTasklet = struct {
             // Last reference - must deinit on main thread
             const vm = this.main_thread.javascript_vm;
 
-            vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinitFromMainThread));
+            vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinitFromMainThread)) catch {
+                // VM is shutting down - cannot safely deinit
+                // This will be detected as a leak by ASAN, which is correct behavior.
+                // Better to leak than use-after-free.
+                if (bun.Environment.isDebug) {
+                    bun.Output.err(
+                        "LEAK",
+                        "FetchTasklet leaked during VM shutdown (addr=0x{x})",
+                        .{@intFromPtr(this)},
+                    );
+                }
+                // Intentional leak - safer than use-after-free
+            };
         }
     }
 
     fn deinitFromMainThread(this: *FetchTasklet) void {
-        // Note: assertMainThread not available on VM, but enqueueTaskConcurrent ensures we're on main thread
+        this.main_thread.assertMainThread();
         this.deinit() catch |err| switch (err) {};
     }
 

@@ -344,6 +344,345 @@ const LockedSharedData = struct {
     }
 };
 
+// ============================================================================
+// OWNERSHIP WRAPPERS
+// ============================================================================
+
+/// Request headers with explicit ownership tracking.
+/// Encapsulates the "do I need to free this?" logic.
+const RequestHeaders = struct {
+    headers: Headers,
+    #owned: bool, // Private: true if we must deinit
+
+    /// Create empty headers (not owned - no cleanup needed)
+    fn initEmpty(allocator: std.mem.Allocator) RequestHeaders {
+        return .{
+            .headers = .{ .allocator = allocator },
+            .#owned = false,
+        };
+    }
+
+    /// Extract headers from FetchHeaders (owned - we must cleanup)
+    fn initFromFetchHeaders(
+        fetch_headers: *FetchHeaders,
+        allocator: std.mem.Allocator,
+    ) !RequestHeaders {
+        return .{
+            .headers = try Headers.from(fetch_headers, allocator),
+            .#owned = true,
+        };
+    }
+
+    /// Single cleanup path
+    fn deinit(self: *RequestHeaders) void {
+        if (self.#owned) {
+            self.headers.entries.deinit(self.headers.allocator);
+            self.headers.buf.deinit(self.headers.allocator);
+        }
+    }
+
+    /// Borrow headers for HTTP request
+    fn borrow(self: *RequestHeaders) *Headers {
+        return &self.headers;
+    }
+};
+
+/// Response metadata with explicit take semantics.
+/// Ensures metadata is only transferred once to Response object.
+const ResponseMetadataHolder = struct {
+    #metadata: ?http.HTTPResponseMetadata = null,
+    #certificate_info: ?http.CertificateInfo = null,
+    allocator: std.mem.Allocator,
+
+    fn init(allocator: std.mem.Allocator) ResponseMetadataHolder {
+        return .{ .allocator = allocator };
+    }
+
+    /// Take metadata, transferring ownership to caller.
+    /// Can only be called once - subsequent calls return null.
+    fn takeMetadata(self: *ResponseMetadataHolder) ?http.HTTPResponseMetadata {
+        const metadata = self.#metadata;
+        self.#metadata = null; // Clear to prevent double-take
+        return metadata;
+    }
+
+    /// Take certificate info, transferring ownership to caller.
+    fn takeCertificate(self: *ResponseMetadataHolder) ?http.CertificateInfo {
+        const cert = self.#certificate_info;
+        self.#certificate_info = null;
+        return cert;
+    }
+
+    /// Set metadata from HTTP result (takes ownership).
+    /// Frees old metadata if present.
+    fn setMetadata(self: *ResponseMetadataHolder, metadata: http.HTTPResponseMetadata) void {
+        if (self.#metadata) |old| {
+            old.deinit(self.allocator);
+        }
+        self.#metadata = metadata;
+    }
+
+    /// Set certificate info from HTTP result (takes ownership).
+    fn setCertificate(self: *ResponseMetadataHolder, cert: http.CertificateInfo) void {
+        if (self.#certificate_info) |old| {
+            old.deinit(self.allocator);
+        }
+        self.#certificate_info = cert;
+    }
+
+    /// Single cleanup path
+    fn deinit(self: *ResponseMetadataHolder) void {
+        if (self.#metadata) |metadata| {
+            metadata.deinit(self.allocator);
+        }
+        if (self.#certificate_info) |cert| {
+            cert.deinit(self.allocator);
+        }
+    }
+};
+
+/// Request body with explicit ownership and lifecycle management.
+/// Encapsulates the "initExactRefs(2)" pattern for streams.
+const HTTPRequestBody = union(enum) {
+    Empty: void,
+
+    /// In-memory blob
+    AnyBlob: struct {
+        blob: AnyBlob,
+        /// Store ref if blob has one (explicit ownership).
+        /// Private field tracks if we've incremented ref count.
+        #store_ref: ?struct {
+            store: *JSC.WebCore.Blob.Store,
+            refed: bool,
+
+            fn ref(self: *@This()) void {
+                if (!self.refed) {
+                    self.store.ref();
+                    self.refed = true;
+                }
+            }
+
+            fn deref(self: *@This()) void {
+                if (self.refed) {
+                    self.store.deref();
+                    self.refed = false;
+                }
+            }
+        } = null,
+
+        fn deinit(self: *@This()) void {
+            if (self.#store_ref) |*store_ref| {
+                store_ref.deref();
+            }
+        }
+    },
+
+    /// File descriptor for sendfile optimization
+    Sendfile: struct {
+        sendfile: http.SendFile,
+        #owns_fd: bool, // Do we need to close the fd?
+
+        fn deinit(self: *@This()) void {
+            if (self.#owns_fd) {
+                _ = std.posix.close(self.sendfile.fd);
+            }
+        }
+    },
+
+    /// Streaming body from ReadableStream
+    ReadableStream: struct {
+        stream: jsc.WebCore.ReadableStream.Strong,
+        /// Track if we've transferred ownership to sink.
+        /// This makes the "initExactRefs(2)" pattern explicit:
+        /// - Before transfer: we own 1 ref
+        /// - After transfer: sink owns 1 ref, stream owns 1 ref (total 2)
+        #transferred_to_sink: bool = false,
+
+        /// Transfer stream to sink (consumes our reference).
+        /// After this call, sink owns the stream.
+        fn transferToSink(self: *@This()) jsc.WebCore.ReadableStream.Strong {
+            bun.assert(!self.#transferred_to_sink);
+            self.#transferred_to_sink = true;
+            // Return stream without deiniting - ownership transferred
+            return self.stream;
+        }
+
+        fn deinit(self: *@This()) void {
+            if (!self.#transferred_to_sink) {
+                // We still own it - deinit our ref
+                self.stream.deinit();
+            }
+            // If transferred, sink owns the ref - don't double-deref
+        }
+    },
+
+    /// Single deinit path for all variants
+    fn deinit(self: *HTTPRequestBody) void {
+        switch (self.*) {
+            .Empty => {},
+            .AnyBlob => |*blob| blob.deinit(),
+            .Sendfile => |*sendfile| sendfile.deinit(),
+            .ReadableStream => |*stream| stream.deinit(),
+        }
+    }
+
+    /// Get blob store for ref counting (if applicable)
+    fn store(self: *const HTTPRequestBody) ?*JSC.WebCore.Blob.Store {
+        return switch (self.*) {
+            .AnyBlob => |*blob| if (blob.#store_ref) |ref| ref.store else null,
+            else => null,
+        };
+    }
+
+    /// Increment store ref count (if applicable)
+    fn refStore(self: *HTTPRequestBody) void {
+        if (self.* == .AnyBlob) {
+            if (self.AnyBlob.#store_ref) |*store_ref| {
+                store_ref.ref();
+            }
+        }
+    }
+};
+
+// ============================================================================
+// URL/PROXY BUFFER PATTERN
+// ============================================================================
+//
+// The url_proxy_buffer field uses bun.ptr.Owned for explicit ownership:
+//
+// In FetchTasklet:
+//
+// /// Owned buffer containing URL and optional proxy string concatenated.
+// /// Slices (url, proxy) point into this buffer.
+// url_proxy_buffer: bun.ptr.Owned([]const u8),
+//
+// /// Non-owning slice into url_proxy_buffer
+// url: []const u8,
+//
+// /// Non-owning slice into url_proxy_buffer
+// proxy: []const u8,
+//
+// /// Create URL buffer with optional proxy
+// fn createURLBuffer(
+//     allocator: std.mem.Allocator,
+//     url_str: []const u8,
+//     proxy_str: []const u8,
+// ) !bun.ptr.Owned([]const u8) {
+//     const total_len = url_str.len + proxy_str.len;
+//     const buffer = try allocator.alloc(u8, total_len);
+//
+//     // Copy URL
+//     @memcpy(buffer[0..url_str.len], url_str);
+//
+//     // Copy proxy (if present)
+//     if (proxy_str.len > 0) {
+//         @memcpy(buffer[url_str.len..], proxy_str);
+//     }
+//
+//     return bun.ptr.Owned([]const u8).fromRawIn(buffer, allocator);
+// }
+//
+// // Usage in init:
+// const buffer = try createURLBuffer(allocator, url, proxy);
+// this.url_proxy_buffer = buffer;
+// this.url = buffer.get()[0..url.len];
+// this.proxy = buffer.get()[url.len..];
+//
+// // Cleanup (automatic in deinit):
+// this.url_proxy_buffer.deinit();
+
+/// Abort signal handling with centralized lifecycle management.
+/// Ensures all ref/unref operations are paired correctly.
+const AbortHandling = struct {
+    #signal: ?*jsc.WebCore.AbortSignal = null,
+    #has_pending_activity_ref: bool = false,
+    #has_listener: bool = false,
+
+    /// Attach abort signal and set up listener.
+    /// Takes ownership of signal ref.
+    fn attachSignal(
+        self: *AbortHandling,
+        signal: *jsc.WebCore.AbortSignal,
+        fetch: *FetchTasklet,
+    ) !void {
+        bun.assert(self.#signal == null);
+
+        // Ref the signal (we now own a reference)
+        signal.ref();
+        self.#signal = signal;
+
+        // Listen for abort event
+        const listener = signal.listen(FetchTasklet, fetch, onAbortCallback);
+        self.#has_listener = (listener != null);
+
+        // Add pending activity ref (keeps signal alive)
+        signal.pendingActivityRef();
+        self.#has_pending_activity_ref = true;
+    }
+
+    /// Detach signal and clean up all references.
+    fn detach(self: *AbortHandling) void {
+        if (self.#signal) |signal| {
+            // Remove pending activity ref if we added one
+            if (self.#has_pending_activity_ref) {
+                signal.pendingActivityUnref();
+                self.#has_pending_activity_ref = false;
+            }
+
+            // Listener is automatically removed by signal
+            self.#has_listener = false;
+
+            // Unref the signal (release our reference)
+            signal.unref();
+            self.#signal = null;
+        }
+    }
+
+    /// Single cleanup path
+    fn deinit(self: *AbortHandling) void {
+        self.detach();
+    }
+
+    /// Callback invoked when abort signal fires
+    fn onAbortCallback(fetch: *FetchTasklet) void {
+        // Set atomic abort flag for HTTP thread fast-path
+        fetch.signal_store.aborted.store(true, .release);
+
+        // Transition state under lock
+        const old_lifecycle = fetch.result.lifecycle;
+
+        if (!old_lifecycle.isTerminal()) {
+            fetch.result.lifecycle = .aborted;
+        }
+
+        // Schedule abort handling on main thread (if not already there)
+        fetch.scheduleAbortHandling();
+    }
+};
+
+// ============================================================================
+// HOSTNAME BUFFER PATTERN
+// ============================================================================
+//
+// The hostname field uses optional bun.ptr.Owned for explicit ownership:
+//
+// In FetchTasklet:
+//
+// /// Hostname buffer for TLS certificate validation.
+// /// Only allocated if custom checkServerIdentity function is provided.
+// hostname: ?bun.ptr.Owned([]u8) = null,
+//
+// // Creation:
+// if (needs_hostname) {
+//     const buf = try allocator.dupe(u8, hostname_str);
+//     this.hostname = bun.ptr.Owned([]u8).fromRawIn(buf, allocator);
+// }
+//
+// // Cleanup (automatic in deinit):
+// if (this.hostname) |*host| {
+//     host.deinit();
+// }
+
 pub const FetchTasklet = struct {
     // ============================================================================
     // STATE MACHINE

@@ -1224,6 +1224,198 @@ pub const FetchTasklet = struct {
         }
     }
 
+    // ========================================================================
+    // STATE-BASED BODY STREAMING FUNCTIONS (Phase 4, Step 4.1)
+    // ========================================================================
+    //
+    // These functions implement state-based dispatch for body streaming.
+    // They will eventually replace the complex conditionals in onBodyReceived.
+    //
+    // CURRENT: Adapted to work with existing FetchTasklet structure
+    // FUTURE: Will be updated to use SharedData in Phase 3
+
+    /// Process initial body data before Response object exists.
+    /// Decides whether to buffer or stream based on timing.
+    ///
+    /// This handles the case where body data arrives before JS has accessed
+    /// the Response body. We check if a ReadableStream exists yet, and either:
+    /// 1. Stream directly to the stream (Path 1 in old code)
+    /// 2. Buffer the data until stream is created (Path 3 in old code)
+    fn processBodyDataInitial(this: *FetchTasklet) bun.JSTerminated!void {
+        const globalThis = this.global_this;
+
+        // Check if we have a readable stream yet (from Response.body being accessed)
+        const has_stream_ref = this.readable_stream_ref.held.has();
+
+        // Also check if Response object exists with a stream
+        const has_response_stream = blk: {
+            if (this.getCurrentResponse()) |response| {
+                if (response.getBodyReadableStream(globalThis)) |_| {
+                    break :blk true;
+                }
+            }
+            break :blk false;
+        };
+
+        if (has_stream_ref or has_response_stream) {
+            // Stream exists - forward data to it
+            try this.streamBodyToJS();
+        } else {
+            // No stream yet - buffer the data
+            this.bufferBodyData();
+        }
+    }
+
+    /// Stream body data to JS ReadableStream.
+    /// Handles both direct streams (readable_stream_ref) and Response body streams.
+    ///
+    /// This corresponds to Path 1 and Path 2 in the old onBodyReceived code:
+    /// - Path 1: Stream via this.readable_stream_ref (lines 1130-1161)
+    /// - Path 2: Stream via Response.getBodyReadableStream (lines 1163-1194)
+    fn streamBodyToJS(this: *FetchTasklet) bun.JSTerminated!void {
+        const globalThis = this.global_this;
+        const scheduled_response_buffer = &this.scheduled_response_buffer.list;
+        const chunk = scheduled_response_buffer.items;
+        const has_more = this.result.has_more;
+
+        // Early exit if no data and more coming
+        if (chunk.len == 0 and has_more) {
+            return;
+        }
+
+        // Path 1: Try streaming via readable_stream_ref first
+        if (this.readable_stream_ref.get(globalThis)) |readable| {
+            if (readable.ptr == .Bytes) {
+                readable.ptr.Bytes.size_hint = this.getSizeHint();
+
+                if (has_more) {
+                    try readable.ptr.Bytes.onData(
+                        .{
+                            .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
+                        },
+                        bun.default_allocator,
+                    );
+                } else {
+                    // Done - send final chunk and clean up
+                    var prev = this.readable_stream_ref;
+                    this.readable_stream_ref = .{};
+                    defer prev.deinit();
+
+                    try readable.ptr.Bytes.onData(
+                        .{
+                            .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
+                        },
+                        bun.default_allocator,
+                    );
+                }
+                return;
+            }
+        }
+
+        // Path 2: Try streaming via Response body stream
+        if (this.getCurrentResponse()) |response| {
+            const sizeHint = this.getSizeHint();
+            response.setSizeHint(sizeHint);
+
+            if (response.getBodyReadableStream(globalThis)) |readable| {
+                if (readable.ptr == .Bytes) {
+                    if (has_more) {
+                        try readable.ptr.Bytes.onData(
+                            .{
+                                .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
+                            },
+                            bun.default_allocator,
+                        );
+                    } else {
+                        // Done - send final chunk and detach stream
+                        readable.value.ensureStillAlive();
+                        response.detachReadableStream(globalThis);
+                        try readable.ptr.Bytes.onData(
+                            .{
+                                .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
+                            },
+                            bun.default_allocator,
+                        );
+                    }
+                    return;
+                }
+            }
+
+            // No stream found - fall back to buffering
+            // This handles the case where stream disappeared or was never created
+            this.bufferBodyData();
+        }
+    }
+
+    /// Buffer body data in memory (no stream yet).
+    /// This handles the case where Response exists but body hasn't been accessed yet.
+    ///
+    /// This corresponds to Path 3 in the old onBodyReceived code (lines 1196-1224).
+    /// Data is accumulated in scheduled_response_buffer until:
+    /// 1. A stream is created (then switch to streaming)
+    /// 2. Request completes (then resolve with buffered data)
+    fn bufferBodyData(this: *FetchTasklet) void {
+        // Data is already in scheduled_response_buffer (accumulated by callback)
+        // This function is called when we decide to keep buffering
+
+        // If request is complete, finalize the buffered body
+        if (!this.result.has_more) {
+            if (this.getCurrentResponse()) |response| {
+                var scheduled_response_buffer = this.scheduled_response_buffer.list;
+                const body = response.getBodyValue();
+
+                // Transfer buffer to body
+                var old = body.*;
+                const body_value = Body.Value{
+                    .InternalBlob = .{
+                        .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
+                    },
+                };
+                body.* = body_value;
+
+                log("bufferBodyData body_value length={}", .{body_value.InternalBlob.bytes.items.len});
+
+                // Reset buffer
+                this.scheduled_response_buffer = .{
+                    .allocator = bun.default_allocator,
+                    .list = .{
+                        .items = &.{},
+                        .capacity = 0,
+                    },
+                };
+
+                // Resolve any pending promise
+                if (old == .Locked) {
+                    log("bufferBodyData old.resolve", .{});
+                    old.resolve(body, this.global_this, response.getFetchHeaders()) catch {
+                        // Handle termination error
+                        return;
+                    };
+                }
+            }
+        }
+        // If has_more is true, data stays in scheduled_response_buffer
+        // and will be accumulated on next callback
+    }
+
+    /// Buffer specific data directly into scheduled_response_buffer.
+    /// Used when we need to explicitly buffer data (e.g., when stream disappears).
+    ///
+    /// This is a helper function for explicit buffering operations.
+    /// Unlike bufferBodyData(), this takes data as a parameter and appends it.
+    fn bufferBodyDataDirect(this: *FetchTasklet, data: []const u8) void {
+        // Append data to scheduled buffer
+        _ = this.scheduled_response_buffer.write(data) catch {
+            // OOM - mark as failed
+            this.result.fail = error.OutOfMemory;
+            log("bufferBodyDataDirect OOM", .{});
+        };
+    }
+
+    // ========================================================================
+    // END STATE-BASED BODY STREAMING FUNCTIONS
+    // ========================================================================
+
     /// Called on main thread when HTTP thread has data ready.
     /// THREAD SAFETY: This runs on main thread, must minimize lock holding time.
     pub fn onProgressUpdate(this: *FetchTasklet) bun.JSTerminated!void {

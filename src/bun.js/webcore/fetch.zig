@@ -571,15 +571,37 @@ pub const FetchTasklet = struct {
         bun.assert(this.ref_count.load(.monotonic) == 0);
         this.setState(.Destroying);
 
-        this.clearData();
-
-        const allocator = bun.default_allocator;
-
-        if (this.http) |http_| {
-            this.http = null;
-            allocator.destroy(http_);
+        // Clear certificate info first (not in bags)
+        if (this.result.certificate_info) |*certificate| {
+            certificate.deinit(bun.default_allocator);
+            this.result.certificate_info = null;
         }
-        allocator.destroy(this);
+
+        // Clear old response_buffer (will be migrated to buffers.scratch later)
+        this.response_buffer.deinit();
+
+        // Deinit request body owner
+        this.req_body.deinit();
+
+        // Deinit ownership bags (single drop point for each domain)
+        this.buffers.deinit();
+        this.net.deinit();
+        this.js.deinit();
+
+        // Unref poll_ref (done here to avoid process-keepalive leaks)
+        var poll_ref = this.poll_ref;
+        this.poll_ref = .{};
+        poll_ref.unref(this.javascript_vm);
+
+        // Clear abort signal
+        this.abort_state.clear();
+        if (this.signal) |signal| {
+            signal.pendingActivityUnref();
+            signal.unref();
+            this.signal = null;
+        }
+
+        bun.default_allocator.destroy(this);
     }
 
     fn getCurrentResponse(this: *FetchTasklet) ?*Response {
@@ -765,7 +787,7 @@ pub const FetchTasklet = struct {
         jsc.markBinding(@src());
         log("onProgressUpdate", .{});
         this.mutex.lock();
-        this.has_schedule_callback.store(false, .monotonic);
+        this.schedule_guard.clear();
         const is_done = !this.result.has_more;
 
         const vm = this.javascript_vm;
@@ -1678,10 +1700,9 @@ pub const FetchTasklet = struct {
             task.response_buffer.reset();
         }
 
-        if (task.has_schedule_callback.cmpxchgStrong(false, true, .acquire, .monotonic)) |has_schedule_callback| {
-            if (has_schedule_callback) {
-                return;
-            }
+        // Use schedule_guard to prevent duplicate callbacks
+        if (!task.schedule_guard.trySet()) {
+            return;
         }
 
         task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));

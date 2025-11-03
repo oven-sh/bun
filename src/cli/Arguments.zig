@@ -45,6 +45,7 @@ pub const base_params_ = (if (Environment.show_crash_trace) debug_params else [_
     clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
     clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
     clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
+    clap.parseParam("--no-color                        Disable ANSI colors in output") catch unreachable,
 } ++ (if (builtin.have_error_return_tracing) [_]ParamType{
     // This will print more error return traces, as a debug aid
     clap.parseParam("--verbose-error-trace             Dump error return traces") catch unreachable,
@@ -382,6 +383,12 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         cmd.printHelp(false);
         Global.exit(1);
     };
+
+    if (args.flag("--no-color")) {
+        Output.enable_ansi_colors = false;
+        Output.enable_ansi_colors_stderr = false;
+        Output.enable_ansi_colors_stdout = false;
+    }
 
     const print_help = args.flag("--help");
     if (print_help) {

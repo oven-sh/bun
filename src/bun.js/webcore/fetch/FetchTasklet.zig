@@ -1051,7 +1051,6 @@ pub const FetchTasklet = struct {
     response: jsc.Weak(FetchTasklet) = .{},
     /// native response ref if we still need it when JS is discarted
     native_response: ?*Response = null,
-    ignore_data: bool = false,
     /// stream strong ref if any is available
     readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
     request_headers: Headers = Headers{ .allocator = undefined },
@@ -1138,9 +1137,6 @@ pub const FetchTasklet = struct {
     /// ownership explicit and ensures automatic cleanup via RAII.
     hostname: ?bun.ptr.Owned([]u8) = null,
 
-    is_waiting_body: bool = false,
-    is_waiting_abort: bool = false,
-    is_waiting_request_stream_start: bool = false,
     mutex: Mutex,
 
     tracker: jsc.Debugger.AsyncTaskTracker,
@@ -1390,7 +1386,7 @@ pub const FetchTasklet = struct {
         this.readable_stream_ref.deinit();
 
         this.scheduled_response_buffer.deinit();
-        if (this.request_body != .ReadableStream or this.is_waiting_request_stream_start) {
+        if (this.request_body != .ReadableStream or this.shared.request_stream_state == .waiting_start) {
             this.request_body.detach();
         }
 
@@ -1463,7 +1459,11 @@ pub const FetchTasklet = struct {
     ///
     /// Cleanup happens via clearRequestStreaming() which drops our sink ref.
     pub fn startRequestStream(this: *FetchTasklet) void {
-        this.is_waiting_request_stream_start = false;
+        {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+            this.shared.request_stream_state = .active;
+        }
         bun.assert(this.request_body == .ReadableStream);
 
         // Get the stream from request_body
@@ -1880,12 +1880,12 @@ pub const FetchTasklet = struct {
             defer this.mutex.unlock();
 
             is_done = !this.result.has_more;
-            is_waiting_request_stream_start = this.is_waiting_request_stream_start;
+            is_waiting_request_stream_start = this.shared.request_stream_state == .waiting_start;
             can_stream = this.result.can_stream;
-            is_waiting_body = this.is_waiting_body;
+            is_waiting_body = this.shared.lifecycle == .response_awaiting_body_access;
             metadata_exists = this.metadata != null;
             is_success = this.result.isSuccess();
-            is_waiting_abort = this.is_waiting_abort;
+            is_waiting_abort = this.shared.abort_requested.load(.acquire) and this.result.has_more;
 
             // Extract certificate info (will be processed outside lock)
             if (this.result.certificate_info) |cert_info| {
@@ -2047,8 +2047,8 @@ pub const FetchTasklet = struct {
                             error.JSTerminated => {},
                         }
                         const check_result = globalObject.tryTakeException().?;
-                        // mark to wait until deinit
-                        this.is_waiting_abort = this.result.has_more;
+                        // mark to wait until deinit (abort_requested + has_more checked at read time)
+                        this.shared.abort_requested.store(true, .release);
                         this.abort_reason.set(globalObject, check_result);
                         this.signal_store.aborted.store(true, .monotonic);
                         this.tracker.didCancel(this.global_this);
@@ -2066,8 +2066,8 @@ pub const FetchTasklet = struct {
 
                     // > Returns <Error> object [...] on failure
                     if (check_result.isAnyError()) {
-                        // mark to wait until deinit
-                        this.is_waiting_abort = this.result.has_more;
+                        // mark to wait until deinit (abort_requested + has_more checked at read time)
+                        this.shared.abort_requested.store(true, .release);
                         this.abort_reason.set(globalObject, check_result);
                         this.signal_store.aborted.store(true, .monotonic);
                         this.tracker.didCancel(this.global_this);
@@ -2293,7 +2293,7 @@ pub const FetchTasklet = struct {
         if (this.getAbortError()) |err| {
             return .{ .Error = err };
         }
-        if (this.is_waiting_body) {
+        if (this.shared.lifecycle == .response_awaiting_body_access) {
             const response = Body.Value{
                 .Locked = .{
                     .size_hint = this.getSizeHint(),
@@ -2329,7 +2329,13 @@ pub const FetchTasklet = struct {
         // at this point we always should have metadata
         const metadata = this.metadata.?;
         const http_response = metadata.response;
-        this.is_waiting_body = this.result.has_more;
+        if (this.result.has_more) {
+            // Transition to response_awaiting_body_access when body hasn't been fully received yet
+            // Must lock because lifecycle is shared with HTTP thread
+            var locked = this.lockShared();
+            defer locked.unlock();
+            locked.transitionTo(.response_awaiting_body_access);
+        }
         return Response.init(
             .{
                 .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
@@ -2363,7 +2369,8 @@ pub const FetchTasklet = struct {
             this.native_response = null;
         }
 
-        this.ignore_data = true;
+        // Signal to ignore remaining body data (checked via shouldIgnoreBodyData)
+        this.shared.abort_requested.store(true, .release);
     }
 
     /// Called when Response JS object is garbage collected.
@@ -2405,8 +2412,8 @@ pub const FetchTasklet = struct {
             // Signal abort to HTTP thread (under lock)
             this.signal_store.aborted.store(true, .release);
 
-            // Set ignore_data flag to stop buffering
-            this.ignore_data = true;
+            // Signal to ignore remaining body data (checked via shouldIgnoreBodyData)
+            this.shared.abort_requested.store(true, .release);
 
             // Clear accumulated buffers since we're ignoring the rest
             this.response_buffer.list.clearRetainingCapacity();
@@ -2541,7 +2548,7 @@ pub const FetchTasklet = struct {
         // enable streaming the write side
         const isStream = fetch_tasklet.request_body == .ReadableStream;
         fetch_tasklet.http.?.client.flags.is_streaming_request_body = isStream;
-        fetch_tasklet.is_waiting_request_stream_start = isStream;
+        fetch_tasklet.shared.request_stream_state = if (isStream) .waiting_start else .none;
         if (isStream) {
             const buffer = http.ThreadSafeStreamBuffer.new(.{});
             buffer.setDrainCallback(FetchTasklet, FetchTasklet.onWriteRequestDataDrain, fetch_tasklet);
@@ -2764,7 +2771,7 @@ pub const FetchTasklet = struct {
         task.http.?.* = async_http.*;
         task.http.?.response_buffer = async_http.response_buffer;
 
-        log("callback success={} ignore_data={} has_more={} bytes={}", .{ result.isSuccess(), task.ignore_data, result.has_more, result.body.?.list.items.len });
+        log("callback success={} ignore_data={} has_more={} bytes={}", .{ result.isSuccess(), shouldIgnoreBodyData(task.shared.lifecycle, task.shared.abort_requested.load(.acquire)), result.has_more, result.body.?.list.items.len });
 
         // Preserve previous metadata and certificate info
         const prev_metadata = task.result.metadata;
@@ -2792,7 +2799,7 @@ pub const FetchTasklet = struct {
         const success = result.isSuccess();
         task.response_buffer = result.body.?.*;
 
-        if (task.ignore_data) {
+        if (shouldIgnoreBodyData(task.shared.lifecycle, task.shared.abort_requested.load(.acquire))) {
             // Ignoring data - clear buffers
             task.response_buffer.reset();
 

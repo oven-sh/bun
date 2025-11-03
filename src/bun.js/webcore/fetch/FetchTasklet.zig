@@ -2,9 +2,36 @@
 //! THREAD SAFETY ARCHITECTURE
 //! ============================================================================
 //!
+//! FetchTasklet coordinates between two threads:
+//! - JavaScript Main Thread: Handles JS API, promises, streams
+//! - HTTP Thread: Performs socket I/O, TLS handshake, HTTP parsing
+//!
 //! Data is split into two categories:
 //! 1. MainThreadData - Only accessed from JavaScript main thread (no lock)
 //! 2. SharedData - Accessed from both threads (mutex protected)
+//!
+//! SYNCHRONIZATION PATTERNS (Phase 2.5):
+//!
+//! HTTP Thread → Main Thread Handoff:
+//! 1. HTTP thread receives data in callback()
+//! 2. Uses atomic swap on has_schedule_callback to prevent duplicate enqueues
+//! 3. Copies data to shared buffers under mutex
+//! 4. Enqueues onProgressUpdate() to main thread
+//! 5. Main thread processes data and resets has_schedule_callback
+//!
+//! Key Thread Safety Mechanisms:
+//! - ref_count: Atomic reference counting for lifetime management
+//! - has_schedule_callback: Atomic flag prevents duplicate main thread enqueues
+//! - signal_store.aborted: Atomic flag for fast-path abort checks
+//! - mutex: Protects all shared mutable state (buffers, result, metadata)
+//! - ThreadSafeStreamBuffer: Used for request body streaming (internal locking)
+//!
+//! Critical Rules:
+//! - HTTP thread does MINIMAL work: atomic ops, data copy under lock, enqueue
+//! - Main thread does ALL JS work: promise resolution, stream operations
+//! - Always check abort flag atomically before enqueueing work
+//! - Use proper memory ordering: acquire/release for synchronization
+//! - Avoid holding mutex while doing JS operations (can trigger GC)
 
 /// Data that can ONLY be accessed from the main JavaScript thread.
 /// No mutex needed - thread confinement enforced by assertions in debug builds.
@@ -415,11 +442,16 @@ pub const FetchTasklet = struct {
 
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
 
+    /// Increment reference count. Thread-safe (atomic operation).
+    /// Can be called from any thread.
     pub fn ref(this: *FetchTasklet) void {
         const count = this.ref_count.fetchAdd(1, .monotonic);
         bun.debugAssert(count > 0);
     }
 
+    /// Decrement reference count. Thread-safe (atomic operation).
+    /// Should be called from main thread when possible.
+    /// Use derefFromThread() when called from HTTP thread.
     pub fn deref(this: *FetchTasklet) void {
         const count = this.ref_count.fetchSub(1, .monotonic);
         bun.debugAssert(count > 0);
@@ -429,16 +461,35 @@ pub const FetchTasklet = struct {
         }
     }
 
+    /// Called from HTTP thread when dropping a reference.
+    /// Must handle case where VM is shutting down.
     pub fn derefFromThread(this: *FetchTasklet) void {
-        const count = this.ref_count.fetchSub(1, .monotonic);
-        bun.debugAssert(count > 0);
+        const old_count = this.ref_count.fetchSub(1, .monotonic);
+        bun.debugAssert(old_count > 0);
 
-        if (count == 1) {
-            // this is really unlikely to happen, but can happen
-            // lets make sure that we always call deinit from main thread
+        if (old_count == 1) {
+            // Last reference - must deinit on main thread
+            const vm = this.javascript_vm;
 
-            this.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinit));
+            vm.eventLoop().enqueueTaskConcurrent(this.concurrent_task.from(this, "deinitFromMainThread")) catch {
+                // VM is shutting down - cannot safely deinit
+                // This will be detected as a leak by ASAN, which is correct behavior.
+                // Better to leak than use-after-free.
+                if (bun.Environment.isDebug) {
+                    bun.Output.err(
+                        "LEAK",
+                        "FetchTasklet leaked during VM shutdown (addr=0x{x})",
+                        .{@intFromPtr(this)},
+                    );
+                }
+                // Intentional leak - safer than use-after-free
+            };
         }
+    }
+
+    fn deinitFromMainThread(this: *FetchTasklet) void {
+        this.global_this.bunVM().assertMainThread();
+        this.deinit() catch |err| switch (err) {};
     }
 
     pub const HTTPRequestBody = union(enum) {
@@ -548,6 +599,8 @@ pub const FetchTasklet = struct {
         }
     }
 
+    /// Clean up all owned resources.
+    /// Must be called from main thread (via deinit or deinitFromMainThread).
     fn clearData(this: *FetchTasklet) void {
         log("clearData ", .{});
         const allocator = bun.default_allocator;
@@ -602,6 +655,8 @@ pub const FetchTasklet = struct {
     }
 
     // XXX: 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void' but 'fn (*FetchTasklet) void' does not
+    /// Destroy the FetchTasklet and free all resources.
+    /// Must be called from main thread when ref_count reaches 0.
     pub fn deinit(this: *FetchTasklet) error{}!void {
         log("deinit", .{});
 
@@ -653,6 +708,8 @@ pub const FetchTasklet = struct {
         }
     }
 
+    /// Called from main thread (from onProgressUpdate) when body data is received.
+    /// Caller must hold the mutex when calling this function.
     pub fn onBodyReceived(this: *FetchTasklet) bun.JSTerminated!void {
         const success = this.result.isSuccess();
         const globalThis = this.global_this;
@@ -797,22 +854,31 @@ pub const FetchTasklet = struct {
         }
     }
 
+    /// Called on main thread to process received data from HTTP thread.
+    /// This is the main thread handler for the callback enqueued from the HTTP thread.
     pub fn onProgressUpdate(this: *FetchTasklet) bun.JSTerminated!void {
         jsc.markBinding(@src());
         log("onProgressUpdate", .{});
-        this.mutex.lock();
-        this.has_schedule_callback.store(false, .monotonic);
-        const is_done = !this.result.has_more;
+
+        // Reset callback flag first (allows HTTP thread to schedule again)
+        defer this.has_schedule_callback.store(false, .release);
 
         const vm = this.javascript_vm;
         // vm is shutting down we cannot touch JS
         if (vm.isShuttingDown()) {
+            // Still need to check if we're done for cleanup
+            this.mutex.lock();
+            const is_done = !this.result.has_more;
             this.mutex.unlock();
             if (is_done) {
                 this.deref();
             }
             return;
         }
+
+        // Acquire lock to read shared state
+        this.mutex.lock();
+        const is_done = !this.result.has_more;
 
         const globalThis = this.global_this;
         defer {
@@ -947,6 +1013,9 @@ pub const FetchTasklet = struct {
         vm.enqueueTask(jsc.Task.init(&holder.task));
     }
 
+    /// Called from main thread (from onProgressUpdate) to validate TLS certificate.
+    /// Caller must hold mutex when calling this function.
+    /// Uses atomic operations to signal abort to HTTP thread.
     pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: http.CertificateInfo) bool {
         if (this.check_server_identity.get()) |check_server_identity| {
             check_server_identity.ensureStillAlive();
@@ -1146,13 +1215,18 @@ pub const FetchTasklet = struct {
         return .{ .SystemError = fetch_error };
     }
 
+    /// Called from main thread when ReadableStream becomes available.
+    /// Main thread only - no locking needed.
     pub fn onReadableStreamAvailable(ctx: *anyopaque, globalThis: *jsc.JSGlobalObject, readable: jsc.WebCore.ReadableStream) void {
         const this = bun.cast(*FetchTasklet, ctx);
         this.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis);
     }
 
+    /// Called from main thread when JS starts consuming the response body stream.
+    /// Acquires mutex to safely transfer buffered data.
     pub fn onStartStreamingHTTPResponseBodyCallback(ctx: *anyopaque) jsc.WebCore.DrainResult {
         const this = bun.cast(*FetchTasklet, ctx);
+        // Atomic check - safe without lock
         if (this.signal_store.aborted.load(.monotonic)) {
             return jsc.WebCore.DrainResult{
                 .aborted = {},
@@ -1260,6 +1334,8 @@ pub const FetchTasklet = struct {
         );
     }
 
+    /// Called from main thread when response body should be ignored.
+    /// Caller must hold mutex when calling this function.
     fn ignoreRemainingResponseBody(this: *FetchTasklet) void {
         log("ignoreRemainingResponseBody", .{});
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
@@ -1284,6 +1360,14 @@ pub const FetchTasklet = struct {
 
     export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.C) void {
         log("onResponseFinalize", .{});
+
+        // === ACQUIRE LOCK - Fix race condition ===
+        // The Response JS object was garbage collected. This can race with the HTTP thread
+        // calling `callback()` which writes to `ignore_data` and `scheduled_response_buffer`.
+        // We must lock before checking/modifying any shared state.
+        this.mutex.lock();
+        defer this.mutex.unlock();
+
         if (this.native_response) |response| {
             const body = response.getBodyValue();
             // Three scenarios:
@@ -1453,6 +1537,8 @@ pub const FetchTasklet = struct {
         return fetch_tasklet;
     }
 
+    /// Called from main thread when abort signal is triggered.
+    /// Uses atomic operation to signal HTTP thread.
     pub fn abortListener(this: *FetchTasklet, reason: JSValue) void {
         log("abortListener", .{});
         reason.ensureStillAlive();
@@ -1488,6 +1574,8 @@ pub const FetchTasklet = struct {
         }
     }
 
+    /// Called from main thread to write request body data.
+    /// Thread-safe: Uses ThreadSafeStreamBuffer which has internal locking.
     pub fn writeRequestData(this: *FetchTasklet, data: []const u8) ResumableSinkBackpressure {
         log("writeRequestData {}", .{data.len});
         if (this.signal) |signal| {
@@ -1496,6 +1584,7 @@ pub const FetchTasklet = struct {
             }
         }
         const thread_safe_stream_buffer = this.request_body_streaming_buffer orelse return .done;
+        // acquire/release provides thread-safe access to the buffer
         const stream_buffer = thread_safe_stream_buffer.acquire();
         defer thread_safe_stream_buffer.release();
         const highWaterMark = if (this.sink) |sink| sink.highWaterMark else 16384;
@@ -1531,10 +1620,13 @@ pub const FetchTasklet = struct {
         return if (stream_buffer.size() >= highWaterMark) .backpressure else .want_more;
     }
 
+    /// Called from main thread to end the request body stream.
+    /// Thread-safe: Uses atomic operations and ThreadSafeStreamBuffer.
     pub fn writeEndRequest(this: *FetchTasklet, err: ?jsc.JSValue) void {
         log("writeEndRequest hasError? {}", .{err != null});
         defer this.deref();
         if (err) |jsError| {
+            // Atomic check - safe without lock
             if (this.signal_store.aborted.load(.monotonic) or this.abort_reason.has()) {
                 return;
             }
@@ -1557,7 +1649,11 @@ pub const FetchTasklet = struct {
         }
     }
 
+    /// Abort the fetch operation.
+    /// Can be called from any thread - uses atomic operation for thread safety.
+    /// HTTP thread checks this flag and stops processing.
     pub fn abortTask(this: *FetchTasklet) void {
+        // Atomic store - safe from any thread
         this.signal_store.aborted.store(true, .monotonic);
         this.tracker.didCancel(this.global_this);
 
@@ -1615,79 +1711,140 @@ pub const FetchTasklet = struct {
     }
 
     /// Called from HTTP thread. Handles HTTP events received from socket.
+    /// This function does MINIMAL work - only atomic operations and data copying under lock.
     pub fn callback(task: *FetchTasklet, async_http: *http.AsyncHTTP, result: http.HTTPClientResult) void {
-        // at this point only this thread is accessing result to is no race condition
+        // === HTTP THREAD - Minimal work, atomic ops only ===
+
         const is_done = !result.has_more;
         // we are done with the http client so we can deref our side
         // this is a atomic operation and will enqueue a task to deinit on the main thread
         defer if (is_done) task.derefFromThread();
 
-        task.mutex.lock();
-        // we need to unlock before task.deref();
-        defer task.mutex.unlock();
-        task.http.?.* = async_http.*;
-        task.http.?.response_buffer = async_http.response_buffer;
-
-        log("callback success={} ignore_data={} has_more={} bytes={}", .{ result.isSuccess(), task.ignore_data, result.has_more, result.body.?.list.items.len });
-
-        const prev_metadata = task.result.metadata;
-        const prev_cert_info = task.result.certificate_info;
-        task.result = result;
-
-        // Preserve pending certificate info if it was preovided in the previous update.
-        if (task.result.certificate_info == null) {
-            if (prev_cert_info) |cert_info| {
-                task.result.certificate_info = cert_info;
-            }
+        // Fast-path check: should we abort?
+        if (task.signal_store.aborted.load(.acquire)) {
+            // Don't schedule anything, HTTP client will clean up
+            return;
         }
 
-        // metadata should be provided only once
-        if (result.metadata orelse prev_metadata) |metadata| {
-            log("added callback metadata", .{});
-            if (task.metadata == null) {
-                task.metadata = metadata;
+        // Prevent duplicate enqueues (atomic swap)
+        // If already scheduled, HTTP thread will pick up this data on next callback
+        if (task.has_schedule_callback.swap(true, .acq_rel)) {
+            // Already scheduled - data will be picked up on next progress update
+            // Still need to store the data under lock for the main thread to process
+            task.mutex.lock();
+            defer task.mutex.unlock();
+
+            task.http.?.* = async_http.*;
+            task.http.?.response_buffer = async_http.response_buffer;
+
+            const prev_metadata = task.result.metadata;
+            const prev_cert_info = task.result.certificate_info;
+            task.result = result;
+
+            // Preserve pending certificate info
+            if (task.result.certificate_info == null) {
+                if (prev_cert_info) |cert_info| {
+                    task.result.certificate_info = cert_info;
+                }
             }
 
-            task.result.metadata = null;
-        }
+            // metadata should be provided only once
+            if (result.metadata orelse prev_metadata) |metadata| {
+                if (task.metadata == null) {
+                    task.metadata = metadata;
+                }
+                task.result.metadata = null;
+            }
 
-        task.body_size = result.body_size;
+            task.body_size = result.body_size;
+            task.response_buffer = result.body.?.*;
 
-        const success = result.isSuccess();
-        task.response_buffer = result.body.?.*;
-
-        if (task.ignore_data) {
+            // Copy data to scheduled buffer if not ignoring
+            if (!task.ignore_data) {
+                const success = result.isSuccess();
+                if (success) {
+                    _ = bun.handleOom(task.scheduled_response_buffer.write(task.response_buffer.list.items));
+                }
+            }
             task.response_buffer.reset();
-
-            if (task.scheduled_response_buffer.list.capacity > 0) {
-                task.scheduled_response_buffer.deinit();
-                task.scheduled_response_buffer = .{
-                    .allocator = bun.default_allocator,
-                    .list = .{
-                        .items = &.{},
-                        .capacity = 0,
-                    },
-                };
-            }
-            if (success and result.has_more) {
-                // we are ignoring the body so we should not receive more data, so will only signal when result.has_more = true
-                return;
-            }
-        } else {
-            if (success) {
-                _ = bun.handleOom(task.scheduled_response_buffer.write(task.response_buffer.list.items));
-            }
-            // reset for reuse
-            task.response_buffer.reset();
+            return;
         }
 
-        if (task.has_schedule_callback.cmpxchgStrong(false, true, .acquire, .monotonic)) |has_schedule_callback| {
-            if (has_schedule_callback) {
-                return;
+        // Copy data to shared state under lock
+        {
+            task.mutex.lock();
+            defer task.mutex.unlock();
+
+            task.http.?.* = async_http.*;
+            task.http.?.response_buffer = async_http.response_buffer;
+
+            log("callback success={} ignore_data={} has_more={} bytes={}", .{ result.isSuccess(), task.ignore_data, result.has_more, result.body.?.list.items.len });
+
+            const prev_metadata = task.result.metadata;
+            const prev_cert_info = task.result.certificate_info;
+            task.result = result;
+
+            // Preserve pending certificate info if it was provided in the previous update.
+            if (task.result.certificate_info == null) {
+                if (prev_cert_info) |cert_info| {
+                    task.result.certificate_info = cert_info;
+                }
+            }
+
+            // metadata should be provided only once
+            if (result.metadata orelse prev_metadata) |metadata| {
+                log("added callback metadata", .{});
+                if (task.metadata == null) {
+                    task.metadata = metadata;
+                }
+
+                task.result.metadata = null;
+            }
+
+            task.body_size = result.body_size;
+
+            const success = result.isSuccess();
+            task.response_buffer = result.body.?.*;
+
+            if (task.ignore_data) {
+                task.response_buffer.reset();
+
+                if (task.scheduled_response_buffer.list.capacity > 0) {
+                    task.scheduled_response_buffer.deinit();
+                    task.scheduled_response_buffer = .{
+                        .allocator = bun.default_allocator,
+                        .list = .{
+                            .items = &.{},
+                            .capacity = 0,
+                        },
+                    };
+                }
+                if (success and result.has_more) {
+                    // we are ignoring the body so we should not receive more data, so will only signal when result.has_more = true
+                    // Reset the flag since we're not enqueueing
+                    _ = task.has_schedule_callback.swap(false, .release);
+                    return;
+                }
+            } else {
+                if (success) {
+                    // Append new data to scheduled response buffer
+                    _ = bun.handleOom(task.scheduled_response_buffer.write(task.response_buffer.list.items));
+                }
+                // reset for reuse
+                task.response_buffer.reset();
             }
         }
 
-        task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
+        // Keep tasklet alive during callback
+        task.ref();
+
+        // Enqueue to main thread
+        task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit)) catch {
+            // Failed to enqueue - release ref and reset flag
+            task.deref();
+            _ = task.has_schedule_callback.store(false, .release);
+            // Data will remain in buffer and be picked up on next progress update
+        };
     }
 };
 

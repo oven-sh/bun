@@ -250,10 +250,10 @@ const SharedData = struct {
 
     /// === STATE TRACKING (protected by mutex) ===
     /// Main fetch lifecycle (mutually exclusive)
-    lifecycle: FetchLifecycle,
+    lifecycle: FetchLifecycle = .created,
 
     /// Request body streaming state (orthogonal)
-    request_stream_state: RequestStreamState,
+    request_stream_state: RequestStreamState = .none,
 
     /// Abort requested? (atomic for fast-path check from HTTP thread)
     abort_requested: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),

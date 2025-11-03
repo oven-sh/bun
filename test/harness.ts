@@ -5,6 +5,7 @@
  * without always needing to run `bun install` in development.
  */
 
+import * as numeric from "_util/numeric.ts";
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
 import { beforeAll, describe, expect } from "bun:test";
@@ -13,7 +14,6 @@ import { readdir, readFile, readlink, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join } from "path";
-import * as numeric from "_util/numeric.ts";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -1643,15 +1643,19 @@ export class VerdaccioRegistry {
 
   async start(silent: boolean = true) {
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
-      silent,
-      // Prefer using a release build of Bun since it's faster
-      execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
-      env: {
-        ...(bunEnv as any),
-        NODE_NO_WARNINGS: "1",
+    this.process = fork(
+      require.resolve("verdaccio/bin/verdaccio"),
+      ["-c", this.configPath, "-l", `0.0.0.0:${this.port}`],
+      {
+        silent,
+        // Prefer using a release build of Bun since it's faster
+        execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
+        env: {
+          ...(bunEnv as any),
+          NODE_NO_WARNINGS: "1",
+        },
       },
-    });
+    );
 
     this.process.stderr?.on("data", data => {
       console.error(`[verdaccio] stderr: ${data}`);

@@ -1920,42 +1920,31 @@ pub const FetchTasklet = struct {
         // or abort flag will be set, making shouldIgnoreData() return true automatically
     }
 
+    /// Called when Response JS object is garbage collected.
+    /// This is our signal to stop processing body data.
     export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.C) void {
         log("onResponseFinalize", .{});
 
         // === ACQUIRE LOCK - Fix race condition ===
-        // The Response JS object was garbage collected. This can race with the HTTP thread
-        // calling `callback()` which writes to `ignore_data` and `scheduled_response_buffer`.
-        // We must lock before checking/modifying any shared state.
         var locked = this.shared.lock();
         defer locked.unlock();
 
-        if (this.main_thread.native_response) |response| {
-            const body = response.getBodyValue();
-            // Three scenarios:
-            //
-            // 1. We are streaming, in which case we should not ignore the body.
-            // 2. We were buffering, in which case
-            //    2a. if we have no promise, we should ignore the body.
-            //    2b. if we have a promise, we should keep loading the body.
-            // 3. We never started buffering, in which case we should ignore the body.
-            //
-            // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
-            if (body.* != .Locked or this.main_thread.readable_stream_ref.held.has()) {
-                // Scenario 1 or 3.
-                return;
-            }
+        const lifecycle = locked.lifecycle();
 
-            if (body.Locked.promise) |promise| {
-                if (promise.isEmptyOrUndefinedOrNull()) {
-                    // Scenario 2b.
-                    this.ignoreRemainingResponseBody();
-                }
-            } else {
-                // Scenario 3.
-                this.ignoreRemainingResponseBody();
-            }
+        // Only request abort if we're still receiving body data
+        if (lifecycle.canReceiveBody()) {
+            // Signal abort to HTTP thread
+            this.shared.abort_requested.store(true, .release);
+
+            // Transition to aborted state
+            locked.transitionTo(.aborted);
+
+            // Clear accumulated buffers since we're ignoring rest
+            locked.shared.response_buffer.list.clearRetainingCapacity();
+            locked.shared.scheduled_response_buffer.list.clearRetainingCapacity();
         }
+
+        // If already terminal, nothing to do
     }
     comptime {
         _ = Bun__FetchResponse_finalize;

@@ -6627,7 +6627,7 @@ describeValkey(
 
       test.each(ValkeyFaker.channels(randomEngine, 4))("subscribing to %s does not fail", async (channel: string) => {
         const client = await ctx.connectedClient();
-        await client.subscribe(channel);
+        await client.subscribe(channel, () => {});
         await client.unsubscribe(channel);
       });
     });

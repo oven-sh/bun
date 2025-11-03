@@ -46,9 +46,10 @@ pub const JsValkey = struct {
                 defer loop.exit();
 
                 // TODO(markovejnovic): This feels pretty cobbled together...
-                self._promise.resolve(go, value.toJSWithOptions(go, .{
+                const js_value = value.toJSWithOptions(go, .{
                     .return_as_buffer = self._return_as_buffer,
-                }) catch |err| go.takeError(err));
+                }) catch |err| go.takeError(err);
+                self._promise.resolve(go, js_value);
             }
 
             pub fn reject(
@@ -93,7 +94,7 @@ pub const JsValkey = struct {
             ctx: *RequestContext,
             value: *protocol.RESPValue,
         ) !void {
-            Self.debug("{*}.onResponse(...)", .{self});
+            Self.debug("{*}.onResponse({})", .{ self, value });
             const go = self.parent()._global_obj;
 
             switch (ctx.*) {
@@ -917,7 +918,8 @@ pub const JsValkey = struct {
     ) bun.JSError!bun.jsc.JSValue {
         const channel_or_many, const handler_callback = cf.argumentsAsArray(2);
         var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
-        var redis_channels = try std.ArrayList(JSArgument).initCapacity(stack_fallback.get(), 1);
+        const allocator = stack_fallback.get();
+        var redis_channels = try std.ArrayList(JSArgument).initCapacity(allocator, 1);
         defer {
             for (redis_channels.items) |*item| {
                 item.deinit();
@@ -953,7 +955,7 @@ pub const JsValkey = struct {
         }
 
         var channel_slices = try std.ArrayList([]const u8).initCapacity(
-            stack_fallback.get(),
+            allocator,
             redis_channels.items.len,
         );
         defer channel_slices.deinit();
@@ -961,19 +963,17 @@ pub const JsValkey = struct {
             channel_slices.appendAssumeCapacity(channel_arg.slice());
         }
 
+        const handler_id: u64 = @bitCast(@intFromEnum(handler_callback));
         var ctx: RequestContext = .{ .user_request = .init(go, false) };
-        self._client.subscribe(
-            channel_slices.items,
-            handler_callback.asPtrAddress(),
-            &ctx,
-        ) catch |err| {
+        self._client.subscribe(channel_slices.items, handler_id, &ctx) catch |err| {
             // Synchronous error: swap() gives us the promise and destroys the Strong
             const promise = ctx.user_request._promise.swap();
             const error_value = protocol.valkeyErrorToJS(go, err, null, .{});
             promise.reject(go, error_value);
             return promise.toJS();
         };
-        return ctx.user_request.promise().toJS();
+        const ret_promise = ctx.user_request.promise();
+        return ret_promise.toJS();
     }
 
     pub fn unsubscribe(
@@ -1013,7 +1013,8 @@ pub const JsValkey = struct {
             }
 
             var ctx: RequestContext = .{ .user_request = .init(go, false) };
-            self._client.unsubscribeHandler(channel.slice(), listener_cb.asPtrAddress(), ctx);
+            const handler_id: u64 = @bitCast(@intFromEnum(listener_cb));
+            self._client.unsubscribeHandler(channel.slice(), handler_id, ctx);
             return ctx.user_request.promise().toJS();
         }
 

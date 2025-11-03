@@ -22,6 +22,9 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
 
     const SubscriptionTracker = struct {
         const Self = @This();
+
+        const debug = bun.Output.scoped(.valkey_subscription_tracker, .visible);
+
         /// Object stored to track an active Pub/Sub subscription.
         const SubscriptionVectorEntry = struct {
             /// The listener ID associated with this subscription.
@@ -49,6 +52,12 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             channel: []const u8,
             entry: SubscriptionVectorEntry,
         ) !SubscriptionChannelId {
+            Self.debug("{*} Adding pending handler_id={} for channel {s}...", .{
+                self,
+                entry.handler_id,
+                channel,
+            });
+
             const channel_id = self.channel_map.get(channel) orelse get_id_blk: {
                 const new_id = self._next_channel_id;
                 try self.channel_map.put(channel, new_id);
@@ -80,6 +89,12 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             channel_id: SubscriptionChannelId,
             handler_id: SubscriptionHandlerId,
         ) !void {
+            Self.debug("{*} Promoting pending handler_id={} to active on channel_id {}...", .{
+                self,
+                handler_id,
+                channel_id,
+            });
+
             const map_entry = self.map.getPtr(channel_id) orelse {
                 bun.Output.debugPanic(
                     "SubscriptionTracker.promotePendingListenerToActive did not find an " ++
@@ -113,6 +128,12 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             channel_id: SubscriptionChannelId,
             handler_id: SubscriptionHandlerId,
         ) !void {
+            Self.debug("{*} Removing active handler_id={} from channel_id {}...", .{
+                self,
+                handler_id,
+                channel_id,
+            });
+
             const map_entry = self.map.getPtr(channel_id) orelse {
                 bun.Output.debugPanic(
                     "SubscriptionTracker.removeActiveHandler did not find a channel_id {}",
@@ -153,18 +174,13 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             }
         }
 
-        pub fn removeHandler(self: *Self, channel: []const u8, handler_id: u64) !void {
-            // TODO(markovejnovic): Implement
-            _ = self;
-            _ = channel;
-            _ = handler_id;
-        }
-
         pub fn receiveMessage(
             self: *Self,
             msg: protocol.Push,
             client_listener: *ValkeyListener,
         ) !void {
+            Self.debug("{*} Receiving push message of kind {s}...", .{ self, msg.kind });
+
             const key = protocol.SubscriptionPushMessageKind.fromString(msg.kind) orelse {
                 return error.InvalidPush;
             };
@@ -267,7 +283,11 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
                 }
             }
 
-            pub fn drop(self: *RequestContext, reason: DropReason, callbacks: *ValkeyListener) void {
+            pub fn drop(
+                self: *RequestContext,
+                reason: DropReason,
+                callbacks: *ValkeyListener,
+            ) void {
                 switch (self.*) {
                     .user_context => |*ctx| {
                         callbacks.onRequestDropped(ctx, reason);
@@ -2169,7 +2189,7 @@ fn QueuedRequest(Context: type) type {
         } = .{ .plain = {} },
 
         pub fn init(req: *const Request(Context), allocator: std.mem.Allocator) !Self {
-            return Self{
+            return .{
                 .serialized_data = try req.command.serialize(allocator),
                 .context = req.context,
                 .pipelinable = req.command.canBePipelined(),

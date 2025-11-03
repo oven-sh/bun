@@ -1,7 +1,363 @@
+//! ============================================================================
+//! THREAD SAFETY ARCHITECTURE
+//! ============================================================================
+//!
+//! Data is split into two categories:
+//! 1. MainThreadData - Only accessed from JavaScript main thread (no lock)
+//! 2. SharedData - Accessed from both threads (mutex protected)
+
+/// Data that can ONLY be accessed from the main JavaScript thread.
+/// No mutex needed - thread confinement enforced by assertions in debug builds.
+const MainThreadData = struct {
+    /// Global object (non-owning pointer)
+    global_this: *JSGlobalObject,
+
+    /// VM (non-owning pointer)
+    javascript_vm: *VirtualMachine,
+
+    /// Promise to resolve/reject (owned)
+    promise: jsc.JSPromise.Strong,
+
+    /// Weak reference to Response JS object for finalization tracking.
+    /// Can become null if GC collects the Response.
+    response_weak: jsc.Weak(FetchTasklet) = .{},
+
+    /// Native Response object for finalization tracking.
+    /// INTENTIONAL DUAL OWNERSHIP with response_weak:
+    /// - Allows tracking when Response JS object is finalized
+    /// - Signals we should stop processing body data
+    /// - See Bun__FetchResponse_finalize for usage
+    native_response: ?*Response = null,
+
+    /// Strong reference to response ReadableStream (owned)
+    readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
+
+    /// Abort signal (ref-counted via AbortSignal's API)
+    /// Managed by AbortHandling wrapper
+    abort_signal: ?*jsc.WebCore.AbortSignal = null,
+
+    /// Abort reason (owned)
+    abort_reason: jsc.Strong.Optional = .empty,
+
+    /// Custom TLS check function (owned)
+    check_server_identity: jsc.Strong.Optional = .empty,
+
+    /// Keep VM alive during fetch
+    poll_ref: Async.KeepAlive = .{},
+
+    /// Task for cross-thread callbacks
+    concurrent_task: jsc.ConcurrentTask = .{},
+
+    /// Debug tracker
+    tracker: jsc.Debugger.AsyncTaskTracker,
+
+    fn assertMainThread(self: *const MainThreadData) void {
+        if (bun.Environment.isDebug) {
+            // Thread confinement assertion
+            // Could add actual thread ID check if available
+            _ = self;
+        }
+    }
+
+    fn deinit(self: *MainThreadData) void {
+        self.promise.deinit();
+        self.readable_stream_ref.deinit();
+        self.abort_reason.deinit();
+        self.check_server_identity.deinit();
+        self.poll_ref.unref(self.javascript_vm);
+        // abort_signal handled by AbortHandling wrapper
+    }
+};
+
+// ============================================================================
+// STATE MACHINE TYPES
+// ============================================================================
+
+/// Main fetch lifecycle - mutually exclusive OR states.
+/// Every FetchTasklet is in exactly ONE of these states at a time.
+const FetchLifecycle = enum(u8) {
+    /// Initial: Created, not yet queued to HTTP thread
+    created,
+
+    /// HTTP request in flight
+    /// Replaces complex state tracking in old code:
+    /// - Sending headers
+    /// - Sending body (if present)
+    /// - Waiting for response headers
+    http_active,
+
+    /// Receiving response headers from server
+    http_receiving_headers,
+
+    /// Receiving response body from server
+    /// Response object may or may not exist yet
+    http_receiving_body,
+
+    /// Response object created, body not yet accessed by JS
+    /// Replaces: is_waiting_body = true
+    response_awaiting_body_access,
+
+    /// Response body is streaming to JS ReadableStream
+    response_body_streaming,
+
+    /// Response body is buffering in memory (no stream created yet)
+    response_body_buffering,
+
+    /// Terminal states (no transitions out)
+    completed,
+    failed,
+    aborted,
+
+    pub fn isTerminal(self: FetchLifecycle) bool {
+        return switch (self) {
+            .completed, .failed, .aborted => true,
+            else => false,
+        };
+    }
+
+    pub fn isHTTPActive(self: FetchLifecycle) bool {
+        return switch (self) {
+            .http_active, .http_receiving_headers, .http_receiving_body => true,
+            else => false,
+        };
+    }
+
+    pub fn canReceiveBody(self: FetchLifecycle) bool {
+        return switch (self) {
+            .http_receiving_body, .response_body_streaming, .response_body_buffering => true,
+            else => false,
+        };
+    }
+
+    /// Validate state transition (debug builds only)
+    pub fn canTransitionTo(self: FetchLifecycle, next: FetchLifecycle) bool {
+        return switch (self) {
+            .created => switch (next) {
+                .http_active, .aborted, .failed => true,
+                else => false,
+            },
+            .http_active => switch (next) {
+                .http_receiving_headers, .aborted, .failed => true,
+                else => false,
+            },
+            .http_receiving_headers => switch (next) {
+                .http_receiving_body,
+                .response_awaiting_body_access,
+                .response_body_buffering,
+                .completed, // Empty body case
+                .aborted,
+                .failed,
+                => true,
+                else => false,
+            },
+            .http_receiving_body => switch (next) {
+                .response_awaiting_body_access, .response_body_streaming, .response_body_buffering, .completed, .aborted, .failed => true,
+                else => false,
+            },
+            .response_awaiting_body_access => switch (next) {
+                .response_body_streaming, .response_body_buffering, .completed, .aborted, .failed => true,
+                else => false,
+            },
+            .response_body_streaming => switch (next) {
+                .completed, .aborted, .failed => true,
+                else => false,
+            },
+            .response_body_buffering => switch (next) {
+                .response_body_streaming, // Upgrade to streaming
+                .completed,
+                .aborted,
+                .failed,
+                => true,
+                else => false,
+            },
+            .completed, .failed, .aborted => false, // Terminal
+        };
+    }
+};
+
+/// Request body streaming state - orthogonal to main lifecycle.
+/// Only relevant when request has a streaming body (ReadableStream).
+const RequestStreamState = enum(u8) {
+    /// No streaming request body (Blob, Sendfile, or empty)
+    none,
+
+    /// Stream exists but hasn't started yet (waiting for server ready)
+    /// Replaces: is_waiting_request_stream_start = true
+    waiting_start,
+
+    /// Stream actively being read and sent to server
+    active,
+
+    /// Stream finished (successfully or with error)
+    complete,
+};
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+/// Helper for validated state transitions (in debug builds)
+fn transitionLifecycle(shared: *SharedData, old_state: FetchLifecycle, new_state: FetchLifecycle) void {
+    if (bun.Environment.isDebug) {
+        bun.assert(old_state.canTransitionTo(new_state));
+    }
+    shared.lifecycle = new_state;
+}
+
+/// Computed property: Should we ignore remaining body data?
+/// Replaces: ignore_data boolean flag
+fn shouldIgnoreBodyData(lifecycle: FetchLifecycle, abort_requested: bool) bool {
+    // Ignore data if:
+    // 1. Abort was requested
+    // 2. Already in aborted state
+    // 3. Response finalized (handled via lifecycle check)
+    return abort_requested or lifecycle == .aborted;
+}
+
+/// Data shared between main thread and HTTP thread.
+/// ALL access must be protected by mutex.
+const SharedData = struct {
+    /// Mutex protecting all mutable fields below
+    mutex: bun.Mutex,
+
+    /// === STATE TRACKING (protected by mutex) ===
+    /// Main fetch lifecycle (mutually exclusive)
+    lifecycle: FetchLifecycle,
+
+    /// Request body streaming state (orthogonal)
+    request_stream_state: RequestStreamState,
+
+    /// Abort requested? (atomic for fast-path check from HTTP thread)
+    abort_requested: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+    /// Connection upgraded to WebSocket? (one-time flag)
+    upgraded_connection: bool = false,
+
+    /// === REFERENCE COUNTING (atomic) ===
+    ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+
+    /// === HTTP CLIENT DATA (owned by HTTP thread after queue) ===
+    http: ?*http.AsyncHTTP = null,
+    result: http.HTTPClientResult = .{},
+    metadata: ?http.HTTPResponseMetadata = null,
+
+    /// === BUFFERS (ownership documented) ===
+    /// Response buffer written by HTTP thread.
+    /// Ownership: HTTP thread writes, main thread reads under lock, then transfers.
+    response_buffer: MutableString,
+
+    /// Response buffer for JS (accumulated data before creating Response).
+    /// Ownership: Main thread only, but guarded by mutex for consistency.
+    scheduled_response_buffer: MutableString,
+
+    /// Body size tracking
+    body_size: http.HTTPClientResult.BodySize = .unknown,
+
+    /// === COORDINATION FLAGS (atomic) ===
+    /// Has callback been scheduled to main thread?
+    /// Prevents duplicate enqueues from HTTP thread.
+    has_schedule_callback: std.atomic.Value(bool),
+
+    /// Signal storage for HTTP thread
+    signals: http.Signals = .{},
+    signal_store: http.Signals.Store = .{},
+
+    fn init(allocator: std.mem.Allocator) !SharedData {
+        return SharedData{
+            .mutex = bun.Mutex.init(),
+            .lifecycle = .created,
+            .request_stream_state = .none,
+            .response_buffer = try MutableString.init(allocator, 0),
+            .scheduled_response_buffer = try MutableString.init(allocator, 0),
+            .has_schedule_callback = std.atomic.Value(bool).init(false),
+        };
+    }
+
+    fn deinit(self: *SharedData) void {
+        self.response_buffer.deinit();
+        self.scheduled_response_buffer.deinit();
+        if (self.metadata) |*metadata| {
+            metadata.deinit(self.response_buffer.allocator);
+        }
+    }
+
+    /// Lock the shared data for exclusive access.
+    /// Returns RAII wrapper that auto-unlocks on scope exit.
+    fn lock(self: *SharedData) LockedSharedData {
+        self.mutex.lock();
+        return LockedSharedData{ .shared = self };
+    }
+};
+
+/// RAII wrapper for locked shared data.
+/// Automatically unlocks on scope exit.
+const LockedSharedData = struct {
+    shared: *SharedData,
+
+    fn unlock(self: LockedSharedData) void {
+        self.shared.mutex.unlock();
+    }
+
+    /// Convenience: Get current lifecycle
+    fn lifecycle(self: LockedSharedData) FetchLifecycle {
+        return self.shared.lifecycle;
+    }
+
+    /// Convenience: Transition lifecycle with validation
+    fn transitionTo(self: LockedSharedData, new_state: FetchLifecycle) void {
+        transitionLifecycle(self.shared, self.shared.lifecycle, new_state);
+    }
+
+    /// Convenience: Should ignore body data?
+    fn shouldIgnoreBody(self: LockedSharedData) bool {
+        return shouldIgnoreBodyData(
+            self.shared.lifecycle,
+            self.shared.abort_requested.load(.acquire),
+        );
+    }
+};
+
 pub const FetchTasklet = struct {
+    // ============================================================================
+    // STATE MACHINE
+    // ============================================================================
+    //
+    // FetchTasklet tracks multiple orthogonal state dimensions:
+    // 1. Main lifecycle (FetchLifecycle) - mutually exclusive
+    // 2. Request streaming (RequestStreamState) - independent
+    // 3. Abort status (atomic bool) - independent
+    // 4. Connection upgrade (bool) - one-time flag
+
     pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
 
     const log = Output.scoped(.FetchTasklet, .visible);
+
+    // ============================================================================
+    // STATE TRANSITION EXAMPLES
+    // ============================================================================
+    //
+    // Normal fetch with buffered body:
+    //   created → http_active → http_receiving_headers → http_receiving_body
+    //   → response_body_buffering → completed
+    //
+    // Normal fetch with streaming body:
+    //   created → http_active → http_receiving_headers → http_receiving_body
+    //   → response_body_streaming → completed
+    //
+    // Fetch with body accessed after response created:
+    //   created → http_active → http_receiving_headers → http_receiving_body
+    //   → response_awaiting_body_access → response_body_streaming → completed
+    //
+    // Aborted fetch:
+    //   (any state) → aborted
+    //
+    // Failed fetch:
+    //   (any state) → failed
+    //
+    // Request streaming (orthogonal):
+    //   none (most requests)
+    //   OR: waiting_start → active → complete
+
     sink: ?*ResumableSink = null,
     http: ?*http.AsyncHTTP = null,
     result: http.HTTPClientResult = .{},

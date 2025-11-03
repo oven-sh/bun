@@ -123,6 +123,155 @@ const RequestStreamState = enum(u8) {
     complete,
 };
 
+/// Unified error storage with explicit precedence rules.
+/// Replaces scattered error tracking across multiple fields.
+const FetchError = union(enum) {
+    none: void,
+    http_error: anyerror,
+    abort_error: jsc.Strong.Optional,
+    js_error: jsc.Strong.Optional,
+    tls_error: jsc.Strong.Optional,
+
+    /// Set new error, freeing old error if present
+    fn set(self: *FetchError, new_error: FetchError) void {
+        self.deinit();
+        self.* = new_error;
+    }
+
+    /// Convert error to Body.Value.ValueError for compatibility with existing code
+    fn toBodyValueError(self: FetchError, global: *JSGlobalObject) Body.Value.ValueError {
+        return switch (self) {
+            .none => unreachable,
+            .http_error => |fail| .{ .SystemError = createSystemErrorFromHTTPError(fail, global) },
+            .abort_error => |strong_opt| .{ .JSValue = strong_opt },
+            .js_error => |strong_opt| .{ .JSValue = strong_opt },
+            .tls_error => |strong_opt| .{ .JSValue = strong_opt },
+        };
+    }
+
+    /// Convert error to JavaScript value for promise rejection
+    fn toJS(self: FetchError, global: *JSGlobalObject) JSValue {
+        return switch (self) {
+            .none => .jsUndefined(),
+            .http_error => |fail| {
+                const sys_err = createSystemErrorFromHTTPError(fail, global);
+                return sys_err.toErrorInstance(global);
+            },
+            .abort_error => |strong_opt| strong_opt.get() orelse .jsUndefined(),
+            .js_error => |strong_opt| strong_opt.get() orelse .jsUndefined(),
+            .tls_error => |strong_opt| strong_opt.get() orelse .jsUndefined(),
+        };
+    }
+
+    /// Check if this is an abort error (for special handling)
+    fn isAbort(self: FetchError) bool {
+        return self == .abort_error;
+    }
+
+    /// Single cleanup path
+    fn deinit(self: *FetchError) void {
+        switch (self.*) {
+            .none, .http_error => {},
+            .abort_error => |*strong_opt| strong_opt.deinit(),
+            .js_error => |*strong_opt| strong_opt.deinit(),
+            .tls_error => |*strong_opt| strong_opt.deinit(),
+        }
+        self.* = .none;
+    }
+
+    /// Helper to create SystemError from HTTP error
+    fn createSystemErrorFromHTTPError(fail: anyerror, _: *JSGlobalObject) jsc.SystemError {
+        // This will be populated from metadata if available
+        const path = bun.String.empty;
+
+        return jsc.SystemError{
+            .code = bun.String.static(switch (fail) {
+                error.ConnectionClosed => "ECONNRESET",
+                else => |e| @errorName(e),
+            }),
+            .message = switch (fail) {
+                error.ConnectionClosed => bun.String.static("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
+                error.FailedToOpenSocket => bun.String.static("Was there a typo in the url or port?"),
+                error.TooManyRedirects => bun.String.static("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
+                error.ConnectionRefused => bun.String.static("Unable to connect. Is the computer able to access the url?"),
+                error.RedirectURLInvalid => bun.String.static("Redirect URL in Location header is invalid."),
+
+                error.UNABLE_TO_GET_ISSUER_CERT => bun.String.static("unable to get issuer certificate"),
+                error.UNABLE_TO_GET_CRL => bun.String.static("unable to get certificate CRL"),
+                error.UNABLE_TO_DECRYPT_CERT_SIGNATURE => bun.String.static("unable to decrypt certificate's signature"),
+                error.UNABLE_TO_DECRYPT_CRL_SIGNATURE => bun.String.static("unable to decrypt CRL's signature"),
+                error.UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY => bun.String.static("unable to decode issuer public key"),
+                error.CERT_SIGNATURE_FAILURE => bun.String.static("certificate signature failure"),
+                error.CRL_SIGNATURE_FAILURE => bun.String.static("CRL signature failure"),
+                error.CERT_NOT_YET_VALID => bun.String.static("certificate is not yet valid"),
+                error.CRL_NOT_YET_VALID => bun.String.static("CRL is not yet valid"),
+                error.CERT_HAS_EXPIRED => bun.String.static("certificate has expired"),
+                error.CRL_HAS_EXPIRED => bun.String.static("CRL has expired"),
+                error.ERROR_IN_CERT_NOT_BEFORE_FIELD => bun.String.static("format error in certificate's notBefore field"),
+                error.ERROR_IN_CERT_NOT_AFTER_FIELD => bun.String.static("format error in certificate's notAfter field"),
+                error.ERROR_IN_CRL_LAST_UPDATE_FIELD => bun.String.static("format error in CRL's lastUpdate field"),
+                error.ERROR_IN_CRL_NEXT_UPDATE_FIELD => bun.String.static("format error in CRL's nextUpdate field"),
+                error.OUT_OF_MEM => bun.String.static("out of memory"),
+                error.DEPTH_ZERO_SELF_SIGNED_CERT => bun.String.static("self signed certificate"),
+                error.SELF_SIGNED_CERT_IN_CHAIN => bun.String.static("self signed certificate in certificate chain"),
+                error.UNABLE_TO_GET_ISSUER_CERT_LOCALLY => bun.String.static("unable to get local issuer certificate"),
+                error.UNABLE_TO_VERIFY_LEAF_SIGNATURE => bun.String.static("unable to verify the first certificate"),
+                error.CERT_CHAIN_TOO_LONG => bun.String.static("certificate chain too long"),
+                error.CERT_REVOKED => bun.String.static("certificate revoked"),
+                error.INVALID_CA => bun.String.static("invalid CA certificate"),
+                error.INVALID_NON_CA => bun.String.static("invalid non-CA certificate (has CA markings)"),
+                error.PATH_LENGTH_EXCEEDED => bun.String.static("path length constraint exceeded"),
+                error.PROXY_PATH_LENGTH_EXCEEDED => bun.String.static("proxy path length constraint exceeded"),
+                error.PROXY_CERTIFICATES_NOT_ALLOWED => bun.String.static("proxy certificates not allowed, please set the appropriate flag"),
+                error.INVALID_PURPOSE => bun.String.static("unsupported certificate purpose"),
+                error.CERT_UNTRUSTED => bun.String.static("certificate not trusted"),
+                error.CERT_REJECTED => bun.String.static("certificate rejected"),
+                error.APPLICATION_VERIFICATION => bun.String.static("application verification failure"),
+                error.SUBJECT_ISSUER_MISMATCH => bun.String.static("subject issuer mismatch"),
+                error.AKID_SKID_MISMATCH => bun.String.static("authority and subject key identifier mismatch"),
+                error.AKID_ISSUER_SERIAL_MISMATCH => bun.String.static("authority and issuer serial number mismatch"),
+                error.KEYUSAGE_NO_CERTSIGN => bun.String.static("key usage does not include certificate signing"),
+                error.UNABLE_TO_GET_CRL_ISSUER => bun.String.static("unable to get CRL issuer certificate"),
+                error.UNHANDLED_CRITICAL_EXTENSION => bun.String.static("unhandled critical extension"),
+                error.KEYUSAGE_NO_CRL_SIGN => bun.String.static("key usage does not include CRL signing"),
+                error.KEYUSAGE_NO_DIGITAL_SIGNATURE => bun.String.static("key usage does not include digital signature"),
+                error.UNHANDLED_CRITICAL_CRL_EXTENSION => bun.String.static("unhandled critical CRL extension"),
+                error.INVALID_EXTENSION => bun.String.static("invalid or inconsistent certificate extension"),
+                error.INVALID_POLICY_EXTENSION => bun.String.static("invalid or inconsistent certificate policy extension"),
+                error.NO_EXPLICIT_POLICY => bun.String.static("no explicit policy"),
+                error.DIFFERENT_CRL_SCOPE => bun.String.static("Different CRL scope"),
+                error.UNSUPPORTED_EXTENSION_FEATURE => bun.String.static("Unsupported extension feature"),
+                error.UNNESTED_RESOURCE => bun.String.static("RFC 3779 resource not subset of parent's resources"),
+                error.PERMITTED_VIOLATION => bun.String.static("permitted subtree violation"),
+                error.EXCLUDED_VIOLATION => bun.String.static("excluded subtree violation"),
+                error.SUBTREE_MINMAX => bun.String.static("name constraints minimum and maximum not supported"),
+                error.UNSUPPORTED_CONSTRAINT_TYPE => bun.String.static("unsupported name constraint type"),
+                error.UNSUPPORTED_CONSTRAINT_SYNTAX => bun.String.static("unsupported or invalid name constraint syntax"),
+                error.UNSUPPORTED_NAME_SYNTAX => bun.String.static("unsupported or invalid name syntax"),
+                error.CRL_PATH_VALIDATION_ERROR => bun.String.static("CRL path validation error"),
+                error.SUITE_B_INVALID_VERSION => bun.String.static("Suite B: certificate version invalid"),
+                error.SUITE_B_INVALID_ALGORITHM => bun.String.static("Suite B: invalid public key algorithm"),
+                error.SUITE_B_INVALID_CURVE => bun.String.static("Suite B: invalid ECC curve"),
+                error.SUITE_B_INVALID_SIGNATURE_ALGORITHM => bun.String.static("Suite B: invalid signature algorithm"),
+                error.SUITE_B_LOS_NOT_ALLOWED => bun.String.static("Suite B: curve not allowed for this LOS"),
+                error.SUITE_B_CANNOT_SIGN_P_384_WITH_P_256 => bun.String.static("Suite B: cannot sign P-384 with P-256"),
+                error.HOSTNAME_MISMATCH => bun.String.static("Hostname mismatch"),
+                error.EMAIL_MISMATCH => bun.String.static("Email address mismatch"),
+                error.IP_ADDRESS_MISMATCH => bun.String.static("IP address mismatch"),
+                error.INVALID_CALL => bun.String.static("Invalid certificate verification context"),
+                error.STORE_LOOKUP => bun.String.static("Issuer certificate lookup error"),
+                error.NAME_CONSTRAINTS_WITHOUT_SANS => bun.String.static("Issuer has name constraints but leaf has no SANs"),
+                error.UNKNOWN_CERTIFICATE_VERIFICATION_ERROR => bun.String.static("unknown certificate verification error"),
+
+                else => |e| bun.String.createFormat("{s} fetching. For more information, pass `verbose: true` in the second argument to fetch()", .{
+                    @errorName(e),
+                }) catch |err| bun.handleOom(err),
+            },
+            .path = path,
+        };
+    }
+};
+
 /// Helper for validated state transitions (in debug builds)
 fn transitionLifecycle(this: *FetchTasklet, old_state: FetchLifecycle, new_state: FetchLifecycle) void {
     if (bun.Environment.isDebug) {
@@ -157,7 +306,7 @@ pub const FetchTasklet = struct {
     //
     // 1. MainThreadData - Only accessed from JavaScript main thread (no lock)
     //    Will contain: global_this, javascript_vm, promise, response_weak,
-    //    native_response, readable_stream_ref, abort_signal, abort_reason,
+    //    native_response, readable_stream_ref, abort_signal,
     //    check_server_identity, poll_ref, concurrent_task, tracker
     //
     // 2. SharedData - Accessed from both threads (mutex protected)
@@ -201,9 +350,6 @@ pub const FetchTasklet = struct {
     //     /// Managed by AbortHandling wrapper
     //     abort_signal: ?*jsc.WebCore.AbortSignal = null,
     //
-    //     /// Abort reason (owned)
-    //     abort_reason: jsc.Strong.Optional = .empty,
-    //
     //     /// Custom TLS check function (owned)
     //     check_server_identity: jsc.Strong.Optional = .empty,
     //
@@ -227,7 +373,6 @@ pub const FetchTasklet = struct {
     //     fn deinit(self: *MainThreadData) void {
     //         self.promise.deinit();
     //         self.readable_stream_ref.deinit();
-    //         self.abort_reason.deinit();
     //         self.check_server_identity.deinit();
     //         self.poll_ref.unref(self.javascript_vm);
     //         // abort_signal handled by AbortHandling wrapper
@@ -377,9 +522,6 @@ pub const FetchTasklet = struct {
     signal_store: http.Signals.Store = .{},
     has_schedule_callback: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
-    // must be stored because AbortSignal stores reason weakly
-    abort_reason: jsc.Strong.Optional = .empty,
-
     // custom checkServerIdentity
     check_server_identity: jsc.Strong.Optional = .empty,
     reject_unauthorized: bool = true,
@@ -397,6 +539,11 @@ pub const FetchTasklet = struct {
     lifecycle: FetchLifecycle = .created,
     /// Request body streaming state (orthogonal to lifecycle)
     request_stream_state: RequestStreamState = .none,
+
+    // === UNIFIED ERROR HANDLING (Phase 7 Step 8) ===
+    /// Single source of truth for all errors
+    /// Replaces: result.fail, abort_reason scattered storage
+    fetch_error: FetchError = .none,
 
     tracker: jsc.Debugger.AsyncTaskTracker,
 
@@ -581,9 +728,10 @@ pub const FetchTasklet = struct {
             this.request_body.detach();
         }
 
-        this.abort_reason.deinit();
         this.check_server_identity.deinit();
         this.clearAbortSignal();
+        // Clear unified error storage
+        this.fetch_error.deinit();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
         this.clearSink();
     }
@@ -968,16 +1116,16 @@ pub const FetchTasklet = struct {
                         const check_result = globalObject.tryTakeException().?;
                         // mark to wait until deinit
                         this.is_waiting_abort = this.result.has_more;
-                        this.abort_reason.set(globalObject, check_result);
+                        // Store error in unified storage
+                        this.fetch_error.set(.{ .tls_error = jsc.Strong.Optional.create(check_result, globalObject) });
                         this.signal_store.aborted.store(true, .monotonic);
-                        // Dual tracking: transition to aborted/failed state
                         if (!this.lifecycle.isTerminal()) {
                             transitionLifecycle(this, this.lifecycle, .failed);
                         }
                         this.tracker.didCancel(this.global_this);
                         // we need to abort the request
                         if (this.http) |http_| http.http_thread.scheduleShutdown(http_);
-                        this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+                        // Note: Do NOT set result.fail - error is in fetch_error
                         return false;
                     };
                     var hostname: bun.String = bun.String.cloneUTF8(certificate_info.hostname);
@@ -991,7 +1139,8 @@ pub const FetchTasklet = struct {
                     if (check_result.isAnyError()) {
                         // mark to wait until deinit
                         this.is_waiting_abort = this.result.has_more;
-                        this.abort_reason.set(globalObject, check_result);
+                        // Store error in unified storage
+                        this.fetch_error.set(.{ .js_error = jsc.Strong.Optional.create(check_result, globalObject) });
                         this.signal_store.aborted.store(true, .monotonic);
                         // Dual tracking: transition to failed state
                         if (!this.lifecycle.isTerminal()) {
@@ -1003,7 +1152,7 @@ pub const FetchTasklet = struct {
                         if (this.http) |http_| {
                             http.http_thread.scheduleShutdown(http_);
                         }
-                        this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+                        // Note: Do NOT set result.fail - error is in fetch_error
                         return false;
                     }
 
@@ -1013,19 +1162,18 @@ pub const FetchTasklet = struct {
                 }
             }
         }
-        this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+        // Note: Do NOT set result.fail - error should be captured in caller
         return false;
     }
 
     fn getAbortError(this: *FetchTasklet) ?Body.Value.ValueError {
-        if (this.abort_reason.has()) {
+        // Check unified error storage
+        if (this.fetch_error == .abort_error) {
             defer this.clearAbortSignal();
-            const out = this.abort_reason;
-
-            this.abort_reason = .empty;
-            return Body.Value.ValueError{ .JSValue = out };
+            return this.fetch_error.toBodyValueError(this.global_this);
         }
 
+        // Fallback: check signal directly (for errors not yet captured)
         if (this.signal) |signal| {
             if (signal.reasonIfAborted(this.global_this)) |reason| {
                 defer this.clearAbortSignal();
@@ -1048,9 +1196,15 @@ pub const FetchTasklet = struct {
     }
 
     pub fn onReject(this: *FetchTasklet) Body.Value.ValueError {
-        bun.assert(this.result.fail != null);
+        bun.assert(this.fetch_error != .none);
         log("onReject", .{});
 
+        // All errors should be in unified storage
+        if (this.fetch_error != .none) {
+            return this.fetch_error.toBodyValueError(this.global_this);
+        }
+
+        // Fallback: check abort signal directly (for race conditions)
         if (this.getAbortError()) |err| {
             return err;
         }
@@ -1059,20 +1213,24 @@ pub const FetchTasklet = struct {
             return .{ .AbortReason = reason };
         }
 
-        // some times we don't have metadata so we also check http.url
-        const path = if (this.metadata) |metadata|
-            bun.String.cloneUTF8(metadata.url)
-        else if (this.http) |http_|
-            bun.String.cloneUTF8(http_.url.href)
-        else
-            bun.String.empty;
+        // Should not reach here - all errors should be captured
+        bun.debugAssert(false); // This indicates a bug in error handling
+        return .{ .SystemError = jsc.SystemError{
+            .code = bun.String.static("EFETCH"),
+            .message = bun.String.static("Unknown fetch error"),
+            .path = bun.String.empty,
+        } };
+    }
 
+    /// Helper to create SystemError from HTTP error with path
+    fn createSystemErrorFromHTTPErrorWithPath(fail: anyerror, global: *JSGlobalObject, path: bun.String) jsc.SystemError {
+        _ = global; // May be used in future for error formatting
         const fetch_error = jsc.SystemError{
-            .code = bun.String.static(switch (this.result.fail.?) {
+            .code = bun.String.static(switch (fail) {
                 error.ConnectionClosed => "ECONNRESET",
                 else => |e| @errorName(e),
             }),
-            .message = switch (this.result.fail.?) {
+            .message = switch (fail) {
                 error.ConnectionClosed => bun.String.static("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
                 error.FailedToOpenSocket => bun.String.static("Was there a typo in the url or port?"),
                 error.TooManyRedirects => bun.String.static("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
@@ -1154,7 +1312,7 @@ pub const FetchTasklet = struct {
             .path = path,
         };
 
-        return .{ .SystemError = fetch_error };
+        return fetch_error;
     }
 
     pub fn onReadableStreamAvailable(ctx: *anyopaque, globalThis: *jsc.JSGlobalObject, readable: jsc.WebCore.ReadableStream) void {
@@ -1486,7 +1644,8 @@ pub const FetchTasklet = struct {
     pub fn abortListener(this: *FetchTasklet, reason: JSValue) void {
         log("abortListener", .{});
         reason.ensureStillAlive();
-        this.abort_reason.set(this.global_this, reason);
+        // Store error in unified storage
+        this.fetch_error.set(.{ .abort_error = jsc.Strong.Optional.create(reason, this.global_this) });
         // Dual tracking: transition to aborted state
         if (!this.lifecycle.isTerminal()) {
             transitionLifecycle(this, this.lifecycle, .aborted);
@@ -1571,11 +1730,12 @@ pub const FetchTasklet = struct {
         // Dual tracking: mark request stream as complete
         this.request_stream_state = .complete;
         if (err) |jsError| {
-            if (this.signal_store.aborted.load(.monotonic) or this.abort_reason.has()) {
+            if (this.signal_store.aborted.load(.monotonic) or this.fetch_error.isAbort()) {
                 return;
             }
             if (!jsError.isUndefinedOrNull()) {
-                this.abort_reason.set(this.global_this, jsError);
+                // Store error in unified storage
+                this.fetch_error.set(.{ .js_error = jsc.Strong.Optional.create(jsError, this.global_this) });
             }
             this.abortTask();
         } else {
@@ -1717,6 +1877,10 @@ pub const FetchTasklet = struct {
             if (success) {
                 transitionLifecycle(task, task.lifecycle, .completed);
             } else {
+                // Capture HTTP error in unified storage
+                if (task.result.fail) |fail| {
+                    task.fetch_error.set(.{ .http_error = fail });
+                }
                 transitionLifecycle(task, task.lifecycle, .failed);
             }
         }

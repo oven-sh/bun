@@ -442,12 +442,18 @@ static void examine_object_fields(Isolate *isolate, Local<Object> o,
   char buf[32] = {0};
   HandleScope hs(isolate);
   o->GetInternalField(0).As<String>()->WriteUtf8(isolate, buf, sizeof(buf));
-  assert(atoi(buf) == expected_field0);
+  if (atoi(buf) != expected_field0) {
+    printf("expected_field0 = %d, got %s\n", expected_field0, buf);
+    assert(false);
+  }
 
   Local<Value> field1 = o->GetInternalField(1).As<Value>();
   if (field1->IsString()) {
     field1.As<String>()->WriteUtf8(isolate, buf, sizeof(buf));
-    assert(atoi(buf) == expected_field1);
+    if (atoi(buf) != expected_field1) {
+      printf("expected_field1 = %d, got %s\n", expected_field1, buf);
+      assert(false);
+    }
   } else {
     assert(field1->IsUndefined());
   }
@@ -505,7 +511,10 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
     for (size_t j = 0; j < num_small_allocs; j++) {
       char buf[32] = {0};
       mini_strings[j]->WriteUtf8(isolate, buf, sizeof(buf));
-      assert(atoi(buf) == (int)j);
+      if (atoi(buf) != (int)j) {
+        printf("mini_strings[%zu] = %d\n", j, atoi(buf));
+        assert(false);
+      }
     }
 
     for (size_t j = 0; j < num_small_allocs; j++) {
@@ -533,7 +542,10 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
   for (size_t i = 0; i < num_strings; i++) {
     huge_strings[i]->WriteUtf8(isolate, string_data);
     for (size_t j = 0; j < string_size - 1; j++) {
-      assert(string_data[j] == (char)(i + 1));
+      if (string_data[j] != (char)(i + 1)) {
+        printf("string_data[%zu] = %c\n", j, string_data[j]);
+        assert(false);
+      }
     }
   }
 

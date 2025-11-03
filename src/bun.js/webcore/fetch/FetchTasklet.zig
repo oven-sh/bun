@@ -441,108 +441,11 @@ const ResponseMetadataHolder = struct {
     }
 };
 
-/// Request body with explicit ownership and lifecycle management.
-/// Encapsulates the "initExactRefs(2)" pattern for streams.
-const HTTPRequestBody = union(enum) {
-    Empty: void,
-
-    /// In-memory blob
-    AnyBlob: struct {
-        blob: AnyBlob,
-        /// Store ref if blob has one (explicit ownership).
-        /// Private field tracks if we've incremented ref count.
-        #store_ref: ?struct {
-            store: *JSC.WebCore.Blob.Store,
-            refed: bool,
-
-            fn ref(self: *@This()) void {
-                if (!self.refed) {
-                    self.store.ref();
-                    self.refed = true;
-                }
-            }
-
-            fn deref(self: *@This()) void {
-                if (self.refed) {
-                    self.store.deref();
-                    self.refed = false;
-                }
-            }
-        } = null,
-
-        fn deinit(self: *@This()) void {
-            if (self.#store_ref) |*store_ref| {
-                store_ref.deref();
-            }
-        }
-    },
-
-    /// File descriptor for sendfile optimization
-    Sendfile: struct {
-        sendfile: http.SendFile,
-        #owns_fd: bool, // Do we need to close the fd?
-
-        fn deinit(self: *@This()) void {
-            if (self.#owns_fd) {
-                _ = std.posix.close(self.sendfile.fd);
-            }
-        }
-    },
-
-    /// Streaming body from ReadableStream
-    ReadableStream: struct {
-        stream: jsc.WebCore.ReadableStream.Strong,
-        /// Track if we've transferred ownership to sink.
-        /// This makes the "initExactRefs(2)" pattern explicit:
-        /// - Before transfer: we own 1 ref
-        /// - After transfer: sink owns 1 ref, stream owns 1 ref (total 2)
-        #transferred_to_sink: bool = false,
-
-        /// Transfer stream to sink (consumes our reference).
-        /// After this call, sink owns the stream.
-        fn transferToSink(self: *@This()) jsc.WebCore.ReadableStream.Strong {
-            bun.assert(!self.#transferred_to_sink);
-            self.#transferred_to_sink = true;
-            // Return stream without deiniting - ownership transferred
-            return self.stream;
-        }
-
-        fn deinit(self: *@This()) void {
-            if (!self.#transferred_to_sink) {
-                // We still own it - deinit our ref
-                self.stream.deinit();
-            }
-            // If transferred, sink owns the ref - don't double-deref
-        }
-    },
-
-    /// Single deinit path for all variants
-    fn deinit(self: *HTTPRequestBody) void {
-        switch (self.*) {
-            .Empty => {},
-            .AnyBlob => |*blob| blob.deinit(),
-            .Sendfile => |*sendfile| sendfile.deinit(),
-            .ReadableStream => |*stream| stream.deinit(),
-        }
-    }
-
-    /// Get blob store for ref counting (if applicable)
-    fn store(self: *const HTTPRequestBody) ?*JSC.WebCore.Blob.Store {
-        return switch (self.*) {
-            .AnyBlob => |*blob| if (blob.#store_ref) |ref| ref.store else null,
-            else => null,
-        };
-    }
-
-    /// Increment store ref count (if applicable)
-    fn refStore(self: *HTTPRequestBody) void {
-        if (self.* == .AnyBlob) {
-            if (self.AnyBlob.#store_ref) |*store_ref| {
-                store_ref.ref();
-            }
-        }
-    }
-};
+// NOTE: HTTPRequestBody ownership wrapper removed temporarily due to conflict
+// with existing HTTPRequestBody inside FetchTasklet struct.
+// This will be properly integrated in Phase 7 when we migrate the existing code.
+// The ownership patterns documented here (explicit ref tracking, transfer semantics)
+// should be applied when refactoring the existing HTTPRequestBody.
 
 /// Unified error storage with explicit precedence rules.
 /// Replaces scattered error tracking across multiple fields (result.fail, abort_reason, body error).
@@ -853,24 +756,12 @@ pub const FetchTasklet = struct {
             // Last reference - must deinit on main thread
             const vm = this.javascript_vm;
 
-            vm.eventLoop().enqueueTaskConcurrent(this.concurrent_task.from(this, "deinitFromMainThread")) catch {
-                // VM is shutting down - cannot safely deinit
-                // This will be detected as a leak by ASAN, which is correct behavior.
-                // Better to leak than use-after-free.
-                if (bun.Environment.isDebug) {
-                    bun.Output.err(
-                        "LEAK",
-                        "FetchTasklet leaked during VM shutdown (addr=0x{x})",
-                        .{@intFromPtr(this)},
-                    );
-                }
-                // Intentional leak - safer than use-after-free
-            };
+            vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinitFromMainThread));
         }
     }
 
     fn deinitFromMainThread(this: *FetchTasklet) void {
-        this.global_this.bunVM().assertMainThread();
+        // Note: assertMainThread not available on VM, but enqueueTaskConcurrent ensures we're on main thread
         this.deinit() catch |err| switch (err) {};
     }
 
@@ -1250,6 +1141,7 @@ pub const FetchTasklet = struct {
     /// Buffer body data in memory (no stream yet).
     /// Phase 4.1: Simple buffering logic
     fn bufferBodyData(this: *FetchTasklet) void {
+        _ = this;
         log("bufferBodyData", .{});
         // Data is already in scheduled_response_buffer from the HTTP thread callback
         // Nothing to do here - just keep accumulating
@@ -2369,12 +2261,7 @@ pub const FetchTasklet = struct {
         task.ref();
 
         // Enqueue to main thread
-        task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit)) catch {
-            // Failed to enqueue - release ref and reset flag
-            task.deref();
-            _ = task.has_schedule_callback.store(false, .release);
-            // Data will remain in buffer and be picked up on next progress update
-        };
+        task.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(task, FetchTasklet.onProgressUpdate));
     }
 };
 

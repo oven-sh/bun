@@ -2463,7 +2463,18 @@ pub const FetchTasklet = struct {
         task.ref();
 
         // Enqueue to main thread
-        task.main_thread.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(task, FetchTasklet.onProgressUpdate));
+        task.main_thread.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(task, FetchTasklet.onProgressUpdate)) catch {
+            // VM is shutting down - cannot enqueue
+            task.deref();
+            task.shared.has_schedule_callback.store(false, .release);
+            if (bun.Environment.isDebug) {
+                bun.Output.err(
+                    "LEAK",
+                    "FetchTasklet HTTP callback not enqueued during VM shutdown (addr=0x{x})",
+                    .{@intFromPtr(task)},
+                );
+            }
+        };
     }
 };
 

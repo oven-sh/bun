@@ -1,42 +1,3 @@
-const X509 = @import("../../api/bun/x509.zig");
-const std = @import("std");
-const DataURL = @import("../../../resolver/data_url.zig").DataURL;
-const Method = @import("../../../http/Method.zig").Method;
-const ZigURL = @import("../../../url.zig").URL;
-
-const bun = @import("bun");
-const Async = bun.Async;
-const Environment = bun.Environment;
-const MutableString = bun.MutableString;
-const Mutex = bun.Mutex;
-const Output = bun.Output;
-const picohttp = bun.picohttp;
-const s3 = bun.S3;
-const BoringSSL = bun.BoringSSL.c;
-const FetchHeaders = bun.webcore.FetchHeaders;
-const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
-const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
-
-const http = bun.http;
-const FetchRedirect = http.FetchRedirect;
-const Headers = bun.http.Headers;
-
-const jsc = bun.jsc;
-const JSGlobalObject = jsc.JSGlobalObject;
-const JSPromise = jsc.JSPromise;
-const JSValue = jsc.JSValue;
-const VirtualMachine = jsc.VirtualMachine;
-const ZigString = jsc.ZigString;
-const JSType = jsc.C.JSType;
-
-const Body = jsc.WebCore.Body;
-const Request = jsc.WebCore.Request;
-const Response = jsc.WebCore.Response;
-const ResumableSinkBackpressure = jsc.WebCore.ResumableSinkBackpressure;
-
-const Blob = jsc.WebCore.Blob;
-const AnyBlob = jsc.WebCore.Blob.Any;
-
 pub const FetchTasklet = struct {
     pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
 
@@ -1373,3 +1334,35 @@ pub const FetchTasklet = struct {
         task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
     }
 };
+
+const X509 = @import("../../api/bun/x509.zig");
+const std = @import("std");
+const Method = @import("../../../http/Method.zig").Method;
+const ZigURL = @import("../../../url.zig").URL;
+
+const bun = @import("bun");
+const Async = bun.Async;
+const MutableString = bun.MutableString;
+const Mutex = bun.Mutex;
+const Output = bun.Output;
+const BoringSSL = bun.BoringSSL.c;
+const FetchHeaders = bun.webcore.FetchHeaders;
+const SSLConfig = bun.api.server.ServerConfig.SSLConfig;
+
+const http = bun.http;
+const FetchRedirect = http.FetchRedirect;
+const Headers = bun.http.Headers;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSPromise = jsc.JSPromise;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;
+const ZigString = jsc.ZigString;
+
+const Body = jsc.WebCore.Body;
+const Response = jsc.WebCore.Response;
+const ResumableSinkBackpressure = jsc.WebCore.ResumableSinkBackpressure;
+
+const Blob = jsc.WebCore.Blob;
+const AnyBlob = jsc.WebCore.Blob.Any;

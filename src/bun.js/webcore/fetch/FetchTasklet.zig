@@ -429,7 +429,25 @@ pub const FetchTasklet = struct {
             // this is really unlikely to happen, but can happen
             // lets make sure that we always call deinit from main thread
 
-            this.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinit));
+            const vm = this.javascript_vm;
+
+            // Check if VM is shutting down before enqueuing
+            if (vm.isShuttingDown()) {
+                // VM is shutting down - cannot safely enqueue task to main thread
+                // This will be detected as a leak by ASAN, which is correct behavior.
+                // Better to leak than use-after-free.
+                if (bun.Environment.isDebug) {
+                    bun.Output.err(
+                        "LEAK",
+                        "FetchTasklet leaked during VM shutdown (addr=0x{x})",
+                        .{@intFromPtr(this)},
+                    );
+                }
+                // Intentional leak - safer than use-after-free
+                return;
+            }
+
+            vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinitFromMainThread));
         }
     }
 
@@ -591,6 +609,14 @@ pub const FetchTasklet = struct {
         this.clearAbortSignal();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
         this.clearSink();
+    }
+
+    /// Helper function to ensure deinit happens on main thread.
+    /// Called via enqueueTaskConcurrent from derefFromThread.
+    // XXX: 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void' but 'fn (*FetchTasklet) void' does not
+    fn deinitFromMainThread(this: *FetchTasklet) error{}!void {
+        bun.debugAssert(this.javascript_vm.isMainThread());
+        this.deinit() catch |err| switch (err) {};
     }
 
     // XXX: 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void' but 'fn (*FetchTasklet) void' does not

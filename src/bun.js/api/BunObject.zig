@@ -561,7 +561,7 @@ pub fn getOrigin(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue 
 
 pub fn enableANSIColors(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     _ = globalThis;
-    return JSValue.jsBoolean(Output.enable_ansi_colors);
+    return JSValue.jsBoolean(Output.enable_ansi_colors_stdout or Output.enable_ansi_colors_stderr);
 }
 
 fn getMain(globalThis: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {

@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
-describe("bun update --interactive actually installs packages", () => {
+describe.concurrent("bun update --interactive actually installs packages", () => {
   test("should update package.json AND install packages", async () => {
     using dir = tempDir("update-interactive-install", {
       "package.json": JSON.stringify({
@@ -55,11 +55,9 @@ describe("bun update --interactive actually installs packages", () => {
 
     try {
       // Wait for UI to render
-      await Bun.sleep(500);
 
       // Select first package and confirm
       updateProc.stdin.write(" "); // space to select
-      await Bun.sleep(50);
       updateProc.stdin.write("\r"); // enter to confirm
       updateProc.stdin.end();
 
@@ -97,6 +95,7 @@ describe("bun update --interactive actually installs packages", () => {
 
       // The installed version should NOT be the old version
       expect(installedVersion).not.toBe("0.1.0");
+      expect(Bun.semver.satisfies(installedVersion, ">0.1.0")).toBe(true);
 
       // And ideally should match the expected version (or at least be compatible)
       // We check that it starts with the expected major.minor
@@ -150,12 +149,9 @@ describe("bun update --interactive actually installs packages", () => {
 
     try {
       // Wait for UI to render
-      await Bun.sleep(500);
 
       updateProc.stdin.write("l"); // toggle latest
-      await Bun.sleep(50);
       updateProc.stdin.write(" "); // select
-      await Bun.sleep(50);
       updateProc.stdin.write("\r"); // confirm
       updateProc.stdin.end();
 
@@ -179,6 +175,7 @@ describe("bun update --interactive actually installs packages", () => {
 
       // Should be newer than 0.1.0
       expect(updatedPkgJson.version).not.toBe("0.1.0");
+      expect(Bun.semver.satisfies(updatedPkgJson.version, ">0.1.0")).toBe(true);
     } catch (err) {
       // Ensure cleanup on failure
       updateProc.stdin.end();

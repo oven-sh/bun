@@ -1274,10 +1274,20 @@ pub const FetchTasklet = struct {
         this.ignore_data = true;
     }
 
+    /// Called when Response JS object is garbage collected.
+    /// This is our signal to stop processing body data.
     export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.C) void {
         log("onResponseFinalize", .{});
+
+        // === ACQUIRE LOCK - Fix race condition ===
+        // The HTTP thread accesses shared state in callback(), so we must lock
+        this.mutex.lock();
+        defer this.mutex.unlock();
+
+        // Check if we have a native response to work with
         if (this.native_response) |response| {
             const body = response.getBodyValue();
+
             // Three scenarios:
             //
             // 1. We are streaming, in which case we should not ignore the body.
@@ -1293,13 +1303,26 @@ pub const FetchTasklet = struct {
             }
 
             if (body.Locked.promise) |promise| {
-                if (promise.isEmptyOrUndefinedOrNull()) {
-                    // Scenario 2b.
-                    this.ignoreRemainingResponseBody();
+                if (!promise.isEmptyOrUndefinedOrNull()) {
+                    // Scenario 2b - promise exists, keep loading
+                    return;
                 }
-            } else {
-                // Scenario 3.
-                this.ignoreRemainingResponseBody();
+            }
+
+            // Scenario 2a or 3 - ignore remaining body
+            // Signal abort to HTTP thread (under lock)
+            this.signal_store.aborted.store(true, .release);
+
+            // Set ignore_data flag to stop buffering
+            this.ignore_data = true;
+
+            // Clear accumulated buffers since we're ignoring the rest
+            this.response_buffer.list.clearRetainingCapacity();
+            this.scheduled_response_buffer.list.clearRetainingCapacity();
+
+            // Enable streaming to drain remaining data without buffering
+            if (this.http) |http_| {
+                http_.enableResponseBodyStreaming();
             }
         }
     }

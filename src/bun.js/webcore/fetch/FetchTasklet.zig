@@ -926,7 +926,7 @@ pub const FetchTasklet = struct {
         this.ignore_data = true;
     }
 
-    export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.C) void {
+    export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.c) void {
         log("onResponseFinalize", .{});
         if (this.native_response) |response| {
             const body = response.getBodyValue();

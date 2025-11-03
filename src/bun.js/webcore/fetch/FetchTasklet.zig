@@ -695,6 +695,100 @@ const AbortHandling = struct {
     }
 };
 
+/// Unified error storage with explicit precedence rules.
+/// Replaces scattered error tracking across multiple fields (result.fail, abort_reason, body error).
+///
+/// ERROR PRECEDENCE:
+/// 1. abort_error - User-initiated abort via AbortSignal (highest priority)
+/// 2. js_error - JavaScript callback errors (e.g., checkServerIdentity returning non-true)
+/// 3. tls_error - TLS certificate validation failures
+/// 4. http_error - Network/HTTP protocol errors (lowest priority)
+///
+/// MEMORY MANAGEMENT:
+/// - http_error: Stores anyerror enum, no dealloc needed
+/// - abort_error, js_error, tls_error: Use jsc.Strong for JSValue, needs deinit()
+///
+/// USAGE:
+/// ```zig
+/// // Setting an error (automatically frees old error)
+/// error_storage.set(.{ .http_error = error.ConnectionRefused });
+///
+/// // Converting to JS for promise rejection
+/// const js_value = error_storage.toJS(global);
+///
+/// // Checking if abort
+/// if (error_storage.isAbort()) { ... }
+///
+/// // Cleanup (safe to call multiple times)
+/// error_storage.deinit();
+/// ```
+const FetchError = union(enum) {
+    none: void,
+    /// HTTP/network error from AsyncHTTP result
+    /// Uses anyerror from http.HTTPClientResult.fail
+    /// No dealloc needed (anyerror is just an enum)
+    http_error: anyerror,
+
+    /// User-initiated abort via AbortSignal.abort()
+    /// Stores the reason passed to abort(reason)
+    /// Needs deinit() to free Strong reference
+    abort_error: jsc.Strong,
+
+    /// JavaScript callback error (e.g., checkServerIdentity returning Error)
+    /// Stores JSValue from callback that indicates failure
+    /// Needs deinit() to free Strong reference
+    js_error: jsc.Strong,
+
+    /// TLS certificate validation error
+    /// Stores error details when certificate check fails
+    /// Needs deinit() to free Strong reference
+    tls_error: jsc.Strong,
+
+    /// Set new error, freeing old error if present.
+    /// This ensures we don't leak Strong references when replacing errors.
+    fn set(self: *FetchError, new_error: FetchError) void {
+        self.deinit();
+        self.* = new_error;
+    }
+
+    /// Convert error to JavaScript value for promise rejection.
+    /// Returns undefined for .none, otherwise returns appropriate JSValue.
+    fn toJS(self: FetchError, global: *JSGlobalObject) JSValue {
+        return switch (self) {
+            .none => .jsUndefined(),
+            // For http_error, we need to convert anyerror to JSValue
+            // This will be implemented in Phase 5.2 when we add error conversion helpers
+            .http_error => |fail| {
+                _ = fail;
+                _ = global;
+                // TODO: Implement anyerror to JSValue conversion in Phase 5.2
+                return .jsUndefined();
+            },
+            .abort_error => |strong| strong.get() orelse .jsUndefined(),
+            .js_error => |strong| strong.get() orelse .jsUndefined(),
+            .tls_error => |strong| strong.get() orelse .jsUndefined(),
+        };
+    }
+
+    /// Check if this is an abort error (for special handling).
+    /// Abort errors have different precedence and cancel behavior.
+    fn isAbort(self: FetchError) bool {
+        return self == .abort_error;
+    }
+
+    /// Single cleanup path - frees all Strong references.
+    /// Safe to call multiple times (resets to .none after cleanup).
+    fn deinit(self: *FetchError) void {
+        switch (self.*) {
+            .none, .http_error => {},
+            .abort_error => |*strong| strong.deinit(),
+            .js_error => |*strong| strong.deinit(),
+            .tls_error => |*strong| strong.deinit(),
+        }
+        self.* = .none;
+    }
+};
+
 pub const FetchTasklet = struct {
     pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
 

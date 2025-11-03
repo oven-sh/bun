@@ -397,6 +397,66 @@ const RequestHeaders = struct {
     }
 };
 
+/// Response metadata with explicit take semantics.
+/// Ensures metadata is only transferred once to Response object.
+///
+/// OWNERSHIP MODEL:
+/// - Metadata and certificate info are owned until taken
+/// - Take methods transfer ownership to caller
+/// - Set methods take ownership of new values
+/// - deinit() frees any remaining owned data
+const ResponseMetadataHolder = struct {
+    #metadata: ?http.HTTPResponseMetadata = null,
+    #certificate_info: ?http.CertificateInfo = null,
+    allocator: std.mem.Allocator,
+
+    fn init(allocator: std.mem.Allocator) ResponseMetadataHolder {
+        return .{ .allocator = allocator };
+    }
+
+    /// Take metadata, transferring ownership to caller.
+    /// Can only be called once - subsequent calls return null.
+    fn takeMetadata(self: *ResponseMetadataHolder) ?http.HTTPResponseMetadata {
+        const metadata = self.#metadata;
+        self.#metadata = null; // Clear to prevent double-take
+        return metadata;
+    }
+
+    /// Take certificate info, transferring ownership to caller.
+    fn takeCertificate(self: *ResponseMetadataHolder) ?http.CertificateInfo {
+        const cert = self.#certificate_info;
+        self.#certificate_info = null;
+        return cert;
+    }
+
+    /// Set metadata from HTTP result (takes ownership).
+    /// Frees old metadata if present.
+    fn setMetadata(self: *ResponseMetadataHolder, metadata: http.HTTPResponseMetadata) void {
+        if (self.#metadata) |old| {
+            old.deinit(self.allocator);
+        }
+        self.#metadata = metadata;
+    }
+
+    /// Set certificate info from HTTP result (takes ownership).
+    fn setCertificate(self: *ResponseMetadataHolder, cert: http.CertificateInfo) void {
+        if (self.#certificate_info) |old| {
+            old.deinit(self.allocator);
+        }
+        self.#certificate_info = cert;
+    }
+
+    /// Single cleanup path
+    fn deinit(self: *ResponseMetadataHolder) void {
+        if (self.#metadata) |metadata| {
+            metadata.deinit(self.allocator);
+        }
+        if (self.#certificate_info) |cert| {
+            cert.deinit(self.allocator);
+        }
+    }
+};
+
 pub const FetchTasklet = struct {
     pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
 

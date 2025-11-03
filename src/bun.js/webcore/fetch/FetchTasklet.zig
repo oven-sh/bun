@@ -2,6 +2,181 @@ pub const FetchTasklet = struct {
     pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
 
     const log = Output.scoped(.FetchTasklet, .visible);
+
+    // ============================================================================
+    // STATE MACHINE
+    // ============================================================================
+    //
+    // FetchTasklet tracks multiple orthogonal state dimensions:
+    // 1. Main lifecycle (FetchLifecycle) - mutually exclusive
+    // 2. Request streaming (RequestStreamState) - independent
+    // 3. Abort status (atomic bool) - independent
+    // 4. Connection upgrade (bool) - one-time flag
+
+    /// Main fetch lifecycle - mutually exclusive OR states.
+    /// Every FetchTasklet is in exactly ONE of these states at a time.
+    const FetchLifecycle = enum(u8) {
+        /// Initial: Created, not yet queued to HTTP thread
+        created,
+
+        /// HTTP request in flight
+        /// Replaces complex state tracking in old code:
+        /// - Sending headers
+        /// - Sending body (if present)
+        /// - Waiting for response headers
+        http_active,
+
+        /// Receiving response headers from server
+        http_receiving_headers,
+
+        /// Receiving response body from server
+        /// Response object may or may not exist yet
+        http_receiving_body,
+
+        /// Response object created, body not yet accessed by JS
+        /// Replaces: is_waiting_body = true
+        response_awaiting_body_access,
+
+        /// Response body is streaming to JS ReadableStream
+        response_body_streaming,
+
+        /// Response body is buffering in memory (no stream created yet)
+        response_body_buffering,
+
+        /// Terminal states (no transitions out)
+        completed,
+        failed,
+        aborted,
+
+        pub fn isTerminal(self: FetchLifecycle) bool {
+            return switch (self) {
+                .completed, .failed, .aborted => true,
+                else => false,
+            };
+        }
+
+        pub fn isHTTPActive(self: FetchLifecycle) bool {
+            return switch (self) {
+                .http_active, .http_receiving_headers, .http_receiving_body => true,
+                else => false,
+            };
+        }
+
+        pub fn canReceiveBody(self: FetchLifecycle) bool {
+            return switch (self) {
+                .http_receiving_body, .response_body_streaming, .response_body_buffering => true,
+                else => false,
+            };
+        }
+
+        /// Validate state transition (debug builds only)
+        pub fn canTransitionTo(self: FetchLifecycle, next: FetchLifecycle) bool {
+            return switch (self) {
+                .created => switch (next) {
+                    .http_active, .aborted, .failed => true,
+                    else => false,
+                },
+                .http_active => switch (next) {
+                    .http_receiving_headers, .aborted, .failed => true,
+                    else => false,
+                },
+                .http_receiving_headers => switch (next) {
+                    .http_receiving_body,
+                    .response_awaiting_body_access,
+                    .response_body_buffering,
+                    .completed, // Empty body case
+                    .aborted,
+                    .failed,
+                    => true,
+                    else => false,
+                },
+                .http_receiving_body => switch (next) {
+                    .response_awaiting_body_access, .response_body_streaming, .response_body_buffering, .completed, .aborted, .failed => true,
+                    else => false,
+                },
+                .response_awaiting_body_access => switch (next) {
+                    .response_body_streaming, .response_body_buffering, .completed, .aborted, .failed => true,
+                    else => false,
+                },
+                .response_body_streaming => switch (next) {
+                    .completed, .aborted, .failed => true,
+                    else => false,
+                },
+                .response_body_buffering => switch (next) {
+                    .response_body_streaming, // Upgrade to streaming
+                    .completed,
+                    .aborted,
+                    .failed,
+                    => true,
+                    else => false,
+                },
+                .completed, .failed, .aborted => false, // Terminal
+            };
+        }
+    };
+
+    /// Request body streaming state - orthogonal to main lifecycle.
+    /// Only relevant when request has a streaming body (ReadableStream).
+    const RequestStreamState = enum(u8) {
+        /// No streaming request body (Blob, Sendfile, or empty)
+        none,
+
+        /// Stream exists but hasn't started yet (waiting for server ready)
+        /// Replaces: is_waiting_request_stream_start = true
+        waiting_start,
+
+        /// Stream actively being read and sent to server
+        active,
+
+        /// Stream finished (successfully or with error)
+        complete,
+    };
+
+    /// Helper for validated state transitions (in debug builds)
+    /// Note: This is a placeholder that will be used when SharedData is introduced
+    fn transitionLifecycle(lifecycle_ptr: *FetchLifecycle, old_state: FetchLifecycle, new_state: FetchLifecycle) void {
+        if (bun.Environment.isDebug) {
+            bun.assert(old_state.canTransitionTo(new_state));
+        }
+        lifecycle_ptr.* = new_state;
+    }
+
+    /// Computed property: Should we ignore remaining body data?
+    /// Replaces: ignore_data boolean flag
+    fn shouldIgnoreBodyData(lifecycle: FetchLifecycle, abort_requested: bool) bool {
+        // Ignore data if:
+        // 1. Abort was requested
+        // 2. Already in aborted state
+        // 3. Response finalized (handled via lifecycle check)
+        return abort_requested or lifecycle == .aborted;
+    }
+
+    // ============================================================================
+    // STATE TRANSITION EXAMPLES
+    // ============================================================================
+    //
+    // Normal fetch with buffered body:
+    //   created → http_active → http_receiving_headers → http_receiving_body
+    //   → response_body_buffering → completed
+    //
+    // Normal fetch with streaming body:
+    //   created → http_active → http_receiving_headers → http_receiving_body
+    //   → response_body_streaming → completed
+    //
+    // Fetch with body accessed after response created:
+    //   created → http_active → http_receiving_headers → http_receiving_body
+    //   → response_awaiting_body_access → response_body_streaming → completed
+    //
+    // Aborted fetch:
+    //   (any state) → aborted
+    //
+    // Failed fetch:
+    //   (any state) → failed
+    //
+    // Request streaming (orthogonal):
+    //   none (most requests)
+    //   OR: waiting_start → active → complete
+
     sink: ?*ResumableSink = null,
     http: ?*http.AsyncHTTP = null,
     result: http.HTTPClientResult = .{},

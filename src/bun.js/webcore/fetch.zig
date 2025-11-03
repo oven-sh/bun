@@ -210,8 +210,8 @@ pub fn Bun__fetch_(
     var proxy: ?ZigURL = null;
     var redirect_type: FetchRedirect = FetchRedirect.follow;
     var signal: ?*jsc.WebCore.AbortSignal = null;
-    // Custom Hostname
-    var hostname: ?[]u8 = null;
+    // Custom Hostname (wrapped for automatic cleanup)
+    var hostname: ?bun.ptr.Owned([]u8) = null;
     var range: ?[]u8 = null;
     var unix_socket_path: ZigString.Slice = ZigString.Slice.empty;
 
@@ -247,9 +247,8 @@ pub fn Bun__fetch_(
         body.detach();
 
         // clean hostname if any
-        if (hostname) |hn| {
-            bun.default_allocator.free(hn);
-            hostname = null;
+        if (hostname) |*hn| {
+            hn.deinit();
         }
         if (range) |range_| {
             bun.default_allocator.free(range_);
@@ -861,11 +860,12 @@ pub fn Bun__fetch_(
 
         if (fetch_headers) |headers_| {
             if (headers_.fastGet(bun.webcore.FetchHeaders.HTTPHeaderName.Host)) |_hostname| {
-                if (hostname) |host| {
+                if (hostname) |*host| {
+                    host.deinit();
                     hostname = null;
-                    allocator.free(host);
                 }
-                hostname = bun.handleOom(_hostname.toOwnedSliceZ(allocator));
+                const hostname_buf = bun.handleOom(_hostname.toOwnedSliceZ(allocator));
+                hostname = bun.ptr.Owned([]u8).fromRaw(hostname_buf);
             }
             if (url.isS3()) {
                 if (headers_.fastGet(bun.webcore.FetchHeaders.HTTPHeaderName.Range)) |_range| {

@@ -775,8 +775,35 @@ pub const FetchTasklet = struct {
     check_server_identity: jsc.Strong.Optional = .empty,
     reject_unauthorized: bool = true,
     upgraded_connection: bool = false,
-    // Custom Hostname
-    hostname: ?[]u8 = null,
+
+    /// Hostname buffer for TLS certificate validation with custom checkServerIdentity.
+    ///
+    /// OWNERSHIP MODEL:
+    /// This buffer is OPTIONALLY OWNED by FetchTasklet using bun.ptr.Owned wrapper.
+    /// The wrapper provides automatic RAII cleanup - no manual free needed.
+    ///
+    /// LIFECYCLE:
+    /// 1. Created in fetch.zig when Host header is present and custom checkServerIdentity is provided
+    /// 2. Allocated from Host header value using toOwnedSliceZ()
+    /// 3. Ownership transferred to FetchTasklet during initialization
+    /// 4. Used in checkServerIdentity() to validate TLS certificate hostname
+    /// 5. Automatically freed in clearData() via bun.ptr.Owned.deinit()
+    ///
+    /// ALLOCATION:
+    /// - Only allocated if custom checkServerIdentity function is provided
+    /// - Created from Host HTTP header value
+    /// - Allocated with bun.default_allocator
+    ///
+    /// USAGE:
+    /// The hostname is extracted from certificate_info and used to call the custom
+    /// checkServerIdentity JavaScript function for TLS certificate validation.
+    ///
+    /// ALTERNATIVE CONSIDERED:
+    /// The old pattern `?[]u8` with manual `allocator.free()` worked but required
+    /// remembering to free in cleanup paths. The bun.ptr.Owned wrapper makes
+    /// ownership explicit and ensures automatic cleanup via RAII.
+    hostname: ?bun.ptr.Owned([]u8) = null,
+
     is_waiting_body: bool = false,
     is_waiting_abort: bool = false,
     is_waiting_request_stream_start: bool = false,
@@ -949,9 +976,8 @@ pub const FetchTasklet = struct {
             this.url_proxy_buffer.len = 0;
         }
 
-        if (this.hostname) |hostname| {
-            allocator.free(hostname);
-            this.hostname = null;
+        if (this.hostname) |*hostname| {
+            hostname.deinit();
         }
 
         if (this.result.certificate_info) |*certificate| {
@@ -1877,7 +1903,7 @@ pub const FetchTasklet = struct {
             fetch_options.redirect_type,
             .{
                 .http_proxy = proxy,
-                .hostname = fetch_options.hostname,
+                .hostname = if (fetch_options.hostname) |h| h.get() else null,
                 .signals = fetch_tasklet.signals,
                 .unix_socket_path = fetch_options.unix_socket_path,
                 .disable_timeout = fetch_options.disable_timeout,
@@ -2053,8 +2079,8 @@ pub const FetchTasklet = struct {
         url_proxy_buffer: []const u8 = "",
         signal: ?*jsc.WebCore.AbortSignal = null,
         globalThis: ?*JSGlobalObject,
-        // Custom Hostname
-        hostname: ?[]u8 = null,
+        // Custom Hostname (wrapped for automatic cleanup)
+        hostname: ?bun.ptr.Owned([]u8) = null,
         check_server_identity: jsc.Strong.Optional = .empty,
         unix_socket_path: ZigString.Slice,
         ssl_config: ?*SSLConfig = null,

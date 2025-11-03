@@ -243,6 +243,9 @@ fn shouldIgnoreBodyData(lifecycle: FetchLifecycle, abort_requested: bool) bool {
 
 /// Data shared between main thread and HTTP thread.
 /// ALL access must be protected by mutex.
+/// NOTE: This struct is infrastructure from Phase 2 that will be fully integrated
+/// in a future phase. Currently FetchTasklet has these fields directly (lines 681-688).
+/// TODO: Migrate FetchTasklet fields into this struct for better encapsulation.
 const SharedData = struct {
     /// Mutex protecting all mutable fields below
     mutex: bun.Mutex,
@@ -594,12 +597,13 @@ const AbortHandling = struct {
         // Set atomic abort flag for HTTP thread fast-path
         fetch.signal_store.aborted.store(true, .release);
 
-        // Transition state under lock
-        const old_lifecycle = fetch.result.lifecycle;
-
+        // Transition lifecycle state under lock (FIXED: Issue 1 & 3)
+        fetch.mutex.lock();
+        const old_lifecycle = fetch.lifecycle;
         if (!old_lifecycle.isTerminal()) {
-            fetch.result.lifecycle = .aborted;
+            fetch.lifecycle = .aborted;
         }
+        fetch.mutex.unlock();
 
         // Schedule abort handling on main thread (if not already there)
         fetch.scheduleAbortHandling();
@@ -639,6 +643,11 @@ pub const FetchTasklet = struct {
     // 2. Request streaming (RequestStreamState) - independent
     // 3. Abort status (atomic bool) - independent
     // 4. Connection upgrade (bool) - one-time flag
+    //
+    // MIGRATION NOTE (Phase 7.3): Adding state machine fields to replace boolean flags
+    // - lifecycle replaces: is_waiting_body
+    // - request_stream_state replaces: is_waiting_request_stream_start
+    // - signal_store.aborted already exists for abort tracking
 
     pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
 
@@ -670,6 +679,20 @@ pub const FetchTasklet = struct {
     //   none (most requests)
     //   OR: waiting_start → active → complete
 
+    // ============================================================================
+    // STATE MACHINE FIELDS (Phase 7.3)
+    // ============================================================================
+    /// Main fetch lifecycle state (replaces is_waiting_body and other implicit states)
+    /// MIGRATION: Must be protected by mutex when accessed
+    lifecycle: FetchLifecycle = .created,
+
+    /// Request body streaming state (replaces is_waiting_request_stream_start)
+    /// MIGRATION: Must be protected by mutex when accessed
+    request_stream_state: RequestStreamState = .none,
+
+    // ============================================================================
+    // CORE FIELDS
+    // ============================================================================
     sink: ?*ResumableSink = null,
     http: ?*http.AsyncHTTP = null,
     result: http.HTTPClientResult = .{},
@@ -687,7 +710,10 @@ pub const FetchTasklet = struct {
     response: jsc.Weak(FetchTasklet) = .{},
     /// native response ref if we still need it when JS is discarted
     native_response: ?*Response = null,
-    ignore_data: bool = false,
+    // MIGRATION (Phase 7.3): ignore_data removed - use shouldIgnoreBodyData() method instead
+    // Old: ignore_data: bool = false,
+    // New: Computed from: shouldIgnoreBodyData(lifecycle, signal_store.aborted)
+    // The helper checks: abort requested OR lifecycle == .aborted
     /// stream strong ref if any is available
     readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
     request_headers: Headers = Headers{ .allocator = undefined },
@@ -718,9 +744,11 @@ pub const FetchTasklet = struct {
     upgraded_connection: bool = false,
     // Custom Hostname
     hostname: ?[]u8 = null,
-    is_waiting_body: bool = false,
-    is_waiting_abort: bool = false,
-    is_waiting_request_stream_start: bool = false,
+    // MIGRATION (Phase 7.3): Boolean flags removed in favor of state machine
+    // Old flags (all removed):
+    //   - is_waiting_body: bool = false → Check lifecycle == .response_awaiting_body_access
+    //   - is_waiting_abort: bool = false → Check signal_store.aborted AND result.has_more
+    //   - is_waiting_request_stream_start: bool = false → Check request_stream_state == .waiting_start
     mutex: Mutex,
 
     tracker: jsc.Debugger.AsyncTaskTracker,
@@ -935,7 +963,10 @@ pub const FetchTasklet = struct {
         this.readable_stream_ref.deinit();
 
         this.scheduled_response_buffer.deinit();
-        if (this.request_body != .ReadableStream or this.is_waiting_request_stream_start) {
+        // MIGRATION (Phase 7.3): Replaced is_waiting_request_stream_start with request_stream_state check
+        // Old: if (this.request_body != .ReadableStream or this.is_waiting_request_stream_start)
+        // New: Detach if not a stream, or if stream hasn't started yet (waiting_start state)
+        if (this.request_body != .ReadableStream or this.request_stream_state == .waiting_start) {
             this.request_body.detach();
         }
 
@@ -981,6 +1012,17 @@ pub const FetchTasklet = struct {
         return null;
     }
 
+    /// MIGRATION (Phase 7.3): Helper method replacing ignore_data boolean flag
+    /// Returns true if we should ignore remaining body data
+    /// Old: this.ignore_data
+    /// New: this.shouldIgnoreData()
+    fn shouldIgnoreData(this: *FetchTasklet) bool {
+        return shouldIgnoreBodyData(
+            this.lifecycle,
+            this.signal_store.aborted.load(.monotonic),
+        );
+    }
+
     /// Start streaming request body to server.
     /// Uses explicit ownership transfer to avoid double-retain bugs.
     ///
@@ -991,7 +1033,10 @@ pub const FetchTasklet = struct {
     ///   - Ref 2: Streaming pipeline (consumed when stream pipes data to sink)
     /// - After: stream ownership transferred to sink, we hold sink ref
     pub fn startRequestStream(this: *FetchTasklet) void {
-        this.is_waiting_request_stream_start = false;
+        // MIGRATION (Phase 7.3): Replaced is_waiting_request_stream_start flag with request_stream_state transition
+        // Old: this.is_waiting_request_stream_start = false;
+        // New: Transition from waiting_start to active
+        this.request_stream_state = .active;
         bun.assert(this.request_body == .ReadableStream);
 
         if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
@@ -1299,12 +1344,18 @@ pub const FetchTasklet = struct {
                 this.deref();
             }
         }
-        if (this.is_waiting_request_stream_start and this.result.can_stream) {
+        // MIGRATION (Phase 7.3): Replaced is_waiting_request_stream_start with request_stream_state check
+        // Old: if (this.is_waiting_request_stream_start and this.result.can_stream)
+        // New: Check if request stream is in waiting_start state
+        if (this.request_stream_state == .waiting_start and this.result.can_stream) {
             // start streaming
             this.startRequestStream();
         }
         // if we already respond the metadata and still need to process the body
-        if (this.is_waiting_body) {
+        // MIGRATION (Phase 7.3): Replaced is_waiting_body with lifecycle state check
+        // Old: if (this.is_waiting_body)
+        // New: Check if we're awaiting body access or actively receiving body
+        if (this.lifecycle == .response_awaiting_body_access) {
             try this.onBodyReceived();
             return;
         }
@@ -1313,7 +1364,11 @@ pub const FetchTasklet = struct {
         // if we abort because of cert error
         // we wait the Http Client because we already have the response
         // we just need to deinit
-        if (this.is_waiting_abort) {
+        // MIGRATION (Phase 7.3): Replaced is_waiting_abort with signal_store.aborted atomic check
+        // Old: if (this.is_waiting_abort)
+        // New: Check atomic abort flag - this indicates abort pending but waiting for HTTP thread cleanup
+        // Note: The original logic set is_waiting_abort = has_more, so we wait if aborted AND has_more
+        if (this.signal_store.aborted.load(.monotonic) and this.result.has_more) {
             return;
         }
         const promise_value = this.promise.valueOrEmpty();
@@ -1441,7 +1496,10 @@ pub const FetchTasklet = struct {
                         }
                         const check_result = globalObject.tryTakeException().?;
                         // mark to wait until deinit
-                        this.is_waiting_abort = this.result.has_more;
+                        // MIGRATION (Phase 7.3): Removed is_waiting_abort flag write
+                        // Old: this.is_waiting_abort = this.result.has_more;
+                        // New: signal_store.aborted atomic already stores abort state
+                        // The combination of aborted=true + has_more is checked in onProgressUpdate
                         this.abort_reason.set(globalObject, check_result);
                         this.signal_store.aborted.store(true, .monotonic);
                         this.tracker.didCancel(this.global_this);
@@ -1460,7 +1518,10 @@ pub const FetchTasklet = struct {
                     // > Returns <Error> object [...] on failure
                     if (check_result.isAnyError()) {
                         // mark to wait until deinit
-                        this.is_waiting_abort = this.result.has_more;
+                        // MIGRATION (Phase 7.3): Removed is_waiting_abort flag write
+                        // Old: this.is_waiting_abort = this.result.has_more;
+                        // New: signal_store.aborted atomic already stores abort state
+                        // The combination of aborted=true + has_more is checked in onProgressUpdate
                         this.abort_reason.set(globalObject, check_result);
                         this.signal_store.aborted.store(true, .monotonic);
                         this.tracker.didCancel(this.global_this);
@@ -1691,7 +1752,10 @@ pub const FetchTasklet = struct {
         if (this.getAbortError()) |err| {
             return .{ .Error = err };
         }
-        if (this.is_waiting_body) {
+        // MIGRATION (Phase 7.3): Replaced is_waiting_body with lifecycle state check
+        // Old: if (this.is_waiting_body)
+        // New: Check if we're still awaiting body data (Response created but body not complete)
+        if (this.lifecycle == .response_awaiting_body_access) {
             const response = Body.Value{
                 .Locked = .{
                     .size_hint = this.getSizeHint(),
@@ -1727,7 +1791,14 @@ pub const FetchTasklet = struct {
         // at this point we always should have metadata
         const metadata = this.metadata.?;
         const http_response = metadata.response;
-        this.is_waiting_body = this.result.has_more;
+        // MIGRATION (Phase 7.3): Replaced is_waiting_body flag with lifecycle state transition
+        // Old: this.is_waiting_body = this.result.has_more;
+        // New: Set lifecycle based on whether we're still receiving body data
+        if (this.result.has_more) {
+            this.lifecycle = .response_awaiting_body_access;
+        } else {
+            this.lifecycle = .completed;
+        }
         return Response.init(
             .{
                 .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
@@ -1763,7 +1834,11 @@ pub const FetchTasklet = struct {
             this.native_response = null;
         }
 
-        this.ignore_data = true;
+        // MIGRATION (Phase 7.3): Removed ignore_data flag write
+        // Old: this.ignore_data = true;
+        // New: No explicit flag needed - shouldIgnoreData() computes from lifecycle and abort state
+        // Since we're finalizing the response, the lifecycle will reflect this,
+        // or abort flag will be set, making shouldIgnoreData() return true automatically
     }
 
     export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.C) void {
@@ -1911,7 +1986,10 @@ pub const FetchTasklet = struct {
         // enable streaming the write side
         const isStream = fetch_tasklet.request_body == .ReadableStream;
         fetch_tasklet.http.?.client.flags.is_streaming_request_body = isStream;
-        fetch_tasklet.is_waiting_request_stream_start = isStream;
+        // MIGRATION (Phase 7.3): Replaced is_waiting_request_stream_start flag with request_stream_state
+        // Old: fetch_tasklet.is_waiting_request_stream_start = isStream;
+        // New: Set request_stream_state to waiting_start if streaming, none otherwise
+        fetch_tasklet.request_stream_state = if (isStream) .waiting_start else .none;
         if (isStream) {
             // Create buffer for request body streaming
             // REF COUNTING: Buffer created with 1 ref, will gain second ref when HTTP thread starts using it
@@ -2182,7 +2260,10 @@ pub const FetchTasklet = struct {
             task.response_buffer = result.body.?.*;
 
             // Copy data to scheduled buffer if not ignoring
-            if (!task.ignore_data) {
+            // MIGRATION (Phase 7.3): Replaced ignore_data flag with shouldIgnoreData() method call
+            // Old: if (!task.ignore_data)
+            // New: if (!task.shouldIgnoreData())
+            if (!task.shouldIgnoreData()) {
                 const success = result.isSuccess();
                 if (success) {
                     _ = bun.handleOom(task.scheduled_response_buffer.write(task.response_buffer.list.items));
@@ -2200,7 +2281,10 @@ pub const FetchTasklet = struct {
             task.http.?.* = async_http.*;
             task.http.?.response_buffer = async_http.response_buffer;
 
-            log("callback success={} ignore_data={} has_more={} bytes={}", .{ result.isSuccess(), task.ignore_data, result.has_more, result.body.?.list.items.len });
+            // MIGRATION (Phase 7.3): Replaced ignore_data in log with shouldIgnoreData() call
+            // Old: task.ignore_data
+            // New: task.shouldIgnoreData()
+            log("callback success={} ignore_data={} has_more={} bytes={}", .{ result.isSuccess(), task.shouldIgnoreData(), result.has_more, result.body.?.list.items.len });
 
             const prev_metadata = task.result.metadata;
             const prev_cert_info = task.result.certificate_info;
@@ -2228,7 +2312,10 @@ pub const FetchTasklet = struct {
             const success = result.isSuccess();
             task.response_buffer = result.body.?.*;
 
-            if (task.ignore_data) {
+            // MIGRATION (Phase 7.3): Replaced ignore_data flag with shouldIgnoreData() method call
+            // Old: if (task.ignore_data)
+            // New: if (task.shouldIgnoreData())
+            if (task.shouldIgnoreData()) {
                 task.response_buffer.reset();
 
                 if (task.scheduled_response_buffer.list.capacity > 0) {

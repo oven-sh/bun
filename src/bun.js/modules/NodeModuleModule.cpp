@@ -10,6 +10,7 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/JSInternalPromise.h>
+#include <JavaScriptCore/IteratorOperations.h>
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JSCommonJSExtensions.h"
@@ -361,32 +362,43 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
         JSC::EncodedJSValue result;
 
         // If paths are provided, use Bun__resolveSyncWithPaths
-        if (pathsValue.isCell() && pathsValue.isObject()) {
-            if (JSC::JSArray* pathsArray = jsDynamicCast<JSC::JSArray*>(pathsValue)) {
-                WTF::Vector<BunString> paths;
-                for (size_t i = 0; i < pathsArray->length(); ++i) {
-                    JSC::JSValue path = pathsArray->getIndex(globalObject, i);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    WTF::String pathStr = path.toWTFString(globalObject);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    paths.append(Bun::toStringRef(pathStr));
-                }
+        if (!pathsValue.isUndefinedOrNull() && hasIteratorMethod(globalObject, pathsValue)) {
+            WTF::Vector<BunString> paths;
 
-                result = Bun__resolveSyncWithPaths(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true, paths.begin(), paths.size());
+            forEachInIterable(globalObject, pathsValue, [&](JSC::VM&, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue item) {
+                if (scope.exception())
+                    return;
 
+                WTF::String pathStr = item.toWTFString(lexicalGlobalObject);
+                if (scope.exception())
+                    return;
+
+                paths.append(Bun::toStringRef(pathStr));
+            });
+
+            if (scope.exception()) {
+                // Clean up on exception
                 for (auto& path : paths) {
                     path.deref();
                 }
-
-                RETURN_IF_EXCEPTION(scope, {});
-
-                if (!JSC::JSValue::decode(result).isString()) {
-                    JSC::throwException(globalObject, scope, JSC::JSValue::decode(result));
-                    return {};
-                }
-
-                return result;
+                return {};
             }
+
+            result = Bun__resolveSyncWithPaths(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true, paths.begin(), paths.size());
+
+            // Clean up BunStrings to avoid leaking
+            for (auto& path : paths) {
+                path.deref();
+            }
+
+            RETURN_IF_EXCEPTION(scope, {});
+
+            if (!JSC::JSValue::decode(result).isString()) {
+                JSC::throwException(globalObject, scope, JSC::JSValue::decode(result));
+                return {};
+            }
+
+            return result;
         }
 
         // No paths provided, use regular resolution

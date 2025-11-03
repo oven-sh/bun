@@ -2,7 +2,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import Module from "module";
 import { tmpdir } from "os";
-import { dirname, join } from "path";
+import { dirname, join, resolve } from "path";
 
 // Detect runtime and import appropriate test framework
 const isBun = typeof Bun !== "undefined";
@@ -34,7 +34,8 @@ if (isBun) {
 
 // Helper to create temp directory - works in both Bun and Node
 function createTempDir(prefix, files) {
-  const dir = mkdtempSync(join(tmpdir(), prefix + "-"));
+  // Use resolve to get the canonical path (handles /tmp -> /private/tmp on macOS)
+  const dir = resolve(mkdtempSync(join(tmpdir(), prefix + "-")));
 
   for (const [filePath, content] of Object.entries(files)) {
     const fullPath = join(dir, filePath);
@@ -73,7 +74,7 @@ test("Module._resolveFilename respects options.paths for package resolution", ()
       paths: [dir],
     });
 
-    expect(resolved).toBe(join(dir, "node_modules/test-package/index.js"));
+    expect(resolved).toBe(resolve(dir, "node_modules/test-package/index.js"));
   } finally {
     cleanup();
   }
@@ -94,7 +95,7 @@ test("Module._resolveFilename respects options.paths for relative paths", () => 
       paths: [dir],
     });
 
-    expect(resolved).toBe(join(dir, "target.js"));
+    expect(resolved).toBe(resolve(dir, "target.js"));
   } finally {
     cleanup();
   }
@@ -154,7 +155,7 @@ test("require.resolve respects options.paths for package resolution", () => {
       paths: [dir],
     });
 
-    expect(resolved).toBe(join(dir, "node_modules/resolve-test-pkg/index.js"));
+    expect(resolved).toBe(resolve(dir, "node_modules/resolve-test-pkg/index.js"));
   } finally {
     cleanup();
   }
@@ -176,7 +177,7 @@ test("require.resolve with relative path and options.paths (Next.js use case)", 
       paths: [dir],
     });
 
-    expect(resolved).toBe(join(dir, "node_modules/babel-plugin-react-compiler/dist/index.js"));
+    expect(resolved).toBe(resolve(dir, "node_modules/babel-plugin-react-compiler/dist/index.js"));
   } finally {
     cleanup();
   }

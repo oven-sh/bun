@@ -461,8 +461,8 @@ function getHostname(self, rest, hostname: string, url) {
 }
 
 // format a parsed object into a url string
-declare function urlFormat(urlObject: string | URL | Url): string;
-function urlFormat(urlObject: unknown) {
+declare function urlFormat(urlObject: string | URL | Url, options?: any): string;
+function urlFormat(urlObject: unknown, options?: any) {
   /*
    * ensure it's an object, and not a string url.
    * If it's an obj, this is a no-op.
@@ -476,10 +476,86 @@ function urlFormat(urlObject: unknown) {
     throw $ERR_INVALID_ARG_TYPE("urlObject", ["Object", "string"], urlObject);
   }
 
+  // Handle WHATWG URL objects with options
+  if (urlObject instanceof URL) {
+    return formatWhatwgUrl(urlObject, options);
+  }
+
   if (!(urlObject instanceof Url)) {
     return Url.prototype.format.$call(urlObject);
   }
   return urlObject.format();
+}
+
+function formatWhatwgUrl(url: URL, options?: any) {
+  if (options !== undefined && options !== null && typeof options !== "object") {
+    throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+  }
+
+  let fragment = true;
+  let unicode = false;
+  let search = true;
+  let auth = true;
+
+  if (options) {
+    if (options.fragment != null) {
+      fragment = Boolean(options.fragment);
+    }
+
+    if (options.unicode != null) {
+      unicode = Boolean(options.unicode);
+    }
+
+    if (options.search != null) {
+      search = Boolean(options.search);
+    }
+
+    if (options.auth != null) {
+      auth = Boolean(options.auth);
+    }
+  }
+
+  let result = url.protocol;
+
+  // Only add // for URLs with host
+  const hasHost = url.host !== "";
+  if (hasHost) {
+    result += "//";
+
+    if (auth && (url.username || url.password)) {
+      result += url.username;
+      if (url.password) {
+        result += ":" + url.password;
+      }
+      result += "@";
+    }
+
+    let hostname = url.hostname;
+    if (unicode && hostname) {
+      try {
+        hostname = domainToUnicode(hostname);
+      } catch (e) {
+        // If domainToUnicode fails, use the original hostname
+      }
+    }
+    result += hostname;
+
+    if (url.port) {
+      result += ":" + url.port;
+    }
+  }
+
+  result += url.pathname;
+
+  if (search && url.search) {
+    result += url.search;
+  }
+
+  if (fragment && url.hash) {
+    result += url.hash;
+  }
+
+  return result;
 }
 
 Url.prototype.format = function format() {

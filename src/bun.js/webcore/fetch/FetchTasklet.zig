@@ -1,3 +1,148 @@
+//! ============================================================================
+//! STATE MACHINE
+//! ============================================================================
+//!
+//! FetchTasklet tracks multiple orthogonal state dimensions:
+//! 1. Main lifecycle (FetchLifecycle) - mutually exclusive
+//! 2. Request streaming (RequestStreamState) - independent
+//! 3. Abort status (atomic bool) - independent
+//! 4. Connection upgrade (bool) - one-time flag
+
+/// Main fetch lifecycle - mutually exclusive OR states.
+/// Every FetchTasklet is in exactly ONE of these states at a time.
+const FetchLifecycle = enum(u8) {
+    /// Initial: Created, not yet queued to HTTP thread
+    created,
+
+    /// HTTP request in flight
+    http_active,
+
+    /// Receiving response headers from server
+    http_receiving_headers,
+
+    /// Receiving response body from server
+    /// Response object may or may not exist yet
+    http_receiving_body,
+
+    /// Response object created, body not yet accessed by JS
+    /// Replaces: is_waiting_body = true
+    response_awaiting_body_access,
+
+    /// Response body is streaming to JS ReadableStream
+    response_body_streaming,
+
+    /// Response body is buffering in memory (no stream created yet)
+    response_body_buffering,
+
+    /// Terminal states (no transitions out)
+    completed,
+    failed,
+    aborted,
+
+    pub fn isTerminal(self: FetchLifecycle) bool {
+        return switch (self) {
+            .completed, .failed, .aborted => true,
+            else => false,
+        };
+    }
+
+    pub fn isHTTPActive(self: FetchLifecycle) bool {
+        return switch (self) {
+            .http_active, .http_receiving_headers, .http_receiving_body => true,
+            else => false,
+        };
+    }
+
+    pub fn canReceiveBody(self: FetchLifecycle) bool {
+        return switch (self) {
+            .http_receiving_body, .response_body_streaming, .response_body_buffering => true,
+            else => false,
+        };
+    }
+
+    /// Validate state transition (debug builds only)
+    pub fn canTransitionTo(self: FetchLifecycle, next: FetchLifecycle) bool {
+        return switch (self) {
+            .created => switch (next) {
+                .http_active, .aborted, .failed => true,
+                else => false,
+            },
+            .http_active => switch (next) {
+                .http_receiving_headers, .aborted, .failed => true,
+                else => false,
+            },
+            .http_receiving_headers => switch (next) {
+                .http_receiving_body,
+                .response_awaiting_body_access,
+                .response_body_buffering,
+                .completed, // Empty body case
+                .aborted,
+                .failed,
+                => true,
+                else => false,
+            },
+            .http_receiving_body => switch (next) {
+                .response_awaiting_body_access, .response_body_streaming, .response_body_buffering, .completed, .aborted, .failed => true,
+                else => false,
+            },
+            .response_awaiting_body_access => switch (next) {
+                .response_body_streaming, .response_body_buffering, .completed, .aborted, .failed => true,
+                else => false,
+            },
+            .response_body_streaming => switch (next) {
+                .completed, .aborted, .failed => true,
+                else => false,
+            },
+            .response_body_buffering => switch (next) {
+                .response_body_streaming, // Upgrade to streaming
+                .completed,
+                .aborted,
+                .failed,
+                => true,
+                else => false,
+            },
+            .completed, .failed, .aborted => false, // Terminal
+        };
+    }
+};
+
+/// Request body streaming state - orthogonal to main lifecycle.
+/// Only relevant when request has a streaming body (ReadableStream).
+const RequestStreamState = enum(u8) {
+    /// No streaming request body (Blob, Sendfile, or empty)
+    none,
+
+    /// Stream exists but hasn't started yet (waiting for server ready)
+    /// Replaces: is_waiting_request_stream_start = true
+    waiting_start,
+
+    /// Stream actively being read and sent to server
+    active,
+
+    /// Stream finished (successfully or with error)
+    complete,
+};
+
+/// Helper for validated state transitions (in debug builds)
+fn transitionLifecycle(this: *FetchTasklet, old_state: FetchLifecycle, new_state: FetchLifecycle) void {
+    if (bun.Environment.isDebug) {
+        bun.assert(old_state.canTransitionTo(new_state));
+    }
+    this.lifecycle = new_state;
+}
+
+/// Computed property: Should we ignore remaining body data?
+/// Replaces: ignore_data boolean flag
+fn shouldIgnoreBodyData(this: *FetchTasklet) bool {
+    // Ignore data if:
+    // 1. Abort was requested (via signal_store)
+    // 2. Already in aborted state
+    // 3. ignore_data flag is set (for backwards compatibility during transition)
+    return this.signal_store.aborted.load(.monotonic) or
+        this.lifecycle == .aborted or
+        this.ignore_data;
+}
+
 pub const FetchTasklet = struct {
     pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
 
@@ -54,6 +199,13 @@ pub const FetchTasklet = struct {
     is_waiting_abort: bool = false,
     is_waiting_request_stream_start: bool = false,
     mutex: Mutex,
+
+    // === NEW STATE MACHINE FIELDS (Phase 7 Step 1) ===
+    // These track state alongside existing boolean flags during transition
+    /// Main fetch lifecycle state (mutually exclusive)
+    lifecycle: FetchLifecycle = .created,
+    /// Request body streaming state (orthogonal to lifecycle)
+    request_stream_state: RequestStreamState = .none,
 
     tracker: jsc.Debugger.AsyncTaskTracker,
 
@@ -280,6 +432,8 @@ pub const FetchTasklet = struct {
 
     pub fn startRequestStream(this: *FetchTasklet) void {
         this.is_waiting_request_stream_start = false;
+        // Dual tracking: update both flag and state
+        this.request_stream_state = .active;
         bun.assert(this.request_body == .ReadableStream);
         if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
             if (this.signal) |signal| {
@@ -346,6 +500,13 @@ pub const FetchTasklet = struct {
 
         if (this.readable_stream_ref.get(globalThis)) |readable| {
             log("onBodyReceived readable_stream_ref", .{});
+            // Dual tracking: mark as streaming if we have a stream
+            if (this.lifecycle == .response_awaiting_body_access or
+                this.lifecycle == .response_body_buffering or
+                this.lifecycle == .http_receiving_body)
+            {
+                transitionLifecycle(this, this.lifecycle, .response_body_streaming);
+            }
             if (readable.ptr == .Bytes) {
                 readable.ptr.Bytes.size_hint = this.getSizeHint();
                 // body can be marked as used but we still need to pipe the data
@@ -383,6 +544,13 @@ pub const FetchTasklet = struct {
             response.setSizeHint(sizeHint);
             if (response.getBodyReadableStream(globalThis)) |readable| {
                 log("onBodyReceived CurrentResponse BodyReadableStream", .{});
+                // Dual tracking: mark as streaming when body stream is accessed
+                if (this.lifecycle == .response_awaiting_body_access or
+                    this.lifecycle == .response_body_buffering or
+                    this.lifecycle == .http_receiving_body)
+                {
+                    transitionLifecycle(this, this.lifecycle, .response_body_streaming);
+                }
                 if (readable.ptr == .Bytes) {
                     const scheduled_response_buffer = this.scheduled_response_buffer.list;
 
@@ -611,6 +779,10 @@ pub const FetchTasklet = struct {
                         this.is_waiting_abort = this.result.has_more;
                         this.abort_reason.set(globalObject, check_result);
                         this.signal_store.aborted.store(true, .monotonic);
+                        // Dual tracking: transition to aborted/failed state
+                        if (!this.lifecycle.isTerminal()) {
+                            transitionLifecycle(this, this.lifecycle, .failed);
+                        }
                         this.tracker.didCancel(this.global_this);
                         // we need to abort the request
                         if (this.http) |http_| http.http_thread.scheduleShutdown(http_);
@@ -630,6 +802,10 @@ pub const FetchTasklet = struct {
                         this.is_waiting_abort = this.result.has_more;
                         this.abort_reason.set(globalObject, check_result);
                         this.signal_store.aborted.store(true, .monotonic);
+                        // Dual tracking: transition to failed state
+                        if (!this.lifecycle.isTerminal()) {
+                            transitionLifecycle(this, this.lifecycle, .failed);
+                        }
                         this.tracker.didCancel(this.global_this);
 
                         // we need to abort the request
@@ -890,6 +1066,19 @@ pub const FetchTasklet = struct {
         const metadata = this.metadata.?;
         const http_response = metadata.response;
         this.is_waiting_body = this.result.has_more;
+        // Dual tracking: update both flag and state
+        // Only transition if not already in a more advanced or terminal state
+        if (this.result.has_more) {
+            if (this.lifecycle == .http_receiving_body or
+                this.lifecycle == .http_receiving_headers or
+                this.lifecycle == .http_active)
+            {
+                transitionLifecycle(this, this.lifecycle, .response_awaiting_body_access);
+            }
+        } else {
+            // No more body - but don't transition to completed yet, let callback handle it
+            // Just stay in current state
+        }
         return Response.init(
             .{
                 .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
@@ -924,6 +1113,10 @@ pub const FetchTasklet = struct {
         }
 
         this.ignore_data = true;
+        // Dual tracking: transition to aborted state
+        if (!this.lifecycle.isTerminal()) {
+            transitionLifecycle(this, this.lifecycle, .aborted);
+        }
     }
 
     export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.C) void {
@@ -1064,6 +1257,8 @@ pub const FetchTasklet = struct {
         const isStream = fetch_tasklet.request_body == .ReadableStream;
         fetch_tasklet.http.?.client.flags.is_streaming_request_body = isStream;
         fetch_tasklet.is_waiting_request_stream_start = isStream;
+        // Dual tracking: set request stream state
+        fetch_tasklet.request_stream_state = if (isStream) .waiting_start else .none;
         if (isStream) {
             const buffer = http.ThreadSafeStreamBuffer.new(.{});
             buffer.setDrainCallback(FetchTasklet, FetchTasklet.onWriteRequestDataDrain, fetch_tasklet);
@@ -1101,6 +1296,10 @@ pub const FetchTasklet = struct {
         log("abortListener", .{});
         reason.ensureStillAlive();
         this.abort_reason.set(this.global_this, reason);
+        // Dual tracking: transition to aborted state
+        if (!this.lifecycle.isTerminal()) {
+            transitionLifecycle(this, this.lifecycle, .aborted);
+        }
         this.abortTask();
         if (this.sink) |sink| {
             sink.cancel(reason);
@@ -1178,6 +1377,8 @@ pub const FetchTasklet = struct {
     pub fn writeEndRequest(this: *FetchTasklet, err: ?jsc.JSValue) void {
         log("writeEndRequest hasError? {}", .{err != null});
         defer this.deref();
+        // Dual tracking: mark request stream as complete
+        this.request_stream_state = .complete;
         if (err) |jsError| {
             if (this.signal_store.aborted.load(.monotonic) or this.abort_reason.has()) {
                 return;
@@ -1251,6 +1452,9 @@ pub const FetchTasklet = struct {
         node.http.?.schedule(allocator, &batch);
         node.poll_ref.ref(global.bunVM());
 
+        // Dual tracking: transition to http_active when queued to HTTP thread
+        transitionLifecycle(node, node.lifecycle, .http_active);
+
         // increment ref so we can keep it alive until the http client is done
         node.ref();
         http.http_thread.schedule(batch);
@@ -1273,6 +1477,23 @@ pub const FetchTasklet = struct {
         task.http.?.response_buffer = async_http.response_buffer;
 
         log("callback success={} ignore_data={} has_more={} bytes={}", .{ result.isSuccess(), task.ignore_data, result.has_more, result.body.?.list.items.len });
+
+        // Dual tracking: update lifecycle state
+        // Only transition if not already in a terminal or later state
+        if (!task.lifecycle.isTerminal()) {
+            if (result.metadata != null and (task.lifecycle == .created or task.lifecycle == .http_active or task.lifecycle == .http_receiving_headers)) {
+                // We have metadata, move to receiving body
+                if (task.lifecycle == .created or task.lifecycle == .http_active) {
+                    transitionLifecycle(task, task.lifecycle, .http_receiving_headers);
+                }
+                if (task.lifecycle == .http_receiving_headers) {
+                    transitionLifecycle(task, task.lifecycle, .http_receiving_body);
+                }
+            } else if (task.lifecycle == .created or task.lifecycle == .http_active) {
+                // No metadata yet, just mark as active
+                transitionLifecycle(task, task.lifecycle, .http_receiving_headers);
+            }
+        }
 
         const prev_metadata = task.result.metadata;
         const prev_cert_info = task.result.certificate_info;
@@ -1299,6 +1520,15 @@ pub const FetchTasklet = struct {
 
         const success = result.isSuccess();
         task.response_buffer = result.body.?.*;
+
+        // Dual tracking: transition to terminal states when done
+        if (!result.has_more and !task.lifecycle.isTerminal()) {
+            if (success) {
+                transitionLifecycle(task, task.lifecycle, .completed);
+            } else {
+                transitionLifecycle(task, task.lifecycle, .failed);
+            }
+        }
 
         if (task.ignore_data) {
             task.response_buffer.reset();

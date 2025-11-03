@@ -293,13 +293,10 @@ pub const FetchTasklet = struct {
 
         this.readable_stream_ref.deinit();
 
-        // if sink exists, it owns any request ReadableStream - but if not then detach the request body
-        if (this.sink == null) {
-            this.request_body.detach();
-        }
         this.scheduled_response_buffer.deinit();
 
-        if (this.request_body != .ReadableStream or this.is_waiting_request_stream_start) {
+        // if sink exists, it owns any request ReadableStream - but if not then detach the request body
+        if (this.sink == null) {
             this.request_body.detach();
         }
 

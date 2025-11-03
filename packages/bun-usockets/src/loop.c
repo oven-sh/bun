@@ -563,16 +563,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
                     } else if (!length) {
                         // lets handle EOF in the same place
                         has_received_eof = true;
-                        #ifdef LIBUS_USE_KQUEUE
-                        s->flags.is_readable = false;
-                        #endif
                         
                         break;
                     } else if (length == LIBUS_SOCKET_ERROR) {
                         if(bsd_would_block()) {
-                            #ifdef LIBUS_USE_KQUEUE
-                            s->flags.is_readable = false;
-                            #endif
                             break;
                         }
                         /* Todo: decide also here what kind of reason we should give */

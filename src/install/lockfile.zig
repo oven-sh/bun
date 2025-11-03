@@ -930,7 +930,6 @@ pub fn hoist(
     var slice = lockfile.packages.slice();
 
     var builder = Tree.Builder(method){
-        .name_hashes = slice.items(.name_hash),
         .queue = .init(allocator),
         .resolution_lists = slice.items(.resolutions),
         .resolutions = lockfile.buffers.resolutions.items,
@@ -942,6 +941,7 @@ pub fn hoist(
         .install_root_dependencies = install_root_dependencies,
         .workspace_filters = workspace_filters,
         .packages_to_install = packages_to_install,
+        .pending_optional_peers = .init(bun.default_allocator),
     };
 
     try (Tree{}).processSubtree(

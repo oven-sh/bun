@@ -391,7 +391,6 @@ pub const Source = struct {
 
                 enable_ansi_colors_stdout = enable_color orelse is_stdout_tty;
                 enable_ansi_colors_stderr = enable_color orelse is_stderr_tty;
-                enable_ansi_colors = enable_ansi_colors_stdout or enable_ansi_colors_stderr;
             }
 
             stdout_stream = new_source.stream;
@@ -407,7 +406,7 @@ pub const OutputStreamDescriptor = enum {
     terminal,
 };
 
-pub var enable_ansi_colors = Environment.isNative;
+pub const enable_ansi_colors = @compileError("Deprecated to prevent accidentally using the wrong one. Use enable_ansi_colors_stdout or enable_ansi_colors_stderr instead.");
 pub var enable_ansi_colors_stderr = Environment.isNative;
 pub var enable_ansi_colors_stdout = Environment.isNative;
 pub var enable_buffering = Environment.isNative;
@@ -427,10 +426,6 @@ pub inline fn isStderrTTY() bool {
 
 pub inline fn isStdinTTY() bool {
     return bun_stdio_tty[0] != 0;
-}
-
-pub inline fn isEmojiEnabled() bool {
-    return enable_ansi_colors;
 }
 
 pub fn isGithubAction() bool {
@@ -525,7 +520,7 @@ pub fn disableBuffering() void {
 pub fn panic(comptime fmt: string, args: anytype) noreturn {
     @branchHint(.cold);
 
-    if (isEmojiEnabled()) {
+    if (enable_ansi_colors_stderr) {
         std.debug.panic(comptime prettyFmt(fmt, true), args);
     } else {
         std.debug.panic(comptime prettyFmt(fmt, false), args);
@@ -562,7 +557,7 @@ pub fn writerBuffered() Source.BufferedStream.Writer {
 }
 
 pub fn resetTerminal() void {
-    if (!enable_ansi_colors) {
+    if (!enable_ansi_colors_stderr and !enable_ansi_colors_stdout) {
         return;
     }
 
@@ -1013,14 +1008,6 @@ pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime 
         printer(comptime prettyFmt(fmt, true), args);
     } else {
         printer(comptime prettyFmt(fmt, false), args);
-    }
-}
-
-pub noinline fn prettyWithPrinterFn(comptime fmt: string, args: anytype, comptime printFn: anytype, ctx: anytype) void {
-    if (enable_ansi_colors) {
-        printFn(ctx, comptime prettyFmt(fmt, true), args);
-    } else {
-        printFn(ctx, comptime prettyFmt(fmt, false), args);
     }
 }
 

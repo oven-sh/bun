@@ -813,7 +813,7 @@ pub extern fn napi_create_arraybuffer(env: napi_env, byte_length: usize, data: [
 
 pub extern fn napi_create_external_arraybuffer(env: napi_env, external_data: ?*anyopaque, byte_length: usize, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status;
 
-pub export fn napi_get_arraybuffer_info(env_: napi_env, arraybuffer_: napi_value, data: ?*[*]u8, byte_length: ?*usize) napi_status {
+pub export fn napi_get_arraybuffer_info(env_: napi_env, arraybuffer_: napi_value, data: ?*?[*]u8, byte_length: ?*usize) napi_status {
     log("napi_get_arraybuffer_info", .{});
     const env = env_ orelse {
         return envIsNull();
@@ -825,11 +825,10 @@ pub export fn napi_get_arraybuffer_info(env_: napi_env, arraybuffer_: napi_value
         return env.setLastError(.invalid_arg);
     }
 
-    const slice = array_buffer.slice();
     if (data) |dat|
-        dat.* = slice.ptr;
+        dat.* = array_buffer.ptr;
     if (byte_length) |len|
-        len.* = slice.len;
+        len.* = array_buffer.byte_len;
     return env.ok();
 }
 
@@ -840,7 +839,7 @@ pub export fn napi_get_typedarray_info(
     typedarray_: napi_value,
     maybe_type: ?*napi_typedarray_type,
     maybe_length: ?*usize,
-    maybe_data: ?*[*]u8,
+    maybe_data: ?*?[*]u8,
     maybe_arraybuffer: ?*napi_value,
     maybe_byte_offset: ?*usize, // note: this is always 0
 ) napi_status {
@@ -892,7 +891,7 @@ pub export fn napi_get_dataview_info(
     env_: napi_env,
     dataview_: napi_value,
     maybe_bytelength: ?*usize,
-    maybe_data: ?*[*]u8,
+    maybe_data: ?*?[*]u8,
     maybe_arraybuffer: ?*napi_value,
     maybe_byte_offset: ?*usize, // note: this is always 0
 ) napi_status {
@@ -1223,7 +1222,7 @@ pub export fn napi_create_buffer_copy(env_: napi_env, length: usize, data: [*]u8
     return env.ok();
 }
 extern fn napi_is_buffer(napi_env, napi_value, *bool) napi_status;
-pub export fn napi_get_buffer_info(env_: napi_env, value_: napi_value, data: ?*[*]u8, length: ?*usize) napi_status {
+pub export fn napi_get_buffer_info(env_: napi_env, value_: napi_value, data: ?*?[*]u8, length: ?*usize) napi_status {
     log("napi_get_buffer_info", .{});
     const env = env_ orelse {
         return envIsNull();

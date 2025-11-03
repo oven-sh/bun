@@ -621,8 +621,37 @@ pub const FetchTasklet = struct {
     /// If is not chunked encoded and Content-Length is not provided this will be unknown
     body_size: http.HTTPClientResult.BodySize = .unknown,
 
-    /// This is url + proxy memory buffer and is owned by FetchTasklet
-    /// We always clone url and proxy (if informed)
+    /// URL/Proxy buffer with explicit ownership tracking.
+    ///
+    /// OWNERSHIP MODEL:
+    /// This buffer is OWNED by FetchTasklet and must be freed on cleanup.
+    /// The buffer contains the URL string and optionally a proxy string concatenated.
+    ///
+    /// LIFECYCLE:
+    /// 1. Created in fetch.zig, initially set to url.href
+    /// 2. May be reallocated to concatenate proxy string (url + proxy in single buffer)
+    /// 3. Ownership transferred to FetchTasklet during initialization
+    /// 4. FetchTasklet responsible for freeing in clearData()
+    /// 5. After transfer, fetch.zig sets local copy to "" to prevent double-free
+    ///
+    /// BUFFER LAYOUT:
+    /// [url_string][proxy_string (optional)]
+    ///
+    /// Related fields (NOT stored here, computed elsewhere):
+    /// - url: ZigURL parsed from buffer[0..url.len]
+    /// - proxy: ZigURL parsed from buffer[url.len..] if proxy present
+    ///
+    /// ALTERNATIVE CONSIDERED:
+    /// Using `bun.ptr.Owned([]const u8)` would provide automatic RAII cleanup:
+    /// ```zig
+    /// url_proxy_buffer: bun.ptr.Owned([]const u8),
+    /// // Usage:
+    /// fn deinit() {
+    ///     self.url_proxy_buffer.deinit(); // Automatic
+    /// }
+    /// ```
+    /// However, the current pattern is already clear and well-established in the codebase.
+    /// The explicit `allocator.free()` in clearData() is simple and obvious.
     url_proxy_buffer: []const u8 = "",
 
     signal: ?*jsc.WebCore.AbortSignal = null,
@@ -799,9 +828,13 @@ pub const FetchTasklet = struct {
         }
     }
 
+    /// Cleanup function that frees all owned resources.
+    /// This is the single cleanup path for FetchTasklet's owned data.
     fn clearData(this: *FetchTasklet) void {
         log("clearData ", .{});
         const allocator = bun.default_allocator;
+
+        // Free url_proxy_buffer (see field documentation for ownership model)
         if (this.url_proxy_buffer.len > 0) {
             allocator.free(this.url_proxy_buffer);
             this.url_proxy_buffer.len = 0;

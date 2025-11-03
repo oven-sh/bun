@@ -1592,6 +1592,9 @@ pub const FetchTasklet = struct {
     }
 
     pub fn abortTask(this: *FetchTasklet) void {
+        // Transition to Aborted state
+        this.setState(.Aborted);
+
         this.signal_store.aborted.store(true, .monotonic);
         this.tracker.didCancel(this.global_this);
 

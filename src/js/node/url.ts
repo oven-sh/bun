@@ -575,7 +575,9 @@ Url.prototype.format = function format() {
   if (this.host) {
     host = auth + this.host;
   } else if (this.hostname) {
-    host = auth + (this.hostname.indexOf(":") === -1 ? this.hostname : "[" + this.hostname + "]");
+    // Check if hostname contains ':' (IPv6) and doesn't already have brackets
+    const needsBrackets = this.hostname.indexOf(":") !== -1 && !isIpv6Hostname(this.hostname);
+    host = auth + (needsBrackets ? "[" + this.hostname + "]" : this.hostname);
     if (this.port) {
       host += ":" + this.port;
     }
@@ -595,13 +597,21 @@ Url.prototype.format = function format() {
    * only the slashedProtocols get the //.  Not mailto:, xmpp:, etc.
    * unless they had them to begin with.
    */
-  if (this.slashes || ((!protocol || slashedProtocol[protocol]) && host.length > 0)) {
-    host = "//" + (host || "");
-    if (pathname && pathname.charAt(0) !== "/") {
-      pathname = "/" + pathname;
+  if (this.slashes || slashedProtocol[protocol]) {
+    if (this.slashes || host) {
+      if (pathname && pathname.charAt(0) !== "/") {
+        pathname = "/" + pathname;
+      }
+      host = "//" + host;
+    } else if (
+      protocol.length >= 4 &&
+      protocol.$charCodeAt(0) === 102 /* f */ &&
+      protocol.$charCodeAt(1) === 105 /* i */ &&
+      protocol.$charCodeAt(2) === 108 /* l */ &&
+      protocol.$charCodeAt(3) === 101 /* e */
+    ) {
+      host = "//";
     }
-  } else if (!host) {
-    host = "";
   }
 
   if (hash && hash.charAt(0) !== "#") {
@@ -614,7 +624,7 @@ Url.prototype.format = function format() {
   pathname = pathname.replace(/[?#]/g, function (match) {
     return encodeURIComponent(match);
   });
-  search = search.replace("#", "%23");
+  search = search.replace(/#/g, "%23");
 
   return protocol + host + pathname + search + hash;
 };

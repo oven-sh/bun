@@ -292,7 +292,7 @@ const SharedData = struct {
 
     fn init(allocator: std.mem.Allocator) !SharedData {
         return SharedData{
-            .mutex = bun.Mutex.init(),
+            .mutex = .{},
             .lifecycle = .created,
             .request_stream_state = .none,
             .response_buffer = try MutableString.init(allocator, 0),
@@ -1020,6 +1020,15 @@ const FetchError = union(enum) {
 //
 // ============================================================================
 
+// ============================================================================
+// PHASE 7 STEP 2: Thread Safety Fields
+// ============================================================================
+//
+// MainThreadData and SharedData structs are already defined earlier in this file.
+// This step adds instances of these structs to FetchTasklet alongside existing fields.
+// This is a NON-BREAKING change - old fields remain until migration completes.
+//
+
 pub const FetchTasklet = struct {
     pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
 
@@ -1138,6 +1147,15 @@ pub const FetchTasklet = struct {
 
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
 
+    /// === PHASE 7 STEP 2: New thread safety fields (NON-BREAKING) ===
+    /// These fields are added alongside existing fields during migration.
+    /// Old fields will be removed once migration to these structs is complete.
+    /// Main thread data (no locking required)
+    main_thread: MainThreadData = undefined,
+
+    /// Shared data (mutex-protected, allocated separately)
+    shared: *SharedData = undefined,
+
     pub fn ref(this: *FetchTasklet) void {
         const count = this.ref_count.fetchAdd(1, .monotonic);
         bun.debugAssert(count > 0);
@@ -1180,6 +1198,22 @@ pub const FetchTasklet = struct {
 
             vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinitFromMainThread));
         }
+    }
+
+    /// === PHASE 7 STEP 2: Transitional helper methods ===
+    /// These methods provide access to data through the new structs while
+    /// maintaining compatibility with existing direct field access.
+    /// During migration, code can be gradually updated to use these methods
+    /// instead of direct field access.
+    /// Lock shared data for exclusive access.
+    /// Returns RAII wrapper that auto-unlocks on scope exit.
+    inline fn lockShared(this: *FetchTasklet) LockedSharedData {
+        return this.shared.lock();
+    }
+
+    /// Assert we're on the main thread (debug builds only).
+    inline fn assertMainThread(this: *const FetchTasklet) void {
+        this.main_thread.assertMainThread();
     }
 
     pub const HTTPRequestBody = union(enum) {
@@ -1365,6 +1399,11 @@ pub const FetchTasklet = struct {
         this.clearAbortSignal();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
         this.clearSink();
+
+        // === PHASE 7 STEP 2: Cleanup new thread safety fields ===
+        this.main_thread.deinit();
+        this.shared.deinit();
+        allocator.destroy(this.shared);
     }
 
     /// Helper function to ensure deinit happens on main thread.
@@ -2402,6 +2441,10 @@ pub const FetchTasklet = struct {
         var jsc_vm = globalThis.bunVM();
         var fetch_tasklet = try allocator.create(FetchTasklet);
 
+        // === PHASE 7 STEP 2: Initialize SharedData (allocated separately) ===
+        const shared_data = try allocator.create(SharedData);
+        shared_data.* = try SharedData.init(allocator);
+
         fetch_tasklet.* = .{
             .mutex = .{},
             .scheduled_response_buffer = .{
@@ -2431,6 +2474,17 @@ pub const FetchTasklet = struct {
             .check_server_identity = fetch_options.check_server_identity,
             .reject_unauthorized = fetch_options.reject_unauthorized,
             .upgraded_connection = fetch_options.upgraded_connection,
+
+            // === PHASE 7 STEP 2: Initialize new thread safety fields ===
+            .main_thread = .{
+                .global_this = globalThis,
+                .javascript_vm = jsc_vm,
+                .promise = promise,
+                .tracker = jsc.Debugger.AsyncTaskTracker.init(jsc_vm),
+                .abort_signal = fetch_options.signal,
+                .check_server_identity = fetch_options.check_server_identity,
+            },
+            .shared = shared_data,
         };
 
         fetch_tasklet.signals = fetch_tasklet.signal_store.to();

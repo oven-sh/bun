@@ -1055,7 +1055,13 @@ pub const JsValkey = struct {
             }
 
             var ctx: RequestContext = .{ .user_request = .init(go, false) };
-            self._client.unsubscribeChannels(channel_slices.items, ctx);
+            self._client.unsubscribeChannels(channel_slices.items, ctx) catch |err| {
+                // Synchronous error: swap() gives us the promise and destroys the Strong
+                const promise = ctx.user_request._promise.swap();
+                const error_value = protocol.valkeyErrorToJS(go, err, null, .{});
+                promise.reject(go, error_value);
+                return promise.toJS();
+            };
             return ctx.user_request.promise().toJS();
         }
 
@@ -1064,7 +1070,13 @@ pub const JsValkey = struct {
         };
         var ctx: RequestContext = .{ .user_request = .init(go, false) };
         const channels = [_][]const u8{channel.slice()};
-        self._client.unsubscribeChannels(&channels, ctx);
+        self._client.unsubscribeChannels(&channels, ctx) catch |err| {
+            // Synchronous error: swap() gives us the promise and destroys the Strong
+            const promise = ctx.user_request._promise.swap();
+            const error_value = protocol.valkeyErrorToJS(go, err, null, .{});
+            promise.reject(go, error_value);
+            return promise.toJS();
+        };
         return ctx.user_request.promise().toJS();
     }
 

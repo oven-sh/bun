@@ -787,19 +787,7 @@ pub const FetchTasklet = struct {
             // Last reference - must deinit on main thread
             const vm = this.main_thread.javascript_vm;
 
-            vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinitFromMainThread)) catch {
-                // VM is shutting down - cannot safely deinit
-                // This will be detected as a leak by ASAN, which is correct behavior.
-                // Better to leak than use-after-free.
-                if (bun.Environment.isDebug) {
-                    bun.Output.err(
-                        "LEAK",
-                        "FetchTasklet leaked during VM shutdown (addr=0x{x})",
-                        .{@intFromPtr(this)},
-                    );
-                }
-                // Intentional leak - safer than use-after-free
-            };
+            vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinitFromMainThread));
         }
     }
 
@@ -1387,11 +1375,15 @@ pub const FetchTasklet = struct {
 
         // Acquire lock to read shared state
         var locked = this.shared.lock();
+        var is_locked = true;
         const is_done = !locked.shared.result.has_more;
 
         const globalThis = this.main_thread.global_this;
         defer {
-            locked.unlock();
+            // PHASE 7.5: Only unlock if still locked (may be unlocked early for onReject/onResolve)
+            if (is_locked) {
+                locked.unlock();
+            }
             // if we are not done we wait until the next call
             if (is_done) {
                 var poll_ref = this.main_thread.poll_ref;
@@ -1404,6 +1396,9 @@ pub const FetchTasklet = struct {
         // Old: if (this.is_waiting_request_stream_start and this.result.can_stream)
         // New: Check if request stream is in waiting_start state
         if (locked.shared.request_stream_state == .waiting_start and locked.shared.result.can_stream) {
+            // PHASE 7.5: Unlock before calling startRequestStream (it will acquire lock itself)
+            locked.unlock();
+            is_locked = false;
             // start streaming
             this.startRequestStream();
         }
@@ -1412,6 +1407,9 @@ pub const FetchTasklet = struct {
         // Old: if (this.is_waiting_body)
         // New: Check if we're awaiting body access or actively receiving body
         if (locked.shared.lifecycle == .response_awaiting_body_access) {
+            // PHASE 7.5: Unlock before calling onBodyReceived (it will acquire lock itself)
+            locked.unlock();
+            is_locked = false;
             try this.onBodyReceived();
             return;
         }
@@ -1461,6 +1459,10 @@ pub const FetchTasklet = struct {
             // we receive some error
             if (locked.shared.reject_unauthorized and !this.checkServerIdentity(certificate_info)) {
                 log("onProgressUpdate: aborted due certError", .{});
+                // PHASE 7.5: Unlock before calling onReject (it will acquire lock itself)
+                locked.unlock();
+                is_locked = false;
+
                 // we need to abort the request
                 const promise = promise_value.asAnyPromise().?;
                 const tracker = this.main_thread.tracker;
@@ -1489,6 +1491,12 @@ pub const FetchTasklet = struct {
             this.main_thread.promise.deinit();
         }
         const success = locked.shared.result.isSuccess();
+
+        // PHASE 7.5: Unlock before calling onReject/onResolve to avoid recursive lock
+        // These functions need to acquire the lock themselves
+        locked.unlock();
+        is_locked = false;
+
         const result = switch (success) {
             true => jsc.Strong.Optional.create(this.onResolve(), globalThis),
             false => brk: {
@@ -2375,10 +2383,14 @@ pub const FetchTasklet = struct {
             locked.shared.response_buffer = result.body.?.*;
 
             // Copy data to scheduled buffer if not ignoring
-            // MIGRATION (Phase 7.3): Replaced ignore_data flag with shouldIgnoreData() method call
-            // Old: if (!task.ignore_data)
-            // New: if (!task.shouldIgnoreData())
-            if (!task.shouldIgnoreData()) {
+            // MIGRATION (Phase 7.5): Use locked data directly to avoid recursive lock
+            // Old: if (!task.shouldIgnoreData())
+            // New: Check fields directly from locked.shared
+            const ignore_data = shouldIgnoreBodyData(
+                locked.shared.lifecycle,
+                locked.shared.signal_store.aborted.load(.monotonic),
+            );
+            if (!ignore_data) {
                 const success = result.isSuccess();
                 if (success) {
                     _ = bun.handleOom(locked.shared.scheduled_response_buffer.write(locked.shared.response_buffer.list.items));
@@ -2396,10 +2408,14 @@ pub const FetchTasklet = struct {
             locked.shared.http.?.* = async_http.*;
             locked.shared.http.?.response_buffer = async_http.response_buffer;
 
-            // MIGRATION (Phase 7.3): Replaced ignore_data in log with shouldIgnoreData() call
-            // Old: task.ignore_data
-            // New: task.shouldIgnoreData()
-            log("callback success={} ignore_data={} has_more={} bytes={}", .{ result.isSuccess(), task.shouldIgnoreData(), result.has_more, result.body.?.list.items.len });
+            // MIGRATION (Phase 7.5): Use locked data directly to avoid recursive lock
+            // Old: task.shouldIgnoreData()
+            // New: Check fields directly from locked.shared
+            const ignore_data = shouldIgnoreBodyData(
+                locked.shared.lifecycle,
+                locked.shared.signal_store.aborted.load(.monotonic),
+            );
+            log("callback success={} ignore_data={} has_more={} bytes={}", .{ result.isSuccess(), ignore_data, result.has_more, result.body.?.list.items.len });
 
             const prev_metadata = locked.shared.result.metadata;
             const prev_cert_info = locked.shared.result.certificate_info;
@@ -2427,10 +2443,14 @@ pub const FetchTasklet = struct {
             const success = result.isSuccess();
             locked.shared.response_buffer = result.body.?.*;
 
-            // MIGRATION (Phase 7.3): Replaced ignore_data flag with shouldIgnoreData() method call
-            // Old: if (task.ignore_data)
-            // New: if (task.shouldIgnoreData())
-            if (task.shouldIgnoreData()) {
+            // MIGRATION (Phase 7.5): Use locked data directly to avoid recursive lock
+            // Old: if (task.shouldIgnoreData())
+            // New: Check fields directly from locked.shared
+            const should_ignore = shouldIgnoreBodyData(
+                locked.shared.lifecycle,
+                locked.shared.signal_store.aborted.load(.monotonic),
+            );
+            if (should_ignore) {
                 locked.shared.response_buffer.reset();
 
                 if (locked.shared.scheduled_response_buffer.list.capacity > 0) {
@@ -2463,18 +2483,7 @@ pub const FetchTasklet = struct {
         task.ref();
 
         // Enqueue to main thread
-        task.main_thread.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(task, FetchTasklet.onProgressUpdate)) catch {
-            // VM is shutting down - cannot enqueue
-            task.deref();
-            task.shared.has_schedule_callback.store(false, .release);
-            if (bun.Environment.isDebug) {
-                bun.Output.err(
-                    "LEAK",
-                    "FetchTasklet HTTP callback not enqueued during VM shutdown (addr=0x{x})",
-                    .{@intFromPtr(task)},
-                );
-            }
-        };
+        task.main_thread.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(task, FetchTasklet.onProgressUpdate));
     }
 };
 

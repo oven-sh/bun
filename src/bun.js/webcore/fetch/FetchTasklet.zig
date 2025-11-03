@@ -586,6 +586,115 @@ const HTTPRequestBodyV2 = union(enum) {
     }
 };
 
+/// Abort signal handling with centralized lifecycle management.
+/// Ensures all ref/unref operations are paired correctly.
+///
+/// OWNERSHIP MODEL:
+/// - Signal is ref-counted via AbortSignal's API
+/// - Private fields track whether we've added refs/listeners
+/// - Single cleanup path in deinit() ensures no leaks
+///
+/// LIFECYCLE:
+/// 1. attachSignal() sets up signal, listener, and pending activity
+/// 2. detach() cleans up all references in correct order
+/// 3. deinit() calls detach() - single cleanup path
+///
+/// CURRENT LIMITATIONS:
+/// This is designed for the new split-data architecture but adapted to work
+/// with current FetchTasklet structure. The onAbortCallback will be updated
+/// in Phase 3, Step 3.6 when data is split.
+const AbortHandling = struct {
+    /// Private: Abort signal (ref-counted)
+    #signal: ?*jsc.WebCore.AbortSignal = null,
+
+    /// Private: Track if we added a pending activity ref
+    /// Ensures we only unref if we added a ref
+    #has_pending_activity_ref: bool = false,
+
+    /// Private: Track if we registered a listener
+    /// Currently not used for cleanup (signal handles it),
+    /// but tracked for consistency and future use
+    #has_listener: bool = false,
+
+    /// Attach abort signal and set up listener.
+    /// Takes ownership of signal ref counting.
+    fn attachSignal(
+        self: *AbortHandling,
+        signal: *jsc.WebCore.AbortSignal,
+        fetch: *FetchTasklet,
+    ) !void {
+        bun.assert(self.#signal == null);
+
+        // Ref the signal (we now own a reference)
+        signal.ref();
+        self.#signal = signal;
+
+        // Listen for abort event
+        // Note: listen() returns the signal (possibly different if already aborted)
+        const listener = signal.listen(FetchTasklet, fetch, onAbortCallback);
+        self.#has_listener = (listener != null);
+
+        // Add pending activity ref (keeps VM alive during async operation)
+        signal.pendingActivityRef();
+        self.#has_pending_activity_ref = true;
+    }
+
+    /// Detach signal and clean up all references.
+    /// Safe to call multiple times.
+    fn detach(self: *AbortHandling) void {
+        if (self.#signal) |signal| {
+            // Remove pending activity ref if we added one
+            if (self.#has_pending_activity_ref) {
+                signal.pendingActivityUnref();
+                self.#has_pending_activity_ref = false;
+            }
+
+            // Listener is automatically removed by signal
+            self.#has_listener = false;
+
+            // Unref the signal (release our reference)
+            signal.unref();
+            self.#signal = null;
+        }
+    }
+
+    /// Single cleanup path
+    fn deinit(self: *AbortHandling) void {
+        self.detach();
+    }
+
+    /// Callback invoked when abort signal fires.
+    /// This is called from JavaScript when AbortSignal.abort() is triggered.
+    ///
+    /// NOTE: The `reason` parameter is REQUIRED by AbortSignal.listen() API.
+    /// See AbortSignal.zig line 16: callback signature must be `fn (*Context, JSValue) void`.
+    /// The JSValue is the abort reason passed from JavaScript.
+    ///
+    /// CURRENT: Works with existing FetchTasklet structure
+    /// FUTURE: Will be updated in Step 3.6 to use split SharedData
+    fn onAbortCallback(fetch: *FetchTasklet, reason: JSValue) void {
+        // Store abort reason (must be on main thread)
+        reason.ensureStillAlive();
+        fetch.abort_reason.set(fetch.global_this, reason);
+
+        // Set atomic abort flag for HTTP thread fast-path
+        fetch.signal_store.aborted.store(true, .release);
+
+        // Cancel async task tracker
+        fetch.tracker.didCancel(fetch.global_this);
+
+        // Schedule shutdown on HTTP thread
+        if (fetch.http) |http_| {
+            http.http_thread.scheduleShutdown(http_);
+        }
+
+        // Cancel sink if present
+        if (fetch.sink) |sink| {
+            sink.cancel(reason);
+        }
+    }
+};
+
 pub const FetchTasklet = struct {
     pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
 

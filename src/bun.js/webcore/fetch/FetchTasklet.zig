@@ -666,6 +666,10 @@ pub const FetchTasklet = struct {
             // this is really unlikely to happen, but can happen
             // lets make sure that we always call deinit from main thread
 
+            // === THREAD SAFETY NOTE (Phase 7 Step 5) ===
+            // enqueueTaskConcurrent returns void and will panic in debug builds if VM has terminated.
+            // This is intentional - if we reach here during VM shutdown, the panic is acceptable
+            // as it indicates a ref counting bug that should be fixed.
             this.main_thread.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinit));
         }
     }
@@ -878,6 +882,35 @@ pub const FetchTasklet = struct {
         }
     }
 
+    // === PHASE 7 STEP 7: BODY STREAMING LOGIC ===
+    // This function handles received HTTP body data and routes it based on timing and state.
+    //
+    // THREE CODE PATHS (based on when JS accesses the response body):
+    //
+    // PATH 1: EARLY STREAMING (readable_stream_ref exists)
+    //   - JS accessed .body BEFORE response was fully received
+    //   - We have a pre-existing ReadableStream to write chunks to
+    //   - Buffer management: Send chunks directly to stream, reset buffer after each chunk
+    //   - State: .response_body_streaming
+    //
+    // PATH 2: LAZY STREAMING (getCurrentResponse() returns a response with body stream)
+    //   - Response exists and JS is NOW accessing .body (getBodyReadableStream creates stream)
+    //   - We're transitioning from buffering to streaming mid-flight
+    //   - Buffer management: Flush buffered data to new stream, then stream remaining chunks
+    //   - State: .response_awaiting_body_access -> .response_body_streaming
+    //
+    // PATH 3: BUFFERING (getCurrentResponse() returns a response without stream)
+    //   - Response exists but JS hasn't accessed .body yet
+    //   - We accumulate all body data in memory
+    //   - Buffer management: Keep accumulating in scheduled_response_buffer, DON'T reset
+    //   - State: .response_body_buffering
+    //   - When complete (!has_more), convert buffer to InternalBlob and resolve Body.Value
+    //
+    // The key difference is TIMING:
+    // - Path 1: Stream created early (before headers received)
+    // - Path 2: Stream created mid-reception (after headers, during body chunks)
+    // - Path 3: No stream yet (buffering, will either become Path 2 or complete buffered)
+    //
     pub fn onBodyReceived(this: *FetchTasklet) bun.JSTerminated!void {
         const success = this.shared.result.isSuccess();
         const globalThis = this.main_thread.global_this;
@@ -890,6 +923,7 @@ pub const FetchTasklet = struct {
             }
         }
 
+        // === ERROR HANDLING (applies to all paths) ===
         if (!success) {
             var err = this.onReject();
             var need_deinit = true;
@@ -925,6 +959,9 @@ pub const FetchTasklet = struct {
             return;
         }
 
+        // === PATH 1: EARLY STREAMING ===
+        // ReadableStream was created BEFORE response fully received (e.g., via response.body.getReader())
+        // Send chunks directly to the existing stream
         if (this.main_thread.readable_stream_ref.get(globalThis)) |readable| {
             log("onBodyReceived readable_stream_ref", .{});
             // Dual tracking: mark as streaming if we have a stream
@@ -965,10 +1002,16 @@ pub const FetchTasklet = struct {
             }
         }
 
+        // === PATH 2 & 3: RESPONSE-BASED HANDLING ===
+        // Response object exists - either create stream now (Path 2) or buffer (Path 3)
         if (this.getCurrentResponse()) |response| {
             log("onBodyReceived Current Response", .{});
             const sizeHint = this.getSizeHint();
             response.setSizeHint(sizeHint);
+
+            // === PATH 2: LAZY STREAMING ===
+            // JS is NOW accessing .body for the first time (getBodyReadableStream creates stream)
+            // Flush any buffered data to the new stream, then continue streaming
             if (response.getBodyReadableStream(globalThis)) |readable| {
                 log("onBodyReceived CurrentResponse BodyReadableStream", .{});
                 // Dual tracking: mark as streaming when body stream is accessed
@@ -1005,7 +1048,10 @@ pub const FetchTasklet = struct {
                 }
             }
 
-            // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
+            // === PATH 3: BUFFERING ===
+            // JS hasn't accessed .body yet - keep accumulating data in memory
+            // When complete, convert entire buffer to InternalBlob
+            // NOTE: We do NOT reset the buffer here (buffer_reset = false)
             buffer_reset = false;
             if (!this.shared.result.has_more) {
                 var scheduled_response_buffer = this.shared.scheduled_response_buffer.list;
@@ -1530,11 +1576,20 @@ pub const FetchTasklet = struct {
 
     fn ignoreRemainingResponseBody(this: *FetchTasklet) void {
         log("ignoreRemainingResponseBody", .{});
+
+        // === THREAD SAFETY FIX (Phase 7 Code Review) ===
+        // Lock FIRST before touching ANY shared state
+        // This prevents race with HTTP thread callback() which modifies shared.http under lock
+        this.shared.mutex.lock();
+        defer this.shared.mutex.unlock();
+
+        // NOW safe to access shared.http
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
         if (this.shared.http) |http_| {
             http_.enableResponseBodyStreaming();
         }
+
         // we should not keep the process alive if we are ignoring the body
         const vm = this.main_thread.javascript_vm;
         this.main_thread.poll_ref.unref(vm);
@@ -1547,10 +1602,17 @@ pub const FetchTasklet = struct {
             this.main_thread.native_response = null;
         }
 
+        // Signal abort to HTTP thread (atomic for fast-path)
+        this.shared.signal_store.aborted.store(true, .monotonic);
+
         // Transition to aborted state
         if (!this.shared.lifecycle.isTerminal()) {
             transitionLifecycle(this, this.shared.lifecycle, .aborted);
         }
+
+        // Clear accumulated buffers since we're ignoring the rest
+        this.shared.response_buffer.list.clearRetainingCapacity();
+        this.shared.scheduled_response_buffer.list.clearRetainingCapacity();
     }
 
     export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.C) void {

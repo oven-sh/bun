@@ -481,12 +481,6 @@ const ResponseMetadataHolder = struct {
     }
 };
 
-// NOTE: HTTPRequestBody ownership wrapper removed temporarily due to conflict
-// with existing HTTPRequestBody inside FetchTasklet struct.
-// This will be properly integrated in Phase 7 when we migrate the existing code.
-// The ownership patterns documented here (explicit ref tracking, transfer semantics)
-// should be applied when refactoring the existing HTTPRequestBody.
-
 /// Unified error storage with explicit precedence rules.
 /// Replaces scattered error tracking across multiple fields (result.fail, abort_reason, body error).
 const FetchError = union(enum) {
@@ -617,17 +611,17 @@ pub const FetchTasklet = struct {
     // 3. Abort status (atomic bool) - independent
     // 4. Connection upgrade (bool) - one-time flag
     //
-    // MIGRATION NOTE (Phase 7.3): Adding state machine fields to replace boolean flags
-    // - lifecycle replaces: is_waiting_body
-    // - request_stream_state replaces: is_waiting_request_stream_start
-    // - signal_store.aborted already exists for abort tracking
+    // State machine architecture:
+    // - lifecycle tracks overall request/response state
+    // - request_stream_state tracks request body streaming state
+    // - signal_store.aborted tracks abort status
 
     pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
 
     const log = Output.scoped(.FetchTasklet, .visible);
 
     // ============================================================================
-    // PHASE 7 INTEGRATION: Container Fields
+    // Container Fields
     // ============================================================================
     /// Main thread data container (no lock needed - thread confinement)
     main_thread: MainThreadData,
@@ -819,7 +813,6 @@ pub const FetchTasklet = struct {
         }
 
         // Clear buffer (drop our ref - HTTP thread might still hold one)
-        // PHASE 7.5: Lock access to request_body_streaming_buffer
         var locked = this.shared.lock();
         defer locked.unlock();
 
@@ -839,7 +832,6 @@ pub const FetchTasklet = struct {
         // url_proxy_buffer and hostname are now in shared data and cleaned up in shared.deinit()
         // No longer need to clean them up here
 
-        // PHASE 7.5: Lock access to shared mutable state during cleanup
         // Read request_stream_state early for later use
         const request_stream_waiting = blk: {
             var locked = this.shared.lock();
@@ -877,9 +869,7 @@ pub const FetchTasklet = struct {
 
         this.main_thread.readable_stream_ref.deinit();
 
-        // MIGRATION (Phase 7.3): Replaced is_waiting_request_stream_start with request_stream_state check
-        // Old: if (this.request_body != .ReadableStream or this.is_waiting_request_stream_start)
-        // New: Detach if not a stream, or if stream hasn't started yet (waiting_start state)
+        // Detach if not a stream, or if stream hasn't started yet (waiting_start state)
         if (this.request_body != .ReadableStream or request_stream_waiting) {
             this.request_body.detach();
         }
@@ -902,11 +892,10 @@ pub const FetchTasklet = struct {
 
         this.clearData();
 
-        // PHASE 7: Clean up container fields
+        // Clean up container fields
         this.main_thread.deinit();
         this.shared.deinit(allocator);
 
-        // PHASE 7.5: Lock access to http pointer for final cleanup
         const http_to_destroy = blk: {
             var locked = this.shared.lock();
             defer locked.unlock();
@@ -938,12 +927,8 @@ pub const FetchTasklet = struct {
         return null;
     }
 
-    /// MIGRATION (Phase 7.3): Helper method replacing ignore_data boolean flag
     /// Returns true if we should ignore remaining body data
-    /// Old: this.ignore_data
-    /// New: this.shouldIgnoreData()
     fn shouldIgnoreData(this: *FetchTasklet) bool {
-        // PHASE 7.5: Lock access to lifecycle state
         var locked = this.shared.lock();
         defer locked.unlock();
 
@@ -963,10 +948,7 @@ pub const FetchTasklet = struct {
     ///   - Ref 2: Streaming pipeline (consumed when stream pipes data to sink)
     /// - After: stream ownership transferred to sink, we hold sink ref
     pub fn startRequestStream(this: *FetchTasklet) void {
-        // MIGRATION (Phase 7.3): Replaced is_waiting_request_stream_start flag with request_stream_state transition
-        // Old: this.is_waiting_request_stream_start = false;
-        // New: Transition from waiting_start to active
-        // PHASE 7.5: Lock access to request_stream_state
+        // Transition request_stream_state from waiting_start to active
         {
             var locked = this.shared.lock();
             defer locked.unlock();
@@ -1030,7 +1012,6 @@ pub const FetchTasklet = struct {
         log("streamBodyToJS", .{});
         const globalThis = this.main_thread.global_this;
 
-        // PHASE 7.5: Lock access to scheduled_response_buffer and result
         var locked = this.shared.lock();
         defer locked.unlock();
 
@@ -1088,7 +1069,6 @@ pub const FetchTasklet = struct {
         log("streamBodyToResponse", .{});
         const globalThis = this.main_thread.global_this;
 
-        // PHASE 7.5: Lock access to body_size, scheduled_response_buffer and result
         var locked = this.shared.lock();
         defer locked.unlock();
 
@@ -1141,7 +1121,6 @@ pub const FetchTasklet = struct {
     fn finalizeBufferedBody(this: *FetchTasklet, response: *Response) bun.JSTerminated!void {
         log("finalizeBufferedBody", .{});
 
-        // PHASE 7.5: Lock access to result and scheduled_response_buffer
         var locked = this.shared.lock();
         defer locked.unlock();
 
@@ -1284,7 +1263,7 @@ pub const FetchTasklet = struct {
 
         const globalThis = this.main_thread.global_this;
         defer {
-            // PHASE 7.5: Only unlock if still locked (may be unlocked early for onReject/onResolve)
+            // Only unlock if still locked (may be unlocked early for onReject/onResolve)
             if (is_locked) {
                 locked.unlock();
             }
@@ -1296,22 +1275,17 @@ pub const FetchTasklet = struct {
                 this.deref();
             }
         }
-        // MIGRATION (Phase 7.3): Replaced is_waiting_request_stream_start with request_stream_state check
-        // Old: if (this.is_waiting_request_stream_start and this.result.can_stream)
-        // New: Check if request stream is in waiting_start state
+        // Check if request stream is in waiting_start state
         if (locked.shared.request_stream_state == .waiting_start and locked.shared.result.can_stream) {
-            // PHASE 7.5: Unlock before calling startRequestStream (it will acquire lock itself)
+            // Unlock before calling startRequestStream (it will acquire lock itself)
             locked.unlock();
             is_locked = false;
             // start streaming
             this.startRequestStream();
         }
         // if we already respond the metadata and still need to process the body
-        // MIGRATION (Phase 7.3): Replaced is_waiting_body with lifecycle state check
-        // Old: if (this.is_waiting_body)
-        // New: Check if we're awaiting body access or actively receiving body
         if (locked.shared.lifecycle == .response_awaiting_body_access) {
-            // PHASE 7.5: Unlock before calling onBodyReceived (it will acquire lock itself)
+            // Unlock before calling onBodyReceived (it will acquire lock itself)
             locked.unlock();
             is_locked = false;
             try this.onBodyReceived();
@@ -1322,16 +1296,12 @@ pub const FetchTasklet = struct {
         // if we abort because of cert error
         // we wait the Http Client because we already have the response
         // we just need to deinit
-        // MIGRATION (Phase 7.3): Replaced is_waiting_abort with signal_store.aborted atomic check
-        // Old: if (this.is_waiting_abort)
-        // New: Check atomic abort flag - this indicates abort pending but waiting for HTTP thread cleanup
-        // Note: The original logic set is_waiting_abort = has_more, so we wait if aborted AND has_more
+        // Check atomic abort flag - this indicates abort pending but waiting for HTTP thread cleanup
         if (locked.shared.signal_store.aborted.load(.monotonic) and locked.shared.result.has_more) {
             return;
         }
 
         // Check if we have an abort error to reject with
-        // PHASE 7.8: Use getAbortErrorLocked since we already hold the lock
         if (this.getAbortErrorLocked(&locked)) |abort_error| {
             const promise_value = this.main_thread.promise.valueOrEmpty();
             if (!promise_value.isEmptyOrUndefinedOrNull()) {
@@ -1364,7 +1334,7 @@ pub const FetchTasklet = struct {
             // we receive some error
             if (locked.shared.reject_unauthorized and !this.checkServerIdentity(certificate_info)) {
                 log("onProgressUpdate: aborted due certError", .{});
-                // PHASE 7.5: Unlock before calling onReject (it will acquire lock itself)
+                // Unlock before calling onReject (it will acquire lock itself)
                 locked.unlock();
                 is_locked = false;
 
@@ -1397,7 +1367,7 @@ pub const FetchTasklet = struct {
         }
         const success = locked.shared.result.isSuccess();
 
-        // PHASE 7.5: Unlock before calling onReject/onResolve to avoid recursive lock
+        // Unlock before calling onReject/onResolve to avoid recursive lock
         // These functions need to acquire the lock themselves
         locked.unlock();
         is_locked = false;
@@ -1484,10 +1454,6 @@ pub const FetchTasklet = struct {
                         }
                         const check_result = globalObject.tryTakeException().?;
                         // mark to wait until deinit
-                        // MIGRATION (Phase 7.3): Removed is_waiting_abort flag write
-                        // Old: this.is_waiting_abort = this.result.has_more;
-                        // New: signal_store.aborted atomic already stores abort state
-                        // The combination of aborted=true + has_more is checked in onProgressUpdate
 
                         // Store TLS error in unified error tracking
                         this.shared.fetch_error.set(.{ .tls_error = jsc.Strong.create(check_result, globalObject) });
@@ -1509,10 +1475,6 @@ pub const FetchTasklet = struct {
                     // > Returns <Error> object [...] on failure
                     if (check_result.isAnyError()) {
                         // mark to wait until deinit
-                        // MIGRATION (Phase 7.3): Removed is_waiting_abort flag write
-                        // Old: this.is_waiting_abort = this.result.has_more;
-                        // New: signal_store.aborted atomic already stores abort state
-                        // The combination of aborted=true + has_more is checked in onProgressUpdate
 
                         // Store TLS error in unified error tracking
                         this.shared.fetch_error.set(.{ .tls_error = jsc.Strong.create(check_result, globalObject) });
@@ -1594,7 +1556,6 @@ pub const FetchTasklet = struct {
     }
 
     pub fn onReject(this: *FetchTasklet) Body.Value.ValueError {
-        // PHASE 7.5: Lock access to result, metadata, and http
         var locked = this.shared.lock();
         defer locked.unlock();
 
@@ -1726,7 +1687,6 @@ pub const FetchTasklet = struct {
             };
         }
 
-        // PHASE 7.5: Lock access to http pointer before using it
         var locked = this.shared.lock();
         defer locked.unlock();
 
@@ -1766,7 +1726,7 @@ pub const FetchTasklet = struct {
     }
 
     /// Get size hint for body streaming.
-    /// PHASE 7.5: Caller must hold mutex when calling this function.
+    /// Caller must hold mutex when calling this function.
     fn getSizeHint(this: *FetchTasklet) Blob.SizeType {
         return switch (this.shared.body_size) {
             .content_length => @truncate(this.shared.body_size.content_length),
@@ -1776,15 +1736,12 @@ pub const FetchTasklet = struct {
     }
 
     /// Convert response to Body.Value.
-    /// PHASE 7.5: Caller must hold mutex when calling this function.
+    /// Caller must hold mutex when calling this function.
     fn toBodyValue(this: *FetchTasklet, locked: *LockedSharedData) Body.Value {
-        // PHASE 7.8: Use getAbortErrorLocked since caller holds the lock
         if (this.getAbortErrorLocked(locked)) |err| {
             return .{ .Error = err };
         }
-        // MIGRATION (Phase 7.3): Replaced is_waiting_body with lifecycle state check
-        // Old: if (this.is_waiting_body)
-        // New: Check if we're still awaiting body data (Response created but body not complete)
+        // Check if we're still awaiting body data (Response created but body not complete)
         if (locked.shared.lifecycle == .response_awaiting_body_access) {
             const response = Body.Value{
                 .Locked = .{
@@ -1818,7 +1775,6 @@ pub const FetchTasklet = struct {
     fn toResponse(this: *FetchTasklet) Response {
         log("toResponse", .{});
 
-        // PHASE 7.5: Lock access to metadata, result, and lifecycle
         var locked = this.shared.lock();
         defer locked.unlock();
 
@@ -1826,9 +1782,7 @@ pub const FetchTasklet = struct {
         // at this point we always should have metadata
         const metadata = locked.shared.metadata.?;
         const http_response = metadata.response;
-        // MIGRATION (Phase 7.3): Replaced is_waiting_body flag with lifecycle state transition
-        // Old: this.is_waiting_body = this.result.has_more;
-        // New: Set lifecycle based on whether we're still receiving body data
+        // Set lifecycle based on whether we're still receiving body data
         if (locked.shared.result.has_more) {
             locked.shared.lifecycle = .response_awaiting_body_access;
         } else {
@@ -1870,12 +1824,6 @@ pub const FetchTasklet = struct {
             response.unref();
             this.main_thread.native_response = null;
         }
-
-        // MIGRATION (Phase 7.3): Removed ignore_data flag write
-        // Old: this.ignore_data = true;
-        // New: No explicit flag needed - shouldIgnoreData() computes from lifecycle and abort state
-        // Since we're finalizing the response, the lifecycle will reflect this,
-        // or abort flag will be set, making shouldIgnoreData() return true automatically
     }
 
     /// Called when Response JS object is garbage collected.
@@ -1927,9 +1875,7 @@ pub const FetchTasklet = struct {
         var jsc_vm = globalThis.bunVM();
         var fetch_tasklet = try allocator.create(FetchTasklet);
 
-        // PHASE 7: Initialize new container fields
         fetch_tasklet.* = .{
-            // Phase 7 container fields
             .main_thread = .{
                 .global_this = globalThis,
                 .javascript_vm = jsc_vm,
@@ -1939,35 +1885,16 @@ pub const FetchTasklet = struct {
                 .tracker = jsc.Debugger.AsyncTaskTracker.init(jsc_vm),
             },
             .shared = try SharedData.init(bun.default_allocator),
-            // Legacy fields (to be migrated)
-            // PHASE 7.4 Part 4: lifecycle now in shared container (initialized in SharedData.init)
-            // PHASE 7.4 Part 4: request_stream_state now in shared container (initialized in SharedData.init)
-            // PHASE 7.4: scheduled_response_buffer now in shared container
-            // PHASE 7.4: response_buffer now in shared container
-            // PHASE 7.4: http now in shared container
-            // PHASE 7: javascript_vm now in main_thread
             .request_body = fetch_options.body,
-            // PHASE 7: global_this now in main_thread
-            // PHASE 7: promise now in main_thread
-            // PHASE 7.4 Part 4: request_headers now in shared container
-            // PHASE 7.4 Part 4: url_proxy_buffer now in shared container
-            // PHASE 7.4 Part 4: signal now abort_signal in main_thread container
-            // PHASE 7.4 Part 4: hostname now in shared container
-            // PHASE 7.4: tracker now in main_thread container
-            // PHASE 7.4: check_server_identity now in main_thread container (initialized above)
-            // PHASE 7.4 Part 4: reject_unauthorized now in shared container
-            // PHASE 7.4 Part 3: upgraded_connection now in shared container
-            // PHASE 7.4 Part 4: mutex now in shared container
         };
 
-        // PHASE 7.4 Part 3 & 4: Set fields in shared container
+        // Set fields in shared container
         fetch_tasklet.shared.upgraded_connection = fetch_options.upgraded_connection;
         fetch_tasklet.shared.request_headers = fetch_options.headers;
         fetch_tasklet.shared.url_proxy_buffer = bun.ptr.Owned([]const u8).fromRaw(fetch_options.url_proxy_buffer);
         fetch_tasklet.shared.hostname = if (fetch_options.hostname) |h| bun.ptr.Owned([]u8).fromRaw(h) else null;
         fetch_tasklet.shared.reject_unauthorized = fetch_options.reject_unauthorized;
 
-        // PHASE 7.4 Part 3: signals now in shared container
         fetch_tasklet.shared.signals = fetch_tasklet.shared.signal_store.to();
 
         fetch_tasklet.main_thread.tracker.didSchedule(globalThis);
@@ -1991,7 +1918,6 @@ pub const FetchTasklet = struct {
             fetch_tasklet.shared.signals.cert_errors = null;
         }
 
-        // PHASE 7.4: Allocate http pointer in shared container
         fetch_tasklet.shared.http = try allocator.create(http.AsyncHTTP);
 
         // This task gets queued on the HTTP thread.
@@ -2025,9 +1951,7 @@ pub const FetchTasklet = struct {
         // enable streaming the write side
         const isStream = fetch_tasklet.request_body == .ReadableStream;
         fetch_tasklet.shared.http.?.client.flags.is_streaming_request_body = isStream;
-        // MIGRATION (Phase 7.3): Replaced is_waiting_request_stream_start flag with request_stream_state
-        // Old: fetch_tasklet.is_waiting_request_stream_start = isStream;
-        // New: Set request_stream_state to waiting_start if streaming, none otherwise
+        // Set request_stream_state to waiting_start if streaming, none otherwise
         fetch_tasklet.shared.request_stream_state = if (isStream) .waiting_start else .none;
         if (isStream) {
             // Create buffer for request body streaming
@@ -2132,7 +2056,6 @@ pub const FetchTasklet = struct {
             }
         }
 
-        // PHASE 7.5: Lock access to request_body_streaming_buffer, http, and upgraded_connection
         var locked = this.shared.lock();
         defer locked.unlock();
 
@@ -2199,7 +2122,6 @@ pub const FetchTasklet = struct {
             }
             this.abortTask();
         } else {
-            // PHASE 7.5: Lock access to upgraded_connection, request_body_streaming_buffer, and http
             var locked = this.shared.lock();
             defer locked.unlock();
 
@@ -2225,7 +2147,6 @@ pub const FetchTasklet = struct {
         this.shared.signal_store.aborted.store(true, .monotonic);
         this.main_thread.tracker.didCancel(this.main_thread.global_this);
 
-        // PHASE 7.5: Lock access to http pointer
         var locked = this.shared.lock();
         defer locked.unlock();
 
@@ -2332,9 +2253,6 @@ pub const FetchTasklet = struct {
             locked.shared.response_buffer = result.body.?.*;
 
             // Copy data to scheduled buffer if not ignoring
-            // MIGRATION (Phase 7.5): Use locked data directly to avoid recursive lock
-            // Old: if (!task.shouldIgnoreData())
-            // New: Check fields directly from locked.shared
             const ignore_data = shouldIgnoreBodyData(
                 locked.shared.lifecycle,
                 locked.shared.signal_store.aborted.load(.monotonic),
@@ -2357,9 +2275,6 @@ pub const FetchTasklet = struct {
             locked.shared.http.?.* = async_http.*;
             locked.shared.http.?.response_buffer = async_http.response_buffer;
 
-            // MIGRATION (Phase 7.5): Use locked data directly to avoid recursive lock
-            // Old: task.shouldIgnoreData()
-            // New: Check fields directly from locked.shared
             const ignore_data = shouldIgnoreBodyData(
                 locked.shared.lifecycle,
                 locked.shared.signal_store.aborted.load(.monotonic),
@@ -2392,9 +2307,6 @@ pub const FetchTasklet = struct {
             const success = result.isSuccess();
             locked.shared.response_buffer = result.body.?.*;
 
-            // MIGRATION (Phase 7.5): Use locked data directly to avoid recursive lock
-            // Old: if (task.shouldIgnoreData())
-            // New: Check fields directly from locked.shared
             const should_ignore = shouldIgnoreBodyData(
                 locked.shared.lifecycle,
                 locked.shared.signal_store.aborted.load(.monotonic),

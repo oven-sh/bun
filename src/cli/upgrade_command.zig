@@ -311,7 +311,7 @@ pub const UpgradeCommand = struct {
 
     const manual_upgrade_command = switch (Environment.os) {
         .linux, .mac => "curl -fsSL https://bun.com/install | bash",
-        .windows => "powershell -c 'irm bun.com/install.ps1|iex'",
+        .windows => "powershell -c 'irm bun.sh/install.ps1|iex'",
         else => "(TODO: Install script for " ++ Environment.os.displayString() ++ ")",
     };
 

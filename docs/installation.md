@@ -201,7 +201,7 @@ On Windows, you can install a specific version of Bun by passing the version num
 
 ```sh
 # PowerShell:
-$ iex "& {$(irm https://bun.com/install.ps1)} -Version $BUN_LATEST_VERSION"
+$ iex "& {$(irm https://bun.sh/install.ps1)} -Version $BUN_LATEST_VERSION"
 ```
 
 ## Downloading Bun binaries directly

@@ -164,7 +164,7 @@ const FailReason = enum {
         };
     }
 
-    pub fn format(reason: FailReason, writer: *std.Io.Writer) !void {
+    pub fn format(reason: FailReason, writer: anytype) !void {
         if (!is_standalone and bun.Environment.allow_assert and reason == .InvalidShimValidation) {
             @panic("Internal Assertion: When encountering FailReason.InvalidShimValidation, you must not print the error, but rather fallback to running the .exe file");
         }

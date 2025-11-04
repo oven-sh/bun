@@ -71,11 +71,39 @@ async function buildRootModule(dryRun?: boolean) {
       js: "// Source code: https://github.com/oven-sh/bun/blob/main/packages/bun-release/scripts/npm-postinstall.ts",
     },
   });
-  write(join(cwd, "bin", "bun.exe"), "");
-  write(join(cwd, "bin", "bunx.exe"), "");
   write(
-    join(cwd, "bin", "README.txt"),
-    `The 'bun.exe' file is a placeholder for the binary file, which
+    join(cwd, "bin", "bun.exe"),
+    `#!/bin/sh
+
+SCRIPT="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT")/.." && pwd)"
+
+cat >&2 <<EOF
+Error: Bun postinstall script was not executed.
+
+This usually happens when:
+  a. Installing with --ignore-scripts flag
+  b. Postinstall scripts are disabled in your package manager
+
+To fix this:
+  - With bun: run 'bun pm trust bun'
+  - With pnpm: run 'pnpm install --allow-build=bun'
+  - Or manually run: 'node "$SCRIPT_DIR/install.js"'
+
+EOF
+
+exit 1
+`,
+  ),
+    write(
+      join(cwd, "bin", "bunx.exe"),
+      `#!/bin/sh
+SCRIPT="$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")"
+exec "$(dirname "$SCRIPT")/bun.exe" "$@"`,
+    ),
+    write(
+      join(cwd, "bin", "README.txt"),
+      `The 'bun.exe' file is a placeholder for the binary file, which
 is replaced by Bun's 'postinstall' script. For this to work, make
 sure that you do not use --ignore-scripts while installing.
 

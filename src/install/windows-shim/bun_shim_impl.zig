@@ -211,7 +211,7 @@ const FailReason = enum {
     }
 
     pub inline fn write(reason: FailReason, writer: anytype) !void {
-        return reason.format("", undefined, writer);
+        return reason.format(writer);
     }
 };
 

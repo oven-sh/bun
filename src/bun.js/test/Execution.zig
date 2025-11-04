@@ -76,8 +76,8 @@ pub const ExecutionSequence = struct {
     /// Index into ExecutionSequence.entries() for the entry that is not started or currently running
     active_entry: ?*ExecutionEntry,
     test_entry: ?*ExecutionEntry,
-    remaining_repeat_count: i64 = 1,
-    remaining_retry_count: u32 = 0,
+    remaining_repeat_count: u32,
+    remaining_retry_count: u32,
     result: Result = .pending,
     executing: bool = false,
     started_at: bun.timespec = .epoch,
@@ -91,10 +91,7 @@ pub const ExecutionSequence = struct {
     } = .not_set,
     maybe_skip: bool = false,
 
-    pub fn init(first_entry: ?*ExecutionEntry, test_entry: ?*ExecutionEntry) ExecutionSequence {
-        const repeat_count: i64 = if (test_entry) |entry| @intCast(entry.repeat_count) else 1;
-        const retry_count: u32 = if (test_entry) |entry| entry.retry_count else 0;
-
+    pub fn init(first_entry: ?*ExecutionEntry, test_entry: ?*ExecutionEntry, retry_count: u32, repeat_count: u32) ExecutionSequence {
         return .{
             .first_entry = first_entry,
             .active_entry = first_entry,
@@ -486,7 +483,9 @@ fn advanceSequence(this: *Execution, sequence: *ExecutionSequence, group: *Concu
 
         // Handle repeat logic: if test passed and we have repeats remaining, repeat it
         if (test_passed) {
-            sequence.remaining_repeat_count -= 1;
+            if (sequence.remaining_repeat_count > 0) {
+                sequence.remaining_repeat_count -= 1;
+            } else if (bun.Environment.ci_assert) bun.assert(false);
             if (sequence.remaining_repeat_count > 0) {
                 this.resetSequence(sequence);
                 return;
@@ -606,11 +605,7 @@ pub fn resetSequence(this: *Execution, sequence: *ExecutionSequence) void {
     }
 
     // Preserve the current remaining_repeat_count and remaining_retry_count
-    const saved_repeat_count = sequence.remaining_repeat_count;
-    const saved_retry_count = sequence.remaining_retry_count;
-    sequence.* = .init(sequence.first_entry, sequence.test_entry);
-    sequence.remaining_repeat_count = saved_repeat_count;
-    sequence.remaining_retry_count = saved_retry_count;
+    sequence.* = .init(sequence.first_entry, sequence.test_entry, sequence.remaining_retry_count, sequence.remaining_repeat_count);
     _ = this;
 }
 

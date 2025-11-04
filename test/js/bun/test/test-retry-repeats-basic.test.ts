@@ -1,5 +1,5 @@
 // Basic tests to verify retry and repeats functionality works
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, onTestFinished, test } from "bun:test";
 
 describe("retry option", () => {
   let attempts = 0;
@@ -72,5 +72,58 @@ describe("retry option with hooks", () => {
   test("verify hooks ran for each retry", () => {
     // Should have: beforeEach, test-1, afterEach (fail), beforeEach, test-2, afterEach (pass)
     expect(log).toEqual(["beforeEach", "test-1", "afterEach", "beforeEach", "test-2", "afterEach"]);
+  });
+});
+describe("repeats with onTestFinished", () => {
+  let log: string[] = [];
+  test(
+    "repeats with onTestFinished",
+    () => {
+      onTestFinished(() => {
+        log.push("onTestFinished");
+      });
+      log.push("test");
+    },
+    { repeats: 3 },
+  );
+  test("verify correct log", () => {
+    expect(log).toEqual(["test", "onTestFinished", "test", "onTestFinished", "test", "onTestFinished"]);
+  });
+});
+
+describe("retry with onTestFinished", () => {
+  let attempts = 0;
+  let log: string[] = [];
+  test(
+    "retry with onTestFinished",
+    () => {
+      attempts++;
+      onTestFinished(() => {
+        log.push("onTestFinished");
+      });
+      log.push(`test-${attempts}`);
+      if (attempts < 2) {
+        throw new Error("fail");
+      }
+    },
+    { retry: 3 },
+  );
+  test("verify correct log", () => {
+    expect(log).toEqual(["test-1", "onTestFinished", "test-2", "onTestFinished"]);
+  });
+});
+
+describe("retry maximum", () => {
+  let attempts = 0;
+  test.failing(
+    "retry maximum",
+    () => {
+      attempts++;
+      throw new Error("fail");
+    },
+    { retry: 3 },
+  );
+  test("verify correct attempts", () => {
+    expect(attempts).toBe(4);
   });
 });

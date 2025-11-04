@@ -132,10 +132,10 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
             defer if (formatted_label) |label| bunTest.gpa.free(label);
 
             const bound = if (args.callback) |cb| try cb.bind(globalThis, item, &bun.String.static("cb"), 0, args_list_raw.items) else null;
-            try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, bound, formatted_label, .{ .timeout = args.options.timeout, .retry = args.options.retry, .repeats = args.options.repeats }, callback_length -| args_list.items.len, line_no);
+            try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, bound, formatted_label, args.options, callback_length -| args_list.items.len, line_no);
         }
     } else {
-        try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, args.callback, args.description, .{ .timeout = args.options.timeout, .retry = args.options.retry, .repeats = args.options.repeats }, callback_length, line_no);
+        try this.enqueueDescribeOrTestCallback(bunTest, globalThis, callFrame, args.callback, args.description, args.options, callback_length, line_no);
     }
 
     return .js_undefined;
@@ -169,7 +169,7 @@ fn filterNames(comptime Rem: type, rem: *Rem, description: ?[]const u8, parent_i
     }
 }
 
-fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTest, globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, callback: ?jsc.JSValue, description: ?[]const u8, options: struct { timeout: u32, retry: u32, repeats: u32 }, callback_length: usize, line_no: u32) bun.JSError!void {
+fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTest, globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, callback: ?jsc.JSValue, description: ?[]const u8, options: ParseArgumentsOptions, callback_length: usize, line_no: u32) bun.JSError!void {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -291,14 +291,15 @@ fn errorInCI(globalThis: *jsc.JSGlobalObject, signature: []const u8) bun.JSError
 const ParseArgumentsResult = struct {
     description: ?[]const u8,
     callback: ?jsc.JSValue,
-    options: struct {
-        timeout: u32 = 0,
-        retry: u32 = 0,
-        repeats: u32 = 1,
-    },
+    options: ParseArgumentsOptions,
     pub fn deinit(this: *ParseArgumentsResult, gpa: std.mem.Allocator) void {
         if (this.description) |str| gpa.free(str);
     }
+};
+const ParseArgumentsOptions = struct {
+    timeout: u32 = 0,
+    retry: u32 = 0,
+    repeats: u32 = 1,
 };
 pub const CallbackMode = enum { require, allow };
 pub const FunctionKind = enum { test_or_describe, hook };

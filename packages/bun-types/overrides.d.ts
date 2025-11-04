@@ -1,6 +1,14 @@
 export {};
 
-interface BodyMixin {
+/**
+ * This is like a BodyMixin, but exists to more things
+ * (e.g. Blob, ReadableStream, Response, etc.)
+ *
+ * Notably, this doesn't have a `blob()` because it's the lowest
+ * common denominator of these objects. A `Blob` in Bun does not
+ * have a `.blob()` method.
+ */
+interface BunConsumerConvenienceMethods {
   /**
    * Consume a text
    */
@@ -28,7 +36,7 @@ interface BodyMixin {
 }
 
 declare module "stream/web" {
-  interface ReadableStream extends BodyMixin {
+  interface ReadableStream extends BunConsumerConvenienceMethods {
     /**
      * Consume as a Blob
      */
@@ -37,11 +45,11 @@ declare module "stream/web" {
 }
 
 declare module "buffer" {
-  interface Blob extends BodyMixin {
-    // we have to specify bytes again even though it comes from
-    // the body mixin, because inheritence is slightly different to
-    // just "copying in the methods" (the difference is to do with how)
-    // type parameters are resolved
+  interface Blob extends BunConsumerConvenienceMethods {
+    // we have to specify bytes again even though it comes from the
+    // BunConsumerConvenienceMethods, because inheritence in TypeScript is
+    // slightly different to just "copying in the methods" (the difference is to
+    // do with how) type parameters are resolved
     bytes(): Promise<Uint8Array<ArrayBuffer>>;
   }
 }

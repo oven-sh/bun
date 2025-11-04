@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 18
+# Version: 19
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -685,6 +685,8 @@ install_common_software() {
 				apt-transport-https \
 				software-properties-common
 		fi
+		install_packages \
+			libc6-dbg
 		;;
 	dnf)
 		install_packages \
@@ -905,7 +907,7 @@ setup_node_gyp_cache() {
 }
 
 bun_version_exact() {
-	print "1.2.17"
+	print "1.3.1"
 }
 
 install_bun() {
@@ -984,6 +986,7 @@ install_build_essentials() {
 			xz-utils \
 			pkg-config \
 			golang
+		install_packages apache2-utils
 		;;
 	dnf | yum)
 		install_packages \
@@ -1011,6 +1014,7 @@ install_build_essentials() {
 			ninja \
 			go \
 			xz
+		install_packages apache2-utils
 		;;
 	esac
 
@@ -1058,12 +1062,11 @@ install_llvm() {
 		install_packages "llvm@$(llvm_version)"
 		;;
 	apk)
-		# alpine doesn't have a lld19 package on 3.21 atm so use bare one for now
 		install_packages \
 			"llvm$(llvm_version)" \
 			"clang$(llvm_version)" \
 			"scudo-malloc" \
-			"lld" \
+			"lld$(llvm_version)" \
 			"llvm$(llvm_version)-dev" # Ensures llvm-symbolizer is installed
 		;;
 	esac
@@ -1193,7 +1196,7 @@ install_docker() {
 			execute_sudo amazon-linux-extras install docker
 			;;
 		amzn-* | alpine-*)
-			install_packages docker
+			install_packages docker docker-cli-compose
 			;;
 		*)
 			sh="$(require sh)"
@@ -1208,10 +1211,17 @@ install_docker() {
 	if [ -f "$systemctl" ]; then
 		execute_sudo "$systemctl" enable docker
 	fi
+	if [ "$os" = "linux" ] && [ "$distro" = "alpine" ]; then
+		execute doas rc-update add docker default
+		execute doas rc-service docker start
+	fi
 
 	getent="$(which getent)"
 	if [ -n "$("$getent" group docker)" ]; then
 		usermod="$(which usermod)"
+		if [ -z "$usermod" ]; then
+			usermod="$(sudo which usermod)"
+		fi
 		if [ -f "$usermod" ]; then
 			execute_sudo "$usermod" -aG docker "$user"
 		fi

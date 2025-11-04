@@ -365,7 +365,7 @@ pub const CryptoHasher = union(enum) {
         _: *jsc.CallFrame,
     ) bun.JSError!jsc.JSValue {
         const copied: CryptoHasher = switch (this.*) {
-            .evp => |*inner| .{ .evp = inner.copy(globalObject.bunVM().rareData().boringEngine()) catch bun.outOfMemory() },
+            .evp => |*inner| .{ .evp = bun.handleOom(inner.copy(globalObject.bunVM().rareData().boringEngine())) },
             .hmac => |inner| brk: {
                 const hmac = inner orelse {
                     return throwHmacConsumed(globalObject);
@@ -488,6 +488,7 @@ const CryptoHasherZig = struct {
         .{ "sha3-512", std.crypto.hash.sha3.Sha3_512 },
         .{ "shake128", std.crypto.hash.sha3.Shake128 },
         .{ "shake256", std.crypto.hash.sha3.Shake256 },
+        .{ "blake2s256", std.crypto.hash.blake2.Blake2s256 },
     };
 
     inline fn digestLength(Algorithm: type) comptime_int {

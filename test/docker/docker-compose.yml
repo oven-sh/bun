@@ -1,0 +1,216 @@
+services:
+  # PostgreSQL Services
+  postgres_plain:
+    image: postgres:15
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_USER: postgres
+    volumes:
+      - ./init-scripts/postgres:/docker-entrypoint-initdb.d:ro
+    ports:
+      - target: 5432
+        published: 0
+        protocol: tcp
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 1h # Effectively disable after startup
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  postgres_tls:
+    image: postgres:15
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_USER: postgres
+    volumes:
+      - ./init-scripts/postgres:/docker-entrypoint-initdb.d:ro
+      - ../js/sql/docker-tls/server.crt:/etc/postgresql/ssl/server.crt:ro
+      - ../js/sql/docker-tls/server.key:/etc/postgresql/ssl/server.key:ro
+    ports:
+      - target: 5432
+        published: 0
+        protocol: tcp
+    command: >
+      postgres
+      -c ssl=on
+      -c ssl_cert_file=/etc/postgresql/ssl/server.crt
+      -c ssl_key_file=/etc/postgresql/ssl/server.key
+      -c max_prepared_transactions=1000
+      -c max_connections=2000
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 1h # Effectively disable after startup
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  postgres_auth:
+    image: postgres:15
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_USER: postgres
+    volumes:
+      - ./init-scripts/postgres-auth:/docker-entrypoint-initdb.d:ro
+      - ./config/pg_hba_auth.conf:/etc/postgresql/pg_hba.conf:ro
+    ports:
+      - target: 5432
+        published: 0
+        protocol: tcp
+    command: >
+      postgres
+      -c hba_file=/etc/postgresql/pg_hba.conf
+      -c max_prepared_transactions=1000
+      -c max_connections=2000
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 1h # Effectively disable after startup
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  # MySQL Services
+  mysql_plain:
+    image: mysql:8.4
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_DATABASE: bun_sql_test
+    ports:
+      - target: 3306
+        published: 0
+        protocol: tcp
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 1h # Effectively disable after startup
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  mysql_native_password:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: bun
+      MYSQL_DATABASE: bun_sql_test
+      MYSQL_ROOT_HOST: "%"
+    command: --default-authentication-plugin=mysql_native_password
+    ports:
+      - target: 3306
+        published: 0
+        protocol: tcp
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pbun"]
+      interval: 1h # Effectively disable after startup
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  mysql_tls:
+    build:
+      context: ../js/sql/mysql-tls
+      dockerfile: Dockerfile
+      args:
+        MYSQL_VERSION: 8.4
+    image: bun-mysql-tls:local
+    environment:
+      MYSQL_ROOT_PASSWORD: bun
+      MYSQL_DATABASE: bun_sql_test
+    ports:
+      - target: 3306
+        published: 0
+        protocol: tcp
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pbun"]
+      interval: 1h # Effectively disable after startup
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  # Redis/Valkey Services
+  redis_plain:
+    image: redis:7-alpine
+    command: redis-server --bind 0.0.0.0 --protected-mode no
+    ports:
+      - target: 6379
+        published: 0
+        protocol: tcp
+    tmpfs:
+      - /data
+
+  redis_unified:
+    build:
+      context: ../js/valkey/docker-unified
+      dockerfile: Dockerfile
+    image: bun-redis-unified:local
+    ports:
+      - target: 6379
+        published: 0
+        protocol: tcp
+        name: tcp
+      - target: 6380
+        published: 0
+        protocol: tcp
+        name: tls
+    volumes:
+      - redis-unix:/tmp/redis
+      - redis-data:/data
+
+  # MinIO (S3) Service
+  minio:
+    image: minio/minio:latest
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_DOMAIN: localhost
+    command: server /data --console-address :9001
+    ports:
+      - target: 9000
+        published: 0
+        protocol: tcp
+        name: api
+      - target: 9001
+        published: 0
+        protocol: tcp
+        name: console
+    tmpfs:
+      - /data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 1h # Effectively disable after startup
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  # WebSocket Autobahn Test Suite
+  # NOTE: Autobahn requires port 9002 to match both internal and external ports
+  # because it validates the Host header against its configured listening port.
+  # Dynamic port mapping causes "port X does not match server listening port 9002" errors.
+  autobahn:
+    image: crossbario/autobahn-testsuite
+    volumes:
+      - ./config/fuzzingserver.json:/config/fuzzingserver.json:ro
+    command: wstest -m fuzzingserver -s /config/fuzzingserver.json
+    ports:
+      - target: 9002
+        published: 0 # Dynamic port
+        protocol: tcp
+
+volumes:
+  redis-unix:
+  redis-data:
+    driver: local
+
+networks:
+  default:
+    driver: bridge

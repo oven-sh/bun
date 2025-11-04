@@ -448,7 +448,7 @@ for (let [gcTick, label] of [
 
         for (const [callback, fixture] of fixtures) {
           describe(fixture.slice(0, 12), () => {
-            describe("should should allow reading stdout", () => {
+            describe("should allow reading stdout", () => {
               it("before exit", async () => {
                 const process = callback();
                 const output = await process.stdout.text();

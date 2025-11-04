@@ -56,6 +56,7 @@ void Bun__TestReporterAgentReportTestStart(Inspector::InspectorTestReporterAgent
 }
 
 enum class BunTestStatus : uint8_t {
+    // this enum is kept in sync with zig Debugger.zig `pub const TestStatus`
     Pass,
     Fail,
     Timeout,

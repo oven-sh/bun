@@ -219,6 +219,9 @@ export default {
     page("install/npmrc", ".npmrc support", {
       description: "Bun supports loading some configuration options from .npmrc",
     }),
+    page("install/security-scanner-api", "Security Scanner API", {
+      description: "Scan your project for vulnerabilities with Bun's security scanner API.",
+    }),
     // page("install/utilities", "Utilities", {
     //   description: "Use `bun pm` to introspect your global module cache or project dependency tree.",
     // }),
@@ -356,7 +359,7 @@ export default {
     page("api/file-io", "File I/O", {
       description: `Read and write files fast with Bun's heavily optimized file system API.`,
     }), // "`Bun.write`"),
-    page("api/redis", "Redis client", {
+    page("api/redis", "Redis Client", {
       description: `Bun provides a fast, native Redis client with automatic command pipelining for better performance.`,
     }),
     page("api/import-meta", "import.meta", {
@@ -383,6 +386,9 @@ export default {
     page("api/spawn", "Child processes", {
       description: `Spawn sync and async child processes with easily configurable input and output streams.`,
     }), // "`Bun.spawn`"),
+    page("api/yaml", "YAML", {
+      description: `Bun.YAML.parse(string) lets you parse YAML files in JavaScript`,
+    }), // "`Bun.spawn`"),
     page("api/html-rewriter", "HTMLRewriter", {
       description: `Parse and transform HTML with Bun's native HTMLRewriter API, inspired by Cloudflare Workers.`,
     }), // "`HTMLRewriter`"),
@@ -401,6 +407,9 @@ export default {
     page("api/cc", "C Compiler", {
       description: `Build & run native C from JavaScript with Bun's native C compiler API`,
     }), // "`bun:ffi`"),
+    page("api/secrets", "Secrets", {
+      description: `Store and retrieve sensitive credentials securely using the operating system's native credential storage APIs.`,
+    }), // "`Bun.secrets`"),
     page("cli/test", "Testing", {
       description: `Bun's built-in test runner is fast and uses Jest-compatible syntax.`,
     }), // "`bun:test`"),

@@ -18,6 +18,32 @@ pub fn init(request_ctx: anytype) AnyRequestContext {
     return .{ .tagged_pointer = Pointer.init(request_ctx) };
 }
 
+pub fn setAdditionalOnAbortCallback(self: AnyRequestContext, cb: ?AdditionalOnAbortCallback) void {
+    if (self.tagged_pointer.isNull()) {
+        return;
+    }
+
+    switch (self.tagged_pointer.tag()) {
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+            bun.assert(self.tagged_pointer.as(HTTPServer.RequestContext).additional_on_abort == null);
+            self.tagged_pointer.as(HTTPServer.RequestContext).additional_on_abort = cb;
+        },
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+            bun.assert(self.tagged_pointer.as(HTTPSServer.RequestContext).additional_on_abort == null);
+            self.tagged_pointer.as(HTTPSServer.RequestContext).additional_on_abort = cb;
+        },
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+            bun.assert(self.tagged_pointer.as(DebugHTTPServer.RequestContext).additional_on_abort == null);
+            self.tagged_pointer.as(DebugHTTPServer.RequestContext).additional_on_abort = cb;
+        },
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+            bun.assert(self.tagged_pointer.as(DebugHTTPSServer.RequestContext).additional_on_abort == null);
+            self.tagged_pointer.as(DebugHTTPSServer.RequestContext).additional_on_abort = cb;
+        },
+        else => @panic("Unexpected AnyRequestContext tag"),
+    }
+}
+
 pub fn memoryCost(self: AnyRequestContext) usize {
     if (self.tagged_pointer.isNull()) {
         return 0;
@@ -221,6 +247,54 @@ pub fn onAbort(self: AnyRequestContext, response: uws.AnyResponse) void {
     }
 }
 
+pub fn ref(self: AnyRequestContext) void {
+    if (self.tagged_pointer.isNull()) {
+        return;
+    }
+
+    switch (self.tagged_pointer.tag()) {
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+            self.tagged_pointer.as(HTTPServer.RequestContext).ref();
+        },
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+            self.tagged_pointer.as(HTTPSServer.RequestContext).ref();
+        },
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+            self.tagged_pointer.as(DebugHTTPServer.RequestContext).ref();
+        },
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+            self.tagged_pointer.as(DebugHTTPSServer.RequestContext).ref();
+        },
+        else => @panic("Unexpected AnyRequestContext tag"),
+    }
+}
+
+pub fn setSignalAborted(self: AnyRequestContext, reason: bun.jsc.CommonAbortReason) void {
+    if (self.tagged_pointer.isNull()) {
+        return;
+    }
+    return switch (self.tagged_pointer.tag()) {
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => self.tagged_pointer.as(HTTPServer.RequestContext).setSignalAborted(reason),
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => self.tagged_pointer.as(HTTPSServer.RequestContext).setSignalAborted(reason),
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => self.tagged_pointer.as(DebugHTTPServer.RequestContext).setSignalAborted(reason),
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => self.tagged_pointer.as(DebugHTTPSServer.RequestContext).setSignalAborted(reason),
+        else => @panic("Unexpected AnyRequestContext tag"),
+    };
+}
+
+pub fn devServer(self: AnyRequestContext) ?*bun.bake.DevServer {
+    if (self.tagged_pointer.isNull()) {
+        return null;
+    }
+    return switch (self.tagged_pointer.tag()) {
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => self.tagged_pointer.as(HTTPServer.RequestContext).devServer(),
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => self.tagged_pointer.as(HTTPSServer.RequestContext).devServer(),
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => self.tagged_pointer.as(DebugHTTPServer.RequestContext).devServer(),
+        @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => self.tagged_pointer.as(DebugHTTPSServer.RequestContext).devServer(),
+        else => @panic("Unexpected AnyRequestContext tag"),
+    };
+}
+
 pub fn deref(self: AnyRequestContext) void {
     if (self.tagged_pointer.isNull()) {
         return;
@@ -242,6 +316,8 @@ pub fn deref(self: AnyRequestContext) void {
         else => @panic("Unexpected AnyRequestContext tag"),
     }
 }
+
+pub const AdditionalOnAbortCallback = @import("./RequestContext.zig").AdditionalOnAbortCallback;
 
 const bun = @import("bun");
 const jsc = bun.jsc;

@@ -412,7 +412,7 @@ pub const Map = struct {
     }
 
     pub fn initWithOneList(list: List) Map {
-        const baby_list = BabyList(List).init((&list)[0..1]);
+        const baby_list = BabyList(List).fromBorrowedSliceDangerous((&list)[0..1]);
         return initList(baby_list);
     }
 

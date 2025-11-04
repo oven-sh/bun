@@ -184,6 +184,7 @@ Bun.hash.rapidhash("data", 1234);
 
 - `"blake2b256"`
 - `"blake2b512"`
+- `"blake2s256"`
 - `"md4"`
 - `"md5"`
 - `"ripemd160"`

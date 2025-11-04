@@ -46,4 +46,50 @@ describe("readline/promises.createInterface()", () => {
       done();
     });
   });
+
+  it("should support Symbol.dispose for using statements", () => {
+    const fi = new FakeInput();
+    let closed = false;
+
+    {
+      using rl = readlinePromises.createInterface({
+        input: fi,
+        output: fi,
+      });
+
+      rl.on("close", () => {
+        closed = true;
+      });
+
+      // Verify the interface has the Symbol.dispose method
+      assert.strictEqual(typeof rl[Symbol.dispose], "function");
+      assert.strictEqual(!closed, true);
+    }
+
+    // After exiting the using block, the interface should be closed
+    assert.strictEqual(closed, true);
+  });
+
+  it("should support Symbol.dispose as alias for close()", () => {
+    const fi = new FakeInput();
+    let closed = false;
+
+    const rl = readlinePromises.createInterface({
+      input: fi,
+      output: fi,
+    });
+
+    rl.on("close", () => {
+      closed = true;
+    });
+
+    // Verify Symbol.dispose exists and works the same as close()
+    assert.strictEqual(typeof rl[Symbol.dispose], "function");
+    assert.strictEqual(!closed, true);
+
+    rl[Symbol.dispose]();
+
+    assert.strictEqual(closed, true);
+    assert.strictEqual(rl.closed, true);
+  });
 });

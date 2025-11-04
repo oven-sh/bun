@@ -47,7 +47,6 @@ const {
   utimesSync,
 } = require("node:fs");
 const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
-const { isPromise } = require("node:util/types");
 
 function cpSyncFn(src, dest, opts) {
   // Warn about using preserveTimestamps on 32-bit node
@@ -64,7 +63,7 @@ function cpSyncFn(src, dest, opts) {
 function checkPathsSync(src, dest, opts) {
   if (opts.filter) {
     const shouldCopy = opts.filter(src, dest);
-    if (isPromise(shouldCopy)) {
+    if ($isPromise(shouldCopy)) {
       // throw new ERR_INVALID_RETURN_VALUE("boolean", "filter", shouldCopy);
       throw new Error("Expected a boolean from the filter function, but got a promise. Use `fs.promises.cp` instead.");
     }

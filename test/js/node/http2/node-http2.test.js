@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, isCI, nodeExe } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import fs from "node:fs";
 import http2 from "node:http2";
@@ -10,6 +10,8 @@ import { Duplex } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
 const { afterEach, beforeEach, describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
+const ASAN_MULTIPLIER = isASAN ? 3 : 1;
+
 function invalidArgTypeHelper(input) {
   if (input === null) return " Received null";
 
@@ -1511,54 +1513,58 @@ it("http2 session.goaway() sends custom data", async done => {
   });
 });
 
-it("http2 server with minimal maxSessionMemory handles multiple requests", async () => {
-  const server = http2.createServer({ maxSessionMemory: 1 });
+it(
+  "http2 server with minimal maxSessionMemory handles multiple requests",
+  async () => {
+    const server = http2.createServer({ maxSessionMemory: 1 });
 
-  return await new Promise(resolve => {
-    server.on("session", session => {
-      session.on("stream", stream => {
-        stream.on("end", function () {
-          this.respond(
-            {
-              ":status": 200,
-            },
-            {
-              endStream: true,
-            },
-          );
+    return await new Promise(resolve => {
+      server.on("session", session => {
+        session.on("stream", stream => {
+          stream.on("end", function () {
+            this.respond(
+              {
+                ":status": 200,
+              },
+              {
+                endStream: true,
+              },
+            );
+          });
+          stream.resume();
         });
-        stream.resume();
       });
-    });
 
-    server.listen(0, () => {
-      const port = server.address().port;
-      const client = http2.connect(`http://localhost:${port}`);
+      server.listen(0, () => {
+        const port = server.address().port;
+        const client = http2.connect(`http://localhost:${port}`);
 
-      function next(i) {
-        if (i === 10000) {
-          client.close();
-          server.close();
-          resolve();
-          return;
+        function next(i) {
+          if (i === 10000) {
+            client.close();
+            server.close();
+            resolve();
+            return;
+          }
+
+          const stream = client.request({ ":method": "POST" });
+
+          stream.on("response", function (headers) {
+            expect(headers[":status"]).toBe(200);
+
+            this.on("close", () => next(i + 1));
+          });
+
+          stream.end();
         }
 
-        const stream = client.request({ ":method": "POST" });
-
-        stream.on("response", function (headers) {
-          expect(headers[":status"]).toBe(200);
-
-          this.on("close", () => next(i + 1));
-        });
-
-        stream.end();
-      }
-
-      // Start the sequence with the first request
-      next(0);
+        // Start the sequence with the first request
+        next(0);
+      });
     });
-  });
-}, 15_000);
+  },
+  15_000 * ASAN_MULTIPLIER,
+);
 
 it("http2.createServer validates input options", () => {
   // Test invalid options passed to createServer

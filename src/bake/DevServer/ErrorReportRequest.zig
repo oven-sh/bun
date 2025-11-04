@@ -22,7 +22,7 @@ body: uws.BodyReaderMixin(@This(), "body", runWithBody, finalize),
 pub fn run(dev: *DevServer, _: *Request, resp: anytype) void {
     const ctx = bun.new(ErrorReportRequest, .{
         .dev = dev,
-        .body = .init(dev.allocator),
+        .body = .init(dev.allocator()),
     });
     ctx.dev.server.?.onPendingRequest();
     ctx.body.readBody(resp);
@@ -41,8 +41,8 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
     var s = std.io.fixedBufferStream(body);
     const reader = s.reader();
 
-    var sfa_general = std.heap.stackFallback(65536, ctx.dev.allocator);
-    var sfa_sourcemap = std.heap.stackFallback(65536, ctx.dev.allocator);
+    var sfa_general = std.heap.stackFallback(65536, ctx.dev.allocator());
+    var sfa_sourcemap = std.heap.stackFallback(65536, ctx.dev.allocator());
     const temp_alloc = sfa_general.get();
     var arena = std.heap.ArenaAllocator.init(temp_alloc);
     defer arena.deinit();
@@ -69,8 +69,8 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
             .function_name = .init(function_name),
             .source_url = .init(file_name),
             .position = if (line > 0) .{
-                .line = .fromOneBased(line + 1),
-                .column = .fromOneBased(@max(1, column)),
+                .line = .fromOneBased(line),
+                .column = if (column < 1) .invalid else .fromOneBased(column),
                 .line_start_byte = 0,
             } else .{
                 .line = .invalid,
@@ -78,6 +78,7 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
                 .line_start_byte = 0,
             },
             .code_type = .None,
+            .is_async = false,
             .remapped = false,
         });
     }
@@ -146,10 +147,10 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
 
         // Remap the frame
         const remapped = result.mappings.find(
-            frame.position.line.oneBased(),
-            frame.position.column.zeroBased(),
+            frame.position.line,
+            frame.position.column,
         );
-        if (remapped) |remapped_position| {
+        if (remapped) |*remapped_position| {
             frame.position = .{
                 .line = .fromZeroBased(remapped_position.originalLine()),
                 .column = .fromZeroBased(remapped_position.originalColumn()),
@@ -169,8 +170,8 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
 
                 if (runtime_lines == null) {
                     const file = result.entry_files.get(@intCast(index - 1));
-                    if (file != .empty) {
-                        const json_encoded_source_code = file.ref.data.quotedContents();
+                    if (file.get()) |source_map| {
+                        const json_encoded_source_code = source_map.quotedContents();
                         // First line of interest is two above the target line.
                         const target_line = @as(usize, @intCast(frame.position.line.zeroBased()));
                         first_line_of_interest = target_line -| 2;
@@ -238,7 +239,7 @@ pub fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !
         ) catch {},
     }
 
-    var out: std.ArrayList(u8) = .init(ctx.dev.allocator);
+    var out: std.ArrayList(u8) = .init(ctx.dev.allocator());
     errdefer out.deinit();
     const w = out.writer();
 

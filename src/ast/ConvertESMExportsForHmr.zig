@@ -121,7 +121,7 @@ pub fn convertStmt(ctx: *ConvertESMExportsForHmr, p: anytype, stmt: Stmt) !void 
                     const temp_id = p.generateTempRef("default_export");
                     try ctx.last_part.declared_symbols.append(p.allocator, .{ .ref = temp_id, .is_top_level = true });
                     try ctx.last_part.symbol_uses.putNoClobber(p.allocator, temp_id, .{ .count_estimate = 1 });
-                    try p.current_scope.generated.push(p.allocator, temp_id);
+                    try p.current_scope.generated.append(p.allocator, temp_id);
 
                     try ctx.export_props.append(p.allocator, .{
                         .key = Expr.init(E.String, .{ .data = "default" }, stmt.loc),
@@ -395,7 +395,7 @@ fn visitRefToExport(
         const arg1 = p.generateTempRef(symbol.original_name);
         try ctx.last_part.declared_symbols.append(p.allocator, .{ .ref = arg1, .is_top_level = true });
         try ctx.last_part.symbol_uses.putNoClobber(p.allocator, arg1, .{ .count_estimate = 1 });
-        try p.current_scope.generated.push(p.allocator, arg1);
+        try p.current_scope.generated.append(p.allocator, arg1);
 
         // 'get abc() { return abc }'
         try ctx.export_props.append(p.allocator, .{
@@ -438,7 +438,7 @@ pub fn finalize(ctx: *ConvertESMExportsForHmr, p: anytype, all_parts: []js_ast.P
 
     if (ctx.export_props.items.len > 0) {
         const obj = Expr.init(E.Object, .{
-            .properties = G.Property.List.fromList(ctx.export_props),
+            .properties = G.Property.List.moveFromList(&ctx.export_props),
         }, logger.Loc.Empty);
 
         // `hmr.exports = ...`
@@ -466,7 +466,7 @@ pub fn finalize(ctx: *ConvertESMExportsForHmr, p: anytype, all_parts: []js_ast.P
                     .name = "reactRefreshAccept",
                     .name_loc = .Empty,
                 }, .Empty),
-                .args = .init(&.{}),
+                .args = .empty,
             }, .Empty),
         }, .Empty));
     }
@@ -474,7 +474,10 @@ pub fn finalize(ctx: *ConvertESMExportsForHmr, p: anytype, all_parts: []js_ast.P
     // Merge all part metadata into the first part.
     for (all_parts[0 .. all_parts.len - 1]) |*part| {
         try ctx.last_part.declared_symbols.appendList(p.allocator, part.declared_symbols);
-        try ctx.last_part.import_record_indices.append(p.allocator, part.import_record_indices.slice());
+        try ctx.last_part.import_record_indices.appendSlice(
+            p.allocator,
+            part.import_record_indices.slice(),
+        );
         for (part.symbol_uses.keys(), part.symbol_uses.values()) |k, v| {
             const gop = try ctx.last_part.symbol_uses.getOrPut(p.allocator, k);
             if (!gop.found_existing) {
@@ -487,13 +490,16 @@ pub fn finalize(ctx: *ConvertESMExportsForHmr, p: anytype, all_parts: []js_ast.P
         part.declared_symbols.entries.len = 0;
         part.tag = .dead_due_to_inlining;
         part.dependencies.clearRetainingCapacity();
-        try part.dependencies.push(p.allocator, .{
+        try part.dependencies.append(p.allocator, .{
             .part_index = @intCast(all_parts.len - 1),
             .source_index = p.source.index,
         });
     }
 
-    try ctx.last_part.import_record_indices.append(p.allocator, p.import_records_for_current_part.items);
+    try ctx.last_part.import_record_indices.appendSlice(
+        p.allocator,
+        p.import_records_for_current_part.items,
+    );
     try ctx.last_part.declared_symbols.appendList(p.allocator, p.declared_symbols);
 
     ctx.last_part.stmts = ctx.stmts.items;

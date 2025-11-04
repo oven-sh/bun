@@ -1538,7 +1538,7 @@ export function parseNumber(value) {
 
 /**
  * @param {string} string
- * @returns {"darwin" | "linux" | "windows"}
+ * @returns {"darwin" | "linux" | "windows" | "freebsd"}
  */
 export function parseOs(string) {
   if (/darwin|apple|mac/i.test(string)) {
@@ -1549,6 +1549,9 @@ export function parseOs(string) {
   }
   if (/win/i.test(string)) {
     return "windows";
+  }
+  if (/freebsd/i.test(string)) {
+    return "freebsd";
   }
   throw new Error(`Unsupported operating system: ${string}`);
 }
@@ -1900,21 +1903,20 @@ export function getUsernameForDistro(distro) {
   if (/windows/i.test(distro)) {
     return "administrator";
   }
-
   if (/alpine|centos/i.test(distro)) {
     return "root";
   }
-
   if (/debian/i.test(distro)) {
     return "admin";
   }
-
   if (/ubuntu/i.test(distro)) {
     return "ubuntu";
   }
-
   if (/amazon|amzn|al\d+|rhel/i.test(distro)) {
     return "ec2-user";
+  }
+  if (/freebsd/i.test(distro)) {
+    return "root";
   }
 
   throw new Error(`Unsupported distro: ${distro}`);
@@ -2808,6 +2810,8 @@ export function endGroup() {
   } else {
     console.groupEnd();
   }
+  // when a file exits with an ASAN error, there is no trailing newline so we add one here to make sure `console.group()` detection doesn't get broken in CI.
+  console.log();
 }
 
 export function printEnvironment() {
@@ -2862,6 +2866,12 @@ export function printEnvironment() {
         const shell = which(["sh", "bash"]);
         if (shell) {
           spawnSync([shell, "-c", "free -m -w"], { stdio: "inherit" });
+        }
+      });
+      startGroup("Docker", () => {
+        const shell = which(["sh", "bash"]);
+        if (shell) {
+          spawnSync([shell, "-c", "docker ps"], { stdio: "inherit" });
         }
       });
     }

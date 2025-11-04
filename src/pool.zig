@@ -214,8 +214,7 @@ pub fn ObjectPool(
             if (comptime max_count > 0) {
                 if (data().count >= max_count) {
                     if (comptime log_allocations) std.io.getStdErr().writeAll(comptime std.fmt.comptimePrint("Free {s} - {d} bytes\n", .{ @typeName(Type), @sizeOf(Type) })) catch {};
-                    if (std.meta.hasFn(Type, "deinit")) node.data.deinit();
-                    node.allocator.destroy(node);
+                    destroyNode(node);
                     return;
                 }
             }
@@ -242,9 +241,19 @@ pub fn ObjectPool(
             dat.list.first = null;
             while (next) |node| {
                 next = node.next;
-                if (std.meta.hasFn(Type, "deinit")) node.data.deinit();
-                node.allocator.destroy(node);
+                destroyNode(node);
             }
+        }
+
+        fn destroyNode(node: *LinkedList.Node) void {
+            // TODO: Once a generic-allocator version of `BabyList` is added, change
+            // `ByteListPool` in `bun.js/webcore.zig` to use a managed default-allocator
+            // `ByteList` instead, and then get rid of the special-casing for `ByteList`
+            // here. This will fix a memory leak.
+            if (comptime Type != bun.ByteList) {
+                bun.memory.deinit(&node.data);
+            }
+            node.allocator.destroy(node);
         }
     };
 }

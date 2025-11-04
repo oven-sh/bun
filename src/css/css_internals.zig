@@ -110,7 +110,12 @@ pub fn testingImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, c
             var stylesheet, var extra = ret;
             var minify_options: bun.css.MinifyOptions = bun.css.MinifyOptions.default();
             minify_options.targets.browsers = browsers;
-            _ = stylesheet.minify(alloc, minify_options, &extra).assert();
+            switch (stylesheet.minify(alloc, minify_options, &extra)) {
+                .result => |_| {},
+                .err => |*err| {
+                    return globalThis.throwValue(try err.toErrorInstance(globalThis));
+                },
+            }
 
             const symbols = bun.ast.Symbol.Map{};
             var local_names = bun.css.LocalsResultsMap{};
@@ -131,8 +136,8 @@ pub fn testingImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, c
                 &symbols,
             )) {
                 .result => |result| result,
-                .err => |err| {
-                    return err.toJSString(alloc, globalThis);
+                .err => |*err| {
+                    return globalThis.throwValue(try err.toErrorInstance(globalThis));
                 },
             };
 
@@ -186,63 +191,63 @@ fn targetsFromJS(globalThis: *jsc.JSGlobalObject, jsobj: JSValue) bun.JSError!bu
     if (try jsobj.getTruthy(globalThis, "android")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
-                targets.android = @intFromFloat(value);
+                targets.android = bun.intFromFloat(u32, value);
             }
         }
     }
     if (try jsobj.getTruthy(globalThis, "chrome")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
-                targets.chrome = @intFromFloat(value);
+                targets.chrome = bun.intFromFloat(u32, value);
             }
         }
     }
     if (try jsobj.getTruthy(globalThis, "edge")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
-                targets.edge = @intFromFloat(value);
+                targets.edge = bun.intFromFloat(u32, value);
             }
         }
     }
     if (try jsobj.getTruthy(globalThis, "firefox")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
-                targets.firefox = @intFromFloat(value);
+                targets.firefox = bun.intFromFloat(u32, value);
             }
         }
     }
     if (try jsobj.getTruthy(globalThis, "ie")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
-                targets.ie = @intFromFloat(value);
+                targets.ie = bun.intFromFloat(u32, value);
             }
         }
     }
     if (try jsobj.getTruthy(globalThis, "ios_saf")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
-                targets.ios_saf = @intFromFloat(value);
+                targets.ios_saf = bun.intFromFloat(u32, value);
             }
         }
     }
     if (try jsobj.getTruthy(globalThis, "opera")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
-                targets.opera = @intFromFloat(value);
+                targets.opera = bun.intFromFloat(u32, value);
             }
         }
     }
     if (try jsobj.getTruthy(globalThis, "safari")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
-                targets.safari = @intFromFloat(value);
+                targets.safari = bun.intFromFloat(u32, value);
             }
         }
     }
     if (try jsobj.getTruthy(globalThis, "samsung")) |val| {
         if (val.isInt32()) {
             if (val.getNumber()) |value| {
-                targets.samsung = @intFromFloat(value);
+                targets.samsung = bun.intFromFloat(u32, value);
             }
         }
     }

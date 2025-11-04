@@ -26,7 +26,7 @@ pub const log = Output.scoped(.debugger, .visible);
 extern "c" fn Bun__createJSDebugger(*JSGlobalObject) u32;
 extern "c" fn Bun__ensureDebugger(u32, bool) void;
 extern "c" fn Bun__startJSDebuggerThread(*JSGlobalObject, u32, *bun.String, c_int, bool) void;
-var futex_atomic: std.atomic.Value(u32) = undefined;
+var futex_atomic: std.atomic.Value(u32) = .init(0);
 
 pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
     const debugger = &(this.debugger orelse return);
@@ -56,7 +56,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
         // TODO: remove this when tickWithTimeout actually works properly on Windows.
         if (debugger.wait_for_connection == .shortly) {
             uv.uv_update_time(this.uvLoop());
-            var timer = bun.default_allocator.create(uv.Timer) catch bun.outOfMemory();
+            var timer = bun.handleOom(bun.default_allocator.create(uv.Timer));
             timer.* = std.mem.zeroes(uv.Timer);
             timer.init(this.uvLoop());
             const onDebuggerTimer = struct {
@@ -127,7 +127,6 @@ pub fn create(this: *VirtualMachine, globalObject: *JSGlobalObject) !void {
         debugger.script_execution_context_id = Bun__createJSDebugger(globalObject);
         if (!this.has_started_debugger) {
             this.has_started_debugger = true;
-            futex_atomic = std.atomic.Value(u32).init(0);
             var thread = try std.Thread.spawn(.{}, startJSDebuggerThread, .{this});
             thread.detach();
         }
@@ -146,10 +145,18 @@ pub fn startJSDebuggerThread(other_vm: *VirtualMachine) void {
     log("startJSDebuggerThread", .{});
     jsc.markBinding(@src());
 
+    // Create a thread-local env_loader to avoid allocator threading violations
+    const thread_allocator = arena.allocator();
+    const env_map = thread_allocator.create(DotEnv.Map) catch @panic("Failed to create debugger env map");
+    env_map.* = DotEnv.Map.init(thread_allocator);
+    const env_loader = thread_allocator.create(DotEnv.Loader) catch @panic("Failed to create debugger env loader");
+    env_loader.* = DotEnv.Loader.init(env_map, thread_allocator);
+
     var vm = VirtualMachine.init(.{
-        .allocator = arena.allocator(),
+        .allocator = thread_allocator,
         .args = std.mem.zeroes(bun.schema.api.TransformOptions),
         .store_fd = false,
+        .env_loader = env_loader,
     }) catch @panic("Failed to create Debugger VM");
     vm.allocator = arena.allocator();
     vm.arena = &arena;
@@ -291,6 +298,7 @@ pub const TestReporterAgent = struct {
     handle: ?*Handle = null,
     const debug = Output.scoped(.TestReporterAgent, .visible);
 
+    /// this enum is kept in sync with c++ InspectorTestReporterAgent.cpp `enum class BunTestStatus`
     pub const TestStatus = enum(u8) {
         pass,
         fail,
@@ -426,6 +434,7 @@ pub const DebuggerId = bun.GenericIndex(i32, Debugger);
 pub const BunFrontendDevServerAgent = @import("./api/server/InspectorBunFrontendDevServerAgent.zig").BunFrontendDevServerAgent;
 pub const HTTPServerAgent = @import("./bindings/HTTPServerAgent.zig");
 
+const DotEnv = @import("../env_loader.zig");
 const std = @import("std");
 
 const bun = @import("bun");

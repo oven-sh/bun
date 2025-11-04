@@ -119,7 +119,7 @@ pub fn ParseProperty(
             }
 
             return G.Property{
-                .ts_decorators = ExprNodeList.init(opts.ts_decorators),
+                .ts_decorators = try ExprNodeList.fromSlice(p.allocator, opts.ts_decorators),
                 .kind = kind,
                 .flags = Flags.Property.init(.{
                     .is_computed = is_computed,
@@ -333,7 +333,7 @@ pub fn ParseProperty(
                                 ) catch unreachable;
 
                                 block.* = G.ClassStaticBlock{
-                                    .stmts = js_ast.BabyList(Stmt).init(stmts),
+                                    .stmts = js_ast.BabyList(Stmt).fromOwnedSlice(stmts),
                                     .loc = loc,
                                 };
 
@@ -347,7 +347,7 @@ pub fn ParseProperty(
                         // Handle invalid identifiers in property names
                         // https://github.com/oven-sh/bun/issues/12039
                         if (p.lexer.token == .t_syntax_error) {
-                            p.log.addRangeErrorFmt(p.source, name_range, p.allocator, "Unexpected {}", .{bun.fmt.quote(name)}) catch bun.outOfMemory();
+                            bun.handleOom(p.log.addRangeErrorFmt(p.source, name_range, p.allocator, "Unexpected {}", .{bun.fmt.quote(name)}));
                             return error.SyntaxError;
                         }
 
@@ -506,7 +506,7 @@ pub fn ParseProperty(
                     try p.lexer.expectOrInsertSemicolon();
 
                     return G.Property{
-                        .ts_decorators = ExprNodeList.init(opts.ts_decorators),
+                        .ts_decorators = try ExprNodeList.fromSlice(p.allocator, opts.ts_decorators),
                         .kind = kind,
                         .flags = Flags.Property.init(.{
                             .is_computed = is_computed,

@@ -1,5 +1,6 @@
 const NodeModulesFolder = Lockfile.Tree.Iterator(.node_modules).Next;
 pub const PackCommand = @import("./pack_command.zig").PackCommand;
+pub const ScanCommand = @import("./scan_command.zig").ScanCommand;
 
 const ByName = struct {
     dependencies: []const Dependency,
@@ -92,6 +93,7 @@ pub const PackageManagerCommand = struct {
             \\
             \\<b>Commands:<r>
             \\
+            \\  <b><green>bun pm<r> <blue>scan<r>                 scan all packages in lockfile for security vulnerabilities
             \\  <b><green>bun pm<r> <blue>pack<r>                 create a tarball of the current workspace
             \\  <d>├<r> <cyan>--dry-run<r>                 do everything except for writing the tarball to disk
             \\  <d>├<r> <cyan>--destination<r>             the directory the tarball will be saved in
@@ -101,7 +103,7 @@ pub const PackageManagerCommand = struct {
             \\  <d>└<r> <cyan>--quiet<r>                   only output the tarball filename
             \\  <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder
             \\  <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder
-            \\  <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile
+            \\  <b><green>bun<r> <blue>list<r>                  list the dependency tree according to the current lockfile
             \\  <d>└<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
             \\  <b><green>bun pm<r> <blue>why<r> <d>\<pkg\><r>            show dependency tree explaining why a package is installed
             \\  <b><green>bun pm<r> <blue>whoami<r>               print the current npm username
@@ -109,7 +111,7 @@ pub const PackageManagerCommand = struct {
             \\  <b><green>bun pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag
             \\  <d>└<r> <cyan>increment<r>                 patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific version
             \\  <b><green>bun pm<r> <blue>pkg<r>                  manage data in package.json
-            \\  <d>├<r> <cyan>get<r> <d>[key ...]<r> 
+            \\  <d>├<r> <cyan>get<r> <d>[key ...]<r>
             \\  <d>├<r> <cyan>set<r> <d>key=value ...<r>
             \\  <d>├<r> <cyan>delete<r> <d>key ...<r>
             \\  <d>└<r> <cyan>fix<r>                       auto-correct common package.json errors
@@ -136,6 +138,10 @@ pub const PackageManagerCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         var args = try std.process.argsAlloc(ctx.allocator);
         args = args[1..];
+
+        // Check if we're being invoked directly as "bun whoami" instead of "bun pm whoami"
+        const is_direct_whoami = if (bun.argv.len > 1) strings.eqlComptime(bun.argv[1], "whoami") else false;
+
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm);
         var pm, const cwd = PackageManager.init(ctx, cli, PackageManager.Subcommand.pm) catch |err| {
             if (err == error.MissingPackageJSON) {
@@ -152,12 +158,21 @@ pub const PackageManagerCommand = struct {
         };
         defer ctx.allocator.free(cwd);
 
-        const subcommand = getSubcommand(&pm.options.positionals);
+        var subcommand = if (is_direct_whoami) "whoami" else getSubcommand(&pm.options.positionals);
+
+        // Normalize "list" to "ls" (handles both "bun list" and "bun pm list")
+        if (strings.eqlComptime(subcommand, "list")) {
+            subcommand = "ls";
+        }
+
         if (pm.options.global) {
             try pm.setupGlobalDir(ctx);
         }
 
-        if (strings.eqlComptime(subcommand, "pack")) {
+        if (strings.eqlComptime(subcommand, "scan")) {
+            try ScanCommand.execWithManager(ctx, pm, cwd);
+            Global.exit(0);
+        } else if (strings.eqlComptime(subcommand, "pack")) {
             try PackCommand.execWithManager(ctx, pm);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "whoami")) {
@@ -191,7 +206,7 @@ pub const PackageManagerCommand = struct {
             if (pm.options.global) {
                 warner: {
                     if (Output.enable_ansi_colors_stderr) {
-                        if (bun.getenvZ("PATH")) |path| {
+                        if (bun.env_var.PATH.get()) |path| {
                             var path_iter = std.mem.tokenizeScalar(u8, path, std.fs.path.delimiter);
                             while (path_iter.next()) |entry| {
                                 if (strings.eql(entry, output_path)) {

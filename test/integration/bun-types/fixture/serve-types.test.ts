@@ -13,27 +13,35 @@ function tmpdirSync(pattern: string = "bun.test."): string {
   return fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), pattern));
 }
 
+export default {
+  fetch: req => Response.json(req.url),
+  websocket: {
+    message(ws) {
+      expectType(ws.data).is<{ name: string }>();
+    },
+  },
+} satisfies Bun.ServeOptions<{ name: string }>;
+
 function expectInstanceOf<T>(value: unknown, constructor: new (...args: any[]) => T): asserts value is T {
   expect(value).toBeInstanceOf(constructor);
 }
 
-function test<T, R extends { [K in keyof R]: Bun.RouterTypes.RouteValue<K & string> }>(
+function test<T = undefined, R extends string = never>(
   name: string,
-  serveConfig: Bun.ServeFunctionOptions<T, R>,
+  options: Bun.Serve.Options<T, R>,
   {
     onConstructorFailure,
     overrideExpectBehavior,
+    skip: skipOptions,
   }: {
     onConstructorFailure?: (error: Error) => void | Promise<void>;
-    overrideExpectBehavior?: (server: Bun.Server) => void | Promise<void>;
+    overrideExpectBehavior?: (server: NoInfer<Bun.Server<T>>) => void | Promise<void>;
+    skip?: boolean;
   } = {},
 ) {
-  if ("unix" in serveConfig && typeof serveConfig.unix === "string" && process.platform === "win32") {
-    // Skip unix socket tests on Windows
-    return;
-  }
+  const skip = skipOptions || ("unix" in options && typeof options.unix === "string" && process.platform === "win32");
 
-  async function testServer(server: Bun.Server) {
+  async function testServer(server: Bun.Server<T>) {
     if (overrideExpectBehavior) {
       await overrideExpectBehavior(server);
     } else {
@@ -45,9 +53,9 @@ function test<T, R extends { [K in keyof R]: Bun.RouterTypes.RouteValue<K & stri
     }
   }
 
-  it(name, async () => {
+  it.skipIf(skip)(name, async () => {
     try {
-      using server = Bun.serve(serveConfig);
+      using server = Bun.serve(options);
       try {
         await testServer(server);
       } finally {
@@ -107,18 +115,21 @@ test(
 test("basic + websocket + upgrade", {
   websocket: {
     message(ws, message) {
-      expectType<typeof ws>().is<Bun.ServerWebSocket<unknown>>();
+      expectType<typeof ws>().is<Bun.ServerWebSocket<undefined>>();
       ws.send(message);
+      expectType(message).is<string | Buffer<ArrayBuffer>>();
     },
   },
 
   fetch(req, server) {
+    expectType(req).is<Request>();
+
     // Upgrade to a ServerWebSocket if we can
     // This automatically checks for the `Sec-WebSocket-Key` header
     // meaning you don't have to check headers, you can just call `upgrade()`
     if (server.upgrade(req)) {
       // When upgrading, we return undefined since we don't want to send a Response
-      return;
+      // return;
     }
 
     return new Response("Regular HTTP response");
@@ -127,6 +138,16 @@ test("basic + websocket + upgrade", {
 
 test("basic + websocket + upgrade + all handlers", {
   fetch(req, server) {
+    expectType(server.upgrade).is<
+      (
+        req: Request,
+        options: {
+          data?: { name: string };
+          headers?: Bun.HeadersInit;
+        },
+      ) => boolean
+    >;
+
     const url = new URL(req.url);
     if (url.pathname === "/chat") {
       if (
@@ -147,20 +168,26 @@ test("basic + websocket + upgrade + all handlers", {
   },
 
   websocket: {
-    open(ws: Bun.ServerWebSocket<{ name: string }>) {
+    data: {} as { name: string },
+
+    open(ws) {
       console.log("WebSocket opened");
       ws.subscribe("the-group-chat");
     },
 
     message(ws, message) {
+      expectType(message).is<string | Buffer<ArrayBuffer>>();
       ws.publish("the-group-chat", `${ws.data.name}: ${message.toString()}`);
     },
 
     close(ws, code, reason) {
+      expectType(code).is<number>();
+      expectType(reason).is<string>();
       ws.publish("the-group-chat", `${ws.data.name} left the chat`);
     },
 
     drain(ws) {
+      expectType(ws.data.name).is<string>();
       console.log("Please send me data. I am ready to receive it.");
     },
 
@@ -201,7 +228,7 @@ test("port 0 + websocket + upgrade", {
   },
   websocket: {
     message(ws) {
-      expectType(ws).is<Bun.ServerWebSocket<unknown>>();
+      expectType(ws).is<Bun.ServerWebSocket<undefined>>();
     },
   },
 });
@@ -269,9 +296,13 @@ test(
   {
     unix: `${tmpdirSync()}/bun.sock`,
     fetch(req, server) {
-      server.upgrade(req);
+      if (server.upgrade(req)) {
+        return;
+      }
+
       return new Response();
     },
+    websocket: { message() {} },
   },
   {
     overrideExpectBehavior: server => {
@@ -504,11 +535,10 @@ test("basic websocket upgrade and ws publish/subscribe to topics", {
 
 test(
   "port with unix socket (is a type error)",
-  // This prettier-ignore exists because between TypeScript 5.8 and 5.9, the location of the error message changed, so
-  // to satisfy both we can just keep what would have been the two erroring lines on the same line
-  // prettier-ignore
-  // @ts-expect-error
-  { unix: `${tmpdirSync()}/bun.sock`, port: 0,
+  // @ts-expect-error Cannot pass unix and port
+  {
+    unix: `${tmpdirSync()}/bun.sock`,
+    port: 0,
     fetch() {
       return new Response();
     },
@@ -524,10 +554,10 @@ test(
 
 test(
   "port with unix socket with websocket + upgrade (is a type error)",
-  // Prettier ignore exists for same reason as above
-  // prettier-ignore
-  // @ts-expect-error
-  { unix: `${tmpdirSync()}/bun.sock`, port: 0,
+  // @ts-expect-error cannot pass unix and port at same time
+  {
+    unix: `${tmpdirSync()}/bun.sock`,
+    port: 0,
     fetch(req, server) {
       server.upgrade(req);
       if (Math.random() > 0.5) return undefined;
@@ -543,3 +573,246 @@ test(
     },
   },
 );
+
+test("hostname: 0.0.0.0 (default - listen on all interfaces)", {
+  hostname: "0.0.0.0",
+  fetch() {
+    return new Response("listening on all interfaces");
+  },
+});
+
+test("hostname: 127.0.0.1 (localhost only)", {
+  hostname: "127.0.0.1",
+  fetch() {
+    return new Response("listening on localhost only");
+  },
+});
+
+test("hostname: localhost", {
+  hostname: "localhost",
+  fetch() {
+    return new Response("listening on localhost");
+  },
+});
+
+test(
+  "hostname: custom IPv4 address",
+  {
+    hostname: "192.168.1.100",
+    fetch() {
+      return new Response("custom hostname");
+    },
+  },
+  {
+    onConstructorFailure: error => {
+      expect(error.message).toContain("Failed to start server");
+    },
+  },
+);
+
+test("port: number type", {
+  port: 3000,
+  fetch() {
+    return new Response("port as number");
+  },
+});
+
+test("port: string type", {
+  port: "3001",
+  fetch() {
+    return new Response("port as string");
+  },
+});
+
+test("port: 0 (random port assignment)", {
+  port: 0,
+  fetch() {
+    return new Response("random port");
+  },
+});
+
+test(
+  "port: from environment variable",
+  {
+    port: process.env.PORT || "3002",
+    fetch() {
+      return new Response("port from env");
+    },
+  },
+  {
+    overrideExpectBehavior: server => {
+      expect(server.port).toBeGreaterThan(0);
+      expect(server.url).toBeDefined();
+    },
+  },
+);
+
+test("reusePort: false (default)", {
+  reusePort: false,
+  port: 0,
+  fetch() {
+    return new Response("reusePort false");
+  },
+});
+
+test("reusePort: true", {
+  reusePort: true,
+  port: 0,
+  fetch() {
+    return new Response("reusePort true");
+  },
+});
+
+test("ipv6Only: false (default)", {
+  ipv6Only: false,
+  port: 0,
+  fetch() {
+    return new Response("ipv6Only false");
+  },
+});
+
+test("idleTimeout: default (10 seconds)", {
+  port: 0,
+  fetch() {
+    return new Response("default idleTimeout");
+  },
+});
+
+test("idleTimeout: custom value (30 seconds)", {
+  idleTimeout: 30,
+  port: 0,
+  fetch() {
+    return new Response("custom idleTimeout");
+  },
+});
+
+test("idleTimeout: 0 (no timeout)", {
+  idleTimeout: 0,
+  port: 0,
+  fetch() {
+    return new Response("no idleTimeout");
+  },
+});
+
+test("maxRequestBodySize: default (128MB)", {
+  port: 0,
+  fetch() {
+    return new Response("default maxRequestBodySize");
+  },
+});
+
+test("maxRequestBodySize: custom small value", {
+  maxRequestBodySize: 1024 * 1024, // 1MB
+  port: 0,
+  fetch() {
+    return new Response("small maxRequestBodySize");
+  },
+});
+
+test("maxRequestBodySize: custom large value", {
+  maxRequestBodySize: 1024 * 1024 * 1024, // 1GB
+  port: 0,
+  fetch() {
+    return new Response("large maxRequestBodySize");
+  },
+});
+
+test("development: true", {
+  development: true,
+  port: 0,
+  fetch() {
+    return new Response("development mode on");
+  },
+});
+
+test("development: false", {
+  development: false,
+  port: 0,
+  fetch() {
+    return new Response("development mode off");
+  },
+});
+
+test("development: defaults to process.env.NODE_ENV !== 'production'", {
+  development: process.env.NODE_ENV !== "production",
+  port: 0,
+  fetch() {
+    return new Response("development from env");
+  },
+});
+
+test(
+  "error callback handles errors",
+  {
+    port: 0,
+    fetch() {
+      throw new Error("Test error");
+    },
+    error(error) {
+      return new Response(`Error handled: ${error.message}`, { status: 500 });
+    },
+  },
+  {
+    overrideExpectBehavior: async server => {
+      const res = await fetch(server.url);
+      expect(res.status).toBe(500);
+      expect(await res.text()).toBe("Error handled: Test error");
+    },
+  },
+);
+
+test(
+  "error callback with async handler",
+  {
+    port: 0,
+    fetch() {
+      throw new Error("Async test error");
+    },
+    async error(error) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      return new Response(`Async error handled: ${error.message}`, { status: 503 });
+    },
+  },
+  {
+    overrideExpectBehavior: async server => {
+      const res = await fetch(server.url);
+      expect(res.status).toBe(503);
+      expect(await res.text()).toBe("Async error handled: Async test error");
+    },
+  },
+);
+
+test("id: custom server identifier", {
+  id: "my-custom-server-id",
+  port: 0,
+  fetch() {
+    return new Response("server with custom id");
+  },
+});
+
+test("id: null (no identifier)", {
+  id: null,
+  port: 0,
+  fetch() {
+    return new Response("server with null id");
+  },
+});
+
+test("multiple properties combined", {
+  hostname: "127.0.0.1",
+  port: 0,
+  reusePort: true,
+  idleTimeout: 20,
+  maxRequestBodySize: 1024 * 1024 * 10, // 10MB
+  development: true,
+  id: "combined-test-server",
+  fetch(req) {
+    return Response.json({
+      url: req.url,
+      method: req.method,
+    });
+  },
+  error(error) {
+    return new Response(`Combined server error: ${error.message}`, { status: 500 });
+  },
+});

@@ -37,7 +37,7 @@ pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
     actual.internal_loop_data.jsc_vm = vm.jsc_vm;
 
     if (comptime Environment.isDebug) {
-        if (bun.getenvZ("BUN_TRACK_LAST_FN_NAME") != null) {
+        if (bun.env_var.BUN_TRACK_LAST_FN_NAME.get()) {
             vm.eventLoop().debug.track_last_fn_name = true;
         }
     }
@@ -56,6 +56,11 @@ pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
 
     if (!this.disabled)
         this.gc_repeating_timer.set(this, onGCRepeatingTimer, gc_timer_interval, gc_timer_interval);
+}
+
+pub fn deinit(this: *GarbageCollectionController) void {
+    this.gc_timer.deinit(true);
+    this.gc_repeating_timer.deinit(true);
 }
 
 pub fn scheduleGCTimer(this: *GarbageCollectionController) void {

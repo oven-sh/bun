@@ -3,3 +3,7 @@
 
 # Tests
 /test/expectations.txt @Jarred-Sumner
+
+# Types
+*.d.ts @alii
+/packages/bun-types/ @alii

@@ -35,7 +35,7 @@ pub fn sendHelperChild(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFram
     if (callback.isFunction()) {
         // TODO: remove this strong. This is expensive and would be an easy way to create a memory leak.
         // These sequence numbers shouldn't exist from JavaScript's perspective at all.
-        child_singleton.callbacks.put(bun.default_allocator, child_singleton.seq, jsc.Strong.Optional.create(callback, globalThis)) catch bun.outOfMemory();
+        bun.handleOom(child_singleton.callbacks.put(bun.default_allocator, child_singleton.seq, jsc.Strong.Optional.create(callback, globalThis)));
     }
 
     // sequence number for InternalMsgHolder
@@ -107,7 +107,7 @@ pub const InternalMsgHolder = struct {
 
     pub fn enqueue(this: *InternalMsgHolder, message: jsc.JSValue, globalThis: *jsc.JSGlobalObject) void {
         //TODO: .addOne is workaround for .append causing crash/ dependency loop in zig compiler
-        const new_item_ptr = this.messages.addOne(bun.default_allocator) catch bun.outOfMemory();
+        const new_item_ptr = bun.handleOom(this.messages.addOne(bun.default_allocator));
         new_item_ptr.* = .create(message, globalThis);
     }
 
@@ -190,7 +190,7 @@ pub fn sendHelperPrimary(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFr
         return globalThis.throwInvalidArgumentTypeValue("message", "object", message);
     }
     if (callback.isFunction()) {
-        ipc_data.internal_msg_queue.callbacks.put(bun.default_allocator, ipc_data.internal_msg_queue.seq, jsc.Strong.Optional.create(callback, globalThis)) catch bun.outOfMemory();
+        bun.handleOom(ipc_data.internal_msg_queue.callbacks.put(bun.default_allocator, ipc_data.internal_msg_queue.seq, jsc.Strong.Optional.create(callback, globalThis)));
     }
 
     // sequence number for InternalMsgHolder

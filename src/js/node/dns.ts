@@ -43,7 +43,7 @@ const addrSplitRE = /(^.+?)(?::(\d+))?$/;
 
 function translateErrorCode(promise: Promise<any>) {
   return promise.catch(error => {
-    return Promise.reject(withTranslatedError(error));
+    return Promise.$reject(withTranslatedError(error));
   });
 }
 
@@ -407,7 +407,7 @@ var InternalResolver = class Resolver {
           switch (rrtype?.toLowerCase()) {
             case "a":
             case "aaaa":
-              callback(null, hostname, results.map(mapResolveX));
+              callback(null, results.map(mapResolveX));
               break;
             default:
               callback(null, results);
@@ -736,7 +736,7 @@ const promises = {
 
     if (!hostname) {
       invalidHostname(hostname);
-      return Promise.resolve(
+      return Promise.$resolve(
         options.all
           ? []
           : {
@@ -749,7 +749,7 @@ const promises = {
     const family = isIP(hostname);
     if (family) {
       const obj = { address: hostname, family };
-      return Promise.resolve(options.all ? [obj] : obj);
+      return Promise.$resolve(options.all ? [obj] : obj);
     }
 
     if (options.all) {
@@ -774,7 +774,7 @@ const promises = {
       if (err.name === "TypeError" || err.name === "RangeError") {
         throw err;
       }
-      return Promise.reject(withTranslatedError(err));
+      return Promise.$reject(withTranslatedError(err));
     }
   },
 
@@ -792,7 +792,7 @@ const promises = {
     switch (rrtype?.toLowerCase()) {
       case "a":
       case "aaaa":
-        return translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyLookup(defaultResultOrder())));
+        return translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyResolveX(false)));
       default:
         return translateErrorCode(dns.resolve(hostname, rrtype));
     }
@@ -870,7 +870,7 @@ const promises = {
         case "a":
         case "aaaa":
           return translateErrorCode(
-            Resolver.#getResolver(this).resolve(hostname, rrtype).then(promisifyLookup(defaultResultOrder())),
+            Resolver.#getResolver(this).resolve(hostname, rrtype).then(promisifyResolveX(false)),
           );
         default:
           return translateErrorCode(Resolver.#getResolver(this).resolve(hostname, rrtype));

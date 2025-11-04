@@ -28,17 +28,17 @@ pub const InitFromBytesOptions = struct {
 
 /// Ownership of `blob` is transferred to this function.
 pub fn initFromAnyBlob(blob: *const AnyBlob, options: InitFromBytesOptions) *StaticRoute {
-    var headers = Headers.from(options.headers, bun.default_allocator, .{ .body = blob }) catch bun.outOfMemory();
+    var headers = bun.handleOom(Headers.from(options.headers, bun.default_allocator, .{ .body = blob }));
     if (options.mime_type) |mime_type| {
         if (headers.getContentType() == null) {
-            headers.append("Content-Type", mime_type.value) catch bun.outOfMemory();
+            bun.handleOom(headers.append("Content-Type", mime_type.value));
         }
     }
 
     // Generate ETag if not already present
     if (headers.get("etag") == null) {
         if (blob.slice().len > 0) {
-            ETag.appendToHeaders(blob.slice(), &headers) catch bun.outOfMemory();
+            bun.handleOom(ETag.appendToHeaders(blob.slice(), &headers));
         }
     }
 
@@ -91,10 +91,11 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
 
         // The user may want to pass in the same Response object multiple endpoints
         // Let's let them do that.
-        response.body.value.toBlobIfPossible();
+        const bodyValue = response.getBodyValue();
+        bodyValue.toBlobIfPossible();
 
         const blob: AnyBlob = brk: {
-            switch (response.body.value) {
+            switch (bodyValue.*) {
                 .Used => {
                     return globalThis.throwInvalidArguments("Response body has already been used", .{});
                 },
@@ -108,13 +109,17 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
                 },
 
                 .Blob, .InternalBlob, .WTFStringImpl => {
-                    if (response.body.value == .Blob and response.body.value.Blob.needsToReadFile()) {
+                    if (bodyValue.* == .Blob and bodyValue.Blob.needsToReadFile()) {
                         return globalThis.throwTODO("TODO: support Bun.file(path) in static routes");
                     }
-                    var blob = response.body.value.use();
+                    var blob = bodyValue.use();
                     blob.globalThis = globalThis;
-                    blob.allocator = null;
-                    response.body.value = .{ .Blob = blob.dupe() };
+                    bun.assertf(
+                        !blob.isHeapAllocated(),
+                        "expected blob not to be heap-allocated",
+                        .{},
+                    );
+                    bodyValue.* = .{ .Blob = blob.dupe() };
 
                     break :brk .{ .Blob = blob };
                 },
@@ -127,13 +132,13 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
 
         var has_content_disposition = false;
 
-        if (response.init.headers) |headers| {
+        if (response.getInitHeaders()) |headers| {
             has_content_disposition = headers.fastHas(.ContentDisposition);
             headers.fastRemove(.TransferEncoding);
             headers.fastRemove(.ContentLength);
         }
 
-        var headers: Headers = if (response.init.headers) |h|
+        var headers: Headers = if (response.getInitHeaders()) |h|
             Headers.from(h, bun.default_allocator, .{
                 .body = &blob,
             }) catch {

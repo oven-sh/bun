@@ -7,9 +7,13 @@
 const bun = @This();
 
 pub const Environment = @import("./env.zig");
+pub const env_var = @import("./env_var.zig");
+pub const feature_flag = env_var.feature_flag;
 
-pub const use_mimalloc = true;
+pub const use_mimalloc = @import("build_options").use_mimalloc;
 pub const default_allocator: std.mem.Allocator = allocators.c_allocator;
+/// Zero-sized type whose `allocator` method returns `default_allocator`.
+pub const DefaultAllocator = allocators.Default;
 /// Zeroing memory allocator
 pub const z_allocator: std.mem.Allocator = allocators.z_allocator;
 
@@ -21,6 +25,7 @@ pub const debug_allocator: std.mem.Allocator = if (Environment.isDebug or Enviro
     debug_allocator_data.allocator
 else
     default_allocator;
+
 pub const debug_allocator_data = struct {
     comptime {
         if (!Environment.isDebug) @compileError("only available in debug");
@@ -40,16 +45,16 @@ pub const debug_allocator_data = struct {
         return backing.?.allocator().rawAlloc(new_len, alignment, ret_addr);
     }
 
-    fn resize(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
-        return backing.?.allocator().rawResize(memory, alignment, new_len, ret_addr);
+    fn resize(_: *anyopaque, mem: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+        return backing.?.allocator().rawResize(mem, alignment, new_len, ret_addr);
     }
 
-    fn remap(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
-        return backing.?.allocator().rawRemap(memory, alignment, new_len, ret_addr);
+    fn remap(_: *anyopaque, mem: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        return backing.?.allocator().rawRemap(mem, alignment, new_len, ret_addr);
     }
 
-    fn free(_: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
-        return backing.?.allocator().rawFree(memory, alignment, ret_addr);
+    fn free(_: *anyopaque, mem: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+        return backing.?.allocator().rawFree(mem, alignment, ret_addr);
     }
 };
 
@@ -86,9 +91,51 @@ pub inline fn clampFloat(_self: anytype, min: @TypeOf(_self), max: @TypeOf(_self
     return self;
 }
 
-/// We cannot use a threadlocal memory allocator for FileSystem-related things
-/// FileSystem is a singleton.
-pub const fs_allocator = default_allocator;
+/// Converts a floating-point value to an integer following Rust semantics.
+/// This provides safe conversion that mimics Rust's `as` operator behavior,
+/// unlike Zig's `@intFromFloat` which panics on out-of-range values.
+///
+/// Conversion rules:
+/// - If finite and within target integer range: truncates toward zero
+/// - If NaN: returns 0
+/// - If out-of-range (including infinities): clamp to target min/max bounds
+pub fn intFromFloat(comptime Int: type, value: anytype) Int {
+    const Float = @TypeOf(value);
+    comptime {
+        // Simple type check - let the compiler do the heavy lifting
+        if (!(Float == f32 or Float == f64)) {
+            @compileError("intFromFloat: value must be f32 or f64");
+        }
+    }
+
+    // Handle NaN
+    if (std.math.isNan(value)) {
+        return 0;
+    }
+
+    // Handle out-of-range values (including infinities)
+    const min_int = std.math.minInt(Int);
+    const max_int = std.math.maxInt(Int);
+
+    // Check the truncated value directly against integer bounds
+    const truncated = @trunc(value);
+
+    // Use f64 for comparison to avoid precision issues
+    if (truncated > @as(f64, @floatFromInt(max_int))) {
+        return max_int;
+    }
+    if (truncated < @as(f64, @floatFromInt(min_int))) {
+        return min_int;
+    }
+
+    // Additional safety check: ensure we can safely convert
+    if (truncated != truncated) { // Check for NaN in truncated value
+        return 0;
+    }
+
+    // Safe to convert - truncate toward zero
+    return @as(Int, @intFromFloat(truncated));
+}
 
 pub fn typedAllocator(comptime T: type) std.mem.Allocator {
     if (heap_breakdown.enabled)
@@ -112,15 +159,17 @@ pub const JSError = error{
     JSError,
     // XXX: This is temporary! meghan will remove this soon
     OutOfMemory,
+    /// Similar to error.JSError but always represents a termination exception.
+    JSTerminated,
 };
 
-pub const JSExecutionTerminated = error{
+pub const JSTerminated = error{
     /// JavaScript execution has been terminated.
     /// This condition is indicated by throwing an exception, so most code should still handle it
     /// with JSError. If you expect that you will not throw any errors other than the termination
     /// exception, you can catch JSError, assert that the exception is the termination exception,
-    /// and return error.JSExecutionTerminated.
-    JSExecutionTerminated,
+    /// and return error.JSTerminated.
+    JSTerminated,
 };
 
 pub const JSOOM = OOM || JSError;
@@ -190,6 +239,7 @@ pub const Output = @import("./output.zig");
 pub const Global = @import("./Global.zig");
 
 pub const FD = @import("./fd.zig").FD;
+pub const MovableIfWindowsFd = @import("./fd.zig").MovableIfWindowsFd;
 
 /// Deprecated: Use `FD` instead.
 pub const FileDescriptor = FD;
@@ -240,7 +290,9 @@ pub const OSPathSlice = paths.OSPathSlice;
 pub const OSPathBuffer = paths.OSPathBuffer;
 pub const Path = paths.Path;
 pub const AbsPath = paths.AbsPath;
+pub const AutoAbsPath = paths.AutoAbsPath;
 pub const RelPath = paths.RelPath;
+pub const AutoRelPath = paths.AutoRelPath;
 pub const EnvPath = paths.EnvPath;
 pub const path_buffer_pool = paths.path_buffer_pool;
 pub const w_path_buffer_pool = paths.w_path_buffer_pool;
@@ -365,12 +417,11 @@ pub const StringHashMapUnowned = struct {
 pub const collections = @import("./collections.zig");
 pub const MultiArrayList = bun.collections.MultiArrayList;
 pub const BabyList = collections.BabyList;
-pub const OffsetList = collections.OffsetList;
+pub const ByteList = collections.ByteList; // alias of BabyList(u8)
+pub const OffsetByteList = collections.OffsetByteList;
 pub const bit_set = collections.bit_set;
 pub const HiveArray = collections.HiveArray;
-
-pub const ByteList = BabyList(u8);
-pub const OffsetByteList = OffsetList(u8);
+pub const BoundedArray = collections.BoundedArray;
 
 pub fn DebugOnly(comptime Type: type) type {
     if (comptime Environment.isDebug) {
@@ -445,11 +496,10 @@ pub fn fastRandom() u64 {
                 // and we only need to do it once per process
                 var value = seed_value.load(.monotonic);
                 while (value == 0) : (value = seed_value.load(.monotonic)) {
-                    if (comptime Environment.isDebug or Environment.is_canary) outer: {
-                        if (getenvZ("BUN_DEBUG_HASH_RANDOM_SEED")) |env| {
-                            value = std.fmt.parseInt(u64, env, 10) catch break :outer;
-                            seed_value.store(value, .monotonic);
-                            return value;
+                    if (comptime Environment.isDebug or Environment.is_canary) {
+                        if (bun.env_var.BUN_DEBUG_HASH_RANDOM_SEED.get()) |v| {
+                            seed_value.store(v, .monotonic);
+                            return v;
                         }
                     }
                     csprng(std.mem.asBytes(&value));
@@ -615,24 +665,24 @@ pub fn onceUnsafe(comptime function: anytype, comptime ReturnType: type) ReturnT
     return Result.execute();
 }
 
-pub fn isHeapMemory(memory: anytype) bool {
+pub fn isHeapMemory(mem: anytype) bool {
     if (comptime use_mimalloc) {
-        const Memory = @TypeOf(memory);
+        const Memory = @TypeOf(mem);
         if (comptime std.meta.trait.isSingleItemPtr(Memory)) {
-            return mimalloc.mi_is_in_heap_region(memory);
+            return mimalloc.mi_is_in_heap_region(mem);
         }
-        return mimalloc.mi_is_in_heap_region(std.mem.sliceAsBytes(memory).ptr);
+        return mimalloc.mi_is_in_heap_region(std.mem.sliceAsBytes(mem).ptr);
     }
     return false;
 }
 
+pub const memory = @import("./memory.zig");
 pub const allocators = @import("./allocators.zig");
 pub const mimalloc = allocators.mimalloc;
 pub const MimallocArena = allocators.MimallocArena;
 pub const AllocationScope = allocators.AllocationScope;
 pub const NullableAllocator = allocators.NullableAllocator;
 pub const MaxHeapAllocator = allocators.MaxHeapAllocator;
-pub const MemoryReportingAllocator = allocators.MemoryReportingAllocator;
 
 pub const isSliceInBuffer = allocators.isSliceInBuffer;
 pub const isSliceInBufferT = allocators.isSliceInBufferT;
@@ -770,27 +820,11 @@ pub fn openDirAbsoluteNotForDeletingOrRenaming(path_: []const u8) !std.fs.Dir {
     return fd.stdDir();
 }
 
-pub fn getRuntimeFeatureFlag(comptime flag: FeatureFlags.RuntimeFeatureFlag) bool {
-    return struct {
-        const state = enum(u8) { idk, disabled, enabled };
-        var is_enabled: std.atomic.Value(state) = std.atomic.Value(state).init(.idk);
-        pub fn get() bool {
-            return switch (is_enabled.load(.seq_cst)) {
-                .enabled => true,
-                .disabled => false,
-                .idk => {
-                    const enabled = if (getenvZ(@tagName(flag))) |val|
-                        strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true")
-                    else
-                        false;
-                    is_enabled.store(if (enabled) .enabled else .disabled, .seq_cst);
-                    return enabled;
-                },
-            };
-        }
-    }.get();
-}
-
+/// Note: You likely do not need this function. See the pattern in env_var.zig for adding
+///       environment variables.
+/// TODO(markovejnovic): Sunset this function when its last usage is removed.
+/// This wrapper exists to avoid the call to sliceTo(0)
+/// Zig's sliceTo(0) is scalar
 pub fn getenvZAnyCase(key: [:0]const u8) ?[]const u8 {
     for (std.os.environ) |lineZ| {
         const line = sliceTo(lineZ, 0);
@@ -803,6 +837,9 @@ pub fn getenvZAnyCase(key: [:0]const u8) ?[]const u8 {
     return null;
 }
 
+/// Note: You likely do not need this function. See the pattern in env_var.zig for adding
+///       environment variables.
+/// TODO(markovejnovic): Sunset this function when its last usage is removed.
 /// This wrapper exists to avoid the call to sliceTo(0)
 /// Zig's sliceTo(0) is scalar
 pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
@@ -818,6 +855,9 @@ pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
     return sliceTo(pointer, 0);
 }
 
+/// Note: You likely do not need this function. See the pattern in env_var.zig for adding
+///       environment variables.
+/// TODO(markovejnovic): Sunset this function when its last usage is removed.
 pub fn getenvTruthy(key: [:0]const u8) bool {
     if (getenvZ(key)) |value| return std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "1");
     return false;
@@ -1263,7 +1303,7 @@ pub fn getFdPath(fd: FileDescriptor, buf: *bun.PathBuffer) ![]u8 {
     if (comptime Environment.isWindows) {
         var wide_buf: WPathBuffer = undefined;
         const wide_slice = try windows.GetFinalPathNameByHandle(fd.native(), .{}, wide_buf[0..]);
-        const res = strings.copyUTF16IntoUTF8(buf[0..], @TypeOf(wide_slice), wide_slice);
+        const res = strings.copyUTF16IntoUTF8(buf[0..], wide_slice);
         return buf[0..res.written];
     }
 
@@ -1276,7 +1316,7 @@ pub fn getFdPath(fd: FileDescriptor, buf: *bun.PathBuffer) ![]u8 {
 
         if (!ProcSelfWorkAroundForDebugging.has_checked) {
             ProcSelfWorkAroundForDebugging.has_checked = true;
-            needs_proc_self_workaround = strings.eql(getenvZ("BUN_NEEDS_PROC_SELF_WORKAROUND") orelse "0", "1");
+            needs_proc_self_workaround = bun.env_var.BUN_NEEDS_PROC_SELF_WORKAROUND.get();
         }
     } else if (comptime !Environment.isLinux) {
         return try std.os.getFdPath(fd.native(), buf);
@@ -1447,8 +1487,8 @@ pub fn concat(comptime T: type, dest: []T, src: []const []const T) void {
 }
 
 pub const renamer = @import("./renamer.zig");
-// TODO: Rename to SourceMap as this is a struct.
-pub const sourcemap = @import("./sourcemap/sourcemap.zig");
+
+pub const SourceMap = @import("./sourcemap/sourcemap.zig");
 
 /// Attempt to coerce some value into a byte slice.
 pub fn asByteSlice(buffer: anytype) []const u8 {
@@ -1686,7 +1726,7 @@ pub const StringSet = struct {
 
     pub const Map = StringArrayHashMap(void);
 
-    pub fn clone(self: StringSet) !StringSet {
+    pub fn clone(self: *const StringSet) !StringSet {
         var new_map = Map.init(self.map.allocator);
         try new_map.ensureTotalCapacity(self.map.count());
         for (self.map.keys()) |key| {
@@ -1703,7 +1743,15 @@ pub const StringSet = struct {
         };
     }
 
-    pub fn keys(self: StringSet) []const []const u8 {
+    pub fn isEmpty(self: *const StringSet) bool {
+        return self.count() == 0;
+    }
+
+    pub fn count(self: *const StringSet) usize {
+        return self.map.count();
+    }
+
+    pub fn keys(self: *const StringSet) []const []const u8 {
         return self.map.keys();
     }
 
@@ -1720,6 +1768,13 @@ pub const StringSet = struct {
 
     pub fn swapRemove(self: *StringSet, key: []const u8) bool {
         return self.map.swapRemove(key);
+    }
+
+    pub fn clearAndFree(self: *StringSet) void {
+        for (self.map.keys()) |key| {
+            self.map.allocator.free(key);
+        }
+        self.map.clearAndFree();
     }
 
     pub fn deinit(self: *StringSet) void {
@@ -1922,8 +1977,6 @@ pub const WTF = struct {
 
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
-pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
-
 const TODO_LOG = Output.scoped(.TODO, .visible);
 pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(value) {
     if (comptime Environment.allow_assert) {
@@ -1984,7 +2037,7 @@ pub const StatFS = switch (Environment.os) {
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
-fn appendOptionsEnv(env: []const u8, args: *std.ArrayList([:0]const u8), allocator: std.mem.Allocator) !void {
+pub fn appendOptionsEnv(env: []const u8, args: *std.ArrayList([:0]const u8), allocator: std.mem.Allocator) !void {
     var i: usize = 0;
     var offset_in_args: usize = 1;
     while (i < env.len) {
@@ -2154,7 +2207,7 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         argv = try std.process.argsAlloc(allocator);
     }
 
-    if (bun.getenvZ("BUN_OPTIONS")) |opts| {
+    if (bun.env_var.BUN_OPTIONS.get()) |opts| {
         var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(allocator, argv);
         try appendOptionsEnv(opts, &argv_list, allocator);
         argv = argv_list.items;
@@ -2578,39 +2631,7 @@ pub noinline fn outOfMemory() noreturn {
     crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
 
-/// If `error_union` is `error.OutOfMemory`, calls `bun.outOfMemory`. Otherwise:
-///
-/// * If that was the only possible error, returns the non-error payload.
-/// * If other errors are possible, returns the same error union, but without `error.OutOfMemory`
-///   in the error set.
-///
-/// Prefer this method over `catch bun.outOfMemory()`, since that could mistakenly catch
-/// non-OOM-related errors.
-pub fn handleOom(error_union: anytype) blk: {
-    const error_union_info = @typeInfo(@TypeOf(error_union)).error_union;
-    const ErrorSet = error_union_info.error_set;
-    const oom_is_only_error = for (@typeInfo(ErrorSet).error_set orelse &.{}) |err| {
-        if (!std.mem.eql(u8, err.name, "OutOfMemory")) break false;
-    } else true;
-
-    break :blk @TypeOf(error_union catch |err| if (comptime oom_is_only_error)
-        unreachable
-    else switch (err) {
-        error.OutOfMemory => unreachable,
-        else => |other_error| other_error,
-    });
-} {
-    const error_union_info = @typeInfo(@TypeOf(error_union)).error_union;
-    const Payload = error_union_info.payload;
-    const ReturnType = @TypeOf(handleOom(error_union));
-    return error_union catch |err|
-        if (comptime ReturnType == Payload)
-            bun.outOfMemory()
-        else switch (err) {
-            error.OutOfMemory => bun.outOfMemory(),
-            else => |other_error| other_error,
-        };
-}
+pub const handleOom = @import("./handle_oom.zig").handleOom;
 
 pub fn todoPanic(
     src: std.builtin.SourceLocation,
@@ -2641,19 +2662,23 @@ pub const heap_breakdown = @import("./heap_breakdown.zig");
 ///
 /// On macOS, you can use `Bun.unsafe.mimallocDump()` to dump the heap.
 pub inline fn new(comptime T: type, init: T) *T {
+    return handleOom(tryNew(T, init));
+}
+
+/// Error-returning version of `new`.
+pub inline fn tryNew(comptime T: type, init: T) OOM!*T {
     const pointer = if (heap_breakdown.enabled)
-        heap_breakdown.getZoneT(T).create(T, init)
+        try heap_breakdown.getZoneT(T).tryCreate(T, init)
     else pointer: {
-        const pointer = default_allocator.create(T) catch outOfMemory();
+        const pointer = try default_allocator.create(T);
         pointer.* = init;
         break :pointer pointer;
     };
 
     if (comptime Environment.allow_assert) {
-        const logAlloc = Output.scoped(.alloc, .visibleIf(@hasDecl(T, "logAllocations")));
+        const logAlloc = Output.scoped(.alloc, .visibleIf(meta.hasDecl(T, "log_allocations")));
         logAlloc("new({s}) = {*}", .{ meta.typeName(T), pointer });
     }
-
     return pointer;
 }
 
@@ -2667,16 +2692,14 @@ pub inline fn destroy(pointer: anytype) void {
     const T = std.meta.Child(@TypeOf(pointer));
 
     if (Environment.allow_assert) {
-        const logAlloc = Output.scoped(.alloc, .visibleIf(@hasDecl(T, "logAllocations")));
+        const logAlloc = Output.scoped(.alloc, .visibleIf(meta.hasDecl(T, "log_allocations")));
         logAlloc("destroy({s}) = {*}", .{ meta.typeName(T), pointer });
 
         // If this type implements a RefCount, make sure it is zero.
         ptr.ref_count.maybeAssertNoRefs(T, pointer);
 
-        switch (@typeInfo(T)) {
-            .@"struct", .@"union", .@"enum" => if (@hasDecl(T, "assertBeforeDestroy"))
-                pointer.assertBeforeDestroy(),
-            else => {},
+        if (comptime std.meta.hasFn(T, "assertBeforeDestroy")) {
+            pointer.assertBeforeDestroy();
         }
     }
 
@@ -2808,23 +2831,6 @@ pub fn reinterpretSlice(comptime T: type, slice: anytype) ReinterpretSliceType(T
     const bytes = std.mem.sliceAsBytes(slice);
     const new_ptr = @as(if (is_const) [*]const T else [*]T, @ptrCast(@alignCast(bytes.ptr)));
     return new_ptr[0..@divTrunc(bytes.len, @sizeOf(T))];
-}
-
-extern "kernel32" fn GetUserNameA(username: *u8, size: *u32) callconv(std.os.windows.WINAPI) c_int;
-
-pub fn getUserName(output_buffer: []u8) ?[]const u8 {
-    if (Environment.isWindows) {
-        var size: u32 = @intCast(output_buffer.len);
-        if (GetUserNameA(@ptrCast(@constCast(output_buffer.ptr)), &size) == 0) {
-            return null;
-        }
-        return output_buffer[0..size];
-    }
-    var env = std.process.getEnvMap(default_allocator) catch outOfMemory();
-    const user = env.get("USER") orelse return null;
-    const size = @min(output_buffer.len, user.len);
-    copy(u8, output_buffer[0..size], user[0..size]);
-    return output_buffer[0..size];
 }
 
 pub inline fn resolveSourcePath(
@@ -3007,7 +3013,7 @@ noinline fn assertionFailure() noreturn {
 
 noinline fn assertionFailureAtLocation(src: std.builtin.SourceLocation) noreturn {
     if (@inComptime()) {
-        @compileError(std.fmt.comptimePrint("assertion failure"));
+        @compileError(std.fmt.comptimePrint("assertion failure", .{}));
     } else {
         @branchHint(.cold);
         Output.panic(assertion_failure_msg ++ " at {s}:{d}:{d}", .{ src.file, src.line, src.column });
@@ -3094,8 +3100,6 @@ pub fn assertf(ok: bool, comptime format: []const u8, args: anytype) callconv(ca
     }
 
     if (!ok) {
-        // crash handler has runtime-only code.
-        if (@inComptime()) @compileError(std.fmt.comptimePrint(format, args));
         assertionFailureWithMsg(format, args);
     }
 }
@@ -3125,17 +3129,12 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
 /// This has no effect on the real code but capturing 'a' and 'b' into
 /// parameters makes assertion failures much easier inspect in a debugger.
 pub inline fn assert_eql(a: anytype, b: anytype) void {
+    if (a == b) return;
     if (@inComptime()) {
-        if (a != b) {
-            @compileLog(a);
-            @compileLog(b);
-            @compileError("A != B");
-        }
+        @compileError(std.fmt.comptimePrint("Assertion failure: {any} != {any}", .{ a, b }));
     }
     if (!Environment.allow_assert) return;
-    if (a != b) {
-        Output.panic("Assertion failure: {any} != {any}", .{ a, b });
-    }
+    Output.panic("Assertion failure: {any} != {any}", .{ a, b });
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into
@@ -3233,8 +3232,8 @@ pub fn getRoughTickCountMs() u64 {
 }
 
 pub const timespec = extern struct {
-    sec: isize,
-    nsec: isize,
+    sec: i64,
+    nsec: i64,
 
     pub const epoch: timespec = .{ .sec = 0, .nsec = 0 };
 
@@ -3348,6 +3347,22 @@ pub const timespec = extern struct {
     pub fn msFromNow(interval: i64) timespec {
         return now().addMs(interval);
     }
+
+    pub fn min(a: timespec, b: timespec) timespec {
+        return if (a.order(&b) == .lt) a else b;
+    }
+    pub fn max(a: timespec, b: timespec) timespec {
+        return if (a.order(&b) == .gt) a else b;
+    }
+    pub fn orderIgnoreEpoch(a: timespec, b: timespec) std.math.Order {
+        if (a.eql(&b)) return .eq;
+        if (a.eql(&.epoch)) return .gt;
+        if (b.eql(&.epoch)) return .lt;
+        return a.order(&b);
+    }
+    pub fn minIgnoreEpoch(a: timespec, b: timespec) timespec {
+        return if (a.orderIgnoreEpoch(b) == .lt) a else b;
+    }
 };
 
 pub const UUID = @import("./bun.js/uuid.zig");
@@ -3364,36 +3379,36 @@ pub fn OrdinalT(comptime Int: type) type {
         start = 0,
         _,
 
-        pub fn fromZeroBased(int: Int) @This() {
+        pub inline fn fromZeroBased(int: Int) @This() {
             assert(int >= 0);
             assert(int != std.math.maxInt(Int));
             return @enumFromInt(int);
         }
 
-        pub fn fromOneBased(int: Int) @This() {
+        pub inline fn fromOneBased(int: Int) @This() {
             assert(int > 0);
             return @enumFromInt(int - 1);
         }
 
-        pub fn zeroBased(ord: @This()) Int {
+        pub inline fn zeroBased(ord: @This()) Int {
             return @intFromEnum(ord);
         }
 
-        pub fn oneBased(ord: @This()) Int {
+        pub inline fn oneBased(ord: @This()) Int {
             return @intFromEnum(ord) + 1;
         }
 
         /// Add two ordinal numbers together. Both are converted to zero-based before addition.
-        pub fn add(ord: @This(), b: @This()) @This() {
+        pub inline fn add(ord: @This(), b: @This()) @This() {
             return fromZeroBased(ord.zeroBased() + b.zeroBased());
         }
 
         /// Add a scalar value to an ordinal number
-        pub fn addScalar(ord: @This(), inc: Int) @This() {
+        pub inline fn addScalar(ord: @This(), inc: Int) @This() {
             return fromZeroBased(ord.zeroBased() + inc);
         }
 
-        pub fn isValid(ord: @This()) bool {
+        pub inline fn isValid(ord: @This()) bool {
             return ord.zeroBased() >= 0;
         }
     };
@@ -3707,7 +3722,7 @@ pub noinline fn throwStackOverflow() StackOverflow!void {
     @branchHint(.cold);
     return error.StackOverflow;
 }
-const StackOverflow = error{StackOverflow};
+pub const StackOverflow = error{StackOverflow};
 
 pub const S3 = @import("./s3/client.zig");
 
@@ -3716,7 +3731,7 @@ pub const S3 = @import("./s3/client.zig");
 /// decommits it or the memory allocator reuses it for a new allocation.
 /// So if we're about to free something sensitive, we should zero it out first.
 pub fn freeSensitive(allocator: std.mem.Allocator, slice: anytype) void {
-    @memset(@constCast(slice), 0);
+    std.crypto.secureZero(std.meta.Child(@TypeOf(slice)), @constCast(slice));
     allocator.free(slice);
 }
 
@@ -3727,7 +3742,8 @@ pub const highway = @import("./highway.zig");
 
 pub const mach_port = if (Environment.isMac) std.c.mach_port_t else u32;
 
-pub const cpp = @import("cpp").bindings;
+/// Automatically generated C++ bindings for functions marked with `[[ZIG_EXPORT(...)]]`
+pub const cpp = @import("cpp");
 
 pub const asan = @import("./asan.zig");
 
@@ -3740,6 +3756,19 @@ pub fn contains(item: anytype, list: *const std.ArrayListUnmanaged(@TypeOf(item)
 }
 
 pub const safety = @import("./safety.zig");
+
+// Export function to check if --use-system-ca flag is set
+pub fn getUseSystemCA(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) error{ JSError, OutOfMemory }!jsc.JSValue {
+    _ = globalObject;
+    _ = callFrame;
+    const Arguments = @import("./cli/Arguments.zig");
+    return jsc.JSValue.jsBoolean(Arguments.Bun__Node__UseSystemCA);
+}
+
+// Claude thinks its bun.JSC when we renamed it to bun.jsc months ago.
+pub const JSC = @compileError("Deprecated: Use @import(\"bun\").jsc instead");
+
+pub const ConfigVersion = @import("./ConfigVersion.zig").ConfigVersion;
 
 const CopyFile = @import("./copy_file.zig");
 const builtin = @import("builtin");

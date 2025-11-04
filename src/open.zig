@@ -25,7 +25,7 @@ pub fn openURL(url: stringZ) void {
             .stdin = .inherit,
 
             .windows = if (Environment.isWindows) .{
-                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
+                .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
             },
         }) catch break :maybe_fallback) {
             // don't fallback:

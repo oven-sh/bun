@@ -332,7 +332,7 @@ const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
 const Signature = @import("./Signature.zig");
 const protocol = @import("./PostgresProtocol.zig");
 const std = @import("std");
-const QueryBindingIterator = @import("./QueryBindingIterator.zig").QueryBindingIterator;
+const QueryBindingIterator = @import("../shared/QueryBindingIterator.zig").QueryBindingIterator;
 
 const types = @import("./PostgresTypes.zig");
 const AnyPostgresError = @import("./PostgresTypes.zig").AnyPostgresError;

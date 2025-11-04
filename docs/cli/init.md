@@ -2,20 +2,29 @@ Scaffold an empty Bun project with the interactive `bun init` command.
 
 ```bash
 $ bun init
-bun init helps you get started with a minimal project and tries to
-guess sensible defaults. Press ^C anytime to quit.
 
-package name (quickstart):
-entry point (index.ts):
+? Select a project template - Press return to submit.
+❯ Blank
+  React
+  Library
 
-Done! A package.json file was saved in the current directory.
- + index.ts
- + .gitignore
- + tsconfig.json (for editor auto-complete)
- + README.md
+✓ Select a project template: Blank
+
++ .gitignore
++ index.ts
++ tsconfig.json (for editor autocomplete)
++ README.md
 
 To get started, run:
-  bun run index.ts
+
+    bun run index.ts
+
+bun install v$BUN_LATEST_VERSION
+
++ @types/bun@$BUN_LATEST_VERSION
++ typescript@5.9.2
+
+7 packages installed
 ```
 
 Press `enter` to accept the default answer for each prompt, or pass the `-y` flag to auto-accept the defaults.
@@ -32,6 +41,11 @@ It creates:
 - a `tsconfig.json` file or a `jsconfig.json` file, depending if the entry point is a TypeScript file or not
 - an entry point which defaults to `index.ts` unless any of `index.{tsx, jsx, js, mts, mjs}` exist or the `package.json` specifies a `module` or `main` field
 - a `README.md` file
+
+AI Agent rules (disable with `$BUN_AGENT_RULE_DISABLED=1`):
+
+- a `CLAUDE.md` file when Claude CLI is detected (disable with `CLAUDE_CODE_AGENT_RULE_DISABLED` env var)
+- a `.cursor/rules/*.mdc` file to guide [Cursor AI](https://cursor.sh) to use Bun instead of Node.js and npm when Cursor is detected
 
 If you pass `-y` or `--yes`, it will assume you want to continue without asking questions.
 

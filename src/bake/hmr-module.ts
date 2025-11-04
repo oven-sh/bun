@@ -115,6 +115,11 @@ export class HMRModule {
       : null;
   }
 
+  // Module Ids are pre-resolved by the bundler
+  requireResolve(id: Id): Id {
+    return id;
+  }
+
   require(id: Id) {
     try {
       const mod = loadModuleSync(id, true, this);

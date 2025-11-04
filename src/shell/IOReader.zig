@@ -35,6 +35,13 @@ pub fn refSelf(this: *IOReader) *IOReader {
     return this;
 }
 
+pub fn memoryCost(this: *const IOReader) usize {
+    var size: usize = @sizeOf(IOReader);
+    size += this.buf.allocatedSlice().len;
+    size += this.readers.memoryCost();
+    return size;
+}
+
 pub fn eventLoop(this: *IOReader) jsc.EventLoopHandle {
     return this.evtloop;
 }
@@ -159,6 +166,7 @@ pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadStat
 }
 
 pub fn onReaderError(this: *IOReader, err: bun.sys.Error) void {
+    log("IOReader(0x{x}.onReaderError({err}) ", .{ @intFromPtr(this), err });
     this.setReading(false);
     this.err = err.toShellSystemError();
     for (this.readers.slice()) |r| {
@@ -221,6 +229,14 @@ pub const IOReaderChildPtr = struct {
             .ptr = ChildPtrRaw.init(p),
             // .ptr = @ptrCast(p),
         };
+    }
+
+    pub fn memoryCost(this: IOReaderChildPtr) usize {
+        if (this.ptr.is(Interpreter.Builtin.Cat)) {
+            // TODO:
+            return @sizeOf(Interpreter.Builtin.Cat);
+        }
+        return 0;
     }
 
     /// Return true if the child should be deleted

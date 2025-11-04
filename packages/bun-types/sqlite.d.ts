@@ -25,6 +25,66 @@
  */
 declare module "bun:sqlite" {
   /**
+   * Options for {@link Database}
+   */
+  export interface DatabaseOptions {
+    /**
+     * Open the database as read-only (no write operations, no create).
+     *
+     * Equivalent to {@link constants.SQLITE_OPEN_READONLY}
+     */
+    readonly?: boolean;
+
+    /**
+     * Allow creating a new database
+     *
+     * Equivalent to {@link constants.SQLITE_OPEN_CREATE}
+     */
+    create?: boolean;
+
+    /**
+     * Open the database as read-write
+     *
+     * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}
+     */
+    readwrite?: boolean;
+
+    /**
+     * When set to `true`, integers are returned as `bigint` types.
+     *
+     * When set to `false`, integers are returned as `number` types and truncated to 52 bits.
+     *
+     * @default false
+     * @since v1.1.14
+     */
+    safeIntegers?: boolean;
+
+    /**
+     * When set to `false` or `undefined`:
+     * - Queries missing bound parameters will NOT throw an error
+     * - Bound named parameters in JavaScript need to exactly match the SQL query.
+     *
+     * @example
+     * ```ts
+     * const db = new Database(":memory:", { strict: false });
+     * db.run("INSERT INTO foo (name) VALUES ($name)", { $name: "foo" });
+     * ```
+     *
+     * When set to `true`:
+     * - Queries missing bound parameters will throw an error
+     * - Bound named parameters in JavaScript no longer need to be `$`, `:`, or `@`. The SQL query will remain prefixed.
+     *
+     * @example
+     * ```ts
+     * const db = new Database(":memory:", { strict: true });
+     * db.run("INSERT INTO foo (name) VALUES ($name)", { name: "foo" });
+     * ```
+     * @since v1.1.14
+     */
+    strict?: boolean;
+  }
+
+  /**
    * A SQLite3 database
    *
    * @example
@@ -53,8 +113,6 @@ declare module "bun:sqlite" {
    * ```ts
    * const db = new Database("mydb.sqlite", {readonly: true});
    * ```
-   *
-   * @category Database
    */
   export class Database implements Disposable {
     /**
@@ -63,96 +121,19 @@ declare module "bun:sqlite" {
      * @param filename The filename of the database to open. Pass an empty string (`""`) or `":memory:"` or undefined for an in-memory database.
      * @param options defaults to `{readwrite: true, create: true}`. If a number, then it's treated as `SQLITE_OPEN_*` constant flags.
      */
-    constructor(
-      filename?: string,
-      options?:
-        | number
-        | {
-            /**
-             * Open the database as read-only (no write operations, no create).
-             *
-             * Equivalent to {@link constants.SQLITE_OPEN_READONLY}
-             */
-            readonly?: boolean;
-            /**
-             * Allow creating a new database
-             *
-             * Equivalent to {@link constants.SQLITE_OPEN_CREATE}
-             */
-            create?: boolean;
-            /**
-             * Open the database as read-write
-             *
-             * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}
-             */
-            readwrite?: boolean;
-
-            /**
-             * When set to `true`, integers are returned as `bigint` types.
-             *
-             * When set to `false`, integers are returned as `number` types and truncated to 52 bits.
-             *
-             * @default false
-             * @since v1.1.14
-             */
-            safeIntegers?: boolean;
-
-            /**
-             * When set to `false` or `undefined`:
-             * - Queries missing bound parameters will NOT throw an error
-             * - Bound named parameters in JavaScript need to exactly match the SQL query.
-             *
-             * @example
-             * ```ts
-             * const db = new Database(":memory:", { strict: false });
-             * db.run("INSERT INTO foo (name) VALUES ($name)", { $name: "foo" });
-             * ```
-             *
-             * When set to `true`:
-             * - Queries missing bound parameters will throw an error
-             * - Bound named parameters in JavaScript no longer need to be `$`, `:`, or `@`. The SQL query will remain prefixed.
-             *
-             * @example
-             * ```ts
-             * const db = new Database(":memory:", { strict: true });
-             * db.run("INSERT INTO foo (name) VALUES ($name)", { name: "foo" });
-             * ```
-             * @since v1.1.14
-             */
-            strict?: boolean;
-          },
-    );
+    constructor(filename?: string, options?: number | DatabaseOptions);
 
     /**
+     * Open or create a SQLite3 databases
+     *
+     * @param filename The filename of the database to open. Pass an empty string (`""`) or `":memory:"` or undefined for an in-memory database.
+     * @param options defaults to `{readwrite: true, create: true}`. If a number, then it's treated as `SQLITE_OPEN_*` constant flags.
+     *
      * This is an alias of `new Database()`
      *
      * See {@link Database}
      */
-    static open(
-      filename: string,
-      options?:
-        | number
-        | {
-            /**
-             * Open the database as read-only (no write operations, no create).
-             *
-             * Equivalent to {@link constants.SQLITE_OPEN_READONLY}
-             */
-            readonly?: boolean;
-            /**
-             * Allow creating a new database
-             *
-             * Equivalent to {@link constants.SQLITE_OPEN_CREATE}
-             */
-            create?: boolean;
-            /**
-             * Open the database as read-write
-             *
-             * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}
-             */
-            readwrite?: boolean;
-          },
-    ): Database;
+    static open(filename: string, options?: number | DatabaseOptions): Database;
 
     /**
      * Execute a SQL query **without returning any results**.
@@ -203,8 +184,11 @@ declare module "bun:sqlite" {
      * @returns `Database` instance
      */
     run<ParamsType extends SQLQueryBindings[]>(sql: string, ...bindings: ParamsType[]): Changes;
+
     /**
      * This is an alias of {@link Database.run}
+     *
+     * @deprecated Prefer {@link Database.run}
      */
     exec<ParamsType extends SQLQueryBindings[]>(sql: string, ...bindings: ParamsType[]): Changes;
 
@@ -351,6 +335,16 @@ declare module "bun:sqlite" {
      */
     static setCustomSQLite(path: string): boolean;
 
+    /**
+     * Closes the database when using the async resource proposal
+     *
+     * @example
+     * ```
+     * using db = new Database("myapp.db");
+     * doSomethingWithDatabase(db);
+     * // Automatically closed when `db` goes out of scope
+     * ```
+     */
     [Symbol.dispose](): void;
 
     /**
@@ -743,6 +737,30 @@ declare module "bun:sqlite" {
      * | `null`          | `NULL`                 |
      */
     values(...params: ParamsType): Array<Array<string | bigint | number | boolean | Uint8Array>>;
+
+    /**
+     * Execute the prepared statement and return all results as arrays of
+     * `Uint8Array`s.
+     *
+     * This is similar to `values()` but returns all values as Uint8Array
+     * objects, regardless of their original SQLite type.
+     *
+     * @param params optional values to bind to the statement. If omitted, the
+     * statement is run with the last bound values or no parameters if there are
+     * none.
+     *
+     * @example
+     * ```ts
+     * const stmt = db.prepare("SELECT * FROM foo WHERE bar = ?");
+     *
+     * stmt.raw("baz");
+     * // => [[Uint8Array(24)]]
+     *
+     * stmt.raw();
+     * // => [[Uint8Array(24)]]
+     * ```
+     */
+    raw(...params: ParamsType): Array<Array<Uint8Array | null>>;
 
     /**
      * The names of the columns returned by the prepared statement.

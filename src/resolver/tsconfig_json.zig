@@ -11,7 +11,6 @@ const JSXFieldSet = FlagSet(options.JSX.Pragma);
 
 pub const TSConfigJSON = struct {
     pub const new = bun.TrivialNew(@This());
-    pub const deinit = bun.TrivialDeinit(@This());
 
     abs_path: string,
 
@@ -480,6 +479,11 @@ pub const TSConfigJSON = struct {
         const r = source.rangeOfString(loc);
         log.addRangeWarningFmt(source, r, allocator, "Non-relative path \"{s}\" is not allowed when \"baseUrl\" is not set (did you forget a leading \"./\"?)", .{text}) catch {};
         return false;
+    }
+
+    pub fn deinit(this: *TSConfigJSON) void {
+        this.paths.deinit();
+        bun.destroy(this);
     }
 };
 

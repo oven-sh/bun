@@ -73,6 +73,7 @@ pub fn writeOutputFilesToDisk(
             chunk,
             chunks,
             &display_size,
+            c.resolver.opts.compile and !chunk.is_browser_chunk_from_server_build,
             chunk.content.sourcemap(c.options.source_maps) != .none,
         ) catch |err| bun.Output.panic("Failed to create output chunk: {s}", .{@errorName(err)});
 
@@ -425,7 +426,6 @@ const base64 = bun.base64;
 const default_allocator = bun.default_allocator;
 const jsc = bun.jsc;
 const options = bun.options;
-const sourcemap = bun.sourcemap;
 const strings = bun.strings;
 
 const bundler = bun.bundle_v2;

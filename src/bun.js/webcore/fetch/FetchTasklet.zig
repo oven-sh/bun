@@ -1469,158 +1469,99 @@ pub const FetchTasklet = struct {
         var locked = this.lockShared();
         const success = locked.shared.result.isSuccess();
         const has_more = locked.shared.result.has_more;
+        const lifecycle = locked.shared.lifecycle;
         locked.unlock();
 
-        const globalThis = this.main_thread.global_this;
-        // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
-        var buffer_reset = true;
-        log("onBodyReceived success={} has_more={}", .{ success, has_more });
-        defer {
-            if (buffer_reset) {
-                // Re-lock to reset buffer
-                var cleanup_locked = this.lockShared();
-                defer cleanup_locked.unlock();
-                cleanup_locked.shared.scheduled_response_buffer.reset();
-            }
-        }
+        log("onBodyReceived success={} has_more={} lifecycle={s}", .{ success, has_more, @tagName(lifecycle) });
 
+        // Handle errors first - centralized error handling
         if (!success) {
-            var err = this.onReject();
-            var need_deinit = true;
-            defer if (need_deinit) err.deinit();
-            var js_err = JSValue.zero;
-            // if we are streaming update with error
-            if (this.main_thread.readable_stream_ref.get(globalThis)) |readable| {
-                if (readable.ptr == .Bytes) {
-                    js_err = err.toJS(globalThis);
-                    js_err.ensureStillAlive();
-                    try readable.ptr.Bytes.onData(
-                        .{
-                            .err = .{ .JSValue = js_err },
-                        },
-                        bun.default_allocator,
-                    );
-                }
-            }
-            if (this.sink) |sink| {
-                if (js_err == .zero) {
-                    js_err = err.toJS(globalThis);
-                    js_err.ensureStillAlive();
-                }
-                sink.cancel(js_err);
-                return;
-            }
-            // if we are buffering resolve the promise
-            if (this.getCurrentResponse()) |response| {
-                need_deinit = false; // body value now owns the error
-                const body = response.getBodyValue();
-                try body.toErrorInstance(err, globalThis);
-            }
+            try this.handleBodyError();
             return;
         }
 
+        // State-based dispatch for body data
+        // The lifecycle state tells us exactly what to do
+        switch (lifecycle) {
+            // Response object created but body not yet accessed
+            // Data is being buffered in scheduled_response_buffer
+            .http_receiving_body, .response_awaiting_body_access => {
+                try this.processBodyDataInitial();
+            },
+
+            // Body is actively streaming to JS ReadableStream
+            .response_body_streaming => {
+                try this.streamBodyToJS();
+            },
+
+            // Body is being buffered in memory (no stream created)
+            .response_body_buffering => {
+                this.bufferBodyData();
+            },
+
+            // Terminal or unexpected states
+            .completed, .failed, .aborted => {
+                // Already done, ignore additional data
+                log("onBodyReceived: ignoring data in terminal state {s}", .{@tagName(lifecycle)});
+            },
+
+            // Shouldn't receive body in these states
+            .created, .http_active, .http_receiving_headers => {
+                log("onBodyReceived: unexpected state {s}", .{@tagName(lifecycle)});
+                bun.assert(false); // Debug assertion
+            },
+        }
+
+        // Reset buffer if we were streaming (not buffering)
+        // Buffering mode manages its own buffer lifecycle
+        if (lifecycle == .response_body_streaming or
+            (lifecycle == .http_receiving_body and this.main_thread.readable_stream_ref.held.has()))
+        {
+            var cleanup_locked = this.lockShared();
+            defer cleanup_locked.unlock();
+            cleanup_locked.shared.scheduled_response_buffer.reset();
+        }
+    }
+
+    /// Centralized error handling for body receive failures.
+    /// Handles streaming and buffering cases uniformly.
+    fn handleBodyError(this: *FetchTasklet) bun.JSTerminated!void {
+        const globalThis = this.main_thread.global_this;
+        var err = this.onReject();
+        var need_deinit = true;
+        defer if (need_deinit) err.deinit();
+
+        var js_err = JSValue.zero;
+
+        // Try to propagate error to active stream
         if (this.main_thread.readable_stream_ref.get(globalThis)) |readable| {
-            log("onBodyReceived readable_stream_ref", .{});
             if (readable.ptr == .Bytes) {
-                readable.ptr.Bytes.size_hint = this.getSizeHint();
-                // body can be marked as used but we still need to pipe the data
-
-                // Lock to access scheduled_response_buffer
-                locked = this.lockShared();
-                const scheduled_response_buffer = &locked.shared.scheduled_response_buffer.list;
-                const chunk = scheduled_response_buffer.items;
-                locked.unlock();
-
-                if (has_more) {
-                    try readable.ptr.Bytes.onData(
-                        .{
-                            .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
-                        },
-                        bun.default_allocator,
-                    );
-                } else {
-                    var prev = this.main_thread.readable_stream_ref;
-                    this.main_thread.readable_stream_ref = .{};
-                    defer prev.deinit();
-                    buffer_reset = false;
-
-                    try readable.ptr.Bytes.onData(
-                        .{
-                            .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
-                        },
-                        bun.default_allocator,
-                    );
-                }
-                return;
+                js_err = err.toJS(globalThis);
+                js_err.ensureStillAlive();
+                try readable.ptr.Bytes.onData(
+                    .{
+                        .err = .{ .JSValue = js_err },
+                    },
+                    bun.default_allocator,
+                );
             }
         }
 
+        // Try to propagate error to sink (request streaming)
+        if (this.sink) |sink| {
+            if (js_err == .zero) {
+                js_err = err.toJS(globalThis);
+                js_err.ensureStillAlive();
+            }
+            sink.cancel(js_err);
+            return;
+        }
+
+        // Try to propagate error to buffered response
         if (this.getCurrentResponse()) |response| {
-            log("onBodyReceived Current Response", .{});
-            const sizeHint = this.getSizeHint();
-            response.setSizeHint(sizeHint);
-            if (response.getBodyReadableStream(globalThis)) |readable| {
-                log("onBodyReceived CurrentResponse BodyReadableStream", .{});
-                if (readable.ptr == .Bytes) {
-                    // Lock to access scheduled_response_buffer
-                    locked = this.lockShared();
-                    const scheduled_response_buffer = locked.shared.scheduled_response_buffer.list;
-                    const chunk = scheduled_response_buffer.items;
-                    locked.unlock();
-
-                    if (has_more) {
-                        try readable.ptr.Bytes.onData(
-                            .{
-                                .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
-                            },
-                            bun.default_allocator,
-                        );
-                    } else {
-                        readable.value.ensureStillAlive();
-                        response.detachReadableStream(globalThis);
-                        try readable.ptr.Bytes.onData(
-                            .{
-                                .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
-                            },
-                            bun.default_allocator,
-                        );
-                    }
-
-                    return;
-                }
-            }
-
-            // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
-            buffer_reset = false;
-            if (!has_more) {
-                // Lock to access and modify scheduled_response_buffer
-                locked = this.lockShared();
-                var scheduled_response_buffer = locked.shared.scheduled_response_buffer.list;
-                locked.shared.scheduled_response_buffer = .{
-                    .allocator = bun.default_allocator,
-                    .list = .{
-                        .items = &.{},
-                        .capacity = 0,
-                    },
-                };
-                locked.unlock();
-
-                const body = response.getBodyValue();
-                // done resolve body
-                var old = body.*;
-                const body_value = Body.Value{
-                    .InternalBlob = .{
-                        .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
-                    },
-                };
-                body.* = body_value;
-                log("onBodyReceived body_value length={}", .{body_value.InternalBlob.bytes.items.len});
-
-                if (old == .Locked) {
-                    log("onBodyReceived old.resolve", .{});
-                    try old.resolve(body, this.main_thread.global_this, response.getFetchHeaders());
-                }
-            }
+            need_deinit = false; // body value now owns the error
+            const body = response.getBodyValue();
+            try body.toErrorInstance(err, globalThis);
         }
     }
 

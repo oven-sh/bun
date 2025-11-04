@@ -604,6 +604,8 @@ pub const CommandLineReporter = struct {
         writer: anytype,
         comptime dim: bool,
     ) void {
+        const initial_retry_count = test_entry.retry_count;
+        const attempts = (initial_retry_count - sequence.remaining_retry_count) + 1;
         var scopes_stack = bun.BoundedArray(*bun_test.DescribeScope, 64).init(0) catch unreachable;
         var parent_: ?*bun_test.DescribeScope = test_entry.base.parent;
 
@@ -676,6 +678,14 @@ pub const CommandLineReporter = struct {
                 writer.print(comptime Output.prettyFmt(line_color_code ++ " {s}<r>", true), .{display_label}) catch unreachable
             else
                 writer.print(comptime Output.prettyFmt(" {s}", false), .{display_label}) catch unreachable;
+
+            // Print attempt count if test was retried (attempts > 1)
+            if (attempts > 1) {
+                if (Output.enable_ansi_colors_stderr)
+                    writer.print(comptime Output.prettyFmt(" <d>({d} attempts)<r>", true), .{attempts}) catch unreachable
+                else
+                    writer.print(" ({d} attempts)", .{attempts}) catch unreachable;
+            }
 
             if (elapsed_ns > (std.time.ns_per_us * 10)) {
                 writer.print(" {any}", .{

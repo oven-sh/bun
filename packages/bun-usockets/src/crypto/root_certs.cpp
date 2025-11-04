@@ -203,11 +203,34 @@ STACK_OF(X509) *us_get_root_extra_cert_instances() {
 }
 
 STACK_OF(X509) *us_get_root_system_cert_instances() {
-  if (!us_should_use_system_ca())
-    return NULL;
-  // Ensure single-path initialization via us_internal_init_root_certs
-  auto certs = us_get_default_ca_certificates();
-  return certs->root_system_cert_instances;
+  // Always load system certificates when explicitly requested
+  // The us_should_use_system_ca() check only controls whether they're
+  // included in the default set, not whether they can be retrieved
+  static STACK_OF(X509) *system_certs = NULL;
+  static std::atomic_bool system_certs_initialized = false;
+  static std::atomic_flag system_certs_lock = ATOMIC_FLAG_INIT;
+
+  if (std::atomic_load(&system_certs_initialized) == 1)
+    return system_certs;
+
+  while (atomic_flag_test_and_set_explicit(&system_certs_lock,
+                                           std::memory_order_acquire))
+    ;
+
+  if (!atomic_exchange(&system_certs_initialized, 1)) {
+#ifdef __APPLE__
+    us_load_system_certificates_macos(&system_certs);
+#elif defined(_WIN32)
+    us_load_system_certificates_windows(&system_certs);
+#else
+    us_load_system_certificates_linux(&system_certs);
+#endif
+  }
+
+  atomic_flag_clear_explicit(&system_certs_lock,
+                             std::memory_order_release);
+
+  return system_certs;
 }
 
 extern "C" X509_STORE *us_get_default_ca_store() {

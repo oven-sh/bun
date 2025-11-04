@@ -5,6 +5,13 @@ const { urlToHttpOptions } = require("internal/url");
 const { isValidTLSArray } = require("internal/tls");
 const { validateHeaderName } = require("node:_http_common");
 const { getTimerDuration } = require("internal/timers");
+
+// Diagnostics channel support
+const dc = require("node:diagnostics_channel");
+const onClientRequestCreatedChannel = dc.channel("http.client.request.created");
+const onClientRequestStartChannel = dc.channel("http.client.request.start");
+const onClientRequestErrorChannel = dc.channel("http.client.request.error");
+const onClientResponseFinishChannel = dc.channel("http.client.response.finish");
 const {
   kBodyChunks,
   abortedSymbol,
@@ -62,6 +69,12 @@ const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 
 function emitErrorEventNT(self, err) {
   if (self.destroyed) return;
+  if (onClientRequestErrorChannel.hasSubscribers) {
+    onClientRequestErrorChannel.publish({
+      request: self,
+      error: err,
+    });
+  }
   if (self.listenerCount("error") > 0) {
     self.emit("error", err);
   }
@@ -376,6 +389,13 @@ function ClientRequest(input, options, cb) {
         fetchOptions.unix = socketPath;
       }
 
+      // Emit diagnostics channel event for request start
+      if (onClientRequestStartChannel.hasSubscribers) {
+        onClientRequestStartChannel.publish({
+          request: this,
+        });
+      }
+
       //@ts-ignore
       this[kFetchRequest] = fetch(url, fetchOptions).then(response => {
         if (this.aborted) {
@@ -409,6 +429,17 @@ function ClientRequest(input, options, cb) {
               callback?.();
             }, msecs);
           };
+
+          // Emit diagnostics channel event when response headers are received
+          // Note: Despite the name "response.finish", Node.js emits this when
+          // response headers arrive, not when the body completes
+          if (onClientResponseFinishChannel.hasSubscribers) {
+            onClientResponseFinishChannel.publish({
+              request: this,
+              response: res,
+            });
+          }
+
           process.nextTick(
             (self, res) => {
               // If the user did not listen for the 'response' event, then they
@@ -463,6 +494,13 @@ function ClientRequest(input, options, cb) {
             }
 
             if (!!$debug) globalReportError(err);
+
+            if (onClientRequestErrorChannel.hasSubscribers) {
+              onClientRequestErrorChannel.publish({
+                request: this,
+                error: err,
+              });
+            }
 
             try {
               this.emit("error", err);
@@ -561,6 +599,12 @@ function ClientRequest(input, options, cb) {
       };
     } catch (err) {
       if (!!$debug) globalReportError(err);
+      if (onClientRequestErrorChannel.hasSubscribers) {
+        onClientRequestErrorChannel.publish({
+          request: this,
+          error: err,
+        });
+      }
       this.emit("error", err);
     } finally {
       process.nextTick(maybeEmitFinish.bind(this));
@@ -925,6 +969,13 @@ function ClientRequest(input, options, cb) {
       this.removeAllListeners("timeout");
     }
   };
+
+  // Emit diagnostics channel event for request creation
+  if (onClientRequestCreatedChannel.hasSubscribers) {
+    onClientRequestCreatedChannel.publish({
+      request: this,
+    });
+  }
 }
 
 const ClientRequestPrototype = {

@@ -573,22 +573,26 @@ describe("@types/bun integration test", () => {
       {
         code: 2322,
         line: "24154.ts:11:3",
-        message: "Type 'Blob' is not assignable to type 'import(\"buffer\").Blob'.",
+        message:
+          "Type 'Blob' is not assignable to type 'import(\"buffer\").Blob'.\nThe types returned by 'stream()' are incompatible between these types.",
       },
       {
         code: 2769,
         line: "fetch.ts:25:32",
-        message: "No overload matches this call.",
+        message:
+          "No overload matches this call.\nOverload 1 of 3, '(input: string | Request | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nOverload 2 of 3, '(input: string | Request | URL, init?: BunFetchRequestInit | undefined): Promise<Response>', gave the following error.\nOverload 3 of 3, '(input: RequestInfo | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.",
       },
       {
         code: 2769,
         line: "fetch.ts:33:32",
-        message: "No overload matches this call.",
+        message:
+          "No overload matches this call.\nOverload 1 of 3, '(input: string | Request | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nOverload 2 of 3, '(input: string | Request | URL, init?: BunFetchRequestInit | undefined): Promise<Response>', gave the following error.\nOverload 3 of 3, '(input: RequestInfo | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.",
       },
       {
         code: 2769,
         line: "fetch.ts:168:34",
-        message: "No overload matches this call.",
+        message:
+          "No overload matches this call.\nOverload 1 of 3, '(input: string | Request | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nOverload 2 of 3, '(input: string | Request | URL, init?: BunFetchRequestInit | undefined): Promise<Response>', gave the following error.\nOverload 3 of 3, '(input: RequestInfo | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.",
       },
       {
         code: 2353,
@@ -605,13 +609,13 @@ describe("@types/bun integration test", () => {
         code: 2345,
         line: "http.ts:55:24",
         message:
-          "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer> | \"it works!\", void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
+          "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer> | \"it works!\", void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.\nType 'AsyncGenerator<Uint8Array<ArrayBuffer> | \"it works!\", void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.",
       },
       {
         code: 2345,
         line: "index.ts:196:14",
         message:
-          "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
+          "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.\nType 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.",
       },
       {
         code: 2345,
@@ -632,7 +636,8 @@ describe("@types/bun integration test", () => {
       {
         "code": 2769,
         "line": "streams.ts:18:3",
-        "message": "No overload matches this call.",
+        "message":
+          "No overload matches this call.\nOverload 1 of 3, '(underlyingSource: UnderlyingByteSource, strategy?: { highWaterMark?: number | undefined; } | undefined): ReadableStream<Uint8Array<ArrayBuffer>>', gave the following error.",
       },
       {
         "code": 2339,

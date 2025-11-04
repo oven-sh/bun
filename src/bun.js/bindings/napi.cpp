@@ -435,7 +435,6 @@ extern "C" napi_status napi_set_element(napi_env env, napi_value object_,
     JSObject* jsObject = object.getObject();
     NAPI_RETURN_EARLY_IF_FALSE(env, jsObject, napi_array_expected);
 
-    PutPropertySlot slot(jsObject, false);
     (void)jsObject->putByIndexInline(globalObject, index, value, false);
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }

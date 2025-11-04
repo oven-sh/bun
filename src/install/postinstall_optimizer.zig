@@ -130,20 +130,6 @@ pub const PostinstallOptimizer = enum {
         }
 
         pub fn get(this: *const @This(), name_hash: PackageNameHash) ?PostinstallOptimizer {
-            return this.dynamic.get(name_hash) orelse {
-                switch (fromDefault(name_hash) orelse return null) {
-                    .native_binlink => {
-                        if (this.disable_default_native_binlinks) {
-                            return null;
-                        }
-                        return .native_binlink;
-                    },
-                    .ignore => {
-                        if (this.disable_default_ignore) {
-                            return null;
-                        }
-                        return .ignore;
-                    },
             if (this.dynamic.get(name_hash)) |optimize| {
                 return optimize;
             }

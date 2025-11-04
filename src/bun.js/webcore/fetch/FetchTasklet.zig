@@ -388,17 +388,18 @@ pub const FetchTasklet = struct {
             log("AbortHandling.onAbortCallback", .{});
             reason.ensureStillAlive();
 
-            // Store error in unified storage
-            fetch.fetch_error.set(.{ .abort_error = jsc.Strong.Optional.create(reason, fetch.main_thread.global_this) });
-
-            // Set atomic abort flag for HTTP thread fast-path
-            fetch.shared.signal_store.aborted.store(true, .monotonic);
-
-            // Transition to aborted state under lock
+            // All shared state modifications must be under lock
             {
                 fetch.shared.mutex.lock();
                 defer fetch.shared.mutex.unlock();
 
+                // Store error in unified storage
+                fetch.fetch_error.set(.{ .abort_error = jsc.Strong.Optional.create(reason, fetch.main_thread.global_this) });
+
+                // Set atomic abort flag for HTTP thread fast-path
+                fetch.shared.signal_store.aborted.store(true, .monotonic);
+
+                // Transition to aborted state
                 if (!fetch.shared.lifecycle.isTerminal()) {
                     transitionLifecycle(fetch, fetch.shared.lifecycle, .aborted);
                 }
@@ -1838,15 +1839,25 @@ pub const FetchTasklet = struct {
         log("writeEndRequest hasError? {}", .{err != null});
         defer this.deref();
         // Dual tracking: mark request stream as complete
-        this.shared.request_stream_state = .complete;
-        if (err) |jsError| {
-            if (this.shared.signal_store.aborted.load(.monotonic) or this.fetch_error.isAbort()) {
-                return;
+        // All shared state access must be under lock
+        {
+            this.shared.mutex.lock();
+            defer this.shared.mutex.unlock();
+
+            this.shared.request_stream_state = .complete;
+
+            if (err) |jsError| {
+                if (this.shared.signal_store.aborted.load(.monotonic) or this.fetch_error.isAbort()) {
+                    return;
+                }
+                if (!jsError.isUndefinedOrNull()) {
+                    // Store error in unified storage
+                    this.fetch_error.set(.{ .js_error = jsc.Strong.Optional.create(jsError, this.main_thread.global_this) });
+                }
             }
-            if (!jsError.isUndefinedOrNull()) {
-                // Store error in unified storage
-                this.fetch_error.set(.{ .js_error = jsc.Strong.Optional.create(jsError, this.main_thread.global_this) });
-            }
+        }
+
+        if (err) |_| {
             this.abortTask();
         } else {
             if (!this.shared.upgraded_connection) {

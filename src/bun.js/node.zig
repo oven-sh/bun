@@ -85,15 +85,6 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             .syscall = .access,
         } };
 
-        pub fn assert(this: @This()) ReturnType {
-            switch (this) {
-                .err => |err| {
-                    bun.Output.panic("Unexpected error\n{}", .{err});
-                },
-                .result => |result| return result,
-            }
-        }
-
         pub inline fn todo() @This() {
             if (Environment.allow_assert) {
                 if (comptime ReturnType == void) {

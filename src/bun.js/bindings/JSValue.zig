@@ -253,7 +253,7 @@ pub const JSValue = enum(i64) {
             loop.debug.js_call_count_outside_tick_queue += @as(usize, @intFromBool(!loop.debug.is_inside_tick_queue));
             if (loop.debug.track_last_fn_name and !loop.debug.is_inside_tick_queue) {
                 loop.debug.last_fn_name.deref();
-                loop.debug.last_fn_name = function.getName(global);
+                loop.debug.last_fn_name = try function.getName(global);
             }
             // Do not assert that the function is callable here.
             // The Bun__JSValue__call function will already assert that, and
@@ -727,7 +727,7 @@ pub const JSValue = enum(i64) {
         defer buf.deinit();
 
         var writer = buf.writer();
-        switch (Output.enable_ansi_colors) {
+        switch (Output.enable_ansi_colors_stderr) {
             inline else => |enabled| try writer.print(Output.prettyFmt(fmt, enabled), args),
         }
         return String.init(buf.slice()).toJS(globalThis);
@@ -1054,9 +1054,9 @@ pub const JSValue = enum(i64) {
     }
 
     extern fn JSC__JSValue__getName(jsc.JSValue, *jsc.JSGlobalObject, *bun.String) void;
-    pub fn getName(this: JSValue, global: *JSGlobalObject) bun.String {
+    pub fn getName(this: JSValue, global: *JSGlobalObject) JSError!bun.String {
         var ret = bun.String.empty;
-        JSC__JSValue__getName(this, global, &ret);
+        try bun.jsc.fromJSHostCallGeneric(global, @src(), JSC__JSValue__getName, .{ this, global, &ret });
         return ret;
     }
 
@@ -1077,13 +1077,12 @@ pub const JSValue = enum(i64) {
         };
     }
 
-    extern fn JSC__JSValue__asCell(this: JSValue) *JSCell;
     pub fn asCell(this: JSValue) *JSCell {
-        // NOTE: asCell already asserts this, but since we're crossing an FFI
-        // boundary, that assertion is opaque to the Zig compiler. By asserting
-        // it twice we let Zig possibly optimize out other checks.
+        // Asserting this lets Zig possibly optimize out other checks.
         bun.unsafeAssert(this.isCell());
-        return JSC__JSValue__asCell(this);
+        // We know `DecodedJSValue.asCell` cannot return null, since `isCell` already checked for
+        // `.zero`.
+        return this.decode().asCell().?;
     }
 
     pub fn isCallable(this: JSValue) bool {
@@ -1137,9 +1136,6 @@ pub const JSValue = enum(i64) {
 
     pub fn asArrayBuffer(this: JSValue, global: *JSGlobalObject) ?ArrayBuffer {
         var out: ArrayBuffer = undefined;
-        // `ptr` might not get set if the ArrayBuffer is empty, so make sure it starts out with a
-        // defined value.
-        out.ptr = &.{};
         if (JSC__JSValue__asArrayBuffer(this, global, &out)) {
             return out;
         }
@@ -1188,12 +1184,18 @@ pub const JSValue = enum(i64) {
     pub fn toSlice(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) JSError!ZigString.Slice {
         const str = try bun.String.fromJS(this, global);
         defer str.deref();
-
         return str.toUTF8(allocator);
     }
 
     pub inline fn toSliceZ(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) ZigString.Slice {
         return getZigString(this, global).toSliceZ(allocator);
+    }
+
+    /// The returned slice is always owned by `allocator`.
+    pub fn toUTF8Bytes(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) JSError![]u8 {
+        const str: bun.String = try .fromJS(this, global);
+        defer str.deref();
+        return str.toUTF8Bytes(allocator);
     }
 
     pub fn toJSString(this: JSValue, globalThis: *JSGlobalObject) bun.JSError!*JSString {
@@ -1243,7 +1245,7 @@ pub const JSValue = enum(i64) {
         allocator: std.mem.Allocator,
     ) ?ZigString.Slice {
         var str = this.toJSString(globalThis) catch return null;
-        return str.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch {
+        return str.toSliceClone(globalThis, allocator) catch {
             globalThis.throwOutOfMemory() catch {}; // TODO: properly propagate exception upwards
             return null;
         };

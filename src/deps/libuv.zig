@@ -2770,10 +2770,7 @@ pub const ReturnCode = enum(c_int) {
     zero = 0,
     _,
 
-    pub fn format(this: ReturnCode, comptime fmt_: []const u8, options_: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt_;
-        _ = options_;
-
+    pub fn format(this: ReturnCode, writer: *std.Io.Writer) !void {
         if (this.errEnum()) |err| {
             try writer.writeAll(@tagName(err));
         } else {

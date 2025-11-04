@@ -1200,9 +1200,9 @@ pub const SliceWithUnderlyingString = struct {
         return this.utf8.slice();
     }
 
-    pub fn format(self: SliceWithUnderlyingString, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: SliceWithUnderlyingString, writer: *std.Io.Writer) !void {
         if (self.utf8.len == 0) {
-            try self.underlying.format(fmt, opts, writer);
+            try self.underlying.format(writer);
             return;
         }
 

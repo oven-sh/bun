@@ -37,13 +37,7 @@ const OptionalThreadId = struct {
         return .{ .inner = id };
     }
 
-    pub fn format(
-        self: OptionalThreadId,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = .{ fmt, options };
+    pub fn format(self: OptionalThreadId, writer: *std.Io.Writer) !void {
         if (self.inner == invalid_thread_id) {
             try writer.writeAll("another thread");
         } else {

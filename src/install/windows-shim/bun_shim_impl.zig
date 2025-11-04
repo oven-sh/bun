@@ -164,9 +164,7 @@ const FailReason = enum {
         };
     }
 
-    pub fn format(reason: FailReason, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        if (fmt.len != 0) @compileError("FailReason.format() only takes empty format string");
-
+    pub fn format(reason: FailReason, writer: *std.Io.Writer) !void {
         if (!is_standalone and bun.Environment.allow_assert and reason == .InvalidShimValidation) {
             @panic("Internal Assertion: When encountering FailReason.InvalidShimValidation, you must not print the error, but rather fallback to running the .exe file");
         }

@@ -77,9 +77,7 @@ pub fn HashMap(comptime K: type, comptime V: type, comptime Context: type, compt
                 return self.hash == empty_hash;
             }
 
-            pub fn format(self: Entry, comptime layout: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-                _ = layout;
-                _ = options;
+            pub fn format(self: Entry, writer: *std.Io.Writer) !void {
                 try writer.print("(hash: {}, key: {}, value: {})", .{ self.hash, self.key, self.value });
             }
         };
@@ -353,9 +351,7 @@ pub fn SortedHashMap(comptime V: type, comptime max_load_percentage: comptime_in
                 return cmp(self.hash, empty_hash) == .eq;
             }
 
-            pub fn format(self: Entry, comptime layout: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-                _ = layout;
-                _ = options;
+            pub fn format(self: Entry, writer: *std.Io.Writer) !void {
                 try writer.print("(hash: {x}, value: {})", .{ mem.asBytes(&self.hash), self.value });
             }
         };

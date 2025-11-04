@@ -188,13 +188,8 @@ pub const UUID7 = struct {
         return .{ .bytes = bytes };
     }
 
-    pub fn format(
-        self: UUID7,
-        comptime layout: []const u8,
-        options: fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        return self.toUUID().format(layout, options, writer);
+    pub fn format(self: UUID7, writer: *std.Io.Writer) !void {
+        return self.toUUID().format(writer);
     }
 };
 
@@ -266,13 +261,8 @@ pub const UUID5 = struct {
         return .{ .bytes = bytes };
     }
 
-    pub fn format(
-        self: UUID5,
-        comptime layout: []const u8,
-        options: fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        return self.toUUID().format(layout, options, writer);
+    pub fn format(self: UUID5, writer: *std.Io.Writer) !void {
+        return self.toUUID().format(writer);
     }
 };
 

@@ -25,7 +25,7 @@ pub const JSValue = enum(i64) {
     pub const is_pointer = false;
     pub const JSType = @import("./JSType.zig").JSType;
 
-    pub fn format(_: JSValue, comptime _: []const u8, _: std.fmt.FormatOptions, _: anytype) !void {
+    pub fn format(_: JSValue, writer: *std.Io.Writer) !void {
         @compileError("Formatting a JSValue directly is not allowed. Use jsc.ConsoleObject.Formatter");
     }
 

@@ -394,7 +394,6 @@ pub fn Diff(comptime T: type) type {
             return self.kind == other.kind and mem.eql(T, self.value, other.value);
         }
 
-        /// pub fn format(value: ?, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void
         pub fn format(value: anytype, writer: *std.Io.Writer) !void {
             const specifier = switch (T) {
                 u8 => "c",

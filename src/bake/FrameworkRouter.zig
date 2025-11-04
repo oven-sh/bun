@@ -423,8 +423,7 @@ pub const Part = union(enum(u3)) {
         };
     }
 
-    pub fn format(part: Part, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        comptime bun.assert(fmt.len == 0);
+    pub fn format(part: Part, writer: *std.Io.Writer) !void {
         try writer.writeAll("Part \"");
         try part.toStringForInternalUse(writer);
         try writer.writeAll("\"");

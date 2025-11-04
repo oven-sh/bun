@@ -267,7 +267,7 @@ const SharedData = struct {
     /// === HTTP CLIENT DATA (owned by HTTP thread after queue) ===
     http: ?*http.AsyncHTTP = null,
     result: http.HTTPClientResult = .{},
-    metadata: ?http.HTTPResponseMetadata = null,
+    metadata: ResponseMetadataHolder = undefined,
 
     /// === BUFFERS (ownership documented) ===
     /// Response buffer written by HTTP thread.
@@ -298,15 +298,14 @@ const SharedData = struct {
             .response_buffer = try MutableString.init(allocator, 0),
             .scheduled_response_buffer = try MutableString.init(allocator, 0),
             .has_schedule_callback = std.atomic.Value(bool).init(false),
+            .metadata = ResponseMetadataHolder.init(allocator),
         };
     }
 
     fn deinit(self: *SharedData) void {
         self.response_buffer.deinit();
         self.scheduled_response_buffer.deinit();
-        if (self.metadata) |*metadata| {
-            metadata.deinit(self.response_buffer.allocator);
-        }
+        self.metadata.deinit();
     }
 
     /// Lock the shared data for exclusive access.
@@ -432,7 +431,7 @@ const ResponseMetadataHolder = struct {
     /// Set metadata from HTTP result (takes ownership).
     /// Frees old metadata if present.
     fn setMetadata(self: *ResponseMetadataHolder, metadata: http.HTTPResponseMetadata) void {
-        if (self.#metadata) |old| {
+        if (self.#metadata) |*old| {
             old.deinit(self.allocator);
         }
         self.#metadata = metadata;
@@ -440,18 +439,33 @@ const ResponseMetadataHolder = struct {
 
     /// Set certificate info from HTTP result (takes ownership).
     fn setCertificate(self: *ResponseMetadataHolder, cert: http.CertificateInfo) void {
-        if (self.#certificate_info) |old| {
+        if (self.#certificate_info) |*old| {
             old.deinit(self.allocator);
         }
         self.#certificate_info = cert;
     }
 
+    /// Check if metadata exists (non-destructive read).
+    fn hasMetadata(self: *const ResponseMetadataHolder) bool {
+        return self.#metadata != null;
+    }
+
+    /// Borrow metadata without taking ownership (non-destructive read).
+    /// Returns null if metadata doesn't exist.
+    /// The ResponseMetadataHolder still owns the metadata after this call.
+    fn borrowMetadata(self: *const ResponseMetadataHolder) ?*const http.HTTPResponseMetadata {
+        if (self.#metadata) |*meta| {
+            return meta;
+        }
+        return null;
+    }
+
     /// Single cleanup path
     fn deinit(self: *ResponseMetadataHolder) void {
-        if (self.#metadata) |metadata| {
+        if (self.#metadata) |*metadata| {
             metadata.deinit(self.allocator);
         }
-        if (self.#certificate_info) |cert| {
+        if (self.#certificate_info) |*cert| {
             cert.deinit(self.allocator);
         }
     }
@@ -1037,7 +1051,7 @@ pub const FetchTasklet = struct {
     sink: ?*ResumableSink = null,
     request_body: HTTPRequestBody = undefined,
     request_body_streaming_buffer: ?*http.ThreadSafeStreamBuffer = null,
-    request_headers: Headers = Headers{ .allocator = undefined },
+    request_headers: RequestHeaders = undefined,
 
     /// URL/Proxy buffer with explicit ownership tracking.
     ///
@@ -1320,18 +1334,13 @@ pub const FetchTasklet = struct {
             this.shared.result.certificate_info = null;
         }
 
-        this.request_headers.entries.deinit(allocator);
-        this.request_headers.buf.deinit(allocator);
-        this.request_headers = Headers{ .allocator = undefined };
+        this.request_headers.deinit(allocator);
 
         if (this.shared.http) |http_| {
             http_.clearData();
         }
 
-        if (this.shared.metadata != null) {
-            this.shared.metadata.?.deinit(allocator);
-            this.shared.metadata = null;
-        }
+        // Metadata is cleaned up in SharedData.deinit()
 
         this.shared.response_buffer.deinit();
         this.main_thread.response_weak.deinit();
@@ -1871,7 +1880,7 @@ pub const FetchTasklet = struct {
             is_waiting_request_stream_start = this.shared.request_stream_state == .waiting_start;
             can_stream = this.shared.result.can_stream;
             is_waiting_body = this.shared.lifecycle == .response_awaiting_body_access;
-            metadata_exists = this.shared.metadata != null;
+            metadata_exists = this.shared.metadata.hasMetadata();
             is_success = this.shared.result.isSuccess();
             is_waiting_abort = this.shared.abort_requested.load(.acquire) and this.shared.result.has_more;
 
@@ -1945,7 +1954,7 @@ pub const FetchTasklet = struct {
 
             // Re-check metadata after cert validation
             this.shared.mutex.lock();
-            const has_metadata = this.shared.metadata != null;
+            const has_metadata = this.shared.metadata.hasMetadata();
             this.shared.mutex.unlock();
 
             if (!has_metadata) {
@@ -2125,7 +2134,7 @@ pub const FetchTasklet = struct {
         bun.assert(locked.shared.result.fail != null);
 
         const abort_reason = locked.shared.result.abortReason();
-        const metadata = locked.shared.metadata;
+        const metadata = locked.shared.metadata.borrowMetadata();
         const http_ptr = locked.shared.http;
         const fail_error = locked.shared.result.fail.?;
         locked.unlock();
@@ -2346,8 +2355,8 @@ pub const FetchTasklet = struct {
 
         // === ACQUIRE LOCK - Read shared state ===
         var locked = this.lockShared();
-        bun.assert(locked.shared.metadata != null);
-        const metadata = locked.shared.metadata.?;
+        bun.assert(locked.shared.metadata.hasMetadata());
+        const metadata = locked.shared.metadata.borrowMetadata().?;
         const has_more = locked.shared.result.has_more;
         const redirected = locked.shared.result.redirected;
 
@@ -2534,8 +2543,8 @@ pub const FetchTasklet = struct {
             bun.default_allocator,
             fetch_options.method,
             fetch_options.url,
-            fetch_options.headers.entries,
-            fetch_options.headers.buf.items,
+            fetch_options.headers.headers.entries,
+            fetch_options.headers.headers.buf.items,
             &fetch_tasklet.shared.response_buffer,
             fetch_tasklet.request_body.slice(),
             http.HTTPClientResult.Callback.New(
@@ -2709,7 +2718,7 @@ pub const FetchTasklet = struct {
 
     const FetchOptions = struct {
         method: Method,
-        headers: Headers,
+        headers: RequestHeaders,
         body: HTTPRequestBody,
         disable_timeout: bool,
         disable_keepalive: bool,
@@ -2799,8 +2808,8 @@ pub const FetchTasklet = struct {
         // Store metadata (only provided once)
         if (result.metadata orelse prev_metadata) |metadata| {
             log("added callback metadata", .{});
-            if (task.shared.metadata == null) {
-                task.shared.metadata = metadata;
+            if (!task.shared.metadata.hasMetadata()) {
+                task.shared.metadata.setMetadata(metadata);
             }
             task.shared.result.metadata = null;
         }

@@ -886,7 +886,8 @@ pub fn Bun__fetch_(
                 }
             }
 
-            break :extract_headers Headers.from(headers_, allocator, .{ .body = body.getAnyBlob() }) catch |err| bun.handleOom(err);
+            const owned_headers = Headers.from(headers_, allocator, .{ .body = body.getAnyBlob() }) catch |err| bun.handleOom(err);
+            break :extract_headers owned_headers;
         }
 
         break :extract_headers headers;
@@ -1329,8 +1330,14 @@ pub fn Bun__fetch_(
         &.{
             .method = method,
             .url = url,
-            .headers = headers orelse Headers{
-                .allocator = allocator,
+            .headers = blk: {
+                if (headers) |h| {
+                    // Headers were created from FetchHeaders, we own them
+                    break :blk .{ .headers = h, .#owned = true };
+                } else {
+                    // Empty headers, not owned
+                    break :blk .{ .headers = Headers{ .allocator = allocator }, .#owned = false };
+                }
             },
             .body = http_body,
             .disable_keepalive = disable_keepalive,

@@ -11,7 +11,7 @@ Bytecode caching is a build-time optimization that dramatically improves applica
 
 Enable bytecode caching with the `--bytecode` flag:
 
-```bash
+```bash terminal icon="terminal"
 bun build ./index.ts --target=bun --bytecode --outdir=./dist
 ```
 
@@ -22,15 +22,15 @@ This generates two files:
 
 At runtime, Bun automatically detects and uses the `.jsc` file:
 
-```bash
-$ bun ./dist/index.js  # Automatically uses index.jsc
+```bash terminal icon="terminal"
+bun ./dist/index.js  # Automatically uses index.jsc
 ```
 
 ### With standalone executables
 
 When creating executables with `--compile`, bytecode is embedded into the binary:
 
-```bash
+```bash terminal icon="terminal"
 bun build ./cli.ts --compile --bytecode --outfile=mycli
 ```
 
@@ -40,7 +40,7 @@ The resulting executable contains both the code and bytecode, giving you maximum
 
 Bytecode works great with minification and source maps:
 
-```bash
+```bash terminal icon="terminal"
 bun build --compile --bytecode --minify --sourcemap ./cli.ts --outfile=mycli
 ```
 
@@ -108,11 +108,12 @@ export default data;
 
 **Workaround**: Move async initialization into a function:
 
-```js
+```js 
 async function init() {
-  const data = await fetch("https://api.example.com");
-  return data;
+	const data = await fetch("https://api.example.com");
+	return data;
 }
+
 export default init;
 ```
 
@@ -124,7 +125,7 @@ Bytecode is **not portable across Bun versions**. The bytecode format is tied to
 
 When you update Bun, you must regenerate bytecode:
 
-```bash
+```bash terminal icon="terminal"
 # After updating Bun
 bun build --bytecode ./index.ts --outdir=./dist
 ```
@@ -156,7 +157,7 @@ Bytecode **does not obscure your source code**. It's an optimization, not a secu
 
 Include bytecode generation in your Dockerfile:
 
-```dockerfile
+```dockerfile Dockerfile icon="docker"
 FROM oven/bun:1 AS builder
 WORKDIR /app
 COPY package.json bun.lock ./
@@ -181,7 +182,7 @@ The bytecode is architecture-independent.
 
 Generate bytecode during your build pipeline:
 
-```yaml
+```yaml workflow.yml icon="file-code"
 # GitHub Actions
 - name: Build with bytecode
   run: |
@@ -198,8 +199,10 @@ Generate bytecode during your build pipeline:
 
 Check that the `.jsc` file exists:
 
-```bash
-$ ls -lh dist/
+```bash terminal icon="terminal"
+ls -lh dist/
+```
+```txt
 -rw-r--r--  1 user  staff   245K  index.js
 -rw-r--r--  1 user  staff   1.1M  index.jsc
 ```
@@ -255,13 +258,13 @@ Modern JavaScript engines use a clever optimization called **lazy parsing**. The
 ```js
 // Without bytecode caching:
 function rarely_used() {
-  // This 500-line function is only parsed
-  // when it's actually called
+	// This 500-line function is only parsed
+	// when it's actually called
 }
 
 function main() {
-  console.log("Starting app");
-  // rarely_used() is never called, so it's never parsed
+	console.log("Starting app");
+	// rarely_used() is never called, so it's never parsed
 }
 ```
 

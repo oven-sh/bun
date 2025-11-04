@@ -28,6 +28,8 @@ patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 catalogs: CatalogMap = .{},
 
+saved_config_version: ?bun.ConfigVersion,
+
 pub const DepSorter = struct {
     lockfile: *const Lockfile,
 
@@ -190,6 +192,26 @@ pub const LoadResult = union(enum) {
         }
     }
 
+    // configVersion and boolean for if the configVersion previously existed/needs to be saved to lockfile
+    pub fn chooseConfigVersion(this: *const LoadResult) struct { bun.ConfigVersion, bool } {
+        return switch (this.*) {
+            .not_found, .err => .{ .current, true },
+            .ok => |ok| switch (ok.migrated) {
+                .none => {
+                    if (ok.lockfile.saved_config_version) |config_version| {
+                        return .{ config_version, false };
+                    }
+
+                    // existing bun project without configVersion
+                    return .{ .v0, true };
+                },
+                .pnpm => .{ .v1, true },
+                .npm => .{ .v0, true },
+                .yarn => .{ .v0, true },
+            },
+        };
+    }
+
     pub const Step = enum { open_file, read_file, parse_file, migrating };
 };
 
@@ -322,7 +344,7 @@ pub fn loadFromDir(
                 var buffered_writer = writer_buf.bufferedWriter();
                 const writer = buffered_writer.writer();
 
-                TextLockfile.Stringifier.saveFromBinary(allocator, result.ok.lockfile, &result, writer) catch |err| {
+                TextLockfile.Stringifier.saveFromBinary(allocator, result.ok.lockfile, &result, &manager.?.options, writer) catch |err| {
                     Output.panic("failed to convert binary lockfile to text lockfile: {s}", .{@errorName(err)});
                 };
 
@@ -1224,7 +1246,7 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
             var buffered_writer = writer_buf.bufferedWriter();
             const writer = buffered_writer.writer();
 
-            TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this, load_result, writer) catch |err| switch (err) {
+            TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this, load_result, options, writer) catch |err| switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
             };
 
@@ -1239,7 +1261,7 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
 
         var total_size: usize = 0;
         var end_pos: usize = 0;
-        Lockfile.Serializer.save(this, options.log_level.isVerbose(), &bytes, &total_size, &end_pos) catch |err| {
+        Lockfile.Serializer.save(this, options, &bytes, &total_size, &end_pos) catch |err| {
             Output.err(err, "failed to serialize lockfile", .{});
             Global.crash();
         };
@@ -1343,6 +1365,7 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
         .overrides = .{},
         .catalogs = .{},
         .meta_hash = zero_hash,
+        .saved_config_version = null,
     };
 }
 

@@ -1,6 +1,6 @@
+import { test } from "bun:test";
 import { basename, dirname, sep } from "node:path";
 import { build, run } from "../../../harness";
-import { test } from "bun:test";
 
 test("build", async () => {
   await build(import.meta.dir);

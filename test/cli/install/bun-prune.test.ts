@@ -614,6 +614,10 @@ linkWorkspacePackages = true
     expect(stderr).not.toContain("error:");
     // Silent mode should produce minimal output
     expect(stdout.trim()).toBe("");
+
+    // Verify pruning actually removed the stray package
+    expect(existsSync(join(String(dir), "node_modules/lodash"))).toBe(false);
+    expect(existsSync(join(String(dir), "node_modules/is-number"))).toBe(true);
   });
 
   it("should verify --dry-run does not modify node_modules", async () => {

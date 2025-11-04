@@ -89,7 +89,7 @@ const proc = Bun.spawn(["cat"], {
   stdout: "pipe",
 });
 
-const output = await new Response(proc.stdout).text();
+const output = await proc.stdout.text();
 console.log(output); // "Hello from ReadableStream!"
 ```
 

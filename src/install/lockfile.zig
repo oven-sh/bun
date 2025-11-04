@@ -192,16 +192,22 @@ pub const LoadResult = union(enum) {
         }
     }
 
-    pub fn chooseConfigVersion(this: *const LoadResult) bun.ConfigVersion {
+    // configVersion and boolean for if the configVersion previously existed/needs to be saved to lockfile
+    pub fn chooseConfigVersion(this: *const LoadResult) struct { bun.ConfigVersion, bool } {
         return switch (this.*) {
-            .not_found, .err => .current,
+            .not_found, .err => .{ .current, true },
             .ok => |ok| switch (ok.migrated) {
-                .none => ok.lockfile.saved_config_version orelse
+                .none => {
+                    if (ok.lockfile.saved_config_version) |config_version| {
+                        return .{ config_version, false };
+                    }
+
                     // existing bun project without configVersion
-                    .v0,
-                .pnpm => .v1,
-                .npm => .v0,
-                .yarn => .v0,
+                    return .{ .v0, true };
+                },
+                .pnpm => .{ .v1, true },
+                .npm => .{ .v0, true },
+                .yarn => .{ .v0, true },
             },
         };
     }

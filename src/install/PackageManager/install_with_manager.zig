@@ -31,7 +31,7 @@ pub fn installWithManager(
 
     try manager.updateLockfileIfNeeded(load_result);
 
-    const config_version = load_result.chooseConfigVersion();
+    const config_version, const changed_config_version = load_result.chooseConfigVersion();
     manager.options.config_version = config_version;
 
     var root = Lockfile.Package{};
@@ -39,6 +39,7 @@ pub fn installWithManager(
         (load_result.ok.lockfile.buffers.dependencies.items.len == 0 and manager.update_requests.len > 0);
 
     manager.options.enable.force_save_lockfile = manager.options.enable.force_save_lockfile or
+        changed_config_version or
         (load_result == .ok and
             // if migrated always save a new lockfile
             (load_result.ok.migrated != .none or

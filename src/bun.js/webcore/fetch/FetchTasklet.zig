@@ -394,9 +394,14 @@ pub const FetchTasklet = struct {
             // Set atomic abort flag for HTTP thread fast-path
             fetch.shared.signal_store.aborted.store(true, .monotonic);
 
-            // Transition to aborted state
-            if (!fetch.shared.lifecycle.isTerminal()) {
-                transitionLifecycle(fetch, fetch.shared.lifecycle, .aborted);
+            // Transition to aborted state under lock
+            {
+                fetch.shared.mutex.lock();
+                defer fetch.shared.mutex.unlock();
+
+                if (!fetch.shared.lifecycle.isTerminal()) {
+                    transitionLifecycle(fetch, fetch.shared.lifecycle, .aborted);
+                }
             }
 
             fetch.main_thread.tracker.didCancel(fetch.main_thread.global_this);

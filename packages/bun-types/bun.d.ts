@@ -5795,7 +5795,7 @@ declare module "bun" {
    *  cmd: ["echo", "hello"],
    *  stdout: "pipe",
    * });
-   * const text = await readableStreamToText(subprocess.stdout);
+   * const text = await new Response(subprocess.stdout).text();
    * console.log(text); // "hello\n"
    * ```
    *
@@ -5830,7 +5830,7 @@ declare module "bun" {
    *
    * ```js
    * const {stdout} = Bun.spawn(["echo", "hello"]);
-   * const text = await readableStreamToText(stdout);
+   * const text = await new Response(stdout).text();
    * console.log(text); // "hello\n"
    * ```
    *

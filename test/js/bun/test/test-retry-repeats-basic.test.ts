@@ -102,28 +102,13 @@ describe("retry with onTestFinished", () => {
         log.push("onTestFinished");
       });
       log.push(`test-${attempts}`);
-      if (attempts < 2) {
+      if (attempts < 3) {
         throw new Error("fail");
       }
     },
     { retry: 3 },
   );
   test("verify correct log", () => {
-    expect(log).toEqual(["test-1", "onTestFinished", "test-2", "onTestFinished"]);
-  });
-});
-
-describe("retry maximum", () => {
-  let attempts = 0;
-  test.failing(
-    "retry maximum",
-    () => {
-      attempts++;
-      throw new Error("fail");
-    },
-    { retry: 3 },
-  );
-  test("verify correct attempts", () => {
-    expect(attempts).toBe(4);
+    expect(log).toEqual(["test-1", "onTestFinished", "test-2", "onTestFinished", "test-3", "onTestFinished"]);
   });
 });

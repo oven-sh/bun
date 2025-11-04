@@ -215,6 +215,11 @@ const MainThreadData = struct {
     /// Custom TLS check function (owned)
     check_server_identity: jsc.Strong.Optional = .empty,
 
+    /// Unified error storage using FetchError union.
+    /// Consolidates all error types (HTTP, abort, JS callback, TLS) into single field.
+    /// MUST call deinit() to free Strong references in abort_error/js_error/tls_error variants.
+    fetch_error: FetchError = .none,
+
     /// Keep VM alive during fetch
     poll_ref: Async.KeepAlive = .{},
 
@@ -237,6 +242,7 @@ const MainThreadData = struct {
         self.readable_stream_ref.deinit();
         self.abort_reason.deinit();
         self.check_server_identity.deinit();
+        self.fetch_error.deinit();
         self.poll_ref.unref(self.javascript_vm);
         // abort_signal handled by AbortHandling wrapper
     }
@@ -684,21 +690,27 @@ const AbortHandling = struct {
     /// See AbortSignal.zig line 16: callback signature must be `fn (*Context, JSValue) void`.
     /// The JSValue is the abort reason passed from JavaScript.
     ///
-    /// CURRENT: Works with existing FetchTasklet structure
-    /// FUTURE: Will be updated in Step 3.6 to use split SharedData
+    /// PHASE 7 STEP 8: Uses unified FetchError for error storage
     fn onAbortCallback(fetch: *FetchTasklet, reason: JSValue) void {
-        // Store abort reason (must be on main thread)
+        // Store abort reason in unified error storage (must be on main thread)
         reason.ensureStillAlive();
-        fetch.abort_reason.set(fetch.global_this, reason);
+        const strong = jsc.Strong.create(reason, fetch.main_thread.global_this);
+        fetch.main_thread.fetch_error.set(.{ .abort_error = strong });
+
+        // Also keep old abort_reason for backward compat (will be removed in Step 8 cleanup)
+        fetch.main_thread.abort_reason.set(fetch.main_thread.global_this, reason);
 
         // Set atomic abort flag for HTTP thread fast-path
-        fetch.signal_store.aborted.store(true, .release);
+        fetch.shared.signal_store.aborted.store(true, .release);
 
         // Cancel async task tracker
-        fetch.tracker.didCancel(fetch.global_this);
+        fetch.main_thread.tracker.didCancel(fetch.main_thread.global_this);
 
         // Schedule shutdown on HTTP thread
-        if (fetch.http) |http_| {
+        var locked = fetch.shared.lock();
+        const http_ptr = locked.shared.http;
+        locked.unlock();
+        if (http_ptr) |http_| {
             http.http_thread.scheduleShutdown(http_);
         }
 
@@ -1987,7 +1999,14 @@ pub const FetchTasklet = struct {
                         const check_result = globalObject.tryTakeException().?;
                         // mark to wait until deinit (abort_requested + has_more checked at read time)
                         this.shared.abort_requested.store(true, .release);
+
+                        // Store error in unified FetchError storage
+                        const strong = jsc.Strong.create(check_result, globalObject);
+                        this.main_thread.fetch_error.set(.{ .js_error = strong });
+
+                        // Also keep old abort_reason for backward compat (will be removed in Step 8 cleanup)
                         this.main_thread.abort_reason.set(globalObject, check_result);
+
                         this.shared.signal_store.aborted.store(true, .monotonic);
                         this.main_thread.tracker.didCancel(this.main_thread.global_this);
 
@@ -2012,7 +2031,14 @@ pub const FetchTasklet = struct {
                     if (check_result.isAnyError()) {
                         // mark to wait until deinit (abort_requested + has_more checked at read time)
                         this.shared.abort_requested.store(true, .release);
+
+                        // Store error in unified FetchError storage
+                        const strong = jsc.Strong.create(check_result, globalObject);
+                        this.main_thread.fetch_error.set(.{ .js_error = strong });
+
+                        // Also keep old abort_reason for backward compat (will be removed in Step 8 cleanup)
                         this.main_thread.abort_reason.set(globalObject, check_result);
+
                         this.shared.signal_store.aborted.store(true, .monotonic);
                         this.main_thread.tracker.didCancel(this.main_thread.global_this);
 
@@ -2547,7 +2573,14 @@ pub const FetchTasklet = struct {
     pub fn abortListener(this: *FetchTasklet, reason: JSValue) void {
         log("abortListener", .{});
         reason.ensureStillAlive();
+
+        // Store error in unified FetchError storage
+        const strong = jsc.Strong.create(reason, this.main_thread.global_this);
+        this.main_thread.fetch_error.set(.{ .abort_error = strong });
+
+        // Also keep old abort_reason for backward compat (will be removed in Step 8 cleanup)
         this.main_thread.abort_reason.set(this.main_thread.global_this, reason);
+
         this.abortTask();
         if (this.sink) |sink| {
             sink.cancel(reason);
@@ -2630,6 +2663,11 @@ pub const FetchTasklet = struct {
                 return;
             }
             if (!jsError.isUndefinedOrNull()) {
+                // Store error in unified FetchError storage
+                const strong = jsc.Strong.create(jsError, this.main_thread.global_this);
+                this.main_thread.fetch_error.set(.{ .js_error = strong });
+
+                // Also keep old abort_reason for backward compat (will be removed in Step 8 cleanup)
                 this.main_thread.abort_reason.set(this.main_thread.global_this, jsError);
             }
             this.abortTask();

@@ -1624,6 +1624,7 @@ export function rmScope(path: string) {
 export function textLockfile(version: number, pkgs: any): string {
   return JSON.stringify({
     lockfileVersion: version,
+    configVersion: 1,
     ...pkgs,
   });
 }
@@ -1731,7 +1732,10 @@ export class VerdaccioRegistry {
   }
 
   async createTestDir(
-    opts: { bunfigOpts?: BunfigOpts; files?: DirectoryTree | string } = { bunfigOpts: {}, files: {} },
+    opts: { bunfigOpts?: BunfigOpts; files?: DirectoryTree | string } = {
+      bunfigOpts: { linker: "hoisted" },
+      files: {},
+    },
   ) {
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
     await rm(join(this.packagesPath, "private-pkg-dont-touch"), { force: true });
@@ -1754,7 +1758,9 @@ cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
     if (!opts.npm) {
       bunfig += `registry = "${this.registryUrl()}"\n`;
     }
-    bunfig += `linker = "${opts.isolated ? "isolated" : "hoisted"}"\n`;
+    if (opts.linker) {
+      bunfig += `linker = "${opts.linker}"\n`;
+    }
     if (opts.publicHoistPattern) {
       if (typeof opts.publicHoistPattern === "string") {
         bunfig += `publicHoistPattern = "${opts.publicHoistPattern}"`;
@@ -1769,7 +1775,7 @@ cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
 type BunfigOpts = {
   saveTextLockfile?: boolean;
   npm?: boolean;
-  isolated?: boolean;
+  linker?: "isolated" | "hoisted";
   publicHoistPattern?: string | string[];
 };
 

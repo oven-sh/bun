@@ -1,5 +1,5 @@
 // Basic tests to verify retry and repeats functionality works
-import { afterEach, beforeEach, describe, expect, onTestFinished, test, afterAll } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, onTestFinished, test } from "bun:test";
 
 describe("retry option", () => {
   let attempts = 0;

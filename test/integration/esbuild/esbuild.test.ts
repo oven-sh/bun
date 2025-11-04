@@ -173,7 +173,7 @@ describe("esbuild integration test", () => {
 
     ({ stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "esbuild", "--version"],
-      cwd: join(packageDir, "node_modules/.bun/estrella@1.4.1/node_modules/estrella"),
+      cwd: join(packageDir, "node_modules/estrella"),
       stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",

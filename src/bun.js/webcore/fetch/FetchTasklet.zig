@@ -1432,7 +1432,8 @@ pub const FetchTasklet = struct {
         }
 
         // Check if we have an abort error to reject with
-        if (this.getAbortError()) |abort_error| {
+        // PHASE 7.8: Use getAbortErrorLocked since we already hold the lock
+        if (this.getAbortErrorLocked(&locked)) |abort_error| {
             const promise_value = this.main_thread.promise.valueOrEmpty();
             if (!promise_value.isEmptyOrUndefinedOrNull()) {
                 const promise = promise_value.asAnyPromise().?;
@@ -1877,14 +1878,15 @@ pub const FetchTasklet = struct {
 
     /// Convert response to Body.Value.
     /// PHASE 7.5: Caller must hold mutex when calling this function.
-    fn toBodyValue(this: *FetchTasklet) Body.Value {
-        if (this.getAbortError()) |err| {
+    fn toBodyValue(this: *FetchTasklet, locked: *LockedSharedData) Body.Value {
+        // PHASE 7.8: Use getAbortErrorLocked since caller holds the lock
+        if (this.getAbortErrorLocked(locked)) |err| {
             return .{ .Error = err };
         }
         // MIGRATION (Phase 7.3): Replaced is_waiting_body with lifecycle state check
         // Old: if (this.is_waiting_body)
         // New: Check if we're still awaiting body data (Response created but body not complete)
-        if (this.shared.lifecycle == .response_awaiting_body_access) {
+        if (locked.shared.lifecycle == .response_awaiting_body_access) {
             const response = Body.Value{
                 .Locked = .{
                     .size_hint = this.getSizeHint(),
@@ -1897,7 +1899,7 @@ pub const FetchTasklet = struct {
             return response;
         }
 
-        var scheduled_response_buffer = this.shared.scheduled_response_buffer.list;
+        var scheduled_response_buffer = locked.shared.scheduled_response_buffer.list;
         const response = Body.Value{
             .InternalBlob = .{
                 .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
@@ -1942,7 +1944,7 @@ pub const FetchTasklet = struct {
                 .status_text = bun.String.createAtomIfPossible(http_response.status),
             },
             Body{
-                .value = this.toBodyValue(),
+                .value = this.toBodyValue(&locked),
             },
             bun.String.createAtomIfPossible(metadata.url),
             redirected,

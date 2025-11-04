@@ -1,4 +1,6 @@
-Bun provides a fast API for resolving routes against file-system paths. This API is primarily intended for library authors. At the moment only Next.js-style file-system routing is supported, but other styles may be added in the future.
+# FileSystemRouter
+
+Bun provides a fast API for resolving routes against file-system paths. This API is primarily intended for library authors. It supports both Next.js-style routing and [React Router file route conventions](https://reactrouter.com/how-to/file-route-conventions).
 
 ## Next.js-style
 
@@ -83,6 +85,44 @@ The router will read the directory contents on initialization. To re-scan the fi
 router.reload();
 ```
 
+## React Router-style
+
+`FileSystemRouter` also understands React Router's file routing conventions. Pass `style: "react-router"` and point `dir` at the directory containing your `routes` files (commonly `app/routes`). Bun will infer the same URL structure as React Router, including pathless layouts, optional segments, and splat routes.
+
+```txt
+app/routes
+├── _index.tsx
+├── about.tsx
+├── concerts._index.tsx
+├── concerts.$city.tsx
+├── concerts.trending.tsx
+├── concerts_.mine.tsx
+├── _auth.login.tsx
+├── _auth.register.tsx
+├── ($lang).categories.tsx
+├── files.$.tsx
+├── $.tsx
+├── sitemap[.]xml.tsx
+├── dashboard
+│   └── route.tsx
+└── dashboard.projects.tsx
+```
+
+```ts
+const router = new Bun.FileSystemRouter({
+  dir: "./app/routes",
+  style: "react-router",
+});
+
+router.match("/concerts/salt-lake-city");
+// => { name: "/concerts/:city", params: { city: "salt-lake-city" } }
+
+router.match("/categories");
+// => { name: "/:lang?/categories", params: {} }
+```
+
+Pathless layout files (prefixed with `_`) are ignored, optional segments created with parentheses are supported, and splat routes (`$.tsx`) capture the remainder of the path in the `*` parameter—matching the React Router documentation.
+
 ## Reference
 
 ```ts
@@ -90,7 +130,7 @@ interface Bun {
   class FileSystemRouter {
     constructor(params: {
       dir: string;
-      style: "nextjs";
+      style: "nextjs" | "react-router";
       origin?: string;
       assetPrefix?: string;
       fileExtensions?: string[];

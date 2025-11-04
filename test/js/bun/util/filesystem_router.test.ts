@@ -29,6 +29,20 @@ function make(files: string[]) {
   };
 }
 
+function makeReactRouter(files: string[]) {
+  const { dir } = make([]);
+  const routesRoot = path.join(dir, "app", "routes");
+  mkdirSync(routesRoot, { recursive: true });
+  const normalizedDir = dir.replaceAll("\\", "/");
+  const normalizedRoutes = routesRoot.replaceAll("\\", "/");
+  const prefixed = files.map(file => path.join("app", "routes", file));
+  createTree(normalizedDir, prefixed);
+  return {
+    dir: normalizedDir,
+    routesDir: normalizedRoutes,
+  };
+}
+
 it("should find files", () => {
   const { dir } = make([
     `index.tsx`,
@@ -89,6 +103,83 @@ it("should find files", () => {
 
   expect(Object.keys(routes).length).toBe(Object.keys(fixture).length);
   expect(Object.values(routes).length).toBe(Object.values(fixture).length);
+});
+
+it("react-router file routes", () => {
+  const { routesDir } = makeReactRouter([
+    `_index.tsx`,
+    `about.tsx`,
+    `concerts._index.tsx`,
+    `concerts.$city.tsx`,
+    `concerts.trending.tsx`,
+    `concerts_.mine.tsx`,
+    `_auth.tsx`,
+    `_auth.login.tsx`,
+    `_auth.register.tsx`,
+    `($lang).categories.tsx`,
+    `files.$.tsx`,
+    `$.tsx`,
+    `sitemap[.]xml.tsx`,
+    `dashboard/route.tsx`,
+    `dashboard.projects.tsx`,
+  ]);
+
+  const router = new FileSystemRouter({
+    dir: routesDir,
+    fileExtensions: [".tsx"],
+    style: "react-router",
+  });
+
+  const routes = router.routes;
+  const fixture: Record<string, string> = {
+    "/": `${routesDir}/_index.tsx`,
+    "/about": `${routesDir}/about.tsx`,
+    "/concerts": `${routesDir}/concerts._index.tsx`,
+    "/concerts/:city": `${routesDir}/concerts.$city.tsx`,
+    "/concerts/trending": `${routesDir}/concerts.trending.tsx`,
+    "/concerts/mine": `${routesDir}/concerts_.mine.tsx`,
+    "/login": `${routesDir}/_auth.login.tsx`,
+    "/register": `${routesDir}/_auth.register.tsx`,
+    "/:lang?/categories": `${routesDir}/($lang).categories.tsx`,
+    "/files/*": `${routesDir}/files.$.tsx`,
+    "/sitemap.xml": `${routesDir}/sitemap[.]xml.tsx`,
+    "/dashboard": `${routesDir}/dashboard/route.tsx`,
+    "/dashboard/projects": `${routesDir}/dashboard.projects.tsx`,
+    "/*": `${routesDir}/$.tsx`,
+  };
+
+  expect(Object.keys(routes).sort()).toEqual(Object.keys(fixture).sort());
+  for (const route in fixture) {
+    expect(routes[route]).toBe(fixture[route]);
+  }
+
+  const dynamic = router.match("/concerts/salt-lake-city")!;
+  expect(dynamic.name).toBe("/concerts/:city");
+  expect(dynamic.filePath).toBe(`${routesDir}/concerts.$city.tsx`);
+  expect(dynamic.params.city).toBe("salt-lake-city");
+
+  const optionalMissing = router.match("/categories")!;
+  expect(optionalMissing.name).toBe("/:lang?/categories");
+  expect(optionalMissing.filePath).toBe(`${routesDir}/($lang).categories.tsx`);
+  expect("lang" in optionalMissing.params).toBe(false);
+
+  const optionalPresent = router.match("/en/categories")!;
+  expect(optionalPresent.params.lang).toBe("en");
+
+  const catchAll = router.match("/files/talks/react.pdf")!;
+  expect(catchAll.name).toBe("/files/*");
+  expect(catchAll.params["*"]).toBe("talks/react.pdf");
+
+  const globalCatchAll = router.match("/totally/unmatched")!;
+  expect(globalCatchAll.name).toBe("/*");
+  expect(globalCatchAll.params["*"]).toBe("totally/unmatched");
+
+  const login = router.match("/login")!;
+  expect(login.name).toBe("/login");
+  expect(Object.keys(login.params).length).toBe(0);
+
+  const sitemap = router.match("/sitemap.xml")!;
+  expect(sitemap.name).toBe("/sitemap.xml");
 });
 
 it("should handle empty dirs", () => {

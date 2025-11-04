@@ -1,26 +1,48 @@
 export {};
 
+interface BodyMixin {
+  /**
+   * Consume a text
+   */
+  text(): Promise<string>;
+
+  /**
+   * Consume as a Uint8Array, backed by an ArrayBuffer
+   */
+  bytes(): Promise<Uint8Array<ArrayBuffer>>;
+
+  /**
+   * Consume as JSON
+   */
+  json(): Promise<any>;
+
+  /**
+   * Consume as a FormData instance
+   */
+  formData(): Promise<FormData>;
+
+  /**
+   * Consume as an ArrayBuffer
+   */
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
+
 declare module "stream/web" {
-  interface ReadableStream {
+  interface ReadableStream extends BodyMixin {
     /**
-     * Consume a ReadableStream as text
-     */
-    text(): Promise<string>;
-
-    /**
-     * Consume a ReadableStream as a Uint8Array
-     */
-    bytes(): Promise<Uint8Array<ArrayBuffer>>;
-
-    /**
-     * Consume a ReadableStream as JSON
-     */
-    json(): Promise<any>;
-
-    /**
-     * Consume a ReadableStream as a Blob
+     * Consume as a Blob
      */
     blob(): Promise<Blob>;
+  }
+}
+
+declare module "buffer" {
+  interface Blob extends BodyMixin {
+    // we have to specify bytes again even though it comes from
+    // the body mixin, because inheritence is slightly different to
+    // just "copying in the methods" (the difference is to do with how)
+    // type parameters are resolved
+    bytes(): Promise<Uint8Array<ArrayBuffer>>;
   }
 }
 

@@ -553,6 +553,11 @@ describe("@types/bun integration test", () => {
     );
     expect(diagnostics).toEqual([
       {
+        code: 2322,
+        line: "24154.ts:11:3",
+        message: "Type 'Blob' is not assignable to type 'import(\"buffer\").Blob'.",
+      },
+      {
         code: 2769,
         line: "fetch.ts:25:32",
         message: "No overload matches this call.",

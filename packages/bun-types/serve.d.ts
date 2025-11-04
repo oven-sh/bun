@@ -203,6 +203,16 @@ declare module "bun" {
     isSubscribed(topic: string): boolean;
 
     /**
+     * Returns an array of all topics the client is currently subscribed to.
+     *
+     * @example
+     * ws.subscribe("chat");
+     * ws.subscribe("notifications");
+     * console.log(ws.subscriptions); // ["chat", "notifications"]
+     */
+    readonly subscriptions: string[];
+
+    /**
      * Batches `send()` and `publish()` operations, which makes it faster to send data.
      *
      * The `message`, `open`, and `drain` callbacks are automatically corked, so

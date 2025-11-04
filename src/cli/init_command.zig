@@ -42,7 +42,7 @@ pub const InitCommand = struct {
     extern fn Bun__ttySetMode(fd: i32, mode: i32) i32;
 
     fn processRadioButton(label: string, comptime Choices: type) !Choices {
-        const colors = Output.enable_ansi_colors;
+        const colors = Output.enable_ansi_colors_stdout;
         const choices = switch (colors) {
             inline else => |colors_comptime| comptime choices: {
                 const choices_fields = bun.meta.EnumFields(Choices);

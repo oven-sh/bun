@@ -250,7 +250,7 @@ pub fn installIsolatedPackages(
                 }
             }
 
-            next_peer: for (peer_dep_ids.items) |peer_dep_id| {
+            for (peer_dep_ids.items) |peer_dep_id| {
                 const resolved_pkg_id, const auto_installed = resolved_pkg_id: {
 
                     // Go through the peers parents looking for a package with the same name.
@@ -316,12 +316,11 @@ pub fn installIsolatedPackages(
                             // version. Only mark all parents if resolution is
                             // different from this transitive peer.
 
-                            if (peer_dep.behavior.isOptionalPeer()) {
-                                // exclude it
-                                continue :next_peer;
-                            }
-
                             const best_version = resolutions[peer_dep_id];
+
+                            if (best_version == invalid_package_id) {
+                                break :resolved_pkg_id .{ invalid_package_id, true };
+                            }
 
                             if (best_version == ids.pkg_id) {
                                 break :resolved_pkg_id .{ ids.pkg_id, true };
@@ -344,16 +343,15 @@ pub fn installIsolatedPackages(
                         curr_id = node_parent_ids[curr_id.get()];
                     }
 
-                    if (peer_dep.behavior.isOptionalPeer()) {
-                        // exclude it
-                        continue;
-                    }
-
                     // choose the current best version
                     break :resolved_pkg_id .{ resolutions[peer_dep_id], true };
                 };
 
-                bun.debugAssert(resolved_pkg_id != invalid_package_id);
+                if (resolved_pkg_id == invalid_package_id) {
+                    // these are optional peers that failed to find any dependency with a matching
+                    // name. they are completely excluded
+                    continue;
+                }
 
                 for (visited_parent_node_ids.items) |visited_parent_id| {
                     const ctx: Store.Node.TransitivePeer.OrderedArraySetCtx = .{

@@ -13,20 +13,22 @@ describe.concurrent("--cpu-prof", () => {
           return fibonacci(n - 1) + fibonacci(n - 2);
         }
 
-        console.log(fibonacci(20));
+        const now = performance.now();
+        while (now + 50 > performance.now()) {
+            Bun.inspect(fibonacci(20));
+        }
       `,
     });
 
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "--cpu-prof", "test.js"],
       cwd: String(dir),
       env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: "inherit",
+      stderr: "inherit",
     });
 
-    // Drain pipes to prevent deadlock
-    const [exitCode] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
+    const exitCode = await proc.exited;
 
     // Check that a .cpuprofile file was created
     const files = readdirSync(String(dir));
@@ -94,7 +96,7 @@ describe.concurrent("--cpu-prof", () => {
     using dir = tempDir("cpu-prof-name", {
       "test.js": `
         function loop() {
-          const end = Date.now() + 16;
+          const end = Date.now() + 32;
           while (Date.now() < end) {}
         }
         loop();
@@ -103,16 +105,15 @@ describe.concurrent("--cpu-prof", () => {
 
     const customName = "my-profile.cpuprofile";
 
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "--cpu-prof", "--cpu-prof-name", customName, "test.js"],
       cwd: String(dir),
       env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: "inherit",
+      stderr: "inherit",
     });
 
-    // Drain pipes to prevent deadlock
-    const [exitCode] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
+    const exitCode = await proc.exited;
 
     const files = readdirSync(String(dir));
     expect(files).toContain(customName);
@@ -123,7 +124,7 @@ describe.concurrent("--cpu-prof", () => {
     using dir = tempDir("cpu-prof-dir", {
       "test.js": `
         function loop() {
-          const end = Date.now() + 16;
+          const end = Date.now() + 32;
           while (Date.now() < end) {}
         }
         loop();
@@ -131,16 +132,15 @@ describe.concurrent("--cpu-prof", () => {
       "profiles": {},
     });
 
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "--cpu-prof", "--cpu-prof-dir", "profiles", "test.js"],
       cwd: String(dir),
       env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: "inherit",
+      stderr: "inherit",
     });
 
-    // Drain pipes to prevent deadlock
-    const [exitCode] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
+    const exitCode = await proc.exited;
 
     const profilesDir = join(String(dir), "profiles");
     const files = readdirSync(profilesDir);
@@ -165,16 +165,15 @@ describe.concurrent("--cpu-prof", () => {
       `,
     });
 
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [bunExe(), "--cpu-prof", "test.js"],
       cwd: String(dir),
       env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: "inherit",
+      stderr: "inherit",
     });
 
-    // Drain pipes to prevent deadlock
-    const [exitCode] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
+    const exitCode = await proc.exited;
 
     const files = readdirSync(String(dir));
     const profileFiles = files.filter(f => f.endsWith(".cpuprofile"));

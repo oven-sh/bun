@@ -1990,15 +1990,39 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     NAPI_CHECK_ARG(env, result);
 
     Zig::GlobalObject* globalObject = toJS(env);
-
-    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(data), length }, createSharedTask<void(void*)>([env = WTF::Ref<NapiEnv>(*env), finalize_hint, finalize_cb](void* p) {
-        NAPI_LOG("external buffer finalizer");
-        env->doFinalizer(finalize_cb, p, finalize_hint);
-    }));
+    JSC::VM& vm = JSC::getVM(globalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+
+    if (data == nullptr || length == 0) {
+
+        // TODO: is there a way to create a detached uint8 array?
+        auto arrayBuffer = JSC::ArrayBuffer::createUninitialized(0, 1);
+        auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTFMove(arrayBuffer), 0, 0);
+        NAPI_RETURN_IF_EXCEPTION(env);
+        buffer->existingBuffer()->detach(vm);
+
+        vm.heap.addFinalizer(buffer, [env = WTF::Ref<NapiEnv>(*env), finalize_cb, data, finalize_hint](JSCell* cell) -> void {
+            NAPI_LOG("external buffer finalizer (empty buffer)");
+            env->doFinalizer(finalize_cb, data, finalize_hint);
+        });
+
+        *result = toNapi(buffer, globalObject);
+        NAPI_RETURN_SUCCESS(env);
+    }
+
+    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(data), length }, createSharedTask<void(void*)>([](void*) {
+        // do nothing
+    }));
 
     auto* buffer = JSC::JSUint8Array::create(globalObject, subclassStructure, WTFMove(arrayBuffer), 0, length);
     NAPI_RETURN_IF_EXCEPTION(env);
+
+    // setup finalizer after creating the array. if it throws callers of napi_create_external_buffer are expected
+    // to free input
+    vm.heap.addFinalizer(buffer, [env = WTF::Ref<NapiEnv>(*env), finalize_cb, data, finalize_hint](JSCell* cell) -> void {
+        NAPI_LOG("external buffer finalizer");
+        env->doFinalizer(finalize_cb, data, finalize_hint);
+    });
 
     *result = toNapi(buffer, globalObject);
     NAPI_RETURN_SUCCESS(env);

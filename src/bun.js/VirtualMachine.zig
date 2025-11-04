@@ -722,7 +722,7 @@ pub inline fn autoGarbageCollect(this: *const VirtualMachine) void {
 
 pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
     Output.debug("Reloading...", .{});
-    const should_clear_terminal = !this.transpiler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
+    const should_clear_terminal = !this.transpiler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors_stdout);
     if (this.hot_reload == .watch) {
         Output.flush();
         bun.reloadProcess(
@@ -1978,7 +1978,7 @@ pub fn printException(
         .stack_check = bun.StackCheck.init(),
     };
     defer formatter.deinit();
-    if (Output.enable_ansi_colors) {
+    if (Output.enable_ansi_colors_stderr) {
         this.printErrorlikeObject(exception.value(), exception, exception_list, &formatter, Writer, writer, true, allow_side_effects);
     } else {
         this.printErrorlikeObject(exception.value(), exception, exception_list, &formatter, Writer, writer, false, allow_side_effects);
@@ -2017,7 +2017,7 @@ pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exceptio
             .error_display_level = .full,
         };
         defer formatter.deinit();
-        switch (Output.enable_ansi_colors) {
+        switch (Output.enable_ansi_colors_stderr) {
             inline else => |enable_colors| this.printErrorlikeObject(result, null, exception_list, &formatter, @TypeOf(writer), writer, enable_colors, true),
         }
     }

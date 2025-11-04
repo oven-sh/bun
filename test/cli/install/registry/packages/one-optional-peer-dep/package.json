@@ -1,0 +1,73 @@
+{
+	"name": "one-optional-peer-dep",
+	"versions": {
+		"1.0.1": {
+			"name": "one-optional-peer-dep",
+			"version": "1.0.1",
+			"peerDependencies": {
+				"no-deps": "^1.0.0"
+			},
+			"_id": "one-optional-peer-dep@1.0.1",
+			"_integrity": "sha512-tqKLkZX69BL7dsv8ldPBeNqypOS2QxPEyqdB48kbcf0oyPGzLK+tOuDFEK7U63H+PoGErF+ro7reQUztRyL/pA==",
+			"_nodeVersion": "24.3.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-tqKLkZX69BL7dsv8ldPBeNqypOS2QxPEyqdB48kbcf0oyPGzLK+tOuDFEK7U63H+PoGErF+ro7reQUztRyL/pA==",
+			"shasum": "70ab2e73a16d86c1ed2547889025df30b8534c71",
+			"dist": {
+				"integrity": "sha512-tqKLkZX69BL7dsv8ldPBeNqypOS2QxPEyqdB48kbcf0oyPGzLK+tOuDFEK7U63H+PoGErF+ro7reQUztRyL/pA==",
+				"shasum": "70ab2e73a16d86c1ed2547889025df30b8534c71",
+				"tarball": "http://http://localhost:4873/one-optional-peer-dep/-/one-optional-peer-dep-1.0.1.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.2": {
+			"name": "one-optional-peer-dep",
+			"version": "1.0.2",
+			"peerDependencies": {
+				"no-deps": "^1.0.0"
+			},
+			"peerDependenciesMeta": {
+				"no-deps": {
+					"optional": true
+				}
+			},
+			"_id": "one-optional-peer-dep@1.0.2",
+			"_integrity": "sha512-S25U8/QXGIKfn/AWtsce1aVMnDjDL+ykFtAufpsuKGad32NlsCpi9TDuXvzoTQ+MdaZpGV3c4xghUZUsNeMp4A==",
+			"_nodeVersion": "24.3.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-S25U8/QXGIKfn/AWtsce1aVMnDjDL+ykFtAufpsuKGad32NlsCpi9TDuXvzoTQ+MdaZpGV3c4xghUZUsNeMp4A==",
+			"shasum": "0fbf084260c3decd365aaaf2d72526ec2d01fe1d",
+			"dist": {
+				"integrity": "sha512-S25U8/QXGIKfn/AWtsce1aVMnDjDL+ykFtAufpsuKGad32NlsCpi9TDuXvzoTQ+MdaZpGV3c4xghUZUsNeMp4A==",
+				"shasum": "0fbf084260c3decd365aaaf2d72526ec2d01fe1d",
+				"tarball": "http://http://localhost:4873/one-optional-peer-dep/-/one-optional-peer-dep-1.0.2.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2025-10-31T21:56:37.922Z",
+		"created": "2025-10-31T21:48:54.585Z",
+		"1.0.1": "2025-10-31T21:48:54.585Z",
+		"1.0.2": "2025-10-31T21:56:37.922Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.2"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"one-optional-peer-dep-1.0.1.tgz": {
+			"shasum": "70ab2e73a16d86c1ed2547889025df30b8534c71",
+			"version": "1.0.1"
+		},
+		"one-optional-peer-dep-1.0.2.tgz": {
+			"shasum": "0fbf084260c3decd365aaaf2d72526ec2d01fe1d",
+			"version": "1.0.2"
+		}
+	},
+	"_rev": "",
+	"_id": "one-optional-peer-dep",
+	"readme": ""
+}

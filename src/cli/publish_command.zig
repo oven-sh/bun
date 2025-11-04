@@ -779,12 +779,12 @@ pub const PublishCommand = struct {
             const offset = 0;
             const padding = 1;
 
-            const horizontal = if (Output.enable_ansi_colors) "─" else "-";
-            const vertical = if (Output.enable_ansi_colors) "│" else "|";
-            const top_left = if (Output.enable_ansi_colors) "┌" else "|";
-            const top_right = if (Output.enable_ansi_colors) "┐" else "|";
-            const bottom_left = if (Output.enable_ansi_colors) "└" else "|";
-            const bottom_right = if (Output.enable_ansi_colors) "┘" else "|";
+            const horizontal = if (Output.enable_ansi_colors_stdout) "─" else "-";
+            const vertical = if (Output.enable_ansi_colors_stdout) "│" else "|";
+            const top_left = if (Output.enable_ansi_colors_stdout) "┌" else "|";
+            const top_right = if (Output.enable_ansi_colors_stdout) "┐" else "|";
+            const bottom_left = if (Output.enable_ansi_colors_stdout) "└" else "|";
+            const bottom_right = if (Output.enable_ansi_colors_stdout) "┘" else "|";
 
             const width = (padding * 2) + auth_url_str.len;
 

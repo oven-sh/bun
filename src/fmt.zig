@@ -707,12 +707,6 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
         check_for_unhighlighted_write: bool = true,
 
         redact_sensitive_information: bool = false,
-
-        pub const default: Options = .{
-            .enable_colors = Output.enable_ansi_colors,
-            .check_for_no_highlighting = true,
-            .redact_sensitive_information = false,
-        };
     };
 
     const ColorCode = enum {

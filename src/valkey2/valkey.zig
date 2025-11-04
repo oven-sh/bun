@@ -20,6 +20,116 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
     const SubscriptionHandlerId = u64;
     const SubscriptionChannelId = u64;
 
+    const _IrrecoverableFailureReason = union(enum) {
+        /// Authentication with the server failed.
+        auth_err: struct { msg: []const u8 },
+    };
+
+    // Why was a request dropped.
+    const _DropReason = union(enum) {
+        /// A critical error occurred and we are unable to continue.
+        irrecoverable_failure: _IrrecoverableFailureReason,
+        /// The client is nominally closing.
+        closing: void,
+    };
+
+    // Each message sent or received by the client has a context which is private to this client.
+    // User contexts are contained within this context too.
+    //
+    // Effectively, you can imagine a message as an onion which contains the following:
+    //   - private context (this type)
+    //     - user context
+    //   - message body
+    const RequestContext = union(enum) {
+        const Self = @This();
+
+        user_context: UserRequestContext,
+
+        /// Context for SUBSCRIBE requests. Used to track listener and channel pair.
+        subscribe_context: struct {
+            user_context: UserRequestContext,
+
+            handler_id: u64,
+            channel_ids: std.ArrayList(SubscriptionChannelId),
+
+            request_type: enum { subscribe, unsubscribe },
+
+            pub fn deinit(self: *@This()) void {
+                self.channel_ids.deinit();
+            }
+        },
+
+        unsubscribe_context: struct {
+            user_context: UserRequestContext,
+
+            handler_id: union(enum) { id: u64, all: void },
+            channel_ids: std.ArrayList(SubscriptionChannelId),
+
+            request_type: enum { subscribe, unsubscribe },
+
+            pub fn deinit(self: *@This()) void {
+                self.channel_ids.deinit();
+            }
+        },
+
+        pub fn failOom(self: *Self, listener: *ValkeyListener) void {
+            switch (self.*) {
+                .user_context => |*ctx| {
+                    ctx.failOom(listener);
+                },
+                .subscribe_context => |*ctx| {
+                    ctx.user_context.failOom(listener);
+                    ctx.deinit();
+                },
+                .unsubscribe_context => |*ctx| {
+                    ctx.user_context.failOom(listener);
+                    ctx.deinit();
+                },
+            }
+        }
+
+        pub fn drop(self: *Self, reason: _DropReason, callbacks: *ValkeyListener) void {
+            switch (self.*) {
+                .user_context => |*ctx| {
+                    callbacks.onRequestDropped(ctx, reason);
+                },
+                .subscribe_context => |*ctx| {
+                    callbacks.onRequestDropped(&ctx.user_context, reason);
+                    ctx.deinit();
+                },
+                .unsubscribe_context => |*ctx| {
+                    callbacks.onRequestDropped(&ctx.user_context, reason);
+                    ctx.deinit();
+                },
+            }
+        }
+
+        pub fn succeed(self: *Self, value: *protocol.RESPValue, callbacks: *ValkeyListener) !void {
+            return switch (self.*) {
+                .user_context => |*ctx| callbacks.onResponse(ctx, value),
+                .subscribe_context => |*ctx| {
+                    try callbacks.onResponse(&ctx.user_context, value);
+                    ctx.deinit();
+                },
+                .unsubscribe_context => |*ctx| {
+                    try callbacks.onResponse(&ctx.user_context, value);
+                    ctx.deinit();
+                },
+            };
+        }
+    };
+
+    // Types internal to the ValkeyClient implementation which encode a request pending to be
+    // sent to the server.
+    //
+    // Unfortunately, the RequestContext does need a tag to track whether it is a regular
+    // request, a subscribe request or an unsubscribe request.
+    //
+    // See the docblock above `enqueueRequestInFlight`.
+    const QueuedRequestType = QueuedRequest(RequestContext);
+    const InternalRequestType = Request(RequestContext);
+
+    // This type tracks all active Pub/Sub subscriptions.
     const SubscriptionTracker = struct {
         const Self = @This();
 
@@ -31,18 +141,52 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             handler_id: SubscriptionHandlerId,
         };
 
+        /// Object stored to track all subscriptions for a given channel.
+        const SubscriptionMapEntry = struct {
+            /// Subscriptions which have been requested to the server but have not been confirmed.
+            pending: std.ArrayList(SubscriptionVectorEntry),
+            /// Subscriptions which have been confirmed by the server and are actively listening.
+            active: std.ArrayList(SubscriptionVectorEntry),
+        };
+
+        /// Marker used to indicate that a channel ID has been confirmed.
+        pub const channel_id_tombstone: SubscriptionChannelId = 0;
+
         map: std.AutoHashMap(SubscriptionChannelId, SubscriptionMapEntry),
         channel_map: std.StringArrayHashMap(SubscriptionChannelId),
         _next_channel_id: SubscriptionChannelId,
         _allocator: std.mem.Allocator,
 
+        inflight_subs: bun.LinearFifo(QueuedRequestType, .Dynamic),
+        inflight_unsubs: bun.LinearFifo(QueuedRequestType, .Dynamic),
+
         pub fn init(allocator: std.mem.Allocator) Self {
             return Self{
                 .map = .init(allocator),
                 .channel_map = .init(allocator),
-                ._next_channel_id = 0,
+                .inflight_subs = .init(allocator),
+                .inflight_unsubs = .init(allocator),
+                ._next_channel_id = 1,
                 ._allocator = allocator,
             };
+        }
+
+        pub fn deinit(self: *Self) void {
+            var it = self.channel_map.iterator();
+            while (it.next()) |entry| {
+                self._allocator.free(entry.key_ptr.*);
+            }
+            self.channel_map.deinit();
+
+            var map_it = self.map.iterator();
+            while (map_it.next()) |entry| {
+                entry.value_ptr.active.deinit();
+                entry.value_ptr.pending.deinit();
+            }
+            self.map.deinit();
+
+            self.inflight_subs.deinit();
+            self.inflight_unsubs.deinit();
         }
 
         /// Get an existing channel ID for a given channel name.
@@ -54,10 +198,14 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
         fn newChannelId(self: *Self) SubscriptionChannelId {
             const new_id = self._next_channel_id;
             self._next_channel_id += 1;
-            while (self.map.get(self._next_channel_id) != null) {
+
+            while (self.map.get(self._next_channel_id) != null or
+                self._next_channel_id == channel_id_tombstone)
+            {
                 @branchHint(.cold);
                 self._next_channel_id += 1;
             }
+
             return new_id;
         }
 
@@ -100,11 +248,11 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             self: *Self,
             channel_id: SubscriptionChannelId,
             handler_id: SubscriptionHandlerId,
-        ) !void {
-            Self.debug("{*} Promoting pending handler_id={} to active on channel_id {}...", .{
+        ) error{OutOfMemory}!void {
+            Self.debug("{*}.promoteChannelToActive({}, {})", .{
                 self,
-                handler_id,
                 channel_id,
+                handler_id,
             });
 
             const map_entry = self.map.getPtr(channel_id) orelse {
@@ -135,7 +283,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             try map_entry.active.append(listener);
         }
 
-        fn removeActiveForChannel(self: *Self, channel_id: SubscriptionChannelId) !void {
+        fn removeActiveForChannel(self: *Self, channel_id: SubscriptionChannelId) void {
             Self.debug("{*}.removeActiveForChannel({})", .{ self, channel_id });
 
             const map_entry = self.map.getPtr(channel_id) orelse {
@@ -214,47 +362,6 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             }
         }
 
-        pub fn receiveMessage(
-            self: *Self,
-            msg: protocol.Push,
-            client_listener: *ValkeyListener,
-        ) !void {
-            Self.debug("{*} Receiving push message of kind {s}...", .{ self, msg.kind });
-
-            const key = protocol.SubscriptionPushMessageKind.fromString(msg.kind) orelse {
-                return error.InvalidPush;
-            };
-
-            const channel = msg.data[0].SimpleString;
-
-            switch (key) {
-                .message => {
-                    const payload = msg.data[1];
-                    if (self.map.getPtr(channel)) |vecs| {
-                        for (vecs.active.items) |*active| {
-                            active.listener(active.handler_id, client_listener, channel, payload);
-                        }
-                    }
-                },
-                .subscribe => {
-                    const sub_count = msg.data[1].Integer;
-                    _ = sub_count;
-                },
-                .unsubscribe => {
-                    const sub_count = msg.data[1].Integer;
-                    _ = sub_count;
-                },
-            }
-        }
-
-        /// Object stored to track all subscriptions for a given channel.
-        const SubscriptionMapEntry = struct {
-            /// Subscriptions which have been requested to the server but have not been confirmed.
-            pending: std.ArrayList(SubscriptionVectorEntry),
-            /// Subscriptions which have been confirmed by the server and are actively listening.
-            active: std.ArrayList(SubscriptionVectorEntry),
-        };
-
         /// Estimate the total number of bytes used by this client. This includes @sizeof(Self).
         fn memoryUsage(self: *const Self) usize {
             // TODO(markovejnovic): Implement
@@ -267,23 +374,6 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             // Since we erase channels from the channel map if they have no listeners, it is safe
             // ot only check the channel map.
             return self.channel_map.count() > 0;
-        }
-
-        pub fn deinit(self: *Self) void {
-            // Free all allocated channel names
-            var it = self.channel_map.iterator();
-            while (it.next()) |entry| {
-                self._allocator.free(entry.key_ptr.*);
-            }
-            self.channel_map.deinit();
-
-            // Free all subscription entries
-            var map_it = self.map.iterator();
-            while (map_it.next()) |entry| {
-                entry.value_ptr.active.deinit();
-                entry.value_ptr.pending.deinit();
-            }
-            self.map.deinit();
         }
     };
 
@@ -301,101 +391,6 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             FailedToOpenSocket,
         };
 
-        /// Each message sent or received by the client has a context which is private to this
-        /// client. User contexts are contained within this context too.
-        ///
-        /// Effectively, you can imagine a message as an onion which contains the following:
-        ///   - private context (this type)
-        ///     - user context
-        ///   - message body
-        const RequestContext = union(enum) {
-            user_context: UserRequestContext,
-
-            /// Context for SUBSCRIBE requests. Used to track listener and channel pair.
-            subscribe_context: struct {
-                user_context: UserRequestContext,
-
-                handler_id: u64,
-                channel_ids: std.ArrayList(SubscriptionChannelId),
-
-                request_type: enum { subscribe, unsubscribe },
-
-                pub fn deinit(self: *@This()) void {
-                    self.channel_ids.deinit();
-                }
-            },
-
-            unsubscribe_context: struct {
-                user_context: UserRequestContext,
-
-                handler_id: union(enum) {
-                    id: u64,
-                    all: void,
-                },
-                channel_ids: std.ArrayList(SubscriptionChannelId),
-
-                request_type: enum { subscribe, unsubscribe },
-
-                pub fn deinit(self: *@This()) void {
-                    self.channel_ids.deinit();
-                }
-            },
-
-            pub fn failOom(self: *RequestContext, listener: *ValkeyListener) void {
-                switch (self.*) {
-                    .user_context => |*ctx| {
-                        ctx.failOom(listener);
-                    },
-                    .subscribe_context => |*ctx| {
-                        ctx.user_context.failOom(listener);
-                        ctx.deinit();
-                    },
-                    .unsubscribe_context => |*ctx| {
-                        ctx.user_context.failOom(listener);
-                        ctx.deinit();
-                    },
-                }
-            }
-
-            pub fn drop(
-                self: *RequestContext,
-                reason: DropReason,
-                callbacks: *ValkeyListener,
-            ) void {
-                switch (self.*) {
-                    .user_context => |*ctx| {
-                        callbacks.onRequestDropped(ctx, reason);
-                    },
-                    .subscribe_context => |*ctx| {
-                        callbacks.onRequestDropped(&ctx.user_context, reason);
-                        ctx.deinit();
-                    },
-                    .unsubscribe_context => |*ctx| {
-                        callbacks.onRequestDropped(&ctx.user_context, reason);
-                        ctx.deinit();
-                    },
-                }
-            }
-
-            pub fn succeed(
-                self: *RequestContext,
-                value: *protocol.RESPValue,
-                callbacks: *ValkeyListener,
-            ) !void {
-                return switch (self.*) {
-                    .user_context => |*ctx| callbacks.onResponse(ctx, value),
-                    .subscribe_context => |*ctx| {
-                        try callbacks.onResponse(&ctx.user_context, value);
-                        ctx.deinit();
-                    },
-                    .unsubscribe_context => |*ctx| {
-                        try callbacks.onResponse(&ctx.user_context, value);
-                        ctx.deinit();
-                    },
-                };
-            }
-        };
-
         /// All requests must be given a context which is passed back when the response is
         /// received.
         pub const RequestType = Request(UserRequestContext);
@@ -403,11 +398,11 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
         /// All responses are paired with the original request context.
         pub const ResponseType = Response(UserRequestContext);
 
-        /// Types internal to the ValkeyClient implementation which encode a request pending to be
-        /// sent to the server.
-        const QueuedRequestType = QueuedRequest(RequestContext);
-        const InternalRequestType = Request(RequestContext);
-        const InternalResponseType = Request(RequestContext);
+        /// A critical error occurred and we are unable to continue.
+        pub const IrrecoverableFailureReason = _IrrecoverableFailureReason;
+
+        /// Why was a request dropped.
+        pub const DropReason = _DropReason;
 
         // TODO(markovejnovic): @taylordotfish mentions that this is a code smell because
         // std.mem.Allocator is known to be a footgun.
@@ -728,6 +723,8 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
 
         /// Invoked by onData for each ingress packet.
         fn onPacket(self: *Self, value: *protocol.RESPValue) !void {
+            Self.debug("{*}.onPacket({})", .{ self, value });
+
             // If we receive a packet while not linked, something's really fucked up.
             bun.debugAssert(self._state == .linked);
 
@@ -741,10 +738,210 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
                 // Consequently, onNormalPacket will handle both normal responses and subscription
                 // responses, and will delegate behavior.
                 .normal, .subscriber => {
+                    // Seeing the message here is a-OK -- all we have to do is pass it on.
+                    if (value.* == .Push) {
+                        return self.onPushPacket(&value.Push);
+                    }
+
                     try self.onNormalPacket(value);
                 },
                 .authenticating => {
+                    // If we receive PUSH messages while authenticating, that likely means we hit
+                    // some odd edge case.
+                    // There are two options here:
+                    //   1. Drop the message as if it wasn't received -- this handles the semantics
+                    //      nicer and is less surprising to the user.
+                    //   2. Pass the message on to the user. In some ways, this is more surprising,
+                    //      but it does allow the user to see messages that may have been sent a
+                    //      split second before authentication dropped and we entered the
+                    //      reconnecting state.
+                    if (value.* == .Push) {
+                        Self.debug("{*} Received out-of-band PUSH message while " ++
+                            "authenticating, dropping...", .{self});
+                        return;
+                    }
+
                     try self.onAuthenticatingPacket(value);
+                },
+            }
+        }
+
+        /// Handle out-of-band packets that are not tied to specific requests.
+        ///
+        /// This cannot throw errors, since throwing errors means that the client would be crashed.
+        fn onPushPacket(self: *Self, msg: *protocol.Push) void {
+            Self.debug("{*}.onPushPacket(...)", .{self});
+
+            const msg_kind = protocol.SubscriptionPushMessageKind.fromString(msg.kind) orelse {
+                bun.Output.debugPanic(
+                    "{*}.onPushPacket received push message with invalid kind {s}",
+                    .{ self, msg.kind },
+                );
+
+                // Just ignore it and move on.
+                return;
+            };
+
+            const channel_value = msg.data[0];
+            const channel = channel_value.BulkString orelse {
+                bun.Output.debugPanic(
+                    "{*}.onPushPacket received push message with invalid channel value {any}",
+                    .{ self, channel_value },
+                );
+
+                // Just ignore it and move on.
+                return;
+            };
+
+            const conn_channel_id = self._subscriptions.existingChannelId(channel) orelse {
+                // We received a push message for a channel we did not actually end up
+                // subscribing to.
+                bun.Output.debugPanic(
+                    "{*}.onPushPacket received subscribe message for unknown channel {s}",
+                    .{ self, channel },
+                );
+
+                // Just ignore it and move on.
+                return;
+            };
+
+            switch (msg_kind) {
+                // This implementation for .subscribe and .unsubscribe will feel weird at first,
+                // but trust me, it needs to be this way. subscribe_context stores ONE handler_id
+                // and MULTIPLE channel_ids, but the server responds with multiple PUSH(subscribe,
+                // ...) messages, one per channel.
+                //
+                // Note that every subscribe request has a corresponding promise that we need to
+                // resolve when every single channel has been subscribed to. Therefore, we need to
+                // peek at the in-flight queue entry, mark the channel that the server confirmed
+                // we're subscribed to, and if all channels are confirmed, resolve the promise.
+                .subscribe => {
+                    if (self._subscriptions.inflight_subs.count == 0) {
+                        Self.debug(
+                            "Received packet but no corresponding request is in flight.",
+                            .{},
+                        );
+                        return;
+                    }
+
+                    const req = self._subscriptions.inflight_subs.peekItemMut(0);
+                    const req_ctx = if (req.context == .subscribe_context)
+                        &req.context.subscribe_context
+                    else {
+                        bun.Output.debugPanic(
+                            "Received non-subscribe message in subscribe channel",
+                            .{},
+                        );
+                        return;
+                    };
+
+                    // We scan the array to find the channel ID that matches conn_channel_id, and
+                    // mark it as resolved by setting it to the tombstone value. While scanning, we
+                    // also fold whether all channels have been resolved.
+                    const all_channels_resolved = scan_loop: {
+                        var all_resolved = true;
+
+                        for (req_ctx.channel_ids.items, 0..) |ch_id, idx| {
+                            if (ch_id == conn_channel_id) {
+                                req_ctx.channel_ids.items[idx] =
+                                    SubscriptionTracker.channel_id_tombstone;
+
+                                bun.handleOom(self._subscriptions.promotePendingListenerToActive(
+                                    ch_id,
+                                    req_ctx.handler_id,
+                                ));
+
+                                // If all_resolved is already false, there's no need to scan
+                                // further.
+                                if (!all_resolved) {
+                                    break :scan_loop all_resolved;
+                                }
+                            } else {
+                                all_resolved = all_resolved and
+                                    (ch_id == SubscriptionTracker.channel_id_tombstone);
+                            }
+                        }
+
+                        break :scan_loop all_resolved;
+                    };
+
+                    if (all_channels_resolved) {
+                        defer self._subscriptions.inflight_subs.discard(1);
+                        try self._callbacks.onResponse(&req_ctx.user_context, &channel_value);
+                    }
+                },
+                .unsubscribe => {
+                    if (self._subscriptions.inflight_unsubs.count == 0) {
+                        Self.debug(
+                            "Received packet but no corresponding request is in flight.",
+                            .{},
+                        );
+                        return;
+                    }
+
+                    const req = self._subscriptions.inflight_unsubs.peekItemMut(0);
+                    const req_ctx = if (req.context == .unsubscribe_context)
+                        &req.context.unsubscribe_context
+                    else {
+                        bun.Output.debugPanic(
+                            "Received non-unsubscribe message in unsubscribe channel",
+                            .{},
+                        );
+                        return;
+                    };
+
+                    // We scan the array to find the channel ID that matches conn_channel_id, and
+                    // mark it as resolved by setting it to the tombstone value. While scanning, we
+                    // also fold whether all channels have been resolved.
+                    const all_channels_resolved = scan_loop: {
+                        switch (req_ctx.handler_id) {
+                            .all => {
+                                // The user request we unsubscribe from everything. Easy enough.
+                                for (req_ctx.channel_ids.items) |ch_id| {
+                                    self._subscriptions.removeActiveForChannel(ch_id);
+                                }
+                                break :scan_loop true;
+                            },
+                            .id => |handler_id| {
+                                var all_resolved = true;
+
+                                for (req_ctx.channel_ids.items, 0..) |ch_id, idx| {
+                                    if (ch_id == conn_channel_id) {
+                                        req_ctx.channel_ids.items[idx] =
+                                            SubscriptionTracker.channel_id_tombstone;
+
+                                        bun.handleOom(self._subscriptions.removeActiveHandler(
+                                            ch_id,
+                                            handler_id,
+                                        ));
+
+                                        // If all_resolved is already false, there's no need to
+                                        // scan further.
+                                        if (!all_resolved) {
+                                            break :scan_loop all_resolved;
+                                        }
+                                    } else {
+                                        all_resolved = all_resolved and
+                                            (ch_id == SubscriptionTracker.channel_id_tombstone);
+                                    }
+                                }
+
+                                break :scan_loop all_resolved;
+                            },
+                        }
+                    };
+
+                    if (all_channels_resolved) {
+                        defer self._subscriptions.inflight_unsubs.discard(1);
+                        try self._callbacks.onResponse(&req_ctx.user_context, &channel_value);
+                    }
+                },
+                .message => {
+                    if (self._subscriptions.map.getPtr(conn_channel_id)) |vecs| {
+                        for (vecs.active.items) |*active| {
+                            self._callbacks.onPush(active.handler_id, channel, &msg.data[1]);
+                        }
+                    }
                 },
             }
         }
@@ -764,51 +961,11 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
                         value.* = .{ .Boolean = value.Integer > 0 };
                     }
                 },
-                .subscribe_context => |*ctx| {
-                    switch (ctx.request_type) {
-                        .subscribe => {
-                            for (ctx.channel_ids.items) |channel_id| {
-                                try self._subscriptions.promotePendingListenerToActive(
-                                    channel_id,
-                                    ctx.handler_id,
-                                );
-                            }
-                        },
-                        else => {
-                            bun.Output.debugPanic(
-                                "Unexpected request type {} in subscribe_context",
-                                .{ctx.request_type},
-                            );
-                        },
-                    }
-                },
-                .unsubscribe_context => |*ctx| {
-                    for (ctx.channel_ids.items) |channel_id| {
-                        switch (ctx.request_type) {
-                            .unsubscribe => {
-                                switch (ctx.handler_id) {
-                                    .all => {
-                                        // They requested we drop all handlers for this channel.
-                                        for (ctx.channel_ids.items) |ch_id| {
-                                            try self._subscriptions.removeActiveForChannel(ch_id);
-                                        }
-                                    },
-                                    .id => |handler_id| {
-                                        try self._subscriptions.removeActiveHandler(
-                                            channel_id,
-                                            handler_id,
-                                        );
-                                    },
-                                }
-                            },
-                            else => {
-                                bun.Output.debugPanic(
-                                    "Unexpected request type {} in unsubscribe_context",
-                                    .{ctx.request_type},
-                                );
-                            },
-                        }
-                    }
+                .subscribe_context, .unsubscribe_context => {
+                    bun.Output.debugPanic(
+                        "{*}.onNormalPacket({}) receive a subscribe/unsubscribe packet.",
+                        .{ self, value },
+                    );
                 },
             }
 
@@ -1336,20 +1493,6 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             return .{ .context = self };
         }
 
-        /// A critical error occurred and we are unable to continue.
-        pub const IrrecoverableFailureReason = union(enum) {
-            /// Authentication with the server failed.
-            auth_err: struct { msg: []const u8 },
-        };
-
-        /// Why was a request dropped.
-        pub const DropReason = union(enum) {
-            /// A critical error occurred and we are unable to continue.
-            irrecoverable_failure: IrrecoverableFailureReason,
-            /// The client is nominally closing.
-            closing: void,
-        };
-
         /// If there's any outbound, drop them and notify the listener.
         fn dropAllOutboundMessages(self: *Self, reason: DropReason) void {
             for (self._outbound_queue.readableSliceMut(0)) |*req| {
@@ -1441,7 +1584,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
                 req.command.args.len(),
             });
 
-            var req_internal = Self.InternalRequestType{
+            var req_internal = InternalRequestType{
                 .command = req.command,
                 .context = .{
                     .user_context = req.context,
@@ -1452,7 +1595,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
 
         /// Attempt to enqueue a request for sending to the server. This may choose to skip the
         /// queue if appropriate.
-        fn enqueueRequest(self: *Self, req: *Self.InternalRequestType) !void {
+        fn enqueueRequest(self: *Self, req: *InternalRequestType) !void {
             const conn_opts = self._connection_params.options;
 
             const can_pipeline = req.command.canBePipelined() and conn_opts.enable_auto_pipelining;
@@ -1495,7 +1638,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
                 return;
             };
 
-            bun.handleOom(self._inflight_queue.writeItem(queued_request));
+            self.enqueueRequestInFlight(queued_request);
             self._state.flushEgressBuffer();
         }
 
@@ -1525,6 +1668,26 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             self.auto_flusher.registered = false;
         }
 
+        /// We need to be able to queue all our messages together in the same outbox, but, then,
+        /// depending on the message type, when they actually get flushed, we need to split the
+        /// in-flight status across different FIFOs. - Regular requests go to the regular in-flight
+        /// queue. - Subscribe requests have their own queue. - Unsubscribe requests have their own
+        /// queue.
+        ///
+        /// The reason we do it this way is because subscribe/unsubscribe requests' responses
+        /// arrive out of band. Effectively, they race with normal requests, while normal requests
+        /// themselves are strictly ordered.
+        ///
+        /// To solve this problem, we have separate queues for each of the three request types, but
+        /// a single outbox queue.
+        fn enqueueRequestInFlight(self: *Self, req: QueuedRequestType) void {
+            bun.handleOom(switch (req.context) {
+                .subscribe_context => self._subscriptions.inflight_subs.writeItem(req),
+                .unsubscribe_context => self._subscriptions.inflight_unsubs.writeItem(req),
+                .user_context => self._inflight_queue.writeItem(req),
+            });
+        }
+
         pub fn onAutoFlush(self: *Self) bool {
             Self.debug("{*}.onAutoFlush()", .{self});
 
@@ -1546,7 +1709,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
                         break;
                     }
 
-                    bun.handleOom(self._inflight_queue.writeItem(req.*));
+                    self.enqueueRequestInFlight(req.*);
 
                     total += 1;
                     total_bytelength += req.serialized_data.len;

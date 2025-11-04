@@ -70,10 +70,11 @@ pub fn valkeyErrorToJS(
             return globalObject.takeException(error.JSError),
     };
 
-    if (msg_fmt) |fmt| {
-        return error_code.fmt(globalObject, fmt, msg_args);
-    }
-    return error_code.fmt(globalObject, "Valkey error: {s}", .{@errorName(err)});
+    return error_code.fmt(
+        globalObject,
+        if (msg_fmt) |f| f else "Valkey error: {s}",
+        if (msg_fmt != null) msg_args else .{@errorName(err)},
+    );
 }
 
 // RESP protocol types
@@ -187,11 +188,7 @@ pub const RESPValue = union(RESPType) {
             .Error => |str| try writer.writeAll(str),
             .Integer => |int| try writer.print("{d}", .{int}),
             .BulkString => |maybe_str| {
-                if (maybe_str) |str| {
-                    try writer.writeAll(str);
-                } else {
-                    try writer.writeAll("(nil)");
-                }
+                try writer.writeAll(if (maybe_str) |str| str else "(nil)");
             },
             .Array => |array| {
                 try writer.writeAll("[");
@@ -205,7 +202,10 @@ pub const RESPValue = union(RESPType) {
             .Double => |d| try writer.print("{d}", .{d}),
             .Boolean => |b| try writer.print("{}", .{b}),
             .BlobError => |str| try writer.print("Error: {s}", .{str}),
-            .VerbatimString => |verbatim| try writer.print("{s}:{s}", .{ verbatim.format, verbatim.content }),
+            .VerbatimString => |verbatim| try writer.print("{s}:{s}", .{
+                verbatim.format,
+                verbatim.content,
+            }),
             .Map => |entries| {
                 try writer.writeAll("{");
                 for (entries, 0..) |entry, i| {
@@ -249,7 +249,10 @@ pub const RESPValue = union(RESPType) {
         }
     }
 
-    pub fn toJS(self: *RESPValue, globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+    pub fn toJS(
+        self: *const RESPValue,
+        globalObject: *jsc.JSGlobalObject,
+    ) bun.JSError!jsc.JSValue {
         return self.toJSWithOptions(globalObject, .{});
     }
 
@@ -257,7 +260,11 @@ pub const RESPValue = union(RESPType) {
         return_as_buffer: bool = false,
     };
 
-    fn valkeyStrToJSValue(globalObject: *jsc.JSGlobalObject, str: []const u8, options: *const ToJSOptions) bun.JSError!jsc.JSValue {
+    fn valkeyStrToJSValue(
+        globalObject: *jsc.JSGlobalObject,
+        str: []const u8,
+        options: *const ToJSOptions,
+    ) bun.JSError!jsc.JSValue {
         if (options.return_as_buffer) {
             // TODO: handle values > 4.7 GB
             return try jsc.ArrayBuffer.createBuffer(globalObject, str);
@@ -266,10 +273,18 @@ pub const RESPValue = union(RESPType) {
         }
     }
 
-    pub fn toJSWithOptions(self: *RESPValue, globalObject: *jsc.JSGlobalObject, options: ToJSOptions) bun.JSError!jsc.JSValue {
+    pub fn toJSWithOptions(
+        self: *const RESPValue,
+        globalObject: *jsc.JSGlobalObject,
+        options: ToJSOptions,
+    ) bun.JSError!jsc.JSValue {
         switch (self.*) {
             .SimpleString => |str| return valkeyStrToJSValue(globalObject, str, &options),
-            .Error => |str| return jsc.Error.REDIS_INVALID_RESPONSE.fmt(globalObject, "{s}", .{str}),
+            .Error => |str| return jsc.Error.REDIS_INVALID_RESPONSE.fmt(
+                globalObject,
+                "{s}",
+                .{str},
+            ),
             .Integer => |int| return jsc.JSValue.jsNumber(int),
             .BulkString => |maybe_str| {
                 if (maybe_str) |str| {
@@ -289,8 +304,16 @@ pub const RESPValue = union(RESPType) {
             .Null => return jsc.JSValue.jsNull(),
             .Double => |d| return jsc.JSValue.jsNumber(d),
             .Boolean => |b| return jsc.JSValue.jsBoolean(b),
-            .BlobError => |str| return jsc.Error.REDIS_INVALID_RESPONSE.fmt(globalObject, "{s}", .{str}),
-            .VerbatimString => |verbatim| return valkeyStrToJSValue(globalObject, verbatim.content, &options),
+            .BlobError => |str| return jsc.Error.REDIS_INVALID_RESPONSE.fmt(
+                globalObject,
+                "{s}",
+                .{str},
+            ),
+            .VerbatimString => |verbatim| return valkeyStrToJSValue(
+                globalObject,
+                verbatim.content,
+                &options,
+            ),
             .Map => |entries| {
                 var js_obj = jsc.JSValue.createEmptyObjectWithNullPrototype(globalObject);
                 for (entries) |*entry| {
@@ -335,12 +358,11 @@ pub const RESPValue = union(RESPType) {
             },
             .BigNumber => |str| {
                 // Try to parse as number if possible
-                if (std.fmt.parseInt(i64, str, 10)) |int| {
-                    return jsc.JSValue.jsNumber(int);
-                } else |_| {
+                return if (std.fmt.parseInt(i64, str, 10)) |int|
+                    jsc.JSValue.jsNumber(int)
+                else |_|
                     // If it doesn't fit in an i64, return as string
                     return bun.String.createUTF8ForJS(globalObject, str);
-                }
             },
         }
     }

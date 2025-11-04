@@ -39,7 +39,7 @@ pub const JsValkey = struct {
             pub fn resolveWithRespValue(
                 self: *@This(),
                 go: *bun.jsc.JSGlobalObject,
-                value: *protocol.RESPValue,
+                value: *const protocol.RESPValue,
             ) void {
                 const loop = go.bunVM().eventLoop();
                 loop.enter();
@@ -92,7 +92,7 @@ pub const JsValkey = struct {
         pub fn onResponse(
             self: *@This(),
             ctx: *RequestContext,
-            value: *protocol.RESPValue,
+            value: *const protocol.RESPValue,
         ) !void {
             Self.debug("{*}.onResponse({})", .{ self, value });
             const go = self.parent()._global_obj;
@@ -109,6 +109,21 @@ pub const JsValkey = struct {
                     }
                 },
             }
+        }
+
+        /// TODO(markovejnovic): Is this signature correct? Can messages be things that aren't
+        ///                      necessarily []const u8?
+        pub fn onPush(
+            self: *@This(),
+            handler_id: u64,
+            channel: []const u8,
+            message: *const protocol.RESPValue,
+        ) void {
+            Self.debug("{*}.onPush({}, {s}, {s})", .{ self, handler_id, channel, message });
+            const go = self.parent()._global_obj;
+            _ = go;
+
+            // TODO(markovejnovic): Call the callback.
         }
 
         pub fn onConnectError(self: *@This()) void {

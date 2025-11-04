@@ -1,5 +1,6 @@
 import * as algo from "_util/algo";
 import * as random from "_util/random";
+import * as promises from "_util/promises";
 import { RedisClient2 } from "bun";
 import { afterEach, describe, expect, it, test } from "bun:test";
 import { describeValkey, Url, ValkeyContext, ValkeyFaker } from "./test-utils";
@@ -6628,7 +6629,42 @@ describeValkey(
       test.each(ValkeyFaker.channels(randomEngine, 4))("subscribing to %s does not fail", async (channel: string) => {
         const client = await ctx.connectedClient();
         await client.subscribe(channel, () => {});
+        console.log(`Subscribed to channel: ${channel}`);
         await client.unsubscribe(channel);
+        console.log(`Unsubscribed from channel: ${channel}`);
+      });
+
+      test("setting in subscriber to channel %s does not fail", async () => {
+        const channel = "subscribe-test";
+        const key = "subscribe-test-key";
+        const value = "subscribe-test-value";
+
+        const client = await ctx.connectedClient();
+        await client.subscribe(channel, () => {});
+        await client.set(key, value);
+        await client.unsubscribe(channel);
+      });
+
+      test("subscribing to a channel receives messages", async () => {
+        const TEST_MESSAGE_COUNT = 128;
+        const subscriber = await ctx.connectedClient();
+        const testChannel = "message-receive-test";
+        const testMessage = "hello world";
+
+        const counter = new promises.AwaitableCounter();
+        await subscriber.subscribe(testChannel, (message: string, channel: string) => {
+          counter.increment();
+          expect(channel).toBe(testChannel);
+          expect(message).toBe(testMessage);
+        });
+
+        Array.from({ length: TEST_MESSAGE_COUNT }).forEach(async () => {
+          expect(await subscriber.publish(testChannel, testMessage)).toBe(1);
+        });
+
+        await counter.untilValue(TEST_MESSAGE_COUNT);
+
+        await subscriber.unsubscribe(testChannel);
       });
     });
   },

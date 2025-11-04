@@ -172,7 +172,7 @@ declare module "bun:test" {
     /**
      * Mock a module
      */
-    module: typeof mock.module;
+    mock: typeof mock.module;
     /**
      * Restore all mocks to their original implementation
      */

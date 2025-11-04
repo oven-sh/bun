@@ -40,6 +40,8 @@ test("inline snapshot", () => {
 
 When you run the test, Bun automatically updates the test file itself with the generated snapshot string. This makes the tests more portable and easier to understand, since the expected output is right next to the test.
 
+Indentation is automatically detected and preserved when updating snapshots, making test files more readable.
+
 ### Using inline snapshots
 
 1. Write your test with `.toMatchInlineSnapshot()`

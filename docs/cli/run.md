@@ -228,6 +228,14 @@ $ bun --smol run index.tsx
 
 This causes the garbage collector to run more frequently, which can slow down execution. However, it can be useful in environments with limited memory. Bun automatically adjusts the garbage collector's heap size based on the available memory (accounting for cgroups and other memory limits) with and without the `--smol` flag, so this is mostly useful for cases where you want to make the heap size grow more slowly.
 
+## `--zero-fill-buffers`
+
+Force all newly allocated buffers to be zero-filled for improved security. When enabled, methods like `Buffer.allocUnsafe()` will always return zero-filled buffers.
+
+```bash
+$ bun --zero-fill-buffers run script.js
+```
+
 ## `--user-agent`
 
 **`--user-agent <string>`** - Set User-Agent header for all `fetch()` requests:

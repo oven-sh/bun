@@ -306,14 +306,14 @@ const SharedData = struct {
 
     /// URL and proxy buffer (setup on main thread, read by HTTP thread)
     /// This is url + proxy memory buffer and is owned by FetchTasklet
-    url_proxy_buffer: []const u8 = "",
+    url_proxy_buffer: bun.ptr.Owned([]const u8),
 
     /// TLS certificate validation setting (read by HTTP thread)
     reject_unauthorized: bool = true,
 
     /// Custom hostname for TLS certificate validation
     /// Only allocated if custom checkServerIdentity function is provided
-    hostname: ?[]u8 = null,
+    hostname: ?bun.ptr.Owned([]u8) = null,
 
     fn init(allocator: std.mem.Allocator) !SharedData {
         return SharedData{
@@ -324,6 +324,7 @@ const SharedData = struct {
             .scheduled_response_buffer = try MutableString.init(allocator, 0),
             .has_schedule_callback = std.atomic.Value(bool).init(false),
             .request_headers = Headers{ .allocator = allocator },
+            .url_proxy_buffer = bun.ptr.Owned([]const u8).fromRaw(&.{}),
         };
     }
 
@@ -337,12 +338,10 @@ const SharedData = struct {
         self.request_headers.entries.deinit(allocator);
         self.request_headers.buf.deinit(allocator);
         // Clean up URL proxy buffer
-        if (self.url_proxy_buffer.len > 0) {
-            allocator.free(self.url_proxy_buffer);
-        }
+        self.url_proxy_buffer.deinit();
         // Clean up hostname
-        if (self.hostname) |hostname| {
-            allocator.free(hostname);
+        if (self.hostname) |*hostname| {
+            hostname.deinit();
         }
         // request_body_streaming_buffer is handled elsewhere (ref counted)
     }
@@ -2025,8 +2024,8 @@ pub const FetchTasklet = struct {
         // PHASE 7.4 Part 3 & 4: Set fields in shared container
         fetch_tasklet.shared.upgraded_connection = fetch_options.upgraded_connection;
         fetch_tasklet.shared.request_headers = fetch_options.headers;
-        fetch_tasklet.shared.url_proxy_buffer = fetch_options.url_proxy_buffer;
-        fetch_tasklet.shared.hostname = fetch_options.hostname;
+        fetch_tasklet.shared.url_proxy_buffer = bun.ptr.Owned([]const u8).fromRaw(fetch_options.url_proxy_buffer);
+        fetch_tasklet.shared.hostname = if (fetch_options.hostname) |h| bun.ptr.Owned([]u8).fromRaw(h) else null;
         fetch_tasklet.shared.reject_unauthorized = fetch_options.reject_unauthorized;
 
         // PHASE 7.4 Part 3: signals now in shared container
@@ -2073,7 +2072,7 @@ pub const FetchTasklet = struct {
             fetch_options.redirect_type,
             .{
                 .http_proxy = proxy,
-                .hostname = fetch_options.hostname,
+                .hostname = if (fetch_tasklet.shared.hostname) |h| h.get() else null,
                 .signals = fetch_tasklet.shared.signals,
                 .unix_socket_path = fetch_options.unix_socket_path,
                 .disable_timeout = fetch_options.disable_timeout,

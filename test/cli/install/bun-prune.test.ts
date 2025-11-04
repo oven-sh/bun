@@ -41,9 +41,10 @@ describe.concurrent("bun prune", () => {
       stderr: "pipe",
     });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).toBe(0);
+    expect(stderr).toBe("");
     // Assert presence of usage/synopsis line
     expect(stdout).toContain("Usage");
     expect(stdout).toContain("bun prune");

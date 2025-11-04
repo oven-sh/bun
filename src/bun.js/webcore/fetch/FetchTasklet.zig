@@ -63,9 +63,6 @@ const MainThreadData = struct {
     /// Managed by AbortHandling wrapper
     abort_signal: ?*jsc.WebCore.AbortSignal = null,
 
-    /// Abort reason (owned)
-    abort_reason: jsc.Strong.Optional = .empty,
-
     /// Custom TLS check function (owned)
     check_server_identity: jsc.Strong.Optional = .empty,
 
@@ -93,7 +90,6 @@ const MainThreadData = struct {
     fn deinit(self: *MainThreadData) void {
         self.promise.deinit();
         self.readable_stream_ref.deinit();
-        self.abort_reason.deinit();
         self.check_server_identity.deinit();
         self.poll_ref.unref(self.javascript_vm);
         // abort_signal handled by AbortHandling wrapper
@@ -297,6 +293,10 @@ const SharedData = struct {
     signals: http.Signals = .{},
     signal_store: http.Signals.Store = .{},
 
+    /// === ERROR TRACKING (protected by mutex) ===
+    /// Unified error storage (replaces scattered abort_reason, result.fail tracking)
+    fetch_error: FetchError = .none,
+
     /// === REQUEST DATA (accessed by both threads) ===
     /// Request body streaming buffer (thread-safe, accessed from both threads)
     request_body_streaming_buffer: ?*http.ThreadSafeStreamBuffer = null,
@@ -334,6 +334,8 @@ const SharedData = struct {
         if (self.metadata) |*metadata| {
             metadata.deinit(self.response_buffer.allocator);
         }
+        // Clean up error storage
+        self.fetch_error.deinit();
         // Clean up request headers
         self.request_headers.entries.deinit(allocator);
         self.request_headers.buf.deinit(allocator);
@@ -489,7 +491,7 @@ const ResponseMetadataHolder = struct {
 /// Replaces scattered error tracking across multiple fields (result.fail, abort_reason, body error).
 const FetchError = union(enum) {
     none: void,
-    http_error: http.HTTPClientResult.Fail,
+    http_error: anyerror, // From HTTPClientResult.fail
     abort_error: jsc.Strong, // From AbortSignal
     js_error: jsc.Strong, // From JS callback (e.g., checkServerIdentity)
     tls_error: jsc.Strong, // From TLS validation
@@ -503,11 +505,15 @@ const FetchError = union(enum) {
     /// Convert error to JavaScript value for promise rejection
     fn toJS(self: FetchError, global: *JSGlobalObject) JSValue {
         return switch (self) {
-            .none => .jsUndefined(),
-            .http_error => |fail| fail.toJS(global),
-            .abort_error => |strong| strong.get() orelse .jsUndefined(),
-            .js_error => |strong| strong.get() orelse .jsUndefined(),
-            .tls_error => |strong| strong.get() orelse .jsUndefined(),
+            .none => .js_undefined,
+            .http_error => {
+                _ = global;
+                // TODO: Implement anyerror to JSValue conversion
+                return .js_undefined;
+            },
+            .abort_error => |strong| strong.get(),
+            .js_error => |strong| strong.get(),
+            .tls_error => |strong| strong.get(),
         };
     }
 
@@ -731,6 +737,7 @@ pub const FetchTasklet = struct {
     // has_schedule_callback: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     // PHASE 7.4: abort_reason migrated to main_thread.abort_reason
+    // PHASE 7.8: abort_reason migrated to shared.error (unified error tracking)
     // // must be stored because AbortSignal stores reason weakly
     // abort_reason: jsc.Strong.Optional = .empty,
 
@@ -978,7 +985,6 @@ pub const FetchTasklet = struct {
             this.request_body.detach();
         }
 
-        this.main_thread.abort_reason.deinit();
         this.main_thread.check_server_identity.deinit();
         this.clearAbortSignal();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
@@ -1582,7 +1588,10 @@ pub const FetchTasklet = struct {
                         // Old: this.is_waiting_abort = this.result.has_more;
                         // New: signal_store.aborted atomic already stores abort state
                         // The combination of aborted=true + has_more is checked in onProgressUpdate
-                        this.main_thread.abort_reason.set(globalObject, check_result);
+
+                        // Store TLS error in unified error tracking
+                        this.shared.fetch_error.set(.{ .tls_error = jsc.Strong.create(check_result, globalObject) });
+
                         this.shared.signal_store.aborted.store(true, .monotonic);
                         this.main_thread.tracker.didCancel(this.main_thread.global_this);
                         // we need to abort the request
@@ -1604,7 +1613,10 @@ pub const FetchTasklet = struct {
                         // Old: this.is_waiting_abort = this.result.has_more;
                         // New: signal_store.aborted atomic already stores abort state
                         // The combination of aborted=true + has_more is checked in onProgressUpdate
-                        this.main_thread.abort_reason.set(globalObject, check_result);
+
+                        // Store TLS error in unified error tracking
+                        this.shared.fetch_error.set(.{ .tls_error = jsc.Strong.create(check_result, globalObject) });
+
                         this.shared.signal_store.aborted.store(true, .monotonic);
                         this.main_thread.tracker.didCancel(this.main_thread.global_this);
 
@@ -1627,14 +1639,39 @@ pub const FetchTasklet = struct {
     }
 
     fn getAbortError(this: *FetchTasklet) ?Body.Value.ValueError {
-        if (this.main_thread.abort_reason.has()) {
-            defer this.clearAbortSignal();
-            const out = this.main_thread.abort_reason;
+        // Note: Caller must NOT hold lock - this function acquires it
+        var locked = this.shared.lock();
+        defer locked.unlock();
 
-            this.main_thread.abort_reason = .empty;
-            return Body.Value.ValueError{ .JSValue = out };
+        return this.getAbortErrorLocked(&locked);
+    }
+
+    fn getAbortErrorLocked(this: *FetchTasklet, locked: *LockedSharedData) ?Body.Value.ValueError {
+        // Note: Caller must hold lock
+        if (locked.shared.fetch_error.isAbort()) {
+            defer this.clearAbortSignal();
+            const js_value = locked.shared.fetch_error.toJS(this.main_thread.global_this);
+            locked.shared.fetch_error = .none; // Clear error after retrieving
+            return Body.Value.ValueError{ .JSValue = jsc.Strong.Optional.create(js_value, this.main_thread.global_this) };
         }
 
+        // Check TLS errors (which are also treated as abort-like)
+        if (locked.shared.fetch_error == .tls_error) {
+            defer this.clearAbortSignal();
+            const js_value = locked.shared.fetch_error.toJS(this.main_thread.global_this);
+            locked.shared.fetch_error = .none; // Clear error after retrieving
+            return Body.Value.ValueError{ .JSValue = jsc.Strong.Optional.create(js_value, this.main_thread.global_this) };
+        }
+
+        // Check JS errors (which are also treated as abort-like)
+        if (locked.shared.fetch_error == .js_error) {
+            defer this.clearAbortSignal();
+            const js_value = locked.shared.fetch_error.toJS(this.main_thread.global_this);
+            locked.shared.fetch_error = .none; // Clear error after retrieving
+            return Body.Value.ValueError{ .JSValue = jsc.Strong.Optional.create(js_value, this.main_thread.global_this) };
+        }
+
+        // Fallback: check abort signal directly
         if (this.main_thread.abort_signal) |signal| {
             if (signal.reasonIfAborted(this.main_thread.global_this)) |reason| {
                 defer this.clearAbortSignal();
@@ -1664,7 +1701,8 @@ pub const FetchTasklet = struct {
         bun.assert(locked.shared.result.fail != null);
         log("onReject", .{});
 
-        if (this.getAbortError()) |err| {
+        // Check unified error tracking first (abort, TLS, JS errors)
+        if (this.getAbortErrorLocked(&locked)) |err| {
             return err;
         }
 
@@ -2132,7 +2170,14 @@ pub const FetchTasklet = struct {
     pub fn abortListener(this: *FetchTasklet, reason: JSValue) void {
         log("abortListener", .{});
         reason.ensureStillAlive();
-        this.main_thread.abort_reason.set(this.main_thread.global_this, reason);
+
+        // Store abort error in unified error tracking (with mutex protection)
+        {
+            var locked = this.shared.lock();
+            defer locked.unlock();
+            locked.shared.fetch_error.set(.{ .abort_error = jsc.Strong.create(reason, this.main_thread.global_this) });
+        }
+
         this.abortTask();
         if (this.main_thread.sink) |sink| {
             sink.cancel(reason);
@@ -2240,12 +2285,16 @@ pub const FetchTasklet = struct {
         log("writeEndRequest hasError? {}", .{err != null});
         defer this.deref(); // Release ref from startRequestStream()
         if (err) |jsError| {
-            // Atomic check - safe without lock
-            if (this.shared.signal_store.aborted.load(.monotonic) or this.main_thread.abort_reason.has()) {
+            // Check if already aborted (fast-path without lock)
+            if (this.shared.signal_store.aborted.load(.monotonic)) {
                 return;
             }
+
             if (!jsError.isUndefinedOrNull()) {
-                this.main_thread.abort_reason.set(this.main_thread.global_this, jsError);
+                // Store JS error in unified error tracking (with mutex protection)
+                var locked = this.shared.lock();
+                defer locked.unlock();
+                locked.shared.fetch_error.set(.{ .js_error = jsc.Strong.create(jsError, this.main_thread.global_this) });
             }
             this.abortTask();
         } else {

@@ -215,7 +215,7 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
         return {};
     }
 
-    return JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(outBuf), 0, result.size());
+    RELEASE_AND_RETURN(scope, JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(outBuf), 0, result.size()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsPublicEncrypt, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

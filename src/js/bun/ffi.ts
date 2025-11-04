@@ -121,7 +121,7 @@ class CString extends String {
       ptr
         ? typeof byteLength === "number" && Number.isSafeInteger(byteLength)
           ? BunCString(ptr, byteOffset || 0, byteLength)
-          : BunCString(ptr)
+          : BunCString(ptr, byteOffset || 0)
         : "",
     );
     this.ptr = typeof ptr === "number" ? ptr : 0;
@@ -526,6 +526,7 @@ function cc(options) {
 
 function linkSymbols(options) {
   const result = nativeLinkSymbols(options);
+  if (Error.isError(result)) throw result;
 
   for (let key in result.symbols) {
     var symbol = result.symbols[key];

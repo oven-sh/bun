@@ -24,7 +24,7 @@
     "noFallthroughCasesInSwitch": true,
     "isolatedModules": true,
 
-    // Stricter type-checking
+    // Less strict type-checking
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false,

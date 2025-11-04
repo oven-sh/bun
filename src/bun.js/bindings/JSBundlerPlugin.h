@@ -7,6 +7,7 @@
 #include <JavaScriptCore/RegularExpression.h>
 #include "napi_external.h"
 #include <JavaScriptCore/Yarr.h>
+#include "WriteBarrierList.h"
 
 typedef void (*JSBundlerPluginAddErrorCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 typedef void (*JSBundlerPluginOnLoadAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
@@ -134,7 +135,7 @@ public:
     NativePluginList onBeforeParse = {};
     BunPluginTarget target { BunPluginTargetBrowser };
 
-    Vector<Strong<JSPromise>> deferredPromises = {};
+    WriteBarrierList<JSC::JSPromise> deferredPromises = {};
 
     JSBundlerPluginAddErrorCallback addError;
     JSBundlerPluginOnLoadAsyncCallback onLoadAsync;

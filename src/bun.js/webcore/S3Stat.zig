@@ -1,9 +1,6 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-
 pub const S3Stat = struct {
-    const log = bun.Output.scoped(.S3Stat, false);
-    pub const js = JSC.Codegen.JSS3Stat;
+    const log = bun.Output.scoped(.S3Stat, .visible);
+    pub const js = jsc.Codegen.JSS3Stat;
     pub const toJS = js.toJS;
     pub const fromJS = js.fromJS;
     pub const fromJSDirect = js.fromJSDirect;
@@ -15,7 +12,7 @@ pub const S3Stat = struct {
     contentType: bun.String,
     lastModified: f64,
 
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*@This() {
+    pub fn constructor(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!*@This() {
         return globalThis.throwInvalidArguments("S3Stat is not constructable", .{});
     }
 
@@ -24,34 +21,34 @@ pub const S3Stat = struct {
         etag: []const u8,
         contentType: []const u8,
         lastModified: []const u8,
-        globalThis: *JSC.JSGlobalObject,
-    ) *@This() {
+        globalThis: *jsc.JSGlobalObject,
+    ) bun.JSError!*@This() {
         var date_str = bun.String.init(lastModified);
         defer date_str.deref();
-        const last_modified = date_str.parseDate(globalThis);
+        const last_modified = try date_str.parseDate(globalThis);
 
         return S3Stat.new(.{
             .size = size,
-            .etag = bun.String.createUTF8(etag),
-            .contentType = bun.String.createUTF8(contentType),
+            .etag = bun.String.cloneUTF8(etag),
+            .contentType = bun.String.cloneUTF8(contentType),
             .lastModified = last_modified,
         });
     }
 
-    pub fn getSize(this: *@This(), _: *JSC.JSGlobalObject) JSC.JSValue {
-        return JSC.JSValue.jsNumber(this.size);
+    pub fn getSize(this: *@This(), _: *jsc.JSGlobalObject) jsc.JSValue {
+        return jsc.JSValue.jsNumber(this.size);
     }
 
-    pub fn getEtag(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn getEtag(this: *@This(), globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         return this.etag.toJS(globalObject);
     }
 
-    pub fn getContentType(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn getContentType(this: *@This(), globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         return this.contentType.toJS(globalObject);
     }
 
-    pub fn getLastModified(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        return JSC.JSValue.fromDateNumber(globalObject, this.lastModified);
+    pub fn getLastModified(this: *@This(), globalObject: *jsc.JSGlobalObject) jsc.JSValue {
+        return jsc.JSValue.fromDateNumber(globalObject, this.lastModified);
     }
 
     pub fn finalize(this: *@This()) void {
@@ -60,3 +57,6 @@ pub const S3Stat = struct {
         bun.destroy(this);
     }
 };
+
+const bun = @import("bun");
+const jsc = bun.jsc;

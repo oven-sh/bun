@@ -24,8 +24,8 @@ import { watch } from "fs";
 const watcher = watch(
   import.meta.dir,
   { recursive: true },
-  (event, filename) => {
-    console.log(`Detected ${event} in ${filename}`);
+  (event, relativePath) => {
+    console.log(`Detected ${event} in ${relativePath}`);
   },
 );
 ```
@@ -65,4 +65,4 @@ process.on("SIGINT", () => {
 
 ---
 
-Refer to [API > Binary data > Typed arrays](https://bun.sh/docs/api/binary-data#typedarray) for more information on working with `Uint8Array` and other binary data formats in Bun.
+Refer to [API > Binary data > Typed arrays](https://bun.com/docs/api/binary-data#typedarray) for more information on working with `Uint8Array` and other binary data formats in Bun.

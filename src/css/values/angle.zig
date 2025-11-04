@@ -1,5 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const Printer = css.Printer;
@@ -85,9 +83,9 @@ pub const Angle = union(Tag) {
                 const deg = this.toDegrees();
 
                 // We print 5 digits of precision by default.
-                // Switch to degrees if there are an even number of them.
-                if (css.fract(std.math.round(deg * 100000.0)) == 0) {
-                    break :brk .{ val, "deg" };
+                // Switch to degrees if length is smaller than rad.
+                if (css.f32_length_with_5_digits(deg) < css.f32_length_with_5_digits(val)) {
+                    break :brk .{ deg, "deg" };
                 } else {
                     break :brk .{ val, "rad" };
                 }
@@ -303,3 +301,6 @@ pub const Angle = union(Tag) {
 /// A CSS [`<angle-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-angle-percentage) value.
 /// May be specified as either an angle or a percentage that resolves to an angle.
 pub const AnglePercentage = css.css_values.percentage.DimensionPercentage(Angle);
+
+const bun = @import("bun");
+const std = @import("std");

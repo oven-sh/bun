@@ -1,9 +1,9 @@
-pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     const object = JSValue.createEmptyObject(globalThis, 1);
     object.put(
         globalThis,
         ZigString.static("parse"),
-        JSC.createCallback(
+        jsc.createCallback(
             globalThis,
             ZigString.static("parse"),
             1,
@@ -15,9 +15,9 @@ pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
 }
 
 pub fn parse(
-    globalThis: *JSC.JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
+    globalThis: *jsc.JSGlobalObject,
+    callframe: *jsc.CallFrame,
+) bun.JSError!jsc.JSValue {
     var arena = bun.ArenaAllocator.init(globalThis.allocator());
     const allocator = arena.allocator();
     defer arena.deinit();
@@ -29,8 +29,8 @@ pub fn parse(
 
     var input_slice = try arguments[0].toSlice(globalThis, bun.default_allocator);
     defer input_slice.deinit();
-    var source = logger.Source.initPathString("input.toml", input_slice.slice());
-    const parse_result = TOMLParser.parse(&source, &log, allocator, false) catch {
+    const source = &logger.Source.initPathString("input.toml", input_slice.slice());
+    const parse_result = TOML.parse(source, &log, allocator, false) catch {
         return globalThis.throwValue(try log.toJS(globalThis, default_allocator, "Failed to parse toml"));
     };
 
@@ -41,7 +41,7 @@ pub fn parse(
         *js_printer.BufferPrinter,
         &writer,
         parse_result,
-        &source,
+        source,
         .{
             .mangled_props = null,
         },
@@ -50,18 +50,19 @@ pub fn parse(
     };
 
     const slice = writer.ctx.buffer.slice();
-    var out = bun.String.fromUTF8(slice);
+    var out = bun.String.borrowUTF8(slice);
     defer out.deref();
 
     return out.toJSByParseJSON(globalThis);
 }
 
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-const ZigString = JSC.ZigString;
-const logger = bun.logger;
 const bun = @import("bun");
-const js_printer = bun.js_printer;
 const default_allocator = bun.default_allocator;
-const TOMLParser = @import("../../toml/toml_parser.zig").TOML;
+const js_printer = bun.js_printer;
+const logger = bun.logger;
+const TOML = bun.interchange.toml.TOML;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;

@@ -1,15 +1,9 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const logger = bun.logger;
-
 pub const css = @import("./css_parser.zig");
 pub const Error = css.Error;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const Result = css.Result;
 
-const ArrayList = std.ArrayListUnmanaged;
 pub const DeclarationList = ArrayList(css.Property);
 
 const BackgroundHandler = css.css_properties.background.BackgroundHandler;
@@ -54,7 +48,7 @@ pub const DeclarationBlock = struct {
             var arraylist = ArrayList(u8){};
             const w = arraylist.writer(bun.default_allocator);
             defer arraylist.deinit(bun.default_allocator);
-            var symbols = bun.JSAst.Symbol.Map{};
+            var symbols = bun.ast.Symbol.Map{};
             var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null, null, &symbols);
             defer printer.deinit();
             this.self.toCss(@TypeOf(w), &printer) catch |e| return try writer.print("<error writing declaration block: {s}>\n", .{@errorName(e)});
@@ -174,7 +168,7 @@ pub const DeclarationBlock = struct {
                     const handled = hndlr.handleProperty(prop, ctx);
 
                     if (!handled) {
-                        hndlr.decls.append(ctx.allocator, prop.*) catch bun.outOfMemory();
+                        bun.handleOom(hndlr.decls.append(ctx.allocator, prop.*));
                         // replacing with a property which does not require allocation
                         // to "delete"
                         prop.* = css.Property{ .all = .@"revert-layer" };
@@ -365,23 +359,23 @@ pub fn parse_declaration_impl(
                             bun.logger.Data,
                             &[_]bun.logger.Data{
                                 bun.logger.Data{
-                                    .text = options.allocator.dupe(u8, "The parent selector is not a single class selector because of the syntax here:") catch bun.outOfMemory(),
+                                    .text = bun.handleOom(options.allocator.dupe(u8, "The parent selector is not a single class selector because of the syntax here:")),
                                     .location = info.toLoggerLocation(options.filename),
                                 },
                             },
-                        ) catch bun.outOfMemory(),
+                        ) catch |err| bun.handleOom(err),
                     );
                 },
             }
         }
     }
     if (important) {
-        important_declarations.append(input.allocator(), property) catch bun.outOfMemory();
+        bun.handleOom(important_declarations.append(input.allocator(), property));
     } else {
-        declarations.append(input.allocator(), property) catch bun.outOfMemory();
+        bun.handleOom(declarations.append(input.allocator(), property));
     }
 
-    return .{ .result = {} };
+    return .success;
 }
 
 pub const DeclarationHandler = struct {
@@ -408,11 +402,11 @@ pub const DeclarationHandler = struct {
         _ = allocator; // autofix
         if (this.direction) |direction| {
             this.direction = null;
-            this.decls.append(context.allocator, css.Property{ .direction = direction }) catch bun.outOfMemory();
+            bun.handleOom(this.decls.append(context.allocator, css.Property{ .direction = direction }));
         }
         // if (this.unicode_bidi) |unicode_bidi| {
         //     this.unicode_bidi = null;
-        //     this.decls.append(context.allocator, css.Property{ .unicode_bidi = unicode_bidi }) catch bun.outOfMemory();
+        //     this.decls.append(context.allocator, css.Property{ .unicode_bidi = unicode_bidi }) catch |err| bun.handleOom(err);
         // }
 
         this.background.finalize(&this.decls, context);
@@ -458,3 +452,10 @@ pub const DeclarationHandler = struct {
         };
     }
 };
+
+const bun = @import("bun");
+const logger = bun.logger;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

@@ -55,7 +55,7 @@ function generate(ssl) {
       },
       setSession: {
         fn: "setSession",
-        length: 0,
+        length: 1,
       },
       getTLSTicket: {
         fn: "getTLSTicket",
@@ -116,7 +116,6 @@ function generate(ssl) {
         length: 0,
       },
 
-      //   },
       listener: {
         getter: "getListener",
       },
@@ -140,6 +139,10 @@ function generate(ssl) {
         fn: "shutdown",
         length: 1,
       },
+      close: {
+        fn: "close",
+        length: 0,
+      },
 
       ref: {
         fn: "jsRef",
@@ -160,7 +163,9 @@ function generate(ssl) {
       },
       localPort: {
         getter: "getLocalPort",
+        cache: true,
       },
+
       //   cork: {
       //     fn: "cork",
       //     length: 1,
@@ -276,7 +281,6 @@ export default [
         getter: "getHostname",
         cache: true,
       },
-
       data: {
         getter: "getData",
         setter: "setData",
@@ -298,7 +302,7 @@ export default [
     JSType: "0b11101110",
     finalize: true,
     construct: true,
-    hasPendingActivity: true,
+    values: ["on_data", "on_drain", "on_error"],
     proto: {
       send: {
         fn: "send",
@@ -454,8 +458,8 @@ export default [
     call: false,
     finalize: true,
     estimatedSize: true,
-    // customInspect: true,
-    structuredClone: { transferable: false, tag: 251 },
+    // inspectCustom: true,
+    structuredClone: { transferable: false, tag: 251, storable: false },
     JSType: "0b11101110",
     klass: {
       isBlockList: {

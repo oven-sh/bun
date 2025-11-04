@@ -39,14 +39,15 @@
 
 namespace WebCore {
 
+class Blob;
+
 class MessageEvent final : public Event {
     WTF_MAKE_TZONE_ALLOCATED(MessageEvent);
 
 public:
     struct JSValueTag {
     };
-    // using DataType = std::variant<JSValueTag, Ref<SerializedScriptValue>, String, Ref<Blob>, Ref<ArrayBuffer>>;
-    using DataType = std::variant<JSValueTag, Ref<SerializedScriptValue>, String, Ref<ArrayBuffer>>;
+    using DataType = std::variant<JSValueTag, Ref<SerializedScriptValue>, String, Ref<Blob>, Ref<ArrayBuffer>>;
     static Ref<MessageEvent> create(const AtomString& type, DataType&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
     static Ref<MessageEvent> create(DataType&&, const String& origin = {}, const String& lastEventId = {}, RefPtr<MessagePort>&& = nullptr, Vector<RefPtr<MessagePort>>&& = {});
 

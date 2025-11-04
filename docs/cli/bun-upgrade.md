@@ -7,7 +7,7 @@ This works by checking the latest version of Bun in [bun-releases-for-updater](h
 If for any reason you run into issues, you can also use the curl install script:
 
 ```bash
-$ curl https://bun.sh/install | bash
+$ curl https://bun.com/install | bash
 ```
 
 It will still work when Bun is already installed.

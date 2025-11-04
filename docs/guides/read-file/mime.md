@@ -17,4 +17,4 @@ file.type; // image/png
 
 ---
 
-Refer to [API > File I/O](https://bun.sh/docs/api/file-io) for more information on working with `BunFile`.
+Refer to [API > File I/O](https://bun.com/docs/api/file-io) for more information on working with `BunFile`.

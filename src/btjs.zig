@@ -1,6 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
 extern const jsc_llint_begin: u8;
 extern const jsc_llint_end: u8;
 /// allocated using bun.default_allocator. when called from lldb, it is never freed.
@@ -92,9 +89,9 @@ fn printSourceAtAddress(debug_info: *std.debug.SelfInfo, out_stream: anytype, ad
     }
     const do_llint = probably_llint and allow_llint;
 
-    const frame: *const bun.JSC.CallFrame = @ptrFromInt(fp);
+    const frame: *const bun.jsc.CallFrame = @ptrFromInt(fp);
     if (do_llint) {
-        const srcloc = frame.getCallerSrcLoc(bun.JSC.VirtualMachine.get().global);
+        const srcloc = frame.getCallerSrcLoc(bun.jsc.VirtualMachine.get().global);
         try tty_config.setColor(out_stream, .bold);
         try out_stream.print("{s}:{d}:{d}: ", .{ srcloc.str, srcloc.line, srcloc.column });
         try tty_config.setColor(out_stream, .reset);
@@ -261,3 +258,6 @@ fn printUnwindError(debug_info: *std.debug.SelfInfo, out_stream: anytype, addres
     }
     try tty_config.setColor(out_stream, .reset);
 }
+
+const bun = @import("bun");
+const std = @import("std");

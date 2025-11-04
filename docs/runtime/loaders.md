@@ -9,7 +9,7 @@ $ bun index.ts
 $ bun index.tsx
 ```
 
-Some aspects of Bun's runtime behavior are affected by the contents of your `tsconfig.json` file. Refer to [Runtime > TypeScript](https://bun.sh/docs/runtime/typescript) page for details.
+Some aspects of Bun's runtime behavior are affected by the contents of your `tsconfig.json` file. Refer to [Runtime > TypeScript](https://bun.com/docs/runtime/typescript) page for details.
 
 ## JSX
 
@@ -52,14 +52,17 @@ Hello world!
 
 {% /codetabs %}
 
-## JSON and TOML
+## JSON, TOML, and YAML
 
-JSON and TOML files can be directly imported from a source file. The contents will be loaded and returned as a JavaScript object.
+JSON, TOML, and YAML files can be directly imported from a source file. The contents will be loaded and returned as a JavaScript object.
 
 ```ts
 import pkg from "./package.json";
 import data from "./data.toml";
+import config from "./config.yaml";
 ```
+
+For more details on YAML support, see the [YAML API documentation](/docs/api/yaml).
 
 ## WASI
 
@@ -89,11 +92,11 @@ import db from "./my.db" with { type: "sqlite" };
 console.log(db.query("select * from users LIMIT 1").get());
 ```
 
-This uses [`bun:sqlite`](https://bun.sh/docs/api/sqlite).
+This uses [`bun:sqlite`](https://bun.com/docs/api/sqlite).
 
 ## Custom loaders
 
-Support for additional file types can be implemented with plugins. Refer to [Runtime > Plugins](https://bun.sh/docs/bundler/plugins) for full documentation.
+Support for additional file types can be implemented with plugins. Refer to [Runtime > Plugins](https://bun.com/docs/bundler/plugins) for full documentation.
 
 <!--
 

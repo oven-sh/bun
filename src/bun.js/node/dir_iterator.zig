@@ -5,19 +5,7 @@
 // - It uses PathString instead of []const u8
 // - Windows can be configured to return []const u16
 
-const builtin = @import("builtin");
-const std = @import("std");
-const posix = std.posix;
-
-const Dir = std.fs.Dir;
-const JSC = bun.JSC;
-const PathString = bun.PathString;
-const bun = @import("bun");
-
 const IteratorError = error{ AccessDenied, SystemResources } || posix.UnexpectedError;
-const mem = std.mem;
-const strings = bun.strings;
-const Maybe = JSC.Maybe;
 
 pub const IteratorResult = struct {
     name: PathString,
@@ -42,17 +30,15 @@ const IteratorResultW = struct {
 };
 const ResultW = Maybe(?IteratorResultW);
 
-const Entry = JSC.Node.Dirent;
-
 pub const Iterator = NewIterator(false);
 pub const IteratorW = NewIterator(true);
 
 pub fn NewIterator(comptime use_windows_ospath: bool) type {
     return switch (builtin.os.tag) {
         .macos, .ios, .freebsd, .netbsd, .dragonfly, .openbsd, .solaris => struct {
-            dir: Dir,
+            dir: FD,
             seek: i64,
-            buf: [8192]u8, // TODO align(@alignOf(os.system.dirent)),
+            buf: [8192]u8 align(@alignOf(std.posix.system.dirent)),
             index: usize,
             end_index: usize,
             received_eof: bool = false,
@@ -60,10 +46,6 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             const Self = @This();
 
             pub const Error = IteratorError;
-
-            fn fd(self: *Self) posix.fd_t {
-                return self.dir.fd;
-            }
 
             /// Memory such as file names referenced in this returned entry becomes invalid
             /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
@@ -94,7 +76,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         self.buf[self.buf.len - 4 ..][0..4].* = .{ 0, 0, 0, 0 };
 
                         const rc = posix.system.__getdirentries64(
-                            self.dir.fd,
+                            self.dir.cast(),
                             &self.buf,
                             self.buf.len,
                             &self.seek,
@@ -146,7 +128,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             }
         },
         .linux => struct {
-            dir: Dir,
+            dir: FD,
             // The if guard is solely there to prevent compile errors from missing `linux.dirent64`
             // definition when compiling for other OSes. It doesn't do anything when compiling for Linux.
             buf: [8192]u8 align(if (builtin.os.tag != .linux) 1 else @alignOf(linux.dirent64)),
@@ -158,16 +140,12 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
 
             pub const Error = IteratorError;
 
-            fn fd(self: *Self) posix.fd_t {
-                return self.dir.fd;
-            }
-
             /// Memory such as file names referenced in this returned entry becomes invalid
             /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
             pub fn next(self: *Self) Result {
                 start_over: while (true) {
                     if (self.index >= self.end_index) {
-                        const rc = linux.getdents64(self.dir.fd, &self.buf, self.buf.len);
+                        const rc = linux.getdents64(self.dir.cast(), &self.buf, self.buf.len);
                         if (Result.errnoSys(rc, .getdents64)) |err| return err;
                         if (rc == 0) return .{ .result = null };
                         self.index = 0;
@@ -208,7 +186,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             // While the official api docs guarantee FILE_BOTH_DIR_INFORMATION to be aligned properly
             // this may not always be the case (e.g. due to faulty VM/Sandboxing tools)
             const FILE_DIRECTORY_INFORMATION_PTR = *align(2) FILE_DIRECTORY_INFORMATION;
-            dir: Dir,
+            dir: FD,
 
             // This structure must be aligned on a LONGLONG (8-byte) boundary.
             // If a buffer contains two or more of these structures, the
@@ -227,10 +205,6 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
 
             const ResultT = if (use_windows_ospath) ResultW else Result;
 
-            fn fd(self: *Self) posix.fd_t {
-                return self.dir.fd;
-            }
-
             /// Memory such as file names referenced in this returned entry becomes invalid
             /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
             pub fn next(self: *Self) ResultT {
@@ -244,7 +218,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         }
 
                         const rc = w.ntdll.NtQueryDirectoryFile(
-                            self.dir.fd,
+                            self.dir.cast(),
                             null,
                             null,
                             null,
@@ -259,14 +233,14 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
 
                         self.first = false;
                         if (io.Information == 0) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = 0", .{bun.FD.fromStdDir(self.dir)});
+                            bun.sys.syslog("NtQueryDirectoryFile({}) = 0", .{self.dir});
                             return .{ .result = null };
                         }
                         self.index = 0;
                         self.end_index = io.Information;
                         // If the handle is not a directory, we'll get STATUS_INVALID_PARAMETER.
                         if (rc == .INVALID_PARAMETER) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ bun.FD.fromStdDir(self.dir), @tagName(rc) });
+                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ self.dir, @tagName(rc) });
                             return .{
                                 .err = .{
                                     .errno = @intFromEnum(bun.sys.SystemErrno.ENOTDIR),
@@ -276,13 +250,13 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         }
 
                         if (rc == .NO_MORE_FILES) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ bun.FD.fromStdDir(self.dir), @tagName(rc) });
+                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ self.dir, @tagName(rc) });
                             self.end_index = self.index;
                             return .{ .result = null };
                         }
 
                         if (rc != .SUCCESS) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ bun.FD.fromStdDir(self.dir), @tagName(rc) });
+                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ self.dir, @tagName(rc) });
 
                             if ((bun.windows.Win32Error.fromNTStatus(rc).toSystemErrno())) |errno| {
                                 return .{
@@ -301,7 +275,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                             };
                         }
 
-                        bun.sys.syslog("NtQueryDirectoryFile({}) = {d}", .{ bun.FD.fromStdDir(self.dir), self.end_index });
+                        bun.sys.syslog("NtQueryDirectoryFile({}) = {d}", .{ self.dir, self.end_index });
                     }
 
                     const dir_info: FILE_DIRECTORY_INFORMATION_PTR = @ptrCast(@alignCast(&self.buf[self.index]));
@@ -356,7 +330,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             }
         },
         .wasi => struct {
-            dir: Dir,
+            dir: FD,
             buf: [8192]u8, // TODO align(@alignOf(os.wasi.dirent_t)),
             cookie: u64,
             index: usize,
@@ -365,10 +339,6 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             const Self = @This();
 
             pub const Error = IteratorError;
-
-            fn fd(self: *Self) posix.fd_t {
-                return self.dir.fd;
-            }
 
             /// Memory such as file names referenced in this returned entry becomes invalid
             /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
@@ -380,7 +350,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                 start_over: while (true) {
                     if (self.index >= self.end_index) {
                         var bufused: usize = undefined;
-                        switch (w.fd_readdir(self.fd, &self.buf, self.buf.len, self.cookie, &bufused)) {
+                        switch (w.fd_readdir(self.dir.cast(), &self.buf, self.buf.len, self.cookie, &bufused)) {
                             .SUCCESS => {},
                             .BADF => unreachable, // Dir is invalid or was opened without iteration ability
                             .FAULT => unreachable,
@@ -440,13 +410,9 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
             return self.iter.next();
         }
 
-        pub inline fn fd(self: *Self) posix.fd_t {
-            return self.iter.fd();
-        }
-
         pub const Error = IteratorError;
 
-        pub fn init(dir: Dir) Self {
+        pub fn init(dir: FD) Self {
             return Self{
                 .iter = switch (builtin.os.tag) {
                     .macos,
@@ -494,6 +460,21 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
 pub const WrappedIterator = NewWrappedIterator(.u8);
 pub const WrappedIteratorW = NewWrappedIterator(.u16);
 
-pub fn iterate(self: Dir, comptime path_type: PathType) NewWrappedIterator(path_type) {
+pub fn iterate(self: FD, comptime path_type: PathType) NewWrappedIterator(path_type) {
     return NewWrappedIterator(path_type).init(self);
 }
+
+const builtin = @import("builtin");
+
+const bun = @import("bun");
+const FD = bun.FD;
+const PathString = bun.PathString;
+const jsc = bun.jsc;
+const strings = bun.strings;
+const Maybe = bun.sys.Maybe;
+const Entry = jsc.Node.Dirent;
+
+const std = @import("std");
+const mem = std.mem;
+const posix = std.posix;
+const Dir = std.fs.Dir;

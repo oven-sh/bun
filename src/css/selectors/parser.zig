@@ -1,8 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const logger = bun.logger;
-
 pub const css = @import("../css_parser.zig");
 const CSSStringFns = css.CSSStringFns;
 
@@ -11,7 +6,6 @@ pub const PrintErr = css.PrintErr;
 
 const Result = css.Result;
 const SmallList = css.SmallList;
-const ArrayList = std.ArrayListUnmanaged;
 
 const impl = css.selector.impl;
 const serialize = css.selector.serialize;
@@ -43,8 +37,6 @@ pub fn ValidSelectorImpl(comptime T: type) void {
     _ = T.SelectorImpl.VendorPrefix;
     _ = T.SelectorImpl.PseudoElement;
 }
-
-const selector_builder = @import("./builder.zig");
 
 pub const attrs = struct {
     pub fn NamespaceUrl(comptime Impl: type) type {
@@ -350,8 +342,6 @@ fn compute_simple_selector_specificity(
         },
     }
 }
-
-const SelectorBuilder = selector_builder.SelectorBuilder;
 
 /// Build up a Selector.
 /// selector : simple_selector_sequence [ combinator simple_selector_sequence ]* ;
@@ -1641,7 +1631,7 @@ pub fn GenericSelector(comptime Impl: type) type {
                 var arraylist = ArrayList(u8){};
                 const w = arraylist.writer(bun.default_allocator);
                 defer arraylist.deinit(bun.default_allocator);
-                const symbols = bun.JSAst.Symbol.Map{};
+                const symbols = bun.ast.Symbol.Map{};
                 const P = css.Printer(@TypeOf(w));
                 var printer = P.new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null, null, &symbols);
                 defer printer.deinit();
@@ -1679,7 +1669,7 @@ pub fn GenericSelector(comptime Impl: type) type {
                 }
                 break :index this.components.items.len;
             };
-            this.components.insert(allocator, index, component) catch bun.outOfMemory();
+            bun.handleOom(this.components.insert(allocator, index, component));
         }
 
         pub fn deepClone(this: *const @This(), allocator: Allocator) This {
@@ -1731,6 +1721,24 @@ pub fn GenericSelector(comptime Impl: type) type {
             };
             return parse(&selector_parser, input);
         }
+
+        pub fn iterRawMatchOrder(this: *const This) RawMatchOrderIterator {
+            return RawMatchOrderIterator{
+                .slice = this.components.items,
+            };
+        }
+
+        const RawMatchOrderIterator = struct {
+            slice: []const GenericComponent(Impl),
+            i: usize = 0,
+
+            pub fn next(this: *@This()) ?GenericComponent(Impl) {
+                if (this.i >= this.slice.len) return null;
+                const result = this.slice[this.i];
+                this.i += 1;
+                return result;
+            }
+        };
 
         /// Returns an iterator over the sequence of simple selectors and
         /// combinators, in parse order (from left to right), starting from
@@ -3583,17 +3591,31 @@ pub const ViewTransitionPartName = union(enum) {
     all,
     /// <custom-ident>
     name: css.css_values.ident.CustomIdent,
+    /// .<custom-ident>
+    class: css.css_values.ident.CustomIdent,
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
         return switch (this.*) {
             .all => try dest.writeStr("*"),
             .name => |name| try css.CustomIdentFns.toCss(&name, W, dest),
+            .class => |name| {
+                try dest.writeChar('.');
+                try css.CustomIdentFns.toCss(&name, W, dest);
+            },
         };
     }
 
     pub fn parse(input: *css.Parser) Result(ViewTransitionPartName) {
         if (input.tryParse(css.Parser.expectDelim, .{'*'}).isOk()) {
             return .{ .result = .all };
+        }
+
+        // Try to parse a class selector (.<custom-ident>)
+        if (input.tryParse(css.Parser.expectDelim, .{'.'}).isOk()) {
+            return .{ .result = .{ .class = switch (css.css_values.ident.CustomIdent.parse(input)) {
+                .result => |v| v,
+                .err => |e| return .{ .err = e },
+            } } };
         }
 
         return .{ .result = .{ .name = switch (css.css_values.ident.CustomIdent.parse(input)) {
@@ -3636,3 +3658,13 @@ pub fn parse_attribute_flags(input: *css.Parser) Result(AttributeFlags) {
         return .{ .err = location.newBasicUnexpectedTokenError(token.*) };
     }
 }
+
+const selector_builder = @import("./builder.zig");
+const SelectorBuilder = selector_builder.SelectorBuilder;
+
+const bun = @import("bun");
+const logger = bun.logger;
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

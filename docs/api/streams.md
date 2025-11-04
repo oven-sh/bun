@@ -28,6 +28,20 @@ for await (const chunk of stream) {
 }
 ```
 
+`ReadableStream` also provides convenience methods for consuming the entire stream:
+
+```ts
+const stream = new ReadableStream({
+  start(controller) {
+    controller.enqueue("hello world");
+    controller.close();
+  },
+});
+
+const data = await stream.text(); // => "hello world"
+// Also available: .json(), .bytes(), .blob()
+```
+
 ## Direct `ReadableStream`
 
 Bun implements an optimized version of `ReadableStream` that avoid unnecessary data copying & queue management logic. With a traditional `ReadableStream`, chunks of data are _enqueued_. Each chunk is copied into a queue, where it sits until the stream is ready to send more data.
@@ -208,8 +222,8 @@ export class ArrayBufferSink {
    *
    * This API might change later to separate Uint8ArraySink and ArrayBufferSink
    */
-  flush(): number | Uint8Array | ArrayBuffer;
-  end(): ArrayBuffer | Uint8Array;
+  flush(): number | Uint8Array<ArrayBuffer> | ArrayBuffer;
+  end(): ArrayBuffer | Uint8Array<ArrayBuffer>;
 }
 ```
 

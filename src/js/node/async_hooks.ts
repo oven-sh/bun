@@ -22,7 +22,8 @@
 // each key is an AsyncLocalStorage object and the value is the associated value. There are a ton of
 // calls to $assert which will verify this invariant (only during bun-debug)
 //
-const [setAsyncHooksEnabled, cleanupLater] = $cpp("NodeAsyncHooks.cpp", "createAsyncHooksBinding");
+const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
+const cleanupLater = $newCppFunction("NodeAsyncHooks.cpp", "jsCleanupLater", 0);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
 
 // Only run during debug
@@ -323,7 +324,7 @@ class AsyncResource {
 function createWarning(message, isCreateHook?: boolean) {
   let warned = false;
   var wrapped = function (arg1?) {
-    if (warned) return;
+    if (warned || (!Bun.env.BUN_FEATURE_FLAG_VERBOSE_WARNINGS && (warned = true))) return;
 
     const known_supported_modules = [
       // the following do not actually need async_hooks to work properly

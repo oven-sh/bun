@@ -646,3 +646,115 @@ describe("FormData", () => {
     }
   });
 });
+
+// https://github.com/oven-sh/bun/issues/14988
+describe("Content-Type header propagation", () => {
+  describe("https://github.com/oven-sh/bun/issues/21011", () => {
+    function createRequest() {
+      const formData = new FormData();
+      formData.append("key", "value");
+
+      return new Request("https://example.com/api/endpoint", {
+        method: "POST",
+        body: formData,
+      });
+    }
+
+    test("without checking body", async () => {
+      const request = createRequest();
+      expect(request.headers.get("Content-Type")).toStartWith("multipart/form-data");
+    });
+
+    test("check body", async () => {
+      const request = createRequest();
+      if (!request.body) {
+        expect.unreachable();
+      }
+      expect(request.headers.get("Content-Type")).toStartWith("multipart/form-data");
+    });
+  });
+
+  // Shared test server that validates multipart/form-data content-type
+  function createTestServer() {
+    return Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (!req.headers.get("content-type")?.includes("multipart/form-data")) {
+          return new Response("Missing multipart/form-data content-type", { status: 400 });
+        }
+        const body = await req.formData();
+        expect(body.get("foo")!.size).toBe(3);
+        return new Response("Success", { status: 200 });
+      },
+    });
+  }
+
+  // Custom Request subclass for testing inheritance
+  class CustomRequest extends Request {
+    constructor(input: string | URL | Request, init?: RequestInit) {
+      super(input, init);
+    }
+  }
+
+  const testCases = [
+    {
+      name: "new Request({body: FormData}) (subclass) -> fetch(request)",
+      async testFn(server: ReturnType<typeof createTestServer>) {
+        const fd = new FormData();
+        fd.append("foo", new Blob(["bar"]));
+        const request = new CustomRequest(server.url.toString(), {
+          method: "POST",
+          body: fd,
+        });
+        return fetch(request);
+      },
+    },
+    {
+      name: "FormData -> Request (subclass) -> ReadableStream -> fetch(request)",
+      async testFn(server: ReturnType<typeof createTestServer>) {
+        const fd = new FormData();
+        fd.append("foo", new Blob(["bar"]));
+        const request = new CustomRequest(server.url.toString(), {
+          method: "POST",
+          body: fd,
+        });
+        return fetch(request);
+      },
+    },
+    {
+      name: "FormData -> Request (subclass) -> fetch(url, {body: request.blob()})",
+      async testFn(server: ReturnType<typeof createTestServer>) {
+        const fd = new FormData();
+        fd.append("foo", new Blob(["bar"]));
+        const request = new CustomRequest(server.url.toString(), {
+          method: "POST",
+          body: fd,
+        });
+        return fetch(server.url.toString(), {
+          method: "POST",
+          body: await request.blob(),
+        });
+      },
+    },
+    {
+      name: "FormData -> Request -> fetch(request)",
+      async testFn(server: ReturnType<typeof createTestServer>) {
+        const fd = new FormData();
+        fd.append("foo", new Blob(["bar"]));
+        const request = new Request(server.url.toString(), {
+          method: "POST",
+          body: fd,
+        });
+        return fetch(request);
+      },
+    },
+  ];
+
+  testCases.forEach(({ name, testFn }) => {
+    it(name, async () => {
+      using server = createTestServer();
+      const res = await testFn(server);
+      expect(res.status).toBe(200);
+    });
+  });
+});

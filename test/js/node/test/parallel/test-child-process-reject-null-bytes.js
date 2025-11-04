@@ -288,9 +288,7 @@ throws(() => fork(__filename, { execPath: 'BBB\0XXX' }), {
 });
 
 // Tests for the 'options.execArgv' argument
-if(typeof Bun === 'undefined') { // This test is disabled in bun because bun does not support execArgv.
-  throws(() => fork(__filename, { execArgv: ['AAA', 'BBB\0XXX', 'CCC'] }), {
-    code: 'ERR_INVALID_ARG_VALUE',
-    name: 'TypeError',
-  });
-}
+throws(() => fork(__filename, { execArgv: ['AAA', 'BBB\0XXX', 'CCC'] }), {
+  code: 'ERR_INVALID_ARG_VALUE',
+  name: 'TypeError',
+});

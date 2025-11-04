@@ -1,4 +1,3 @@
-
 pub const GetterSetter = opaque {
     pub fn isGetterNull(this: *GetterSetter) bool {
         return JSC__GetterSetter__isGetterNull(this);

@@ -24,4 +24,4 @@ function generate(name: string) {
   });
 }
 
-export default [generate("NativeZlib"), generate("NativeBrotli")];
+export default [generate("NativeZlib"), generate("NativeBrotli"), generate("NativeZstd")];

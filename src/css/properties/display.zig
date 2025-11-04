@@ -1,13 +1,7 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
 
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
-
-
 
 /// A value for the [display](https://drafts.csswg.org/css-display-3/#the-display-properties) property.
 pub const Display = union(enum) {
@@ -287,3 +281,7 @@ pub const DisplayInside = union(enum) {
         return css.implementEql(@This(), lhs, rhs);
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;

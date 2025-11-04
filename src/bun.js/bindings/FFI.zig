@@ -1,8 +1,6 @@
 // This is zig translate-c run on ffi.h
 // it turns out: FFI.h is faster than our implementation that calls into C++ bindings
 // so we just use this in some cases
-const bun = @import("bun");
-const jsc = bun.jsc;
 pub const @"bool" = bool;
 pub const JSCell = ?*anyopaque;
 const struct_unnamed_1 = extern struct {
@@ -537,3 +535,6 @@ pub const NotCellMask = NumberTag | OtherTag;
 pub const MAX_INT32 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 2147483648, .decimal);
 pub const MAX_INT52 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 9007199254740991, .decimal);
 pub const NumberTag = @import("std").zig.c_translation.promoteIntLiteral(c_longlong, 0xfffe000000000000, .hex);
+
+const bun = @import("bun");
+const jsc = bun.jsc;

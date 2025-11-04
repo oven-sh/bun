@@ -1,15 +1,12 @@
-const std = @import("std");
-const bun = @import("bun");
 const wchar_t = u16;
+
+// Match libarchive's platform-specific type definitions
 const la_int64_t = i64;
 const la_ssize_t = isize;
+
 const struct_archive = opaque {};
 const struct_archive_entry = opaque {};
-const mode_t = bun.Mode;
-const FILE = @import("std").c.FILE;
 // const time_t = @import("std").c.time_t;
-const dev_t = @import("std").c.dev_t;
-const OOM = bun.OOM;
 
 pub const FileType = enum(mode_t) {
     regular = 0o100000,
@@ -1342,3 +1339,12 @@ pub const ARCHIVE_ENTRY_ACL_STYLE_SEPARATOR_COMMA = @as(c_int, 0x00000008);
 pub const ARCHIVE_ENTRY_ACL_STYLE_COMPACT = @as(c_int, 0x00000010);
 pub const OLD_ARCHIVE_ENTRY_ACL_STYLE_EXTRA_ID = @as(c_int, 1024);
 pub const OLD_ARCHIVE_ENTRY_ACL_STYLE_MARK_DEFAULT = @as(c_int, 2048);
+
+const std = @import("std");
+
+const bun = @import("bun");
+const OOM = bun.OOM;
+const mode_t = bun.Mode;
+
+const FILE = @import("std").c.FILE;
+const dev_t = @import("std").c.dev_t;

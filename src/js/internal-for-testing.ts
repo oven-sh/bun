@@ -12,7 +12,7 @@ const fmtBinding = $bindgenFn("fmt.bind.ts", "fmtString");
 export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight-javascript");
 export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
 
-export const TLSBinding = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
+export const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 
@@ -24,6 +24,13 @@ export const patchInternals = {
 
 const shellLex = $newZigFunction("shell.zig", "TestingAPIs.shellLex", 2);
 const shellParse = $newZigFunction("shell.zig", "TestingAPIs.shellParse", 2);
+
+export const escapeRegExp = $newZigFunction("escapeRegExp.zig", "jsEscapeRegExp", 1);
+export const escapeRegExpForPackageNameMatching = $newZigFunction(
+  "escapeRegExp.zig",
+  "jsEscapeRegExpForPackageNameMatching",
+  1,
+);
 
 export const shellInternals = {
   lex: (a, ...b) => shellLex(a.raw, b),
@@ -78,7 +85,7 @@ export const upgrade_test_helpers = $zig("upgrade_command.zig", "upgrade_js_bind
   closeTempDirHandle: () => void;
 };
 
-export const install_test_helpers = $zig("install.zig", "bun_install_js_bindings.generate") as {
+export const install_test_helpers = $zig("install_binding.zig", "bun_install_js_bindings.generate") as {
   /**
    * Returns the lockfile at the given path as an object.
    */
@@ -186,3 +193,25 @@ export const decodeURIComponentSIMD = $newCppFunction(
 export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");
 export const getCounters = $newZigFunction("Counters.zig", "createCountersObject", 0);
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
+
+interface setSocketOptionsFn {
+  (socket: Bun.Socket, sendBuffer: 1, size: number): void;
+  (socket: Bun.Socket, recvBuffer: 2, size: number): void;
+}
+
+export const setSocketOptions: setSocketOptionsFn = $newZigFunction("socket.zig", "jsSetSocketOptions", 3);
+type SerializationContext = "worker" | "window" | "postMessage" | "default";
+export const structuredCloneAdvanced: (
+  value: any,
+  transferList: any[],
+  forTransfer: boolean,
+  forStorage: boolean,
+  serializationContext: SerializationContext,
+) => any = $newCppFunction("StructuredClone.cpp", "jsFunctionStructuredCloneAdvanced", 5);
+
+export const lsanDoLeakCheck = $newCppFunction("InternalForTesting.cpp", "jsFunction_lsanDoLeakCheck", 1);
+
+export const hostedGitInfo = {
+  parseUrl: $newZigFunction("hosted_git_info.zig", "TestingAPIs.jsParseUrl", 1),
+  fromUrl: $newZigFunction("hosted_git_info.zig", "TestingAPIs.jsFromUrl", 1),
+};

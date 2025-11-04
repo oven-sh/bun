@@ -1,0 +1,42 @@
+{
+	"name": "diff-peer-1",
+	"versions": {
+		"1.0.0": {
+			"name": "diff-peer-1",
+			"version": "1.0.0",
+			"dependencies": {
+				"has-peer": "1.0.0",
+				"peer-no-deps": "1.0.0"
+			},
+			"_id": "diff-peer-1@1.0.0",
+			"_nodeVersion": "23.10.0",
+			"_npmVersion": "10.9.2",
+			"dist": {
+				"integrity": "sha512-a9nTh3aUOE6VDmn23Q9v6JUqBGnsnSBGcZ7P5Qff+5YuJ3KhWd0rbY/+DLDpwO7zAsTzKP1Bs9KtWDwQHzocVA==",
+				"shasum": "2a72f1f0e12b5a7790c26cce6b0e018b47e06c90",
+				"tarball": "http://localhost:4873/diff-peer-1/-/diff-peer-1-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2025-06-08T19:48:23.111Z",
+		"created": "2025-06-08T19:48:23.111Z",
+		"1.0.0": "2025-06-08T19:48:23.111Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"diff-peer-1-1.0.0.tgz": {
+			"shasum": "2a72f1f0e12b5a7790c26cce6b0e018b47e06c90",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "diff-peer-1",
+	"readme": "ERROR: No README data found!"
+}

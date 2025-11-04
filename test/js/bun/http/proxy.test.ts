@@ -261,3 +261,79 @@ test("axios with https-proxy-agent", async () => {
   // did we got proxied?
   expect(httpProxyServer.log).toEqual([`CONNECT localhost:${httpsServer.port}`]);
 });
+
+test("HTTPS over HTTP proxy preserves TLS record order with large bodies", async () => {
+  // Create a custom HTTPS server that returns body size for this test
+  using customServer = Bun.serve({
+    port: 0,
+    tls: tlsCert,
+    async fetch(req) {
+      // return the body size
+      const buf = await req.arrayBuffer();
+      return new Response(String(buf.byteLength), { status: 200 });
+    },
+  });
+
+  // Test with multiple body sizes to ensure TLS record ordering is preserved
+  // also testing several times because it's flaky otherwise
+  const testCases = [
+    16 * 1024 * 1024, // 16MB
+    32 * 1024 * 1024, // 32MB
+  ];
+
+  for (const size of testCases) {
+    const body = new Uint8Array(size).fill(0x61); // 'a'
+
+    const response = await fetch(customServer.url, {
+      method: "POST",
+      proxy: httpProxyServer.url,
+      headers: { "Content-Type": "application/octet-stream" },
+      body,
+      keepalive: false,
+      tls: { ca: tlsCert.cert, rejectUnauthorized: false },
+    });
+
+    expect(response.ok).toBe(true);
+    expect(response.status).toBe(200);
+    const result = await response.text();
+
+    // recvd body size should exactly match the sent body size
+    expect(result).toBe(String(size));
+  }
+});
+
+test("HTTPS origin close-delimited body via HTTP proxy does not ECONNRESET", async () => {
+  // Inline raw HTTPS origin: 200 + no Content-Length then close
+  const originServer = tls.createServer(
+    { ...tlsCert, rejectUnauthorized: false },
+    (clientSocket: net.Socket | tls.TLSSocket) => {
+      clientSocket.once("data", () => {
+        const body = "ok";
+        // ! Notice we are not using a Content-Length header here, this is what is causing the issue
+        const resp = "HTTP/1.1 200 OK\r\n" + "content-type: text/plain\r\n" + "connection: close\r\n" + "\r\n" + body;
+        clientSocket.write(resp);
+        clientSocket.end();
+      });
+      clientSocket.on("error", () => {});
+    },
+  );
+  originServer.listen(0);
+  await once(originServer, "listening");
+  const originURL = `https://localhost:${(originServer.address() as net.AddressInfo).port}`;
+  try {
+    const res = await fetch(originURL, {
+      method: "POST",
+      body: "x",
+      proxy: httpProxyServer.url,
+      keepalive: false,
+      tls: { ca: tlsCert.cert, rejectUnauthorized: false },
+    });
+    expect(res.ok).toBe(true);
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toBe("ok");
+  } finally {
+    originServer.close();
+    await once(originServer, "close");
+  }
+});

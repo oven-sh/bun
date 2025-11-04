@@ -1,7 +1,5 @@
-
 pub const css = @import("./css_parser.zig");
 pub const Error = css.Error;
-
 
 pub const PropertyCategory = enum {
     logical,

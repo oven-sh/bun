@@ -15,3 +15,7 @@ const socket = connect(
   },
 );
 socket.unref();
+socket.ref();
+socket.ref();
+socket.ref();
+socket.unref();

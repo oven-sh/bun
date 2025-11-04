@@ -108,9 +108,9 @@ const buildPlatforms = [
   { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", profile: "asan", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.21" },
-  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.21" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.21" },
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.22" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.22" },
+  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.22" },
   { os: "windows", arch: "x64", release: "2019" },
   { os: "windows", arch: "x64", baseline: true, release: "2019" },
 ];
@@ -127,15 +127,15 @@ const testPlatforms = [
   { os: "linux", arch: "x64", distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "12", tier: "latest" },
+  { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "24.04", tier: "latest" },
-  { os: "linux", arch: "aarch64", distro: "ubuntu", release: "20.04", tier: "oldest" },
+  { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "24.04", tier: "latest" },
-  { os: "linux", arch: "x64", distro: "ubuntu", release: "20.04", tier: "oldest" },
+  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "24.04", tier: "latest" },
-  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "20.04", tier: "oldest" },
-  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.21", tier: "latest" },
-  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.21", tier: "latest" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.21", tier: "latest" },
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.22", tier: "latest" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.22", tier: "latest" },
+  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.22", tier: "latest" },
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
   { os: "windows", arch: "x64", release: "2019", baseline: true, tier: "oldest" },
 ];
@@ -228,13 +228,7 @@ function getRetry(limit = 0) {
     manual: {
       permit_on_passed: true,
     },
-    automatic: [
-      { exit_status: 1, limit },
-      { exit_status: -1, limit: 1 },
-      { exit_status: 255, limit: 1 },
-      { signal_reason: "cancel", limit: 1 },
-      { signal_reason: "agent_stop", limit: 1 },
-    ],
+    automatic: false,
   };
 }
 
@@ -309,10 +303,48 @@ function getCppAgent(platform, options) {
   }
 
   return getEc2Agent(platform, options, {
-    instanceType: arch === "aarch64" ? "c8g.16xlarge" : "c7i.16xlarge",
-    cpuCount: 32,
-    threadsPerCore: 1,
+    instanceType: arch === "aarch64" ? "c8g.4xlarge" : "c7i.4xlarge",
   });
+}
+
+/**
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {string}
+ */
+function getLinkBunAgent(platform, options) {
+  const { os, arch, distro } = platform;
+
+  if (os === "darwin") {
+    return {
+      queue: `build-${os}`,
+      os,
+      arch,
+    };
+  }
+
+  if (os === "windows") {
+    return getEc2Agent(platform, options, {
+      instanceType: arch === "aarch64" ? "r8g.large" : "r7i.large",
+    });
+  }
+
+  return getEc2Agent(platform, options, {
+    instanceType: arch === "aarch64" ? "r8g.xlarge" : "r7i.xlarge",
+  });
+}
+
+/**
+ * @returns {Platform}
+ */
+function getZigPlatform() {
+  return {
+    os: "linux",
+    arch: "aarch64",
+    abi: "musl",
+    distro: "alpine",
+    release: "3.22",
+  };
 }
 
 /**
@@ -328,19 +360,9 @@ function getZigAgent(platform, options) {
   //   queue: "build-zig",
   // };
 
-  return getEc2Agent(
-    {
-      os: "linux",
-      arch: "aarch64",
-      abi: "musl",
-      distro: "alpine",
-      release: "3.21",
-    },
-    options,
-    {
-      instanceType: "r8g.large",
-    },
-  );
+  return getEc2Agent(getZigPlatform(), options, {
+    instanceType: "r8g.large",
+  });
 }
 
 /**
@@ -349,7 +371,7 @@ function getZigAgent(platform, options) {
  * @returns {Agent}
  */
 function getTestAgent(platform, options) {
-  const { os, arch } = platform;
+  const { os, arch, profile } = platform;
 
   if (os === "darwin") {
     return {
@@ -359,7 +381,7 @@ function getTestAgent(platform, options) {
     };
   }
 
-  // TODO: `dev-server-ssr-110.test.ts` and `next-build.test.ts` run out of memory at 8GB of memory, so use 16GB instead.
+  // TODO: delete this block when we upgrade to mimalloc v3
   if (os === "windows") {
     return getEc2Agent(platform, options, {
       instanceType: "c7i.2xlarge",
@@ -369,6 +391,13 @@ function getTestAgent(platform, options) {
   }
 
   if (arch === "aarch64") {
+    if (profile === "asan") {
+      return getEc2Agent(platform, options, {
+        instanceType: "c8g.2xlarge",
+        cpuCount: 2,
+        threadsPerCore: 1,
+      });
+    }
     return getEc2Agent(platform, options, {
       instanceType: "c8g.xlarge",
       cpuCount: 2,
@@ -376,6 +405,13 @@ function getTestAgent(platform, options) {
     });
   }
 
+  if (profile === "asan") {
+    return getEc2Agent(platform, options, {
+      instanceType: "c7i.2xlarge",
+      cpuCount: 2,
+      threadsPerCore: 1,
+    });
+  }
   return getEc2Agent(platform, options, {
     instanceType: "c7i.xlarge",
     cpuCount: 2,
@@ -412,11 +448,17 @@ function getBuildEnv(target, options) {
  * @param {PipelineOptions} options
  * @returns {string}
  */
-function getBuildCommand(target, options) {
+function getBuildCommand(target, options, label) {
   const { profile } = target;
+  const buildProfile = profile || "release";
 
-  const label = profile || "release";
-  return `bun run build:${label}`;
+  if (target.os === "windows" && label === "build-bun") {
+    // Only sign release builds, not canary builds (DigiCert charges per signature)
+    const enableSigning = !options.canary ? " -DENABLE_WINDOWS_CODESIGNING=ON" : "";
+    return `bun run build:${buildProfile}${enableSigning}`;
+  }
+
+  return `bun run build:${buildProfile}`;
 }
 
 /**
@@ -453,7 +495,7 @@ function getBuildCppStep(platform, options) {
       BUN_CPP_ONLY: "ON",
       ...getBuildEnv(platform, options),
     },
-    // We used to build the C++ dependencies and bun in seperate steps.
+    // We used to build the C++ dependencies and bun in separate steps.
     // However, as long as the zig build takes longer than both sequentially,
     // it's cheaper to run them in the same step. Can be revisited in the future.
     command: [`${command} --target bun`, `${command} --target dependencies`],
@@ -505,14 +547,15 @@ function getLinkBunStep(platform, options) {
     key: `${getTargetKey(platform)}-build-bun`,
     label: `${getTargetLabel(platform)} - build-bun`,
     depends_on: [`${getTargetKey(platform)}-build-cpp`, `${getTargetKey(platform)}-build-zig`],
-    agents: getCppAgent(platform, options),
+    agents: getLinkBunAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: {
       BUN_LINK_ONLY: "ON",
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       ...getBuildEnv(platform, options),
     },
-    command: `${getBuildCommand(platform, options)} --target bun`,
+    command: `${getBuildCommand(platform, options, "build-bun")} --target bun`,
   };
 }
 
@@ -572,7 +615,10 @@ function getTestBunStep(platform, options, testOptions = {}) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     parallelism: unifiedTests ? undefined : os === "darwin" ? 2 : 10,
-    timeout_in_minutes: profile === "asan" ? 90 : 30,
+    timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : 30,
+    env: {
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
+    },
     command:
       os === "windows"
         ? `node .\\scripts\\runner.node.mjs ${args.join(" ")}`
@@ -925,7 +971,7 @@ function getOptionsStep() {
       {
         key: "unified-builds",
         select: "Do you want to build each platform in a single step?",
-        hint: "If true, builds will not be split into seperate steps (this will likely slow down the build)",
+        hint: "If true, builds will not be split into separate steps (this will likely slow down the build)",
         required: false,
         default: "false",
         options: booleanOptions,
@@ -933,7 +979,7 @@ function getOptionsStep() {
       {
         key: "unified-tests",
         select: "Do you want to run tests in a single step?",
-        hint: "If true, tests will not be split into seperate steps (this will be very slow)",
+        hint: "If true, tests will not be split into separate steps (this will be very slow)",
         required: false,
         default: "false",
         options: booleanOptions,
@@ -1111,6 +1157,11 @@ async function getPipeline(options = {}) {
     steps.push(
       ...relevantBuildPlatforms.map(target => {
         const imageKey = getImageKey(target);
+        const zigImageKey = getImageKey(getZigPlatform());
+        const dependsOn = imagePlatforms.has(zigImageKey) ? [`${zigImageKey}-build-image`] : [];
+        if (imagePlatforms.has(imageKey)) {
+          dependsOn.push(`${imageKey}-build-image`);
+        }
 
         return getStepWithDependsOn(
           {
@@ -1120,7 +1171,7 @@ async function getPipeline(options = {}) {
               ? [getBuildBunStep(target, options)]
               : [getBuildCppStep(target, options), getBuildZigStep(target, options), getLinkBunStep(target, options)],
           },
-          imagePlatforms.has(imageKey) ? `${imageKey}-build-image` : undefined,
+          ...dependsOn,
         );
       }),
     );

@@ -39,7 +39,7 @@
 
 class FFICallbackFunctionWrapper {
 
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(FFICallbackFunctionWrapper);
 
 public:
     JSC::Strong<JSC::JSFunction> m_function;

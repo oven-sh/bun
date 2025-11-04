@@ -1,14 +1,7 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
 
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
-
-
-
 
 /// A value for the [position](https://www.w3.org/TR/css-position-3/#position-property) property.
 pub const Position = union(enum) {
@@ -83,3 +76,7 @@ pub const Position = union(enum) {
         return css.implementDeepClone(@This(), this, allocator);
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;

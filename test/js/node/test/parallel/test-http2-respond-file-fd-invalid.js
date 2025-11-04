@@ -34,7 +34,7 @@ server.on('stream', (stream) => {
 });
 server.listen(0, () => {
 
-  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  const client = http2.connect(`http://localhost:${server.address().port}`);
   const req = client.request();
 
   req.on('response', common.mustCall());

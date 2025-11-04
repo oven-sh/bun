@@ -1,17 +1,5 @@
 const Scanner = @This();
 
-const std = @import("std");
-const bun = @import("bun");
-const BundleOptions = @import("../../options.zig").BundleOptions;
-
-const Allocator = std.mem.Allocator;
-const FileSystem = bun.fs.FileSystem;
-const Transpiler = bun.Transpiler;
-const strings = bun.strings;
-const StringOrTinyString = strings.StringOrTinyString;
-const JSC = bun.JSC;
-const jest = JSC.Jest;
-
 /// Memory is borrowed.
 exclusion_names: []const []const u8 = &.{},
 /// When this list is empty, no filters are applied.
@@ -27,7 +15,7 @@ options: *BundleOptions,
 has_iterated: bool = false,
 search_count: usize = 0,
 
-const log = bun.Output.scoped(.jest, true);
+const log = bun.Output.scoped(.jest, .hidden);
 const Fifo = std.fifo.LinearFifo(ScanEntry, .Dynamic);
 const ScanEntry = struct {
     relative_dir: bun.StoredFileDescriptorType,
@@ -73,21 +61,20 @@ pub fn scan(this: *Scanner, path_literal: []const u8) Error!void {
     const parts = &[_][]const u8{ this.fs.top_level_dir, path_literal };
     const path = this.fs.absBuf(parts, &this.scan_dir_buf);
 
-    var root = this.readDirWithName(path, null) catch |err| {
-        switch (err) {
+    var root = try this.readDirWithName(path, null);
+
+    if (root.* == .err) {
+        switch (root.err.original_err) {
             error.NotDir, error.ENOTDIR => {
                 if (this.isTestFile(path)) {
-                    const rel_path = bun.PathString.init(this.fs.filename_store.append([]const u8, path) catch bun.outOfMemory());
-                    this.test_files.append(this.allocator(), rel_path) catch bun.outOfMemory();
+                    const rel_path = bun.PathString.init(bun.handleOom(this.fs.filename_store.append([]const u8, path)));
+                    bun.handleOom(this.test_files.append(this.allocator(), rel_path));
                 }
             },
             error.ENOENT => return error.DoesNotExist,
-            error.OutOfMemory => return error.OutOfMemory,
-            else => log("Scanner.readDirWithName('{s}') -> {s}", .{ path, @errorName(err) }),
+            else => log("Scanner.readDirWithName('{s}') -> {s}", .{ path, @errorName(root.err.original_err) }),
         }
-
-        return;
-    };
+    }
 
     // you typed "." and we already scanned it
     if (!this.has_iterated) {
@@ -221,3 +208,17 @@ pub fn next(this: *Scanner, entry: *FileSystem.Entry, fd: bun.StoredFileDescript
 inline fn allocator(self: *const Scanner) Allocator {
     return self.dirs_to_scan.allocator;
 }
+
+const std = @import("std");
+const BundleOptions = @import("../../options.zig").BundleOptions;
+const Allocator = std.mem.Allocator;
+
+const bun = @import("bun");
+const Transpiler = bun.Transpiler;
+const FileSystem = bun.fs.FileSystem;
+
+const jsc = bun.jsc;
+const jest = jsc.Jest;
+
+const strings = bun.strings;
+const StringOrTinyString = strings.StringOrTinyString;

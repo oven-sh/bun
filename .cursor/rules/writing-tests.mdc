@@ -11,10 +11,10 @@ You'll find all of Bun's tests in the `test/` directory.
 * `test/`
   * `cli/` - CLI command tests, like `bun install` or `bun init`
   * `js/` - JavaScript & TypeScript tests
-    * `bun/` - `Bun` APIs tests, seperated by category, for example: `glob/` for `Bun.Glob` tests
-    * `node/` - Node.js module tests, seperated by module, for example: `assert/` for `node:assert` tests
+    * `bun/` - `Bun` APIs tests, separated by category, for example: `glob/` for `Bun.Glob` tests
+    * `node/` - Node.js module tests, separated by module, for example: `assert/` for `node:assert` tests
       * `test/` - Vendored Node.js tests, taken from the Node.js repository (does not conform to Bun's test style)
-    * `web/` - Web API tests, seperated by category, for example: `fetch/` for `Request` and `Response` tests
+    * `web/` - Web API tests, separated by category, for example: `fetch/` for `Request` and `Response` tests
     * `third_party/` - npm package tests, to validate that basic usage works in Bun
   * `napi/` - N-API tests
   * `v8/` - V8 C++ API tests

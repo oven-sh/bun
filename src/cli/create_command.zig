@@ -1,38 +1,4 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const Progress = bun.Progress;
-
-const logger = bun.logger;
-
-const js_ast = bun.JSAst;
-
-const resolve_path = @import("../resolver/resolve_path.zig");
-const Command = @import("../cli.zig").Command;
-
-const fs = @import("../fs.zig");
-const URL = @import("../url.zig").URL;
-const HTTP = bun.http;
-
-const JSON = bun.JSON;
-const Archiver = bun.libarchive.Archiver;
-const Zlib = @import("../zlib.zig");
-const JSPrinter = bun.js_printer;
-const DotEnv = @import("../env_loader.zig");
-const NPMClient = @import("../which_npm_client.zig").NPMClient;
-const which = @import("../which.zig").which;
-const clap = bun.clap;
-const Headers = bun.http.Headers;
-const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: bun.PathBuffer = undefined;
-const Futex = @import("../futex.zig");
 
 const target_nextjs_version = "12.2.3";
 pub var initialized_store = false;
@@ -143,7 +109,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
         .stdin = .inherit,
 
         .windows = if (Environment.isWindows) .{
-            .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+            .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
         },
     }) catch return;
 }
@@ -165,7 +131,7 @@ pub const ProgressBuf = struct {
     }
 
     pub fn pretty(comptime fmt: string, args: anytype) !string {
-        if (Output.enable_ansi_colors) {
+        if (Output.enable_ansi_colors_stdout) {
             return ProgressBuf.print(comptime Output.prettyFmt(fmt, true), args);
         } else {
             return ProgressBuf.print(comptime Output.prettyFmt(fmt, false), args);
@@ -247,7 +213,7 @@ pub const CreateCommand = struct {
             break :brk DotEnv.Loader.init(map, ctx.allocator);
         };
 
-        env_loader.loadProcess();
+        try env_loader.loadProcess();
 
         const dirname: string = brk: {
             if (positionals.len == 1) {
@@ -361,8 +327,8 @@ pub const CreateCommand = struct {
 
                 var tarball_buf_list = std.ArrayListUnmanaged(u8){ .capacity = file_buf.len, .items = file_buf };
                 var gunzip = try Zlib.ZlibReaderArrayList.init(tarball_bytes.list.items, &tarball_buf_list, ctx.allocator);
-                try gunzip.readAll();
-                gunzip.deinit();
+                defer gunzip.deinit();
+                try gunzip.readAll(true);
 
                 node.name = try ProgressBuf.print("Extracting {s}", .{template});
                 node.setCompletedItems(0);
@@ -484,7 +450,7 @@ pub const CreateCommand = struct {
 
                 const destination_dir = destination_dir__;
                 const Walker = @import("../walker_skippable.zig");
-                var walker_ = try Walker.walk(template_dir, ctx.allocator, skip_files, skip_dirs);
+                var walker_ = try Walker.walk(.fromStdDir(template_dir), ctx.allocator, skip_files, skip_dirs);
                 defer walker_.deinit();
 
                 const FileCopier = struct {
@@ -498,7 +464,7 @@ pub const CreateCommand = struct {
                         src_base_len: if (Environment.isWindows) usize else void,
                         src_buf: if (Environment.isWindows) *bun.WPathBuffer else void,
                     ) !void {
-                        while (try walker.next()) |entry| {
+                        while (try walker.next().unwrap()) |entry| {
                             if (comptime Environment.isWindows) {
                                 if (entry.kind != .file and entry.kind != .directory) continue;
 
@@ -561,7 +527,7 @@ pub const CreateCommand = struct {
                             defer outfile.close();
                             defer node_.completeOne();
 
-                            const infile = bun.FD.fromStdFile(try entry.dir.openFile(entry.basename, .{ .mode = .read_only }));
+                            const infile = try entry.dir.openat(entry.basename, bun.O.RDONLY, 0).unwrap();
                             defer infile.close();
 
                             // Assumption: you only really care about making sure something that was executable is still executable
@@ -688,9 +654,9 @@ pub const CreateCommand = struct {
             if (package_json_file != null) {
                 initializeStore();
 
-                var source = logger.Source.initPathString("package.json", package_json_contents.list.items);
+                const source = &logger.Source.initPathString("package.json", package_json_contents.list.items);
 
-                var package_json_expr = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch {
+                var package_json_expr = JSON.parseUTF8(source, ctx.log, ctx.allocator) catch {
                     package_json_file = null;
                     break :process_package_json;
                 };
@@ -700,7 +666,7 @@ pub const CreateCommand = struct {
                     break :process_package_json;
                 }
 
-                const properties_list = std.ArrayList(js_ast.G.Property).fromOwnedSlice(default_allocator, package_json_expr.data.e_object.properties.slice());
+                var properties_list = std.ArrayList(js_ast.G.Property).fromOwnedSlice(default_allocator, package_json_expr.data.e_object.properties.slice());
 
                 if (ctx.log.errors > 0) {
                     try ctx.log.print(Output.errorWriter());
@@ -778,7 +744,7 @@ pub const CreateCommand = struct {
                         // has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
                         // has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
 
-                        // property.data.e_object.properties = js_ast.G.Property.List.init(Prune.prune(property.data.e_object.properties.slice()));
+                        // property.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(Prune.prune(property.data.e_object.properties.slice()));
                         if (property.data.e_object.properties.len > 0) {
                             has_dependencies = true;
                             dev_dependencies = q.expr;
@@ -799,8 +765,7 @@ pub const CreateCommand = struct {
 
                         // has_react_scripts = has_react_scripts or property.hasAnyPropertyNamed(&.{"react-scripts"});
                         // has_relay = has_relay or property.hasAnyPropertyNamed(&.{ "react-relay", "relay-runtime", "babel-plugin-relay" });
-                        // property.data.e_object.properties = js_ast.G.Property.List.init(Prune.prune(property.data.e_object.properties.slice()));
-                        property.data.e_object.properties = js_ast.G.Property.List.init(property.data.e_object.properties.slice());
+                        // property.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(Prune.prune(property.data.e_object.properties.slice()));
 
                         if (property.data.e_object.properties.len > 0) {
                             has_dependencies = true;
@@ -1086,9 +1051,12 @@ pub const CreateCommand = struct {
                     pub const bun_bun_for_nextjs_task: string = "bun bun --use next";
                 };
 
-                InjectionPrefill.bun_macro_relay_object.properties = js_ast.G.Property.List.init(InjectionPrefill.bun_macro_relay_properties[0..]);
-                InjectionPrefill.bun_macros_relay_object.properties = js_ast.G.Property.List.init(&InjectionPrefill.bun_macros_relay_object_properties);
-                InjectionPrefill.bun_macros_relay_only_object.properties = js_ast.G.Property.List.init(&InjectionPrefill.bun_macros_relay_only_object_properties);
+                InjectionPrefill.bun_macro_relay_object.properties = js_ast.G.Property.List
+                    .fromBorrowedSliceDangerous(InjectionPrefill.bun_macro_relay_properties[0..]);
+                InjectionPrefill.bun_macros_relay_object.properties = js_ast.G.Property.List
+                    .fromBorrowedSliceDangerous(&InjectionPrefill.bun_macros_relay_object_properties);
+                InjectionPrefill.bun_macros_relay_only_object.properties = js_ast.G.Property.List
+                    .fromBorrowedSliceDangerous(&InjectionPrefill.bun_macros_relay_only_object_properties);
 
                 // if (needs_to_inject_dev_dependency and dev_dependencies == null) {
                 //     var e_object = try ctx.allocator.create(E.Object);
@@ -1298,7 +1266,7 @@ pub const CreateCommand = struct {
 
                 package_json_expr.data.e_object.is_single_line = false;
 
-                package_json_expr.data.e_object.properties = js_ast.G.Property.List.fromList(properties_list);
+                package_json_expr.data.e_object.properties = js_ast.G.Property.List.moveFromList(&properties_list);
                 {
                     var i: usize = 0;
                     var property_i: usize = 0;
@@ -1337,7 +1305,9 @@ pub const CreateCommand = struct {
                                     script_property_out_i += 1;
                                 }
 
-                                property.value.?.data.e_object.properties = js_ast.G.Property.List.init(scripts_properties[0..script_property_out_i]);
+                                property.value.?.data.e_object.properties = js_ast.G.Property.List.fromBorrowedSliceDangerous(
+                                    scripts_properties[0..script_property_out_i],
+                                );
                             }
                         }
 
@@ -1416,7 +1386,7 @@ pub const CreateCommand = struct {
                             }
                         }
                     }
-                    package_json_expr.data.e_object.properties = js_ast.G.Property.List.init(package_json_expr.data.e_object.properties.ptr[0..property_i]);
+                    package_json_expr.data.e_object.properties.shrinkRetainingCapacity(property_i);
                 }
 
                 const file: bun.FD = .fromStdFile(package_json_file.?);
@@ -1429,7 +1399,7 @@ pub const CreateCommand = struct {
                     @TypeOf(&package_json_writer),
                     &package_json_writer,
                     package_json_expr,
-                    &source,
+                    source,
                     .{ .mangled_props = null },
                 ) catch |err| {
                     Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
@@ -1517,7 +1487,7 @@ pub const CreateCommand = struct {
                 .stdin = .inherit,
 
                 .windows = if (Environment.isWindows) .{
-                    .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
+                    .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
                 },
             });
             _ = try process.unwrap();
@@ -1541,7 +1511,7 @@ pub const CreateCommand = struct {
 
         Output.pretty(
             \\
-            \\<d>Come hang out in bun's Discord: https://bun.sh/discord<r>
+            \\<d>Come hang out in bun's Discord: https://bun.com/discord<r>
             \\
         , .{});
 
@@ -1697,7 +1667,7 @@ pub const CreateCommand = struct {
             .entry_points = &[_]string{analyzer.entry_point},
             .onFetch = @ptrCast(&Analyzer.onAnalyze),
         };
-        try bun.CLI.BuildCommand.exec(bun.CLI.Command.get(), &fetcher);
+        try bun.cli.BuildCommand.exec(bun.cli.Command.get(), &fetcher);
     }
     pub fn extractInfo(ctx: Command.Context) !struct { example_tag: Example.Tag, template: []const u8 } {
         var example_tag = Example.Tag.unknown;
@@ -1706,7 +1676,7 @@ pub const CreateCommand = struct {
         const create_options = try CreateOptions.parse(ctx);
         const positionals = create_options.positionals;
         if (positionals.len == 0) {
-            bun.CLI.Command.Tag.printHelp(.CreateCommand, false);
+            bun.cli.Command.Tag.printHelp(.CreateCommand, false);
             Global.crash();
         }
 
@@ -1717,7 +1687,7 @@ pub const CreateCommand = struct {
             break :brk DotEnv.Loader.init(map, ctx.allocator);
         };
 
-        env_loader.loadProcess();
+        try env_loader.loadProcess();
 
         // var unsupported_packages = UnsupportedPackages{};
         const template = brk: {
@@ -1735,7 +1705,7 @@ pub const CreateCommand = struct {
                         const extension = std.fs.path.extension(positional);
                         if (Example.Tag.fromFileExtension(extension)) |tag| {
                             example_tag = tag;
-                            break :brk bun.default_allocator.dupe(u8, outdir_path) catch bun.outOfMemory();
+                            break :brk bun.handleOom(bun.default_allocator.dupe(u8, outdir_path));
                         }
                         // Show a warning when the local file exists and it's not a .js file
                         // A lot of create-* npm packages have .js in the name, so you could end up with that warning.
@@ -1915,7 +1885,7 @@ pub const Example = struct {
                 folders[1] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.stdDir();
             }
 
-            if (env_loader.map.get(bun.DotEnv.home_env)) |home_dir| {
+            if (env_loader.map.get(bun.env_var.HOME.key())) |home_dir| {
                 var parts = [_]string{ home_dir, BUN_CREATE_DIR };
                 const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                 folders[2] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.stdDir();
@@ -2134,8 +2104,8 @@ pub const Example = struct {
         progress.name = "Parsing package.json";
         refresher.refresh();
         initializeStore();
-        var source = logger.Source.initPathString("package.json", mutable.list.items);
-        var expr = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch |err| {
+        const source = &logger.Source.initPathString("package.json", mutable.list.items);
+        var expr = JSON.parseUTF8(source, ctx.log, ctx.allocator) catch |err| {
             progress.end();
             refresher.refresh();
 
@@ -2242,7 +2212,7 @@ pub const Example = struct {
         );
         async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
-        if (Output.enable_ansi_colors) {
+        if (Output.enable_ansi_colors_stdout) {
             async_http.client.progress_node = progress_node;
         }
 
@@ -2265,8 +2235,8 @@ pub const Example = struct {
         }
 
         initializeStore();
-        var source = logger.Source.initPathString("examples.json", mutable.list.items);
-        const examples_object = JSON.parseUTF8(&source, ctx.log, ctx.allocator) catch |err| {
+        const source = &logger.Source.initPathString("examples.json", mutable.list.items);
+        const examples_object = JSON.parseUTF8(source, ctx.log, ctx.allocator) catch |err| {
             if (ctx.log.errors > 0) {
                 try ctx.log.print(Output.errorWriter());
                 Global.exit(1);
@@ -2316,7 +2286,7 @@ pub const CreateListExamplesCommand = struct {
             break :brk DotEnv.Loader.init(map, ctx.allocator);
         };
 
-        env_loader.loadProcess();
+        try env_loader.loadProcess();
 
         var progress = Progress{};
         progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
@@ -2331,7 +2301,7 @@ pub const CreateListExamplesCommand = struct {
 
         Output.prettyln("<r><d>#<r> You can also paste a GitHub repository:\n\n  <b>bun create <cyan>ahfarmer/calculator calc<r>\n\n", .{});
 
-        if (env_loader.map.get(bun.DotEnv.home_env)) |homedir| {
+        if (env_loader.map.get(bun.env_var.HOME.key())) |homedir| {
             Output.prettyln(
                 "<d>This command is completely optional. To add a new local template, create a folder in {s}/.bun-create/. To publish a new template, git clone https://github.com/oven-sh/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
                 .{homedir},
@@ -2456,4 +2426,35 @@ const GitHandler = struct {
     }
 };
 
+const string = []const u8;
+
+const CopyFile = @import("../copy_file.zig");
+const DotEnv = @import("../env_loader.zig");
 const SourceFileProjectGenerator = @import("../create/SourceFileProjectGenerator.zig");
+const Zlib = @import("../zlib.zig");
+const fs = @import("../fs.zig");
+const resolve_path = @import("../resolver/resolve_path.zig");
+const std = @import("std");
+const Command = @import("../cli.zig").Command;
+const NPMClient = @import("../which_npm_client.zig").NPMClient;
+const URL = @import("../url.zig").URL;
+const which = @import("../which.zig").which;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Futex = bun.Futex;
+const Global = bun.Global;
+const JSON = bun.json;
+const JSPrinter = bun.js_printer;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const Progress = bun.Progress;
+const clap = bun.clap;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.ast;
+const logger = bun.logger;
+const strings = bun.strings;
+const Archiver = bun.libarchive.Archiver;
+
+const HTTP = bun.http;
+const Headers = bun.http.Headers;

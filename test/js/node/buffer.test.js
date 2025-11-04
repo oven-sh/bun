@@ -193,6 +193,7 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(isAscii(new Buffer(""))).toBeTrue();
         expect(isAscii(new Buffer([32, 32, 128]))).toBeFalse();
         expect(isAscii(new Buffer("What did the 🦊 say?"))).toBeFalse();
+        expect(new isAscii(new Buffer("What did the 🦊 say?"))).toBeFalse();
         expect(isAscii(new Buffer("").buffer)).toBeTrue();
         expect(isAscii(new Buffer([32, 32, 128]).buffer)).toBeFalse();
       });
@@ -327,6 +328,34 @@ for (let withOverridenBufferWrite of [false, true]) {
           expect(() => b[unsignedFunction](2n ** 64n)).toThrow(RangeError);
           expect(() => b[unsignedFunction](-(2n ** 65n))).toThrow(RangeError);
           expect(() => b[unsignedFunction](2n ** 65n)).toThrow(RangeError);
+        }
+      });
+
+      it("write BigInt64 with insufficient buffer space", () => {
+        // Test for bounds check fix - prevent unsigned integer underflow
+        // when byteLength < 8, the check `offset > byteLength - 8` would underflow
+        const buf = Buffer.from("Hello World");
+        const slice = buf.slice(0, 5); // 5 bytes
+
+        for (const fn of ["writeBigInt64LE", "writeBigInt64BE", "writeBigUInt64LE", "writeBigUInt64BE"]) {
+          // Should throw because we need 8 bytes but only have 5
+          expect(() => slice[fn](4096n, 0)).toThrow(RangeError);
+          // Should also throw with large invalid offset
+          expect(() => slice[fn](4096n, 10000)).toThrow(RangeError);
+        }
+
+        // Test exact boundary - 8 bytes should work at offset 0
+        const buf8 = Buffer.allocUnsafe(8);
+        for (const fn of ["writeBigInt64LE", "writeBigInt64BE", "writeBigUInt64LE", "writeBigUInt64BE"]) {
+          expect(buf8[fn](4096n, 0)).toBe(8);
+          // But should fail at offset 1 (not enough space)
+          expect(() => buf8[fn](4096n, 1)).toThrow(RangeError);
+        }
+
+        // Test very small buffers
+        const buf7 = Buffer.allocUnsafe(7);
+        for (const fn of ["writeBigInt64LE", "writeBigInt64BE", "writeBigUInt64LE", "writeBigUInt64BE"]) {
+          expect(() => buf7[fn](0n, 0)).toThrow(RangeError);
         }
       });
 
@@ -3059,4 +3088,42 @@ it("Buffer.from(arrayBuffer, byteOffset, length)", () => {
   expect(buf.byteOffset).toBe(3);
   expect(buf.byteLength).toBe(5);
   expect(buf[Symbol.iterator]().toArray()).toEqual([13, 14, 15, 16, 17]);
+});
+
+describe("ERR_BUFFER_OUT_OF_BOUNDS", () => {
+  for (const method of ["writeBigInt64BE", "writeBigInt64LE", "writeBigUInt64BE", "writeBigUInt64LE"]) {
+    for (const bufferLength of [0, 1, 2, 3, 4, 5, 6]) {
+      const buffer = Buffer.allocUnsafe(bufferLength);
+      it(`Buffer(${bufferLength}).${method}`, () => {
+        expect(() => buffer[method](0n)).toThrow(
+          expect.objectContaining({
+            code: "ERR_BUFFER_OUT_OF_BOUNDS",
+          }),
+        );
+        expect(() => buffer[method](0n, 0)).toThrow(
+          expect.objectContaining({
+            code: "ERR_BUFFER_OUT_OF_BOUNDS",
+          }),
+        );
+      });
+    }
+  }
+
+  for (const method of ["readBigInt64BE", "readBigInt64LE", "readBigUInt64BE", "readBigUInt64LE"]) {
+    for (const bufferLength of [0, 1, 2, 3, 4, 5, 6]) {
+      const buffer = Buffer.allocUnsafe(bufferLength);
+      it(`Buffer(${bufferLength}).${method}`, () => {
+        expect(() => buffer[method]()).toThrow(
+          expect.objectContaining({
+            code: "ERR_BUFFER_OUT_OF_BOUNDS",
+          }),
+        );
+        expect(() => buffer[method](0)).toThrow(
+          expect.objectContaining({
+            code: "ERR_BUFFER_OUT_OF_BOUNDS",
+          }),
+        );
+      });
+    }
+  }
 });

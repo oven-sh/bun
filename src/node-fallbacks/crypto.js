@@ -73,3 +73,4 @@ export function getCurves() {
 }
 
 export const webcrypto = crypto;
+export default crypto;

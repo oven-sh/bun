@@ -164,8 +164,70 @@ describe("mock()", () => {
     try {
       expect(func2).toHaveReturned();
     } catch (e) {
-      expect(e.message).toContain("Function threw an exception");
+      expect(e.message.replaceAll(/\x1B\[[0-9;]*m/g, "")).toMatchInlineSnapshot(`
+        "expect(received).toHaveReturned(expected)
+
+        Expected number of succesful returns: >= 1
+        Received number of succesful returns:    0
+        Received number of calls:                1
+        "
+      `);
     }
+  });
+
+  test("toHaveNthReturnedWith", () => {
+    const fn = jest.fn();
+
+    // Test when function hasn't been called
+    expect(() => expect(fn).toHaveNthReturnedWith(1, "value")).toThrow();
+
+    // Call with different return values
+    fn.mockReturnValueOnce("first");
+    fn.mockReturnValueOnce("second");
+    fn.mockReturnValueOnce("third");
+
+    fn();
+    fn();
+    fn();
+
+    // Test positive cases
+    expect(fn).toHaveNthReturnedWith(1, "first");
+    expect(fn).toHaveNthReturnedWith(2, "second");
+    expect(fn).toHaveNthReturnedWith(3, "third");
+
+    // Test negative cases
+    expect(fn).not.toHaveNthReturnedWith(1, "wrong");
+    expect(fn).not.toHaveNthReturnedWith(2, "wrong");
+    expect(fn).not.toHaveNthReturnedWith(3, "wrong");
+
+    // Test out of bounds
+    expect(() => expect(fn).toHaveNthReturnedWith(4, "value")).toThrow();
+    expect(() => expect(fn).toHaveNthReturnedWith(0, "value")).toThrow();
+    expect(() => expect(fn).toHaveNthReturnedWith(-1, "value")).toThrow();
+
+    // Test with objects
+    const obj1 = { a: 1 };
+    const obj2 = { b: 2 };
+    fn.mockReturnValueOnce(obj1);
+    fn.mockReturnValueOnce(obj2);
+
+    fn();
+    fn();
+
+    expect(fn).toHaveNthReturnedWith(4, obj1);
+    expect(fn).toHaveNthReturnedWith(5, obj2);
+
+    // Test with thrown errors
+    const error = new Error("test error");
+    fn.mockImplementationOnce(() => {
+      throw error;
+    });
+
+    try {
+      fn();
+    } catch (e) {}
+
+    expect(() => expect(fn).toHaveNthReturnedWith(6, "value")).toThrow();
   });
 
   test("passes this value", () => {
@@ -598,6 +660,11 @@ describe("mock()", () => {
     expect(await expectRejects(fn())).toBe(43);
     expect(await expectRejects(fn())).toBe(44);
     expect(await expectRejects(fn())).toBe(42);
+  });
+  test("mockRejectedValue doesn't throw when never called", () => {
+    const fn = jest.fn().mockRejectedValue(new Error("Test error"));
+    expect(fn).toBeDefined();
+    expect(typeof fn).toBe("function");
   });
   test("withImplementation (sync)", () => {
     const fn = jest.fn(() => "1");

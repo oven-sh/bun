@@ -82,7 +82,7 @@ static std::optional<Vector<uint8_t>> crypt(int operation, const Vector<uint8_t>
     // First part
     {
         // Initialize the encryption(decryption) operation
-        if (1 != EVP_CipherInit_ex(ctx.get(), algorithm, nullptr, key.data(), counter.data(), operation))
+        if (1 != EVP_CipherInit_ex(ctx.get(), algorithm, nullptr, key.begin(), counter.begin(), operation))
             return std::nullopt;
 
         // Disable padding
@@ -90,11 +90,11 @@ static std::optional<Vector<uint8_t>> crypt(int operation, const Vector<uint8_t>
             return std::nullopt;
 
         // Provide the message to be encrypted(decrypted), and obtain the encrypted(decrypted) output
-        if (1 != EVP_CipherUpdate(ctx.get(), outputText.data(), &len, inputText.data(), headSize))
+        if (1 != EVP_CipherUpdate(ctx.get(), outputText.begin(), &len, inputText.begin(), headSize))
             return std::nullopt;
 
         // Finalize the encryption(decryption)
-        if (1 != EVP_CipherFinal_ex(ctx.get(), outputText.data() + len, &len))
+        if (1 != EVP_CipherFinal_ex(ctx.get(), outputText.begin() + len, &len))
             return std::nullopt;
     }
 
@@ -105,7 +105,7 @@ static std::optional<Vector<uint8_t>> crypt(int operation, const Vector<uint8_t>
         Vector<uint8_t> remainingCounter = counterBlockHelper.counterVectorAfterOverflow();
 
         // Initialize the encryption(decryption) operation
-        if (1 != EVP_CipherInit_ex(ctx.get(), algorithm, nullptr, key.data(), remainingCounter.data(), operation))
+        if (1 != EVP_CipherInit_ex(ctx.get(), algorithm, nullptr, key.begin(), remainingCounter.begin(), operation))
             return std::nullopt;
 
         // Disable padding
@@ -113,11 +113,11 @@ static std::optional<Vector<uint8_t>> crypt(int operation, const Vector<uint8_t>
             return std::nullopt;
 
         // Provide the message to be encrypted(decrypted), and obtain the encrypted(decrypted) output
-        if (1 != EVP_CipherUpdate(ctx.get(), outputText.data() + headSize, &len, inputText.data() + headSize, tailSize))
+        if (1 != EVP_CipherUpdate(ctx.get(), outputText.begin() + headSize, &len, inputText.begin() + headSize, tailSize))
             return std::nullopt;
 
         // Finalize the encryption(decryption)
-        if (1 != EVP_CipherFinal_ex(ctx.get(), outputText.data() + headSize + len, &len))
+        if (1 != EVP_CipherFinal_ex(ctx.get(), outputText.begin() + headSize + len, &len))
             return std::nullopt;
     }
 

@@ -478,6 +478,8 @@ function ffiRunner(fast) {
       expect(identity_ptr(cptr)).toBe(cptr);
       const second_ptr = ptr(new Buffer(8));
       expect(identity_ptr(second_ptr)).toBe(second_ptr);
+      expect(new CString(ptr(Buffer.from([97, 97, 97, 0, 97, 98, 99, 0, 0])), 4).toString()).toBe("abc");
+      expect(new CString(ptr(Buffer.from([97, 97, 97, 0, 97, 98, 99, 0, 0])), 4, 2).toString()).toBe("ab");
     });
 
     it("CFunction", () => {

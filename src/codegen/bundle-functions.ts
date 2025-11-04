@@ -288,7 +288,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       entrypoints: [tmpFile],
       define,
       target: "bun",
-      minify: { syntax: true, whitespace: false },
+      minify: { syntax: true, whitespace: false, keepNames: true },
     });
     // TODO: Wait a few versions before removing this
     if (!build.success) {
@@ -421,8 +421,8 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
     #include "BunBuiltinNames.h"
 
     namespace WebCore {
-        static const LChar combinedSourceCodeBuffer[${combinedSourceCodeLength + 1}] = { ${combinedSourceCodeChars}, 0 };
-        static const std::span<const LChar> internalCombinedSource = { combinedSourceCodeBuffer, ${combinedSourceCodeLength} };
+        static const Latin1Character combinedSourceCodeBuffer[${combinedSourceCodeLength + 1}] = { ${combinedSourceCodeChars}, 0 };
+        static const std::span<const Latin1Character> internalCombinedSource = { combinedSourceCodeBuffer, ${combinedSourceCodeLength} };
     `;
 
   for (const { basename, functions } of files) {

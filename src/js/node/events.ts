@@ -32,7 +32,8 @@ const {
   validateFunction,
 } = require("internal/validators");
 
-const { inspect, types } = require("node:util");
+const types = require("node:util/types");
+let inspect: typeof import("node:util").inspect | undefined;
 
 const SymbolFor = Symbol.for;
 const ArrayPrototypeSlice = Array.prototype.slice;
@@ -49,14 +50,14 @@ const kFirstEventParam = SymbolFor("nodejs.kFirstEventParam");
 const captureRejectionSymbol = SymbolFor("nodejs.rejection");
 
 let FixedQueue;
-const kEmptyObject = Object.freeze({ __proto__: null });
+const kEmptyObject = Object.freeze(Object.create(null));
 
 var defaultMaxListeners = 10;
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.$apply(this)`.
 function EventEmitter(opts) {
   if (this._events === undefined || this._events === this.__proto__._events) {
-    this._events = { __proto__: null };
+    this._events = Object.create(null);
     this._eventsCount = 0;
   }
 
@@ -121,7 +122,8 @@ function emitError(emitter, args) {
 
   let stringifiedEr;
   try {
-    stringifiedEr = inspect(er);
+    if (!inspect) inspect = require("internal/util/inspect").inspect;
+    stringifiedEr = inspect!(er);
   } catch {
     stringifiedEr = er;
   }
@@ -240,7 +242,7 @@ EventEmitterPrototype.addListener = function addListener(type, fn) {
   checkListener(fn);
   var events = this._events;
   if (!events) {
-    events = this._events = { __proto__: null };
+    events = this._events = Object.create(null);
     this._eventsCount = 0;
   } else if (events.newListener) {
     this.emit("newListener", type, fn.listener ?? fn);
@@ -265,7 +267,7 @@ EventEmitterPrototype.prependListener = function prependListener(type, fn) {
   checkListener(fn);
   var events = this._events;
   if (!events) {
-    events = this._events = { __proto__: null };
+    events = this._events = Object.create(null);
     this._eventsCount = 0;
   } else if (events.newListener) {
     this.emit("newListener", type, fn.listener ?? fn);
@@ -285,9 +287,10 @@ EventEmitterPrototype.prependListener = function prependListener(type, fn) {
 };
 
 function overflowWarning(emitter, type, handlers) {
+  if (!inspect) inspect = require("internal/util/inspect").inspect;
   handlers.warned = true;
   const warn = new Error(
-    `Possible EventTarget memory leak detected. ${handlers.length} ${String(type)} listeners added to ${inspect(emitter, { depth: -1 })}. MaxListeners is ${emitter._maxListeners}. Use events.setMaxListeners() to increase limit`,
+    `Possible EventTarget memory leak detected. ${handlers.length} ${String(type)} listeners added to ${inspect!(emitter, { depth: -1 })}. MaxListeners is ${emitter._maxListeners}. Use events.setMaxListeners() to increase limit`,
   );
   warn.name = "MaxListenersExceededWarning";
   warn.emitter = emitter;
@@ -370,7 +373,7 @@ EventEmitterPrototype.removeAllListeners = function removeAllListeners(type) {
         this._eventsCount--;
       }
     } else {
-      this._events = { __proto__: null };
+      this._events = Object.create(null);
     }
     return this;
   }
@@ -382,14 +385,16 @@ EventEmitterPrototype.removeAllListeners = function removeAllListeners(type) {
       this.removeAllListeners(key);
     }
     this.removeAllListeners("removeListener");
-    this._events = { __proto__: null };
+    this._events = Object.create(null);
     this._eventsCount = 0;
     return this;
   }
 
   // emit in LIFO order
   const listeners = events[type];
-  for (let i = listeners.length - 1; i >= 0; i--) this.removeListener(type, listeners[i]);
+  if (listeners !== undefined) {
+    for (let i = listeners.length - 1; i >= 0; i--) this.removeListener(type, listeners[i]);
+  }
   return this;
 };
 
@@ -511,14 +516,14 @@ function on(emitter, event, options = kEmptyObject) {
             emitter.resume();
             paused = false;
           }
-          return Promise.resolve(createIterResult(value, false));
+          return Promise.$resolve(createIterResult(value, false));
         }
 
         // Then we error, if an error happened
         // This happens one time if at all, because after 'error'
         // we stop listening
         if (error) {
-          const p = Promise.reject(error);
+          const p = Promise.$reject(error);
           // Only the first element errors
           error = null;
           return p;
@@ -620,7 +625,7 @@ function on(emitter, event, options = kEmptyObject) {
       unconsumedPromises.shift().resolve(doneResult);
     }
 
-    return Promise.resolve(doneResult);
+    return Promise.$resolve(doneResult);
   }
 }
 Object.defineProperty(on, "name", { value: "on" });

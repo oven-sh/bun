@@ -37,7 +37,7 @@ export function markPromiseAsHandled(promise: Promise<unknown>) {
 
 export function shieldingPromiseResolve(result) {
   const promise = Promise.$resolve(result);
-  if (promise.$then === undefined) promise.$then = Promise.prototype.$then;
+  if (promise.$then === undefined) promise.$then = $Promise.prototype.$then;
   return promise;
 }
 

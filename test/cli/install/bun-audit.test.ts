@@ -1,4 +1,4 @@
-import { readableStreamToText, spawn } from "bun";
+import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, DirectoryTree, gunzipJsonRequest, lazyPromiseLike, tempDirWithFiles } from "harness";
 import { join } from "node:path";
@@ -47,9 +47,9 @@ function doAuditTest(
   },
 ) {
   test(label, async () => {
-    const dir = tempDirWithFiles("bun-test-pm-audit-" + label.replace(/[^a-zA-Z0-9]/g, "-"), options.files);
+    const dir = tempDirWithFiles("bun-test-audit-" + label.replace(/[^a-zA-Z0-9]/g, "-"), options.files);
 
-    const cmd = [bunExe(), "pm", "audit", ...(options.args ?? [])];
+    const cmd = [bunExe(), "audit", ...(options.args ?? [])];
 
     const url = server.url.toString().slice(0, -1);
 
@@ -64,8 +64,8 @@ function doAuditTest(
       },
     });
 
-    const stdout = lazyPromiseLike(() => readableStreamToText(proc.stdout));
-    const stderr = lazyPromiseLike(() => readableStreamToText(proc.stderr));
+    const stdout = lazyPromiseLike(() => proc.stdout.text());
+    const stderr = lazyPromiseLike(() => proc.stderr.text());
 
     const exitCode = await proc.exited;
 
@@ -87,7 +87,7 @@ function doAuditTest(
   });
 }
 
-describe("`bun pm audit`", () => {
+describe("`bun audit`", () => {
   doAuditTest("should fail with no package.json", {
     exitCode: 1,
     files: {
@@ -285,6 +285,62 @@ describe("`bun pm audit`", () => {
     },
     fn: async ({ stdout }) => {
       expect(await stdout).toInclude("workspace:a › ms");
+    },
+  });
+
+  doAuditTest("--audit-level critical only shows critical vulnerabilities", {
+    exitCode: 1,
+    files: fixture("express@3"),
+    args: ["--audit-level", "critical"],
+    fn: async ({ stdout, stderr }) => {
+      expect(await stderr).not.toContain("invalid `--audit-level` value");
+      const output = await stdout;
+      expect(output).toContain("critical:");
+      expect(output).not.toContain("moderate:");
+      expect(output).not.toContain("high:");
+      expect(output).not.toContain("low:");
+    },
+  });
+
+  doAuditTest("--audit-level validates input and rejects invalid levels", {
+    exitCode: 1,
+    files: fixture("safe-is-number@7"),
+    args: ["--audit-level", "invalid"],
+    fn: async ({ stderr }) => {
+      expect(await stderr).toContain("invalid `--audit-level` value");
+      expect(await stderr).toContain("Valid values are: low, moderate, high, critical");
+    },
+  });
+
+  doAuditTest("--audit-level accepts all valid severity levels", {
+    exitCode: 0,
+    files: fixture("safe-is-number@7"),
+    args: ["--audit-level", "moderate"],
+    fn: async ({ stdout, stderr }) => {
+      expect(await stderr).not.toContain("invalid `--audit-level` value");
+      expect(await stdout).toContain("No vulnerabilities found");
+    },
+  });
+
+  doAuditTest("--prod flag is recognized and doesn't cause errors", {
+    exitCode: 1,
+    files: fixture("mix-of-safe-and-vulnerable-dependencies"),
+    args: ["--prod"],
+    fn: async ({ stdout, stderr }) => {
+      expect(await stderr).not.toContain("error");
+      expect(await stdout).toContain("vulnerabilities");
+    },
+  });
+
+  doAuditTest("--ignore flag filters out specific CVE IDs", {
+    exitCode: 1,
+    files: fixture("express@3"),
+    args: ["--ignore", "GHSA-gwg9-rgvj-4h5j"],
+    fn: async ({ stdout, stderr }) => {
+      expect(await stderr).not.toContain("error");
+      const output = await stdout;
+      expect(output).not.toContain("GHSA-gwg9-rgvj-4h5j");
+      expect(output).toContain("vulnerabilities");
     },
   });
 });

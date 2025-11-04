@@ -114,7 +114,7 @@ assert.strictEqual(script.runInContext(ctx), false);
   }, (err) => {
     stack = err.stack;
     return /^ \^/m.test(stack) &&
-           typeof Bun === 'undefined' ? /expected-filename\.js:33:131/.test(stack) : /expected-filename\.js:32:139/.test(stack);
+           typeof Bun === 'undefined' ? /expected-filename\.js:33:131/.test(stack) : /expected-filename\.js:33:140/.test(stack);
   }, `stack not formatted as expected: ${stack}`);
 }
 

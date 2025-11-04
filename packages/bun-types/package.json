@@ -10,20 +10,26 @@
   },
   "files": [
     "./*.d.ts",
-    "docs/**/*.md",
-    "docs/*.md"
+    "./vendor/**/*.d.ts",
+    "./docs/**/*.md",
+    "./docs/*.md",
+    "./CLAUDE.md",
+    "./README.md"
   ],
-  "homepage": "https://bun.sh",
+  "homepage": "https://bun.com",
   "dependencies": {
     "@types/node": "*"
   },
+  "peerDependencies": {
+    "@types/react": "^19"
+  },
   "devDependencies": {
-    "typescript": "^5.0.2"
+    "@types/react": "^19"
   },
   "scripts": {
     "prebuild": "echo $(pwd)",
     "copy-docs": "rm -rf docs && cp -rL ../../docs/ ./docs && find ./docs -type f -name '*.md' -exec sed -i 's/\\$BUN_LATEST_VERSION/'\"${BUN_VERSION#bun-v}\"'/g' {} +",
-    "build": "bun run copy-docs && bun scripts/build.ts",
+    "build": "bun run copy-docs && cp ../../src/init/rule.md CLAUDE.md && bun scripts/build.ts",
     "test": "tsc",
     "fmt": "echo $(which biome) && biome format --write ."
   },

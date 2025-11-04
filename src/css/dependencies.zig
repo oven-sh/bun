@@ -1,13 +1,8 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-
 pub const css = @import("./css_parser.zig");
 pub const css_values = @import("./values/values.zig");
 const Url = css_values.url.Url;
 pub const Error = css.Error;
 // const Location = css.Location;
-
 
 /// Options for `analyze_dependencies` in `PrinterOptions`.
 pub const DependencyOptions = struct {
@@ -59,7 +54,7 @@ pub const ImportDependency = struct {
     /// The location of the dependency in the source file.
     loc: SourceRange,
 
-    pub fn new(allocator: Allocator, rule: *const css.css_rules.import.ImportRule, filename: []const u8, local_names: ?*const css.LocalsResultsMap, symbols: *const bun.JSAst.Symbol.Map) ImportDependency {
+    pub fn new(allocator: Allocator, rule: *const css.css_rules.import.ImportRule, filename: []const u8, local_names: ?*const css.LocalsResultsMap, symbols: *const bun.ast.Symbol.Map) ImportDependency {
         const supports = if (rule.supports) |*supports| brk: {
             const s = css.to_css.string(
                 allocator,
@@ -150,3 +145,7 @@ pub const SourceRange = struct {
         };
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;

@@ -1,6 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const Printer = css.Printer;
@@ -639,28 +636,10 @@ pub const Length = union(enum) {
             std.mem.swap(Length, &a, &b);
         }
 
-        if (a == .calc and b == .calc) {
-            return Length{ .calc = bun.create(allocator, Calc(Length), a.calc.add(allocator, b.calc.*)) };
-        } else if (a == .calc) {
-            switch (a.calc.*) {
-                .value => |v| return v.add__(allocator, b),
-                else => return Length{ .calc = bun.create(allocator, Calc(Length), Calc(Length){
-                    .sum = .{
-                        .left = bun.create(allocator, Calc(Length), a.calc.*),
-                        .right = bun.create(allocator, Calc(Length), b.intoCalc(allocator)),
-                    },
-                }) },
-            }
-        } else if (b == .calc) {
-            switch (b.calc.*) {
-                .value => |v| return a.add__(allocator, v.*),
-                else => return Length{ .calc = bun.create(allocator, Calc(Length), Calc(Length){
-                    .sum = .{
-                        .left = bun.create(allocator, Calc(Length), a.intoCalc(allocator)),
-                        .right = bun.create(allocator, Calc(Length), b.calc.*),
-                    },
-                }) },
-            }
+        if (a == .calc and a.calc.* == .value and b != .calc) {
+            return a.calc.value.add__(allocator, b);
+        } else if (b == .calc and b.calc.* == .value and a != .calc) {
+            return a.add__(allocator, b.calc.value.*);
         } else {
             return Length{ .calc = bun.create(allocator, Calc(Length), Calc(Length){
                 .sum = .{
@@ -812,3 +791,7 @@ pub const Length = union(enum) {
         };
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;

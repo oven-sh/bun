@@ -183,7 +183,13 @@ function ClientRequest(input, options, cb) {
   };
 
   this.flushHeaders = function () {
-    send();
+    if (!fetching) {
+      this[kAbortController] ??= new AbortController();
+      this[kAbortController].signal.addEventListener("abort", onAbort, {
+        once: true,
+      });
+      startFetch();
+    }
   };
 
   this.destroy = function (err?: Error) {
@@ -244,7 +250,7 @@ function ClientRequest(input, options, cb) {
   const onAbort = (_err?: Error) => {
     this[kClearTimeout]?.();
     socketCloseListener();
-    if (!this[abortedSymbol]) {
+    if (!this[abortedSymbol] && !this?.res?.complete) {
       process.nextTick(emitAbortNextTick, this);
       this[abortedSymbol] = true;
     }
@@ -543,7 +549,7 @@ function ClientRequest(input, options, cb) {
 
   const send = () => {
     this.finished = true;
-    this[kAbortController] = new AbortController();
+    this[kAbortController] ??= new AbortController();
     this[kAbortController].signal.addEventListener("abort", onAbort, { once: true });
 
     var body = this[kBodyChunks] && this[kBodyChunks].length > 1 ? new Blob(this[kBodyChunks]) : this[kBodyChunks]?.[0];

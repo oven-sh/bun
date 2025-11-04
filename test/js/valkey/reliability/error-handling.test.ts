@@ -71,7 +71,7 @@ describe.skipIf(!isEnabled)("Valkey: Error Handling", () => {
   });
 
   describe("Null/Undefined/Invalid Input Handling", () => {
-    test.only("should handle undefined/null command arguments", async () => {
+    test("should handle undefined/null command arguments", async () => {
       const client = ctx.redis;
 
       // undefined key

@@ -10,7 +10,7 @@ const h2 = require('http2');
 // any errors if the stream was destroyed before headers were sent
 
 const server = h2.createServer();
-server.listen(0, "127.0.0.1", common.mustCall(function() {
+server.listen(0, common.mustCall(function() {
   const port = server.address().port;
   server.once('request', common.mustCall(function(request, response) {
     response.on('finish', common.mustCall(() => {
@@ -26,23 +26,22 @@ server.listen(0, "127.0.0.1", common.mustCall(function() {
       });
     }));
 
-
     response.destroy();
   }));
 
-  const url = `http://127.0.0.1:${port}`;
+  const url = `http://localhost:${port}`;
   const client = h2.connect(url, common.mustCall(function() {
     const headers = {
       ':path': '/',
       ':method': 'GET',
       ':scheme': 'http',
-      ':authority': `127.0.0.1:${port}`
+      ':authority': `localhost:${port}`
     };
     const request = client.request(headers);
     request.on('end', common.mustCall(function() {
       client.close();
     }));
-    request.end("hello");
+    request.end();
     request.resume();
   }));
 }));

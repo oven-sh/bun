@@ -1,9 +1,5 @@
-const std = @import("std");
-const builtin = @import("builtin");
 pub const bun = @import("./bun.zig");
-const recover = @import("test/recover.zig");
 
-const TestFn = std.builtin.TestFn;
 const Output = bun.Output;
 const Environment = bun.Environment;
 
@@ -27,10 +23,10 @@ pub fn main() void {
     // So it's safest to put it very early in the main function.
     if (Environment.isWindows) {
         _ = bun.windows.libuv.uv_replace_allocator(
-            @ptrCast(&bun.Mimalloc.mi_malloc),
-            @ptrCast(&bun.Mimalloc.mi_realloc),
-            @ptrCast(&bun.Mimalloc.mi_calloc),
-            @ptrCast(&bun.Mimalloc.mi_free),
+            @ptrCast(&bun.mimalloc.mi_malloc),
+            @ptrCast(&bun.mimalloc.mi_realloc),
+            @ptrCast(&bun.mimalloc.mi_calloc),
+            @ptrCast(&bun.mimalloc.mi_free),
         );
         environ = @ptrCast(std.os.environ.ptr);
         _environ = @ptrCast(std.os.environ.ptr);
@@ -198,7 +194,12 @@ comptime {
 
     _ = bun.bun_js.Bun__onRejectEntryPointResult;
     _ = bun.bun_js.Bun__onResolveEntryPointResult;
-    _ = &@import("bun.js/node/buffer.zig").BufferVectorized;
-    @import("cli/upgrade_command.zig").@"export"();
-    @import("cli/test_command.zig").@"export"();
+    _ = &@import("./bun.js/node/buffer.zig").BufferVectorized;
+    @import("./cli/upgrade_command.zig").@"export"();
+    @import("./cli/test_command.zig").@"export"();
 }
+
+const builtin = @import("builtin");
+const recover = @import("./test/recover.zig");
+const std = @import("std");
+const TestFn = std.builtin.TestFn;

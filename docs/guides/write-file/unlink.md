@@ -13,4 +13,4 @@ await file.delete();
 
 ---
 
-See [Docs > API > File I/O](https://bun.sh/docs/api/file-io#reading-files-bun-file) for complete documentation of `Bun.file()`.
+See [Docs > API > File I/O](https://bun.com/docs/api/file-io#reading-files-bun-file) for complete documentation of `Bun.file()`.

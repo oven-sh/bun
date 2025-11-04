@@ -1,30 +1,8 @@
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const FileDescriptor = bun.FileDescriptor;
-const FeatureFlags = bun.FeatureFlags;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-const Mutex = bun.Mutex;
 const Fs = @This();
-const path_handler = @import("./resolver/resolve_path.zig");
-const PathString = bun.PathString;
-const allocators = bun.allocators;
-const OOM = bun.OOM;
-const FD = bun.FD;
 
-const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
-const PathBuffer = bun.PathBuffer;
-const WPathBuffer = bun.WPathBuffer;
+pub const debug = Output.scoped(.fs, .hidden);
 
-pub const debug = Output.scoped(.fs, true);
-
-// pub const FilesystemImplementation = @import("fs_impl.zig");
+// pub const FilesystemImplementation = @import("./fs_impl.zig");
 
 pub const Preallocate = struct {
     pub const Counts = struct {
@@ -69,7 +47,7 @@ pub const FileSystem = struct {
     }
 
     var tmpname_id_number = std.atomic.Value(u32).init(0);
-    pub fn tmpname(_: *const FileSystem, extname: string, buf: []u8, hash: u64) ![*:0]u8 {
+    pub fn tmpname(extname: string, buf: []u8, hash: u64) std.fmt.BufPrintError![:0]u8 {
         const hex_value = @as(u64, @truncate(@as(u128, @intCast(hash)) | @as(u128, @intCast(std.time.nanoTimestamp()))));
 
         return try std.fmt.bufPrintZ(buf, ".{any}-{any}.{s}", .{
@@ -110,7 +88,7 @@ pub const FileSystem = struct {
     }
 
     pub fn initWithForce(top_level_dir_: ?stringZ, comptime force: bool) !*FileSystem {
-        const allocator = bun.fs_allocator;
+        const allocator = bun.default_allocator;
         var top_level_dir = top_level_dir_ orelse (if (Environment.isBrowser) "/project/" else try bun.getcwdAlloc(allocator));
         _ = &top_level_dir;
 
@@ -128,6 +106,11 @@ pub const FileSystem = struct {
         }
 
         return &instance;
+    }
+
+    pub fn deinit(this: *const FileSystem) void {
+        this.dirname_store.deinit();
+        this.filename_store.deinit();
     }
 
     pub const DirEntry = struct {
@@ -553,20 +536,20 @@ pub const FileSystem = struct {
             return switch (Environment.os) {
                 // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw#remarks
                 .windows => win_tempdir_cache orelse {
-                    const value = bun.getenvZ("TEMP") orelse bun.getenvZ("TMP") orelse brk: {
-                        if (bun.getenvZ("SystemRoot") orelse bun.getenvZ("windir")) |windir| {
+                    const value = bun.env_var.TEMP.get() orelse bun.env_var.TMP.get() orelse brk: {
+                        if (bun.env_var.SYSTEMROOT.get() orelse bun.env_var.WINDIR.get()) |windir| {
                             break :brk std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}\\Temp",
                                 .{strings.withoutTrailingSlash(windir)},
-                            ) catch bun.outOfMemory();
+                            ) catch |err| bun.handleOom(err);
                         }
 
-                        if (bun.getenvZ("USERPROFILE")) |profile| {
+                        if (bun.env_var.HOME.get()) |profile| {
                             var buf: bun.PathBuffer = undefined;
                             var parts = [_]string{"AppData\\Local\\Temp"};
                             const out = bun.path.joinAbsStringBuf(profile, &buf, &parts, .loose);
-                            break :brk bun.default_allocator.dupe(u8, out) catch bun.outOfMemory();
+                            break :brk bun.handleOom(bun.default_allocator.dupe(u8, out));
                         }
 
                         var tmp_buf: bun.PathBuffer = undefined;
@@ -576,7 +559,7 @@ pub const FileSystem = struct {
                             bun.default_allocator,
                             "{s}\\Windows\\Temp",
                             .{strings.withoutTrailingSlash(root)},
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     };
                     win_tempdir_cache = value;
                     return value;
@@ -595,7 +578,7 @@ pub const FileSystem = struct {
         pub var tmpdir_path_set = false;
         pub fn tmpdirPath(_: *const @This()) []const u8 {
             if (!tmpdir_path_set) {
-                tmpdir_path = bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse platformTempDir();
+                tmpdir_path = bun.env_var.BUN_TMPDIR.get() orelse platformTempDir();
                 tmpdir_path_set = true;
             }
 
@@ -604,7 +587,7 @@ pub const FileSystem = struct {
 
         pub fn openTmpDir(_: *const RealFS) !std.fs.Dir {
             if (!tmpdir_path_set) {
-                tmpdir_path = bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse platformTempDir();
+                tmpdir_path = bun.env_var.BUN_TMPDIR.get() orelse platformTempDir();
                 tmpdir_path_set = true;
             }
 
@@ -624,8 +607,8 @@ pub const FileSystem = struct {
             var existing = this.entries.atIndex(index) orelse return null;
             if (existing.* == .entries) {
                 if (existing.entries.generation < generation) {
-                    var handle = bun.openDirForIteration(std.fs.cwd(), existing.entries.dir) catch |err| {
-                        existing.entries.data.clearAndFree(bun.fs_allocator);
+                    var handle = bun.openDirForIteration(FD.cwd(), existing.entries.dir).unwrap() catch |err| {
+                        existing.entries.data.clearAndFree(bun.default_allocator);
 
                         return this.readDirectoryError(existing.entries.dir, err) catch unreachable;
                     };
@@ -636,15 +619,15 @@ pub const FileSystem = struct {
                         &existing.entries.data,
                         existing.entries.dir,
                         generation,
-                        handle,
+                        handle.stdDir(),
 
                         void,
                         void{},
                     ) catch |err| {
-                        existing.entries.data.clearAndFree(bun.fs_allocator);
+                        existing.entries.data.clearAndFree(bun.default_allocator);
                         return this.readDirectoryError(existing.entries.dir, err) catch unreachable;
                     };
-                    existing.entries.data.clearAndFree(bun.fs_allocator);
+                    existing.entries.data.clearAndFree(bun.default_allocator);
                     existing.entries.* = new_entry;
                 }
             }
@@ -653,7 +636,7 @@ pub const FileSystem = struct {
         }
 
         pub fn getDefaultTempDir() string {
-            return bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse platformTempDir();
+            return bun.env_var.BUN_TMPDIR.get() orelse platformTempDir();
         }
 
         pub fn setTempdir(path: ?string) void {
@@ -842,7 +825,7 @@ pub const FileSystem = struct {
             const file_limit = adjustUlimit() catch unreachable;
 
             if (!_entries_option_map_loaded) {
-                _entries_option_map = EntriesOption.Map.init(bun.fs_allocator);
+                _entries_option_map = EntriesOption.Map.init(bun.default_allocator);
                 _entries_option_map_loaded = true;
             }
 
@@ -982,9 +965,9 @@ pub const FileSystem = struct {
         ) !DirEntry {
             _ = fs;
 
-            var iter = bun.iterateDir(handle);
+            var iter = bun.iterateDir(.fromStdDir(handle));
             var dir = DirEntry.init(_dir, generation);
-            const allocator = bun.fs_allocator;
+            const allocator = bun.default_allocator;
             errdefer dir.deinit(allocator);
 
             if (store_fd) {
@@ -1006,11 +989,22 @@ pub const FileSystem = struct {
         fn readDirectoryError(fs: *RealFS, dir: string, err: anyerror) OOM!*EntriesOption {
             if (comptime FeatureFlags.enable_entry_cache) {
                 var get_or_put_result = try fs.entries.getOrPut(dir);
-                const opt = try fs.entries.put(&get_or_put_result, EntriesOption{
-                    .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
-                });
+                switch (err) {
+                    error.ENOENT, error.FileNotFound => {
+                        fs.entries.markNotFound(get_or_put_result);
+                        temp_entries_option = EntriesOption{
+                            .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
+                        };
+                        return &temp_entries_option;
+                    },
+                    else => {
+                        const opt = try fs.entries.put(&get_or_put_result, EntriesOption{
+                            .err = DirEntry.Err{ .original_err = err, .canonical_error = err },
+                        });
 
-                return opt;
+                        return opt;
+                    },
+                }
             }
 
             temp_entries_option = EntriesOption{
@@ -1074,11 +1068,18 @@ pub const FileSystem = struct {
                         }
 
                         in_place = cached_result.entries;
+                    } else if (cache_result.?.status == .not_found and generation == 0) {
+                        temp_entries_option = EntriesOption{
+                            .err = DirEntry.Err{ .original_err = error.ENOENT, .canonical_error = error.ENOENT },
+                        };
+                        return &temp_entries_option;
                     }
                 }
             }
 
-            var handle = maybe_handle orelse try fs.openDir(dir);
+            var handle = maybe_handle orelse (fs.openDir(dir) catch |err| {
+                return try fs.readDirectoryError(dir, err);
+            });
 
             defer {
                 if (maybe_handle == null and (!store_fd or fs.needToCloseFiles())) {
@@ -1105,14 +1106,14 @@ pub const FileSystem = struct {
                 Iterator,
                 iterator,
             ) catch |err| {
-                if (in_place) |existing| existing.data.clearAndFree(bun.fs_allocator);
+                if (in_place) |existing| existing.data.clearAndFree(bun.default_allocator);
                 return try fs.readDirectoryError(dir, err);
             };
 
             if (comptime FeatureFlags.enable_entry_cache) {
-                const entries_ptr = in_place orelse bun.fs_allocator.create(DirEntry) catch bun.outOfMemory();
+                const entries_ptr = in_place orelse bun.handleOom(bun.default_allocator.create(DirEntry));
                 if (in_place) |original| {
-                    original.data.clearAndFree(bun.fs_allocator);
+                    original.data.clearAndFree(bun.default_allocator);
                 }
                 if (store_fd and !entries.fd.isValid())
                     entries.fd = .fromStdDir(handle);
@@ -1145,7 +1146,7 @@ pub const FileSystem = struct {
         ) !PathContentsPair {
             return readFileWithHandleAndAllocator(
                 fs,
-                bun.fs_allocator,
+                bun.default_allocator,
                 path,
                 _size,
                 file,
@@ -1382,10 +1383,10 @@ pub const FileSystem = struct {
             if (comptime bun.Environment.isWindows) {
                 var file = bun.sys.getFileAttributes(absolute_path_c) orelse return error.FileNotFound;
                 var depth: usize = 0;
-                const buf2: *bun.PathBuffer = bun.PathBufferPool.get();
-                defer bun.PathBufferPool.put(buf2);
-                const buf3: *bun.PathBuffer = bun.PathBufferPool.get();
-                defer bun.PathBufferPool.put(buf3);
+                const buf2: *bun.PathBuffer = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(buf2);
+                const buf3: *bun.PathBuffer = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(buf3);
 
                 var current_buf: *bun.PathBuffer = buf2;
                 var other_buf: *bun.PathBuffer = &outpath;
@@ -1560,6 +1561,18 @@ pub const PathName = struct {
     /// extensionless files report ""
     ext: string,
     filename: string,
+
+    pub fn findExtname(_path: string) string {
+        var start: usize = 0;
+        if (bun.path.lastIndexOfSep(_path)) |i| {
+            start = i + 1;
+        }
+        const base = _path[start..];
+        if (bun.strings.lastIndexOfChar(base, '.')) |dot| {
+            if (dot > 0) return base[dot..];
+        }
+        return "";
+    }
 
     pub fn extWithoutLeadingDot(self: *const PathName) string {
         return if (self.ext.len > 0 and self.ext[0] == '.') self.ext[1..] else self.ext;
@@ -1806,6 +1819,14 @@ pub const Path = struct {
         }
     }
 
+    pub inline fn assertFilePathIsAbsolute(path: *const Path) void {
+        if (bun.Environment.ci_assert) {
+            if (path.isFile()) {
+                bun.assert(std.fs.path.isAbsolute(path.text));
+            }
+        }
+    }
+
     pub inline fn isPrettyPathPosix(path: *const Path) bool {
         if (!Environment.isWindows) return true;
         return bun.strings.indexOfChar(path.pretty, '\\') == null;
@@ -1972,5 +1993,30 @@ pub const Path = struct {
 // pub fn customRealpath(allocator: std.mem.Allocator, path: string) !string {
 //     var opened = try std.posix.open(path, if (Environment.isLinux) bun.O.PATH else bun.O.RDONLY, 0);
 //     defer std.posix.close(opened);
-
 // }
+
+pub const StatHash = @import("./fs/stat_hash.zig");
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const path_handler = @import("./resolver/resolve_path.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FD = bun.FD;
+const FeatureFlags = bun.FeatureFlags;
+const FileDescriptor = bun.FileDescriptor;
+const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
+const MutableString = bun.MutableString;
+const Mutex = bun.Mutex;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const PathBuffer = bun.PathBuffer;
+const PathString = bun.PathString;
+const StoredFileDescriptorType = bun.StoredFileDescriptorType;
+const WPathBuffer = bun.WPathBuffer;
+const allocators = bun.allocators;
+const default_allocator = bun.default_allocator;
+const strings = bun.strings;

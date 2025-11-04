@@ -389,7 +389,7 @@ pub const FetchTasklet = struct {
             reason.ensureStillAlive();
 
             // Store error in unified storage
-            fetch.fetch_error.set(.{ .abort_error = jsc.Strong.Optional.create(reason, fetch.global_this) });
+            fetch.fetch_error.set(.{ .abort_error = jsc.Strong.Optional.create(reason, fetch.main_thread.global_this) });
 
             // Set atomic abort flag for HTTP thread fast-path
             fetch.signal_store.aborted.store(true, .monotonic);
@@ -399,7 +399,7 @@ pub const FetchTasklet = struct {
                 transitionLifecycle(fetch, fetch.lifecycle, .aborted);
             }
 
-            fetch.tracker.didCancel(fetch.global_this);
+            fetch.main_thread.tracker.didCancel(fetch.main_thread.global_this);
 
             // Abort the HTTP request
             fetch.abortTask();
@@ -450,66 +450,66 @@ pub const FetchTasklet = struct {
     // These structs are commented out in Step 2 and will be enabled in Step 4
     // when we migrate the actual field storage into them.
 
-    // NOTE (Phase 7 Step 2): Will be enabled in Step 4
-    //
-    // /// Data that can ONLY be accessed from the main JavaScript thread.
-    // /// No mutex needed - thread confinement enforced by assertions in debug builds.
-    // const MainThreadData = struct {
-    //     /// Global object (non-owning pointer)
-    //     global_this: *JSGlobalObject,
-    //
-    //     /// VM (non-owning pointer)
-    //     javascript_vm: *VirtualMachine,
-    //
-    //     /// Promise to resolve/reject (owned)
-    //     promise: jsc.JSPromise.Strong,
-    //
-    //     /// Weak reference to Response JS object for finalization tracking.
-    //     /// Can become null if GC collects the Response.
-    //     response_weak: jsc.Weak(FetchTasklet) = .{},
-    //
-    //     /// Native Response object for finalization tracking.
-    //     /// INTENTIONAL DUAL OWNERSHIP with response_weak:
-    //     /// - Allows tracking when Response JS object is finalized
-    //     /// - Signals we should stop processing body data
-    //     /// - See Bun__FetchResponse_finalize for usage
-    //     native_response: ?*Response = null,
-    //
-    //     /// Strong reference to response ReadableStream (owned)
-    //     readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
-    //
-    //     /// Abort signal (ref-counted via AbortSignal's API)
-    //     /// Managed by AbortHandling wrapper
-    //     abort_signal: ?*jsc.WebCore.AbortSignal = null,
-    //
-    //     /// Custom TLS check function (owned)
-    //     check_server_identity: jsc.Strong.Optional = .empty,
-    //
-    //     /// Keep VM alive during fetch
-    //     poll_ref: Async.KeepAlive = .{},
-    //
-    //     /// Task for cross-thread callbacks
-    //     concurrent_task: jsc.ConcurrentTask = .{},
-    //
-    //     /// Debug tracker
-    //     tracker: jsc.Debugger.AsyncTaskTracker,
-    //
-    //     fn assertMainThread(self: *const MainThreadData) void {
-    //         if (bun.Environment.isDebug) {
-    //             // Thread confinement assertion
-    //             // Could add actual thread ID check if available
-    //             _ = self;
-    //         }
-    //     }
-    //
-    //     fn deinit(self: *MainThreadData) void {
-    //         self.promise.deinit();
-    //         self.readable_stream_ref.deinit();
-    //         self.check_server_identity.deinit();
-    //         self.poll_ref.unref(self.javascript_vm);
-    //         // abort_signal handled by AbortHandling wrapper
-    //     }
-    // };
+    // NOTE (Phase 7 Step 4): MainThreadData is now ENABLED
+    /// Data that can ONLY be accessed from the main JavaScript thread.
+    /// No mutex needed - thread confinement enforced by assertions in debug builds.
+    const MainThreadData = struct {
+        /// Global object (non-owning pointer)
+        global_this: *JSGlobalObject,
+
+        /// VM (non-owning pointer)
+        javascript_vm: *VirtualMachine,
+
+        /// Promise to resolve/reject (owned)
+        promise: jsc.JSPromise.Strong,
+
+        /// Weak reference to Response JS object for finalization tracking.
+        /// Can become null if GC collects the Response.
+        response_weak: jsc.Weak(FetchTasklet) = .{},
+
+        /// Native Response object for finalization tracking.
+        /// INTENTIONAL DUAL OWNERSHIP with response_weak:
+        /// - Allows tracking when Response JS object is finalized
+        /// - Signals we should stop processing body data
+        /// - See Bun__FetchResponse_finalize for usage
+        native_response: ?*Response = null,
+
+        /// Strong reference to response ReadableStream (owned)
+        readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
+
+        /// Abort signal - stored here but managed by AbortHandling wrapper
+        /// The AbortHandling struct handles all ref/unref operations
+        abort_signal: ?*jsc.WebCore.AbortSignal = null,
+
+        /// Custom TLS check function (owned)
+        check_server_identity: jsc.Strong.Optional = .empty,
+
+        /// Keep VM alive during fetch
+        poll_ref: Async.KeepAlive = .{},
+
+        /// Task for cross-thread callbacks
+        concurrent_task: jsc.ConcurrentTask = .{},
+
+        /// Debug tracker
+        tracker: jsc.Debugger.AsyncTaskTracker,
+
+        fn assertMainThread(self: *const MainThreadData) void {
+            if (bun.Environment.isDebug) {
+                // Thread confinement assertion
+                // Could add actual thread ID check if available
+                _ = self;
+            }
+        }
+
+        fn deinit(self: *MainThreadData) void {
+            self.promise.deinit();
+            self.readable_stream_ref.deinit();
+            self.check_server_identity.deinit();
+            self.poll_ref.unref(self.javascript_vm);
+            // abort_signal handled by AbortHandling wrapper
+            // response_weak is not owned, no cleanup needed
+        }
+    };
     //
     // /// Data shared between main thread and HTTP thread.
     // /// ALL access must be protected by mutex.
@@ -615,12 +615,14 @@ pub const FetchTasklet = struct {
     //     }
     // };
 
+    // === PHASE 7 STEP 4: MAIN THREAD DATA ===
+    /// All fields that ONLY accessed from the main JavaScript thread
+    main_thread: MainThreadData,
+
     sink: ?*ResumableSink = null,
     http: ?*http.AsyncHTTP = null,
     result: http.HTTPClientResult = .{},
     metadata: ?http.HTTPResponseMetadata = null,
-    javascript_vm: *VirtualMachine = undefined,
-    global_this: *JSGlobalObject = undefined,
     request_body: HTTPRequestBody = undefined,
     request_body_streaming_buffer: ?*http.ThreadSafeStreamBuffer = null,
 
@@ -628,16 +630,7 @@ pub const FetchTasklet = struct {
     response_buffer: MutableString = undefined,
     /// buffer used to stream response to JS
     scheduled_response_buffer: MutableString = undefined,
-    /// response weak ref we need this to track the response JS lifetime
-    response: jsc.Weak(FetchTasklet) = .{},
-    /// native response ref if we still need it when JS is discarted
-    native_response: ?*Response = null,
-    /// stream strong ref if any is available
-    readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
     request_headers: RequestHeaders = undefined,
-    promise: jsc.JSPromise.Strong,
-    concurrent_task: jsc.ConcurrentTask = .{},
-    poll_ref: Async.KeepAlive = .{},
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the request
     /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
@@ -654,8 +647,7 @@ pub const FetchTasklet = struct {
     signal_store: http.Signals.Store = .{},
     has_schedule_callback: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
-    // custom checkServerIdentity
-    check_server_identity: jsc.Strong.Optional = .empty,
+    // custom checkServerIdentity - removed, now in main_thread
     reject_unauthorized: bool = true,
     upgraded_connection: bool = false,
     // Custom Hostname
@@ -674,8 +666,6 @@ pub const FetchTasklet = struct {
     /// Single source of truth for all errors
     /// Replaces: result.fail, abort_reason scattered storage
     fetch_error: FetchError = .none,
-
-    tracker: jsc.Debugger.AsyncTaskTracker,
 
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
 
@@ -701,7 +691,7 @@ pub const FetchTasklet = struct {
             // this is really unlikely to happen, but can happen
             // lets make sure that we always call deinit from main thread
 
-            this.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinit));
+            this.main_thread.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinit));
         }
     }
 
@@ -842,21 +832,22 @@ pub const FetchTasklet = struct {
         }
 
         this.response_buffer.deinit();
-        this.response.deinit();
-        if (this.native_response) |response| {
-            this.native_response = null;
 
+        // Clean up response references (these are managed separately from main_thread.deinit)
+        this.main_thread.response_weak.deinit();
+        if (this.main_thread.native_response) |response| {
+            this.main_thread.native_response = null;
             response.unref();
         }
 
-        this.readable_stream_ref.deinit();
+        // Main thread deinit handles: promise, readable_stream_ref, check_server_identity, poll_ref
+        this.main_thread.deinit();
 
         this.scheduled_response_buffer.deinit();
         if (this.request_body != .ReadableStream or this.request_stream_state == .waiting_start) {
             this.request_body.detach();
         }
 
-        this.check_server_identity.deinit();
         this.abort_handling.deinit(this);
         // Clear unified error storage
         this.fetch_error.deinit();
@@ -883,12 +874,12 @@ pub const FetchTasklet = struct {
 
     fn getCurrentResponse(this: *FetchTasklet) ?*Response {
         // we need a body to resolve the promise when buffering
-        if (this.native_response) |response| {
+        if (this.main_thread.native_response) |response| {
             return response;
         }
 
         // if we did not have a direct reference we check if the Weak ref is still alive
-        if (this.response.get()) |response_js| {
+        if (this.main_thread.response_weak.get()) |response_js| {
             if (response_js.as(Response)) |response| {
                 return response;
             }
@@ -901,15 +892,15 @@ pub const FetchTasklet = struct {
         // Transition request stream state to active
         this.request_stream_state = .active;
         bun.assert(this.request_body == .ReadableStream);
-        if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
+        if (this.request_body.ReadableStream.get(this.main_thread.global_this)) |stream| {
             if (this.abort_handling.get()) |signal| {
                 if (signal.aborted()) {
-                    stream.abort(this.global_this);
+                    stream.abort(this.main_thread.global_this);
                     return;
                 }
             }
 
-            const globalThis = this.global_this;
+            const globalThis = this.main_thread.global_this;
             this.ref(); // lets only unref when sink is done
             // +1 because the task refs the sink
             const sink = ResumableSink.initExactRefs(globalThis, stream, this, 2);
@@ -919,7 +910,7 @@ pub const FetchTasklet = struct {
 
     pub fn onBodyReceived(this: *FetchTasklet) bun.JSTerminated!void {
         const success = this.result.isSuccess();
-        const globalThis = this.global_this;
+        const globalThis = this.main_thread.global_this;
         // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
         var buffer_reset = true;
         log("onBodyReceived success={} has_more={}", .{ success, this.result.has_more });
@@ -935,7 +926,7 @@ pub const FetchTasklet = struct {
             defer if (need_deinit) err.deinit();
             var js_err = JSValue.zero;
             // if we are streaming update with error
-            if (this.readable_stream_ref.get(globalThis)) |readable| {
+            if (this.main_thread.readable_stream_ref.get(globalThis)) |readable| {
                 if (readable.ptr == .Bytes) {
                     js_err = err.toJS(globalThis);
                     js_err.ensureStillAlive();
@@ -964,7 +955,7 @@ pub const FetchTasklet = struct {
             return;
         }
 
-        if (this.readable_stream_ref.get(globalThis)) |readable| {
+        if (this.main_thread.readable_stream_ref.get(globalThis)) |readable| {
             log("onBodyReceived readable_stream_ref", .{});
             // Dual tracking: mark as streaming if we have a stream
             if (this.lifecycle == .response_awaiting_body_access or
@@ -988,8 +979,8 @@ pub const FetchTasklet = struct {
                         bun.default_allocator,
                     );
                 } else {
-                    var prev = this.readable_stream_ref;
-                    this.readable_stream_ref = .{};
+                    var prev = this.main_thread.readable_stream_ref;
+                    this.main_thread.readable_stream_ref = .{};
                     defer prev.deinit();
                     buffer_reset = false;
 
@@ -1069,7 +1060,7 @@ pub const FetchTasklet = struct {
 
                 if (old == .Locked) {
                     log("onBodyReceived old.resolve", .{});
-                    try old.resolve(body, this.global_this, response.getFetchHeaders());
+                    try old.resolve(body, this.main_thread.global_this, response.getFetchHeaders());
                 }
             }
         }
@@ -1082,7 +1073,7 @@ pub const FetchTasklet = struct {
         this.has_schedule_callback.store(false, .monotonic);
         const is_done = !this.result.has_more;
 
-        const vm = this.javascript_vm;
+        const vm = this.main_thread.javascript_vm;
         // vm is shutting down we cannot touch JS
         if (vm.isShuttingDown()) {
             this.mutex.unlock();
@@ -1092,13 +1083,13 @@ pub const FetchTasklet = struct {
             return;
         }
 
-        const globalThis = this.global_this;
+        const globalThis = this.main_thread.global_this;
         defer {
             this.mutex.unlock();
             // if we are not done we wait until the next call
             if (is_done) {
-                var poll_ref = this.poll_ref;
-                this.poll_ref = .{};
+                var poll_ref = this.main_thread.poll_ref;
+                this.main_thread.poll_ref = .{};
                 poll_ref.unref(vm);
                 this.deref();
             }
@@ -1123,11 +1114,11 @@ pub const FetchTasklet = struct {
         if (this.is_waiting_abort) {
             return;
         }
-        const promise_value = this.promise.valueOrEmpty();
+        const promise_value = this.main_thread.promise.valueOrEmpty();
 
         if (promise_value.isEmptyOrUndefinedOrNull()) {
             log("onProgressUpdate: promise_value is null", .{});
-            this.promise.deinit();
+            this.main_thread.promise.deinit();
             return;
         }
 
@@ -1140,7 +1131,7 @@ pub const FetchTasklet = struct {
                 log("onProgressUpdate: aborted due certError", .{});
                 // we need to abort the request
                 const promise = promise_value.asAnyPromise().?;
-                const tracker = this.tracker;
+                const tracker = this.main_thread.tracker;
                 var result = this.onReject();
                 defer result.deinit();
 
@@ -1148,7 +1139,7 @@ pub const FetchTasklet = struct {
                 try promise.reject(globalThis, result.toJS(globalThis));
 
                 tracker.didDispatch(globalThis);
-                this.promise.deinit();
+                this.main_thread.promise.deinit();
                 return;
             }
             // everything ok
@@ -1158,12 +1149,12 @@ pub const FetchTasklet = struct {
             }
         }
 
-        const tracker = this.tracker;
+        const tracker = this.main_thread.tracker;
         tracker.willDispatch(globalThis);
         defer {
             log("onProgressUpdate: promise_value is not null", .{});
             tracker.didDispatch(globalThis);
-            this.promise.deinit();
+            this.main_thread.promise.deinit();
         }
         const success = this.result.isSuccess();
         const result = switch (success) {
@@ -1215,11 +1206,11 @@ pub const FetchTasklet = struct {
         holder.* = .{
             .held = result,
             // we need the promise to be alive until the task is done
-            .promise = this.promise.strong,
+            .promise = this.main_thread.promise.strong,
             .globalObject = globalThis,
             .task = undefined,
         };
-        this.promise.strong = .empty;
+        this.main_thread.promise.strong = .empty;
         holder.task = switch (success) {
             true => jsc.AnyTask.New(Holder, Holder.resolve).init(holder),
             false => jsc.AnyTask.New(Holder, Holder.reject).init(holder),
@@ -1229,13 +1220,13 @@ pub const FetchTasklet = struct {
     }
 
     pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: http.CertificateInfo) bool {
-        if (this.check_server_identity.get()) |check_server_identity| {
+        if (this.main_thread.check_server_identity.get()) |check_server_identity| {
             check_server_identity.ensureStillAlive();
             if (certificate_info.cert.len > 0) {
                 const cert = certificate_info.cert;
                 var cert_ptr = cert.ptr;
                 if (BoringSSL.d2i_X509(null, &cert_ptr, @intCast(cert.len))) |x509| {
-                    const globalObject = this.global_this;
+                    const globalObject = this.main_thread.global_this;
                     defer x509.free();
                     const js_cert = X509.toJS(x509, globalObject) catch |err| {
                         switch (err) {
@@ -1252,7 +1243,7 @@ pub const FetchTasklet = struct {
                         if (!this.lifecycle.isTerminal()) {
                             transitionLifecycle(this, this.lifecycle, .failed);
                         }
-                        this.tracker.didCancel(this.global_this);
+                        this.main_thread.tracker.didCancel(this.main_thread.global_this);
                         // we need to abort the request
                         if (this.http) |http_| http.http_thread.scheduleShutdown(http_);
                         // Note: Do NOT set result.fail - error is in fetch_error
@@ -1276,7 +1267,7 @@ pub const FetchTasklet = struct {
                         if (!this.lifecycle.isTerminal()) {
                             transitionLifecycle(this, this.lifecycle, .failed);
                         }
-                        this.tracker.didCancel(this.global_this);
+                        this.main_thread.tracker.didCancel(this.main_thread.global_this);
 
                         // we need to abort the request
                         if (this.http) |http_| {
@@ -1300,14 +1291,14 @@ pub const FetchTasklet = struct {
         // Check unified error storage
         if (this.fetch_error == .abort_error) {
             defer this.clearAbortSignal();
-            return this.fetch_error.toBodyValueError(this.global_this);
+            return this.fetch_error.toBodyValueError(this.main_thread.global_this);
         }
 
         // Fallback: check signal directly (for errors not yet captured)
         if (this.abort_handling.get()) |signal| {
-            if (signal.reasonIfAborted(this.global_this)) |reason| {
+            if (signal.reasonIfAborted(this.main_thread.global_this)) |reason| {
                 defer this.clearAbortSignal();
-                return reason.toBodyValueError(this.global_this);
+                return reason.toBodyValueError(this.main_thread.global_this);
             }
         }
 
@@ -1324,7 +1315,7 @@ pub const FetchTasklet = struct {
 
         // All errors should be in unified storage
         if (this.fetch_error != .none) {
-            return this.fetch_error.toBodyValueError(this.global_this);
+            return this.fetch_error.toBodyValueError(this.main_thread.global_this);
         }
 
         // Fallback: check abort signal directly (for race conditions)
@@ -1440,7 +1431,7 @@ pub const FetchTasklet = struct {
 
     pub fn onReadableStreamAvailable(ctx: *anyopaque, globalThis: *jsc.JSGlobalObject, readable: jsc.WebCore.ReadableStream) void {
         const this = bun.cast(*FetchTasklet, ctx);
-        this.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis);
+        this.main_thread.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis);
     }
 
     pub fn onStartStreamingHTTPResponseBodyCallback(ctx: *anyopaque) jsc.WebCore.DrainResult {
@@ -1509,7 +1500,7 @@ pub const FetchTasklet = struct {
                 .Locked = .{
                     .size_hint = this.getSizeHint(),
                     .task = this,
-                    .global = this.global_this,
+                    .global = this.main_thread.global_this,
                     .onStartStreaming = FetchTasklet.onStartStreamingHTTPResponseBodyCallback,
                     .onReadableStreamAvailable = FetchTasklet.onReadableStreamAvailable,
                 },
@@ -1575,15 +1566,15 @@ pub const FetchTasklet = struct {
             http_.enableResponseBodyStreaming();
         }
         // we should not keep the process alive if we are ignoring the body
-        const vm = this.javascript_vm;
-        this.poll_ref.unref(vm);
+        const vm = this.main_thread.javascript_vm;
+        this.main_thread.poll_ref.unref(vm);
         // clean any remaining refereces
-        this.readable_stream_ref.deinit();
-        this.response.deinit();
+        this.main_thread.readable_stream_ref.deinit();
+        this.main_thread.response_weak.deinit();
 
-        if (this.native_response) |response| {
+        if (this.main_thread.native_response) |response| {
             response.unref();
-            this.native_response = null;
+            this.main_thread.native_response = null;
         }
 
         // Transition to aborted state
@@ -1594,7 +1585,7 @@ pub const FetchTasklet = struct {
 
     export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.C) void {
         log("onResponseFinalize", .{});
-        if (this.native_response) |response| {
+        if (this.main_thread.native_response) |response| {
             const body = response.getBodyValue();
             // Three scenarios:
             //
@@ -1605,7 +1596,7 @@ pub const FetchTasklet = struct {
             // 3. We never started buffering, in which case we should ignore the body.
             //
             // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
-            if (body.* != .Locked or this.readable_stream_ref.held.has()) {
+            if (body.* != .Locked or this.main_thread.readable_stream_ref.held.has()) {
                 // Scenario 1 or 3.
                 return;
             }
@@ -1628,10 +1619,10 @@ pub const FetchTasklet = struct {
     pub fn onResolve(this: *FetchTasklet) JSValue {
         log("onResolve", .{});
         const response = bun.new(Response, this.toResponse());
-        const response_js = Response.makeMaybePooled(@as(*jsc.JSGlobalObject, this.global_this), response);
+        const response_js = Response.makeMaybePooled(@as(*jsc.JSGlobalObject, this.main_thread.global_this), response);
         response_js.ensureStillAlive();
-        this.response = jsc.Weak(FetchTasklet).create(response_js, this.global_this, .FetchResponse, this);
-        this.native_response = response.ref();
+        this.main_thread.response_weak = jsc.Weak(FetchTasklet).create(response_js, this.main_thread.global_this, .FetchResponse, this);
+        this.main_thread.native_response = response.ref();
         return response_js;
     }
 
@@ -1645,6 +1636,13 @@ pub const FetchTasklet = struct {
         var fetch_tasklet = try allocator.create(FetchTasklet);
 
         fetch_tasklet.* = .{
+            .main_thread = .{
+                .global_this = globalThis,
+                .javascript_vm = jsc_vm,
+                .promise = promise,
+                .check_server_identity = fetch_options.check_server_identity,
+                .tracker = jsc.Debugger.AsyncTaskTracker.init(jsc_vm),
+            },
             .mutex = .{},
             .scheduled_response_buffer = .{
                 .allocator = bun.default_allocator,
@@ -1661,25 +1659,20 @@ pub const FetchTasklet = struct {
                 },
             },
             .http = try allocator.create(http.AsyncHTTP),
-            .javascript_vm = jsc_vm,
             .request_body = fetch_options.body,
-            .global_this = globalThis,
-            .promise = promise,
             .request_headers = .{
                 .headers = fetch_options.headers,
                 .#owned = true, // We own these headers and must clean them up
             },
             .url_proxy_buffer = fetch_options.url_proxy_buffer,
             .hostname = fetch_options.hostname,
-            .tracker = jsc.Debugger.AsyncTaskTracker.init(jsc_vm),
-            .check_server_identity = fetch_options.check_server_identity,
             .reject_unauthorized = fetch_options.reject_unauthorized,
             .upgraded_connection = fetch_options.upgraded_connection,
         };
 
         fetch_tasklet.signals = fetch_tasklet.signal_store.to();
 
-        fetch_tasklet.tracker.didSchedule(globalThis);
+        fetch_tasklet.main_thread.tracker.didSchedule(globalThis);
 
         if (fetch_tasklet.request_body.store()) |store| {
             store.ref();
@@ -1694,7 +1687,7 @@ pub const FetchTasklet = struct {
             proxy = jsc_vm.transpiler.env.getHttpProxyFor(fetch_options.url);
         }
 
-        if (fetch_tasklet.check_server_identity.has() and fetch_tasklet.reject_unauthorized) {
+        if (fetch_tasklet.main_thread.check_server_identity.has() and fetch_tasklet.reject_unauthorized) {
             fetch_tasklet.signal_store.cert_errors.store(true, .monotonic);
         } else {
             fetch_tasklet.signals.cert_errors = null;
@@ -1769,7 +1762,7 @@ pub const FetchTasklet = struct {
     pub fn onWriteRequestDataDrain(this: *FetchTasklet) void {
         // ref until the main thread callback is called
         this.ref();
-        this.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.resumeRequestDataStream));
+        this.main_thread.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.resumeRequestDataStream));
     }
 
     /// This is ALWAYS called from the main thread
@@ -1843,7 +1836,7 @@ pub const FetchTasklet = struct {
             }
             if (!jsError.isUndefinedOrNull()) {
                 // Store error in unified storage
-                this.fetch_error.set(.{ .js_error = jsc.Strong.Optional.create(jsError, this.global_this) });
+                this.fetch_error.set(.{ .js_error = jsc.Strong.Optional.create(jsError, this.main_thread.global_this) });
             }
             this.abortTask();
         } else {
@@ -1863,7 +1856,7 @@ pub const FetchTasklet = struct {
 
     pub fn abortTask(this: *FetchTasklet) void {
         this.signal_store.aborted.store(true, .monotonic);
-        this.tracker.didCancel(this.global_this);
+        this.main_thread.tracker.didCancel(this.main_thread.global_this);
 
         if (this.http) |http_| {
             http.http_thread.scheduleShutdown(http_);
@@ -1909,7 +1902,7 @@ pub const FetchTasklet = struct {
 
         var batch = bun.ThreadPool.Batch{};
         node.http.?.schedule(allocator, &batch);
-        node.poll_ref.ref(global.bunVM());
+        node.main_thread.poll_ref.ref(global.bunVM());
 
         // Dual tracking: transition to http_active when queued to HTTP thread
         transitionLifecycle(node, node.lifecycle, .http_active);
@@ -2024,7 +2017,7 @@ pub const FetchTasklet = struct {
             }
         }
 
-        task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
+        task.main_thread.javascript_vm.eventLoop().enqueueTaskConcurrent(task.main_thread.concurrent_task.from(task, .manual_deinit));
     }
 };
 

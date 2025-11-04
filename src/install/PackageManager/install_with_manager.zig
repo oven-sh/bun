@@ -790,7 +790,7 @@ pub fn installWithManager(
                 switch (config_version) {
                     .v0 => continue :linker .hoisted,
                     .v1 => {
-                        if (!load_result.migratedFromNpm()) {
+                        if (!load_result.migratedFromNpm() and manager.lockfile.workspace_paths.count() > 0) {
                             continue :linker .isolated;
                         }
                         continue :linker .hoisted;

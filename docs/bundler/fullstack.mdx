@@ -11,39 +11,39 @@ import dashboard from "./dashboard.html";
 import homepage from "./index.html";
 
 const server = serve({
-	routes: {
-		// ** HTML imports **
-		// Bundle & route index.html to "/". This uses HTMLRewriter to scan
-		// the HTML for `<script>` and `<link>` tags, runs Bun's JavaScript
-		// & CSS bundler on them, transpiles any TypeScript, JSX, and TSX,
-		// downlevels CSS with Bun's CSS parser and serves the result.
-		"/": homepage,
-		// Bundle & route dashboard.html to "/dashboard"
-		"/dashboard": dashboard,
+  routes: {
+    // ** HTML imports **
+    // Bundle & route index.html to "/". This uses HTMLRewriter to scan
+    // the HTML for `<script>` and `<link>` tags, runs Bun's JavaScript
+    // & CSS bundler on them, transpiles any TypeScript, JSX, and TSX,
+    // downlevels CSS with Bun's CSS parser and serves the result.
+    "/": homepage,
+    // Bundle & route dashboard.html to "/dashboard"
+    "/dashboard": dashboard,
 
-		// ** API endpoints ** (Bun v1.2.3+ required)
-		"/api/users": {
-			async GET(req) {
-				const users = await sql`SELECT * FROM users`;
-				return Response.json(users);
-			},
-			async POST(req) {
-				const { name, email } = await req.json();
-				const [user] = await sql`INSERT INTO users (name, email) VALUES (${name}, ${email})`;
-				return Response.json(user);
-			},
-		},
-		"/api/users/:id": async req => {
-			const { id } = req.params;
-			const [user] = await sql`SELECT * FROM users WHERE id = ${id}`;
-			return Response.json(user);
-		},
-	},
+    // ** API endpoints ** (Bun v1.2.3+ required)
+    "/api/users": {
+      async GET(req) {
+        const users = await sql`SELECT * FROM users`;
+        return Response.json(users);
+      },
+      async POST(req) {
+        const { name, email } = await req.json();
+        const [user] = await sql`INSERT INTO users (name, email) VALUES (${name}, ${email})`;
+        return Response.json(user);
+      },
+    },
+    "/api/users/:id": async req => {
+      const { id } = req.params;
+      const [user] = await sql`SELECT * FROM users WHERE id = ${id}`;
+      return Response.json(user);
+    },
+  },
 
-	// Enable development mode for:
-	// - Detailed error messages
-	// - Hot reloading (Bun v1.2.3+ required)
-	development: true,
+  // Enable development mode for:
+  // - Detailed error messages
+  // - Hot reloading (Bun v1.2.3+ required)
+  development: true,
 });
 
 console.log(`Listening on ${server.url}`);
@@ -70,14 +70,14 @@ These HTML files are used as routes in Bun's dev server you can pass to `Bun.ser
 
 ```ts title="app.ts" icon="/icons/typescript.svg"
 Bun.serve({
-	routes: {
-		"/": homepage,
-		"/dashboard": dashboard,
-	},
+  routes: {
+    "/": homepage,
+    "/dashboard": dashboard,
+  },
 
-	fetch(req) {
-		// ... api requests
-	},
+  fetch(req) {
+    // ... api requests
+  },
 });
 ```
 
@@ -90,16 +90,16 @@ An `index.html` file like this:
 ```html title="index.html" icon="file-code"
 <!DOCTYPE html>
 <html>
-	<head>
-		<title>Home</title>
-		<link rel="stylesheet" href="./reset.css" />
-		<link rel="stylesheet" href="./styles.css" />
-	</head>
-	<body>
-		<div id="root"></div>
-		<script type="module" src="./sentry-and-preloads.ts"></script>
-		<script type="module" src="./my-app.tsx"></script>
-	</body>
+  <head>
+    <title>Home</title>
+    <link rel="stylesheet" href="./reset.css" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./sentry-and-preloads.ts"></script>
+    <script type="module" src="./my-app.tsx"></script>
+  </body>
 </html>
 ```
 
@@ -108,14 +108,14 @@ Becomes something like this:
 ```html title="index.html" icon="file-code"
 <!DOCTYPE html>
 <html>
-	<head>
-		<title>Home</title>
-		<link rel="stylesheet" href="/index-[hash].css" />
-	</head>
-	<body>
-		<div id="root"></div>
-		<script type="module" src="/index-[hash].js"></script>
-	</body>
+  <head>
+    <title>Home</title>
+    <link rel="stylesheet" href="/index-[hash].css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/index-[hash].js"></script>
+  </body>
 </html>
 ```
 
@@ -129,16 +129,16 @@ import dashboard from "../public/dashboard.html";
 import { serve } from "bun";
 
 serve({
-	routes: {
-		"/": dashboard,
-	},
-	async fetch(req) {
-		// ...api requests
-		return new Response("hello world");
-	},
+routes: {
+"/": dashboard,
+},
+async fetch(req) {
+// ...api requests
+return new Response("hello world");
+},
 });
 
-```
+````
 
 ```tsx title="src/frontend.tsx" icon="/icons/typescript.svg"
 import { createRoot } from 'react-dom/client';
@@ -147,7 +147,7 @@ import App from './app';
 const container = document.getElementById('root');
 const root = createRoot(container!);
 root.render(<App />);
-```
+````
 
 ```html title="public/dashboard.html" icon="file-code"
 <!DOCTYPE html>
@@ -164,19 +164,17 @@ root.render(<App />);
 ```
 
 ```tsx title="src/app.tsx" icon="/icons/typescript.svg"
-import { useState } from 'react';
+import { useState } from "react";
 
 export default function App() {
-	const [count, setCount] = useState(0);
+  const [count, setCount] = useState(0);
 
-	return (
-		<div>
-			<h1>Dashboard</h1>
-			<button onClick={() => setCount(count + 1)}>
-				Count: {count}
-			</button>
-		</div>
-	);
+  return (
+    <div>
+      <h1>Dashboard</h1>
+      <button onClick={() => setCount(count + 1)}>Count: {count}</button>
+    </div>
+  );
 }
 ```
 
@@ -224,18 +222,18 @@ To enable this, pass `console: true` in the development object in `Bun.serve()`.
 import homepage from "./index.html";
 
 Bun.serve({
-	// development can also be an object.
-	development: {
-		// Enable Hot Module Reloading
-		hmr: true,
+  // development can also be an object.
+  development: {
+    // Enable Hot Module Reloading
+    hmr: true,
 
-		// Echo console logs from the browser to the terminal
-		console: true,
-	},
+    // Echo console logs from the browser to the terminal
+    console: true,
+  },
 
-	routes: {
-		"/": homepage,
-	},
+  routes: {
+    "/": homepage,
+  },
 });
 ```
 
@@ -271,7 +269,7 @@ import { serve } from "bun";
 import index from "./index.html";
 
 serve({
-	routes: { "/": index },
+  routes: { "/": index },
 });
 ```
 
@@ -290,12 +288,12 @@ import { serve } from "bun";
 import homepage from "./index.html";
 
 serve({
-	routes: {
-		"/": homepage,
-	},
+  routes: {
+    "/": homepage,
+  },
 
-	// Production mode
-	development: false,
+  // Production mode
+  development: false,
 });
 ```
 
@@ -309,35 +307,35 @@ Define API endpoints with HTTP method handlers:
 import { serve } from "bun";
 
 serve({
-	routes: {
-		"/api/users": {
-			async GET(req) {
-				// Handle GET requests
-				const users = await getUsers();
-				return Response.json(users);
-			},
+  routes: {
+    "/api/users": {
+      async GET(req) {
+        // Handle GET requests
+        const users = await getUsers();
+        return Response.json(users);
+      },
 
-			async POST(req) {
-				// Handle POST requests
-				const userData = await req.json();
-				const user = await createUser(userData);
-				return Response.json(user, { status: 201 });
-			},
+      async POST(req) {
+        // Handle POST requests
+        const userData = await req.json();
+        const user = await createUser(userData);
+        return Response.json(user, { status: 201 });
+      },
 
-			async PUT(req) {
-				// Handle PUT requests
-				const userData = await req.json();
-				const user = await updateUser(userData);
-				return Response.json(user);
-			},
+      async PUT(req) {
+        // Handle PUT requests
+        const userData = await req.json();
+        const user = await updateUser(userData);
+        return Response.json(user);
+      },
 
-			async DELETE(req) {
-				// Handle DELETE requests
-				await deleteUser(req.params.id);
-				return new Response(null, { status: 204 });
-			},
-		},
-	},
+      async DELETE(req) {
+        // Handle DELETE requests
+        await deleteUser(req.params.id);
+        return new Response(null, { status: 204 });
+      },
+    },
+  },
 });
 ```
 
@@ -347,28 +345,28 @@ Use URL parameters in your routes:
 
 ```ts title="src/backend.ts" icon="/icons/typescript.svg"
 serve({
-	routes: {
-		// Single parameter
-		"/api/users/:id": async req => {
-			const { id } = req.params;
-			const user = await getUserById(id);
-			return Response.json(user);
-		},
+  routes: {
+    // Single parameter
+    "/api/users/:id": async req => {
+      const { id } = req.params;
+      const user = await getUserById(id);
+      return Response.json(user);
+    },
 
-		// Multiple parameters
-		"/api/users/:userId/posts/:postId": async req => {
-			const { userId, postId } = req.params;
-			const post = await getPostByUser(userId, postId);
-			return Response.json(post);
-		},
+    // Multiple parameters
+    "/api/users/:userId/posts/:postId": async req => {
+      const { userId, postId } = req.params;
+      const post = await getPostByUser(userId, postId);
+      return Response.json(post);
+    },
 
-		// Wildcard routes
-		"/api/files/*": async req => {
-			const filePath = req.params["*"];
-			const file = await getFile(filePath);
-			return new Response(file);
-		},
-	},
+    // Wildcard routes
+    "/api/files/*": async req => {
+      const filePath = req.params["*"];
+      const file = await getFile(filePath);
+      return new Response(file);
+    },
+  },
 });
 ```
 
@@ -376,31 +374,31 @@ serve({
 
 ```ts title="src/backend.ts" icon="/icons/typescript.svg"
 serve({
-	routes: {
-		"/api/data": {
-			async POST(req) {
-				// Parse JSON body
-				const body = await req.json();
+  routes: {
+    "/api/data": {
+      async POST(req) {
+        // Parse JSON body
+        const body = await req.json();
 
-				// Access headers
-				const auth = req.headers.get("Authorization");
+        // Access headers
+        const auth = req.headers.get("Authorization");
 
-				// Access URL parameters
-				const { id } = req.params;
+        // Access URL parameters
+        const { id } = req.params;
 
-				// Access query parameters
-				const url = new URL(req.url);
-				const page = url.searchParams.get("page") || "1";
+        // Access query parameters
+        const url = new URL(req.url);
+        const page = url.searchParams.get("page") || "1";
 
-				// Return response
-				return Response.json({
-					message: "Data processed",
-					page: parseInt(page),
-					authenticated: !!auth,
-				});
-			},
-		},
-	},
+        // Return response
+        return Response.json({
+          message: "Data processed",
+          page: parseInt(page),
+          authenticated: !!auth,
+        });
+      },
+    },
+  },
 });
 ```
 
@@ -428,11 +426,11 @@ This will allow you to use TailwindCSS utility classes in your HTML and CSS file
 ```html title="index.html" icon="file-code"
 <!doctype html>
 <html>
-	<head>
-		<link rel="stylesheet" href="tailwindcss" />
-		<!-- [!code ++] -->
-	</head>
-	<!-- the rest of your HTML... -->
+  <head>
+    <link rel="stylesheet" href="tailwindcss" />
+    <!-- [!code ++] -->
+  </head>
+  <!-- the rest of your HTML... -->
 </html>
 ```
 
@@ -442,18 +440,18 @@ Alternatively, you can import TailwindCSS in your CSS file:
 @import "tailwindcss";
 
 .custom-class {
-	@apply bg-red-500 text-white;
+  @apply bg-red-500 text-white;
 }
 ```
 
 ```html index.html icon="file-code"
 <!doctype html>
 <html>
-	<head>
-		<link rel="stylesheet" href="./style.css" />
-		<!-- [!code ++] -->
-	</head>
-	<!-- the rest of your HTML... -->
+  <head>
+    <link rel="stylesheet" href="./style.css" />
+    <!-- [!code ++] -->
+  </head>
+  <!-- the rest of your HTML... -->
 </html>
 ```
 
@@ -470,17 +468,17 @@ plugins = ["./my-plugin-implementation.ts"]
 import type { BunPlugin } from "bun";
 
 const myPlugin: BunPlugin = {
-	name: "my-custom-plugin",
-	setup(build) {
-		// Plugin implementation
-		build.onLoad({ filter: /\.custom$/ }, async args => {
-			const text = await Bun.file(args.path).text();
-			return {
-				contents: `export default ${JSON.stringify(text)};`,
-				loader: "js",
-			};
-		});
-	},
+  name: "my-custom-plugin",
+  setup(build) {
+    // Plugin implementation
+    build.onLoad({ filter: /\.custom$/ }, async args => {
+      const text = await Bun.file(args.path).text();
+      return {
+        contents: `export default ${JSON.stringify(text)};`,
+        loader: "js",
+      };
+    });
+  },
 };
 
 export default myPlugin;
@@ -489,9 +487,9 @@ export default myPlugin;
 Bun will lazily resolve and load each plugin and use them to bundle your routes.
 
 <Note>
-	This is currently in `bunfig.toml` to make it possible to know statically which plugins are in use
-	when we eventually integrate this with the `bun build` CLI. These plugins work in `Bun.build()`'s
-	JS API, but are not yet supported in the CLI.
+  This is currently in `bunfig.toml` to make it possible to know statically which plugins are in use when we eventually
+  integrate this with the `bun build` CLI. These plugins work in `Bun.build()`'s JS API, but are not yet supported in
+  the CLI.
 </Note>
 
 ## How It Works
@@ -559,78 +557,76 @@ db.exec(`
 `);
 
 const server = serve({
-	routes: {
-		// Frontend routes
-		"/": homepage,
-		"/dashboard": dashboard,
+  routes: {
+    // Frontend routes
+    "/": homepage,
+    "/dashboard": dashboard,
 
-		// API routes
-		"/api/users": {
-			async GET() {
-				const users = db.query("SELECT * FROM users").all();
-				return Response.json(users);
-			},
+    // API routes
+    "/api/users": {
+      async GET() {
+        const users = db.query("SELECT * FROM users").all();
+        return Response.json(users);
+      },
 
-			async POST(req) {
-				const { name, email } = await req.json();
+      async POST(req) {
+        const { name, email } = await req.json();
 
-				try {
-					const result = db
-						.query("INSERT INTO users (name, email) VALUES (?, ?) RETURNING *")
-						.get(name, email);
+        try {
+          const result = db.query("INSERT INTO users (name, email) VALUES (?, ?) RETURNING *").get(name, email);
 
-					return Response.json(result, { status: 201 });
-				} catch (error) {
-					return Response.json({ error: "Email already exists" }, { status: 400 });
-				}
-			},
-		},
+          return Response.json(result, { status: 201 });
+        } catch (error) {
+          return Response.json({ error: "Email already exists" }, { status: 400 });
+        }
+      },
+    },
 
-		"/api/users/:id": {
-			async GET(req) {
-				const { id } = req.params;
-				const user = db.query("SELECT * FROM users WHERE id = ?").get(id);
+    "/api/users/:id": {
+      async GET(req) {
+        const { id } = req.params;
+        const user = db.query("SELECT * FROM users WHERE id = ?").get(id);
 
-				if (!user) {
-					return Response.json({ error: "User not found" }, { status: 404 });
-				}
+        if (!user) {
+          return Response.json({ error: "User not found" }, { status: 404 });
+        }
 
-				return Response.json(user);
-			},
+        return Response.json(user);
+      },
 
-			async DELETE(req) {
-				const { id } = req.params;
-				const result = db.query("DELETE FROM users WHERE id = ?").run(id);
+      async DELETE(req) {
+        const { id } = req.params;
+        const result = db.query("DELETE FROM users WHERE id = ?").run(id);
 
-				if (result.changes === 0) {
-					return Response.json({ error: "User not found" }, { status: 404 });
-				}
+        if (result.changes === 0) {
+          return Response.json({ error: "User not found" }, { status: 404 });
+        }
 
-				return new Response(null, { status: 204 });
-			},
-		},
+        return new Response(null, { status: 204 });
+      },
+    },
 
-		// Health check endpoint
-		"/api/health": {
-			GET() {
-				return Response.json({
-					status: "ok",
-					timestamp: new Date().toISOString(),
-				});
-			},
-		},
-	},
+    // Health check endpoint
+    "/api/health": {
+      GET() {
+        return Response.json({
+          status: "ok",
+          timestamp: new Date().toISOString(),
+        });
+      },
+    },
+  },
 
-	// Enable development mode
-	development: {
-		hmr: true,
-		console: true,
-	},
+  // Enable development mode
+  development: {
+    hmr: true,
+    console: true,
+  },
 
-	// Fallback for unmatched routes
-	fetch(req) {
-		return new Response("Not Found", { status: 404 });
-	},
+  // Fallback for unmatched routes
+  fetch(req) {
+    return new Response("Not Found", { status: 404 });
+  },
 });
 
 console.log(`🚀 Server running on ${server.url}`);
@@ -639,16 +635,16 @@ console.log(`🚀 Server running on ${server.url}`);
 ```html title="public/index.html"
 <!DOCTYPE html>
 <html>
-	<head>
-		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		<title>Fullstack Bun App</title>
-		<link rel="stylesheet" href="../src/styles.css" />
-	</head>
-	<body>
-		<div id="root"></div>
-		<script type="module" src="../src/main.tsx"></script>
-	</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fullstack Bun App</title>
+    <link rel="stylesheet" href="../src/styles.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="../src/main.tsx"></script>
+  </body>
 </html>
 ```
 
@@ -665,205 +661,193 @@ root.render(<App />);
 import { useState, useEffect } from "react";
 
 interface User {
-	id: number;
-	name: string;
-	email: string;
-	created_at: string;
+  id: number;
+  name: string;
+  email: string;
+  created_at: string;
 }
 
 export function App() {
-	const [users, setUsers] = useState<User[]>([]);
-	const [name, setName] = useState("");
-	const [email, setEmail] = useState("");
-	const [loading, setLoading] = useState(false);
+  const [users, setUsers] = useState<User[]>([]);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(false);
 
-	const fetchUsers = async () => {
-		const response = await fetch("/api/users");
-		const data = await response.json();
-		setUsers(data);
-	};
+  const fetchUsers = async () => {
+    const response = await fetch("/api/users");
+    const data = await response.json();
+    setUsers(data);
+  };
 
-	const createUser = async (e: React.FormEvent) => {
-		e.preventDefault();
-		setLoading(true);
+  const createUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
 
-		try {
-			const response = await fetch("/api/users", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ name, email }),
-			});
+    try {
+      const response = await fetch("/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, email }),
+      });
 
-			if (response.ok) {
-				setName("");
-				setEmail("");
-				await fetchUsers();
-			} else {
-				const error = await response.json();
-				alert(error.error);
-			}
-		} catch (error) {
-			alert("Failed to create user");
-		} finally {
-			setLoading(false);
-		}
-	};
+      if (response.ok) {
+        setName("");
+        setEmail("");
+        await fetchUsers();
+      } else {
+        const error = await response.json();
+        alert(error.error);
+      }
+    } catch (error) {
+      alert("Failed to create user");
+    } finally {
+      setLoading(false);
+    }
+  };
 
-	const deleteUser = async (id: number) => {
-		if (!confirm("Are you sure?")) return;
+  const deleteUser = async (id: number) => {
+    if (!confirm("Are you sure?")) return;
 
-		try {
-			const response = await fetch(`/api/users/${id}`, {
-				method: "DELETE",
-			});
+    try {
+      const response = await fetch(`/api/users/${id}`, {
+        method: "DELETE",
+      });
 
-			if (response.ok) {
-				await fetchUsers();
-			}
-		} catch (error) {
-			alert("Failed to delete user");
-		}
-	};
+      if (response.ok) {
+        await fetchUsers();
+      }
+    } catch (error) {
+      alert("Failed to delete user");
+    }
+  };
 
-	useEffect(() => {
-		fetchUsers();
-	}, []);
+  useEffect(() => {
+    fetchUsers();
+  }, []);
 
-	return (
-		<div className="container">
-			<h1>User Management</h1>
+  return (
+    <div className="container">
+      <h1>User Management</h1>
 
-			<form onSubmit={createUser} className="form">
-				<input
-					type="text"
-					placeholder="Name"
-					value={name}
-					onChange={e => setName(e.target.value)}
-					required
-				/>
-				<input
-					type="email"
-					placeholder="Email"
-					value={email}
-					onChange={e => setEmail(e.target.value)}
-					required
-				/>
-				<button type="submit" disabled={loading}>
-					{loading ? "Creating..." : "Create User"}
-				</button>
-			</form>
+      <form onSubmit={createUser} className="form">
+        <input type="text" placeholder="Name" value={name} onChange={e => setName(e.target.value)} required />
+        <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required />
+        <button type="submit" disabled={loading}>
+          {loading ? "Creating..." : "Create User"}
+        </button>
+      </form>
 
-			<div className="users">
-				<h2>Users ({users.length})</h2>
-				{users.map(user => (
-					<div key={user.id} className="user-card">
-						<div>
-							<strong>{user.name}</strong>
-							<br />
-							<span>{user.email}</span>
-						</div>
-						<button onClick={() => deleteUser(user.id)} className="delete-btn">
-							Delete
-						</button>
-					</div>
-				))}
-			</div>
-		</div>
-	);
+      <div className="users">
+        <h2>Users ({users.length})</h2>
+        {users.map(user => (
+          <div key={user.id} className="user-card">
+            <div>
+              <strong>{user.name}</strong>
+              <br />
+              <span>{user.email}</span>
+            </div>
+            <button onClick={() => deleteUser(user.id)} className="delete-btn">
+              Delete
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 ```
 
 ```css title="src/styles.css"
 * {
-	margin: 0;
-	padding: 0;
-	box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
 body {
-	font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-	background: #f5f5f5;
-	color: #333;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #f5f5f5;
+  color: #333;
 }
 
 .container {
-	max-width: 800px;
-	margin: 0 auto;
-	padding: 2rem;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 2rem;
 }
 
 h1 {
-	color: #2563eb;
-	margin-bottom: 2rem;
+  color: #2563eb;
+  margin-bottom: 2rem;
 }
 
 .form {
-	background: white;
-	padding: 1.5rem;
-	border-radius: 8px;
-	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-	margin-bottom: 2rem;
-	display: flex;
-	gap: 1rem;
-	flex-wrap: wrap;
+  background: white;
+  padding: 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  margin-bottom: 2rem;
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
 }
 
 .form input {
-	flex: 1;
-	min-width: 200px;
-	padding: 0.75rem;
-	border: 1px solid #ddd;
-	border-radius: 4px;
+  flex: 1;
+  min-width: 200px;
+  padding: 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
 }
 
 .form button {
-	padding: 0.75rem 1.5rem;
-	background: #2563eb;
-	color: white;
-	border: none;
-	border-radius: 4px;
-	cursor: pointer;
+  padding: 0.75rem 1.5rem;
+  background: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
 }
 
 .form button:hover {
-	background: #1d4ed8;
+  background: #1d4ed8;
 }
 
 .form button:disabled {
-	opacity: 0.5;
-	cursor: not-allowed;
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .users {
-	background: white;
-	padding: 1.5rem;
-	border-radius: 8px;
-	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  background: white;
+  padding: 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .user-card {
-	display: flex;
-	justify-content: space-between;
-	align-items: center;
-	padding: 1rem;
-	border-bottom: 1px solid #eee;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  border-bottom: 1px solid #eee;
 }
 
 .user-card:last-child {
-	border-bottom: none;
+  border-bottom: none;
 }
 
 .delete-btn {
-	padding: 0.5rem 1rem;
-	background: #dc2626;
-	color: white;
-	border: none;
-	border-radius: 4px;
-	cursor: pointer;
+  padding: 0.5rem 1rem;
+  background: #dc2626;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
 }
 
 .delete-btn:hover {
-	background: #b91c1c;
+  background: #b91c1c;
 }
 ```
 
@@ -903,14 +887,14 @@ my-app/
 
 ```ts title="server/config.ts" icon="/icons/typescript.svg"
 export const config = {
-	development: process.env.NODE_ENV !== "production",
-	port: process.env.PORT || 3000,
-	database: {
-		url: process.env.DATABASE_URL || "./dev.db",
-	},
-	cors: {
-		origin: process.env.CORS_ORIGIN || "*",
-	},
+  development: process.env.NODE_ENV !== "production",
+  port: process.env.PORT || 3000,
+  database: {
+    url: process.env.DATABASE_URL || "./dev.db",
+  },
+  cors: {
+    origin: process.env.CORS_ORIGIN || "*",
+  },
 };
 ```
 
@@ -918,19 +902,19 @@ export const config = {
 
 ```ts title="server/middleware.ts" icon="/icons/typescript.svg"
 export function errorHandler(error: Error, req: Request) {
-	console.error("Server error:", error);
+  console.error("Server error:", error);
 
-	if (process.env.NODE_ENV === "production") {
-		return Response.json({ error: "Internal server error" }, { status: 500 });
-	}
+  if (process.env.NODE_ENV === "production") {
+    return Response.json({ error: "Internal server error" }, { status: 500 });
+  }
 
-	return Response.json(
-		{
-			error: error.message,
-			stack: error.stack,
-		},
-		{ status: 500 },
-	);
+  return Response.json(
+    {
+      error: error.message,
+      stack: error.stack,
+    },
+    { status: 500 },
+  );
 }
 ```
 
@@ -938,19 +922,19 @@ export function errorHandler(error: Error, req: Request) {
 
 ```ts title="server/utils.ts" icon="/icons/typescript.svg"
 export function json(data: any, status = 200) {
-	return Response.json(data, { status });
+  return Response.json(data, { status });
 }
 
 export function error(message: string, status = 400) {
-	return Response.json({ error: message }, { status });
+  return Response.json({ error: message }, { status });
 }
 
 export function notFound(message = "Not found") {
-	return error(message, 404);
+  return error(message, 404);
 }
 
 export function unauthorized(message = "Unauthorized") {
-	return error(message, 401);
+  return error(message, 401);
 }
 ```
 
@@ -958,20 +942,20 @@ export function unauthorized(message = "Unauthorized") {
 
 ```ts title="types/api.ts" icon="/icons/typescript.svg"
 export interface User {
-	id: number;
-	name: string;
-	email: string;
-	created_at: string;
+  id: number;
+  name: string;
+  email: string;
+  created_at: string;
 }
 
 export interface CreateUserRequest {
-	name: string;
-	email: string;
+  name: string;
+  email: string;
 }
 
 export interface ApiResponse<T> {
-	data?: T;
-	error?: string;
+  data?: T;
+  error?: string;
 }
 ```
 
@@ -1030,19 +1014,19 @@ CORS_ORIGIN=https://myapp.com
 // Before (Express + Webpack)
 app.use(express.static("dist"));
 app.get("/api/users", (req, res) => {
-	res.json(users);
+  res.json(users);
 });
 
 // After (Bun fullstack)
 serve({
-	routes: {
-		"/": homepage, // Replaces express.static
-		"/api/users": {
-			GET() {
-				return Response.json(users);
-			},
-		},
-	},
+  routes: {
+    "/": homepage, // Replaces express.static
+    "/api/users": {
+      GET() {
+        return Response.json(users);
+      },
+    },
+  },
 });
 ```
 

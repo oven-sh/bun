@@ -46,10 +46,10 @@ declare module "stream/web" {
 
 declare module "buffer" {
   interface Blob extends BunConsumerConvenienceMethods {
-    // we have to specify bytes again even though it comes from the
-    // BunConsumerConvenienceMethods, because inheritence in TypeScript is
-    // slightly different to just "copying in the methods" (the difference is to
-    // do with how) type parameters are resolved
+    // We have to specify bytes again even though it comes from
+    // BunConsumerConvenienceMethods, because inheritance in TypeScript is
+    // slightly different from just "copying in the methods" (the difference is
+    // related to how type parameters are resolved)
     bytes(): Promise<Uint8Array<ArrayBuffer>>;
   }
 }

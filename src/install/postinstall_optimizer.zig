@@ -144,10 +144,28 @@ pub const PostinstallOptimizer = enum {
                         }
                         return .ignore;
                     },
-                }
+            if (this.dynamic.get(name_hash)) |optimize| {
+                return optimize;
+            }
 
+            const default = fromDefault(name_hash) orelse {
                 return null;
             };
+
+            switch (default) {
+                .native_binlink => {
+                    if (!this.disable_default_native_binlinks) {
+                        return .native_binlink;
+                    }
+                },
+                .ignore => {
+                    if (!this.disable_default_ignore) {
+                        return .ignore;
+                    }
+                },
+            }
+
+            return null;
         }
     };
 };

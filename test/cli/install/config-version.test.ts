@@ -1,8 +1,8 @@
 import { file } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { exists } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunEnv as env, runBunInstall } from "harness";
 import { join } from "path";
-import { exists } from "fs/promises";
 
 var registry = new VerdaccioRegistry();
 

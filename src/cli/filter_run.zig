@@ -53,7 +53,7 @@ pub const ProcessHandle = struct {
         var spawned: bun.spawn.process.SpawnProcessResult = brk: {
 
             // Get the envp with the PATH configured
-            // There's probably a more optimal way to do this where you have a std.array_list.Managed shared
+            // There's probably a more optimal way to do this where you have a std.ArrayList shared
             // instead of creating a new one for each process
             var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();

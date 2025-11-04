@@ -627,7 +627,7 @@ pub const ToJSError = error{
 
 /// Say you need to allocate a bunch of tiny arrays
 /// You could just do separate allocations for each, but that is slow
-/// With std.array_list.Managed, pointers invalidate on resize and that means it will crash.
+/// With std.ArrayList, pointers invalidate on resize and that means it will crash.
 /// So a better idea is to batch up your allocations into one larger allocation
 /// and then just make all the arrays point to different parts of the larger allocation
 pub fn NewBatcher(comptime Type: type) type {

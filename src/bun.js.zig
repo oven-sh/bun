@@ -555,16 +555,16 @@ fn isBrokenEmulator() bool {
         const newBits = asm volatile (
             \\
             // copy input into xmm0
-            \\movsd %xmm2, %xmm0
+            \\movsd %%xmm2, %%xmm0
             // convert doubles in xmm0 to ints in xmm1
             // -- this SHOULD leave xmm0 unchanged, but it does not in some Rosetta versions
-            \\cvttpd2dq %xmm0, %xmm1
+            \\cvttpd2dq %%xmm0, %%xmm1
             // the result of this expression is the value left in xmm0
             : [ret] "={xmm0}" (-> f64),
               // start with 0.5 in xmm2
             : [input] "{xmm2}" (@as(f64, 0.5)),
-              // we clobber xmm0 and xmm1
-            : "xmm0", "xmm1"
+              // we clobber xmm1
+            : "xmm1"
         );
         return newBits != 0.5;
     }

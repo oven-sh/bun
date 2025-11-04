@@ -85,6 +85,9 @@ pub const runtime_params_ = [_]ParamType{
     clap.parseParam("--inspect <STR>?                  Activate Bun's debugger") catch unreachable,
     clap.parseParam("--inspect-wait <STR>?             Activate Bun's debugger, wait for a connection before executing") catch unreachable,
     clap.parseParam("--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait") catch unreachable,
+    clap.parseParam("--cpu-prof                        Start CPU profiler and write profile to disk on exit") catch unreachable,
+    clap.parseParam("--cpu-prof-name <STR>             Specify the name of the CPU profile file") catch unreachable,
+    clap.parseParam("--cpu-prof-dir <STR>              Specify the directory where the CPU profile will be saved") catch unreachable,
     clap.parseParam("--if-present                      Exit without an error if the entrypoint does not exist") catch unreachable,
     clap.parseParam("--no-install                      Disable auto install in the Bun runtime") catch unreachable,
     clap.parseParam("--install <STR>                   Configure auto-install behavior. One of \"auto\" (default, auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always).") catch unreachable,
@@ -215,7 +218,34 @@ pub const test_only_params = [_]ParamType{
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
+fn loadGlobalBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+    if (ctx.has_loaded_global_config) return;
+
+    ctx.has_loaded_global_config = true;
+
+    var config_buf: bun.PathBuffer = undefined;
+    if (getHomeConfigPath(&config_buf)) |path| {
+        try loadBunfig(allocator, true, path, ctx, comptime cmd);
+    }
+}
+
 pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+    if (comptime cmd.readGlobalConfig()) {
+        loadGlobalBunfig(allocator, ctx, cmd) catch |err| {
+            if (auto_loaded) return;
+
+            Output.prettyErrorln("{}\nreading global config \"{s}\"", .{
+                err,
+                config_path,
+            });
+            Global.exit(1);
+        };
+    }
+
+    try loadBunfig(allocator, auto_loaded, config_path, ctx, cmd);
+}
+
+fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
     const source = switch (bun.sys.File.toSource(config_path, allocator, .{ .convert_bom = true })) {
         .result => |s| s,
         .err => |err| {
@@ -227,7 +257,6 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
             Global.exit(1);
         },
     };
-
     js_ast.Stmt.Data.Store.create();
     js_ast.Expr.Data.Store.create();
     defer {
@@ -239,13 +268,19 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
         ctx.log.level = original_level;
     }
     ctx.log.level = logger.Log.Level.warn;
+    ctx.debug.loaded_bunfig = true;
     try Bunfig.parse(allocator, &source, ctx, cmd);
 }
 
 fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
-    if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |data_dir| {
-        var paths = [_]string{".bunfig.toml"};
+    var paths = [_]string{".bunfig.toml"};
+
+    if (bun.env_var.XDG_CONFIG_HOME.get()) |data_dir| {
         return resolve_path.joinAbsStringBufZ(data_dir, buf, &paths, .auto);
+    }
+
+    if (bun.env_var.HOME.get()) |home_dir| {
+        return resolve_path.joinAbsStringBufZ(home_dir, buf, &paths, .auto);
     }
 
     return null;
@@ -287,7 +322,6 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
     if (config_path_.len == 0) {
         return;
     }
-    defer ctx.debug.loaded_bunfig = true;
     var config_path: [:0]u8 = undefined;
     if (config_path_[0] == '/') {
         @memcpy(config_buf[0..config_path_.len], config_path_);
@@ -596,7 +630,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             const preloads = args.options("--preload");
             const preloads2 = args.options("--require");
             const preloads3 = args.options("--import");
-            const preload4 = bun.getenvZ("BUN_INSPECT_PRELOAD");
+            const preload4 = bun.env_var.BUN_INSPECT_PRELOAD.get();
 
             const total_preloads = ctx.preloads.len + preloads.len + preloads2.len + preloads3.len + (if (preload4 != null) @as(usize, 1) else @as(usize, 0));
             if (total_preloads > 0) {
@@ -774,6 +808,24 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             bun.jsc.RuntimeTranspilerCache.is_disabled = true;
         }
 
+        if (args.flag("--cpu-prof")) {
+            ctx.runtime_options.cpu_prof.enabled = true;
+            if (args.option("--cpu-prof-name")) |name| {
+                ctx.runtime_options.cpu_prof.name = name;
+            }
+            if (args.option("--cpu-prof-dir")) |dir| {
+                ctx.runtime_options.cpu_prof.dir = dir;
+            }
+        } else {
+            // Warn if --cpu-prof-name or --cpu-prof-dir is used without --cpu-prof
+            if (args.option("--cpu-prof-name")) |_| {
+                Output.warn("--cpu-prof-name requires --cpu-prof to be enabled", .{});
+            }
+            if (args.option("--cpu-prof-dir")) |_| {
+                Output.warn("--cpu-prof-dir requires --cpu-prof to be enabled", .{});
+            }
+        }
+
         if (args.flag("--no-deprecation")) {
             Bun__Node__ProcessNoDeprecation = true;
         }
@@ -804,10 +856,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
         } else if (use_system_ca) {
             Bun__Node__CAStore = .system;
         } else {
-            if (bun.getenvZ("NODE_USE_SYSTEM_CA")) |val| {
-                if (val.len > 0 and val[0] == '1') {
-                    Bun__Node__CAStore = .system;
-                }
+            if (bun.env_var.NODE_USE_SYSTEM_CA.get()) {
+                Bun__Node__CAStore = .system;
             }
         }
 
@@ -1344,7 +1394,6 @@ const FeatureFlags = bun.FeatureFlags;
 const Global = bun.Global;
 const OOM = bun.OOM;
 const Output = bun.Output;
-const RegularExpression = bun.RegularExpression;
 const clap = bun.clap;
 const js_ast = bun.ast;
 const logger = bun.logger;
@@ -1352,6 +1401,7 @@ const options = bun.options;
 const resolve_path = bun.path;
 const strings = bun.strings;
 const Api = bun.schema.api;
+const RegularExpression = bun.jsc.RegularExpression;
 
 const CLI = bun.cli;
 const Command = CLI.Command;

@@ -637,7 +637,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     auto env = globalObject->makeNapiEnv(nmodule);
     env->filename = filename_cstr;
 
-    auto encoded = reinterpret_cast<EncodedJSValue>(napi_register_module_v1(env, reinterpret_cast<napi_value>(exportsValue)));
+    auto encoded = reinterpret_cast<EncodedJSValue>(napi_register_module_v1(env.ptr(), reinterpret_cast<napi_value>(exportsValue)));
     if (env->throwPendingException()) {
         return {};
     }
@@ -656,7 +656,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
             // TODO: think about the finalizer here
             // currently we do not dealloc napi modules so we don't have to worry about it right now
             auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
-            Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, env, nullptr);
+            Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr, env.ptr());
             bool success = resultObject->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
             ASSERT(success);
             RETURN_IF_EXCEPTION(scope, {});
@@ -3430,14 +3430,23 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& ar
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue nextTick;
     if (!this->m_nextTickFunction) {
-        this->get(globalObject, Identifier::fromString(vm, "nextTick"_s));
+        nextTick = this->get(globalObject, Identifier::fromString(vm, "nextTick"_s));
         RETURN_IF_EXCEPTION(scope, void());
     }
 
     ASSERT(!args.isEmpty());
     JSObject* nextTickFn = this->m_nextTickFunction.get();
-    ASSERT(nextTickFn);
+    if (!nextTickFn) [[unlikely]] {
+        if (nextTick && nextTick.isObject())
+            nextTickFn = asObject(nextTick);
+        else {
+            throwVMError(globalObject, scope, "Failed to call nextTick"_s);
+            return;
+        }
+    }
     ASSERT_WITH_MESSAGE(!args.at(0).inherits<AsyncContextFrame>(), "queueNextTick must not pass an AsyncContextFrame. This will cause a crash.");
     JSC::call(globalObject, nextTickFn, args, "Failed to call nextTick"_s);
     RELEASE_AND_RETURN(scope, void());
@@ -3501,6 +3510,24 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
     JSValue function = JSValue::decode(func);
 
     process->queueNextTick<2>(globalObject, function, { JSValue::decode(arg1), JSValue::decode(arg2) });
+}
+
+// This does the equivalent of
+// return require.cache.get(Bun.main)
+static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(processObject->globalObject());
+    auto* bun = globalObject->bunObject();
+    RETURN_IF_EXCEPTION(scope, {});
+    auto& builtinNames = Bun::builtinNames(vm);
+    JSValue mainValue = bun->get(globalObject, builtinNames.mainPublicName());
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* requireMap = globalObject->requireMap();
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue mainModule = requireMap->get(globalObject, mainValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    return mainModule;
 }
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
@@ -3899,7 +3926,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   hrtime                           constructProcessHrtimeObject                        PropertyCallback
   isBun                            constructIsBun                                      PropertyCallback
   kill                             Process_functionKill                                Function 2
-  mainModule                       processObjectInternalsMainModuleCodeGenerator       Builtin|Accessor
+  mainModule                       constructMainModuleProperty                         PropertyCallback
   memoryUsage                      constructMemoryUsage                                PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                              PropertyCallback
   nextTick                         constructProcessNextTickFn                          PropertyCallback

@@ -89,6 +89,7 @@ lockfile: *Lockfile = undefined,
 
 options: Options,
 preinstall_state: std.ArrayListUnmanaged(PreinstallState) = .{},
+postinstall_optimizer: PostinstallOptimizer.List = .{},
 
 global_link_dir: ?std.fs.Dir = null,
 global_dir: ?std.fs.Dir = null,
@@ -791,7 +792,8 @@ pub fn init(
     try env.load(entries_option.entries, &[_][]u8{}, .production, false);
 
     initializeStore();
-    if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |data_dir| {
+
+    if (bun.env_var.XDG_CONFIG_HOME.get() orelse bun.env_var.HOME.get()) |data_dir| {
         var buf: bun.PathBuffer = undefined;
         var parts = [_]string{
             "./.npmrc",
@@ -831,7 +833,7 @@ pub fn init(
         bun.spawn.process.WaiterThread.setShouldUseWaiterThread();
     }
 
-    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS)) {
+    if (bun.feature_flag.BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS.get()) {
         bun.sys.WindowsSymlinkOptions.has_failed_to_create_symlink = true;
     }
 
@@ -1313,6 +1315,7 @@ const PackageManifestMap = bun.install.PackageManifestMap;
 const PackageNameAndVersionHash = bun.install.PackageNameAndVersionHash;
 const PackageNameHash = bun.install.PackageNameHash;
 const PatchTask = bun.install.PatchTask;
+const PostinstallOptimizer = bun.install.PostinstallOptimizer;
 const PreinstallState = bun.install.PreinstallState;
 const Task = bun.install.Task;
 const TaskCallbackContext = bun.install.TaskCallbackContext;

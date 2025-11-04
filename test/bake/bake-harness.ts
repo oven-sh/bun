@@ -1772,7 +1772,7 @@ function testImpl(description: string, options: DevServerTest, NODE_ENV: "develo
         if (fs.existsSync(path.join(root, "bun.lock"))) {
           // run bun install
           Bun.spawnSync({
-            cmd: [process.execPath, "install"],
+            cmd: [process.execPath, "install", "--linker=hoisted"],
             cwd: root,
             stdio: ["inherit", "inherit", "inherit"],
             env: bunEnv,

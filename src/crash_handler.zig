@@ -241,7 +241,7 @@ pub fn crashHandler(
                     } else if (bun.analytics.Features.unsupported_uv_function > 0) {
                         const name = unsupported_uv_function orelse "<unknown>";
                         const fmt =
-                            \\Bun encountered a crash when running a NAPI module that tried to call 
+                            \\Bun encountered a crash when running a NAPI module that tried to call
                             \\the <red>{s}<r> libuv function.
                             \\
                             \\Bun is actively working on supporting all libuv functions for POSIX
@@ -255,11 +255,11 @@ pub fn crashHandler(
                         has_printed_message = true;
                     }
                 } else {
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.writeAll(Output.prettyFmt("<red>", true)) catch std.posix.abort();
                     }
                     writer.writeAll("oh no") catch std.posix.abort();
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.writeAll(Output.prettyFmt("<r><d>: multiple threads are crashing<r>\n", true)) catch std.posix.abort();
                     } else {
                         writer.writeAll(Output.prettyFmt(": multiple threads are crashing\n", true)) catch std.posix.abort();
@@ -267,13 +267,13 @@ pub fn crashHandler(
                 }
 
                 if (reason != .out_of_memory or debug_trace) {
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.writeAll(Output.prettyFmt("<red>", true)) catch std.posix.abort();
                     }
 
                     writer.writeAll("panic") catch std.posix.abort();
 
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.writeAll(Output.prettyFmt("<r><d>", true)) catch std.posix.abort();
                     }
 
@@ -294,7 +294,7 @@ pub fn crashHandler(
                     }
 
                     writer.writeAll(": ") catch std.posix.abort();
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.writeAll(Output.prettyFmt("<r>", true)) catch std.posix.abort();
                     }
                     writer.print("{}\n", .{reason}) catch std.posix.abort();
@@ -385,7 +385,7 @@ pub fn crashHandler(
                     if (!has_printed_message) {
                         has_printed_message = true;
                         writer.writeAll("oh no") catch std.posix.abort();
-                        if (Output.enable_ansi_colors) {
+                        if (Output.enable_ansi_colors_stderr) {
                             writer.writeAll(Output.prettyFmt("<r><d>:<r> ", true)) catch std.posix.abort();
                         } else {
                             writer.writeAll(Output.prettyFmt(": ", true)) catch std.posix.abort();
@@ -403,7 +403,7 @@ pub fn crashHandler(
                         } else if (bun.analytics.Features.unsupported_uv_function > 0) {
                             const name = unsupported_uv_function orelse "<unknown>";
                             const fmt =
-                                \\Bun encountered a crash when running a NAPI module that tried to call 
+                                \\Bun encountered a crash when running a NAPI module that tried to call
                                 \\the <red>{s}<r> libuv function.
                                 \\
                                 \\Bun is actively working on supporting all libuv functions for POSIX
@@ -435,7 +435,7 @@ pub fn crashHandler(
                         }
                     }
 
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.print(Output.prettyFmt("<cyan>", true), .{}) catch std.posix.abort();
                     }
 
@@ -452,7 +452,7 @@ pub fn crashHandler(
                     writer.writeAll("\n") catch std.posix.abort();
                 }
 
-                if (Output.enable_ansi_colors) {
+                if (Output.enable_ansi_colors_stderr) {
                     writer.writeAll(Output.prettyFmt("<r>\n", true)) catch std.posix.abort();
                 } else {
                     writer.writeAll("\n") catch std.posix.abort();
@@ -583,7 +583,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                         },
                     );
 
-                    if (bun.getenvZ("USER")) |user| {
+                    if (bun.env_var.USER.get()) |user| {
                         if (user.len > 0) {
                             Output.prettyError(
                                 \\
@@ -652,7 +652,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                         },
                     );
 
-                    if (bun.getenvZ("USER")) |user| {
+                    if (bun.env_var.USER.get()) |user| {
                         if (user.len > 0) {
                             Output.prettyError(
                                 \\
@@ -699,7 +699,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
                     );
 
                     if (bun.Environment.isLinux) {
-                        if (bun.getenvZ("USER")) |user| {
+                        if (bun.env_var.USER.get()) |user| {
                             if (user.len > 0) {
                                 Output.prettyError(
                                     \\
@@ -804,7 +804,7 @@ pub fn reportBaseUrl() []const u8 {
     };
     return static.base_url orelse {
         const computed = computed: {
-            if (bun.getenvZ("BUN_CRASH_REPORT_URL")) |url| {
+            if (bun.env_var.BUN_CRASH_REPORT_URL.get()) |url| {
                 break :computed bun.strings.withoutTrailingSlash(url);
             }
             break :computed default_report_base_url;
@@ -957,7 +957,7 @@ pub fn printMetadata(writer: anytype) !void {
         }
     }
 
-    if (Output.enable_ansi_colors) {
+    if (Output.enable_ansi_colors_stderr) {
         try writer.writeAll(Output.prettyFmt("<r><d>", true));
     }
 
@@ -1045,7 +1045,7 @@ pub fn printMetadata(writer: anytype) !void {
         try writer.writeAll("\n");
     }
 
-    if (Output.enable_ansi_colors) {
+    if (Output.enable_ansi_colors_stderr) {
         try writer.writeAll(Output.prettyFmt("<r>", true));
     }
     try writer.writeAll("\n");
@@ -1412,18 +1412,13 @@ fn isReportingEnabled() bool {
     if (suppress_reporting) return false;
 
     // If trying to test the crash handler backend, implicitly enable reporting
-    if (bun.getenvZ("BUN_CRASH_REPORT_URL")) |value| {
+    if (bun.env_var.BUN_CRASH_REPORT_URL.get()) |value| {
         return value.len > 0;
     }
 
     // Environment variable to specifically enable or disable reporting
-    if (bun.getenvZ("BUN_ENABLE_CRASH_REPORTING")) |value| {
-        if (value.len > 0) {
-            if (bun.strings.eqlComptime(value, "1")) {
-                return true;
-            }
-            return false;
-        }
+    if (bun.env_var.BUN_ENABLE_CRASH_REPORTING.get()) |enable_crash_reporting| {
+        return enable_crash_reporting;
     }
 
     // Debug builds shouldn't report to the default url by default
@@ -1512,7 +1507,7 @@ fn report(url: []const u8) void {
             var buf2: bun.PathBuffer = undefined;
             const curl = bun.which(
                 &buf,
-                bun.getenvZ("PATH") orelse return,
+                bun.env_var.PATH.get() orelse return,
                 bun.getcwd(&buf2) catch return,
                 "curl",
             ) orelse return;
@@ -2265,7 +2260,7 @@ export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C)
 export fn CrashHandler__unsupportedUVFunction(name: ?[*:0]const u8) callconv(.C) void {
     bun.analytics.Features.unsupported_uv_function += 1;
     unsupported_uv_function = name;
-    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB)) {
+    if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB.get()) {
         suppressReporting();
     }
     std.debug.panic("unsupported uv function: {s}", .{name.?});

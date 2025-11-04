@@ -2335,9 +2335,6 @@ pub const api = struct {
         /// line_text
         line_text: []const u8,
 
-        /// suggestion
-        suggestion: []const u8,
-
         /// offset
         offset: u32 = 0,
 
@@ -2349,7 +2346,6 @@ pub const api = struct {
             this.line = try reader.readValue(i32);
             this.column = try reader.readValue(i32);
             this.line_text = try reader.readValue([]const u8);
-            this.suggestion = try reader.readValue([]const u8);
             this.offset = try reader.readValue(u32);
             return this;
         }
@@ -2360,7 +2356,6 @@ pub const api = struct {
             try writer.writeInt(this.line);
             try writer.writeInt(this.column);
             try writer.writeValue(@TypeOf(this.line_text), this.line_text);
-            try writer.writeValue(@TypeOf(this.suggestion), this.suggestion);
             try writer.writeInt(this.offset);
         }
     };
@@ -2825,14 +2820,18 @@ pub const api = struct {
         /// token
         token: []const u8,
 
+        /// email
+        email: []const u8,
+
         pub fn dupe(this: NpmRegistry, allocator: std.mem.Allocator) NpmRegistry {
-            const buf = bun.handleOom(allocator.alloc(u8, this.url.len + this.username.len + this.password.len + this.token.len));
+            const buf = bun.handleOom(allocator.alloc(u8, this.url.len + this.username.len + this.password.len + this.token.len + this.email.len));
 
             var out: NpmRegistry = .{
                 .url = "",
                 .username = "",
                 .password = "",
                 .token = "",
+                .email = "",
             };
 
             var i: usize = 0;
@@ -2853,6 +2852,7 @@ pub const api = struct {
             this.username = try reader.readValue([]const u8);
             this.password = try reader.readValue([]const u8);
             this.token = try reader.readValue([]const u8);
+            this.email = try reader.readValue([]const u8);
             return this;
         }
 
@@ -2861,6 +2861,7 @@ pub const api = struct {
             try writer.writeValue(@TypeOf(this.username), this.username);
             try writer.writeValue(@TypeOf(this.password), this.password);
             try writer.writeValue(@TypeOf(this.token), this.token);
+            try writer.writeValue(@TypeOf(this.email), this.email);
         }
 
         pub const Parser = struct {
@@ -3055,6 +3056,9 @@ pub const api = struct {
 
         minimum_release_age_ms: ?f64 = null,
         minimum_release_age_excludes: ?[]const []const u8 = null,
+
+        public_hoist_pattern: ?install.PnpmMatcher = null,
+        hoist_pattern: ?install.PnpmMatcher = null,
     };
 
     pub const ClientServerModule = struct {
@@ -3217,4 +3221,5 @@ const std = @import("std");
 
 const bun = @import("bun");
 const OOM = bun.OOM;
+const install = bun.install;
 const js_ast = bun.ast;

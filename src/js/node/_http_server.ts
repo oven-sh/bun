@@ -1526,7 +1526,7 @@ ServerResponse.prototype._implicitHeader = function () {
 
 Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
   get() {
-    return !this.destroyed && !this.finished && (this[kHandle]?.bufferedAmount ?? 1) !== 0;
+    return !this.destroyed && !this.finished && (this[kHandle]?.bufferedAmount ?? 0) !== 0;
   },
 });
 

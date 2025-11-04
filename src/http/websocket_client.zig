@@ -28,6 +28,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         ping_len: u8 = 0,
         ping_received: bool = false,
         close_received: bool = false,
+        close_frame_buffering: bool = false,
 
         receive_frame: usize = 0,
         receive_body_remain: usize = 0,
@@ -110,6 +111,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.clearSendBuffers(true);
             this.ping_received = false;
             this.ping_len = 0;
+            this.close_frame_buffering = false;
             this.receive_pending_chunk_len = 0;
             this.receiving_compressed = false;
             this.message_is_compressed = false;
@@ -260,7 +262,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     var outstring = jsc.ZigString.Empty;
                     if (utf16_bytes_) |utf16| {
                         outstring = jsc.ZigString.from16Slice(utf16);
-                        outstring.mark();
+                        outstring.markGlobal();
                         jsc.markBinding(@src());
                         out.didReceiveText(false, &outstring);
                     } else {
@@ -652,39 +654,42 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     },
 
                     .close => {
-                        this.close_received = true;
-
-                        // invalid close frame with 1 byte
-                        if (data.len == 1 and receive_body_remain == 1) {
+                        if (receive_body_remain == 1 or receive_body_remain > 125) {
                             this.terminate(ErrorCode.invalid_control_frame);
                             terminated = true;
                             break;
                         }
-                        // 2 byte close code and optional reason
-                        if (data.len >= 2 and receive_body_remain >= 2) {
-                            var code = std.mem.readInt(u16, data[0..2], .big);
-                            log("Received close with code {d}", .{code});
-                            if (code == 1001) {
-                                // going away actual sends 1000 (normal close)
-                                code = 1000;
-                            } else if ((code < 1000) or (code >= 1004 and code < 1007) or (code >= 1016 and code <= 2999)) {
-                                // invalid codes must clean close with 1002
-                                code = 1002;
+
+                        if (receive_body_remain > 0) {
+                            if (!this.close_frame_buffering) {
+                                this.ping_len = @truncate(receive_body_remain);
+                                receive_body_remain = 0;
+                                this.close_frame_buffering = true;
                             }
-                            const reason_len = receive_body_remain - 2;
-                            if (reason_len > 125) {
-                                this.terminate(ErrorCode.invalid_control_frame);
-                                terminated = true;
-                                break;
+                            const to_copy = @min(data.len, this.ping_len - receive_body_remain);
+                            @memcpy(this.ping_frame_bytes[6 + receive_body_remain ..][0..to_copy], data[0..to_copy]);
+                            receive_body_remain += to_copy;
+                            data = data[to_copy..];
+                            if (receive_body_remain < this.ping_len) break;
+
+                            this.close_received = true;
+                            const close_data = this.ping_frame_bytes[6..][0..this.ping_len];
+                            if (this.ping_len >= 2) {
+                                var code = std.mem.readInt(u16, close_data[0..2], .big);
+                                if (code == 1001) code = 1000;
+                                if ((code < 1000) or (code >= 1004 and code < 1007) or (code >= 1016 and code <= 2999)) code = 1002;
+                                var buf: [125]u8 = undefined;
+                                @memcpy(buf[0 .. this.ping_len - 2], close_data[2..this.ping_len]);
+                                this.sendCloseWithBody(socket, code, &buf, this.ping_len - 2);
+                            } else {
+                                this.sendClose();
                             }
-                            var close_reason_buf: [125]u8 = undefined;
-                            @memcpy(close_reason_buf[0..reason_len], data[2..receive_body_remain]);
-                            this.sendCloseWithBody(socket, code, &close_reason_buf, reason_len);
-                            data = data[receive_body_remain..];
+                            this.close_frame_buffering = false;
                             terminated = true;
                             break;
                         }
 
+                        this.close_received = true;
                         this.sendClose();
                         terminated = true;
                         break;
@@ -743,9 +748,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 const content_to_compress: []const u8 = switch (bytes) {
                     .utf16 => |utf16| brk: {
                         // Convert UTF16 to UTF8 for compression
-                        const content_byte_len: usize = strings.elementLengthUTF16IntoUTF8([]const u16, utf16);
+                        const content_byte_len: usize = strings.elementLengthUTF16IntoUTF8(utf16);
                         temp_buffer = allocator.alloc(u8, content_byte_len) catch return false;
-                        const encode_result = strings.copyUTF16IntoUTF8(temp_buffer.?, []const u16, utf16);
+                        const encode_result = strings.copyUTF16IntoUTF8(temp_buffer.?, utf16);
                         break :brk temp_buffer.?[0..encode_result.written];
                     },
                     .latin1 => |latin1| brk: {
@@ -757,7 +762,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         }
 
                         temp_buffer = allocator.alloc(u8, content_byte_len) catch return false;
-                        const encode_result = strings.copyLatin1IntoUTF8(temp_buffer.?, []const u8, latin1);
+                        const encode_result = strings.copyLatin1IntoUTF8(temp_buffer.?, latin1);
                         break :brk temp_buffer.?[0..encode_result.written];
                     },
                     .bytes => |b| b,
@@ -1185,8 +1190,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 return null;
             }
 
-            ws.send_buffer.ensureTotalCapacity(2048) catch bun.outOfMemory();
-            ws.receive_buffer.ensureTotalCapacity(2048) catch bun.outOfMemory();
+            bun.handleOom(ws.send_buffer.ensureTotalCapacity(2048));
+            bun.handleOom(ws.receive_buffer.ensureTotalCapacity(2048));
             ws.poll_ref.ref(globalThis.bunVM());
 
             const buffered_slice: []u8 = buffered_data[0..buffered_data_len];
@@ -1430,7 +1435,7 @@ const Copy = union(enum) {
     pub fn len(this: @This(), byte_len: *usize) usize {
         switch (this) {
             .utf16 => {
-                byte_len.* = strings.elementLengthUTF16IntoUTF8([]const u16, this.utf16);
+                byte_len.* = strings.elementLengthUTF16IntoUTF8(this.utf16);
                 return WebsocketHeader.frameSizeIncludingMask(byte_len.*);
             },
             .latin1 => {
@@ -1486,7 +1491,7 @@ const Copy = union(enum) {
         switch (this) {
             .utf16 => |utf16| {
                 header.len = WebsocketHeader.packLength(content_byte_len);
-                const encode_into_result = strings.copyUTF16IntoUTF8Impl(to_mask, []const u16, utf16, true);
+                const encode_into_result = strings.copyUTF16IntoUTF8Impl(to_mask, utf16, true);
                 bun.assert(@as(usize, encode_into_result.written) == content_byte_len);
                 bun.assert(@as(usize, encode_into_result.read) == utf16.len);
                 header.len = WebsocketHeader.packLength(encode_into_result.written);
@@ -1496,7 +1501,7 @@ const Copy = union(enum) {
                 Mask.fill(globalThis, buf[mask_offset..][0..4], to_mask[0..content_byte_len], to_mask[0..content_byte_len]);
             },
             .latin1 => |latin1| {
-                const encode_into_result = strings.copyLatin1IntoUTF8(to_mask, []const u8, latin1);
+                const encode_into_result = strings.copyLatin1IntoUTF8(to_mask, latin1);
                 bun.assert(@as(usize, encode_into_result.written) == content_byte_len);
 
                 // latin1 can contain non-ascii
@@ -1554,7 +1559,7 @@ const Copy = union(enum) {
     }
 };
 
-const log = Output.scoped(.WebSocketClient, false);
+const log = Output.scoped(.WebSocketClient, .visible);
 
 const string = []const u8;
 

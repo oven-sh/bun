@@ -13,7 +13,7 @@ pub const xxHash32 = hashWrap(struct {
     }
 });
 pub const xxHash64 = hashWrap(struct {
-    pub fn hash(seed: u32, bytes: []const u8) u64 {
+    pub fn hash(seed: u64, bytes: []const u8) u64 {
         // sidestep .hash taking in anytype breaking ArgTuple
         // downstream by forcing a type signature on the input
         return std.hash.XxHash64.hash(seed, bytes);

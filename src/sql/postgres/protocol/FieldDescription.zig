@@ -60,7 +60,7 @@ pub fn decodeInternal(this: *@This(), comptime Container: type, reader: NewReade
 pub const decode = DecoderWrap(FieldDescription, decodeInternal).decode;
 
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
-const ColumnIdentifier = @import("./ColumnIdentifier.zig").ColumnIdentifier;
+const ColumnIdentifier = @import("../../shared/ColumnIdentifier.zig").ColumnIdentifier;
 const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
 const NewReader = @import("./NewReader.zig").NewReader;
 

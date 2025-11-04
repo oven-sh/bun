@@ -120,7 +120,7 @@ pub const ShellMvBatchedTask = struct {
                     ResolvePath.basename(src),
                 }, .auto);
 
-                this.err = e.withPath(bun.default_allocator.dupeZ(u8, target_path[0..]) catch bun.outOfMemory());
+                this.err = e.withPath(bun.handleOom(bun.default_allocator.dupeZ(u8, target_path[0..])));
                 return false;
             },
             else => {},
@@ -257,7 +257,7 @@ pub fn next(this: *Mv) Yield {
 
                 this.args.target_fd = maybe_fd;
                 const cwd_fd = this.bltn().parentCmd().base.shell.cwd_fd;
-                const tasks = this.bltn().arena.allocator().alloc(ShellMvBatchedTask, task_count) catch bun.outOfMemory();
+                const tasks = bun.handleOom(this.bltn().arena.allocator().alloc(ShellMvBatchedTask, task_count));
                 // Initialize tasks
                 {
                     var i: usize = 0;
@@ -485,7 +485,7 @@ pub inline fn bltn(this: *Mv) *Builtin {
 }
 
 // --
-const debug = bun.Output.scoped(.ShellCat, true);
+const debug = bun.Output.scoped(.ShellCat, .hidden);
 
 const std = @import("std");
 

@@ -27,7 +27,7 @@ pub const Version = struct {
                             ),
                         ),
                     },
-                ) catch bun.outOfMemory();
+                ) catch |err| bun.handleOom(err);
             }
             return this.tag;
         }
@@ -557,7 +557,7 @@ pub const UpgradeCommand = struct {
                         save_dir.deleteFileZ(tmpname) catch {};
                         Global.exit(1);
                     }
-                } else if (Environment.isWindows) {
+                } else if (comptime Environment.isWindows) {
                     // Run a powershell script to unzip the file
                     const unzip_script = try std.fmt.allocPrint(
                         ctx.allocator,
@@ -570,9 +570,9 @@ pub const UpgradeCommand = struct {
 
                     var buf: bun.PathBuffer = undefined;
                     const powershell_path =
-                        bun.which(&buf, bun.getenvZ("PATH") orelse "", "", "powershell") orelse
+                        bun.which(&buf, bun.env_var.PATH.get() orelse "", "", "powershell") orelse
                         hardcoded_system_powershell: {
-                            const system_root = bun.getenvZ("SystemRoot") orelse "C:\\Windows";
+                            const system_root = bun.env_var.SYSTEMROOT.get() orelse "C:\\Windows";
                             const hardcoded_system_powershell = bun.path.joinAbsStringBuf(system_root, &buf, &.{ system_root, "System32\\WindowsPowerShell\\v1.0\\powershell.exe" }, .windows);
                             if (bun.sys.exists(hardcoded_system_powershell)) {
                                 break :hardcoded_system_powershell hardcoded_system_powershell;
@@ -601,7 +601,7 @@ pub const UpgradeCommand = struct {
                         .stdin = .inherit,
 
                         .windows = if (Environment.isWindows) .{
-                            .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null)),
+                            .loop = bun.jsc.EventLoopHandle.init(bun.jsc.MiniEventLoop.initGlobal(null, null)),
                         },
                     }) catch |err| {
                         Output.prettyErrorln("<r><red>error:<r> Failed to spawn Expand-Archive on {s} due to error {s}", .{ tmpname, @errorName(err) });
@@ -649,7 +649,7 @@ pub const UpgradeCommand = struct {
                         } else |_| {}
                     }
 
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> Failed to verify Bun (code: {s})<r>)", .{@errorName(err)});
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> Failed to verify Bun (code: {s})<r>", .{@errorName(err)});
                     Global.exit(1);
                 };
 
@@ -820,7 +820,7 @@ pub const UpgradeCommand = struct {
                     "completions",
                 };
 
-                env_loader.map.put("IS_BUN_AUTO_UPDATE", "true") catch bun.outOfMemory();
+                bun.handleOom(env_loader.map.put("IS_BUN_AUTO_UPDATE", "true"));
                 var std_map = try env_loader.map.stdEnvMap(ctx.allocator);
                 defer std_map.deinit();
                 _ = std.process.Child.run(.{

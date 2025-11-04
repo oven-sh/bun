@@ -425,9 +425,9 @@ pub const Token = struct {
                 .right = .{
                     .op = .lte,
                     .version = .{
-                        .major = std.math.maxInt(u32),
-                        .minor = std.math.maxInt(u32),
-                        .patch = std.math.maxInt(u32),
+                        .major = std.math.maxInt(u64),
+                        .minor = std.math.maxInt(u64),
+                        .patch = std.math.maxInt(u64),
                     },
                 },
             },
@@ -437,8 +437,8 @@ pub const Token = struct {
                         .op = .lte,
                         .version = .{
                             .major = version.major orelse 0,
-                            .minor = std.math.maxInt(u32),
-                            .patch = std.math.maxInt(u32),
+                            .minor = std.math.maxInt(u64),
+                            .patch = std.math.maxInt(u64),
                         },
                     },
                 },
@@ -458,8 +458,8 @@ pub const Token = struct {
                         .op = .gt,
                         .version = .{
                             .major = version.major orelse 0,
-                            .minor = std.math.maxInt(u32),
-                            .patch = std.math.maxInt(u32),
+                            .minor = std.math.maxInt(u64),
+                            .patch = std.math.maxInt(u64),
                         },
                     },
                 },
@@ -483,7 +483,7 @@ pub const Token = struct {
                         .version = .{
                             .major = version.major orelse 0,
                             .minor = version.minor orelse 0,
-                            .patch = std.math.maxInt(u32),
+                            .patch = std.math.maxInt(u64),
                         },
                     },
                 },
@@ -504,7 +504,7 @@ pub const Token = struct {
                         .version = .{
                             .major = version.major orelse 0,
                             .minor = version.minor orelse 0,
-                            .patch = std.math.maxInt(u32),
+                            .patch = std.math.maxInt(u64),
                         },
                     },
                 },

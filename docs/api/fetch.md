@@ -233,6 +233,7 @@ In addition to the standard fetch options, Bun provides several extensions:
 ```ts
 const response = await fetch("http://example.com", {
   // Control automatic response decompression (default: true)
+  // Supports gzip, deflate, brotli (br), and zstd
   decompress: true,
 
   // Disable connection reuse for this request
@@ -320,7 +321,6 @@ Bun automatically sets the `Content-Type` header for request bodies when not exp
 
 - For `Blob` objects, uses the blob's `type`
 - For `FormData`, sets appropriate multipart boundary
-- For JSON objects, sets `application/json`
 
 ## Debugging
 
@@ -340,7 +340,7 @@ This will print the request and response headers to your terminal:
 [fetch] > User-Agent: Bun/$BUN_LATEST_VERSION
 [fetch] > Accept: */*
 [fetch] > Host: example.com
-[fetch] > Accept-Encoding: gzip, deflate, br
+[fetch] > Accept-Encoding: gzip, deflate, br, zstd
 
 [fetch] < 200 OK
 [fetch] < Content-Encoding: gzip

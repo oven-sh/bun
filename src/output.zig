@@ -6,6 +6,10 @@ threadlocal var source_set: bool = false;
 var stderr_stream: Source.StreamType = undefined;
 var stdout_stream: Source.StreamType = undefined;
 var stdout_stream_set = false;
+
+// Track which stdio descriptors are TTYs (0=stdin, 1=stdout, 2=stderr)
+pub export var bun_stdio_tty: [3]i32 = .{ 0, 0, 0 };
+
 pub var terminal_size: std.posix.winsize = .{
     .row = 0,
     .col = 0,
@@ -76,31 +80,22 @@ pub const Source = struct {
     }
 
     pub fn isNoColor() bool {
-        const no_color = bun.getenvZ("NO_COLOR") orelse return false;
-        // https://no-color.org/
-        // "when present and not an empty string (regardless of its value)"
-        return no_color.len != 0;
+        return bun.env_var.NO_COLOR.get();
     }
 
     pub fn getForceColorDepth() ?ColorDepth {
-        const force_color = bun.getenvZ("FORCE_COLOR") orelse return null;
+        const force_color = bun.env_var.FORCE_COLOR.get() orelse return null;
         // Supported by Node.js, if set will ignore NO_COLOR.
         // - "0" to indicate no color support
         // - "1", "true", or "" to indicate 16-color support
         // - "2" to indicate 256-color support
         // - "3" to indicate 16 million-color support
-        if (strings.eqlComptime(force_color, "1") or strings.eqlComptime(force_color, "true") or strings.eqlComptime(force_color, "")) {
-            return ColorDepth.@"16";
-        }
-
-        if (strings.eqlComptime(force_color, "2")) {
-            return ColorDepth.@"256";
-        }
-        if (strings.eqlComptime(force_color, "3")) {
-            return ColorDepth.@"16m";
-        }
-
-        return ColorDepth.none;
+        return switch (force_color) {
+            0 => .none,
+            1 => .@"16",
+            2 => .@"256",
+            else => .@"16m",
+        };
     }
 
     pub fn isForceColor() bool {
@@ -118,8 +113,6 @@ pub const Source = struct {
 
         return colorDepth() != .none;
     }
-
-    export var bun_stdio_tty: [3]i32 = .{ 0, 0, 0 };
 
     const WindowsStdio = struct {
         const w = bun.windows;
@@ -271,29 +264,22 @@ pub const Source = struct {
             return;
         }
 
-        const term = bun.getenvZ("TERM") orelse "";
+        const term = bun.env_var.TERM.get() orelse "";
         if (strings.eqlComptime(term, "dumb")) {
             return;
         }
 
-        if (bun.getenvZ("TMUX") != null) {
+        if (bun.env_var.TMUX.get() != null) {
             lazy_color_depth = .@"256";
             return;
         }
 
-        if (bun.getenvZ("CI")) |ci| {
-            inline for (.{ "APPVEYOR", "BUILDKITE", "CIRCLECI", "DRONE", "GITHUB_ACTIONS", "GITLAB_CI", "TRAVIS" }) |ci_env| {
-                if (strings.eqlComptime(ci, ci_env)) {
-                    lazy_color_depth = .@"256";
-                    return;
-                }
-            }
-
+        if (bun.env_var.CI.get() != null) {
             lazy_color_depth = .@"16";
             return;
         }
 
-        if (bun.getenvZ("TERM_PROGRAM")) |term_program| {
+        if (bun.env_var.TERM_PROGRAM.get()) |term_program| {
             const use_16m = .{
                 "ghostty",
                 "MacTerm",
@@ -311,7 +297,7 @@ pub const Source = struct {
 
         var has_color_term_set = false;
 
-        if (bun.getenvZ("COLORTERM")) |color_term| {
+        if (bun.env_var.COLORTERM.get()) |color_term| {
             if (strings.eqlComptime(color_term, "truecolor") or strings.eqlComptime(color_term, "24bit")) {
                 lazy_color_depth = .@"16m";
                 return;
@@ -405,7 +391,6 @@ pub const Source = struct {
 
                 enable_ansi_colors_stdout = enable_color orelse is_stdout_tty;
                 enable_ansi_colors_stderr = enable_color orelse is_stderr_tty;
-                enable_ansi_colors = enable_ansi_colors_stdout or enable_ansi_colors_stderr;
             }
 
             stdout_stream = new_source.stream;
@@ -421,7 +406,7 @@ pub const OutputStreamDescriptor = enum {
     terminal,
 };
 
-pub var enable_ansi_colors = Environment.isNative;
+pub const enable_ansi_colors = @compileError("Deprecated to prevent accidentally using the wrong one. Use enable_ansi_colors_stdout or enable_ansi_colors_stderr instead.");
 pub var enable_ansi_colors_stderr = Environment.isNative;
 pub var enable_ansi_colors_stdout = Environment.isNative;
 pub var enable_buffering = Environment.isNative;
@@ -431,15 +416,22 @@ pub var is_github_action = false;
 pub var stderr_descriptor_type = OutputStreamDescriptor.unknown;
 pub var stdout_descriptor_type = OutputStreamDescriptor.unknown;
 
-pub inline fn isEmojiEnabled() bool {
-    return enable_ansi_colors;
+pub inline fn isStdoutTTY() bool {
+    return bun_stdio_tty[1] != 0;
+}
+
+pub inline fn isStderrTTY() bool {
+    return bun_stdio_tty[2] != 0;
+}
+
+pub inline fn isStdinTTY() bool {
+    return bun_stdio_tty[0] != 0;
 }
 
 pub fn isGithubAction() bool {
-    if (bun.getenvZ("GITHUB_ACTIONS")) |value| {
-        return strings.eqlComptime(value, "true") and
-            // Do not print github annotations for AI agents because that wastes the context window.
-            !isAIAgent();
+    if (bun.env_var.GITHUB_ACTIONS.get()) {
+        // Do not print github annotations for AI agents because that wastes the context window.
+        return !isAIAgent();
     }
     return false;
 }
@@ -448,7 +440,7 @@ pub fn isAIAgent() bool {
     const get_is_agent = struct {
         var value = false;
         fn evaluate() bool {
-            if (bun.getenvZ("AGENT")) |env| {
+            if (bun.env_var.AGENT.get()) |env| {
                 return strings.eqlComptime(env, "1");
             }
 
@@ -457,12 +449,12 @@ pub fn isAIAgent() bool {
             }
 
             // Claude Code.
-            if (bun.getenvTruthy("CLAUDECODE")) {
+            if (bun.env_var.CLAUDECODE.get()) {
                 return true;
             }
 
             // Replit.
-            if (bun.getenvTruthy("REPL_ID")) {
+            if (bun.env_var.REPL_ID.get()) {
                 return true;
             }
 
@@ -495,16 +487,29 @@ pub fn isAIAgent() bool {
 
 pub fn isVerbose() bool {
     // Set by Github Actions when a workflow is run using debug mode.
-    if (bun.getenvZ("RUNNER_DEBUG")) |value| {
-        if (strings.eqlComptime(value, "1")) {
-            return true;
-        }
-    }
-    return false;
+    return bun.env_var.RUNNER_DEBUG.get();
 }
 
 pub fn enableBuffering() void {
     if (comptime Environment.isNative) enable_buffering = true;
+}
+
+const EnableBufferingScope = struct {
+    prev_buffering: bool,
+    pub fn init() EnableBufferingScope {
+        const prev_buffering = enable_buffering;
+        enable_buffering = true;
+        return .{ .prev_buffering = prev_buffering };
+    }
+
+    /// Does not call Output.flush().
+    pub fn deinit(self: EnableBufferingScope) void {
+        enable_buffering = self.prev_buffering;
+    }
+};
+
+pub fn enableBufferingScope() EnableBufferingScope {
+    return EnableBufferingScope.init();
 }
 
 pub fn disableBuffering() void {
@@ -515,7 +520,7 @@ pub fn disableBuffering() void {
 pub fn panic(comptime fmt: string, args: anytype) noreturn {
     @branchHint(.cold);
 
-    if (isEmojiEnabled()) {
+    if (enable_ansi_colors_stderr) {
         std.debug.panic(comptime prettyFmt(fmt, true), args);
     } else {
         std.debug.panic(comptime prettyFmt(fmt, false), args);
@@ -552,7 +557,7 @@ pub fn writerBuffered() Source.BufferedStream.Writer {
 }
 
 pub fn resetTerminal() void {
-    if (!enable_ansi_colors) {
+    if (!enable_ansi_colors_stderr and !enable_ansi_colors_stdout) {
         return;
     }
 
@@ -741,7 +746,19 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 ///   BUN_DEBUG_ALL=1
 pub const LogFunction = fn (comptime fmt: string, args: anytype) callconv(bun.callconv_inline) void;
 
-pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
+pub const Visibility = enum {
+    /// Hide logs for this scope by default.
+    hidden,
+    /// Show logs for this scope by default.
+    visible,
+
+    /// Show logs for this scope by default if and only if `condition` is true.
+    pub fn visibleIf(condition: bool) Visibility {
+        return if (condition) .visible else .hidden;
+    }
+};
+
+pub fn Scoped(comptime tag: anytype, comptime visibility: Visibility) type {
     const tagname = comptime if (!Environment.enable_logs) .{} else brk: {
         const input = switch (@TypeOf(tag)) {
             @Type(.enum_literal) => @tagName(tag),
@@ -754,10 +771,10 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
         break :brk ascii_slice;
     };
 
-    return ScopedLogger(&tagname, disabled);
+    return ScopedLogger(&tagname, visibility);
 }
 
-fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
+fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) type {
     if (comptime !Environment.enable_logs) {
         return struct {
             pub inline fn isVisible() bool {
@@ -773,7 +790,7 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
         var buffered_writer: BufferedWriter = undefined;
         var out: BufferedWriter.Writer = undefined;
         var out_set = false;
-        var really_disable = std.atomic.Value(bool).init(disabled);
+        var really_disable = std.atomic.Value(bool).init(visibility == .hidden);
 
         var lock = bun.Mutex{};
 
@@ -782,10 +799,10 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
         fn evaluateIsVisible() void {
             if (bun.getenvZAnyCase("BUN_DEBUG_" ++ tagname)) |val| {
                 really_disable.store(strings.eqlComptime(val, "0"), .monotonic);
-            } else if (bun.getenvZAnyCase("BUN_DEBUG_ALL")) |val| {
-                really_disable.store(strings.eqlComptime(val, "0"), .monotonic);
-            } else if (bun.getenvZAnyCase("BUN_DEBUG_QUIET_LOGS")) |val| {
-                really_disable.store(really_disable.load(.monotonic) or !strings.eqlComptime(val, "0"), .monotonic);
+            } else if (bun.env_var.BUN_DEBUG_ALL.get()) |val| {
+                really_disable.store(!val, .monotonic);
+            } else if (bun.env_var.BUN_DEBUG_QUIET_LOGS.get()) |val| {
+                really_disable.store(really_disable.load(.monotonic) or val, .monotonic);
             } else {
                 for (bun.argv) |arg| {
                     if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-" ++ tagname, true)) {
@@ -865,11 +882,8 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
     };
 }
 
-pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
-    return Scoped(
-        tag,
-        disabled,
-    ).log;
+pub fn scoped(comptime tag: anytype, comptime visibility: Visibility) LogFunction {
+    return Scoped(tag, visibility).log;
 }
 
 pub fn up(n: usize) void {
@@ -994,14 +1008,6 @@ pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime 
         printer(comptime prettyFmt(fmt, true), args);
     } else {
         printer(comptime prettyFmt(fmt, false), args);
-    }
-}
-
-pub noinline fn prettyWithPrinterFn(comptime fmt: string, args: anytype, comptime printFn: anytype, ctx: anytype) void {
-    if (enable_ansi_colors) {
-        printFn(ctx, comptime prettyFmt(fmt, true), args);
-    } else {
-        printFn(ctx, comptime prettyFmt(fmt, false), args);
     }
 }
 
@@ -1225,7 +1231,7 @@ extern "c" fn getpid() c_int;
 pub fn initScopedDebugWriterAtStartup() void {
     bun.debugAssert(source_set);
 
-    if (bun.getenvZ("BUN_DEBUG")) |path| {
+    if (bun.env_var.BUN_DEBUG.get()) |path| {
         if (path.len > 0 and !strings.eql(path, "0") and !strings.eql(path, "false")) {
             if (std.fs.path.dirname(path)) |dir| {
                 std.fs.cwd().makePath(dir) catch {};
@@ -1274,6 +1280,31 @@ pub var buffered_stdin = std.io.BufferedReader(4096, File.Reader){
 };
 
 const string = []const u8;
+
+/// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036
+pub const synchronized_start = "\x1b[?2026h";
+
+/// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036
+pub const synchronized_end = "\x1b[?2026l";
+
+/// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036
+pub fn synchronized() Synchronized {
+    return Synchronized.begin();
+}
+pub const Synchronized = struct {
+    pub fn begin() Synchronized {
+        if (Environment.isPosix) {
+            print(synchronized_start, .{});
+        }
+        return .{};
+    }
+
+    pub fn end(_: @This()) void {
+        if (Environment.isPosix) {
+            print(synchronized_end, .{});
+        }
+    }
+};
 
 const Environment = @import("./env.zig");
 const root = @import("root");

@@ -7,8 +7,8 @@ fn PathBufferPoolT(comptime T: type) type {
         const Pool = ObjectPool(T, null, true, 4);
 
         pub fn get() *T {
-            // use a threadlocal allocator so mimalloc deletes it on thread deinit.
-            return &Pool.get(bun.threadlocalAllocator()).data;
+            // use a thread-local allocator so mimalloc deletes it on thread deinit.
+            return &Pool.get(bun.threadLocalAllocator()).data;
         }
 
         pub fn put(buffer: *const T) void {

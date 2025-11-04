@@ -4,7 +4,7 @@ const SOCKET = *anyopaque;
 const LPFN_ACCEPTEX = *const anyopaque;
 const LPFN_CONNECTEX = *const anyopaque;
 
-pub const log = bun.Output.scoped(.uv, true);
+pub const log = bun.Output.scoped(.uv, .hidden);
 
 pub const CHAR = u8;
 pub const SHORT = c_short;
@@ -143,10 +143,10 @@ pub const UV__ENODATA = -@as(c_int, 4024);
 pub const UV__EUNATCH = -@as(c_int, 4023);
 pub const UV_VERSION_H = "";
 pub const UV_VERSION_MAJOR = @as(c_int, 1);
-pub const UV_VERSION_MINOR = @as(c_int, 46);
-pub const UV_VERSION_PATCH = @as(c_int, 1);
-pub const UV_VERSION_IS_RELEASE = @as(c_int, 0);
-pub const UV_VERSION_SUFFIX = "dev";
+pub const UV_VERSION_MINOR = @as(c_int, 51);
+pub const UV_VERSION_PATCH = @as(c_int, 0);
+pub const UV_VERSION_IS_RELEASE = @as(c_int, 1);
+pub const UV_VERSION_SUFFIX = "";
 pub const UV_VERSION_HEX = ((UV_VERSION_MAJOR << @as(c_int, 16)) | (UV_VERSION_MINOR << @as(c_int, 8))) | UV_VERSION_PATCH;
 
 pub const UV_THREADPOOL_H_ = "";
@@ -1471,6 +1471,7 @@ pub const struct_uv_tty_s = extern struct {
         normal = 0,
         raw = 1,
         io = 2,
+        vt = 3,
     };
 
     pub fn setMode(this: *uv_tty_t, mode: Mode) ReturnCode {
@@ -2698,6 +2699,7 @@ pub fn translateUVErrorToE(code_in: anytype) bun.sys.E {
         UV_EIO => bun.sys.E.IO,
         UV_ENXIO => bun.sys.E.NXIO,
         UV_E2BIG => bun.sys.E.@"2BIG",
+        UV_ENOEXEC => bun.sys.E.NOEXEC,
         UV_EBADF => bun.sys.E.BADF,
         UV_EAGAIN => bun.sys.E.AGAIN,
         UV_ENOMEM => bun.sys.E.NOMEM,
@@ -2713,6 +2715,7 @@ pub fn translateUVErrorToE(code_in: anytype) bun.sys.E {
         UV_ENFILE => bun.sys.E.NFILE,
         UV_EMFILE => bun.sys.E.MFILE,
         UV_ENOTTY => bun.sys.E.NOTTY,
+        UV_EFTYPE => bun.sys.E.FTYPE,
         UV_ETXTBSY => bun.sys.E.TXTBSY,
         UV_EFBIG => bun.sys.E.FBIG,
         UV_ENOSPC => bun.sys.E.NOSPC,
@@ -2803,6 +2806,7 @@ pub const ReturnCode = enum(c_int) {
                 UV_EIO => @intFromEnum(bun.sys.E.IO),
                 UV_ENXIO => @intFromEnum(bun.sys.E.NXIO),
                 UV_E2BIG => @intFromEnum(bun.sys.E.@"2BIG"),
+                UV_ENOEXEC => @intFromEnum(bun.sys.E.NOEXEC),
                 UV_EBADF => @intFromEnum(bun.sys.E.BADF),
                 UV_EAGAIN => @intFromEnum(bun.sys.E.AGAIN),
                 UV_ENOMEM => @intFromEnum(bun.sys.E.NOMEM),
@@ -2818,6 +2822,7 @@ pub const ReturnCode = enum(c_int) {
                 UV_ENFILE => @intFromEnum(bun.sys.E.NFILE),
                 UV_EMFILE => @intFromEnum(bun.sys.E.MFILE),
                 UV_ENOTTY => @intFromEnum(bun.sys.E.NOTTY),
+                UV_EFTYPE => @intFromEnum(bun.sys.E.FTYPE),
                 UV_ETXTBSY => @intFromEnum(bun.sys.E.TXTBSY),
                 UV_EFBIG => @intFromEnum(bun.sys.E.FBIG),
                 UV_ENOSPC => @intFromEnum(bun.sys.E.NOSPC),
@@ -2981,7 +2986,7 @@ fn StreamMixin(comptime Type: type) type {
                         req.readStop();
                         error_cb(context_data, ReturnCodeI64.init(nreads).errEnum() orelse bun.sys.E.CANCELED);
                     } else {
-                        read_cb(context_data, buffer.slice());
+                        read_cb(context_data, buffer.base[0..@intCast(nreads)]);
                     }
                 }
             };

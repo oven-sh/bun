@@ -71,11 +71,31 @@ depth: ?usize = null,
 /// isolated installs (pnpm-like) or hoisted installs (yarn-like, original)
 node_linker: NodeLinker = .auto,
 
+public_hoist_pattern: ?bun.install.PnpmMatcher = null,
+hoist_pattern: ?bun.install.PnpmMatcher = null,
+
+// Security scanner module path
+security_scanner: ?[]const u8 = null,
+
+// Minimum release age in ms (security feature)
+// Only install packages published at least N ms ago
+minimum_release_age_ms: ?f64 = null,
+// Packages to exclude from minimum release age checking
+minimum_release_age_excludes: ?[]const []const u8 = null,
+
+/// Override CPU architecture for optional dependencies filtering
+cpu: Npm.Architecture = Npm.Architecture.current,
+/// Override OS for optional dependencies filtering
+os: Npm.OperatingSystem = Npm.OperatingSystem.current,
+
+config_version: ?bun.ConfigVersion = null,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",
     otp: string = "",
     auth_type: ?AuthType = null,
+    tolerate_republish: bool = false,
 };
 
 pub const Access = enum {
@@ -153,7 +173,7 @@ pub const Update = struct {
 };
 
 pub fn openGlobalDir(explicit_global_dir: string) !std.fs.Dir {
-    if (bun.getenvZ("BUN_INSTALL_GLOBAL_DIR")) |home_dir| {
+    if (bun.env_var.BUN_INSTALL_GLOBAL_DIR.get()) |home_dir| {
         return try std.fs.cwd().makeOpenPath(home_dir, .{});
     }
 
@@ -161,34 +181,25 @@ pub fn openGlobalDir(explicit_global_dir: string) !std.fs.Dir {
         return try std.fs.cwd().makeOpenPath(explicit_global_dir, .{});
     }
 
-    if (bun.getenvZ("BUN_INSTALL")) |home_dir| {
+    if (bun.env_var.BUN_INSTALL.get()) |home_dir| {
         var buf: bun.PathBuffer = undefined;
         var parts = [_]string{ "install", "global" };
         const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
         return try std.fs.cwd().makeOpenPath(path, .{});
     }
 
-    if (!Environment.isWindows) {
-        if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ("HOME")) |home_dir| {
-            var buf: bun.PathBuffer = undefined;
-            var parts = [_]string{ ".bun", "install", "global" };
-            const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-            return try std.fs.cwd().makeOpenPath(path, .{});
-        }
-    } else {
-        if (bun.getenvZ("USERPROFILE")) |home_dir| {
-            var buf: bun.PathBuffer = undefined;
-            var parts = [_]string{ ".bun", "install", "global" };
-            const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
-            return try std.fs.cwd().makeOpenPath(path, .{});
-        }
+    if (bun.env_var.XDG_CACHE_HOME.get() orelse bun.env_var.HOME.get()) |home_dir| {
+        var buf: bun.PathBuffer = undefined;
+        var parts = [_]string{ ".bun", "install", "global" };
+        const path = Path.joinAbsStringBuf(home_dir, &buf, &parts, .auto);
+        return try std.fs.cwd().makeOpenPath(path, .{});
     }
 
     return error.@"No global directory found";
 }
 
 pub fn openGlobalBinDir(opts_: ?*const Api.BunInstall) !std.fs.Dir {
-    if (bun.getenvZ("BUN_INSTALL_BIN")) |home_dir| {
+    if (bun.env_var.BUN_INSTALL_BIN.get()) |home_dir| {
         return try std.fs.cwd().makeOpenPath(home_dir, .{});
     }
 
@@ -200,7 +211,7 @@ pub fn openGlobalBinDir(opts_: ?*const Api.BunInstall) !std.fs.Dir {
         }
     }
 
-    if (bun.getenvZ("BUN_INSTALL")) |home_dir| {
+    if (bun.env_var.BUN_INSTALL.get()) |home_dir| {
         var buf: bun.PathBuffer = undefined;
         var parts = [_]string{
             "bin",
@@ -209,7 +220,7 @@ pub fn openGlobalBinDir(opts_: ?*const Api.BunInstall) !std.fs.Dir {
         return try std.fs.cwd().makeOpenPath(path, .{});
     }
 
-    if (bun.getenvZ("XDG_CACHE_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |home_dir| {
+    if (bun.env_var.XDG_CACHE_HOME.get() orelse bun.env_var.HOME.get()) |home_dir| {
         var buf: bun.PathBuffer = undefined;
         var parts = [_]string{
             ".bun",
@@ -236,6 +247,7 @@ pub fn load(
         .username = "",
         .password = "",
         .token = "",
+        .email = "",
     };
     if (bun_install_) |config| {
         if (config.default_registry) |registry| {
@@ -277,6 +289,11 @@ pub fn load(
 
         if (config.node_linker) |node_linker| {
             this.node_linker = node_linker;
+        }
+
+        if (config.security_scanner) |security_scanner| {
+            this.security_scanner = security_scanner;
+            this.do.prefetch_resolved_tarballs = false;
         }
 
         if (config.cafile) |cafile| {
@@ -356,6 +373,22 @@ pub fn load(
             if (ignore_scripts) {
                 this.do.run_scripts = false;
             }
+        }
+
+        if (config.minimum_release_age_ms) |min_age_ms| {
+            this.minimum_release_age_ms = min_age_ms;
+        }
+
+        if (config.minimum_release_age_excludes) |exclusions| {
+            this.minimum_release_age_excludes = exclusions;
+        }
+
+        if (config.public_hoist_pattern) |public_hoist_pattern| {
+            this.public_hoist_pattern = public_hoist_pattern;
+        }
+
+        if (config.hoist_pattern) |hoist_pattern| {
+            this.hoist_pattern = hoist_pattern;
         }
 
         this.explicit_global_directory = config.global_dir orelse this.explicit_global_directory;
@@ -533,7 +566,15 @@ pub fn load(
             this.save_text_lockfile = save_text_lockfile;
         }
 
+        if (cli.minimum_release_age_ms) |min_age_ms| {
+            this.minimum_release_age_ms = min_age_ms;
+        }
+
         this.lockfile_only = cli.lockfile_only;
+
+        if (cli.lockfile_only) {
+            this.do.prefetch_resolved_tarballs = false;
+        }
 
         if (cli.node_linker) |node_linker| {
             this.node_linker = node_linker;
@@ -566,6 +607,10 @@ pub fn load(
         if (cli.backend) |backend| {
             PackageInstall.supported_method = backend;
         }
+
+        // CPU and OS are now parsed as enums in CommandLineArguments, just copy them
+        this.cpu = cli.cpu;
+        this.os = cli.os;
 
         this.do.update_to_latest = cli.latest;
         this.do.recursive = cli.recursive;
@@ -624,6 +669,7 @@ pub fn load(
         if (cli.publish_config.auth_type) |auth_type| {
             this.publish_config.auth_type = auth_type;
         }
+        this.publish_config.tolerate_republish = cli.tolerate_republish;
 
         if (cli.ca.len > 0) {
             this.ca = cli.ca;
@@ -668,7 +714,8 @@ pub const Do = packed struct(u16) {
     update_to_latest: bool = false,
     analyze: bool = false,
     recursive: bool = false,
-    _: u3 = 0,
+    prefetch_resolved_tarballs: bool = true,
+    _: u2 = 0,
 };
 
 pub const Enable = packed struct(u16) {
@@ -697,7 +744,6 @@ const std = @import("std");
 
 const bun = @import("bun");
 const DotEnv = bun.DotEnv;
-const Environment = bun.Environment;
 const FD = bun.FD;
 const OOM = bun.OOM;
 const Output = bun.Output;

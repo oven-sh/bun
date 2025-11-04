@@ -4,11 +4,11 @@ refcount: u32 = 1,
 len: u32 = 0,
 ptr: [*]const u8 = undefined,
 
-const debug = bun.Output.scoped(.RefCountedEnvStr, true);
+const debug = bun.Output.scoped(.RefCountedEnvStr, .hidden);
 
 pub fn init(slice: []const u8) *RefCountedStr {
     debug("init: {s}", .{slice});
-    const this = bun.default_allocator.create(RefCountedStr) catch bun.outOfMemory();
+    const this = bun.handleOom(bun.default_allocator.create(RefCountedStr));
     this.* = .{
         .refcount = 1,
         .len = @intCast(slice.len),

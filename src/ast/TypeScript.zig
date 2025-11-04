@@ -194,11 +194,11 @@ pub fn isTSArrowFnJSX(p: anytype) !bool {
     }
     if (p.lexer.token == .t_identifier) {
         try p.lexer.next();
-        if (p.lexer.token == .t_comma) {
+        if (p.lexer.token == .t_comma or p.lexer.token == .t_equals) {
             is_ts_arrow_fn = true;
         } else if (p.lexer.token == .t_extends) {
             try p.lexer.next();
-            is_ts_arrow_fn = p.lexer.token != .t_equals and p.lexer.token != .t_greater_than;
+            is_ts_arrow_fn = p.lexer.token != .t_equals and p.lexer.token != .t_greater_than and p.lexer.token != .t_slash;
         }
     }
 

@@ -29,7 +29,6 @@ err-in-hook-and-multiple-tests.ts:
 error: beforeEach
       at <anonymous> (/err-in-hook-and-multiple-tests.ts:4:31)
 (fail) test 0
-(fail) test 0
 1 | import { beforeEach, test } from "bun:test";
 2 | 
 3 | beforeEach(() => {
@@ -38,11 +37,10 @@ error: beforeEach
 error: beforeEach
       at <anonymous> (/err-in-hook-and-multiple-tests.ts:4:31)
 (fail) test 1
-(fail) test 1
 
  0 pass
- 4 fail
-Ran 4 tests across 1 file.
+ 2 fail
+Ran 2 tests across 1 file.
 `);
   });
 

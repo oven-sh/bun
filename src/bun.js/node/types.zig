@@ -86,9 +86,10 @@ pub const BlobOrStringOrBuffer = union(enum) {
                 }
                 if (allow_request_response) {
                     if (value.as(jsc.WebCore.Request)) |request| {
-                        request.body.value.toBlobIfPossible();
+                        const bodyValue = request.getBodyValue();
+                        bodyValue.toBlobIfPossible();
 
-                        if (request.body.value.tryUseAsAnyBlob()) |any_blob_| {
+                        if (bodyValue.tryUseAsAnyBlob()) |any_blob_| {
                             var any_blob = any_blob_;
                             defer any_blob.detach();
                             return .{ .blob = any_blob.toBlob(global) };
@@ -98,9 +99,10 @@ pub const BlobOrStringOrBuffer = union(enum) {
                     }
 
                     if (value.as(jsc.WebCore.Response)) |response| {
-                        response.body.value.toBlobIfPossible();
+                        const bodyValue = response.getBodyValue();
+                        bodyValue.toBlobIfPossible();
 
-                        if (response.body.value.tryUseAsAnyBlob()) |any_blob_| {
+                        if (bodyValue.tryUseAsAnyBlob()) |any_blob_| {
                             var any_blob = any_blob_;
                             defer any_blob.detach();
                             return .{ .blob = any_blob.toBlob(global) };
@@ -221,10 +223,9 @@ pub const StringOrBuffer = union(enum) {
                 if (!allow_string_object and str_type != .String) {
                     return null;
                 }
-                const str = try bun.String.fromJS(value, global);
-
+                var str = try bun.String.fromJS(value, global);
+                defer str.deref();
                 if (is_async) {
-                    defer str.deref();
                     var possible_clone = str;
                     var sliced = try possible_clone.toThreadSafeSlice(allocator);
                     sliced.reportExtraMemory(global.vm());
@@ -399,7 +400,13 @@ pub const Encoding = enum(u8) {
             },
             .hex => {
                 var buf: [size * 4]u8 = undefined;
-                const out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch bun.outOfMemory();
+                const out = std.fmt.bufPrint(
+                    &buf,
+                    "{}",
+                    .{std.fmt.fmtSliceHexLower(input)},
+                ) catch |err| switch (err) {
+                    error.NoSpaceLeft => unreachable,
+                };
                 const result = jsc.ZigString.init(out).toJS(globalObject);
                 return result;
             },
@@ -417,6 +424,11 @@ pub const Encoding = enum(u8) {
     }
 
     pub fn encodeWithMaxSize(encoding: Encoding, globalObject: *jsc.JSGlobalObject, comptime max_size: usize, input: []const u8) bun.JSError!jsc.JSValue {
+        bun.assertf(
+            input.len <= max_size,
+            "input length ({}) should not exceed max_size ({})",
+            .{ input.len, max_size },
+        );
         switch (encoding) {
             .base64 => {
                 var base64_buf: [std.base64.standard.Encoder.calcSize(max_size * 4)]u8 = undefined;
@@ -433,7 +445,13 @@ pub const Encoding = enum(u8) {
             },
             .hex => {
                 var buf: [max_size * 4]u8 = undefined;
-                const out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch bun.outOfMemory();
+                const out = std.fmt.bufPrint(
+                    &buf,
+                    "{}",
+                    .{std.fmt.fmtSliceHexLower(input)},
+                ) catch |err| switch (err) {
+                    error.NoSpaceLeft => unreachable,
+                };
                 const result = jsc.ZigString.init(out).toJS(globalObject);
                 return result;
             },
@@ -653,7 +671,7 @@ pub const PathLike = union(enum) {
 
                 arguments.eat();
 
-                return try fromBunString(ctx, str, arguments.will_be_async, allocator);
+                return try fromBunString(ctx, &str, arguments.will_be_async, allocator);
             },
             else => {
                 if (arg.as(jsc.DOMURL)) |domurl| {
@@ -674,7 +692,7 @@ pub const PathLike = union(enum) {
                     }
                     arguments.eat();
 
-                    return try fromBunString(ctx, str, arguments.will_be_async, allocator);
+                    return try fromBunString(ctx, &str, arguments.will_be_async, allocator);
                 }
 
                 return null;
@@ -682,7 +700,7 @@ pub const PathLike = union(enum) {
         }
     }
 
-    pub fn fromBunString(global: *jsc.JSGlobalObject, str: bun.String, will_be_async: bool, allocator: std.mem.Allocator) !PathLike {
+    pub fn fromBunString(global: *jsc.JSGlobalObject, str: *bun.String, will_be_async: bool, allocator: std.mem.Allocator) !PathLike {
         try Valid.pathStringLength(str.length(), global);
 
         if (will_be_async) {
@@ -699,13 +717,12 @@ pub const PathLike = union(enum) {
             return .{ .threadsafe_string = sliced };
         } else {
             var sliced = str.toSlice(allocator);
-            errdefer if (!sliced.isWTFAllocated()) sliced.deinit();
+            errdefer sliced.deinit();
 
             try Valid.pathNullBytes(sliced.slice(), global);
 
             // Costs nothing to keep both around.
             if (sliced.isWTFAllocated()) {
-                str.ref();
                 return .{ .slice_with_underlying_string = sliced };
             }
 
@@ -785,7 +802,7 @@ pub const VectorArrayBuffer = struct {
         var bufferlist = std.ArrayList(bun.PlatformIOVec).init(allocator);
         var i: usize = 0;
         const len = try val.getLength(globalObject);
-        bufferlist.ensureTotalCapacityPrecise(len) catch bun.outOfMemory();
+        bun.handleOom(bufferlist.ensureTotalCapacityPrecise(len));
 
         while (i < len) {
             const element = try val.getIndex(globalObject, @as(u32, @truncate(i)));
@@ -799,7 +816,7 @@ pub const VectorArrayBuffer = struct {
             };
 
             const buf = array_buffer.byteSlice();
-            bufferlist.append(bun.platformIOVecCreate(buf)) catch bun.outOfMemory();
+            bun.handleOom(bufferlist.append(bun.platformIOVecCreate(buf)));
             i += 1;
         }
 

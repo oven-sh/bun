@@ -30,7 +30,7 @@ pub fn writeInternal(
 pub const write = WriteWrap(@This(), writeInternal).write;
 
 const std = @import("std");
-const Data = @import("../Data.zig").Data;
+const Data = @import("../../shared/Data.zig").Data;
 const DecoderWrap = @import("./DecoderWrap.zig").DecoderWrap;
 const Int32 = @import("../types/int_types.zig").Int32;
 const NewReader = @import("./NewReader.zig").NewReader;

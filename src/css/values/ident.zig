@@ -193,7 +193,7 @@ pub const IdentOrRef = packed struct(u128) {
         };
 
         if (comptime bun.Environment.isDebug) {
-            const heap_ptr: *[]const u8 = debug_ident[1].create([]const u8) catch bun.outOfMemory();
+            const heap_ptr: *[]const u8 = bun.handleOom(debug_ident[1].create([]const u8));
             heap_ptr.* = debug_ident[0];
             this.__ptrbits = @intCast(@intFromPtr(heap_ptr));
         }

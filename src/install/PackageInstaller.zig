@@ -45,7 +45,7 @@ pub const PackageInstaller = struct {
 
     seen_bin_links: bun.StringHashMap(void),
 
-    const debug = Output.scoped(.PackageInstaller, true);
+    const debug = Output.scoped(.PackageInstaller, .hidden);
 
     pub const NodeModulesFolder = struct {
         tree_id: Lockfile.Tree.Id = 0,
@@ -121,7 +121,6 @@ pub const PackageInstaller = struct {
 
             return (try bun.sys.openDirAtWindowsA(.fromStdDir(root), this.path.items, .{
                 .can_rename_or_delete = false,
-                .create = false,
                 .read_only = false,
             }).unwrap()).stdDir();
         }
@@ -132,11 +131,9 @@ pub const PackageInstaller = struct {
                     break :brk try root.makeOpenPath(this.path.items, .{ .iterate = true, .access_sub_paths = true });
                 }
 
-                // TODO: is this `makePath` necessary with `.create = true` below
-                try bun.MakePath.makePath(u8, root, this.path.items);
                 break :brk (try bun.sys.openDirAtWindowsA(.fromStdDir(root), this.path.items, .{
                     .can_rename_or_delete = false,
-                    .create = true,
+                    .op = .open_or_create,
                     .read_only = false,
                 }).unwrap()).stdDir();
             };
@@ -259,9 +256,17 @@ pub const PackageInstaller = struct {
         log_level: Options.LogLevel,
     ) void {
         const lockfile = this.lockfile;
+        const manager = this.manager;
         const string_buf = lockfile.buffers.string_bytes.items;
         var node_modules_path: bun.AbsPath(.{}) = .from(this.node_modules.path.items);
         defer node_modules_path.deinit();
+
+        const pkgs = lockfile.packages.slice();
+        const pkg_name_hashes = pkgs.items(.name_hash);
+        const pkg_metas = pkgs.items(.meta);
+        const pkg_resolutions_lists = pkgs.items(.resolutions);
+        const pkg_resolutions_buffer = lockfile.buffers.resolutions.items;
+        const pkg_names = pkgs.items(.name);
 
         while (tree.binaries.removeOrNull()) |dep_id| {
             bun.assertWithLocation(dep_id < lockfile.buffers.dependencies.items.len, @src());
@@ -271,28 +276,50 @@ pub const PackageInstaller = struct {
             bun.assertWithLocation(bin.tag != .none, @src());
 
             const alias = lockfile.buffers.dependencies.items[dep_id].name.slice(string_buf);
+            const package_name_ = strings.StringOrTinyString.init(alias);
+            var target_package_name = package_name_;
+            var can_retry_without_native_binlink_optimization = false;
+            var target_node_modules_path_opt: ?bun.AbsPath(.{}) = null;
+            defer if (target_node_modules_path_opt) |*path| path.deinit();
 
-            var bin_linker: Bin.Linker = .{
-                .bin = bin,
-                .global_bin_path = this.options.bin_path,
-                .package_name = strings.StringOrTinyString.init(alias),
-                .string_buf = string_buf,
-                .extern_string_buf = lockfile.buffers.extern_strings.items,
-                .seen = &this.seen_bin_links,
-                .node_modules_path = &node_modules_path,
-                .abs_target_buf = link_target_buf,
-                .abs_dest_buf = link_dest_buf,
-                .rel_buf = link_rel_buf,
-            };
+            if (manager.postinstall_optimizer.isNativeBinlinkEnabled()) native_binlink_optimization: {
+                // Check for native binlink optimization
+                const name_hash = pkg_name_hashes[package_id];
+                if (manager.postinstall_optimizer.get(name_hash)) |optimizer| {
+                    switch (optimizer) {
+                        .native_binlink => {
+                            const target_cpu = manager.options.cpu;
+                            const target_os = manager.options.os;
+                            if (PostinstallOptimizer.getNativeBinlinkReplacementPackageID(
+                                pkg_resolutions_lists[package_id].get(pkg_resolutions_buffer),
+                                pkg_metas,
+                                target_cpu,
+                                target_os,
+                            )) |replacement_pkg_id| {
+                                if (tree_id != 0) {
+                                    // TODO: support this optimization in nested node_modules
+                                    // It's tricky to get the hoisting right.
+                                    // So we leave this out for now.
+                                    break :native_binlink_optimization;
+                                }
 
+                                const replacement_name = pkg_names[replacement_pkg_id].slice(string_buf);
+                                target_package_name = strings.StringOrTinyString.init(replacement_name);
+                                can_retry_without_native_binlink_optimization = true;
+                            }
+                        },
+                        .ignore => {},
+                    }
+                }
+            }
             // globally linked packages shouls always belong to the root
             // tree (0).
-            const global = if (!this.manager.options.global)
+            const global = if (!manager.options.global)
                 false
             else if (tree_id != 0)
                 false
             else global: {
-                for (this.manager.update_requests) |request| {
+                for (manager.update_requests) |request| {
                     if (request.package_id == package_id) {
                         break :global true;
                     }
@@ -301,21 +328,52 @@ pub const PackageInstaller = struct {
                 break :global false;
             };
 
-            bin_linker.link(global);
+            while (true) {
+                var bin_linker: Bin.Linker = .{
+                    .bin = bin,
+                    .global_bin_path = this.options.bin_path,
+                    .package_name = package_name_,
+                    .target_package_name = target_package_name,
+                    .string_buf = string_buf,
+                    .extern_string_buf = lockfile.buffers.extern_strings.items,
+                    .seen = &this.seen_bin_links,
+                    .node_modules_path = &node_modules_path,
+                    .target_node_modules_path = if (target_node_modules_path_opt) |*path| path else &node_modules_path,
+                    .abs_target_buf = link_target_buf,
+                    .abs_dest_buf = link_dest_buf,
+                    .rel_buf = link_rel_buf,
+                };
 
-            if (bin_linker.err) |err| {
-                if (log_level != .silent) {
-                    this.manager.log.addErrorFmtOpts(
-                        this.manager.allocator,
-                        "Failed to link <b>{s}<r>: {s}",
-                        .{ alias, @errorName(err) },
-                        .{},
-                    ) catch bun.outOfMemory();
+                bin_linker.link(global);
+
+                if (can_retry_without_native_binlink_optimization and (bin_linker.skipped_due_to_missing_bin or bin_linker.err != null)) {
+                    can_retry_without_native_binlink_optimization = false;
+                    if (PackageManager.verbose_install) {
+                        Output.prettyErrorln("<d>[Bin Linker]<r> {s} -> {s} retrying without native bin link", .{
+                            package_name_.slice(),
+                            target_package_name.slice(),
+                        });
+                    }
+                    target_package_name = package_name_;
+                    continue;
                 }
 
-                if (this.options.enable.fail_early) {
-                    this.manager.crash();
+                if (bin_linker.err) |err| {
+                    if (log_level != .silent) {
+                        manager.log.addErrorFmtOpts(
+                            manager.allocator,
+                            "Failed to link <b>{s}<r>: {s}",
+                            .{ alias, @errorName(err) },
+                            .{},
+                        ) catch |e| bun.handleOom(e);
+                    }
+
+                    if (this.options.enable.fail_early) {
+                        manager.crash();
+                    }
                 }
+
+                break;
             }
         }
     }
@@ -342,7 +400,7 @@ pub const PackageInstaller = struct {
                     .node_modules,
                 );
 
-                this.node_modules.path.appendSlice(rel_path) catch bun.outOfMemory();
+                bun.handleOom(this.node_modules.path.appendSlice(rel_path));
 
                 this.linkTreeBins(tree, @intCast(tree_id), &link_target_buf, &link_dest_buf, &link_rel_buf, log_level);
             }
@@ -360,6 +418,7 @@ pub const PackageInstaller = struct {
             if (this.canRunScripts(tree_id)) {
                 _ = this.pending_lifecycle_scripts.swapRemove(i);
                 const output_in_foreground = false;
+
                 this.manager.spawnPackageLifecycleScripts(
                     this.command_ctx,
                     entry.list,
@@ -372,7 +431,7 @@ pub const PackageInstaller = struct {
                         const args = .{ name, @errorName(err) };
 
                         if (log_level.showProgress()) {
-                            switch (Output.enable_ansi_colors) {
+                            switch (Output.enable_ansi_colors_stderr) {
                                 inline else => |enable_ansi_colors| {
                                     this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
                                 },
@@ -455,7 +514,7 @@ pub const PackageInstaller = struct {
                     const args = .{ package_name, @errorName(err) };
 
                     if (log_level.showProgress()) {
-                        switch (Output.enable_ansi_colors) {
+                        switch (Output.enable_ansi_colors_stderr) {
                             inline else => |enable_ansi_colors| {
                                 this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
                             },
@@ -536,7 +595,7 @@ pub const PackageInstaller = struct {
         // fixes an assertion failure where a transitive dependency is a git dependency newly added to the lockfile after the list of dependencies has been resized
         // this assertion failure would also only happen after the lockfile has been written to disk and the summary is being printed.
         if (this.successfully_installed.bit_length < this.lockfile.packages.len) {
-            const new = Bitset.initEmpty(bun.default_allocator, this.lockfile.packages.len) catch bun.outOfMemory();
+            const new = bun.handleOom(Bitset.initEmpty(bun.default_allocator, this.lockfile.packages.len));
             var old = this.successfully_installed;
             defer old.deinit(bun.default_allocator);
             old.copyInto(new);
@@ -908,7 +967,7 @@ pub const PackageInstaller = struct {
                 const context: TaskCallbackContext = .{
                     .dependency_install_context = .{
                         .tree_id = this.current_tree_id,
-                        .path = this.node_modules.path.clone() catch bun.outOfMemory(),
+                        .path = bun.handleOom(this.node_modules.path.clone()),
                         .dependency_id = dependency_id,
                     },
                 };
@@ -1015,7 +1074,7 @@ pub const PackageInstaller = struct {
                     task.callback.apply.install_context = .{
                         .dependency_id = dependency_id,
                         .tree_id = this.current_tree_id,
-                        .path = this.node_modules.path.clone() catch bun.outOfMemory(),
+                        .path = bun.handleOom(this.node_modules.path.clone()),
                     };
                     this.manager.enqueuePatchTask(task);
                     return;
@@ -1026,8 +1085,8 @@ pub const PackageInstaller = struct {
                 this.trees[this.current_tree_id].pending_installs.append(this.manager.allocator, .{
                     .dependency_id = dependency_id,
                     .tree_id = this.current_tree_id,
-                    .path = this.node_modules.path.clone() catch bun.outOfMemory(),
-                }) catch bun.outOfMemory();
+                    .path = bun.handleOom(this.node_modules.path.clone()),
+                }) catch |err| bun.handleOom(err);
                 return;
             }
 
@@ -1087,7 +1146,7 @@ pub const PackageInstaller = struct {
                     }
 
                     if (this.bins[package_id].tag != .none) {
-                        this.trees[this.current_tree_id].binaries.add(dependency_id) catch bun.outOfMemory();
+                        bun.handleOom(this.trees[this.current_tree_id].binaries.add(dependency_id));
                     }
 
                     const dep = this.lockfile.buffers.dependencies.items[dependency_id];
@@ -1103,22 +1162,40 @@ pub const PackageInstaller = struct {
                         defer folder_path.deinit();
                         folder_path.append(alias.slice(this.lockfile.buffers.string_bytes.items));
 
-                        if (this.enqueueLifecycleScripts(
-                            alias.slice(this.lockfile.buffers.string_bytes.items),
-                            log_level,
-                            &folder_path,
-                            package_id,
-                            dep.behavior.optional,
-                            resolution,
-                        )) {
-                            if (is_trusted_through_update_request) {
-                                this.manager.trusted_deps_to_add_to_package_json.append(
-                                    this.manager.allocator,
-                                    this.manager.allocator.dupe(u8, alias.slice(this.lockfile.buffers.string_bytes.items)) catch bun.outOfMemory(),
-                                ) catch bun.outOfMemory();
+                        enqueueLifecycleScripts: {
+                            if (this.manager.postinstall_optimizer.shouldIgnoreLifecycleScripts(
+                                pkg_name_hash,
+                                this.lockfile.packages.items(.resolutions)[package_id].get(this.lockfile.buffers.resolutions.items),
+                                this.lockfile.packages.items(.meta),
+                                this.manager.options.cpu,
+                                this.manager.options.os,
+                                this.current_tree_id,
+                            )) {
+                                if (PackageManager.verbose_install) {
+                                    Output.prettyErrorln("<d>[Lifecycle Scripts]<r> ignoring {s} lifecycle scripts", .{
+                                        pkg_name.slice(this.lockfile.buffers.string_bytes.items),
+                                    });
+                                }
+                                break :enqueueLifecycleScripts;
+                            }
 
-                                if (this.lockfile.trusted_dependencies == null) this.lockfile.trusted_dependencies = .{};
-                                this.lockfile.trusted_dependencies.?.put(this.manager.allocator, truncated_dep_name_hash, {}) catch bun.outOfMemory();
+                            if (this.enqueueLifecycleScripts(
+                                alias.slice(this.lockfile.buffers.string_bytes.items),
+                                log_level,
+                                &folder_path,
+                                package_id,
+                                dep.behavior.optional,
+                                resolution,
+                            )) {
+                                if (is_trusted_through_update_request) {
+                                    this.manager.trusted_deps_to_add_to_package_json.append(
+                                        this.manager.allocator,
+                                        bun.handleOom(this.manager.allocator.dupe(u8, alias.slice(this.lockfile.buffers.string_bytes.items))),
+                                    ) catch |err| bun.handleOom(err);
+
+                                    if (this.lockfile.trusted_dependencies == null) this.lockfile.trusted_dependencies = .{};
+                                    this.lockfile.trusted_dependencies.?.put(this.manager.allocator, truncated_dep_name_hash, {}) catch |err| bun.handleOom(err);
+                                }
                             }
                         }
                     }
@@ -1149,7 +1226,7 @@ pub const PackageInstaller = struct {
                                         resolution.fmt(this.lockfile.buffers.string_bytes.items, .posix),
                                     });
                                 }
-                                const entry = this.summary.packages_with_blocked_scripts.getOrPut(this.manager.allocator, truncated_dep_name_hash) catch bun.outOfMemory();
+                                const entry = bun.handleOom(this.summary.packages_with_blocked_scripts.getOrPut(this.manager.allocator, truncated_dep_name_hash));
                                 if (!entry.found_existing) entry.value_ptr.* = 0;
                                 entry.value_ptr.* += count;
                             }
@@ -1241,7 +1318,7 @@ pub const PackageInstaller = struct {
             }
         } else {
             if (this.bins[package_id].tag != .none) {
-                this.trees[this.current_tree_id].binaries.add(dependency_id) catch bun.outOfMemory();
+                bun.handleOom(this.trees[this.current_tree_id].binaries.add(dependency_id));
             }
 
             var destination_dir: LazyPackageDestinationDir = .{
@@ -1275,24 +1352,42 @@ pub const PackageInstaller = struct {
                 defer folder_path.deinit();
                 folder_path.append(alias.slice(this.lockfile.buffers.string_bytes.items));
 
-                if (this.enqueueLifecycleScripts(
-                    alias.slice(this.lockfile.buffers.string_bytes.items),
-                    log_level,
-                    &folder_path,
-                    package_id,
-                    dep.behavior.optional,
-                    resolution,
-                )) {
-                    if (is_trusted_through_update_request) {
-                        this.manager.trusted_deps_to_add_to_package_json.append(
-                            this.manager.allocator,
-                            this.manager.allocator.dupe(u8, alias.slice(this.lockfile.buffers.string_bytes.items)) catch bun.outOfMemory(),
-                        ) catch bun.outOfMemory();
+                enqueueLifecycleScripts: {
+                    if (this.manager.postinstall_optimizer.shouldIgnoreLifecycleScripts(
+                        pkg_name_hash,
+                        this.lockfile.packages.items(.resolutions)[package_id].get(this.lockfile.buffers.resolutions.items),
+                        this.lockfile.packages.items(.meta),
+                        this.manager.options.cpu,
+                        this.manager.options.os,
+                        this.current_tree_id,
+                    )) {
+                        if (PackageManager.verbose_install) {
+                            Output.prettyErrorln("<d>[Lifecycle Scripts]<r> ignoring {s} lifecycle scripts", .{
+                                pkg_name.slice(this.lockfile.buffers.string_bytes.items),
+                            });
+                        }
+                        break :enqueueLifecycleScripts;
                     }
 
-                    if (add_to_lockfile) {
-                        if (this.lockfile.trusted_dependencies == null) this.lockfile.trusted_dependencies = .{};
-                        this.lockfile.trusted_dependencies.?.put(this.manager.allocator, truncated_dep_name_hash, {}) catch bun.outOfMemory();
+                    if (this.enqueueLifecycleScripts(
+                        alias.slice(this.lockfile.buffers.string_bytes.items),
+                        log_level,
+                        &folder_path,
+                        package_id,
+                        dep.behavior.optional,
+                        resolution,
+                    )) {
+                        if (is_trusted_through_update_request) {
+                            this.manager.trusted_deps_to_add_to_package_json.append(
+                                this.manager.allocator,
+                                bun.handleOom(this.manager.allocator.dupe(u8, alias.slice(this.lockfile.buffers.string_bytes.items))),
+                            ) catch |err| bun.handleOom(err);
+                        }
+
+                        if (add_to_lockfile) {
+                            if (this.lockfile.trusted_dependencies == null) this.lockfile.trusted_dependencies = .{};
+                            this.lockfile.trusted_dependencies.?.put(this.manager.allocator, truncated_dep_name_hash, {}) catch |err| bun.handleOom(err);
+                        }
                     }
                 }
             }
@@ -1331,7 +1426,7 @@ pub const PackageInstaller = struct {
                 const args = .{ folder_name, @errorName(err) };
 
                 if (log_level.showProgress()) {
-                    switch (Output.enable_ansi_colors) {
+                    switch (Output.enable_ansi_colors_stderr) {
                         inline else => |enable_ansi_colors| {
                             this.progress.log(comptime Output.prettyFmt(fmt, enable_ansi_colors), args);
                         },
@@ -1367,7 +1462,7 @@ pub const PackageInstaller = struct {
                 .list = scripts_list.?,
                 .tree_id = this.current_tree_id,
                 .optional = optional,
-            }) catch bun.outOfMemory();
+            }) catch |err| bun.handleOom(err);
 
             return true;
         }
@@ -1427,6 +1522,7 @@ const PackageID = install.PackageID;
 const PackageInstall = install.PackageInstall;
 const PackageNameHash = install.PackageNameHash;
 const PatchTask = install.PatchTask;
+const PostinstallOptimizer = install.PostinstallOptimizer;
 const Resolution = install.Resolution;
 const Task = install.Task;
 const TaskCallbackContext = install.TaskCallbackContext;

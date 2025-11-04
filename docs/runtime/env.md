@@ -8,6 +8,10 @@ Bun reads the following files automatically (listed in order of increasing prece
 - `.env.production`, `.env.development`, `.env.test` (depending on value of `NODE_ENV`)
 - `.env.local`
 
+{% callout %}
+**Note:** When `NODE_ENV=test`, `.env.local` is **not** loaded. This ensures consistent test environments across different executions by preventing local overrides during testing. This behavior matches popular frameworks like [Next.js](https://nextjs.org/docs/pages/guides/environment-variables#test-environment-variables) and [Create React App](https://create-react-app.dev/docs/adding-custom-environment-variables/#what-other-env-files-can-be-used).
+{% /callout %}
+
 ```txt#.env
 FOO=hello
 BAR=world
@@ -215,6 +219,11 @@ These environment variables are read by Bun and configure aspects of its behavio
 
 - `DO_NOT_TRACK`
 - Disable uploading crash reports to `bun.report` on crash. On macOS & Windows, crash report uploads are enabled by default. Otherwise, telemetry is not sent yet as of May 21st, 2024, but we are planning to add telemetry in the coming weeks. If `DO_NOT_TRACK=1`, then auto-uploading crash reports and telemetry are both [disabled](https://do-not-track.dev/).
+
+---
+
+- `BUN_OPTIONS`
+- Prepends command-line arguments to any Bun execution. For example, `BUN_OPTIONS="--hot"` makes `bun run dev` behave like `bun --hot run dev`.
 
 {% /table %}
 

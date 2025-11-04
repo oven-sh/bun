@@ -333,16 +333,16 @@ pub const S3 = struct {
 
             pub const new = bun.TrivialNew(@This());
 
-            pub fn resolve(result: bun.S3.S3DeleteResult, opaque_self: *anyopaque) void {
+            pub fn resolve(result: bun.S3.S3DeleteResult, opaque_self: *anyopaque) bun.JSTerminated!void {
                 const self: *@This() = @ptrCast(@alignCast(opaque_self));
                 defer self.deinit();
                 const globalObject = self.global;
                 switch (result) {
                     .success => {
-                        self.promise.resolve(globalObject, .true);
+                        try self.promise.resolve(globalObject, .true);
                     },
                     .not_found, .failure => |err| {
-                        self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
+                        try self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
                     },
                 }
             }
@@ -361,7 +361,7 @@ pub const S3 = struct {
         defer aws_options.deinit();
         store.ref();
 
-        bun.S3.delete(&aws_options.credentials, this.path(), @ptrCast(&Wrapper.resolve), Wrapper.new(.{
+        try bun.S3.delete(&aws_options.credentials, this.path(), @ptrCast(&Wrapper.resolve), Wrapper.new(.{
             .promise = promise,
             .store = store, // store is needed in case of not found error
             .global = globalThis,
@@ -381,7 +381,7 @@ pub const S3 = struct {
             resolvedlistOptions: bun.S3.S3ListObjectsOptions,
             global: *JSGlobalObject,
 
-            pub fn resolve(result: bun.S3.S3ListObjectsResult, opaque_self: *anyopaque) void {
+            pub fn resolve(result: bun.S3.S3ListObjectsResult, opaque_self: *anyopaque) bun.JSTerminated!void {
                 const self: *@This() = @ptrCast(@alignCast(opaque_self));
                 defer self.deinit();
                 const globalObject = self.global;
@@ -390,11 +390,11 @@ pub const S3 = struct {
                     .success => |list_result| {
                         defer list_result.deinit();
                         const list_result_js = list_result.toJS(globalObject) catch return self.promise.reject(globalObject, error.JSError);
-                        self.promise.resolve(globalObject, list_result_js);
+                        try self.promise.resolve(globalObject, list_result_js);
                     },
 
                     inline .not_found, .failure => |err| {
-                        self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
+                        try self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
                     },
                 }
             }
@@ -418,10 +418,10 @@ pub const S3 = struct {
         var aws_options = try this.getCredentialsWithOptions(extra_options, globalThis);
         defer aws_options.deinit();
 
-        const options = bun.S3.getListObjectsOptionsFromJS(globalThis, listOptions) catch bun.outOfMemory();
+        const options = try bun.S3.getListObjectsOptionsFromJS(globalThis, listOptions);
         store.ref();
 
-        bun.S3.listObjects(&aws_options.credentials, options, @ptrCast(&Wrapper.resolve), bun.new(Wrapper, .{
+        try bun.S3.listObjects(&aws_options.credentials, options, @ptrCast(&Wrapper.resolve), bun.new(Wrapper, .{
             .promise = promise,
             .store = store, // store is needed in case of not found error
             .resolvedlistOptions = options,

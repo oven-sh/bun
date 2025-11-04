@@ -39,7 +39,7 @@ pub fn writeInternal(
 pub const write = WriteWrap(@This(), writeInternal).write;
 
 const std = @import("std");
-const Data = @import("../Data.zig").Data;
+const Data = @import("../../shared/Data.zig").Data;
 const NewWriter = @import("./NewWriter.zig").NewWriter;
 const WriteWrap = @import("./WriteWrap.zig").WriteWrap;
 const zFieldCount = @import("./zHelpers.zig").zFieldCount;

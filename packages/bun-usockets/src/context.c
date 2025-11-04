@@ -153,7 +153,7 @@ void us_internal_socket_context_unlink_connecting_socket(int ssl, struct us_sock
 }
 
 /* We always add in the top, so we don't modify any s.next */
-void us_internal_socket_context_link_listen_socket(struct us_socket_context_t *context, struct us_listen_socket_t *ls) {
+void us_internal_socket_context_link_listen_socket(int ssl, struct us_socket_context_t *context, struct us_listen_socket_t *ls) {
     struct us_socket_t* s = &ls->s;
     s->context = context;
     s->next = (struct us_socket_t *) context->head_listen_sockets;
@@ -162,7 +162,7 @@ void us_internal_socket_context_link_listen_socket(struct us_socket_context_t *c
         context->head_listen_sockets->s.prev = s;
     }
     context->head_listen_sockets = ls;
-    us_socket_context_ref(0, context);
+    us_socket_context_ref(ssl, context);
 }
 
 void us_internal_socket_context_link_connecting_socket(int ssl, struct us_socket_context_t *context, struct us_connecting_socket_t *c) {
@@ -179,7 +179,7 @@ void us_internal_socket_context_link_connecting_socket(int ssl, struct us_socket
 
 
 /* We always add in the top, so we don't modify any s.next */
-void us_internal_socket_context_link_socket(struct us_socket_context_t *context, struct us_socket_t *s) {
+void us_internal_socket_context_link_socket(int ssl, struct us_socket_context_t *context, struct us_socket_t *s) {
     s->context = context;
     s->next = context->head_sockets;
     s->prev = 0;
@@ -187,7 +187,7 @@ void us_internal_socket_context_link_socket(struct us_socket_context_t *context,
         context->head_sockets->prev = s;
     }
     context->head_sockets = s;
-    us_socket_context_ref(0, context);
+    us_socket_context_ref(ssl, context);
     us_internal_enable_sweep_timer(context->loop);
 }
 
@@ -388,7 +388,7 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     s->flags.is_ipc = 0;
     s->next = 0;
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
-    us_internal_socket_context_link_listen_socket(context, ls);
+    us_internal_socket_context_link_listen_socket(ssl, context, ls);
 
     ls->socket_ext_size = socket_ext_size;
 
@@ -423,7 +423,7 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     s->flags.is_paused = 0;
     s->flags.is_ipc = 0;
     s->next = 0;
-    us_internal_socket_context_link_listen_socket(context, ls);
+    us_internal_socket_context_link_listen_socket(ssl, context, ls);
 
     ls->socket_ext_size = socket_ext_size;
 
@@ -456,7 +456,7 @@ struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_cont
     socket->connect_state = NULL;
     socket->connect_next = NULL;
 
-    us_internal_socket_context_link_socket(context, socket);
+    us_internal_socket_context_link_socket(0, context, socket);
 
     return socket;
 }
@@ -584,7 +584,7 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         flags->is_paused = 0;
         flags->is_ipc = 0;
         /* Link it into context so that timeout fires properly */
-        us_internal_socket_context_link_socket(context, s);
+        us_internal_socket_context_link_socket(0, context, s);
 
         // TODO check this, specifically how it interacts with the SSL code
         // does this work when we create multiple sockets at once? will we need multiple SSL contexts?
@@ -762,7 +762,7 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_con
     connect_socket->flags.is_ipc = 0;
     connect_socket->connect_state = NULL;
     connect_socket->connect_next = NULL;
-    us_internal_socket_context_link_socket(context, connect_socket);
+    us_internal_socket_context_link_socket(ssl, context, connect_socket);
 
     return connect_socket;
 }
@@ -804,12 +804,9 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
     }
 
     struct us_connecting_socket_t *c = s->connect_state;
-    
     struct us_socket_t *new_s = s;
-    
     if (ext_size != -1) {
         struct us_poll_t *pool_ref = &s->p;
-       
         new_s = (struct us_socket_t *) us_poll_resize(pool_ref, loop, sizeof(struct us_socket_t) + ext_size);
         if (c) {
             c->connecting_head = new_s;
@@ -831,7 +828,7 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
         /* We manually ref/unref context to handle context life cycle with low-priority queue */
         us_socket_context_ref(ssl, context);
     } else {
-        us_internal_socket_context_link_socket(context, new_s);
+        us_internal_socket_context_link_socket(ssl, context, new_s);
     }
     /* We can safely unref the old context here with can potentially be freed */
     us_socket_context_unref(ssl, old_context);

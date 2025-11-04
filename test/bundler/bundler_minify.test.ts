@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { normalizeBunSnapshot } from "harness";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -74,18 +75,87 @@ describe("bundler", () => {
     minifySyntax: true,
   });
   itBundled("minify/FunctionExpressionRemoveName", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
-        capture(function remove() {});
-        capture(function() {});
-        capture(function rename_me() { rename_me() });
+        export var AB = function A() { };
+        export var CD = function B() { return 1; };
+        export var EF = function C() { C(); };
+        export var GH = function() { };
+        export var IJ = class D { };
+        export var KL = class E { constructor() {} };
+        export var MN = class F { method() { return F; } };
+        export var OP = class { };
       `,
     },
-    // capture is pretty stupid and will stop at first )
-    capture: ["function(", "function(", "function e("],
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // With minify-identifiers, variable names are minified but we check function/class name removal
+      // Function names with 0 usage should be removed
+      expect(code).toMatch(/var \w+ = function\(\) \{/); // AB function without name
+      expect(code).toContain("return 1"); // CD function
+      // Function name with self-reference should be kept (minified)
+      expect(code).toMatch(/function \w+\(\) \{\s*\w+\(\)/); // EF function with self-reference
+      // Class names with 0 usage should be removed
+      expect(code).toMatch(/\w+ = class \{/); // Classes without names
+      // Class name with self-reference should be kept (minified)
+      expect(code).toMatch(/class \w+ \{[\s\S]*return \w+/); // MN class with self-reference
+    },
     minifySyntax: true,
     minifyIdentifiers: true,
+    target: "bun",
+  });
+  itBundled("minify/KeepNamesPreservesNames", {
+    files: {
+      "/entry.js": /* js */ `
+        export var AB = function A() { };
+        export var CD = function B() { return 1; };
+        export var EF = function C() { C(); };
+        export var GH = function() { };
+        export var IJ = class D { };
+        export var KL = class E { constructor() {} };
+        export var MN = class F { method() { return F; } };
+        export var OP = class { };
+      `,
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // With keepNames, all names should be preserved even when minifying
+      expect(code).toContain("function A()");
+      expect(code).toContain("function B()");
+      expect(code).toContain("function C()");
+      expect(code).toContain("class D");
+      expect(code).toContain("class E");
+      expect(code).toContain("class F");
+      // Anonymous functions/classes stay anonymous
+      expect(code).toMatch(/\w+ = function\(\) \{\}/); // GH stays anonymous
+      expect(code).toMatch(/\w+ = class \{\s*\}/); // OP stays anonymous
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false, // Don't minify identifiers to make testing easier
+    keepNames: true,
+    target: "bun",
+  });
+  itBundled("minify/KeepNamesWithMinifyIdentifiers", {
+    files: {
+      "/entry.js": /* js */ `
+        export var AB = function A() { };
+        export var CD = function B() { return 1; };
+        export var EF = class C { };
+      `,
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // With keepNames + minifyIdentifiers, names are preserved but minified
+      // The original names A, B, C should still exist (though minified)
+      expect(code).toMatch(/function \w+\(\)/); // Functions should have names
+      expect(code).toMatch(/class \w+/); // Classes should have names
+      // Should not have anonymous functions/classes
+      expect(code).not.toContain("function()");
+      expect(code).not.toContain("class {");
+    },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    keepNames: true,
     target: "bun",
   });
   itBundled("minify/PrivateIdentifiersNameCollision", {
@@ -688,6 +758,381 @@ describe("bundler", () => {
     },
     run: {
       stdout: "foo\ntrue\ntrue\ndisabled_for_development",
+    },
+  });
+
+  itBundled("minify/ErrorConstructorOptimization", {
+    files: {
+      "/entry.js": /* js */ `
+        // Test all Error constructors
+        capture(new Error());
+        capture(new Error("message"));
+        capture(new Error("message", { cause: "cause" }));
+        
+        capture(new TypeError());
+        capture(new TypeError("type error"));
+        
+        capture(new SyntaxError());
+        capture(new SyntaxError("syntax error"));
+        
+        capture(new RangeError());
+        capture(new RangeError("range error"));
+        
+        capture(new ReferenceError());
+        capture(new ReferenceError("ref error"));
+        
+        capture(new EvalError());
+        capture(new EvalError("eval error"));
+        
+        capture(new URIError());
+        capture(new URIError("uri error"));
+        
+        capture(new AggregateError([], "aggregate error"));
+        capture(new AggregateError([new Error("e1")], "multiple"));
+        
+        // Test with complex arguments
+        const msg = "dynamic";
+        capture(new Error(msg));
+        capture(new TypeError(getErrorMessage()));
+        
+        // Test that other constructors are not affected
+        capture(new Date());
+        capture(new Map());
+        capture(new Set());
+        
+        function getErrorMessage() { return "computed"; }
+      `,
+    },
+    capture: [
+      "Error()",
+      'Error("message")',
+      'Error("message", { cause: "cause" })',
+      "TypeError()",
+      'TypeError("type error")',
+      "SyntaxError()",
+      'SyntaxError("syntax error")',
+      "RangeError()",
+      'RangeError("range error")',
+      "ReferenceError()",
+      'ReferenceError("ref error")',
+      "EvalError()",
+      'EvalError("eval error")',
+      "URIError()",
+      'URIError("uri error")',
+      'AggregateError([], "aggregate error")',
+      'AggregateError([Error("e1")], "multiple")',
+      "Error(msg)",
+      "TypeError(getErrorMessage())",
+      "/* @__PURE__ */ new Date",
+      "/* @__PURE__ */ new Map",
+      "/* @__PURE__ */ new Set",
+    ],
+    minifySyntax: true,
+    target: "bun",
+  });
+
+  itBundled("minify/ErrorConstructorWithVariables", {
+    files: {
+      "/entry.js": /* js */ `
+        function capture(val) { console.log(val); return val; }
+        // Test that Error constructors work with variables and expressions
+        const e1 = new Error("test1");
+        const e2 = new TypeError("test2");
+        const e3 = new SyntaxError("test3");
+        
+        capture(e1.message);
+        capture(e2.message);
+        capture(e3.message);
+        
+        // Test that they're still Error instances
+        capture(e1 instanceof Error);
+        capture(e2 instanceof TypeError);
+        capture(e3 instanceof SyntaxError);
+        
+        // Test with try-catch
+        try {
+          throw new RangeError("out of range");
+        } catch (e) {
+          capture(e.message);
+        }
+      `,
+    },
+    capture: [
+      "val",
+      "e1.message",
+      "e2.message",
+      "e3.message",
+      "e1 instanceof Error",
+      "e2 instanceof TypeError",
+      "e3 instanceof SyntaxError",
+      "e.message",
+    ],
+    minifySyntax: true,
+    target: "bun",
+    run: {
+      stdout: "test1\ntest2\ntest3\ntrue\ntrue\ntrue\nout of range",
+    },
+  });
+
+  itBundled("minify/ErrorConstructorPreservesSemantics", {
+    files: {
+      "/entry.js": /* js */ `
+        function capture(val) { console.log(val); return val; }
+        // Verify that Error() and new Error() have identical behavior
+        const e1 = new Error("with new");
+        const e2 = Error("without new");
+        
+        // Both should be Error instances
+        capture(e1 instanceof Error);
+        capture(e2 instanceof Error);
+        
+        // Both should have the same message
+        capture(e1.message === "with new");
+        capture(e2.message === "without new");
+        
+        // Both should have stack traces
+        capture(typeof e1.stack === "string");
+        capture(typeof e2.stack === "string");
+        
+        // Test all error types
+        const errors = [
+          [new TypeError("t1"), TypeError("t2")],
+          [new SyntaxError("s1"), SyntaxError("s2")],
+          [new RangeError("r1"), RangeError("r2")],
+        ];
+        
+        for (const [withNew, withoutNew] of errors) {
+          capture(withNew.constructor === withoutNew.constructor);
+        }
+      `,
+    },
+    capture: [
+      "val",
+      "e1 instanceof Error",
+      "e2 instanceof Error",
+      'e1.message === "with new"',
+      'e2.message === "without new"',
+      'typeof e1.stack === "string"',
+      'typeof e2.stack === "string"',
+      "withNew.constructor === withoutNew.constructor",
+    ],
+    minifySyntax: true,
+    target: "bun",
+    run: {
+      stdout: "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue",
+    },
+  });
+
+  itBundled("minify/AdditionalGlobalConstructorOptimization", {
+    files: {
+      "/entry.js": /* js */ `
+        // Test Array constructor
+        capture(new Array());
+        capture(new Array(3));
+        capture(new Array(1, 2, 3));
+        
+        // Test Array with non-numeric single arguments (should convert to literal)
+        capture(new Array("string"));
+        capture(new Array(true));
+        capture(new Array(null));
+        capture(new Array(undefined));
+        capture(new Array({}));
+        
+        // Test Object constructor
+        capture(new Object());
+        capture(new Object(null));
+        capture(new Object({ a: 1 }));
+        
+        // Test Function constructor
+        capture(new Function("return 42"));
+        capture(new Function("a", "b", "return a + b"));
+        
+        // Test RegExp constructor
+        capture(new RegExp("test"));
+        capture(new RegExp("test", "gi"));
+        capture(new RegExp(/abc/));
+        
+        // Test with variables
+        const pattern = "\\d+";
+        capture(new RegExp(pattern));
+        
+        // Test that other constructors are preserved
+        capture(new Date());
+        capture(new Map());
+        capture(new Set());
+      `,
+    },
+    capture: [
+      "[]", // new Array() -> []
+      "Array(3)", // new Array(3) stays as Array(3) because it creates sparse array
+      `[
+  1,
+  2,
+  3
+]`, // new Array(1, 2, 3) -> [1, 2, 3]
+      `[
+  "string"
+]`, // new Array("string") -> ["string"]
+      `[
+  !0
+]`, // new Array(true) -> [true] (minified to !0)
+      `[
+  null
+]`, // new Array(null) -> [null]
+      `[
+  void 0
+]`, // new Array(undefined) -> [void 0]
+      `[
+  {}
+]`, // new Array({}) -> [{}]
+      "{}", // new Object() -> {}
+      "{}", // new Object(null) -> {}
+      "{ a: 1 }", // new Object({ a: 1 }) -> { a: 1 }
+      'Function("return 42")',
+      'Function("a", "b", "return a + b")',
+      'new RegExp("test")',
+      'new RegExp("test", "gi")',
+      "new RegExp(/abc/)",
+      "new RegExp(pattern)",
+      "/* @__PURE__ */ new Date",
+      "/* @__PURE__ */ new Map",
+      "/* @__PURE__ */ new Set",
+    ],
+    minifySyntax: true,
+    target: "bun",
+  });
+
+  itBundled("minify/ArrayConstructorWithNumberAndMinifyWhitespace", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(new Array(0));
+        capture(new Array(1));
+        capture(new Array(2));
+        capture(new Array(3));
+        capture(new Array(4));
+        capture(new Array(5));
+        capture(new Array(6));
+        capture(new Array(7));
+        capture(new Array(8));
+        capture(new Array(9));
+        capture(new Array(10));
+        capture(new Array(11));
+        capture(new Array(4.5));
+      `,
+    },
+    capture: [
+      "[]", // new Array() -> []
+      "[,]", // new Array(1) -> [undefined]
+      "[,,]", // new Array(2) -> [undefined, undefined]
+      "[,,,]", // new Array(3) -> [undefined, undefined, undefined]
+      "[,,,,]", // new Array(4) -> [undefined, undefined, undefined, undefined]
+      "[,,,,,]", // new Array(5) -> [undefined x 5]
+      "[,,,,,,]", // new Array(6) -> [undefined x 6]
+      "[,,,,,,,]", // new Array(7) -> [undefined x 7]
+      "[,,,,,,,,]", // new Array(8) -> [undefined x 8]
+      "[,,,,,,,,,]", // new Array(9) -> [undefined x 9]
+      "[,,,,,,,,,,]", // new Array(10) -> [undefined x 10]
+      "Array(11)", // new Array(11) -> Array(11)
+      "Array(4.5)", // new Array(4.5) is Array(4.5) because it's not an integer
+    ],
+    minifySyntax: true,
+    minifyWhitespace: true,
+    target: "bun",
+  });
+
+  itBundled("minify/GlobalConstructorSemanticsPreserved", {
+    files: {
+      "/entry.js": /* js */ `
+        function capture(val) { console.log(val); return val; }
+        
+        // Test Array semantics
+        const a1 = new Array(1, 2, 3);
+        const a2 = Array(1, 2, 3);
+        capture(JSON.stringify(a1) === JSON.stringify(a2));
+        capture(a1.constructor === a2.constructor);
+        
+        // Test sparse array semantics - new Array(5) creates sparse array
+        const sparse = new Array(5);
+        capture(sparse.length === 5);
+        capture(0 in sparse === false); // No element at index 0
+        capture(JSON.stringify(sparse) === "[null,null,null,null,null]");
+
+        // Single-arg variable case: must preserve sparse semantics
+        const n = 3;
+        const a3 = new Array(n);
+        const a4 = Array(n);
+        capture(a3.length === a4.length && a3.length === 3 && a3[0] === undefined);
+        
+        // Test Object semantics
+        const o1 = new Object();
+        const o2 = Object();
+        capture(typeof o1 === typeof o2);
+        capture(o1.constructor === o2.constructor);
+        
+        // Test Function semantics
+        const f1 = new Function("return 1");
+        const f2 = Function("return 1");
+        capture(typeof f1 === typeof f2);
+        capture(f1() === f2());
+        
+        // Test RegExp semantics
+        const r1 = new RegExp("test", "g");
+        const r2 = RegExp("test", "g");
+        capture(r1.source === r2.source);
+        capture(r1.flags === r2.flags);
+      `,
+    },
+    capture: [
+      "val",
+      "JSON.stringify(a1) === JSON.stringify(a2)",
+      "a1.constructor === a2.constructor",
+      "sparse.length === 5",
+      "0 in sparse === !1",
+      'JSON.stringify(sparse) === "[null,null,null,null,null]"',
+      "a3.length === a4.length && a3.length === 3 && a3[0] === void 0",
+      "typeof o1 === typeof o2",
+      "o1.constructor === o2.constructor",
+      "typeof f1 === typeof f2",
+      "f1() === f2()",
+      "r1.source === r2.source",
+      "r1.flags === r2.flags",
+    ],
+    minifySyntax: true,
+    target: "bun",
+    run: {
+      stdout: "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue",
+    },
+  });
+
+  itBundled("minify/TypeofUndefinedOptimization", {
+    files: {
+      "/entry.js": /* js */ `
+        // Test all equality operators with typeof undefined
+        console.log(typeof x !== 'undefined');
+        console.log(typeof x != 'undefined'); 
+        console.log('undefined' !== typeof x);
+        console.log('undefined' != typeof x);
+        
+        console.log(typeof x === 'undefined');
+        console.log(typeof x == 'undefined');
+        console.log('undefined' === typeof x);
+        console.log('undefined' == typeof x);
+        
+        // These should not be optimized
+        console.log(typeof x === 'string');
+        console.log(x === 'undefined');
+        console.log('undefined' === y);
+        console.log(typeof x === 'undefinedx');
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const file = api.readFile("out.js");
+      expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(
+        `"console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x<"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x>"u");console.log(typeof x==="string");console.log(x==="undefined");console.log(y==="undefined");console.log(typeof x==="undefinedx");"`,
+      );
     },
   });
 });

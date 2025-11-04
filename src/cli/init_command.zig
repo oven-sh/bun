@@ -42,7 +42,7 @@ pub const InitCommand = struct {
     extern fn Bun__ttySetMode(fd: i32, mode: i32) i32;
 
     fn processRadioButton(label: string, comptime Choices: type) !Choices {
-        const colors = Output.enable_ansi_colors;
+        const colors = Output.enable_ansi_colors_stdout;
         const choices = switch (colors) {
             inline else => |colors_comptime| comptime choices: {
                 const choices_fields = bun.meta.EnumFields(Choices);
@@ -995,14 +995,14 @@ const Template = enum {
         }
 
         // Give some way to opt out.
-        if (bun.getenvTruthy("BUN_AGENT_RULE_DISABLED") or bun.getenvTruthy("CLAUDE_CODE_AGENT_RULE_DISABLED")) {
+        if (bun.env_var.BUN_AGENT_RULE_DISABLED.get() or bun.env_var.CLAUDE_CODE_AGENT_RULE_DISABLED.get()) {
             return false;
         }
 
         const pathbuffer = bun.path_buffer_pool.get();
         defer bun.path_buffer_pool.put(pathbuffer);
 
-        return bun.which(pathbuffer, bun.getenvZ("PATH") orelse return false, bun.fs.FileSystem.instance.top_level_dir, "claude") != null;
+        return bun.which(pathbuffer, bun.env_var.PATH.get() orelse return false, bun.fs.FileSystem.instance.top_level_dir, "claude") != null;
     }
 
     pub fn createAgentRule() void {
@@ -1046,25 +1046,21 @@ const Template = enum {
         // If cursor is not installed but claude code is installed, then create the CLAUDE.md.
         if (@"create CLAUDE.md") {
             // In this case, the frontmatter from the cursor rule is not helpful so let's trim it out.
-            const end_of_frontmatter = bun.strings.lastIndexOf(agent_rule, "---\n") orelse 0;
+            const end_of_frontmatter = if (bun.strings.lastIndexOf(agent_rule, "---\n")) |start| start + "---\n".len else 0;
 
             InitCommand.Assets.createNew("CLAUDE.md", agent_rule[end_of_frontmatter..]) catch {};
-            Output.prettyln(" + <r><d>CLAUDE.md<r>", .{});
-            Output.flush();
         }
     }
 
     fn isCursorInstalled() bool {
         // Give some way to opt-out.
-        if (bun.getenvTruthy("BUN_AGENT_RULE_DISABLED") or bun.getenvTruthy("CURSOR_AGENT_RULE_DISABLED")) {
+        if (bun.env_var.BUN_AGENT_RULE_DISABLED.get() or bun.env_var.CURSOR_AGENT_RULE_DISABLED.get()) {
             return false;
         }
 
         // Detect if they're currently using cursor.
-        if (bun.getenvZAnyCase("CURSOR_TRACE_ID")) |env| {
-            if (env.len > 0) {
-                return true;
-            }
+        if (bun.env_var.CURSOR_TRACE_ID.get()) {
+            return true;
         }
 
         if (Environment.isMac) {
@@ -1105,7 +1101,7 @@ const Template = enum {
             .{ .path = "bun-env.d.ts", .contents = @embedFile("../init/react-app/bun-env.d.ts") },
             .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
             .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
-            .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-app/src/index.tsx") },
+            .{ .path = "src/index.ts", .contents = @embedFile("../init/react-app/src/index.ts") },
             .{ .path = "src/App.tsx", .contents = @embedFile("../init/react-app/src/App.tsx") },
             .{ .path = "src/index.html", .contents = @embedFile("../init/react-app/src/index.html") },
             .{ .path = "src/index.css", .contents = @embedFile("../init/react-app/src/index.css") },
@@ -1124,7 +1120,7 @@ const Template = enum {
             .{ .path = "bun-env.d.ts", .contents = @embedFile("../init/react-tailwind/bun-env.d.ts") },
             .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
             .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
-            .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-tailwind/src/index.tsx") },
+            .{ .path = "src/index.ts", .contents = @embedFile("../init/react-tailwind/src/index.ts") },
             .{ .path = "src/App.tsx", .contents = @embedFile("../init/react-tailwind/src/App.tsx") },
             .{ .path = "src/index.html", .contents = @embedFile("../init/react-tailwind/src/index.html") },
             .{ .path = "src/index.css", .contents = @embedFile("../init/react-tailwind/src/index.css") },
@@ -1146,7 +1142,7 @@ const Template = enum {
             .{ .path = "bun-env.d.ts", .contents = @embedFile("../init/react-shadcn/bun-env.d.ts") },
             .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
             .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
-            .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-shadcn/src/index.tsx") },
+            .{ .path = "src/index.ts", .contents = @embedFile("../init/react-shadcn/src/index.ts") },
             .{ .path = "src/App.tsx", .contents = @embedFile("../init/react-shadcn/src/App.tsx") },
             .{ .path = "src/index.html", .contents = @embedFile("../init/react-shadcn/src/index.html") },
             .{ .path = "src/index.css", .contents = @embedFile("../init/react-shadcn/src/index.css") },
@@ -1155,7 +1151,7 @@ const Template = enum {
             .{ .path = "src/components/ui/button.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/button.tsx") },
             .{ .path = "src/components/ui/select.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/select.tsx") },
             .{ .path = "src/components/ui/input.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/input.tsx") },
-            .{ .path = "src/components/ui/form.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/form.tsx") },
+            .{ .path = "src/components/ui/textarea.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/textarea.tsx") },
             .{ .path = "src/APITester.tsx", .contents = @embedFile("../init/react-shadcn/src/APITester.tsx") },
             .{ .path = "src/lib/utils.ts", .contents = @embedFile("../init/react-shadcn/src/lib/utils.ts") },
             .{ .path = "src/react.svg", .contents = @embedFile("../init/react-shadcn/src/react.svg") },

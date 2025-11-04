@@ -3,7 +3,7 @@ pub const Loop = uv.Loop;
 pub const KeepAlive = struct {
     status: Status = .inactive,
 
-    const log = Output.scoped(.KeepAlive, false);
+    const log = Output.scoped(.KeepAlive, .visible);
 
     const Status = enum { active, inactive, done };
 
@@ -121,7 +121,7 @@ pub const FilePoll = struct {
     pub const Flags = Posix.FilePoll.Flags;
     pub const Owner = Posix.FilePoll.Owner;
 
-    const log = Output.scoped(.FilePoll, false);
+    const log = Output.scoped(.FilePoll, .visible);
 
     pub inline fn isActive(this: *const FilePoll) bool {
         return this.flags.contains(.has_incremented_poll_count);
@@ -305,7 +305,7 @@ pub const FilePoll = struct {
         pending_free_head: ?*FilePoll = null,
         pending_free_tail: ?*FilePoll = null,
 
-        const log = Output.scoped(.FilePoll, false);
+        const log = Output.scoped(.FilePoll, .visible);
 
         pub fn init() Store {
             return .{

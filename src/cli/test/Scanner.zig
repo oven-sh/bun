@@ -15,7 +15,7 @@ options: *BundleOptions,
 has_iterated: bool = false,
 search_count: usize = 0,
 
-const log = bun.Output.scoped(.jest, true);
+const log = bun.Output.scoped(.jest, .hidden);
 const Fifo = std.fifo.LinearFifo(ScanEntry, .Dynamic);
 const ScanEntry = struct {
     relative_dir: bun.StoredFileDescriptorType,
@@ -61,21 +61,20 @@ pub fn scan(this: *Scanner, path_literal: []const u8) Error!void {
     const parts = &[_][]const u8{ this.fs.top_level_dir, path_literal };
     const path = this.fs.absBuf(parts, &this.scan_dir_buf);
 
-    var root = this.readDirWithName(path, null) catch |err| {
-        switch (err) {
+    var root = try this.readDirWithName(path, null);
+
+    if (root.* == .err) {
+        switch (root.err.original_err) {
             error.NotDir, error.ENOTDIR => {
                 if (this.isTestFile(path)) {
-                    const rel_path = bun.PathString.init(this.fs.filename_store.append([]const u8, path) catch bun.outOfMemory());
-                    this.test_files.append(this.allocator(), rel_path) catch bun.outOfMemory();
+                    const rel_path = bun.PathString.init(bun.handleOom(this.fs.filename_store.append([]const u8, path)));
+                    bun.handleOom(this.test_files.append(this.allocator(), rel_path));
                 }
             },
             error.ENOENT => return error.DoesNotExist,
-            error.OutOfMemory => return error.OutOfMemory,
-            else => log("Scanner.readDirWithName('{s}') -> {s}", .{ path, @errorName(err) }),
+            else => log("Scanner.readDirWithName('{s}') -> {s}", .{ path, @errorName(root.err.original_err) }),
         }
-
-        return;
-    };
+    }
 
     // you typed "." and we already scanned it
     if (!this.has_iterated) {

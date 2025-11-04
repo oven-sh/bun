@@ -16,18 +16,7 @@ pub fn JSHostFunctionTypeWithContext(comptime ContextType: type) type {
 pub fn toJSHostFn(comptime functionToWrap: JSHostFnZig) JSHostFn {
     return struct {
         pub fn function(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(jsc.conv) JSValue {
-            if (Environment.allow_assert and Environment.is_canary) {
-                const value = functionToWrap(globalThis, callframe) catch |err| switch (err) {
-                    error.JSError => .zero,
-                    error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-                };
-                debugExceptionAssertion(globalThis, value, functionToWrap);
-                return value;
-            }
-            return @call(.always_inline, functionToWrap, .{ globalThis, callframe }) catch |err| switch (err) {
-                error.JSError => .zero,
-                error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-            };
+            return toJSHostFnResult(globalThis, functionToWrap(globalThis, callframe));
         }
     }.function;
 }
@@ -35,16 +24,25 @@ pub fn toJSHostFn(comptime functionToWrap: JSHostFnZig) JSHostFn {
 pub fn toJSHostFnWithContext(comptime ContextType: type, comptime Function: JSHostFnZigWithContext(ContextType)) JSHostFunctionTypeWithContext(ContextType) {
     return struct {
         pub fn function(ctx: *ContextType, globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(jsc.conv) JSValue {
-            const value = Function(ctx, globalThis, callframe) catch |err| switch (err) {
-                error.JSError => .zero,
-                error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-            };
-            if (Environment.allow_assert and Environment.is_canary) {
-                debugExceptionAssertion(globalThis, value, Function);
-            }
-            return value;
+            return toJSHostFnResult(globalThis, Function(ctx, globalThis, callframe));
         }
     }.function;
+}
+pub fn toJSHostFnResult(globalThis: *JSGlobalObject, result: bun.JSError!JSValue) JSValue {
+    if (Environment.allow_assert and Environment.is_canary) {
+        const value = result catch |err| switch (err) {
+            error.JSError => .zero,
+            error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
+            error.JSTerminated => .zero,
+        };
+        debugExceptionAssertion(globalThis, value, "_unknown_".*);
+        return value;
+    }
+    return result catch |err| switch (err) {
+        error.JSError => .zero,
+        error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
+        error.JSTerminated => .zero,
+    };
 }
 
 fn debugExceptionAssertion(globalThis: *JSGlobalObject, value: JSValue, comptime func: anytype) void {
@@ -70,13 +68,14 @@ fn debugExceptionAssertion(globalThis: *JSGlobalObject, value: JSValue, comptime
     bun.assert((value == .zero) == globalThis.hasException());
 }
 
-pub fn toJSHostSetterValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSError }!void) bool {
+pub fn toJSHostSetterValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSError, JSTerminated }!void) bool {
     value catch |err| switch (err) {
         error.JSError => return false,
         error.OutOfMemory => {
             _ = globalThis.throwOutOfMemoryValue();
             return false;
         },
+        error.JSTerminated => return false,
     };
     return true;
 }
@@ -94,10 +93,11 @@ pub fn toJSHostCall(
     scope.init(globalThis, src);
     defer scope.deinit();
 
-    const returned: error{ OutOfMemory, JSError }!JSValue = @call(.auto, function, args);
+    const returned: error{ OutOfMemory, JSError, JSTerminated }!JSValue = @call(.auto, function, args);
     const normal = returned catch |err| switch (err) {
         error.JSError => .zero,
         error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
+        error.JSTerminated => .zero,
     };
     scope.assertExceptionPresenceMatches(normal == .zero);
     return normal;
@@ -114,7 +114,7 @@ pub fn fromJSHostCall(
     src: std.builtin.SourceLocation,
     comptime function: anytype,
     args: std.meta.ArgsTuple(@TypeOf(function)),
-) bun.JSError!JSValue {
+) error{JSError}!JSValue {
     var scope: jsc.ExceptionValidationScope = undefined;
     scope.init(globalThis, src);
     defer scope.deinit();
@@ -131,7 +131,7 @@ pub fn fromJSHostCallGeneric(
     src: std.builtin.SourceLocation,
     comptime function: anytype,
     args: std.meta.ArgsTuple(@TypeOf(function)),
-) bun.JSError!@typeInfo(@TypeOf(function)).@"fn".return_type.? {
+) error{JSError}!@typeInfo(@TypeOf(function)).@"fn".return_type.? {
     var scope: jsc.CatchScope = undefined;
     scope.init(globalThis, src);
     defer scope.deinit();
@@ -167,6 +167,18 @@ inline fn parseErrorSet(T: type, errors: []const std.builtin.Type.Error) ParsedH
         }
         break :brk errs;
     };
+}
+
+// For when bubbling up errors to functions that require a C ABI boundary
+// TODO: make this not need a 'globalThis'
+pub fn voidFromJSError(err: bun.JSError, globalThis: *jsc.JSGlobalObject) void {
+    switch (err) {
+        error.JSError => {},
+        error.OutOfMemory => globalThis.throwOutOfMemory() catch {},
+        error.JSTerminated => {},
+    }
+    // TODO: catch exception, declare throw scope, re-throw
+    // c++ needs to be able to see that zig functions can throw for BUN_JSC_validateExceptionChecks
 }
 
 pub fn wrap1(comptime func: anytype) @"return": {

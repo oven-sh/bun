@@ -42,6 +42,7 @@ await client.incr("counter");
 By default, the client reads connection information from the following environment variables (in order of precedence):
 
 - `REDIS_URL`
+- `VALKEY_URL`
 - If not set, defaults to `"redis://localhost:6379"`
 
 ### Connection Lifecycle
@@ -88,6 +89,9 @@ await redis.set("user:1:name", "Alice");
 // Get a key
 const name = await redis.get("user:1:name");
 
+// Get a key as Uint8Array
+const buffer = await redis.getBuffer("user:1:name");
+
 // Delete a key
 await redis.del("user:1:name");
 
@@ -132,6 +136,10 @@ await redis.hmset("user:123", [
 const userFields = await redis.hmget("user:123", ["name", "email"]);
 console.log(userFields); // ["Alice", "alice@example.com"]
 
+// Get single field from hash (returns value directly, null if missing)
+const userName = await redis.hget("user:123", "name");
+console.log(userName); // "Alice"
+
 // Increment a numeric field in a hash
 await redis.hincrby("user:123", "visits", 1);
 
@@ -159,6 +167,102 @@ const randomTag = await redis.srandmember("tags");
 
 // Pop (remove and return) a random member
 const poppedTag = await redis.spop("tags");
+```
+
+## Pub/Sub
+
+Bun provides native bindings for the [Redis
+Pub/Sub](https://redis.io/docs/latest/develop/pubsub/) protocol. **New in Bun
+1.2.23**
+
+{% callout %}
+**🚧** — The Redis Pub/Sub feature is experimental. Although we expect it to be
+stable, we're currently actively looking for feedback and areas for improvement.
+{% /callout %}
+
+### Basic Usage
+
+To get started publishing messages, you can set up a publisher in
+`publisher.ts`:
+
+```typescript#publisher.ts
+import { RedisClient } from "bun";
+
+const writer = new RedisClient("redis://localhost:6739");
+await writer.connect();
+
+writer.publish("general", "Hello everyone!");
+
+writer.close();
+```
+
+In another file, create the subscriber in `subscriber.ts`:
+
+```typescript#subscriber.ts
+import { RedisClient } from "bun";
+
+const listener = new RedisClient("redis://localhost:6739");
+await listener.connect();
+
+await listener.subscribe("general", (message, channel) => {
+  console.log(`Received: ${message}`);
+});
+```
+
+In one shell, run your subscriber:
+
+```bash
+bun run subscriber.ts
+```
+
+and, in another, run your publisher:
+
+```bash
+bun run publisher.ts
+```
+
+{% callout %}
+**Note:** The subscription mode takes over the `RedisClient` connection. A
+client with subscriptions can only call `RedisClient.prototype.subscribe()`. In
+other words, applications which need to message Redis need a separate
+connection, acquirable through `.duplicate()`:
+
+```typescript
+import { RedisClient } from "bun";
+
+const redis = new RedisClient("redis://localhost:6379");
+await redis.connect();
+const subscriber = await redis.duplicate();
+
+await subscriber.subscribe("foo", () => {});
+await redis.set("bar", "baz");
+```
+
+{% /callout %}
+
+### Publishing
+
+Publishing messages is done through the `publish()` method:
+
+```typescript
+await client.publish(channelName, message);
+```
+
+### Subscriptions
+
+The Bun `RedisClient` allows you to subscribe to channels through the
+`.subscribe()` method:
+
+```typescript
+await client.subscribe(channel, (message, channel) => {});
+```
+
+You can unsubscribe through the `.unsubscribe()` method:
+
+```typescript
+await client.unsubscribe(); // Unsubscribe from all channels.
+await client.unsubscribe(channel); // Unsubscribe a particular channel.
+await client.unsubscribe(channel, listener); // Unsubscribe a particular listener.
 ```
 
 ## Advanced Usage
@@ -482,9 +586,10 @@ When connecting to Redis servers using older versions that don't support RESP3, 
 
 Current limitations of the Redis client we are planning to address in future versions:
 
-- [ ] No dedicated API for pub/sub functionality (though you can use the raw command API)
 - [ ] Transactions (MULTI/EXEC) must be done through raw commands for now
 - [ ] Streams are supported but without dedicated methods
+- [ ] Pub/Sub does not currently support binary data, nor pattern-based
+      subscriptions.
 
 Unsupported features:
 

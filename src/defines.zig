@@ -329,6 +329,7 @@ pub const Define = struct {
                 .data = value_define.*,
             });
 
+            define.allocator.free(gpe.value_ptr.*);
             gpe.value_ptr.* = try list.toOwnedSlice();
         } else {
             var list = try std.ArrayList(DotDefine).initCapacity(allocator, 1);
@@ -398,6 +399,14 @@ pub const Define = struct {
         }
 
         return define;
+    }
+
+    pub fn deinit(this: *Define) void {
+        var diter = this.dots.valueIterator();
+        while (diter.next()) |key| this.allocator.free(key.*);
+        this.dots.clearAndFree();
+        this.identifiers.clearAndFree();
+        this.allocator.destroy(this);
     }
 };
 

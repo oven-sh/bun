@@ -19,8 +19,13 @@ pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
 ref_count: RefCount,
-writer: WriterImpl = if (bun.Environment.isWindows) .{} else .{ .close_fd = false },
-fd: bun.FileDescriptor,
+writer: WriterImpl = if (bun.Environment.isWindows) .{
+    // Tell the Windows PipeWriter impl to *not* close the file descriptor,
+    // unfortunately this won't work if it creates a uv_pipe or uv_tty as those
+    // types own their file descriptor
+    .owns_fd = false,
+} else .{ .close_fd = false },
+fd: MovableIfWindowsFd,
 writers: Writers = .{ .inlined = .{} },
 buf: std.ArrayListUnmanaged(u8) = .{},
 /// quick hack to get windows working
@@ -37,7 +42,7 @@ async_deinit: AsyncDeinitWriter = .{},
 started: bool = false,
 flags: Flags = .{},
 
-const debug = bun.Output.scoped(.IOWriter, true);
+const debug = bun.Output.scoped(.IOWriter, .hidden);
 
 pub const ChildPtr = IOWriterChildPtr;
 
@@ -70,6 +75,15 @@ pub fn refSelf(this: *IOWriter) *IOWriter {
     return this;
 }
 
+pub fn memoryCost(this: *const IOWriter) usize {
+    var cost: usize = @sizeOf(IOWriter);
+    cost += this.buf.allocatedSlice().len;
+    cost += if (comptime bun.Environment.isWindows) this.winbuf.allocatedSlice().len else 0;
+    cost += this.writers.memoryCost();
+    cost += this.writer.memoryCost();
+    return cost;
+}
+
 pub const Flags = packed struct(u8) {
     pollable: bool = false,
     nonblocking: bool = false,
@@ -81,7 +95,7 @@ pub const Flags = packed struct(u8) {
 pub fn init(fd: bun.FileDescriptor, flags: Flags, evtloop: jsc.EventLoopHandle) *IOWriter {
     const this = bun.new(IOWriter, .{
         .ref_count = .init(),
-        .fd = fd,
+        .fd = MovableIfWindowsFd.init(fd),
         .evtloop = evtloop,
         .concurrent_task = jsc.EventLoopTask.fromEventLoop(evtloop),
         .concurrent_task2 = jsc.EventLoopTask.fromEventLoop(evtloop),
@@ -96,8 +110,9 @@ pub fn init(fd: bun.FileDescriptor, flags: Flags, evtloop: jsc.EventLoopHandle) 
 }
 
 pub fn __start(this: *IOWriter) Maybe(void) {
+    bun.assert(this.fd.isOwned());
     debug("IOWriter(0x{x}, fd={}) __start()", .{ @intFromPtr(this), this.fd });
-    if (this.writer.start(this.fd, this.flags.pollable).asErr()) |e_| {
+    if (this.writer.start(&this.fd, this.flags.pollable).asErr()) |e_| {
         const e: bun.sys.Error = e_;
         if (bun.Environment.isPosix) {
             // We get this if we pass in a file descriptor that is not
@@ -140,7 +155,7 @@ pub fn __start(this: *IOWriter) Maybe(void) {
                 this.flags.pollable = false;
                 this.flags.nonblocking = false;
                 this.flags.is_socket = false;
-                return this.writer.startWithFile(this.fd);
+                return this.writer.startWithFile(this.fd.get().?);
             }
         }
         return .{ .err = e };
@@ -150,11 +165,17 @@ pub fn __start(this: *IOWriter) Maybe(void) {
             this.writer.getPoll().?.flags.insert(.nonblocking);
         }
 
-        if (this.flags.is_socket) {
+        const sendto_MSG_NOWAIT_blocks = bun.Environment.isMac;
+
+        if (this.flags.is_socket and (!sendto_MSG_NOWAIT_blocks or this.flags.nonblocking)) {
             this.writer.getPoll().?.flags.insert(.socket);
         } else if (this.flags.pollable) {
             this.writer.getPoll().?.flags.insert(.fifo);
         }
+    }
+
+    if (comptime bun.Environment.isWindows) {
+        log("IOWriter(0x{x}, {}) starting with source={s}", .{ @intFromPtr(this), this.fd, if (this.writer.source) |src| @tagName(src) else "no source lol" });
     }
 
     return .success;
@@ -206,7 +227,13 @@ fn write(this: *IOWriter) enum {
 
     bun.assert(this.writer.handle == .poll);
     if (this.writer.handle.poll.isWatching()) return .suspended;
-    this.writer.start(this.fd, this.flags.pollable).assert();
+    switch (this.writer.start(this.fd, this.flags.pollable)) {
+        .result => |_| {},
+        .err => |err| {
+            this.onError(err);
+            return .failed;
+        },
+    }
     return .suspended;
 }
 
@@ -313,7 +340,7 @@ pub fn doFileWrite(this: *IOWriter) Yield {
     };
     if (child.bytelist) |bl| {
         const written_slice = this.buf.items[this.total_bytes_written .. this.total_bytes_written + amt];
-        bl.append(bun.default_allocator, written_slice) catch bun.outOfMemory();
+        bun.handleOom(bl.appendSlice(bun.default_allocator, written_slice));
     }
     child.written += amt;
     if (!child.wroteEverything()) {
@@ -337,7 +364,7 @@ pub fn onWritePollable(this: *IOWriter, amount: usize, status: bun.io.WriteStatu
     } else {
         if (child.bytelist) |bl| {
             const written_slice = this.buf.items[this.total_bytes_written .. this.total_bytes_written + amount];
-            bl.append(bun.default_allocator, written_slice) catch bun.outOfMemory();
+            bun.handleOom(bl.appendSlice(bun.default_allocator, written_slice));
         }
         this.total_bytes_written += amount;
         child.written += amount;
@@ -426,7 +453,7 @@ pub fn onError(this: *IOWriter, err__: bun.sys.Error) void {
     this.err = ee;
     log("IOWriter(0x{x}, fd={}) onError errno={s} errmsg={} errsyscall={}", .{ @intFromPtr(this), this.fd, @tagName(ee.getErrno()), ee.message, ee.syscall });
     var seen_alloc = std.heap.stackFallback(@sizeOf(usize) * 64, bun.default_allocator);
-    var seen = std.ArrayList(usize).initCapacity(seen_alloc.get(), 64) catch bun.outOfMemory();
+    var seen = bun.handleOom(std.ArrayList(usize).initCapacity(seen_alloc.get(), 64));
     defer seen.deinit();
     writer_loop: for (this.writers.slice()) |w| {
         if (w.isDead()) continue;
@@ -441,7 +468,7 @@ pub fn onError(this: *IOWriter, err__: bun.sys.Error) void {
             continue :writer_loop;
         }
 
-        seen.append(@intFromPtr(ptr)) catch bun.outOfMemory();
+        bun.handleOom(seen.append(@intFromPtr(ptr)));
         // TODO: This probably shouldn't call .run()
         w.ptr.onIOWriterChunk(0, this.err).run();
     }
@@ -458,7 +485,7 @@ pub fn getBuffer(this: *IOWriter) []const u8 {
     const result = this.getBufferImpl();
     if (comptime bun.Environment.isWindows) {
         this.winbuf.clearRetainingCapacity();
-        this.winbuf.appendSlice(bun.default_allocator, result) catch bun.outOfMemory();
+        bun.handleOom(this.winbuf.appendSlice(bun.default_allocator, result));
         return this.winbuf.items;
     }
     log("IOWriter(0x{x}, fd={}) getBuffer = {d} bytes", .{ @intFromPtr(this), this.fd, result.len });
@@ -592,7 +619,7 @@ pub fn enqueue(this: *IOWriter, ptr: anytype, bytelist: ?*bun.ByteList, buf: []c
         .bytelist = bytelist,
     };
     log("IOWriter(0x{x}, fd={}) enqueue(0x{x} {s}, buf_len={d}, buf={s}, writer_len={d})", .{ @intFromPtr(this), this.fd, @intFromPtr(writer.rawPtr()), @tagName(writer.ptr.ptr.tag()), buf.len, buf[0..@min(128, buf.len)], this.writers.len() + 1 });
-    this.buf.appendSlice(bun.default_allocator, buf) catch bun.outOfMemory();
+    bun.handleOom(this.buf.appendSlice(bun.default_allocator, buf));
     this.writers.append(writer);
     return this.enqueueInternal();
 }
@@ -619,7 +646,7 @@ pub fn enqueueFmt(
 ) Yield {
     var buf_writer = this.buf.writer(bun.default_allocator);
     const start = this.buf.items.len;
-    buf_writer.print(fmt, args) catch bun.outOfMemory();
+    bun.handleOom(buf_writer.print(fmt, args));
 
     const childptr = if (@TypeOf(ptr) == ChildPtr) ptr else ChildPtr.init(ptr);
     if (this.handleBrokenPipe(childptr)) |yield| return yield;
@@ -637,6 +664,7 @@ pub fn enqueueFmt(
 
 fn asyncDeinit(this: *@This()) void {
     debug("IOWriter(0x{x}, fd={}) asyncDeinit", .{ @intFromPtr(this), this.fd });
+    bun.assert(!this.is_writing);
     this.async_deinit.enqueue();
 }
 
@@ -648,7 +676,10 @@ pub fn deinitOnMainThread(this: *IOWriter) void {
         if (this.writer.handle == .poll and this.writer.handle.poll.isRegistered()) {
             this.writer.handle.closeImpl(null, {}, false);
         }
-    } else this.winbuf.deinit(bun.default_allocator);
+    } else {
+        this.writer.close();
+        this.winbuf.deinit(bun.default_allocator);
+    }
     if (this.fd.isValid()) this.fd.close();
     this.writer.disableKeepingProcessAlive(this.evtloop);
     bun.destroy(this);
@@ -760,6 +791,7 @@ fn tryWriteWithWriteFn(fd: bun.FileDescriptor, buf: []const u8, comptime write_f
 }
 
 pub fn drainBufferedData(parent: *IOWriter, buf: []const u8, max_write_size: usize, received_hup: bool) bun.io.WriteResult {
+    bun.assert(bun.Environment.isPosix);
     _ = received_hup;
 
     const trimmed = if (max_write_size < buf.len and max_write_size > 0) buf[0..max_write_size] else buf;
@@ -767,7 +799,7 @@ pub fn drainBufferedData(parent: *IOWriter, buf: []const u8, max_write_size: usi
     var drained: usize = 0;
 
     while (drained < trimmed.len) {
-        const attempt = tryWriteWithWriteFn(parent.fd, buf, bun.sys.write);
+        const attempt = tryWriteWithWriteFn(parent.fd.get().?, buf, bun.sys.write);
         switch (attempt) {
             .pending => |pending| {
                 drained += pending;
@@ -835,11 +867,12 @@ pub const AsyncDeinitWriter = struct {
     }
 };
 
-const log = bun.Output.scoped(.IOWriter, true);
+const log = bun.Output.scoped(.IOWriter, .hidden);
 
 const std = @import("std");
 
 const bun = @import("bun");
+const MovableIfWindowsFd = bun.MovableIfWindowsFd;
 const assert = bun.assert;
 const jsc = bun.jsc;
 const Maybe = bun.sys.Maybe;

@@ -47,6 +47,7 @@ pub fn trackResolutionFailure(store: *DirectoryWatchStore, import_source: []cons
         .json,
         .jsonc,
         .toml,
+        .yaml,
         .wasm,
         .napi,
         .base64,
@@ -100,14 +101,14 @@ fn insert(
     });
 
     if (store.dependencies_free_list.items.len == 0)
-        try store.dependencies.ensureUnusedCapacity(dev.allocator, 1);
+        try store.dependencies.ensureUnusedCapacity(dev.allocator(), 1);
 
-    const gop = try store.watches.getOrPut(dev.allocator, bun.strings.withoutTrailingSlashWindowsPath(dir_name_to_watch));
+    const gop = try store.watches.getOrPut(dev.allocator(), bun.strings.withoutTrailingSlashWindowsPath(dir_name_to_watch));
     const specifier_cloned = if (specifier[0] == '.' or std.fs.path.isAbsolute(specifier))
-        try dev.allocator.dupe(u8, specifier)
+        try dev.allocator().dupe(u8, specifier)
     else
-        try std.fmt.allocPrint(dev.allocator, "./{s}", .{specifier});
-    errdefer dev.allocator.free(specifier_cloned);
+        try std.fmt.allocPrint(dev.allocator(), "./{s}", .{specifier});
+    errdefer dev.allocator().free(specifier_cloned);
 
     if (gop.found_existing) {
         const dep = store.appendDepAssumeCapacity(.{
@@ -163,8 +164,8 @@ fn insert(
             if (owned_fd) "from dir cache" else "owned fd",
         });
 
-    const dir_name = try dev.allocator.dupe(u8, dir_name_to_watch);
-    errdefer dev.allocator.free(dir_name);
+    const dir_name = try dev.allocator().dupe(u8, dir_name_to_watch);
+    errdefer dev.allocator().free(dir_name);
 
     gop.key_ptr.* = bun.strings.withoutTrailingSlashWindowsPath(dir_name);
 

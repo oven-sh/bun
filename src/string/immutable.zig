@@ -10,6 +10,19 @@ pub const Encoding = enum {
     utf16,
 };
 
+pub const AsciiStatus = enum {
+    unknown,
+    all_ascii,
+    non_ascii,
+
+    pub fn fromBool(is_all_ascii: ?bool) AsciiStatus {
+        return if (is_all_ascii orelse return .unknown)
+            .all_ascii
+        else
+            .non_ascii;
+    }
+};
+
 /// Returned by classification functions that do not discriminate between utf8 and ascii.
 pub const EncodingNonAscii = enum {
     utf8,
@@ -399,6 +412,12 @@ pub fn indexOfCharNeg(self: string, char: u8) i32 {
 pub fn indexOfSigned(self: string, str: string) i32 {
     const i = std.mem.indexOf(u8, self, str) orelse return -1;
     return @as(i32, @intCast(i));
+}
+
+/// Returns last index of `char` before a character `before`.
+pub fn lastIndexBeforeChar(in: []const u8, char: u8, before: u8) ?usize {
+    const before_pos = indexOfChar(in, before) orelse in.len;
+    return lastIndexOfChar(in[0..before_pos], char);
 }
 
 pub fn lastIndexOfChar(self: []const u8, char: u8) callconv(bun.callconv_inline) ?usize {
@@ -1119,6 +1138,15 @@ pub fn index(self: string, str: string) i32 {
     }
 }
 
+/// Returns a substring starting at `start` up to the end of the string.
+/// If `start` is greater than the string's length, returns an empty string.
+pub fn substring(self: anytype, start: ?usize, stop: ?usize) @TypeOf(self) {
+    const sta = start orelse 0;
+    const sto = stop orelse self.len;
+
+    return self[@min(sta, self.len)..@min(sto, self.len)];
+}
+
 pub const ascii_vector_size = if (Environment.isWasm) 8 else 16;
 pub const ascii_u16_vector_size = if (Environment.isWasm) 4 else 8;
 pub const AsciiVectorInt = std.meta.Int(.unsigned, ascii_vector_size);
@@ -1540,17 +1568,24 @@ pub fn trimPrefixComptime(comptime T: type, buffer: []const T, comptime prefix: 
         buffer;
 }
 
+pub fn trimSuffixComptime(buffer: []const u8, comptime suffix: anytype) []const u8 {
+    return if (hasSuffixComptime(buffer, suffix))
+        buffer[0 .. buffer.len - suffix.len]
+    else
+        buffer;
+}
+
 /// Get the line number and the byte offsets of `line_range_count` above the desired line number
 /// The final element is the end index of the desired line
 const LineRange = struct {
     start: u32,
     end: u32,
 };
-pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range_count: usize) std.BoundedArray(LineRange, line_range_count) {
+pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range_count: usize) bun.BoundedArray(LineRange, line_range_count) {
     const remaining = text;
     if (remaining.len == 0) return .{};
 
-    var ranges = std.BoundedArray(LineRange, line_range_count){};
+    var ranges = bun.BoundedArray(LineRange, line_range_count){};
 
     var current_line: u32 = 0;
     const first_newline_or_nonascii_i = strings.indexOfNewlineOrNonASCIICheckStart(text, 0, true) orelse {
@@ -1644,7 +1679,7 @@ pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range
         };
 
         if (ranges.len == line_range_count and current_line <= target_line) {
-            var new_ranges = std.BoundedArray(LineRange, line_range_count){};
+            var new_ranges = bun.BoundedArray(LineRange, line_range_count){};
             new_ranges.appendSliceAssumeCapacity(ranges.slice()[1..]);
             ranges = new_ranges;
         }
@@ -1658,7 +1693,7 @@ pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range
     }
 
     if (ranges.len == line_range_count and current_line <= target_line) {
-        var new_ranges = std.BoundedArray(LineRange, line_range_count){};
+        var new_ranges = bun.BoundedArray(LineRange, line_range_count){};
         new_ranges.appendSliceAssumeCapacity(ranges.slice()[1..]);
         ranges = new_ranges;
     }
@@ -1667,10 +1702,10 @@ pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range
 }
 
 /// Get N lines from the start of the text
-pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: usize) ?std.BoundedArray([]const u8, line_range_count) {
+pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: usize) ?bun.BoundedArray([]const u8, line_range_count) {
     const ranges = indexOfLineRanges(text, line, line_range_count);
     if (ranges.len == 0) return null;
-    var results = std.BoundedArray([]const u8, line_range_count){};
+    var results = bun.BoundedArray([]const u8, line_range_count){};
     results.len = ranges.len;
 
     for (results.slice()[0..ranges.len], ranges.slice()) |*chunk, range| {
@@ -1682,7 +1717,7 @@ pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: us
     return results;
 }
 
-pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
+pub fn firstNonASCII16(slice: []const u16) ?u32 {
     var remaining = slice;
     const remaining_start = remaining.ptr;
 
@@ -1744,6 +1779,10 @@ pub fn trim(slice: anytype, comptime values_to_strip: []const u8) @TypeOf(slice)
     while (begin < end and std.mem.indexOfScalar(u8, values_to_strip, slice[begin]) != null) : (begin += 1) {}
     while (end > begin and std.mem.indexOfScalar(u8, values_to_strip, slice[end - 1]) != null) : (end -= 1) {}
     return slice[begin..end];
+}
+
+pub fn trimSpaces(slice: anytype) @TypeOf(slice) {
+    return trim(slice, &whitespace_chars);
 }
 
 pub fn isAllWhitespace(slice: []const u8) bool {
@@ -2007,7 +2046,7 @@ pub fn concatWithLength(
     allocator: std.mem.Allocator,
     args: []const string,
     length: usize,
-) ![]u8 {
+) bun.OOM![]u8 {
     const out = try allocator.alloc(u8, length);
     var remain = out;
     for (args) |arg| {
@@ -2021,7 +2060,7 @@ pub fn concatWithLength(
 pub fn concat(
     allocator: std.mem.Allocator,
     args: []const string,
-) ![]u8 {
+) bun.OOM![]u8 {
     var length: usize = 0;
     for (args) |arg| {
         length += arg.len;
@@ -2239,19 +2278,18 @@ pub const convertUTF8toUTF16InBuffer = unicode.convertUTF8toUTF16InBuffer;
 pub const convertUTF8toUTF16InBufferZ = unicode.convertUTF8toUTF16InBufferZ;
 pub const copyLatin1IntoASCII = unicode.copyLatin1IntoASCII;
 pub const copyLatin1IntoUTF16 = unicode.copyLatin1IntoUTF16;
+pub const copyCP1252IntoUTF16 = unicode.copyCP1252IntoUTF16;
 pub const copyLatin1IntoUTF8 = unicode.copyLatin1IntoUTF8;
 pub const copyLatin1IntoUTF8StopOnNonASCII = unicode.copyLatin1IntoUTF8StopOnNonASCII;
 pub const copyU16IntoU8 = unicode.copyU16IntoU8;
 pub const copyU8IntoU16 = unicode.copyU8IntoU16;
-pub const copyU8IntoU16WithAlignment = unicode.copyU8IntoU16WithAlignment;
 pub const copyUTF16IntoUTF8 = unicode.copyUTF16IntoUTF8;
 pub const copyUTF16IntoUTF8Impl = unicode.copyUTF16IntoUTF8Impl;
-pub const copyUTF16IntoUTF8WithBuffer = unicode.copyUTF16IntoUTF8WithBuffer;
 pub const copyUTF16IntoUTF8WithBufferImpl = unicode.copyUTF16IntoUTF8WithBufferImpl;
 pub const decodeCheck = unicode.decodeCheck;
 pub const decodeWTF8RuneT = unicode.decodeWTF8RuneT;
 pub const decodeWTF8RuneTMultibyte = unicode.decodeWTF8RuneTMultibyte;
-pub const elementLengthLatin1IntoUTF16 = unicode.elementLengthLatin1IntoUTF16;
+pub const elementLengthCP1252IntoUTF16 = unicode.elementLengthCP1252IntoUTF16;
 pub const elementLengthLatin1IntoUTF8 = unicode.elementLengthLatin1IntoUTF8;
 pub const elementLengthUTF16IntoUTF8 = unicode.elementLengthUTF16IntoUTF8;
 pub const elementLengthUTF8IntoUTF16 = unicode.elementLengthUTF8IntoUTF16;
@@ -2262,9 +2300,8 @@ pub const eqlUtf16 = unicode.eqlUtf16;
 pub const isAllASCII = unicode.isAllASCII;
 pub const isValidUTF8 = unicode.isValidUTF8;
 pub const isValidUTF8WithoutSIMD = unicode.isValidUTF8WithoutSIMD;
-pub const latin1ToCodepointAssumeNotASCII = unicode.latin1ToCodepointAssumeNotASCII;
-pub const latin1ToCodepointBytesAssumeNotASCII = unicode.latin1ToCodepointBytesAssumeNotASCII;
-pub const latin1ToCodepointBytesAssumeNotASCII16 = unicode.latin1ToCodepointBytesAssumeNotASCII16;
+pub const cp1252ToCodepointAssumeNotASCII = unicode.cp1252ToCodepointAssumeNotASCII;
+pub const cp1252ToCodepointBytesAssumeNotASCII16 = unicode.cp1252ToCodepointBytesAssumeNotASCII16;
 pub const literal = unicode.literal;
 pub const nonASCIISequenceLength = unicode.nonASCIISequenceLength;
 pub const replaceLatin1WithUTF8 = unicode.replaceLatin1WithUTF8;
@@ -2308,11 +2345,12 @@ pub const visibleCodepointWidthType = visible_.visibleCodepointWidthType;
 pub const escapeHTMLForLatin1Input = escapeHTML_.escapeHTMLForLatin1Input;
 pub const escapeHTMLForUTF16Input = escapeHTML_.escapeHTMLForUTF16Input;
 
+pub const escapeRegExp = escapeRegExp_.escapeRegExp;
+pub const escapeRegExpForPackageNameMatching = escapeRegExp_.escapeRegExpForPackageNameMatching;
+
 pub const addNTPathPrefix = paths_.addNTPathPrefix;
 pub const addNTPathPrefixIfNeeded = paths_.addNTPathPrefixIfNeeded;
 pub const addLongPathPrefix = paths_.addLongPathPrefix;
-pub const addLongPathPrefixIfNeeded = paths_.addLongPathPrefixIfNeeded;
-pub const assertIsValidWindowsPath = paths_.assertIsValidWindowsPath;
 pub const charIsAnySlash = paths_.charIsAnySlash;
 pub const cloneNormalizingSeparators = paths_.cloneNormalizingSeparators;
 pub const fromWPath = paths_.fromWPath;
@@ -2330,7 +2368,6 @@ pub const toNTPath16 = paths_.toNTPath16;
 pub const toPath = paths_.toPath;
 pub const toPathMaybeDir = paths_.toPathMaybeDir;
 pub const toPathNormalized = paths_.toPathNormalized;
-pub const toWDirNormalized = paths_.toWDirNormalized;
 pub const toWDirPath = paths_.toWDirPath;
 pub const toWPath = paths_.toWPath;
 pub const toWPathMaybeDir = paths_.toWPathMaybeDir;
@@ -2344,13 +2381,14 @@ pub const withoutTrailingSlash = paths_.withoutTrailingSlash;
 pub const withoutTrailingSlashWindowsPath = paths_.withoutTrailingSlashWindowsPath;
 pub const basename = paths_.basename;
 
-pub const log = bun.Output.scoped(.STR, true);
+pub const log = bun.Output.scoped(.STR, .hidden);
 pub const grapheme = @import("./immutable/grapheme.zig");
 pub const CodePoint = i32;
 
 const string = []const u8;
 
 const escapeHTML_ = @import("./immutable/escapeHTML.zig");
+const escapeRegExp_ = @import("./escapeRegExp.zig");
 const paths_ = @import("./immutable/paths.zig");
 const std = @import("std");
 const unicode = @import("./immutable/unicode.zig");

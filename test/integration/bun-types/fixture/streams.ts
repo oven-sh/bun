@@ -1,9 +1,11 @@
 import { expectType } from "./utilities";
 
-new ReadableStream({
+new ReadableStream<string>({
   start(controller) {
     controller.enqueue("hello");
     controller.enqueue("world");
+    // @ts-expect-error
+    controller.enqueue(2);
     controller.close();
   },
 });

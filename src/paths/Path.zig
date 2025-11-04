@@ -227,11 +227,15 @@ pub fn AbsPath(comptime opts: Options) type {
     return Path(copy);
 }
 
+pub const AutoAbsPath = Path(.{ .kind = .abs, .sep = .auto });
+
 pub fn RelPath(comptime opts: Options) type {
     var copy = opts;
     copy.kind = .rel;
     return Path(copy);
 }
+
+pub const AutoRelPath = Path(.{ .kind = .rel, .sep = .auto });
 
 pub fn Path(comptime opts: Options) type {
     const Result = opts.ResultFn();
@@ -240,7 +244,7 @@ pub fn Path(comptime opts: Options) type {
     //     @compileError("utf16 not supported");
     // }
 
-    // const log = Output.scoped(.Path, false);
+    // const log = Output.scoped(.Path, .visible);
 
     return struct {
         _buf: opts.Buf(),
@@ -394,11 +398,6 @@ pub fn Path(comptime opts: Options) type {
             return this;
         }
         pub fn from(input: anytype) Result(@This()) {
-            switch (comptime @TypeOf(input)) {
-                []u8, []const u8, [:0]u8, [:0]const u8 => {},
-                []u16, []const u16, [:0]u16, [:0]const u16 => {},
-                else => @compileError("unsupported type: " ++ @typeName(@TypeOf(input))),
-            }
             const trimmed = switch (comptime opts.kind) {
                 .abs => trimmed: {
                     bun.debugAssert(isInputAbsolute(input));

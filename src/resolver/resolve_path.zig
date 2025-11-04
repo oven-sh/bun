@@ -37,6 +37,16 @@ inline fn nqlAtIndexCaseInsensitive(comptime string_count: comptime_int, index: 
     return false;
 }
 
+/// The given string contains separators that match the platform's path separator style.
+pub fn hasPlatformPathSeparators(input_path: []const u8) bool {
+    if (bun.Environment.isWindows) {
+        // Windows accepts both forward and backward slashes as path separators
+        return bun.strings.indexOfAny(input_path, "\\/") != null;
+    } else {
+        return bun.strings.containsChar(input_path, '/');
+    }
+}
+
 const IsSeparatorFunc = fn (char: u8) bool;
 const IsSeparatorFuncT = fn (comptime T: type, char: anytype) bool;
 const LastSeparatorFunction = fn (slice: []const u8) ?usize;
@@ -1260,7 +1270,7 @@ pub fn joinStringBufT(comptime T: type, buf: []T, parts: anytype, comptime platf
     }
 
     if (count * 2 > temp_buf.len) {
-        temp_buf = bun.default_allocator.alloc(T, count * 2) catch bun.outOfMemory();
+        temp_buf = bun.handleOom(bun.default_allocator.alloc(T, count * 2));
         free_temp_buf = true;
     }
 

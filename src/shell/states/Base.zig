@@ -53,7 +53,8 @@ const AllocScope = union(enum) {
     pub fn leakSlice(this: *AllocScope, memory: anytype) void {
         if (comptime bun.Environment.enableAllocScopes) {
             _ = @typeInfo(@TypeOf(memory)).pointer;
-            bun.assert(!this.scopedAllocator().trackExternalFree(memory, null));
+            this.scopedAllocator().trackExternalFree(memory, null) catch |err|
+                std.debug.panic("invalid free: {}", .{err});
         }
     }
 };

@@ -2,12 +2,13 @@
 #include "headers-handwritten.h"
 #include "BunBuiltinNames.h"
 #include "WebCoreJSBuiltins.h"
+#include "ZigGlobalObject.h"
 
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue IPCSerialize(JSC::JSGlobalObject* global, JSC::EncodedJSValue message, JSC::EncodedJSValue handle)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue IPCSerialize(Zig::GlobalObject* global, JSC::EncodedJSValue message, JSC::EncodedJSValue handle)
 {
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSFunction* serializeFunction = JSC::JSFunction::create(vm, global, WebCore::ipcSerializeCodeGenerator(vm), global);
+    JSC::JSFunction* serializeFunction = global->m_ipcSerializeFunction.getInitializedOnMainThread(global);
     JSC::CallData callData = JSC::getCallData(serializeFunction);
 
     JSC::MarkedArgumentBuffer args;
@@ -19,11 +20,11 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue IPCSerialize(JSC::J
     return JSC::JSValue::encode(result);
 }
 
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue IPCParse(JSC::JSGlobalObject* global, JSC::EncodedJSValue target, JSC::EncodedJSValue serialized, JSC::EncodedJSValue fd)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue IPCParse(Zig::GlobalObject* global, JSC::EncodedJSValue target, JSC::EncodedJSValue serialized, JSC::EncodedJSValue fd)
 {
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSFunction* parseFunction = JSC::JSFunction::create(vm, global, WebCore::ipcParseHandleCodeGenerator(vm), global);
+    JSC::JSFunction* parseFunction = global->m_ipcParseHandleFunction.getInitializedOnMainThread(global);
     JSC::CallData callData = JSC::getCallData(parseFunction);
 
     JSC::MarkedArgumentBuffer args;

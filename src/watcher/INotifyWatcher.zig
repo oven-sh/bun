@@ -3,7 +3,7 @@
 
 const INotifyWatcher = @This();
 
-const log = Output.scoped(.watcher, false);
+const log = Output.scoped(.watcher, .visible);
 
 // inotify events are variable-sized, so a byte buffer is used (also needed
 // since communication is done via the `read` syscall). what is notable about
@@ -94,9 +94,7 @@ pub fn init(this: *INotifyWatcher, _: []const u8) !void {
     bun.assert(!this.loaded);
     this.loaded = true;
 
-    if (bun.getenvZ("BUN_INOTIFY_COALESCE_INTERVAL")) |env| {
-        this.coalesce_interval = std.fmt.parseInt(isize, env, 10) catch 100_000;
-    }
+    this.coalesce_interval = std.math.cast(isize, bun.env_var.BUN_INOTIFY_COALESCE_INTERVAL.get()) orelse 100_000;
 
     // TODO: convert to bun.sys.Error
     this.fd = .fromNative(try std.posix.inotify_init1(IN.CLOEXEC));
@@ -352,6 +350,7 @@ fn processINotifyEventBatch(this: *bun.Watcher, event_count: usize, temp_name_li
     defer this.mutex.unlock();
     if (this.running) {
         // all_events.len == 0 is checked above, so last_event_index + 1 is safe
+        this.writeTraceEvents(all_events[0 .. last_event_index + 1], this.changed_filepaths[0..name_off]);
         this.onFileUpdate(this.ctx, all_events[0 .. last_event_index + 1], this.changed_filepaths[0..name_off], this.watchlist);
     }
 

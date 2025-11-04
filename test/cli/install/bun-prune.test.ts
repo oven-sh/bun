@@ -399,7 +399,11 @@ describe.concurrent("bun prune", () => {
     expect(existsSync(join(String(dir), "node_modules/lodash"))).toBe(true);
   });
 
-  // TODO(bun-1): This test fails in debug builds due to workspace installation bug
+  // TODO: This test is skipped because debug builds don't auto-install workspace package dependencies.
+  // Workspace packages and their dependencies (e.g., packages/pkg1 and its lodash dependency) aren't
+  // installed in node_modules during `bun install` in debug builds, even though the lockfile is correct.
+  // Production builds work correctly. This is a pre-existing installation bug, not a prune issue.
+  // Related: #16162 (transitive deps in workspaces), #19782 (workspace linking on first install)
   it.skip("should work in workspaces", async () => {
     using dir = tempDir("prune-workspace", {
       "package.json": JSON.stringify({

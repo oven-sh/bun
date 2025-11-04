@@ -416,8 +416,7 @@ extern "C" napi_status napi_set_property(napi_env env, napi_value target,
 
     JSValue jsValue = toJS(value);
 
-    // Ignoring the return value matches JS sloppy mode
-    (void)object->methodTable()->put(object, globalObject, identifier, jsValue, slot);
+    (void)object->putInline(globalObject, identifier, jsValue, slot);
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }
 
@@ -432,12 +431,13 @@ extern "C" napi_status napi_set_element(napi_env env, napi_value object_,
     JSValue value = toJS(value_);
     NAPI_RETURN_EARLY_IF_FALSE(env, !object.isEmpty() && !value.isEmpty(), napi_invalid_arg);
 
+    auto globalObject = toJS(env);
     JSObject* jsObject = object.getObject();
     NAPI_RETURN_EARLY_IF_FALSE(env, jsObject, napi_array_expected);
 
-    jsObject->methodTable()->putByIndex(jsObject, toJS(env), index, value, false);
-    NAPI_RETURN_IF_EXCEPTION(env);
-    NAPI_RETURN_SUCCESS(env);
+    PutPropertySlot slot(jsObject, false);
+    (void)jsObject->putByIndexInline(globalObject, index, value, false);
+    NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }
 
 extern "C" napi_status napi_has_element(napi_env env, napi_value object_,
@@ -454,9 +454,9 @@ extern "C" napi_status napi_has_element(napi_env env, napi_value object_,
     NAPI_RETURN_EARLY_IF_FALSE(env, jsObject, napi_array_expected);
 
     bool has_property = jsObject->hasProperty(toJS(env), index);
+    NAPI_RETURN_IF_EXCEPTION(env);
     *result = has_property;
-
-    NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
+    NAPI_RETURN_SUCCESS(env);
 }
 
 extern "C" napi_status napi_has_property(napi_env env, napi_value object,
@@ -472,8 +472,13 @@ extern "C" napi_status napi_has_property(napi_env env, napi_value object,
     NAPI_RETURN_IF_EXCEPTION(env);
 
     auto keyProp = toJS(key);
-    *result = target->hasProperty(globalObject, keyProp.toPropertyKey(globalObject));
-    NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
+    JSC::PropertyName name = keyProp.toPropertyKey(globalObject);
+    NAPI_RETURN_IF_EXCEPTION(env);
+
+    bool hasProperty = target->hasProperty(globalObject, name);
+    NAPI_RETURN_IF_EXCEPTION(env);
+    *result = hasProperty;
+    NAPI_RETURN_SUCCESS(env);
 }
 
 extern "C" napi_status napi_get_date_value(napi_env env, napi_value value, double* result)
@@ -507,8 +512,26 @@ extern "C" napi_status napi_get_property(napi_env env, napi_value object,
 
     auto keyProp = toJS(key);
     JSC::EnsureStillAliveScope ensureAlive2(keyProp);
-    *result = toNapi(target->get(globalObject, keyProp.toPropertyKey(globalObject)), globalObject);
-    NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
+    PropertySlot slot(target, PropertySlot::InternalMethodType::Get);
+    auto propertyName = keyProp.toPropertyKey(globalObject);
+    NAPI_RETURN_IF_EXCEPTION(env);
+
+    const auto index = parseIndex(propertyName);
+
+    bool hasProperty = index ? target->getPropertySlot(globalObject, *index, slot)
+                             : target->getNonIndexPropertySlot(globalObject, propertyName, slot);
+
+    NAPI_RETURN_IF_EXCEPTION(env);
+
+    if (!hasProperty) {
+        *result = toNapi(jsUndefined(), globalObject);
+    } else {
+        JSValue resultValue = slot.getValue(globalObject, propertyName);
+        NAPI_RETURN_IF_EXCEPTION(env);
+        *result = toNapi(resultValue, globalObject);
+    }
+
+    NAPI_RETURN_SUCCESS(env);
 }
 
 extern "C" napi_status napi_delete_property(napi_env env, napi_value object,
@@ -524,7 +547,11 @@ extern "C" napi_status napi_delete_property(napi_env env, napi_value object,
     NAPI_RETURN_IF_EXCEPTION(env);
 
     auto keyProp = toJS(key);
-    auto deleteResult = target->deleteProperty(globalObject, keyProp.toPropertyKey(globalObject));
+    auto name = JSC::PropertyName(keyProp.toPropertyKey(globalObject));
+    NAPI_RETURN_IF_EXCEPTION(env);
+
+    auto deleteResult = target->deleteProperty(globalObject, name);
+
     NAPI_RETURN_IF_EXCEPTION(env);
 
     if (result) [[likely]] {
@@ -550,7 +577,12 @@ extern "C" napi_status napi_has_own_property(napi_env env, napi_value object,
     JSValue keyProp = toJS(key);
     NAPI_RETURN_EARLY_IF_FALSE(env, keyProp.isString() || keyProp.isSymbol(), napi_name_expected);
 
-    *result = target->hasOwnProperty(globalObject, JSC::PropertyName(keyProp.toPropertyKey(globalObject)));
+    auto name = JSC::PropertyName(keyProp.toPropertyKey(globalObject));
+    NAPI_RETURN_IF_EXCEPTION(env);
+
+    bool hasOwnProperty = target->hasOwnProperty(globalObject, name);
+    NAPI_RETURN_IF_EXCEPTION(env);
+    *result = hasOwnProperty;
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }
 
@@ -575,11 +607,10 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
     JSC::EnsureStillAliveScope ensureAlive2(target);
 
     auto nameStr = WTF::String::fromUTF8({ utf8name, strlen(utf8name) });
-    auto identifier = JSC::Identifier::fromString(vm, WTFMove(nameStr));
-
+    auto name = JSC::PropertyName(JSC::Identifier::fromString(vm, WTFMove(nameStr)));
     PutPropertySlot slot(target, false);
 
-    target->methodTable()->put(target, globalObject, identifier, jsValue, slot);
+    target->putInline(globalObject, name, jsValue, slot);
     NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
 }
 

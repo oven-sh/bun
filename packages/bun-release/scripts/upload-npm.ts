@@ -71,7 +71,7 @@ async function buildRootModule(dryRun?: boolean) {
       js: "// Source code: https://github.com/oven-sh/bun/blob/main/packages/bun-release/scripts/npm-postinstall.ts",
     },
   });
-  write(
+  (write(
     join(cwd, "bin", "bun.exe"),
     `#!/bin/sh
 
@@ -116,7 +116,7 @@ be executing a copy of Node.js every time!
 Unfortunately, it is not possible to fix all cases on all platforms
 without *requiring* a postinstall script.
 `,
-  );
+    ));
   const os = [...new Set(platforms.map(({ os }) => os))];
   const cpu = [...new Set(platforms.map(({ arch }) => arch))];
   writeJson(join(cwd, "package.json"), {

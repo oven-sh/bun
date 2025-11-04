@@ -583,7 +583,7 @@ extern "C" napi_status napi_has_own_property(napi_env env, napi_value object,
     bool hasOwnProperty = target->hasOwnProperty(globalObject, name);
     NAPI_RETURN_IF_EXCEPTION(env);
     *result = hasOwnProperty;
-    NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
+    NAPI_RETURN_SUCCESS(env);
 }
 
 extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,

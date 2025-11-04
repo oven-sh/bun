@@ -41,6 +41,7 @@
 #include "JSCookie.h"
 #include "JSCookieMap.h"
 #include "Secrets.h"
+#include "../../../packages/bun-usockets/src/crypto/root_certs_header.h"
 
 #ifdef WIN32
 #include <ws2def.h>
@@ -567,6 +568,24 @@ JSC_DEFINE_HOST_FUNCTION(functionBunNanoseconds, (JSGlobalObject * globalObject,
     return JSValue::encode(jsNumber(time));
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionBunLoadExtraCACerts, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& globalObject = *defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = globalObject.vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto pathValue = callFrame->argument(0);
+
+    {
+        WTF::String pathString = pathValue.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode({}));
+        pathString = pathResolveWTFString(lexicalGlobalObject, pathString);
+
+        us_load_extra_ca_certs(pathString.utf8().data());
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto& globalObject = *defaultGlobalObject(lexicalGlobalObject);
@@ -756,6 +775,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     isMainThread                                   constructIsMainThread                                               ReadOnly|DontDelete|PropertyCallback
     jest                                           BunObject_callback_jest                                             DontEnum|DontDelete|Function 1
     listen                                         BunObject_callback_listen                                           DontDelete|Function 1
+    loadExtraCACerts                               functionBunLoadExtraCACerts                                         DontDelete|Function 1
     udpSocket                                      BunObject_callback_udpSocket                                        DontDelete|Function 1
     main                                           bunObjectMain                                                       DontDelete|CustomAccessor
     mmap                                           BunObject_callback_mmap                                             DontDelete|Function 1

@@ -35,7 +35,7 @@ static bool us_should_use_system_ca() {
   if (Bun__Node__UseSystemCA) {
     return true;
   }
-  
+
   // Check environment variable
   const char *use_system_ca = getenv("NODE_USE_SYSTEM_CA");
   return use_system_ca && strcmp(use_system_ca, "1") == 0;
@@ -191,12 +191,14 @@ struct us_default_ca_certificates {
 us_default_ca_certificates* us_get_default_ca_certificates() {
   static us_default_ca_certificates default_ca_certificates = {{NULL}, NULL, NULL};
 
-  us_internal_init_root_certs(default_ca_certificates.root_cert_instances, 
+  us_internal_init_root_certs(default_ca_certificates.root_cert_instances,
                               default_ca_certificates.root_extra_cert_instances,
                               default_ca_certificates.root_system_cert_instances);
 
   return &default_ca_certificates;
 }
+
+std::mutex us_get_root_extra_cert_instances_mutex;
 
 STACK_OF(X509) *us_get_root_extra_cert_instances() {
   return us_get_default_ca_certificates()->root_extra_cert_instances;
@@ -208,8 +210,34 @@ STACK_OF(X509) *us_get_root_system_cert_instances() {
   return certs->root_system_cert_instances;
 }
 
+static X509_STORE *store;
+
+void us_load_extra_ca_certs(const char *extra_certs) {
+  if (store == NULL || !extra_certs || !extra_certs[0])
+    return;
+
+  STACK_OF(X509)* loaded = us_ssl_ctx_load_all_certs_from_file(extra_certs);
+  if (loaded) {
+    for (int i = 0; i < sk_X509_num(loaded); i++) {
+      X509 *cert = sk_X509_value(loaded, i);
+      X509_up_ref(cert);
+      X509_STORE_add_cert(store, cert);
+    }
+
+    std::unique_lock current_lock{us_get_root_extra_cert_instances_mutex};
+    auto* current = us_get_default_ca_certificates();
+    if (current->root_extra_cert_instances == NULL)
+      current->root_extra_cert_instances = loaded;
+    else {
+      for (X509 *cert; (cert = sk_X509_pop(loaded)) != NULL;)
+        sk_X509_push(current->root_extra_cert_instances, cert);
+      sk_X509_free(loaded);
+    }
+  }
+}
+
 extern "C" X509_STORE *us_get_default_ca_store() {
-  X509_STORE *store = X509_STORE_new();
+  store = X509_STORE_new();
   if (store == NULL) {
     return NULL;
   }
@@ -278,11 +306,11 @@ void us_load_system_certificates_windows(STACK_OF(X509) **system_certs) {
   if (*system_certs == NULL) {
     return;
   }
-  
+
   // Load raw certificates from Windows stores
   std::vector<RawCertificate> raw_certs;
   us_load_system_certificates_windows_raw(raw_certs);
-  
+
   // Convert each raw certificate to X509
   for (const auto& raw_cert : raw_certs) {
     const unsigned char* data = raw_cert.data.data();

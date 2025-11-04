@@ -957,6 +957,21 @@ declare module "bun" {
   ): Promise<FormData>;
 
   /**
+   * Load CA certificates from the given path and add them to the global certificate store.
+   *
+   * This works equivalently to setting $NODE_EXTRA_CA_CERTS except at run-time:
+   * `path` must be a valid PEM certificate chain, otherwise this is a no-op.
+   *
+   * @param path The CA certificates.
+   *
+   * @example
+   * ```ts
+   * Bun.loadExtraCACerts("/etc/certs/ca.pem");
+   * ```
+   */
+  function loadExtraCACerts(path: string): void;
+
+  /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
    *
    * @param stream The stream to consume

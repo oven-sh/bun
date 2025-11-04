@@ -588,6 +588,8 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
                 const connection_value = this.headerStr(header_values[i]);
                 if (std.ascii.eqlIgnoreCase(connection_value, "close")) {
                     this.flags.disable_keepalive = true;
+                } else if (std.ascii.eqlIgnoreCase(connection_value, "keep-alive")) {
+                    this.flags.disable_keepalive = false;
                 }
             },
             hashHeaderConst("if-modified-since") => {
@@ -2235,8 +2237,11 @@ pub fn handleResponseMetadata(
             },
             hashHeaderConst("Connection") => {
                 if (response.status_code >= 200 and response.status_code <= 299) {
-                    if (!strings.eqlComptime(header.value, "keep-alive")) {
+                    // HTTP headers are case-insensitive (RFC 7230)
+                    if (std.ascii.eqlIgnoreCase(header.value, "close")) {
                         this.state.flags.allow_keepalive = false;
+                    } else if (std.ascii.eqlIgnoreCase(header.value, "keep-alive")) {
+                        this.state.flags.allow_keepalive = true;
                     }
                 }
             },

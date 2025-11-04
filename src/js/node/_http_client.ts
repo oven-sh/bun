@@ -268,7 +268,7 @@ function ClientRequest(input, options, cb) {
     const method = this[kMethod];
 
     let keepalive = true;
-    const agentKeepalive = this[kAgent]?.keepalive;
+    const agentKeepalive = this[kAgent]?.keepAlive;
     if (agentKeepalive !== undefined) {
       keepalive = agentKeepalive;
     }

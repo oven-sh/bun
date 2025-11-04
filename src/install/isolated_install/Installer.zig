@@ -927,7 +927,7 @@ pub const Installer = struct {
 
                     installer.appendStorePath(&pkg_cwd, this.entry_id);
 
-                    if (pkg_res.tag != .root and (pkg_res.tag == .workspace or is_trusted)) enqueueLifecycleScripts: {
+                    if (pkg_res.tag != .root and (pkg_res.tag == .workspace or is_trusted)) enqueue_lifecycle_scripts: {
                         var pkg_scripts: Package.Scripts = pkg_script_lists[pkg_id];
                         if (is_trusted and manager.postinstall_optimizer.shouldIgnoreLifecycleScripts(
                             pkg_name_hashes[pkg_id],
@@ -937,7 +937,7 @@ pub const Installer = struct {
                             manager.options.os,
                             null,
                         )) {
-                            break :enqueueLifecycleScripts;
+                            break :enqueue_lifecycle_scripts;
                         }
 
                         var log = bun.logger.Log.init(bun.default_allocator);

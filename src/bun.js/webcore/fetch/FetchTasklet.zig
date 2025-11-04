@@ -1456,14 +1456,22 @@ pub const FetchTasklet = struct {
     }
 
     pub fn onBodyReceived(this: *FetchTasklet) bun.JSTerminated!void {
-        const success = this.shared.result.isSuccess();
+        // === ACQUIRE LOCK - Copy out shared state before doing JS work ===
+        var locked = this.lockShared();
+        const success = locked.shared.result.isSuccess();
+        const has_more = locked.shared.result.has_more;
+        locked.unlock();
+
         const globalThis = this.main_thread.global_this;
         // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
         var buffer_reset = true;
-        log("onBodyReceived success={} has_more={}", .{ success, this.shared.result.has_more });
+        log("onBodyReceived success={} has_more={}", .{ success, has_more });
         defer {
             if (buffer_reset) {
-                this.shared.scheduled_response_buffer.reset();
+                // Re-lock to reset buffer
+                var cleanup_locked = this.lockShared();
+                defer cleanup_locked.unlock();
+                cleanup_locked.shared.scheduled_response_buffer.reset();
             }
         }
 
@@ -1507,11 +1515,14 @@ pub const FetchTasklet = struct {
             if (readable.ptr == .Bytes) {
                 readable.ptr.Bytes.size_hint = this.getSizeHint();
                 // body can be marked as used but we still need to pipe the data
-                const scheduled_response_buffer = &this.shared.scheduled_response_buffer.list;
 
+                // Lock to access scheduled_response_buffer
+                locked = this.lockShared();
+                const scheduled_response_buffer = &locked.shared.scheduled_response_buffer.list;
                 const chunk = scheduled_response_buffer.items;
+                locked.unlock();
 
-                if (this.shared.result.has_more) {
+                if (has_more) {
                     try readable.ptr.Bytes.onData(
                         .{
                             .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
@@ -1542,11 +1553,13 @@ pub const FetchTasklet = struct {
             if (response.getBodyReadableStream(globalThis)) |readable| {
                 log("onBodyReceived CurrentResponse BodyReadableStream", .{});
                 if (readable.ptr == .Bytes) {
-                    const scheduled_response_buffer = this.shared.scheduled_response_buffer.list;
-
+                    // Lock to access scheduled_response_buffer
+                    locked = this.lockShared();
+                    const scheduled_response_buffer = locked.shared.scheduled_response_buffer.list;
                     const chunk = scheduled_response_buffer.items;
+                    locked.unlock();
 
-                    if (this.shared.result.has_more) {
+                    if (has_more) {
                         try readable.ptr.Bytes.onData(
                             .{
                                 .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
@@ -1570,8 +1583,19 @@ pub const FetchTasklet = struct {
 
             // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
             buffer_reset = false;
-            if (!this.shared.result.has_more) {
-                var scheduled_response_buffer = this.shared.scheduled_response_buffer.list;
+            if (!has_more) {
+                // Lock to access and modify scheduled_response_buffer
+                locked = this.lockShared();
+                var scheduled_response_buffer = locked.shared.scheduled_response_buffer.list;
+                locked.shared.scheduled_response_buffer = .{
+                    .allocator = bun.default_allocator,
+                    .list = .{
+                        .items = &.{},
+                        .capacity = 0,
+                    },
+                };
+                locked.unlock();
+
                 const body = response.getBodyValue();
                 // done resolve body
                 var old = body.*;
@@ -1582,14 +1606,6 @@ pub const FetchTasklet = struct {
                 };
                 body.* = body_value;
                 log("onBodyReceived body_value length={}", .{body_value.InternalBlob.bytes.items.len});
-
-                this.shared.scheduled_response_buffer = .{
-                    .allocator = bun.default_allocator,
-                    .list = .{
-                        .items = &.{},
-                        .capacity = 0,
-                    },
-                };
 
                 if (old == .Locked) {
                     log("onBodyReceived old.resolve", .{});
@@ -1649,9 +1665,13 @@ pub const FetchTasklet = struct {
     /// - Path 2: Stream via Response.getBodyReadableStream (lines 1163-1194)
     fn streamBodyToJS(this: *FetchTasklet) bun.JSTerminated!void {
         const globalThis = this.main_thread.global_this;
-        const scheduled_response_buffer = &this.shared.scheduled_response_buffer.list;
+
+        // === ACQUIRE LOCK - Copy out shared state ===
+        var locked = this.lockShared();
+        const scheduled_response_buffer = &locked.shared.scheduled_response_buffer.list;
         const chunk = scheduled_response_buffer.items;
-        const has_more = this.shared.result.has_more;
+        const has_more = locked.shared.result.has_more;
+        locked.unlock();
 
         // Early exit if no data and more coming
         if (chunk.len == 0 and has_more) {
@@ -1733,10 +1753,26 @@ pub const FetchTasklet = struct {
         // Data is already in scheduled_response_buffer (accumulated by callback)
         // This function is called when we decide to keep buffering
 
+        // === ACQUIRE LOCK - Check if request is complete ===
+        var locked = this.lockShared();
+        const has_more = locked.shared.result.has_more;
+        locked.unlock();
+
         // If request is complete, finalize the buffered body
-        if (!this.shared.result.has_more) {
+        if (!has_more) {
             if (this.getCurrentResponse()) |response| {
-                var scheduled_response_buffer = this.shared.scheduled_response_buffer.list;
+                // Lock to access and modify scheduled_response_buffer
+                locked = this.lockShared();
+                var scheduled_response_buffer = locked.shared.scheduled_response_buffer.list;
+                locked.shared.scheduled_response_buffer = .{
+                    .allocator = bun.default_allocator,
+                    .list = .{
+                        .items = &.{},
+                        .capacity = 0,
+                    },
+                };
+                locked.unlock();
+
                 const body = response.getBodyValue();
 
                 // Transfer buffer to body
@@ -1749,15 +1785,6 @@ pub const FetchTasklet = struct {
                 body.* = body_value;
 
                 log("bufferBodyData body_value length={}", .{body_value.InternalBlob.bytes.items.len});
-
-                // Reset buffer
-                this.shared.scheduled_response_buffer = .{
-                    .allocator = bun.default_allocator,
-                    .list = .{
-                        .items = &.{},
-                        .capacity = 0,
-                    },
-                };
 
                 // Resolve any pending promise
                 if (old == .Locked) {
@@ -1779,10 +1806,13 @@ pub const FetchTasklet = struct {
     /// This is a helper function for explicit buffering operations.
     /// Unlike bufferBodyData(), this takes data as a parameter and appends it.
     fn bufferBodyDataDirect(this: *FetchTasklet, data: []const u8) void {
-        // Append data to scheduled buffer
-        _ = this.shared.scheduled_response_buffer.write(data) catch {
+        // === ACQUIRE LOCK - Append data to scheduled buffer ===
+        var locked = this.lockShared();
+        defer locked.unlock();
+
+        _ = locked.shared.scheduled_response_buffer.write(data) catch {
             // OOM - mark as failed
-            this.shared.result.fail = error.OutOfMemory;
+            locked.shared.result.fail = error.OutOfMemory;
             log("bufferBodyDataDirect OOM", .{});
         };
     }
@@ -2010,9 +2040,15 @@ pub const FetchTasklet = struct {
                         this.main_thread.abort_reason.set(globalObject, check_result);
                         this.shared.signal_store.aborted.store(true, .monotonic);
                         this.main_thread.tracker.didCancel(this.main_thread.global_this);
+
+                        // === ACQUIRE LOCK - Access http and set fail ===
+                        var locked = this.lockShared();
+                        const http_ptr = locked.shared.http;
+                        locked.shared.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+                        locked.unlock();
+
                         // we need to abort the request
-                        if (this.shared.http) |http_| http.http_thread.scheduleShutdown(http_);
-                        this.shared.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+                        if (http_ptr) |http_| http.http_thread.scheduleShutdown(http_);
                         return false;
                     };
                     var hostname: bun.String = bun.String.cloneUTF8(certificate_info.hostname);
@@ -2030,11 +2066,16 @@ pub const FetchTasklet = struct {
                         this.shared.signal_store.aborted.store(true, .monotonic);
                         this.main_thread.tracker.didCancel(this.main_thread.global_this);
 
+                        // === ACQUIRE LOCK - Access http and set fail ===
+                        var locked = this.lockShared();
+                        const http_ptr = locked.shared.http;
+                        locked.shared.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+                        locked.unlock();
+
                         // we need to abort the request
-                        if (this.shared.http) |http_| {
+                        if (http_ptr) |http_| {
                             http.http_thread.scheduleShutdown(http_);
                         }
-                        this.shared.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
                         return false;
                     }
 
@@ -2079,31 +2120,40 @@ pub const FetchTasklet = struct {
     }
 
     pub fn onReject(this: *FetchTasklet) Body.Value.ValueError {
-        bun.assert(this.shared.result.fail != null);
+        // === ACQUIRE LOCK - Copy out error state ===
+        var locked = this.lockShared();
+        bun.assert(locked.shared.result.fail != null);
+
+        const abort_reason = locked.shared.result.abortReason();
+        const metadata = locked.shared.metadata;
+        const http_ptr = locked.shared.http;
+        const fail_error = locked.shared.result.fail.?;
+        locked.unlock();
+
         log("onReject", .{});
 
         if (this.getAbortError()) |err| {
             return err;
         }
 
-        if (this.shared.result.abortReason()) |reason| {
+        if (abort_reason) |reason| {
             return .{ .AbortReason = reason };
         }
 
         // some times we don't have metadata so we also check http.url
-        const path = if (this.shared.metadata) |metadata|
-            bun.String.cloneUTF8(metadata.url)
-        else if (this.shared.http) |http_|
+        const path = if (metadata) |meta|
+            bun.String.cloneUTF8(meta.url)
+        else if (http_ptr) |http_|
             bun.String.cloneUTF8(http_.url.href)
         else
             bun.String.empty;
 
         const fetch_error = jsc.SystemError{
-            .code = bun.String.static(switch (this.shared.result.fail.?) {
+            .code = bun.String.static(switch (fail_error) {
                 error.ConnectionClosed => "ECONNRESET",
                 else => |e| @errorName(e),
             }),
-            .message = switch (this.shared.result.fail.?) {
+            .message = switch (fail_error) {
                 error.ConnectionClosed => bun.String.static("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
                 error.FailedToOpenSocket => bun.String.static("Was there a typo in the url or port?"),
                 error.TooManyRedirects => bun.String.static("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
@@ -2240,9 +2290,13 @@ pub const FetchTasklet = struct {
     }
 
     fn getSizeHint(this: *FetchTasklet) Blob.SizeType {
-        return switch (this.shared.body_size) {
-            .content_length => @truncate(this.shared.body_size.content_length),
-            .total_received => @truncate(this.shared.body_size.total_received),
+        // === ACQUIRE LOCK - Read body_size ===
+        var locked = this.lockShared();
+        defer locked.unlock();
+
+        return switch (locked.shared.body_size) {
+            .content_length => @truncate(locked.shared.body_size.content_length),
+            .total_received => @truncate(locked.shared.body_size.total_received),
             .unknown => 0,
         };
     }
@@ -2251,7 +2305,13 @@ pub const FetchTasklet = struct {
         if (this.getAbortError()) |err| {
             return .{ .Error = err };
         }
-        if (this.shared.lifecycle == .response_awaiting_body_access) {
+
+        // === ACQUIRE LOCK - Read lifecycle ===
+        var locked = this.lockShared();
+        const lifecycle = locked.shared.lifecycle;
+        locked.unlock();
+
+        if (lifecycle == .response_awaiting_body_access) {
             const response = Body.Value{
                 .Locked = .{
                     .size_hint = this.getSizeHint(),
@@ -2283,17 +2343,22 @@ pub const FetchTasklet = struct {
 
     fn toResponse(this: *FetchTasklet) Response {
         log("toResponse", .{});
-        bun.assert(this.shared.metadata != null);
-        // at this point we always should have metadata
-        const metadata = this.shared.metadata.?;
-        const http_response = metadata.response;
-        if (this.shared.result.has_more) {
+
+        // === ACQUIRE LOCK - Read shared state ===
+        var locked = this.lockShared();
+        bun.assert(locked.shared.metadata != null);
+        const metadata = locked.shared.metadata.?;
+        const has_more = locked.shared.result.has_more;
+        const redirected = locked.shared.result.redirected;
+
+        if (has_more) {
             // Transition to response_awaiting_body_access when body hasn't been fully received yet
             // Must lock because lifecycle is shared with HTTP thread
-            var locked = this.lockShared();
-            defer locked.unlock();
             locked.transitionTo(.response_awaiting_body_access);
         }
+        locked.unlock();
+
+        const http_response = metadata.response;
         return Response.init(
             .{
                 .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
@@ -2304,17 +2369,24 @@ pub const FetchTasklet = struct {
                 .value = this.toBodyValue(),
             },
             bun.String.createAtomIfPossible(metadata.url),
-            this.shared.result.redirected,
+            redirected,
         );
     }
 
     fn ignoreRemainingResponseBody(this: *FetchTasklet) void {
         log("ignoreRemainingResponseBody", .{});
+
+        // === ACQUIRE LOCK - Access http pointer ===
+        var locked = this.lockShared();
+        const http_ptr = locked.shared.http;
+        locked.unlock();
+
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
-        if (this.shared.http) |http_| {
+        if (http_ptr) |http_| {
             http_.enableResponseBodyStreaming();
         }
+
         // we should not keep the process alive if we are ignoring the body
         const vm = this.main_thread.javascript_vm;
         this.main_thread.poll_ref.unref(vm);
@@ -2328,6 +2400,7 @@ pub const FetchTasklet = struct {
         }
 
         // Signal to ignore remaining body data (checked via shouldIgnoreBodyData)
+        // Atomic access - no lock needed
         this.shared.abort_requested.store(true, .release);
     }
 
@@ -2672,8 +2745,8 @@ pub const FetchTasklet = struct {
         );
 
         var batch = bun.ThreadPool.Batch{};
-        node.http.?.schedule(allocator, &batch);
-        node.poll_ref.ref(global.bunVM());
+        node.shared.http.?.schedule(allocator, &batch);
+        node.main_thread.poll_ref.ref(global.bunVM());
 
         // increment ref so we can keep it alive until the http client is done
         node.ref();
@@ -2732,19 +2805,19 @@ pub const FetchTasklet = struct {
             task.shared.result.metadata = null;
         }
 
-        task.body_size = result.body_size;
+        task.shared.body_size = result.body_size;
 
         // Copy response body data to shared buffer
         const success = result.isSuccess();
-        task.response_buffer = result.body.?.*;
+        task.shared.response_buffer = result.body.?.*;
 
         if (shouldIgnoreBodyData(task.shared.lifecycle, task.shared.abort_requested.load(.acquire))) {
             // Ignoring data - clear buffers
-            task.response_buffer.reset();
+            task.shared.response_buffer.reset();
 
-            if (task.scheduled_response_buffer.list.capacity > 0) {
-                task.scheduled_response_buffer.deinit();
-                task.scheduled_response_buffer = .{
+            if (task.shared.scheduled_response_buffer.list.capacity > 0) {
+                task.shared.scheduled_response_buffer.deinit();
+                task.shared.scheduled_response_buffer = .{
                     .allocator = bun.default_allocator,
                     .list = .{
                         .items = &.{},
@@ -2756,22 +2829,22 @@ pub const FetchTasklet = struct {
             if (success and result.has_more) {
                 // Ignoring body with more data - don't schedule callback
                 // Reset flag so future callbacks can schedule
-                task.has_schedule_callback.store(false, .release);
+                task.shared.has_schedule_callback.store(false, .release);
                 return;
             }
         } else {
             // Accumulate data into scheduled buffer
             if (success) {
                 // Handle OOM gracefully under lock
-                _ = task.scheduled_response_buffer.write(task.response_buffer.list.items) catch blk: {
+                _ = task.shared.scheduled_response_buffer.write(task.shared.response_buffer.list.items) catch blk: {
                     // OOM while copying data - mark as failed
-                    task.result.fail = error.OutOfMemory;
+                    task.shared.result.fail = error.OutOfMemory;
                     // Continue to schedule callback so main thread can handle error
                     break :blk 0;
                 };
             }
             // Reset for reuse by HTTP client
-            task.response_buffer.reset();
+            task.shared.response_buffer.reset();
         }
 
         // === RELEASE LOCK - Schedule to main thread outside lock ===
@@ -2783,7 +2856,7 @@ pub const FetchTasklet = struct {
 
         // Enqueue callback to main thread
         // Note: concurrent_task.from() does not allocate, safe to call here
-        task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
+        task.main_thread.javascript_vm.eventLoop().enqueueTaskConcurrent(task.main_thread.concurrent_task.from(task, .manual_deinit));
     }
 };
 

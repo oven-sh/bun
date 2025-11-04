@@ -10,7 +10,7 @@ export {};
  */
 interface BunConsumerConvenienceMethods {
   /**
-   * Consume a text
+   * Consume as text
    */
   text(): Promise<string>;
 

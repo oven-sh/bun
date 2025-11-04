@@ -244,9 +244,6 @@ fn shouldIgnoreBodyData(lifecycle: FetchLifecycle, abort_requested: bool) bool {
 
 /// Data shared between main thread and HTTP thread.
 /// ALL access must be protected by mutex.
-/// NOTE: This struct is infrastructure from Phase 2 that will be fully integrated
-/// in a future phase. Currently FetchTasklet has these fields directly (lines 681-688).
-/// TODO: Migrate FetchTasklet fields into this struct for better encapsulation.
 const SharedData = struct {
     /// Mutex protecting all mutable fields below
     mutex: bun.Mutex,
@@ -502,7 +499,8 @@ const FetchError = union(enum) {
             .none => .js_undefined,
             .http_error => {
                 _ = global;
-                // TODO: Implement anyerror to JSValue conversion
+                // NOTE: Currently returns undefined for http_error cases.
+                // Future enhancement: Convert anyerror to JSValue with error details.
                 return .js_undefined;
             },
             .abort_error => |strong| strong.get(),
@@ -880,9 +878,11 @@ pub const FetchTasklet = struct {
         this.clearSink();
     }
 
-    // XXX: 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void' but 'fn (*FetchTasklet) void' does not
     /// Destroy the FetchTasklet and free all resources.
     /// Must be called from main thread when ref_count reaches 0.
+    /// NOTE: Returns `error{}!void` for compatibility with callback coercion.
+    /// Zig type system: `fn (*T) error{}!void` coerces to `fn (*T) bun.JSError!void`,
+    /// but `fn (*T) void` does not.
     pub fn deinit(this: *FetchTasklet) error{}!void {
         log("deinit", .{});
 
@@ -1968,8 +1968,9 @@ pub const FetchTasklet = struct {
                 },
             };
         }
-        // TODO is this necessary? the http client already sets the redirect type,
-        // so manually setting it here seems redundant
+        // Disable redirects for manual/error redirect modes.
+        // NOTE: AsyncHTTP.init sets client.redirect_type, but does not set remaining_redirect_count.
+        // We must explicitly set remaining_redirect_count to 0 to prevent redirects.
         if (fetch_options.redirect_type != FetchRedirect.follow) {
             fetch_tasklet.shared.http.?.client.remaining_redirect_count = 0;
         }
@@ -2030,7 +2031,9 @@ pub const FetchTasklet = struct {
     /// Called after HTTP thread signals buffer is drained.
     /// THREAD: Main thread
     /// REF COUNTING: Releases ref added in onWriteRequestDataDrain()
-    // XXX: 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void' but 'fn (*FetchTasklet) void' does not
+    /// NOTE: Returns `error{}!void` for compatibility with callback coercion.
+    /// Zig type system: `fn (*T) error{}!void` coerces to `fn (*T) bun.JSError!void`,
+    /// but `fn (*T) void` does not.
     pub fn resumeRequestDataStream(this: *FetchTasklet) error{}!void {
         // Release ref from onWriteRequestDataDrain() (cross-thread handoff complete)
         defer this.deref();

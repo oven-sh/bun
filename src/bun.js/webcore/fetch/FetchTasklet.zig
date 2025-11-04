@@ -637,7 +637,6 @@ pub const FetchTasklet = struct {
     reject_unauthorized: bool = true,
     // Custom Hostname
     hostname: ?[]u8 = null,
-    is_waiting_abort: bool = false,
 
     // === UNIFIED ERROR HANDLING (Phase 7 Step 8) ===
     /// Single source of truth for all errors
@@ -769,20 +768,13 @@ pub const FetchTasklet = struct {
         return FetchTasklet{};
     }
 
-    fn clearSink(this: *FetchTasklet) void {
-        if (this.sink) |sink| {
-            this.sink = null;
-            sink.deref();
-        }
-        if (this.request_body_streaming_buffer) |buffer| {
-            this.request_body_streaming_buffer = null;
-            buffer.clearDrainCallback();
-            buffer.deref();
-        }
-    }
+    // XXX: 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void' but 'fn (*FetchTasklet) void' does not
+    pub fn deinit(this: *FetchTasklet) error{}!void {
+        log("deinit", .{});
 
-    fn clearData(this: *FetchTasklet) void {
-        log("clearData ", .{});
+        bun.assert(this.shared.ref_count.load(.monotonic) == 0);
+
+        // Inline clearData() - single cleanup path
         const allocator = bun.default_allocator;
         if (this.url_proxy_buffer.len > 0) {
             allocator.free(this.url_proxy_buffer);
@@ -825,19 +817,17 @@ pub const FetchTasklet = struct {
         this.abort_handling.deinit(this);
         // Clear unified error storage
         this.fetch_error.deinit();
-        // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
-        this.clearSink();
-    }
 
-    // XXX: 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void' but 'fn (*FetchTasklet) void' does not
-    pub fn deinit(this: *FetchTasklet) error{}!void {
-        log("deinit", .{});
-
-        bun.assert(this.shared.ref_count.load(.monotonic) == 0);
-
-        this.clearData();
-
-        const allocator = bun.default_allocator;
+        // Inline clearSink() - clear the sink only after the request ended otherwise we would potentially lose the last chunk
+        if (this.sink) |sink| {
+            this.sink = null;
+            sink.deref();
+        }
+        if (this.request_body_streaming_buffer) |buffer| {
+            this.request_body_streaming_buffer = null;
+            buffer.clearDrainCallback();
+            buffer.deref();
+        }
 
         if (this.shared.http) |http_| {
             this.shared.http = null;
@@ -1126,8 +1116,8 @@ pub const FetchTasklet = struct {
 
         // if we abort because of cert error
         // we wait the Http Client because we already have the response
-        // we just need to deinit
-        if (this.is_waiting_abort) {
+        // we just need to deinit - check if we're in failed state
+        if (this.shared.lifecycle == .failed) {
             return;
         }
         const promise_value = this.main_thread.promise.valueOrEmpty();
@@ -1251,8 +1241,6 @@ pub const FetchTasklet = struct {
                             error.JSTerminated => {},
                         }
                         const check_result = globalObject.tryTakeException().?;
-                        // mark to wait until deinit
-                        this.is_waiting_abort = this.shared.result.has_more;
                         // Store error in unified storage
                         this.fetch_error.set(.{ .tls_error = jsc.Strong.Optional.create(check_result, globalObject) });
                         this.shared.signal_store.aborted.store(true, .monotonic);
@@ -1274,8 +1262,6 @@ pub const FetchTasklet = struct {
 
                     // > Returns <Error> object [...] on failure
                     if (check_result.isAnyError()) {
-                        // mark to wait until deinit
-                        this.is_waiting_abort = this.shared.result.has_more;
                         // Store error in unified storage
                         this.fetch_error.set(.{ .js_error = jsc.Strong.Optional.create(check_result, globalObject) });
                         this.shared.signal_store.aborted.store(true, .monotonic);

@@ -27,7 +27,6 @@ const {
   setIsNextIncomingMessageHTTPS,
   callCloseCallback,
   emitCloseNT,
-  ConnResetException,
   NodeHTTPResponseAbortEvent,
   STATUS_CODES,
   isTlsSymbol,
@@ -43,25 +42,27 @@ const {
   setServerIdleTimeout,
   setServerCustomOptions,
   getMaxHTTPHeaderSize,
+  kBunServer,
 } = require("internal/http");
-const NumberIsNaN = Number.isNaN;
 
 const { format } = require("internal/util/inspect");
+const { ConnResetException } = require("internal/shared");
 
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
-const { kIncomingMessage } = require("node:_http_common");
-const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
+const { kIncomingMessage, chunkExpression } = require("node:_http_common");
 
 const getBunServerAllClosedPromise = $newZigFunction("node_http_binding.zig", "getBunServerAllClosedPromise", 1);
 const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
 
 const kServerResponse = Symbol("ServerResponse");
 const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
+const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const GlobalPromise = globalThis.Promise;
 const kEmptyBuffer = Buffer.alloc(0);
 const ObjectKeys = Object.keys;
 const MathMin = Math.min;
+const NumberIsNaN = Number.isNaN;
 
 let cluster;
 
@@ -85,7 +86,7 @@ function setCloseCallback(self, callback) {
 
 function assignSocketInternal(self, socket) {
   if (socket._httpMessage) {
-    throw $ERR_HTTP_SOCKET_ASSIGNED("Socket already assigned");
+    throw $ERR_HTTP_SOCKET_ASSIGNED();
   }
   socket._httpMessage = self;
   setCloseCallback(socket, onServerResponseClose);
@@ -193,6 +194,7 @@ function emitListeningNextTick(self, hostname, port) {
   }
 }
 
+type Server = import("node:http").Server;
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
   EventEmitter.$call(this);
@@ -548,6 +550,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         socket[kEnableStreaming](false);
 
         const http_res = new ResponseClass(http_req, {
+          [kBunServer]: true,
           [kHandle]: handle,
           [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
         });
@@ -754,6 +757,7 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
     }
   }
 }
+
 // uWS::HttpParserError
 enum HttpParserError {
   HTTP_PARSER_ERROR_NONE = 0,
@@ -773,10 +777,10 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
   let err;
   switch (errorCode) {
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH:
-      err = $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error");
+      err = $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error: Invalid Content-Length");
       break;
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING:
-      err = $HPE_INVALID_TRANSFER_ENCODING("Parse Error");
+      err = $HPE_INVALID_TRANSFER_ENCODING("Parse Error: Invalid Transfer-Encoding");
       break;
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_EOF:
       err = $HPE_INVALID_EOF_STATE("Parse Error");
@@ -1148,7 +1152,7 @@ function _writeHead(statusCode, reason, obj, response) {
           (response.chunkedEncoding !== true || response.hasHeader("content-length")) &&
           (response._trailer || response.hasHeader("trailer"))
         ) {
-          throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
+          throw $ERR_HTTP_TRAILER_INVALID();
         }
         // Headers in obj should override previous headers but still
         // allow explicit duplicates. To do so, we first remove any
@@ -1184,7 +1188,7 @@ function _writeHead(statusCode, reason, obj, response) {
       } else {
         response.removeHeader("content-length");
       }
-      throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
+      throw $ERR_HTTP_TRAILER_INVALID();
     }
   }
 
@@ -1194,8 +1198,8 @@ function _writeHead(statusCode, reason, obj, response) {
 Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
 
 function ServerResponse(req, options): void {
-  if (!(this instanceof ServerResponse)) return new ServerResponse(req, options);
-  OutgoingMessage.$call(this, options);
+  this[Symbol.for("meghan.kind")] = "_http_server";
+  OutgoingMessage.$call(this, { ...options, [kBunServer]: true });
 
   this.useChunkedEncodingByDefault = true;
 
@@ -1206,21 +1210,17 @@ function ServerResponse(req, options): void {
     this.write = ServerResponse_writeDeprecated;
     this.end = ServerResponse_finalDeprecated;
   }
-
   this.req = req;
   this.sendDate = true;
   this._sent100 = false;
   this[headerStateSymbol] = NodeHTTPHeaderState.none;
   this[kPendingCallbacks] = [];
   this.finished = false;
-
   // this is matching node's behaviour
   // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/lib/_http_server.js#L192
   if (req.method === "HEAD") this._hasBody = false;
-
   if (options) {
     const handle = options[kHandle];
-
     if (handle) {
       this[kHandle] = handle;
     } else {
@@ -1297,6 +1297,7 @@ ServerResponse.prototype.writeProcessing = function (cb) {
 ServerResponse.prototype.writeContinue = function (cb) {
   this.socket[kHandle]?.response?.writeContinue();
   cb?.();
+  this._sent100 = true;
 };
 
 // This end method is actually on the OutgoingMessage prototype in Node.js
@@ -1410,6 +1411,7 @@ Object.defineProperty(ServerResponse.prototype, "writable", {
   get() {
     return !this._ended || !hasServerResponseFinished(this);
   },
+  set() {},
 });
 
 ServerResponse.prototype.write = function (chunk, encoding, callback) {
@@ -1514,13 +1516,10 @@ ServerResponse.prototype.detachSocket = function (socket) {
     socket.removeListener("close", onServerResponseClose);
     socket._httpMessage = null;
   }
-
   this.socket = null;
 };
 
 ServerResponse.prototype._implicitHeader = function () {
-  if (this.headersSent) return;
-  // @ts-ignore
   this.writeHead(this.statusCode);
 };
 
@@ -1573,18 +1572,19 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
 
 ServerResponse.prototype.writeHead = function (statusCode, statusMessage, headers) {
   if (this.headersSent) {
-    throw $ERR_HTTP_HEADERS_SENT("writeHead");
+    throw $ERR_HTTP_HEADERS_SENT("write");
   }
   _writeHead(statusCode, statusMessage, headers, this);
 
   this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
+  this._header = " ";
 
   return this;
 };
 
 ServerResponse.prototype.assignSocket = function (socket) {
   if (socket._httpMessage) {
-    throw $ERR_HTTP_SOCKET_ASSIGNED("Socket already assigned");
+    throw $ERR_HTTP_SOCKET_ASSIGNED();
   }
   socket._httpMessage = this;
   socket.once("close", onServerResponseClose);

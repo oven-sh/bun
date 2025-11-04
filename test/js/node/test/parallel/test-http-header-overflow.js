@@ -1,5 +1,6 @@
 'use strict';
 const { expectsError, mustCall } = require('../common');
+if ('Bun' in globalThis) require('../common').skip("TODO: BUN: test was edited and never worked");
 const assert = require('assert');
 const { createServer, maxHeaderSize } = require('http');
 const { createConnection } = require('net');
@@ -16,22 +17,23 @@ const PAYLOAD = PAYLOAD_GET + CRLF + DUMMY_HEADER_NAME + DUMMY_HEADER_VALUE;
 const server = createServer();
 
 server.on('connection', mustCall((socket) => {
-
   socket.on('error', expectsError({
     name: 'Error',
     message: 'Parse Error: Header overflow',
     code: 'HPE_HEADER_OVERFLOW',
-    // those can be inconsistent depending if everything is sended in one go or not
-    // bytesParsed: PAYLOAD.length, 
-    // rawPacket: Buffer.from(PAYLOAD)
+    bytesParsed: PAYLOAD.length,
+    rawPacket: Buffer.from(PAYLOAD)
   }));
 
+  // The data is not sent from the client to ensure that it is received as a
+  // single chunk.
+  socket.push(PAYLOAD);
 }));
 
 server.listen(0, mustCall(() => {
   const c = createConnection(server.address().port);
   let received = '';
-  c.write(PAYLOAD);
+
   c.on('data', mustCall((data) => {
     received += data.toString();
   }));

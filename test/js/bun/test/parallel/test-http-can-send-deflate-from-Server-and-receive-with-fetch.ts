@@ -7,8 +7,8 @@ const { expect } = createTest(import.meta.path);
 
 await using server = createServer((req, res) => {
   expect(req.url).toBe("/hello");
-  res.writeHead(200);
   res.setHeader("content-encoding", "deflate");
+  res.writeHead(200);
 
   const inputStream = new stream.Readable();
   inputStream.push("Hello World");

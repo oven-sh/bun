@@ -1624,6 +1624,7 @@ export function rmScope(path: string) {
 export function textLockfile(version: number, pkgs: any): string {
   return JSON.stringify({
     lockfileVersion: version,
+    configVersion: 1,
     ...pkgs,
   });
 }

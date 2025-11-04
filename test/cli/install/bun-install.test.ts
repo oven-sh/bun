@@ -8380,6 +8380,7 @@ it("should handle modified git resolutions in bun.lock", async () => {
       join(package_dir, "bun.lock"),
       JSON.stringify({
         "lockfileVersion": 0,
+        "configVersion": 1,
         "workspaces": {
           "": {
             "dependencies": {

@@ -160,14 +160,12 @@ async function diagnose(
     return `${relative(fixtureDir, diagnostic.file.fileName)}:${lineAndCharacter.line + 1}:${lineAndCharacter.character + 1}`;
   }
 
-  function getMessageChain(diagnostic: ts.Diagnostic | ts.DiagnosticMessageChain): string[] {
-    if (typeof diagnostic.messageText === "string") {
-      return [diagnostic.messageText];
+  function getMessageChain(chain: string | ts.DiagnosticMessageChain): string[] {
+    if (typeof chain === "string") {
+      return [chain];
     }
 
-    const chain = diagnostic.messageText;
-
-    const messages = [diagnostic.messageText.messageText];
+    const messages = getMessageChain(chain.messageText);
 
     if (chain.next) {
       for (const next of chain.next) {
@@ -187,7 +185,7 @@ async function diagnose(
     .concat(program.emit().diagnostics)
     .map(diagnostic => ({
       line: getLine(diagnostic),
-      message: getMessageChain(diagnostic).join("\n"),
+      message: getMessageChain(diagnostic.messageText).join("\n"),
       code: diagnostic.code,
     }));
 

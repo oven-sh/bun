@@ -945,7 +945,7 @@ pub const ExecutionEntry = struct {
     repeat_count: u32,
 
     next: ?*ExecutionEntry = null,
-    skip_to: ?*ExecutionEntry = null,
+    skip_to_after: ?*ExecutionEntry = null,
 
     const AddedInPhase = enum { preload, collection, execution };
 

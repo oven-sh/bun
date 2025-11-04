@@ -27,10 +27,8 @@ pub fn StaticHashMap(comptime K: type, comptime V: type, comptime Context: type,
                 return self.hash == empty_hash;
             }
 
-            pub fn format(self: Entry, comptime layout: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-                _ = layout;
-                _ = options;
-                try writer.prints("(hash: {}, key: {}, value: {})", .{ self.hash, self.key, self.value });
+            pub fn format(self: Entry, writer: *std.Io.Writer) !void {
+                try writer.print("(hash: {}, key: {}, value: {})", .{ self.hash, self.key, self.value });
             }
         };
 

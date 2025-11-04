@@ -160,6 +160,24 @@ async function diagnose(
     return `${relative(fixtureDir, diagnostic.file.fileName)}:${lineAndCharacter.line + 1}:${lineAndCharacter.character + 1}`;
   }
 
+  function getMessageChain(diagnostic: ts.Diagnostic | ts.DiagnosticMessageChain): string[] {
+    if (typeof diagnostic.messageText === "string") {
+      return [diagnostic.messageText];
+    }
+
+    const chain = diagnostic.messageText;
+
+    const messages = [diagnostic.messageText.messageText];
+
+    if (chain.next) {
+      for (const next of chain.next) {
+        messages.push(...getMessageChain(next));
+      }
+    }
+
+    return messages;
+  }
+
   const diagnostics = ts
     .getPreEmitDiagnostics(program)
     .concat(program.getOptionsDiagnostics())
@@ -169,7 +187,7 @@ async function diagnose(
     .concat(program.emit().diagnostics)
     .map(diagnostic => ({
       line: getLine(diagnostic),
-      message: typeof diagnostic.messageText === "string" ? diagnostic.messageText : diagnostic.messageText.messageText,
+      message: getMessageChain(diagnostic).join("\n"),
       code: diagnostic.code,
     }));
 

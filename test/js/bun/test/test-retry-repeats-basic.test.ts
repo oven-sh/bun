@@ -1,5 +1,5 @@
 // Basic tests to verify retry and repeats functionality works
-import { afterEach, beforeEach, describe, expect, onTestFinished, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, onTestFinished, test, afterAll } from "bun:test";
 
 describe("retry option", () => {
   let attempts = 0;
@@ -110,5 +110,27 @@ describe("retry with onTestFinished", () => {
   );
   test("verify correct log", () => {
     expect(log).toEqual(["test-1", "onTestFinished", "test-2", "onTestFinished", "test-3", "onTestFinished"]);
+  });
+});
+
+describe("retry with inner afterAll", () => {
+  let attempts = 0;
+  let log: string[] = [];
+  test(
+    "retry with inner afterAll",
+    () => {
+      attempts++;
+      afterAll(() => {
+        log.push("inner afterAll");
+      });
+      log.push(`test-${attempts}`);
+      if (attempts < 3) {
+        throw new Error("fail");
+      }
+    },
+    { retry: 3 },
+  );
+  test("verify correct log", () => {
+    expect(log).toEqual(["test-1", "inner afterAll", "test-2", "inner afterAll", "test-3", "inner afterAll"]);
   });
 });

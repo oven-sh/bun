@@ -800,7 +800,7 @@ pub const FetchTasklet = struct {
     ///   - Ref 2: HTTP thread holds (released when HTTP completes)
     ///
     /// CALL SITES:
-    /// - clearData(): Called during FetchTasklet cleanup
+    /// - deinit(): Called during FetchTasklet cleanup
     /// - writeEndRequest(): Called when request stream ends (with or without error)
     fn clearSink(this: *FetchTasklet) void {
         // Clear sink (drop our ref - stream pipeline might still hold one)
@@ -822,14 +822,19 @@ pub const FetchTasklet = struct {
         }
     }
 
-    /// Clean up all owned resources.
-    /// Must be called from main thread (via deinit or deinitFromMainThread).
-    fn clearData(this: *FetchTasklet) void {
-        log("clearData ", .{});
-        const allocator = bun.default_allocator;
-        // url_proxy_buffer and hostname are now in shared data and cleaned up in shared.deinit()
-        // No longer need to clean them up here
+    /// Destroy the FetchTasklet and free all resources.
+    /// Must be called from main thread when ref_count reaches 0.
+    /// NOTE: Returns `error{}!void` for compatibility with callback coercion.
+    /// Zig type system: `fn (*T) error{}!void` coerces to `fn (*T) bun.JSError!void`,
+    /// but `fn (*T) void` does not.
+    pub fn deinit(this: *FetchTasklet) error{}!void {
+        log("deinit", .{});
 
+        bun.assert(this.shared.ref_count.load(.monotonic) == 0);
+
+        const allocator = bun.default_allocator;
+
+        // Clean up resources that must be handled while locked
         // Read request_stream_state early for later use
         const request_stream_waiting = blk: {
             var locked = this.shared.lock();
@@ -840,19 +845,12 @@ pub const FetchTasklet = struct {
                 locked.shared.result.certificate_info = null;
             }
 
-            // request_headers is now in shared data and cleaned up in shared.deinit()
-
             if (locked.shared.http) |http_| {
                 http_.clearData();
             }
 
-            if (locked.shared.metadata != null) {
-                locked.shared.metadata.?.deinit(allocator);
-                locked.shared.metadata = null;
-            }
-
-            locked.shared.response_buffer.deinit();
-            locked.shared.scheduled_response_buffer.deinit();
+            // Note: metadata, response_buffer, and scheduled_response_buffer
+            // are cleaned up by SharedData.deinit() below - no need to double-free
 
             // Check request_stream_state while locked
             break :blk locked.shared.request_stream_state == .waiting_start;
@@ -876,21 +874,6 @@ pub const FetchTasklet = struct {
         this.clearAbortSignal();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
         this.clearSink();
-    }
-
-    /// Destroy the FetchTasklet and free all resources.
-    /// Must be called from main thread when ref_count reaches 0.
-    /// NOTE: Returns `error{}!void` for compatibility with callback coercion.
-    /// Zig type system: `fn (*T) error{}!void` coerces to `fn (*T) bun.JSError!void`,
-    /// but `fn (*T) void` does not.
-    pub fn deinit(this: *FetchTasklet) error{}!void {
-        log("deinit", .{});
-
-        bun.assert(this.shared.ref_count.load(.monotonic) == 0);
-
-        const allocator = bun.default_allocator;
-
-        this.clearData();
 
         // Clean up container fields
         this.main_thread.deinit();

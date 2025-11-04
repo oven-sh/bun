@@ -352,7 +352,7 @@ const LockedSharedData = struct {
 
 /// Request headers with explicit ownership tracking.
 /// Encapsulates the "do I need to free this?" logic that was previously
-/// scattered across clearData() and other cleanup paths.
+/// scattered across deinit() and other cleanup paths.
 ///
 /// OWNERSHIP MODEL:
 /// - Headers created from FetchHeaders are OWNED (must be freed)
@@ -479,7 +479,7 @@ const ResponseMetadataHolder = struct {
 
 /// Request body with explicit ownership and lifecycle management.
 /// Encapsulates the "do I own this resource?" logic that was previously
-/// scattered across clearData() and other cleanup paths.
+/// scattered across deinit() and other cleanup paths.
 ///
 /// NOTE: This is the new implementation with explicit ownership tracking.
 /// The old HTTPRequestBody is still in use inside FetchTasklet.
@@ -1075,7 +1075,7 @@ pub const FetchTasklet = struct {
     /// 1. Created in fetch.zig, initially set to url.href
     /// 2. May be reallocated to concatenate proxy string (url + proxy in single buffer)
     /// 3. Ownership transferred to FetchTasklet during initialization
-    /// 4. FetchTasklet responsible for freeing in clearData()
+    /// 4. FetchTasklet responsible for freeing in deinit()
     /// 5. After transfer, fetch.zig sets local copy to "" to prevent double-free
     ///
     /// BUFFER LAYOUT:
@@ -1095,7 +1095,7 @@ pub const FetchTasklet = struct {
     /// }
     /// ```
     /// However, the current pattern is already clear and well-established in the codebase.
-    /// The explicit `allocator.free()` in clearData() is simple and obvious.
+    /// The explicit `allocator.free()` in deinit() is simple and obvious.
     url_proxy_buffer: []const u8 = "",
     reject_unauthorized: bool = true,
 
@@ -1110,7 +1110,7 @@ pub const FetchTasklet = struct {
     /// 2. Allocated from Host header value using toOwnedSliceZ()
     /// 3. Ownership transferred to FetchTasklet during initialization
     /// 4. Used in checkServerIdentity() to validate TLS certificate hostname
-    /// 5. Automatically freed in clearData() via bun.ptr.Owned.deinit()
+    /// 5. Automatically freed in deinit() via bun.ptr.Owned.deinit()
     ///
     /// ALLOCATION:
     /// - Only allocated if custom checkServerIdentity function is provided
@@ -1178,22 +1178,6 @@ pub const FetchTasklet = struct {
 
             vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinitFromMainThread));
         }
-    }
-
-    /// === PHASE 7 STEP 2: Transitional helper methods ===
-    /// These methods provide access to data through the new structs while
-    /// maintaining compatibility with existing direct field access.
-    /// During migration, code can be gradually updated to use these methods
-    /// instead of direct field access.
-    /// Lock shared data for exclusive access.
-    /// Returns RAII wrapper that auto-unlocks on scope exit.
-    inline fn lockShared(this: *FetchTasklet) LockedSharedData {
-        return this.shared.lock();
-    }
-
-    /// Assert we're on the main thread (debug builds only).
-    inline fn assertMainThread(this: *const FetchTasklet) void {
-        this.main_thread.assertMainThread();
     }
 
     pub const HTTPRequestBody = union(enum) {
@@ -1299,7 +1283,7 @@ pub const FetchTasklet = struct {
     /// - Buffer: We hold 1 ref, sink may hold another. We drop our ref here.
     ///
     /// This is called from:
-    /// 1. clearData() - Normal cleanup path when request completes
+    /// 1. deinit() - Normal cleanup path when request completes
     /// 2. Error paths - When streaming needs to be aborted
     fn clearRequestStreaming(this: *FetchTasklet) void {
         // Clear sink (drop our ref - stream might still hold one)
@@ -1325,10 +1309,20 @@ pub const FetchTasklet = struct {
         this.clearRequestStreaming();
     }
 
-    /// Cleanup function that frees all owned resources.
-    /// This is the single cleanup path for FetchTasklet's owned data.
-    fn clearData(this: *FetchTasklet) void {
-        log("clearData ", .{});
+    /// Helper function to ensure deinit happens on main thread.
+    /// Called via enqueueTaskConcurrent from derefFromThread.
+    // XXX: 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void' but 'fn (*FetchTasklet) void' does not
+    fn deinitFromMainThread(this: *FetchTasklet) error{}!void {
+        bun.debugAssert(this.main_thread.javascript_vm.isMainThread());
+        this.deinit() catch |err| switch (err) {};
+    }
+
+    // XXX: 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void' but 'fn (*FetchTasklet) void' does not
+    pub fn deinit(this: *FetchTasklet) error{}!void {
+        log("deinit", .{});
+
+        bun.assert(this.shared.ref_count.load(.monotonic) == 0);
+
         const allocator = bun.default_allocator;
 
         // Free url_proxy_buffer (see field documentation for ownership model)
@@ -1375,29 +1369,10 @@ pub const FetchTasklet = struct {
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
         this.clearSink();
 
-        // === PHASE 7 STEP 2: Cleanup new thread safety fields ===
+        // Cleanup thread safety wrapper fields
         this.main_thread.deinit();
         this.shared.deinit();
         allocator.destroy(this.shared);
-    }
-
-    /// Helper function to ensure deinit happens on main thread.
-    /// Called via enqueueTaskConcurrent from derefFromThread.
-    // XXX: 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void' but 'fn (*FetchTasklet) void' does not
-    fn deinitFromMainThread(this: *FetchTasklet) error{}!void {
-        bun.debugAssert(this.main_thread.javascript_vm.isMainThread());
-        this.deinit() catch |err| switch (err) {};
-    }
-
-    // XXX: 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void' but 'fn (*FetchTasklet) void' does not
-    pub fn deinit(this: *FetchTasklet) error{}!void {
-        log("deinit", .{});
-
-        bun.assert(this.shared.ref_count.load(.monotonic) == 0);
-
-        this.clearData();
-
-        const allocator = bun.default_allocator;
 
         if (this.shared.http) |http_| {
             this.shared.http = null;
@@ -1478,7 +1453,7 @@ pub const FetchTasklet = struct {
 
     pub fn onBodyReceived(this: *FetchTasklet) bun.JSTerminated!void {
         // === ACQUIRE LOCK - Copy out shared state before doing JS work ===
-        var locked = this.lockShared();
+        var locked = this.shared.lock();
         const success = locked.shared.result.isSuccess();
         const has_more = locked.shared.result.has_more;
         const lifecycle = locked.shared.lifecycle;
@@ -1529,7 +1504,7 @@ pub const FetchTasklet = struct {
         if (lifecycle == .response_body_streaming or
             (lifecycle == .http_receiving_body and this.main_thread.readable_stream_ref.held.has()))
         {
-            var cleanup_locked = this.lockShared();
+            var cleanup_locked = this.shared.lock();
             defer cleanup_locked.unlock();
             cleanup_locked.shared.scheduled_response_buffer.reset();
         }
@@ -1629,7 +1604,7 @@ pub const FetchTasklet = struct {
         const globalThis = this.main_thread.global_this;
 
         // === ACQUIRE LOCK - Copy out shared state ===
-        var locked = this.lockShared();
+        var locked = this.shared.lock();
         const scheduled_response_buffer = &locked.shared.scheduled_response_buffer.list;
         const chunk = scheduled_response_buffer.items;
         const has_more = locked.shared.result.has_more;
@@ -1716,7 +1691,7 @@ pub const FetchTasklet = struct {
         // This function is called when we decide to keep buffering
 
         // === ACQUIRE LOCK - Check if request is complete ===
-        var locked = this.lockShared();
+        var locked = this.shared.lock();
         const has_more = locked.shared.result.has_more;
         locked.unlock();
 
@@ -1724,7 +1699,7 @@ pub const FetchTasklet = struct {
         if (!has_more) {
             if (this.getCurrentResponse()) |response| {
                 // Lock to access and modify scheduled_response_buffer
-                locked = this.lockShared();
+                locked = this.shared.lock();
                 var scheduled_response_buffer = locked.shared.scheduled_response_buffer.list;
                 locked.shared.scheduled_response_buffer = .{
                     .allocator = bun.default_allocator,
@@ -1769,7 +1744,7 @@ pub const FetchTasklet = struct {
     /// Unlike bufferBodyData(), this takes data as a parameter and appends it.
     fn bufferBodyDataDirect(this: *FetchTasklet, data: []const u8) void {
         // === ACQUIRE LOCK - Append data to scheduled buffer ===
-        var locked = this.lockShared();
+        var locked = this.shared.lock();
         defer locked.unlock();
 
         _ = locked.shared.scheduled_response_buffer.write(data) catch {
@@ -1817,12 +1792,9 @@ pub const FetchTasklet = struct {
         // === ACQUIRE LOCK - Brief critical section to read state ===
         // Copy state out from under lock, then release before doing JS work
         var is_done: bool = undefined;
-        var is_waiting_request_stream_start: bool = undefined;
         var can_stream: bool = undefined;
-        var is_waiting_body: bool = undefined;
         var metadata_exists: bool = undefined;
         var is_success: bool = undefined;
-        var is_waiting_abort: bool = undefined;
         var certificate_info_snapshot: ?http.CertificateInfo = null;
 
         {
@@ -1830,12 +1802,9 @@ pub const FetchTasklet = struct {
             defer this.shared.mutex.unlock();
 
             is_done = !this.shared.result.has_more;
-            is_waiting_request_stream_start = this.shared.request_stream_state == .waiting_start;
             can_stream = this.shared.result.can_stream;
-            is_waiting_body = this.shared.lifecycle == .response_awaiting_body_access;
             metadata_exists = this.shared.metadata.hasMetadata();
             is_success = this.shared.result.isSuccess();
-            is_waiting_abort = this.shared.abort_requested.load(.acquire) and this.shared.result.has_more;
 
             // Extract certificate info (will be processed outside lock)
             if (this.shared.result.certificate_info) |cert_info| {
@@ -1858,12 +1827,12 @@ pub const FetchTasklet = struct {
         }
 
         // Handle request stream start (requires JS interaction)
-        if (is_waiting_request_stream_start and can_stream) {
+        if (this.shared.request_stream_state == .waiting_start and can_stream) {
             this.startRequestStream();
         }
 
         // Handle body data already received
-        if (is_waiting_body) {
+        if (this.shared.lifecycle == .response_awaiting_body_access) {
             try this.onBodyReceived();
             return;
         }
@@ -1874,7 +1843,7 @@ pub const FetchTasklet = struct {
         }
 
         // Waiting for abort to complete
-        if (is_waiting_abort) {
+        if (this.shared.abort_requested.load(.acquire) and this.shared.result.has_more) {
             return;
         }
 
@@ -2011,7 +1980,7 @@ pub const FetchTasklet = struct {
                         this.main_thread.tracker.didCancel(this.main_thread.global_this);
 
                         // === ACQUIRE LOCK - Access http and set fail ===
-                        var locked = this.lockShared();
+                        var locked = this.shared.lock();
                         const http_ptr = locked.shared.http;
                         locked.shared.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
                         locked.unlock();
@@ -2043,7 +2012,7 @@ pub const FetchTasklet = struct {
                         this.main_thread.tracker.didCancel(this.main_thread.global_this);
 
                         // === ACQUIRE LOCK - Access http and set fail ===
-                        var locked = this.lockShared();
+                        var locked = this.shared.lock();
                         const http_ptr = locked.shared.http;
                         locked.shared.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
                         locked.unlock();
@@ -2097,7 +2066,7 @@ pub const FetchTasklet = struct {
 
     pub fn onReject(this: *FetchTasklet) Body.Value.ValueError {
         // === ACQUIRE LOCK - Copy out error state ===
-        var locked = this.lockShared();
+        var locked = this.shared.lock();
         bun.assert(locked.shared.result.fail != null);
 
         const abort_reason = locked.shared.result.abortReason();
@@ -2267,7 +2236,7 @@ pub const FetchTasklet = struct {
 
     fn getSizeHint(this: *FetchTasklet) Blob.SizeType {
         // === ACQUIRE LOCK - Read body_size ===
-        var locked = this.lockShared();
+        var locked = this.shared.lock();
         defer locked.unlock();
 
         return switch (locked.shared.body_size) {
@@ -2283,7 +2252,7 @@ pub const FetchTasklet = struct {
         }
 
         // === ACQUIRE LOCK - Read lifecycle ===
-        var locked = this.lockShared();
+        var locked = this.shared.lock();
         const lifecycle = locked.shared.lifecycle;
         locked.unlock();
 
@@ -2321,7 +2290,7 @@ pub const FetchTasklet = struct {
         log("toResponse", .{});
 
         // === ACQUIRE LOCK - Read shared state ===
-        var locked = this.lockShared();
+        var locked = this.shared.lock();
         bun.assert(locked.shared.metadata.hasMetadata());
         const metadata = locked.shared.metadata.borrowMetadata().?;
         const has_more = locked.shared.result.has_more;
@@ -2353,7 +2322,7 @@ pub const FetchTasklet = struct {
         log("ignoreRemainingResponseBody", .{});
 
         // === ACQUIRE LOCK - Access http pointer ===
-        var locked = this.lockShared();
+        var locked = this.shared.lock();
         const http_ptr = locked.shared.http;
         locked.unlock();
 

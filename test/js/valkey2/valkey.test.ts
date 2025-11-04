@@ -6645,11 +6645,11 @@ describeValkey(
         await client.unsubscribe(channel);
       });
 
-      test("subscribing to a channel receives messages", async () => {
+      test.each(ValkeyFaker.channels(randomEngine, 4))("loopback on %s channel", async (testChannel: string) => {
         const TEST_MESSAGE_COUNT = 128;
         const subscriber = await ctx.connectedClient();
-        const testChannel = "message-receive-test";
-        const testMessage = "hello world";
+
+        const testMessage = ValkeyFaker.publishMessage(randomEngine);
 
         const counter = new promises.AwaitableCounter();
         await subscriber.subscribe(testChannel, (message: string, channel: string) => {
@@ -6663,7 +6663,6 @@ describeValkey(
         });
 
         await counter.untilValue(TEST_MESSAGE_COUNT);
-
         await subscriber.unsubscribe(testChannel);
       });
     });

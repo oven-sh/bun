@@ -169,7 +169,7 @@ fn filterNames(comptime Rem: type, rem: *Rem, description: ?[]const u8, parent_i
     }
 }
 
-fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTest, globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, callback: ?jsc.JSValue, description: ?[]const u8, options: struct { timeout: u32, retry: ?f64, repeats: ?f64 }, callback_length: usize, line_no: u32) bun.JSError!void {
+fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTest, globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, callback: ?jsc.JSValue, description: ?[]const u8, options: struct { timeout: u32, retry: u32, repeats: u32 }, callback_length: usize, line_no: u32) bun.JSError!void {
     groupLog.begin(@src());
     defer groupLog.end();
 
@@ -246,8 +246,8 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
             bun.assert(!bunTest.collection.locked);
             groupLog.log("enqueueTestCallback / {s} / in scope: {s}", .{ description orelse "(unnamed)", bunTest.collection.active_scope.base.name orelse "(unnamed)" });
 
-            const retry_count: u32 = if (options.retry) |r| @intFromFloat(@max(0, @min(r, std.math.maxInt(u32)))) else 0;
-            const repeat_count: u32 = if (options.repeats) |r| @intFromFloat(@max(1, @min(r, std.math.maxInt(u32)))) else 1;
+            const retry_count: u32 = options.retry;
+            const repeat_count: u32 = @max(options.repeats, 1);
 
             _ = try bunTest.collection.active_scope.appendTest(bunTest.gpa, description, if (matches_filter) callback else null, .{
                 .has_done_parameter = has_done_parameter,
@@ -293,8 +293,8 @@ const ParseArgumentsResult = struct {
     callback: ?jsc.JSValue,
     options: struct {
         timeout: u32 = 0,
-        retry: ?f64 = null,
-        repeats: ?f64 = null,
+        retry: u32 = 0,
+        repeats: u32 = 1,
     },
     pub fn deinit(this: *ParseArgumentsResult, gpa: std.mem.Allocator) void {
         if (this.description) |str| gpa.free(str);
@@ -387,13 +387,13 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
             if (!retries.isNumber()) {
                 return globalThis.throwPretty("{}() expects retry to be a number", .{signature});
             }
-            result.options.retry = retries.asNumber();
+            result.options.retry = std.math.lossyCast(u32, retries.asNumber());
         }
         if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
                 return globalThis.throwPretty("{}() expects repeats to be a number", .{signature});
             }
-            result.options.repeats = repeats.asNumber();
+            result.options.repeats = std.math.lossyCast(u32, repeats.asNumber());
         }
     } else if (options.isUndefinedOrNull()) {
         // no options

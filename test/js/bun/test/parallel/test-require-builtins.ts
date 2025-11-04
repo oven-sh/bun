@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { expect } from "bun:test";
 
 for (let builtin of builtinModules) {
-  const safe = builtin.replaceAll("/", "_");
+  const safe = builtin.replaceAll("/", "_").replaceAll(":", "_");
   const base = safe + ".cjs";
   const dir = tempDirWithFiles("", {
     [`${base}`]: `

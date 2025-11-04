@@ -564,7 +564,7 @@ pub fn load(
     {
         const remaining_in_buffer = total_buffer_size -| stream.pos;
 
-        if (remaining_in_buffer > 16 and total_buffer_size <= stream.buffer.len) {
+        if (remaining_in_buffer > 8 and total_buffer_size <= stream.buffer.len) {
             const next_num = try reader.readInt(u64, .little);
             if (next_num == has_config_version_tag) {
                 const config_version = bun.ConfigVersion.fromInt(try reader.readInt(u64, .little)) orelse {

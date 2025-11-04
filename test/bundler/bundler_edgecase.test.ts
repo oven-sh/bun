@@ -1385,6 +1385,96 @@ describe("bundler", () => {
       `,
     },
   });
+  itBundled("edgecase/PackageExternalShouldNotExternalizeTsconfigPaths#6351", {
+    files: {
+      "/src/entry.ts": /* ts */ `
+        import { foo } from "~/foo";
+        import { bar } from "@/bar";
+        import { external } from "external-package";
+        console.log(foo, bar, external);
+      `,
+      "/src/foo.ts": /* ts */ `
+        export const foo = "foo value";
+      `,
+      "/src/bar.ts": /* ts */ `
+        export const bar = "bar value";
+      `,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": ".",
+            "paths": {
+              "~/*": ["./src/*"],
+              "@/*": ["./src/*"]
+            }
+          }
+        }
+      `,
+    },
+    packages: "external",
+    target: "bun",
+    runtimeFiles: {
+      "/node_modules/external-package/index.js": `export const external = "external value";`,
+      "/node_modules/external-package/package.json": /* json */ `
+        {
+          "name": "external-package",
+          "version": "1.0.0",
+          "main": "index.js"
+        }
+      `,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // Tsconfig path aliases should be bundled, not externalized
+      expect(out).toContain("foo value");
+      expect(out).toContain("bar value");
+      // Real external packages should be externalized
+      expect(out).toContain('from "external-package"');
+    },
+    run: {
+      file: "/src/entry.ts",
+      stdout: `
+        foo value bar value external value
+      `,
+    },
+  });
+  itBundled("edgecase/PackageExternalWithoutTsconfigPathsShouldStillExternalize", {
+    files: {
+      "/src/entry.ts": /* ts */ `
+        import { external } from "external-package";
+        import { local } from "./local";
+        console.log(external, local);
+      `,
+      "/src/local.ts": /* ts */ `
+        export const local = "local value";
+      `,
+    },
+    packages: "external",
+    target: "bun",
+    runtimeFiles: {
+      "/node_modules/external-package/index.js": `export const external = "external value";`,
+      "/node_modules/external-package/package.json": /* json */ `
+        {
+          "name": "external-package",
+          "version": "1.0.0",
+          "main": "index.js"
+        }
+      `,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // Local files should be bundled
+      expect(out).toContain("local value");
+      // External packages should be externalized
+      expect(out).toContain('from "external-package"');
+    },
+    run: {
+      file: "/src/entry.ts",
+      stdout: `
+        external value local value
+      `,
+    },
+  });
   itBundled("edgecase/IntegerUnderflow#12547", {
     files: {
       "/entry.js": `

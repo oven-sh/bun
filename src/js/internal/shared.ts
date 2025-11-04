@@ -130,10 +130,9 @@ function getLazy<T>(initializer: () => T) {
   let value: T;
   let initialized = false;
   return function () {
-    if (initialized === false) {
-      value = initializer();
-      initialized = true;
-    }
+    if (initialized) return value;
+    value = initializer();
+    initialized = true;
     return value;
   };
 }

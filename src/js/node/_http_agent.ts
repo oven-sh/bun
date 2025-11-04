@@ -1,8 +1,8 @@
-const net = require("node:net");
 const EventEmitter = require("node:events");
 const { parseProxyConfigFromEnv, kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
 const { getLazy, kEmptyObject, once } = require("internal/shared");
 const { validateNumber, validateOneOf, validateString } = require("internal/validators");
+const { isIP } = require("internal/net/isIP");
 
 const kOnKeylog = Symbol("onkeylog");
 const kRequestOptions = Symbol("requestOptions");
@@ -133,19 +133,21 @@ function maybeEnableKeylog(this: Agent, eventName) {
   }
 }
 
-const lazyTLS = getLazy(() => require("node:tls"));
+const tls = getLazy(() => require("node:tls"));
+const net = getLazy(() => require("node:net"));
 
 Agent.defaultMaxSockets = Infinity;
 
 Agent.prototype.createConnection = function createConnection(...args) {
-  const normalized = net._normalizeArgs(args);
+  const normalized = net()._normalizeArgs(args);
   const options = normalized[0];
   const cb = normalized[1];
 
   const shouldUseProxy = checkShouldUseProxy(this[kProxyConfig], options);
   $debug(`http createConnection should use proxy for ${options.host}:${options.port}:`, shouldUseProxy);
   if (!shouldUseProxy) {
-    return net.createConnection(...args);
+    // @ts-ignore
+    return net().createConnection(...args);
   }
 
   const connectOptions = {
@@ -153,9 +155,11 @@ Agent.prototype.createConnection = function createConnection(...args) {
   };
   const proxyProtocol = this[kProxyConfig].protocol;
   if (proxyProtocol === "http:") {
-    return net.connect(connectOptions, cb);
+    // @ts-ignore
+    return net().connect(connectOptions, cb);
   } else if (proxyProtocol === "https:") {
-    return lazyTLS().connect(connectOptions, cb);
+    // @ts-ignore
+    return tls().connect(connectOptions, cb);
   }
   // This should be unreachable because proxy config should be null for other protocols.
   $assert(false, `Unexpected proxy protocol ${proxyProtocol}`);
@@ -309,7 +313,7 @@ function calculateServerName(options, req) {
     }
   }
   // Don't implicitly set invalid (IP) servernames.
-  if (net.isIP(servername)) servername = "";
+  if (isIP(servername)) servername = "";
   return servername;
 }
 
@@ -365,12 +369,13 @@ Agent.prototype.removeSocket = function removeSocket(s, options) {
 
   for (let sk = 0; sk < sets.length; sk++) {
     const sockets = sets[sk];
+    const socket = sockets[name];
 
-    if (sockets[name]) {
-      const index = sockets[name].indexOf(s);
+    if (socket) {
+      const index = socket.indexOf(s);
       if (index !== -1) {
-        sockets[name].splice(index, 1);
-        if (sockets[name].length === 0) delete sockets[name];
+        socket.splice(index, 1);
+        if (socket.length === 0) delete sockets[name];
       }
     }
   }
@@ -411,9 +416,10 @@ Agent.prototype.keepSocketAlive = function keepSocketAlive(socket) {
 
   let agentTimeout = this.options.timeout || 0;
   let canKeepSocketAlive = true;
+  const res = socket._httpMessage?.res;
 
-  if (socket._httpMessage?.res) {
-    const keepAliveHint = socket._httpMessage.res.headers["keep-alive"];
+  if (res) {
+    const keepAliveHint = res.headers["keep-alive"];
 
     if (keepAliveHint) {
       const hint = /^timeout=(\d+)/.exec(keepAliveHint)?.[1];

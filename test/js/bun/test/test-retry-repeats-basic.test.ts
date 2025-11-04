@@ -10,16 +10,17 @@ describe("retry option", () => {
       if (attempts < 3) {
         throw new Error("fail");
       }
-      expect(attempts).toBe(3);
     },
     { retry: 3 },
   );
+  test("correct number of attempts from previous test", () => {
+    expect(attempts).toBe(3);
+  });
 });
 
 describe("repeats option with hooks", () => {
+  let log: string[] = [];
   describe("isolated test with repeats", () => {
-    let log: string[] = [];
-
     beforeEach(() => {
       log.push("beforeEach");
     });
@@ -35,19 +36,18 @@ describe("repeats option with hooks", () => {
       },
       { repeats: 2 },
     );
+  });
 
-    test("verify hooks ran for each repeat", () => {
-      // Should have: beforeEach, test, afterEach (first), beforeEach, test, afterEach (second), beforeEach (this test)
-      expect(log).toEqual(["beforeEach", "test", "afterEach", "beforeEach", "test", "afterEach", "beforeEach"]);
-    });
+  test("verify hooks ran for each repeat", () => {
+    // Should have: beforeEach, test, afterEach (first), beforeEach, test, afterEach (second)
+    expect(log).toEqual(["beforeEach", "test", "afterEach", "beforeEach", "test", "afterEach"]);
   });
 });
 
 describe("retry option with hooks", () => {
+  let attempts = 0;
+  let log: string[] = [];
   describe("isolated test with retry", () => {
-    let attempts = 0;
-    let log: string[] = [];
-
     beforeEach(() => {
       log.push("beforeEach");
     });
@@ -67,10 +67,10 @@ describe("retry option with hooks", () => {
       },
       { retry: 3 },
     );
+  });
 
-    test("verify hooks ran for each retry", () => {
-      // Should have: beforeEach, test-1, afterEach (fail), beforeEach, test-2, afterEach (pass), beforeEach (this test)
-      expect(log).toEqual(["beforeEach", "test-1", "afterEach", "beforeEach", "test-2", "afterEach", "beforeEach"]);
-    });
+  test("verify hooks ran for each retry", () => {
+    // Should have: beforeEach, test-1, afterEach (fail), beforeEach, test-2, afterEach (pass)
+    expect(log).toEqual(["beforeEach", "test-1", "afterEach", "beforeEach", "test-2", "afterEach"]);
   });
 });

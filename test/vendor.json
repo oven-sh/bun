@@ -3,5 +3,12 @@
     "package": "elysia",
     "repository": "https://github.com/elysiajs/elysia",
     "tag": "1.4.12"
+  },
+  {
+    "package": "express",
+    "repository": "https://github.com/expressjs/express",
+    "tag": "v5.1.0",
+    "testExtensions": ["js"],
+    "build": false
   }
 ]

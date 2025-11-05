@@ -91,5 +91,6 @@ The following globals are automatically available in test files without importin
 - `describe`: Group tests
 - `expect`: Make assertions
 - `beforeAll`, `beforeEach`, `afterAll`, `afterEach`: Lifecycle hooks
+- `before`, `after`: Alias for `beforeAll`/`afterAll` respectively to better support [Mocha](https://mochajs.org)
 - `jest`: Jest global object
 - `vi`: Vitest compatibility alias for common jest methods

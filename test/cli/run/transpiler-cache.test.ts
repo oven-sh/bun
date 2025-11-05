@@ -186,4 +186,35 @@ describe("transpiler cache", () => {
     expect(b.stdout == "production 5");
     expect(newCacheCount()).toBe(0);
   });
+
+  test("is disabled when --define is used", () => {
+    writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", { code: "MY_DEFINE" }));
+    // First run with --define should work but not cache
+    const proc1 = Bun.spawnSync({
+      cmd: [bunExe(), "--define", "MY_DEFINE=123", join(temp_dir, "a.js")],
+      env,
+      cwd: temp_dir,
+    });
+    expect(proc1.stdout.toString().trim()).toBe("123");
+    // Cache should not be created when --define is used
+    expect(!existsSync(cache_dir) || newCacheCount() === 0).toBeTrue();
+
+    // Second run with same --define should also not use cache
+    const proc2 = Bun.spawnSync({
+      cmd: [bunExe(), "--define", "MY_DEFINE=123", join(temp_dir, "a.js")],
+      env,
+      cwd: temp_dir,
+    });
+    expect(proc2.stdout.toString().trim()).toBe("123");
+    expect(!existsSync(cache_dir) || newCacheCount() === 0).toBeTrue();
+
+    // Run with different --define value should give different output
+    const proc3 = Bun.spawnSync({
+      cmd: [bunExe(), "--define", "MY_DEFINE=456", join(temp_dir, "a.js")],
+      env,
+      cwd: temp_dir,
+    });
+    expect(proc3.stdout.toString().trim()).toBe("456");
+    expect(!existsSync(cache_dir) || newCacheCount() === 0).toBeTrue();
+  });
 });

@@ -459,6 +459,10 @@ pub const Command = struct {
             compile_target: Cli.CompileTarget = .{},
             compile_exec_argv: ?[]const u8 = null,
             windows: options.WindowsOptions = .{},
+
+            /// Set to true when user-provided defines (via --define) are present.
+            /// Used to disable RuntimeTranspilerCache since defines affect transpilation output.
+            has_user_defines: bool = false,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {

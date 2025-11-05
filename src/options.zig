@@ -1724,6 +1724,10 @@ pub const BundleOptions = struct {
     auto_import_jsx: bool = true,
     allow_runtime: bool = true,
 
+    /// Set to true when user-provided defines (via --define) are present.
+    /// Disables RuntimeTranspilerCache since defines affect transpilation output.
+    has_user_defines: bool = false,
+
     trim_unused_imports: ?bool = null,
     mark_builtins_as_external: bool = false,
     server_components: bool = false,
@@ -1879,6 +1883,12 @@ pub const BundleOptions = struct {
         if (this.defines_loaded) {
             return;
         }
+
+        // Check if user provided defines via --define flag
+        if (this.transform_options.define) |user_defines| {
+            this.has_user_defines = user_defines.keys.len > 0;
+        }
+
         this.define = try definesFromTransformOptions(
             allocator,
             this.log,

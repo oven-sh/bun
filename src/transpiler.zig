@@ -960,6 +960,10 @@ pub const Transpiler = struct {
 
         keep_json_and_toml_as_one_statement: bool = false,
         allow_bytecode_cache: bool = false,
+
+        /// Set to true when user-provided defines (via --define) are present.
+        /// Disables RuntimeTranspilerCache since defines affect transpilation output.
+        has_user_defines: bool = false,
     };
 
     pub fn parse(
@@ -1112,6 +1116,7 @@ pub const Transpiler = struct {
                 opts.features.minify_identifiers = transpiler.options.minify_identifiers;
                 opts.features.dead_code_elimination = transpiler.options.dead_code_elimination;
                 opts.features.remove_cjs_module_wrapper = this_parse.remove_cjs_module_wrapper;
+                opts.features.has_user_defines = this_parse.has_user_defines;
 
                 if (transpiler.macro_context == null) {
                     transpiler.macro_context = js_ast.Macro.MacroContext.init(transpiler);

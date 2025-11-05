@@ -211,6 +211,10 @@ pub const Runtime = struct {
         // TODO: make this a bitset of all unsupported features
         lower_using: bool = true,
 
+        /// Set to true when user-provided defines (via --define) are present.
+        /// Disables RuntimeTranspilerCache since defines affect transpilation output.
+        has_user_defines: bool = false,
+
         const hash_fields_for_runtime_transpiler = .{
             .top_level_await,
             .auto_import_jsx,

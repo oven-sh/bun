@@ -392,7 +392,8 @@ pub const RuntimeTranspilerStore = struct {
                     vm.debugger.?.set_breakpoint_on_first_line and
                     is_main and
                     setBreakPointOnFirstLine(),
-                .runtime_transpiler_cache = if (!jsc.RuntimeTranspilerCache.is_disabled) &cache else null,
+                .has_user_defines = transpiler.options.has_user_defines,
+                .runtime_transpiler_cache = if (!jsc.RuntimeTranspilerCache.is_disabled and !transpiler.options.has_user_defines) &cache else null,
                 .remove_cjs_module_wrapper = is_main and vm.module_loader.eval_source != null,
                 .module_type = module_type,
                 .allow_bytecode_cache = true,

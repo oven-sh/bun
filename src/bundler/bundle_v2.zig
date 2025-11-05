@@ -657,7 +657,7 @@ pub const BundleV2 = struct {
         const entry = bun.handleOom(this.pathToSourceIndexMap(target).getOrPut(this.allocator(), path.text));
         if (!entry.found_existing) {
             path.* = bun.handleOom(this.pathWithPrettyInitialized(path.*, target));
-            entry.key_ptr.* = path.text;
+            entry.key_ptr.* = path.*;
             const loader: Loader = brk: {
                 const record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
                 if (record.loader) |out_loader| {
@@ -699,9 +699,9 @@ pub const BundleV2 = struct {
                     .browser => .{ this.pathToSourceIndexMap(this.transpiler.options.target), this.pathToSourceIndexMap(.bake_server_components_ssr) },
                     .bake_server_components_ssr => .{ this.pathToSourceIndexMap(this.transpiler.options.target), this.pathToSourceIndexMap(.browser) },
                 };
-                bun.handleOom(a.put(this.allocator(), entry.key_ptr.*, entry.value_ptr.*));
+                bun.handleOom(a.putPath(this.allocator(), entry.key_ptr, entry.value_ptr.*));
                 if (this.framework.?.server_components.?.separate_ssr_graph)
-                    bun.handleOom(b.put(this.allocator(), entry.key_ptr.*, entry.value_ptr.*));
+                    bun.handleOom(b.putPath(this.allocator(), entry.key_ptr, entry.value_ptr.*));
             }
         } else {
             out_source_index = Index.init(entry.value_ptr.*);
@@ -736,7 +736,7 @@ pub const BundleV2 = struct {
 
         path = bun.handleOom(this.pathWithPrettyInitialized(path, target));
         path.assertPrettyIsValid();
-        entry.key_ptr.* = path.text;
+        entry.key_ptr.* = path;
         entry.value_ptr.* = source_index.get();
         bun.handleOom(this.graph.ast.append(this.allocator(), JSAst.empty));
 
@@ -798,7 +798,7 @@ pub const BundleV2 = struct {
 
         path.* = bun.handleOom(this.pathWithPrettyInitialized(path.*, target));
         path.assertPrettyIsValid();
-        entry.key_ptr.* = path.text;
+        entry.key_ptr.* = path.*;
         entry.value_ptr.* = source_index.get();
         bun.handleOom(this.graph.ast.append(this.allocator(), JSAst.empty));
 
@@ -2455,7 +2455,8 @@ pub const BundleV2 = struct {
                     if (!existing.found_existing) {
                         this.free_list.appendSlice(&.{ result.namespace, result.path }) catch {};
                         path = bun.handleOom(this.pathWithPrettyInitialized(path, resolve.import_record.original_target));
-                        existing.key_ptr.* = path.text;
+                        // Update the key to use the arena-allocated path strings
+                        existing.key_ptr.* = path;
 
                         // We need to parse this
                         const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
@@ -3429,7 +3430,7 @@ pub const BundleV2 = struct {
 
             const is_html_entrypoint = import_record_loader == .html and target.isServerSide() and this.transpiler.options.dev_server == null;
 
-            if (this.pathToSourceIndexMap(target).get(path.text)) |id| {
+            if (this.pathToSourceIndexMap(target).getPath(path)) |id| {
                 if (this.transpiler.options.dev_server != null and loader != .html) {
                     import_record.path = this.graph.input_files.items(.source)[id].path;
                 } else {
@@ -3442,7 +3443,13 @@ pub const BundleV2 = struct {
                 import_record.kind = .html_manifest;
             }
 
-            const resolve_entry = resolve_queue.getOrPut(path.text) catch |err| bun.handleOom(err);
+            // Generate namespace-aware key for the resolve queue
+            const resolve_key = if (path.isFile())
+                path.text
+            else
+                std.fmt.allocPrint(this.allocator(), "{s}:::::{s}", .{ path.namespace, path.text }) catch |err| bun.handleOom(err);
+
+            const resolve_entry = resolve_queue.getOrPut(resolve_key) catch |err| bun.handleOom(err);
             if (resolve_entry.found_existing) {
                 import_record.path = resolve_entry.value_ptr.*.path;
                 continue;
@@ -3451,7 +3458,11 @@ pub const BundleV2 = struct {
             path.* = bun.handleOom(this.pathWithPrettyInitialized(path.*, target));
 
             import_record.path = path.*;
-            resolve_entry.key_ptr.* = path.text;
+            // Update key to use the arena-allocated path after pathWithPrettyInitialized
+            resolve_entry.key_ptr.* = if (path.isFile())
+                path.text
+            else
+                std.fmt.allocPrint(this.allocator(), "{s}:::::{s}", .{ path.namespace, path.text }) catch |err| bun.handleOom(err);
             debug("created ParseTask: {s}", .{path.text});
             const resolve_task = bun.handleOom(bun.default_allocator.create(ParseTask));
             resolve_task.* = ParseTask.init(&resolve_result, Index.invalid, this);

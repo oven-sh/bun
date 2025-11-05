@@ -22,10 +22,6 @@ using JSC::JSValue;
 
 namespace node {
 
-// Thread-local storage to accumulate ALL module registrations during dlopen
-// Used to save modules to DLHandleMap after dlopen completes
-thread_local std::vector<node_module*> thread_local_registered_modules;
-
 void AddEnvironmentCleanupHook(v8::Isolate* isolate,
     void (*fun)(void* arg),
     void* arg)
@@ -49,8 +45,8 @@ void node_module_register(void* opaque_mod)
 
     auto keyStr = WTF::String::fromUTF8(mod->nm_modname);
 
-    // Append to thread-local vector so BunProcess.cpp can save ALL registrations after dlopen completes
-    thread_local_registered_modules.push_back(mod);
+    // Append to GlobalObject vector so BunProcess.cpp can save ALL registrations after dlopen completes
+    globalObject->m_pendingV8Modules.append(mod);
 
     globalObject->napiModuleRegisterCallCount++;
     JSValue pendingNapiModule = globalObject->m_pendingNapiModuleAndExports[0].get();

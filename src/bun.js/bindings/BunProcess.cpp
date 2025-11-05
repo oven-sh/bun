@@ -570,7 +570,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
             }
 
             // Save all V8 C++ module registrations
-            for (auto* mod : node::thread_local_registered_modules) {
+            for (auto* mod : globalObject->m_pendingV8Modules) {
                 Bun::DLHandleMap::singleton().add(handle, mod);
             }
         }
@@ -587,7 +587,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
         // Clear all pending registrations
         globalObject->m_pendingNapiModules.clear();
-        node::thread_local_registered_modules.clear();
+        globalObject->m_pendingV8Modules.clear();
 
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
         globalObject->napiModuleRegisterCallCount = 0;
@@ -634,7 +634,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
         // Clear the vectors (no need to save again since already in DLHandleMap)
         globalObject->m_pendingNapiModules.clear();
-        node::thread_local_registered_modules.clear();
+        globalObject->m_pendingV8Modules.clear();
 
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
         globalObject->napiModuleRegisterCallCount = 0;

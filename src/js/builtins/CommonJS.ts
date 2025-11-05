@@ -215,6 +215,8 @@ export function loadEsmIntoCjs(resolvedSpecifier: string) {
     if (state < $ModuleLink && $isPromise(fetch)) {
       // This will probably never happen, but just in case
       if (($getPromiseInternalField(fetch, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending) {
+        registry.$delete(resolvedSpecifier);
+
         throw new TypeError(`require() async module "${key}" is unsupported. use "await import()" instead.`);
       }
 
@@ -231,6 +233,8 @@ export function loadEsmIntoCjs(resolvedSpecifier: string) {
       let state = flags & $promiseStateMask;
       // this branch should never happen, but just to be safe
       if (state === $promiseStatePending || (reactionsOrResult && $isPromise(reactionsOrResult))) {
+        registry.$delete(resolvedSpecifier);
+
         throw new TypeError(`require() async module "${key}" is unsupported. use "await import()" instead.`);
       } else if (state === $promiseStateRejected) {
         if (!reactionsOrResult?.message) {
@@ -282,6 +286,8 @@ export function loadEsmIntoCjs(resolvedSpecifier: string) {
 
   var linkAndEvaluateResult = loader.linkAndEvaluateModule(resolvedSpecifier, undefined);
   if (linkAndEvaluateResult && $isPromise(linkAndEvaluateResult)) {
+    registry.$delete(resolvedSpecifier);
+
     // if you use top-level await, or any dependencies use top-level await, then we throw here
     // this means the module will still actually load eventually, but that's okay.
     throw new TypeError(

@@ -577,6 +577,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
         // Execute all NAPI modules
         for (auto& mod : globalObject->m_pendingNapiModules) {
+            // Restore dlopen handle for this module before execution
+            // executePendingNapiModule clears it, so we must set it for each module
+            globalObject->m_pendingNapiModuleDlopenHandle = handle;
             globalObject->m_pendingNapiModule = mod;
             Napi::executePendingNapiModule(globalObject);
             globalObject->m_pendingNapiModule = {};
@@ -621,6 +624,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
         // Execute all NAPI modules that were just registered
         for (auto& mod : globalObject->m_pendingNapiModules) {
+            // Restore dlopen handle for this module before execution
+            // executePendingNapiModule clears it, so we must set it for each module
+            globalObject->m_pendingNapiModuleDlopenHandle = handle;
             globalObject->m_pendingNapiModule = mod;
             Napi::executePendingNapiModule(globalObject);
             globalObject->m_pendingNapiModule = {};

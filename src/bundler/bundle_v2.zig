@@ -2396,6 +2396,7 @@ pub const BundleV2 = struct {
                 //
                 // The file could be on disk.
                 if (strings.eqlComptime(resolve.import_record.namespace, "file")) {
+                    debug("> onResolve: no_match => reading disk file ({s})", .{ resolve.import_record.specifier });
                     if (resolve.import_record.kind == .entry_point_build) {
                         const target = resolve.import_record.original_target;
                         const resolved = this.transpilerForTarget(target).resolveEntryPoint(resolve.import_record.specifier) catch {
@@ -2416,6 +2417,7 @@ pub const BundleV2 = struct {
                     return;
                 }
 
+                debug("> onResolve: no_match => can't handle ({s}:...)", .{ resolve.import_record.namespace });
                 const log = this.logForResolutionFailures(resolve.import_record.source_file, resolve.import_record.original_target.bakeGraph());
 
                 // When it's not a file, this is an error and we should report it.
@@ -2453,6 +2455,7 @@ pub const BundleV2 = struct {
                     const existing = this.pathToSourceIndexMap(resolve.import_record.original_target)
                         .getOrPutPath(this.allocator(), &path) catch |err| bun.handleOom(err);
                     if (!existing.found_existing) {
+                        debug("> onResolve: loading new ({s}:{s})", .{ path.namespace, path.text });
                         this.free_list.appendSlice(&.{ result.namespace, result.path }) catch {};
                         path = bun.handleOom(this.pathWithPrettyInitialized(path, resolve.import_record.original_target));
                         existing.key_ptr.* = path.text;
@@ -2507,11 +2510,13 @@ pub const BundleV2 = struct {
                             this.graph.pool.schedule(task);
                         }
                     } else {
+                        debug("> onResolve: reusing cached ({s}:{s})", .{ path.namespace, path.text });
                         out_source_index = Index.init(existing.value_ptr.*);
                         bun.default_allocator.free(result.namespace);
                         bun.default_allocator.free(result.path);
                     }
                 } else {
+                    debug("> onResolve: skipping external ({s}:{s})", .{ result.namespace, result.path });
                     bun.default_allocator.free(result.namespace);
                     bun.default_allocator.free(result.path);
                 }

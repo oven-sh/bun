@@ -201,7 +201,7 @@ On Windows, you can install a specific version of Bun by passing the version num
 
 ```sh
 # PowerShell:
-$ iex "& {$(irm https://bun.com/install.ps1)} -Version $BUN_LATEST_VERSION"
+$ iex "& {$(irm https://bun.sh/install.ps1)} -Version $BUN_LATEST_VERSION"
 ```
 
 ## Downloading Bun binaries directly
@@ -242,7 +242,7 @@ Bun also publishes `darwin-x64-baseline` binaries, but these are just a copy of 
 Works on macOS x64 & Silicon, Linux x64, Windows Subsystem for Linux.
 
 ```sh
-$ curl -fsSL https://bun.com/install | bash
+$ curl -fsSL https://bun.sh/install | bash
 ```
 
 Once installed, the binary can upgrade itself.

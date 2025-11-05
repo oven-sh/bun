@@ -9,9 +9,12 @@ mode: center
 In this guide, we will deploy a Bun HTTP server to Google Cloud Run using a `Dockerfile`.
 
 <Note>
-  Before continuing, make sure you have: - A Bun application ready for deployment - A [Google Cloud
-  account](https://cloud.google.com/) with billing enabled - [Google Cloud
-  CLI](https://cloud.google.com/sdk/docs/install) installed and configured
+	Before continuing, make sure you have:
+
+    - A Bun application ready for deployment
+    - A [Google Cloud account](https://cloud.google.com/) with billing enabled
+    - [Google Cloud CLI](https://cloud.google.com/sdk/docs/install) installed and configured
+
 </Note>
 
 ---
@@ -116,6 +119,7 @@ FROM oven/bun:latest
 COPY package.json bun.lock ./
 
 # Install the dependencies
+# Install the dependencies
 RUN bun install --production --frozen-lockfile
 
 # Copy the rest of the application into the container
@@ -127,6 +131,8 @@ CMD ["bun", "index.ts"]
 
 <Note>
   Make sure that the start command corresponds to your application's entry point. This can also be `CMD ["bun", "run", "start"]` if you have a start script in your `package.json`.
+
+    This image installs dependencies and runs your app with Bun inside a container. If your app doesn't have dependencies, you can omit the `RUN bun install --production --frozen-lockfile` line.
 
     This image installs dependencies and runs your app with Bun inside a container. If your app doesn't have dependencies, you can omit the `RUN bun install --production --frozen-lockfile` line.
 
@@ -153,7 +159,8 @@ Make sure you're in the directory containing your `Dockerfile`, then deploy dire
 
 <Note>
   Update the `--region` flag to your preferred region. You can also omit this flag to get an interactive prompt to
-  select a region.
+  select a region. Update the `--region` flag to your preferred region. You can also omit this flag to get an
+  interactive prompt to select a region.
 </Note>
 
 ```bash terminal icon="terminal"

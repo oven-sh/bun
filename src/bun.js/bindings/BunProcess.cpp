@@ -566,7 +566,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
             // We need to heap-allocate a copy since m_pendingNapiModule will be cleared
             if (handle) {
                 auto* heapModule = new napi_module(globalObject->m_pendingNapiModule.value());
-                Bun::DLHandleMap::singleton().set(handle, heapModule);
+                Bun::DLHandleMap::singleton().add(handle, heapModule);
             }
 
             // Execute the stored registration function now that dlopen has completed
@@ -576,7 +576,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
             globalObject->m_pendingNapiModule = {};
         } else if (node::thread_local_last_registered_module && handle) {
             // V8 C++ style module
-            Bun::DLHandleMap::singleton().set(handle, node::thread_local_last_registered_module);
+            Bun::DLHandleMap::singleton().add(handle, node::thread_local_last_registered_module);
             node::thread_local_last_registered_module = nullptr;
         }
 
@@ -597,23 +597,24 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         return JSValue::encode(jsUndefined());
     }
 
-    // Module didn't self-register on this load. Check if we have a cached registration.
-    if (auto cachedModule = Bun::DLHandleMap::singleton().get(handle)) {
-        // Replay the registration with the current exports/module
-        std::visit([](auto&& mod) {
-            using T = std::decay_t<decltype(mod)>;
-            if constexpr (std::is_same_v<T, node::node_module*>) {
-                node::node_module_register(mod);
-            } else if constexpr (std::is_same_v<T, napi_module*>) {
-                napi_module_register(mod);
-            }
-        },
-            *cachedModule);
+    // Module didn't self-register on this load. Check if we have cached registrations.
+    if (auto cachedModules = Bun::DLHandleMap::singleton().get(handle)) {
+        // Replay all registrations from this handle
+        for (auto& registration : *cachedModules) {
+            std::visit([](auto&& mod) {
+                using T = std::decay_t<decltype(mod)>;
+                if constexpr (std::is_same_v<T, node::node_module*>) {
+                    node::node_module_register(mod);
+                } else if constexpr (std::is_same_v<T, napi_module*>) {
+                    napi_module_register(mod);
+                }
+            }, registration);
 
-        // For NAPI modules, execute the pending module
-        if (globalObject->m_pendingNapiModule) {
-            Napi::executePendingNapiModule(globalObject);
-            globalObject->m_pendingNapiModule = {};
+            // For NAPI modules, execute the pending module after each registration
+            if (globalObject->m_pendingNapiModule) {
+                Napi::executePendingNapiModule(globalObject);
+                globalObject->m_pendingNapiModule = {};
+            }
         }
 
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();

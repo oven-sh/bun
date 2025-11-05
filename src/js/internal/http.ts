@@ -201,14 +201,6 @@ function validateMsecs(numberlike: any, field: string) {
   return numberlike;
 }
 
-class ConnResetException extends Error {
-  constructor(msg) {
-    super(msg);
-    this.code = "ECONNRESET";
-    this.name = "ConnResetException";
-  }
-}
-
 const METHODS = [
   "ACL",
   "BIND",
@@ -487,7 +479,6 @@ function filterEnvForProxies(env) {
 }
 
 export {
-  ConnResetException,
   Headers,
   METHODS,
   STATUS_CODES,

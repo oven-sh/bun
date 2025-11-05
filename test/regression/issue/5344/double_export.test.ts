@@ -5,15 +5,8 @@ test("no double export", async () => {
 
   await Bun.build({
     entrypoints: [import.meta.dir + "/a.fixture.ts", import.meta.dir + "/b.fixture.ts"],
-    format: "esm",
-    sourcemap: "external",
     splitting: true,
     outdir: import.meta.dir + "/dist",
-    target: "bun",
-    minify: false,
-    define: {
-      "process.env.NODE_ENV": `"development"`,
-    },
   });
 
   // @ts-ignore

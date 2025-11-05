@@ -133,7 +133,6 @@ The `BUN_CONFIG_VERBOSE_FETCH` environment variable lets you log network request
 
 Bun also supports printing `fetch()` and `node:http` network requests as `curl` commands by setting the environment variable `BUN_CONFIG_VERBOSE_FETCH` to `curl`. This prints the `fetch` request as a single-line `curl` command to let you copy-paste into your terminal to replicate the request.
 
-
 ```ts index.ts icon="/icons/typescript.svg"
 process.env.BUN_CONFIG_VERBOSE_FETCH = "curl";
 
@@ -145,6 +144,7 @@ await fetch("https://example.com", {
   body: JSON.stringify({ foo: "bar" }),
 });
 ```
+
 ```txt
 [fetch] $ curl --http1.1 "https://example.com/" -X POST -H "content-type: application/json" -H "Connection: keep-alive" -H "User-Agent: Bun/1.3.1" -H "Accept: */*" -H "Host: example.com" -H "Accept-Encoding: gzip, deflate, br" --compressed -H "Content-Length: 13" --data-raw "{\"foo\":\"bar\"}"
 [fetch] > HTTP/1.1 POST https://example.com/
@@ -185,6 +185,7 @@ await fetch("https://example.com", {
   body: JSON.stringify({ foo: "bar" }),
 });
 ```
+
 ```txt
 [fetch] > HTTP/1.1 POST https://example.com/
 [fetch] > content-type: application/json
@@ -314,6 +315,7 @@ const fn = () => {
 
 fn();
 ```
+
 ```txt
 Error: here!
     at myInner (file.js:4:15)

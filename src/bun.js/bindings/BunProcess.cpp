@@ -615,7 +615,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
                 } else if constexpr (std::is_same_v<T, napi_module*>) {
                     napi_module_register(mod);
                 }
-            }, registration);
+            },
+                registration);
         }
 
         // Execute all NAPI modules that were just registered

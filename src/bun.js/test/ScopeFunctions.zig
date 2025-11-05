@@ -247,7 +247,7 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
             groupLog.log("enqueueTestCallback / {s} / in scope: {s}", .{ description orelse "(unnamed)", bunTest.collection.active_scope.base.name orelse "(unnamed)" });
 
             const retry_count: u32 = options.retry;
-            const repeat_count: u32 = @max(options.repeats, 1);
+            const repeat_count: u32 = options.repeats + 1;
 
             _ = try bunTest.collection.active_scope.appendTest(bunTest.gpa, description, if (matches_filter) callback else null, .{
                 .has_done_parameter = has_done_parameter,
@@ -299,7 +299,7 @@ const ParseArgumentsResult = struct {
 const ParseArgumentsOptions = struct {
     timeout: u32 = 0,
     retry: u32 = 0,
-    repeats: u32 = 1,
+    repeats: u32 = 0,
 };
 pub const CallbackMode = enum { require, allow };
 pub const FunctionKind = enum { test_or_describe, hook };

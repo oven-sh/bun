@@ -39,8 +39,19 @@ describe("repeats option with hooks", () => {
   });
 
   test("verify hooks ran for each repeat", () => {
-    // Should have: beforeEach, test, afterEach (first), beforeEach, test, afterEach (second)
-    expect(log).toEqual(["beforeEach", "test", "afterEach", "beforeEach", "test", "afterEach"]);
+    // Should have: beforeEach, test, afterEach (first), beforeEach, test, afterEach (second), beforeEach, test, afterEach (third)
+    // repeats: 2 means 1 initial + 2 repeats = 3 total runs
+    expect(log).toEqual([
+      "beforeEach",
+      "test",
+      "afterEach",
+      "beforeEach",
+      "test",
+      "afterEach",
+      "beforeEach",
+      "test",
+      "afterEach",
+    ]);
   });
 });
 
@@ -87,7 +98,17 @@ describe("repeats with onTestFinished", () => {
     { repeats: 3 },
   );
   test("verify correct log", () => {
-    expect(log).toEqual(["test", "onTestFinished", "test", "onTestFinished", "test", "onTestFinished"]);
+    // repeats: 3 means 1 initial + 3 repeats = 4 total runs
+    expect(log).toEqual([
+      "test",
+      "onTestFinished",
+      "test",
+      "onTestFinished",
+      "test",
+      "onTestFinished",
+      "test",
+      "onTestFinished",
+    ]);
   });
 });
 

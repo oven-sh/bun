@@ -1,26 +1,56 @@
 export {};
 
+/**
+ * This is like a BodyMixin, but exists to more things
+ * (e.g. Blob, ReadableStream, Response, etc.)
+ *
+ * Notably, this doesn't have a `blob()` because it's the lowest
+ * common denominator of these objects. A `Blob` in Bun does not
+ * have a `.blob()` method.
+ */
+interface BunConsumerConvenienceMethods {
+  /**
+   * Consume as text
+   */
+  text(): Promise<string>;
+
+  /**
+   * Consume as a Uint8Array, backed by an ArrayBuffer
+   */
+  bytes(): Promise<Uint8Array<ArrayBuffer>>;
+
+  /**
+   * Consume as JSON
+   */
+  json(): Promise<any>;
+
+  /**
+   * Consume as a FormData instance
+   */
+  formData(): Promise<FormData>;
+
+  /**
+   * Consume as an ArrayBuffer
+   */
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
+
 declare module "stream/web" {
-  interface ReadableStream {
+  interface ReadableStream extends BunConsumerConvenienceMethods {
     /**
-     * Consume a ReadableStream as text
-     */
-    text(): Promise<string>;
-
-    /**
-     * Consume a ReadableStream as a Uint8Array
-     */
-    bytes(): Promise<Uint8Array<ArrayBuffer>>;
-
-    /**
-     * Consume a ReadableStream as JSON
-     */
-    json(): Promise<any>;
-
-    /**
-     * Consume a ReadableStream as a Blob
+     * Consume as a Blob
      */
     blob(): Promise<Blob>;
+  }
+}
+
+declare module "buffer" {
+  interface Blob extends BunConsumerConvenienceMethods {
+    // We have to specify bytes again even though it comes from
+    // BunConsumerConvenienceMethods, because inheritance in TypeScript is
+    // slightly different from just "copying in the methods" (the difference is
+    // related to how type parameters are resolved)
+    bytes(): Promise<Uint8Array<ArrayBuffer>>;
   }
 }
 

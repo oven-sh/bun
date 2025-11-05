@@ -837,3 +837,181 @@ it("error does not UAF", async () => {
   }
   expect(emsg).toInclude(" ");
 });
+
+describe("onDisconnect", () => {
+  it("onDisconnect callback is called when IPC disconnects", done => {
+    const tmpDir = tmpdirSync();
+    const childScript = path.join(tmpDir, "ipc-disconnect-child.js");
+    writeFileSync(
+      childScript,
+      `
+        process.send("hello");
+        setTimeout(() => {
+          process.disconnect();
+          setTimeout(() => process.exit(0), 10);
+        }, 50);
+      `,
+    );
+
+    let disconnectCalled = false;
+
+    const proc = spawn({
+      cmd: [bunExe(), childScript],
+      ipc: (message, subprocess) => {
+        expect(message).toBe("hello");
+      },
+      onDisconnect: () => {
+        disconnectCalled = true;
+        proc.kill();
+        expect(disconnectCalled).toBe(true);
+        done();
+      },
+      stdio: ["inherit", "inherit", "inherit"],
+      env: bunEnv,
+    });
+  });
+
+  it("onDisconnect callback receives correct arguments", done => {
+    const tmpDir = tmpdirSync();
+    const childScript = path.join(tmpDir, "ipc-disconnect-child2.js");
+    writeFileSync(
+      childScript,
+      `
+        process.send("test");
+        setTimeout(() => {
+          process.disconnect();
+          setTimeout(() => process.exit(0), 10);
+        }, 50);
+      `,
+    );
+
+    const proc = spawn({
+      cmd: [bunExe(), childScript],
+      ipc: () => {},
+      onDisconnect: () => {
+        // onDisconnect should be called without arguments
+        proc.kill();
+        done();
+      },
+      stdio: ["inherit", "inherit", "inherit"],
+      env: bunEnv,
+    });
+  });
+
+  it("onDisconnect is not called when IPC is not used", async () => {
+    let disconnectCalled = false;
+
+    const proc = spawn({
+      cmd: [bunExe(), "-e", "console.log('hello')"],
+      onDisconnect: () => {
+        disconnectCalled = true;
+      },
+      stdout: "pipe",
+      stderr: "ignore",
+      stdin: "ignore",
+    });
+
+    await proc.exited;
+    expect(disconnectCalled).toBe(false);
+  });
+});
+
+describe("argv0", () => {
+  it("argv0 option changes process.argv0 but not executable", async () => {
+    const proc = spawn({
+      cmd: [bunExe(), "-e", "console.log(process.argv0)"],
+      argv0: "custom-argv0",
+      stdout: "pipe",
+      stderr: "ignore",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+
+    const output = await proc.stdout.text();
+    expect(output.trim()).toBe("custom-argv0");
+    await proc.exited;
+  });
+
+  it("argv0 option works with spawnSync", () => {
+    const proc = spawnSync({
+      cmd: [bunExe(), "-e", "console.log(process.argv0)"],
+      argv0: "custom-argv0-sync",
+      stdout: "pipe",
+      stderr: "ignore",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+
+    const output = proc.stdout!.toString("utf-8").trim();
+    expect(output).toBe("custom-argv0-sync");
+  });
+
+  it("argv0 defaults to cmd[0] when not specified", async () => {
+    const proc = spawn({
+      cmd: [bunExe(), "-e", "console.log(process.argv0)"],
+      stdout: "pipe",
+      stderr: "ignore",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+
+    const output = await proc.stdout.text();
+    expect(output.trim()).toBe(bunExe());
+    await proc.exited;
+  });
+});
+
+describe("option combinations", () => {
+  it("detached + argv0 works together", async () => {
+    const proc = spawn({
+      cmd: [bunExe(), "-e", "console.log(process.argv0)"],
+      detached: true,
+      argv0: "custom-name",
+      stdout: "pipe",
+      stderr: "ignore",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+
+    const output = await proc.stdout.text();
+    expect(output.trim()).toBe("custom-name");
+    await proc.exited;
+  });
+
+  it("onDisconnect + ipc + serialization works together", done => {
+    const tmpDir = tmpdirSync();
+    const childScript = path.join(tmpDir, "ipc-combo-child.js");
+    writeFileSync(
+      childScript,
+      `
+        process.send({ type: "hello", data: "world" });
+        setTimeout(() => {
+          process.disconnect();
+          setTimeout(() => process.exit(0), 10);
+        }, 50);
+      `,
+    );
+
+    let messageReceived = false;
+    let disconnectCalled = false;
+
+    const proc = spawn({
+      cmd: [bunExe(), childScript],
+      ipc: (message: any) => {
+        expect(message.type).toBe("hello");
+        expect(message.data).toBe("world");
+        messageReceived = true;
+      },
+      onDisconnect: () => {
+        disconnectCalled = true;
+        proc.kill();
+        expect(messageReceived).toBe(true);
+        expect(disconnectCalled).toBe(true);
+        done();
+      },
+      serialization: "advanced",
+      stdio: ["inherit", "inherit", "inherit"],
+      env: bunEnv,
+    });
+  });
+});

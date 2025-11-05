@@ -278,7 +278,6 @@ function Install-Build-Essentials {
     python `
     golang `
     nasm `
-    ruby `
     strawberryperl `
     mingw
   Install-Rust

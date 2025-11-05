@@ -608,7 +608,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
                 } else if constexpr (std::is_same_v<T, napi_module*>) {
                     napi_module_register(mod);
                 }
-            }, registration);
+            },
+                registration);
 
             // For NAPI modules, execute the pending module after each registration
             if (globalObject->m_pendingNapiModule) {

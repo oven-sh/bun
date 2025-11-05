@@ -5944,6 +5944,10 @@ declare module "bun" {
       cmd: string[];
 
       onExit?: never;
+      /**
+       * The `lazy` option applies only to async spawns. It is not supported in spawnSync.
+       */
+      lazy?: never;
     },
   ): SyncSubprocess<Out, Err>;
 
@@ -5977,7 +5981,12 @@ declare module "bun" {
      * ```
      */
     cmds: string[],
-    options?: SpawnOptions.OptionsObject<In, Out, Err>,
+    options?: SpawnOptions.OptionsObject<In, Out, Err> & {
+      /**
+       * The `lazy` option applies only to async spawns. It is not supported in spawnSync.
+       */
+      lazy?: never;
+    },
   ): SyncSubprocess<Out, Err>;
 
   /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */

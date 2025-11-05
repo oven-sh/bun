@@ -480,6 +480,7 @@ for (let [gcTick, label] of [
                   }
 
                   resolve && resolve();
+                  // @ts-expect-error
                   resolve = undefined;
                 })();
                 await promise;
@@ -679,9 +680,10 @@ describe("should not hang", () => {
     it(
       "sleep " + sleep,
       async () => {
-        const runs = [];
+        const runs: Promise<void>[] = [];
+
         let initialMaxFD = -1;
-        for (let order of [
+        for (const order of [
           ["sleep", "kill", "unref", "exited"],
           ["sleep", "unref", "kill", "exited"],
           ["kill", "sleep", "unref", "exited"],
@@ -839,36 +841,37 @@ it("error does not UAF", async () => {
 });
 
 describe("onDisconnect", () => {
-  it("onDisconnect callback is called when IPC disconnects", done => {
+  it("onDisconnect callback is called when IPC disconnects", async () => {
     const tmpDir = tmpdirSync();
     const childScript = path.join(tmpDir, "ipc-disconnect-child.js");
     writeFileSync(
       childScript,
       `
         process.send("hello");
-        setTimeout(() => {
-          process.disconnect();
-          setTimeout(() => process.exit(0), 10);
-        }, 50);
+        process.disconnect();
+        Promise.resolve().then(() => process.exit(0));
       `,
     );
 
     let disconnectCalled = false;
 
-    const proc = spawn({
+    const { promise, resolve } = Promise.withResolvers<void>();
+
+    await using proc = spawn({
       cmd: [bunExe(), childScript],
       ipc: (message, subprocess) => {
         expect(message).toBe("hello");
       },
       onDisconnect: () => {
         disconnectCalled = true;
-        proc.kill();
         expect(disconnectCalled).toBe(true);
-        done();
+        resolve();
       },
       stdio: ["inherit", "inherit", "inherit"],
       env: bunEnv,
     });
+
+    await promise;
   });
 
   it("onDisconnect callback receives correct arguments", done => {
@@ -878,24 +881,23 @@ describe("onDisconnect", () => {
       childScript,
       `
         process.send("test");
-        setTimeout(() => {
-          process.disconnect();
-          setTimeout(() => process.exit(0), 10);
-        }, 50);
+        process.disconnect();
+        Promise.resolve().then(() => process.exit(0));
       `,
     );
 
-    const proc = spawn({
-      cmd: [bunExe(), childScript],
-      ipc: () => {},
-      onDisconnect: () => {
-        // onDisconnect should be called without arguments
-        proc.kill();
-        done();
-      },
-      stdio: ["inherit", "inherit", "inherit"],
-      env: bunEnv,
-    });
+    (async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), childScript],
+        ipc: () => {},
+        onDisconnect: () => {
+          // onDisconnect should be called without arguments
+          done();
+        },
+        stdio: ["inherit", "inherit", "inherit"],
+        env: bunEnv,
+      });
+    })();
   });
 
   it("onDisconnect is not called when IPC is not used", async () => {
@@ -919,7 +921,7 @@ describe("onDisconnect", () => {
 describe("argv0", () => {
   it("argv0 option changes process.argv0 but not executable", async () => {
     const proc = spawn({
-      cmd: [bunExe(), "-e", "console.log(process.argv0)"],
+      cmd: [bunExe(), "-e", "console.log(process.argv0); console.log(process.execPath)"],
       argv0: "custom-argv0",
       stdout: "pipe",
       stderr: "ignore",
@@ -928,13 +930,15 @@ describe("argv0", () => {
     });
 
     const output = await proc.stdout.text();
-    expect(output.trim()).toBe("custom-argv0");
+    const lines = output.trim().split(/\r?\n/);
+    expect(lines[0]).toBe("custom-argv0");
+    expect(lines[1]).toBe(bunExe());
     await proc.exited;
   });
 
   it("argv0 option works with spawnSync", () => {
     const proc = spawnSync({
-      cmd: [bunExe(), "-e", "console.log(process.argv0)"],
+      cmd: [bunExe(), "-e", "console.log(process.argv0); console.log(process.execPath)"],
       argv0: "custom-argv0-sync",
       stdout: "pipe",
       stderr: "ignore",
@@ -942,8 +946,9 @@ describe("argv0", () => {
       env: bunEnv,
     });
 
-    const output = proc.stdout!.toString("utf-8").trim();
-    expect(output).toBe("custom-argv0-sync");
+    const lines = proc.stdout!.toString("utf-8").trim().split(/\r?\n/);
+    expect(lines[0]).toBe("custom-argv0-sync");
+    expect(lines[1]).toBe(bunExe());
   });
 
   it("argv0 defaults to cmd[0] when not specified", async () => {
@@ -978,40 +983,43 @@ describe("option combinations", () => {
     await proc.exited;
   });
 
-  it("onDisconnect + ipc + serialization works together", done => {
+  it("onDisconnect + ipc + serialization works together", async () => {
     const tmpDir = tmpdirSync();
     const childScript = path.join(tmpDir, "ipc-combo-child.js");
     writeFileSync(
       childScript,
       `
         process.send({ type: "hello", data: "world" });
-        setTimeout(() => {
-          process.disconnect();
-          setTimeout(() => process.exit(0), 10);
-        }, 50);
+        process.disconnect();
+        Promise.resolve().then(() => process.exit(0));
       `,
     );
 
     let messageReceived = false;
     let disconnectCalled = false;
 
-    const proc = spawn({
+    const msg = Promise.withResolvers<void>();
+    const disc = Promise.withResolvers<void>();
+
+    await using proc = spawn({
       cmd: [bunExe(), childScript],
       ipc: (message: any) => {
         expect(message.type).toBe("hello");
         expect(message.data).toBe("world");
         messageReceived = true;
+        msg.resolve();
       },
       onDisconnect: () => {
         disconnectCalled = true;
-        proc.kill();
-        expect(messageReceived).toBe(true);
-        expect(disconnectCalled).toBe(true);
-        done();
+        disc.resolve();
       },
       serialization: "advanced",
       stdio: ["inherit", "inherit", "inherit"],
       env: bunEnv,
     });
+
+    await Promise.all([msg.promise, disc.promise]);
+    expect(messageReceived).toBe(true);
+    expect(disconnectCalled).toBe(true);
   });
 });

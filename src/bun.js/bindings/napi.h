@@ -553,10 +553,6 @@ public:
 // to run the module's entrypoint.
 void executePendingNapiModule(Zig::GlobalObject* globalObject);
 
-// Thread-local storage for most recently registered NAPI module
-// Used to save module to DLHandleMap after dlopen completes
-extern thread_local napi_module* thread_local_last_napi_module;
-
 }
 
 namespace Zig {

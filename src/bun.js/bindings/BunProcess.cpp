@@ -561,26 +561,23 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
         // Module self-registered via static constructor
 
-        // Save the module registration to the handle map for future loads
-        if (handle) {
-            // Check for V8 C++ style module
-            if (node::thread_local_last_registered_module) {
-                Bun::DLHandleMap::singleton().set(handle, node::thread_local_last_registered_module);
-                node::thread_local_last_registered_module = nullptr;
-            }
-            // Check for NAPI style module
-            else if (Napi::thread_local_last_napi_module) {
-                Bun::DLHandleMap::singleton().set(handle, Napi::thread_local_last_napi_module);
-                Napi::thread_local_last_napi_module = nullptr;
-            }
-        }
-
         if (globalObject->m_pendingNapiModule) {
+            // Save NAPI module to handle map before executing
+            // We need to heap-allocate a copy since m_pendingNapiModule will be cleared
+            if (handle) {
+                auto* heapModule = new napi_module(globalObject->m_pendingNapiModule.value());
+                Bun::DLHandleMap::singleton().set(handle, heapModule);
+            }
+
             // Execute the stored registration function now that dlopen has completed
             Napi::executePendingNapiModule(globalObject);
 
             // Clear the pending module
             globalObject->m_pendingNapiModule = {};
+        } else if (node::thread_local_last_registered_module && handle) {
+            // V8 C++ style module
+            Bun::DLHandleMap::singleton().set(handle, node::thread_local_last_registered_module);
+            node::thread_local_last_registered_module = nullptr;
         }
 
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();

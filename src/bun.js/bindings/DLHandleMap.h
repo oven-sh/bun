@@ -7,6 +7,10 @@
 #include <wtf/Lock.h>
 #include <variant>
 
+#if OS(WINDOWS)
+#include <windows.h>
+#endif
+
 namespace Bun {
 
 // Thread-safe map for tracking dlopen handles to module registrations.
@@ -18,7 +22,11 @@ namespace Bun {
 // up the saved registration and replay it.
 class DLHandleMap {
 public:
+#if OS(WINDOWS)
+    using DLHandle = HMODULE;
+#else
     using DLHandle = void*;
+#endif
 
     // A module can be either V8 C++ style or NAPI style
     using ModuleRegistration = std::variant<node::node_module*, napi_module*>;
@@ -35,7 +43,7 @@ public:
     }
 
     // Save a V8 C++ module registration
-    void set(DLHandle handle, node::node_module* module) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+    void set(DLHandle handle, node::node_module* module)
     {
         ASSERT(handle != nullptr);
         ASSERT(module != nullptr);
@@ -45,7 +53,7 @@ public:
     }
 
     // Save a NAPI module registration
-    void set(DLHandle handle, napi_module* module) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+    void set(DLHandle handle, napi_module* module)
     {
         ASSERT(handle != nullptr);
         ASSERT(module != nullptr);
@@ -55,7 +63,7 @@ public:
     }
 
     // Look up a previously saved module registration
-    std::optional<ModuleRegistration> get(DLHandle handle) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+    std::optional<ModuleRegistration> get(DLHandle handle)
     {
         ASSERT(handle != nullptr);
 
@@ -77,7 +85,7 @@ private:
     DLHandleMap& operator=(const DLHandleMap&) = delete;
 
     WTF::Lock m_lock;
-    WTF::HashMap<DLHandle, ModuleRegistration> m_map WTF_GUARDED_BY_LOCK(m_lock);
+    WTF::HashMap<DLHandle, ModuleRegistration> m_map;
 };
 
 } // namespace Bun

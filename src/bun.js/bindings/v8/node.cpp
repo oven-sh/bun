@@ -80,16 +80,12 @@ void node_module_register(void* opaque_mod)
         object = Bun::JSCommonJSModule::create(globalObject, keyStr, exportsObject, false, jsUndefined());
         strongExportsObject = { vm, exportsObject };
     } else {
-        JSValue exportsObject = object->get(globalObject, WebCore::builtinNames(vm).exportsPublicName());
+        JSValue exportsObject = object->getIfPropertyExists(globalObject, WebCore::builtinNames(vm).exportsPublicName());
         RETURN_IF_EXCEPTION(scope, void());
 
-        // Convert exports to object, matching Node.js behavior.
-        // This throws for null/undefined and creates wrapper objects for primitives.
-        JSObject* exports = exportsObject.toObject(globalObject);
-        RETURN_IF_EXCEPTION(scope, void());
-
-        ASSERT(exports);
-        strongExportsObject = { vm, exports };
+        if (exportsObject && exportsObject.isObject()) {
+            strongExportsObject = { vm, exportsObject.getObject() };
+        }
     }
 
     JSC::Strong<JSC::JSObject> strongObject = { vm, object };

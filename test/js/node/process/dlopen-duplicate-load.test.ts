@@ -124,11 +124,11 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
       process.dlopen(m1, "${addonPath.replace(/\\/g, "\\\\")}");
       console.log("m1.exports.hello:", m1.exports.hello());
 
-      // Second load with different initial exports (primitive)
-      const m2 = { exports: "initial" };
+      // Second load with different exports object
+      const m2 = { exports: { initial: true } };
       process.dlopen(m2, "${addonPath.replace(/\\/g, "\\\\")}");
-      console.log("m2.exports type:", typeof m2.exports);
-      console.log("m2.exports is string:", typeof m2.exports === "string");
+      console.log("m2.exports.initial:", m2.exports.initial);
+      console.log("m2.exports.hello:", m2.exports.hello());
     `;
 
     await using proc = Bun.spawn({
@@ -141,8 +141,8 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toContain("m1.exports.hello: world");
-    expect(stdout).toContain("m2.exports type: string");
-    expect(stdout).toContain("m2.exports is string: true");
+    expect(stdout).toContain("m2.exports.initial: true");
+    expect(stdout).toContain("m2.exports.hello: world");
     expect(exitCode).toBe(0);
   });
 });

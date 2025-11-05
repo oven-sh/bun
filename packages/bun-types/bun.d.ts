@@ -5589,28 +5589,6 @@ declare module "bun" {
        * @default undefined (no limit)
        */
       maxBuffer?: number;
-
-      /**
-       * If true, stdout and stderr pipes will not automatically start reading
-       * data. Reading will only begin when you access the `stdout` or `stderr`
-       * properties.
-       *
-       * This can improve performance when you don't need to read output
-       * immediately.
-       *
-       * @default false
-       *
-       * @example
-       * ```ts
-       * const subprocess = Bun.spawn({
-       *   cmd: ["echo", "hello"],
-       *   lazy: true, // Don't start reading stdout until accessed
-       * });
-       * // stdout reading hasn't started yet
-       * await subprocess.stdout.text(); // Now reading starts
-       * ```
-       */
-      lazy?: boolean;
     }
 
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
@@ -5872,6 +5850,28 @@ declare module "bun" {
   >(
     options: SpawnOptions.OptionsObject<In, Out, Err> & {
       /**
+       * If true, stdout and stderr pipes will not automatically start reading
+       * data. Reading will only begin when you access the `stdout` or `stderr`
+       * properties.
+       *
+       * This can improve performance when you don't need to read output
+       * immediately.
+       *
+       * @default false
+       *
+       * @example
+       * ```ts
+       * const subprocess = Bun.spawn({
+       *   cmd: ["echo", "hello"],
+       *   lazy: true, // Don't start reading stdout until accessed
+       * });
+       * // stdout reading hasn't started yet
+       * await subprocess.stdout.text(); // Now reading starts
+       * ```
+       */
+      lazy?: boolean;
+
+      /**
        * The command to run
        *
        * The first argument will be resolved to an absolute executable path. It must be a file, not a directory.
@@ -5920,7 +5920,29 @@ declare module "bun" {
      * ```
      */
     cmds: string[],
-    options?: SpawnOptions.OptionsObject<In, Out, Err>,
+    options?: SpawnOptions.OptionsObject<In, Out, Err> & {
+      /**
+       * If true, stdout and stderr pipes will not automatically start reading
+       * data. Reading will only begin when you access the `stdout` or `stderr`
+       * properties.
+       *
+       * This can improve performance when you don't need to read output
+       * immediately.
+       *
+       * @default false
+       *
+       * @example
+       * ```ts
+       * const subprocess = Bun.spawn({
+       *   cmd: ["echo", "hello"],
+       *   lazy: true, // Don't start reading stdout until accessed
+       * });
+       * // stdout reading hasn't started yet
+       * await subprocess.stdout.text(); // Now reading starts
+       * ```
+       */
+      lazy?: boolean;
+    },
   ): Subprocess<In, Out, Err>;
 
   /**
@@ -5960,10 +5982,6 @@ declare module "bun" {
       cmd: string[];
 
       onExit?: never;
-      /**
-       * The `lazy` option applies only to async spawns. It is not supported in spawnSync.
-       */
-      lazy?: never;
     },
   ): SyncSubprocess<Out, Err>;
 
@@ -5997,12 +6015,7 @@ declare module "bun" {
      * ```
      */
     cmds: string[],
-    options?: SpawnOptions.OptionsObject<In, Out, Err> & {
-      /**
-       * The `lazy` option applies only to async spawns. It is not supported in spawnSync.
-       */
-      lazy?: never;
-    },
+    options?: SpawnOptions.OptionsObject<In, Out, Err>,
   ): SyncSubprocess<Out, Err>;
 
   /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */

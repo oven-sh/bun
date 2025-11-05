@@ -26,13 +26,12 @@ const EventEmitter = require("node:events");
 let dns: typeof import("node:dns");
 
 const normalizedArgsSymbol = Symbol("normalizedArgs");
-const { ExceptionWithHostPort } = require("internal/shared");
+const { ExceptionWithHostPort, ConnResetException, NodeAggregateError, ErrnoException } = require("internal/shared");
 import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
-const { NodeAggregateError, ErrnoException } = require("internal/shared");
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
@@ -2450,17 +2449,6 @@ function addServerAbortSignalOption(self, options) {
     process.nextTick(onAborted);
   } else {
     signal.addEventListener("abort", onAborted);
-  }
-}
-
-class ConnResetException extends Error {
-  constructor(msg) {
-    super(msg);
-    this.code = "ECONNRESET";
-  }
-
-  get ["constructor"]() {
-    return Error;
   }
 }
 

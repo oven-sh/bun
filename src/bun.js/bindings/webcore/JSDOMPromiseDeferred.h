@@ -38,11 +38,12 @@ class JSDOMWindow;
 enum class RejectAsHandled : uint8_t { No,
     Yes };
 
-#define DEFERRED_PROMISE_HANDLE_AND_RETURN_IF_EXCEPTION(scope, globalObject) do { \
-        if (scope.exception()) [[unlikely]] { \
+#define DEFERRED_PROMISE_HANDLE_AND_RETURN_IF_EXCEPTION(scope, globalObject)           \
+    do {                                                                               \
+        if (scope.exception()) [[unlikely]] {                                          \
             handleUncaughtException(scope, *jsCast<JSDOMGlobalObject*>(globalObject)); \
-            return; \
-        } \
+            return;                                                                    \
+        }                                                                              \
     } while (false)
 
 class DeferredPromise : public DOMGuarded<JSC::JSPromise> {

@@ -3,7 +3,7 @@ import * as fs from "fs/promises";
 test("no double export", async () => {
   await fs.rm(import.meta.dir + "/dist", { recursive: true, force: true });
 
-  const result = await Bun.build({
+  await Bun.build({
     entrypoints: [import.meta.dir + "/a.fixture.ts", import.meta.dir + "/b.fixture.ts"],
     format: "esm",
     sourcemap: "external",

@@ -1,6 +1,6 @@
 The Bun bundler implements a set of default loaders out of the box. As a rule of thumb, the bundler and the runtime both support the same set of file types out of the box.
 
-`.js` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx` `.jsx` `.toml` `.json` `.yaml` `.yml` `.txt` `.wasm` `.node` `.html`
+`.js` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx` `.jsx` `.toml` `.json` `.yaml` `.yml` `.txt` `.wasm` `.node` `.html` `.csv`
 
 Bun uses the file extension to determine which built-in _loader_ should be used to parse the file. Every loader has a name, such as `js`, `tsx`, or `json`. These names are used when building [plugins](https://bun.com/docs/bundler/plugins) that extend Bun with custom loaders.
 
@@ -169,6 +169,79 @@ export default {
 {% /codetabs %}
 
 For more details on YAML support including the runtime API `Bun.YAML.parse()`, see the [YAML API documentation](/docs/api/yaml).
+
+### `csv`
+
+**CSV loader**. Default for `.csv`.
+
+CSV files can be directly imported. Bun will parse them with its fast native CSV parser.
+
+```ts
+import data from "./data.csv";
+console.log(data); // => [{ name: "John Doe", age: "35", email: "johndoe@example.com", favourite_animal: "🦔" }];
+
+// via import attribute:
+// import myCustomCSV from './my.data' with { type: "csv" };
+
+import data from "./data.csv" with { type: "csv_no_header" };
+console.log(data); // => [["name", "age", "email", "favourite_animal"], ["John Doe", "35", "johndoe@example.com", "🦔"]];
+```
+
+Following types are supported: `csv`, `csv_no_header`, `tsv`, `tsv_no_header`.
+For more flexibility, you can import the CSV file as `text` and parse it with [`Bun.CSV.parse`](/docs/api/csv).
+
+During bundling, the parsed CSV is inlined into the bundle as a JavaScript object or array (depending on the header option).
+
+{% codetabs %}
+
+```ts#With header
+var data = [
+  {
+    name: "John Doe",
+    age: "35",
+    email: "johndoe@example.com",
+    favourite_animal: "\uD83E\uDD94"
+  },
+  // ...other rows
+];
+console.log(data);
+```
+
+```ts#Without header
+var data = [
+  ["name", "age", "email", "favourite_animal"],
+  ["John Doe", "35", "johndoe@example.com", "\uD83E\uDD94"]
+  // ...other rows
+];
+console.log(data);
+```
+
+{% /codetabs %}
+
+`.csv` import exposes the same parse results as [`Bun.CSV.parse`](/docs/api/csv) as named exports,
+and the data as the default export.
+
+{% codetabs %}
+
+```csv#Input
+name,age,email,favourite_animal
+John Doe,35,johndoe@example.com,🦔
+Jane Smith,28,janesmith@example.com,Cat
+Liam Brown,42,Dog
+```
+
+```js#Output
+import csv_data, { data, rows, columns, errors } from "./data.csv";
+
+console.log(csv_data === data); // => true
+console.log(rows); // => 3
+console.log(columns); // => 4
+console.log(errors); // => [{ line: 4, message: "Field count mismatch: expected 4, got 3" }]
+```
+
+{% /codetabs %}
+
+For more details on CSV support including the runtime API `Bun.CSV.parse()`, see the [CSV API documentation](/docs/api/csv).
 
 ### `text`
 

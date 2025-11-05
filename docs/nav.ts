@@ -388,7 +388,10 @@ export default {
     }), // "`Bun.spawn`"),
     page("api/yaml", "YAML", {
       description: `Bun.YAML.parse(string) lets you parse YAML files in JavaScript`,
-    }), // "`Bun.spawn`"),
+    }), // "`Bun.YAML`"),
+    page("api/csv", "CSV", {
+      description: `Bun.CSV.parse(string) lets you parse CSV files in JavaScript`,
+    }), // "`Bun.CSV`"),
     page("api/html-rewriter", "HTMLRewriter", {
       description: `Parse and transform HTML with Bun's native HTMLRewriter API, inspired by Cloudflare Workers.`,
     }), // "`HTMLRewriter`"),

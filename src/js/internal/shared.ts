@@ -126,6 +126,17 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
 
 const kEmptyObject = ObjectFreeze(Object.create(null));
 
+function getLazy<T>(initializer: () => T) {
+  let value: T;
+  let initialized = false;
+  return function () {
+    if (initialized) return value;
+    value = initializer();
+    initialized = true;
+    return value;
+  };
+}
+
 //
 
 export default {
@@ -137,6 +148,7 @@ export default {
   NodeAggregateError,
   ErrnoException,
   once,
+  getLazy,
 
   kHandle: Symbol("kHandle"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),

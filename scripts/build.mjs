@@ -101,9 +101,11 @@ async function build(args) {
 
   await startGroup("CMake Build", () => spawn("cmake", buildArgs, { env }));
 
-  await startGroup("sccache stats", () => {
-    spawn("sccache", ["--show-stats"], { env });
-  });
+  if (isBuildkite()) {
+    await startGroup("sccache stats", () => {
+      spawn("sccache", ["--show-stats"], { env });
+    });
+  }
 
   printDuration("total", Date.now() - startTime);
 }

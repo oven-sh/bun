@@ -2,6 +2,8 @@
 #include "napi.h"
 
 #include "BunProcess.h"
+#include "DLHandleMap.h"
+#include "v8/node.h"
 
 // Include the CMake-generated dependency versions header
 #include "bun_dependency_versions.h"
@@ -558,11 +560,61 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
         // Module self-registered via static constructor
+
+        // Save the module registration to the handle map for future loads
+        if (handle) {
+            // Check for V8 C++ style module
+            if (node::thread_local_last_registered_module) {
+                Bun::DLHandleMap::singleton().set(handle, node::thread_local_last_registered_module);
+                node::thread_local_last_registered_module = nullptr;
+            }
+            // Check for NAPI style module
+            else if (Napi::thread_local_last_napi_module) {
+                Bun::DLHandleMap::singleton().set(handle, Napi::thread_local_last_napi_module);
+                Napi::thread_local_last_napi_module = nullptr;
+            }
+        }
+
         if (globalObject->m_pendingNapiModule) {
             // Execute the stored registration function now that dlopen has completed
             Napi::executePendingNapiModule(globalObject);
 
             // Clear the pending module
+            globalObject->m_pendingNapiModule = {};
+        }
+
+        JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
+        globalObject->napiModuleRegisterCallCount = 0;
+        globalObject->m_pendingNapiModuleAndExports[0].clear();
+        globalObject->m_pendingNapiModuleAndExports[1].clear();
+
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (resultValue && resultValue != strongModule.get()) {
+            if (resultValue.isCell() && resultValue.getObject()->isErrorInstance()) {
+                JSC::throwException(globalObject, scope, resultValue);
+                return {};
+            }
+        }
+
+        return JSValue::encode(jsUndefined());
+    }
+
+    // Module didn't self-register on this load. Check if we have a cached registration.
+    if (auto cachedModule = Bun::DLHandleMap::singleton().get(handle)) {
+        // Replay the registration with the current exports/module
+        std::visit([](auto&& mod) {
+            using T = std::decay_t<decltype(mod)>;
+            if constexpr (std::is_same_v<T, node::node_module*>) {
+                node::node_module_register(mod);
+            } else if constexpr (std::is_same_v<T, napi_module*>) {
+                napi_module_register(mod);
+            }
+        }, *cachedModule);
+
+        // For NAPI modules, execute the pending module
+        if (globalObject->m_pendingNapiModule) {
+            Napi::executePendingNapiModule(globalObject);
             globalObject->m_pendingNapiModule = {};
         }
 

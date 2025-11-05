@@ -798,6 +798,12 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject)
     globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, object);
 }
 
+namespace Napi {
+// Thread-local storage for most recently registered NAPI module
+// Used to save module to DLHandleMap after dlopen completes
+thread_local napi_module* thread_local_last_napi_module = nullptr;
+}
+
 extern "C" void napi_module_register(napi_module* mod)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject();
@@ -809,6 +815,8 @@ extern "C" void napi_module_register(napi_module* mod)
     // Store the entire module struct to be processed after dlopen completes
     if (mod && mod->nm_register_func) {
         globalObject->m_pendingNapiModule = *mod;
+        // Store in thread-local so BunProcess.cpp can save it after dlopen completes
+        Napi::thread_local_last_napi_module = mod;
         // Increment the counter to signal that a module registered itself
         Bun__napi_module_register_count++;
     } else {

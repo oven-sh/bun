@@ -932,7 +932,7 @@ describe("argv0", () => {
     const output = await proc.stdout.text();
     const lines = output.trim().split(/\r?\n/);
     expect(lines[0]).toBe("custom-argv0");
-    expect(lines[1]).toBe(bunExe());
+    expect(path.normalize(lines[1])).toBe(path.normalize(bunExe()));
     await proc.exited;
   });
 
@@ -948,7 +948,7 @@ describe("argv0", () => {
 
     const lines = proc.stdout!.toString("utf-8").trim().split(/\r?\n/);
     expect(lines[0]).toBe("custom-argv0-sync");
-    expect(lines[1]).toBe(bunExe());
+    expect(path.normalize(lines[1])).toBe(path.normalize(bunExe()));
   });
 
   it("argv0 defaults to cmd[0] when not specified", async () => {

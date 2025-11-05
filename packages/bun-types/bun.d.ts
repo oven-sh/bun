@@ -5329,7 +5329,23 @@ declare module "bun" {
       cwd?: string;
 
       /**
-       * Whether the process should be detached from the current process.
+       * Whether the child runs in its own session/process group, independent of
+       * the parent.
+       *
+       * - POSIX: enables a new session via `setsid()` so the child becomes a
+       *   process group leader. This lets it continue running after the parent
+       *   exits and receive signals independently from the parent’s
+       *   terminal/process group.
+       * - Windows: sets `UV_PROCESS_DETACHED`, allowing the child to outlive
+       *   the parent.
+       *
+       * Notes:
+       * - This does not daemonize the process: stdio handles are unchanged. If
+       *   you don’t want stdio to keep the parent alive, use `stdio: ["ignore",
+       *   "ignore", "ignore"]` (or similar) or call `proc.unref()` so the
+       *   parent event loop can exit independently.
+       * - Detaching affects lifetime/ownership, not environment or working
+       *   directory.
        *
        * @default false
        */

@@ -806,9 +806,9 @@ extern "C" void napi_module_register(napi_module* mod)
     // knows that napi_module_register was attempted
     globalObject->napiModuleRegisterCallCount++;
 
-    // Store the entire module struct to be processed after dlopen completes
+    // Append to vector to accumulate ALL module registrations during dlopen
     if (mod && mod->nm_register_func) {
-        globalObject->m_pendingNapiModule = *mod;
+        globalObject->m_pendingNapiModules.push_back(*mod);
         // Increment the counter to signal that a module registered itself
         Bun__napi_module_register_count++;
     } else {

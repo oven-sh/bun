@@ -41,8 +41,9 @@ struct node_module {
 
 extern "C" BUN_EXPORT void node_module_register(void* mod);
 
-// Thread-local storage for most recently registered module
-// Used to save module to DLHandleMap after dlopen completes
-extern thread_local node_module* thread_local_last_registered_module;
+// Thread-local storage to accumulate ALL module registrations during dlopen
+// Used to save modules to DLHandleMap after dlopen completes
+#include <vector>
+extern thread_local std::vector<node_module*> thread_local_registered_modules;
 
 } // namespace node

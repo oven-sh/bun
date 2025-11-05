@@ -559,26 +559,32 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #endif
 
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
-        // Module self-registered via static constructor
+        // Module self-registered via static constructor(s)
+        // Save ALL registrations to handle map before executing
 
-        if (globalObject->m_pendingNapiModule) {
-            // Save NAPI module to handle map before executing
-            // We need to heap-allocate a copy since m_pendingNapiModule will be cleared
-            if (handle) {
-                auto* heapModule = new napi_module(globalObject->m_pendingNapiModule.value());
+        if (handle) {
+            // Save all NAPI module registrations
+            for (auto& mod : globalObject->m_pendingNapiModules) {
+                auto* heapModule = new napi_module(mod);
                 Bun::DLHandleMap::singleton().add(handle, heapModule);
             }
 
-            // Execute the stored registration function now that dlopen has completed
-            Napi::executePendingNapiModule(globalObject);
-
-            // Clear the pending module
-            globalObject->m_pendingNapiModule = {};
-        } else if (node::thread_local_last_registered_module && handle) {
-            // V8 C++ style module
-            Bun::DLHandleMap::singleton().add(handle, node::thread_local_last_registered_module);
-            node::thread_local_last_registered_module = nullptr;
+            // Save all V8 C++ module registrations
+            for (auto* mod : node::thread_local_registered_modules) {
+                Bun::DLHandleMap::singleton().add(handle, mod);
+            }
         }
+
+        // Execute all NAPI modules
+        for (auto& mod : globalObject->m_pendingNapiModules) {
+            globalObject->m_pendingNapiModule = mod;
+            Napi::executePendingNapiModule(globalObject);
+            globalObject->m_pendingNapiModule = {};
+        }
+
+        // Clear all pending registrations
+        globalObject->m_pendingNapiModules.clear();
+        node::thread_local_registered_modules.clear();
 
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
         globalObject->napiModuleRegisterCallCount = 0;
@@ -600,6 +606,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     // Module didn't self-register on this load. Check if we have cached registrations.
     if (auto cachedModules = Bun::DLHandleMap::singleton().get(handle)) {
         // Replay all registrations from this handle
+        // This will populate the vectors again via register functions
         for (auto& registration : *cachedModules) {
             std::visit([](auto&& mod) {
                 using T = std::decay_t<decltype(mod)>;
@@ -608,15 +615,19 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
                 } else if constexpr (std::is_same_v<T, napi_module*>) {
                     napi_module_register(mod);
                 }
-            },
-                registration);
-
-            // For NAPI modules, execute the pending module after each registration
-            if (globalObject->m_pendingNapiModule) {
-                Napi::executePendingNapiModule(globalObject);
-                globalObject->m_pendingNapiModule = {};
-            }
+            }, registration);
         }
+
+        // Execute all NAPI modules that were just registered
+        for (auto& mod : globalObject->m_pendingNapiModules) {
+            globalObject->m_pendingNapiModule = mod;
+            Napi::executePendingNapiModule(globalObject);
+            globalObject->m_pendingNapiModule = {};
+        }
+
+        // Clear the vectors (no need to save again since already in DLHandleMap)
+        globalObject->m_pendingNapiModules.clear();
+        node::thread_local_registered_modules.clear();
 
         JSValue resultValue = globalObject->m_pendingNapiModuleAndExports[0].get();
         globalObject->napiModuleRegisterCallCount = 0;

@@ -6,7 +6,6 @@ try {
   listener = await require(entrypointPath);
 } catch (e) {
   console.log(e.message.replace(require.resolve(entrypointPath), "<the module>"));
-  // delete require.cache[require.resolve(entrypointPath)]; // -- uncommenting this line DOES fix the problem
   listener = await import(entrypointPath);
 }
 for (let i = 0; i < 5; i++) if (listener.default) listener = listener.default;

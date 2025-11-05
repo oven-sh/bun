@@ -9,10 +9,9 @@ mode: center
 In this guide, we will deploy a Bun HTTP server to Google Cloud Run using a `Dockerfile`.
 
 <Note>
-	Before continuing, make sure you have: 
-		- A Bun application ready for deployment 
-		- A [Google Cloud account](https://cloud.google.com/) with billing enabled 
-		- [Google Cloud CLI](https://cloud.google.com/sdk/docs/install) installed and configured 
+  Before continuing, make sure you have: - A Bun application ready for deployment - A [Google Cloud
+  account](https://cloud.google.com/) with billing enabled - [Google Cloud
+  CLI](https://cloud.google.com/sdk/docs/install) installed and configured
 </Note>
 
 ---
@@ -20,20 +19,21 @@ In this guide, we will deploy a Bun HTTP server to Google Cloud Run using a `Doc
 <Steps> 
 <Step title={<span>Initialize <code>gcloud</code> by select/creating a project</span>}>
 
-Make sure that you've initialized the Google Cloud CLI. This command logs you in, and prompts you to either select an existing project or create a new one. 
+Make sure that you've initialized the Google Cloud CLI. This command logs you in, and prompts you to either select an existing project or create a new one.
 
 For more help with the Google Cloud CLI, see the [official documentation](https://docs.cloud.google.com/sdk/gcloud/reference/init).
- 
+
 ```bash terminal icon="terminal"
 gcloud init
 ```
+
 ```txt
 Welcome! This command will take you through the configuration of gcloud.
 
 You must sign in to continue. Would you like to sign in (Y/n)? Y
 You are signed in as [email@example.com].
 
-Pick cloud project to use: 
+Pick cloud project to use:
  [1] existing-bun-app-1234
  [2] Enter a project ID
  [3] Create a new project
@@ -101,6 +101,7 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 These commands enable Cloud Run (`run.googleapis.com`) and Cloud Build (`cloudbuild.googleapis.com`), which are required for deploying from source. Cloud Run runs your containerized app, while Cloud Build handles building and packaging it.
 
 The IAM binding grants the Compute Engine service account (`$PROJECT_NUMBER-compute@developer.gserviceaccount.com`) permission to build and deploy images on your behalf.
+
 </Note>
 
 </Step>
@@ -114,7 +115,7 @@ FROM oven/bun:latest
 # Copy the package.json and bun.lock into the container
 COPY package.json bun.lock ./
 
-# Install the dependencies 
+# Install the dependencies
 RUN bun install --production --frozen-lockfile
 
 # Copy the rest of the application into the container
@@ -127,7 +128,8 @@ CMD ["bun", "index.ts"]
 <Note>
   Make sure that the start command corresponds to your application's entry point. This can also be `CMD ["bun", "run", "start"]` if you have a start script in your `package.json`.
 
-	This image installs dependencies and runs your app with Bun inside a container. If your app doesn't have dependencies, you can omit the `RUN bun install --production --frozen-lockfile` line.
+    This image installs dependencies and runs your app with Bun inside a container. If your app doesn't have dependencies, you can omit the `RUN bun install --production --frozen-lockfile` line.
+
 </Note>
 
 Create a new `.dockerignore` file in the root of your project. This file contains the files and directories that should be _excluded_ from the container image, such as `node_modules`. This makes your builds faster and smaller:
@@ -150,8 +152,8 @@ LICENSE
 Make sure you're in the directory containing your `Dockerfile`, then deploy directly from your local source:
 
 <Note>
-	Update the `--region` flag to your preferred region. You can also omit this flag to get an
-	interactive prompt to select a region.
+  Update the `--region` flag to your preferred region. You can also omit this flag to get an interactive prompt to
+  select a region.
 </Note>
 
 ```bash terminal icon="terminal"

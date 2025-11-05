@@ -1,7 +1,7 @@
 #pragma once
 
 #include "root.h"
-#include "node.h"
+#include "v8/node.h"
 #include "napi.h"
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
@@ -15,6 +15,9 @@
 #endif
 
 namespace Bun {
+
+// A module can be either V8 C++ style or NAPI style
+using DLModuleRegistration = std::variant<node::node_module*, napi_module*>;
 
 // Thread-safe map for tracking dlopen handles to module registrations.
 // This allows re-loading the same native module multiple times, matching Node.js behavior.
@@ -31,9 +34,6 @@ public:
 #else
     using DLHandle = void*;
 #endif
-
-    // A module can be either V8 C++ style or NAPI style
-    using ModuleRegistration = std::variant<node::node_module*, napi_module*>;
 
     // Get the singleton instance
     static DLHandleMap& singleton()
@@ -53,8 +53,8 @@ public:
         ASSERT(module != nullptr);
 
         WTF::Locker locker { m_lock };
-        auto& registrations = m_map.ensure(handle, [] { return WTF::Vector<ModuleRegistration>(); }).iterator->value;
-        registrations.append(ModuleRegistration(module));
+        auto& registrations = m_map.ensure(handle, [] { return WTF::Vector<DLModuleRegistration>(); }).iterator->value;
+        registrations.append(DLModuleRegistration(module));
     }
 
     // Add a NAPI module registration to the vector for this handle
@@ -64,12 +64,12 @@ public:
         ASSERT(module != nullptr);
 
         WTF::Locker locker { m_lock };
-        auto& registrations = m_map.ensure(handle, [] { return WTF::Vector<ModuleRegistration>(); }).iterator->value;
-        registrations.append(ModuleRegistration(module));
+        auto& registrations = m_map.ensure(handle, [] { return WTF::Vector<DLModuleRegistration>(); }).iterator->value;
+        registrations.append(DLModuleRegistration(module));
     }
 
     // Look up all previously saved module registrations for this handle
-    std::optional<WTF::Vector<ModuleRegistration>> get(DLHandle handle)
+    std::optional<WTF::Vector<DLModuleRegistration>> get(DLHandle handle)
     {
         ASSERT(handle != nullptr);
 
@@ -91,7 +91,7 @@ private:
     DLHandleMap& operator=(const DLHandleMap&) = delete;
 
     WTF::Lock m_lock;
-    WTF::HashMap<DLHandle, WTF::Vector<ModuleRegistration>> m_map;
+    WTF::HashMap<DLHandle, WTF::Vector<DLModuleRegistration>> m_map;
 };
 
 } // namespace Bun

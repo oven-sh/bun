@@ -37,8 +37,8 @@ Bun.serve({
     // Redirect from /blog/hello to /blog/hello/world
     "/blog/hello": Response.redirect("/blog/hello/world"),
 
-    // Serve a file by buffering it in memory
-    "/favicon.ico": new Response(await Bun.file("./favicon.ico").bytes(), {
+    // Serve files directly (Bun v1.2.16+)
+    "/favicon.ico": new Response(Bun.file("./favicon.ico"), {
       headers: {
         "Content-Type": "image/x-icon",
       },
@@ -230,7 +230,7 @@ Both route types automatically adjust status codes:
 
 ```ts
 const server = Bun.serve({
-  static: {
+  routes: {
     "/api/time": new Response(new Date().toISOString()),
   },
 
@@ -242,7 +242,7 @@ const server = Bun.serve({
 // Update the time every second.
 setInterval(() => {
   server.reload({
-    static: {
+    routes: {
       "/api/time": new Response(new Date().toISOString()),
     },
 

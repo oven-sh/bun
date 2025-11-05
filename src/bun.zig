@@ -683,7 +683,6 @@ pub const MimallocArena = allocators.MimallocArena;
 pub const AllocationScope = allocators.AllocationScope;
 pub const NullableAllocator = allocators.NullableAllocator;
 pub const MaxHeapAllocator = allocators.MaxHeapAllocator;
-pub const MemoryReportingAllocator = allocators.MemoryReportingAllocator;
 
 pub const isSliceInBuffer = allocators.isSliceInBuffer;
 pub const isSliceInBufferT = allocators.isSliceInBufferT;
@@ -3768,6 +3767,8 @@ pub fn getUseSystemCA(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFra
 
 // Claude thinks its bun.JSC when we renamed it to bun.jsc months ago.
 pub const JSC = @compileError("Deprecated: Use @import(\"bun\").jsc instead");
+
+pub const ConfigVersion = @import("./ConfigVersion.zig").ConfigVersion;
 
 const CopyFile = @import("./copy_file.zig");
 const builtin = @import("builtin");

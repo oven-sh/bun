@@ -149,3 +149,37 @@ for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"
     expect("👨‍❤️‍💋‍👨")[matcher]();
   });
 }
+
+// Test for strings with control characters and binary data (from gist)
+test("handles binary data with control characters", () => {
+  // This string caused freezing issues in earlier versions
+  const problematicString = `com.apple.lastuseddate#PS: S�\u000bi\ncom.apple.macl: \x07@��Y6�>J��'��\x03�FS\ncom.apple.metadata:kMDItemWhereFroms: bplist00�\x01\x02_\x11\x02\x04https://software.download.prss.microsoft.com/dbazure/Win11_25H2_English_Arm64.iso?t=984c522c-a10b-41d5-99ec-68cc848694c9&P1=1762014682&P2=601&P3=2&P4=G6eN0uFrG64Ft%2bDz061PD0rTvYV2UQjZUVtyS9Rn9Ytt0F%2bscgadBtf%2fUs5BKFyowVlDqPhEbTtqBsPEk21bgNAyRwBj%2fgnQcRhiIwEcqSJ9Wyf4ChE%2bYRuc0Eeha9IJakJwuBizc38a4qKsEIxihqroM01TM8iANCExlWWZKG3Gayc%2b18OcvGefTc1G%2bvtvd57AWmeK1kho00yTFtT1sqdS6OXV000YyaYoIVLjVypaoQj7MYJ46vCQb%2bVvn3QZgXaMVwbKjCMI15ezgpGptQPWBssWz9hYC9Fv1OuWcmBwvLGkvL1MczAWSuY3P0kqfezG%2fdkh2cX5NUo2G3zPtw%3d%3d_\x10\x1ahttps://www.microsoft.com/\ncom.apple.provenance: \x01\x02\n`;
+
+  // Should not freeze and should return a reasonable width
+  const width = Bun.stringWidth(problematicString);
+  expect(width).toBeGreaterThan(0);
+  expect(width).toBeLessThan(problematicString.length + 100);
+
+  // Also test with countAnsiEscapeCodes: false (the default)
+  const width2 = Bun.stringWidth(problematicString, { countAnsiEscapeCodes: false });
+  expect(width2).toBeGreaterThan(0);
+  expect(width2).toBeLessThan(problematicString.length + 100);
+});
+
+// Test edge cases with malformed ANSI sequences
+test("handles malformed ANSI sequences", () => {
+  // ESC without [
+  expect(Bun.stringWidth("\x1bHello")).toBeGreaterThan(0);
+
+  // ESC [ without closing m
+  expect(Bun.stringWidth("\x1b[31Hello")).toBeGreaterThan(0);
+
+  // ESC [ with other characters but no m
+  expect(Bun.stringWidth("\x1b[31;32;33Hello")).toBeGreaterThan(0);
+
+  // Multiple unclosed sequences
+  expect(Bun.stringWidth("\x1b[31\x1b[32\x1b[33Hello")).toBeGreaterThan(0);
+
+  // Control characters mixed with text
+  expect(Bun.stringWidth("\x01\x02\x03Hello\x07\x0b\x10\x1aWorld")).toBeGreaterThan(0);
+});

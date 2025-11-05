@@ -657,11 +657,19 @@ pub const visible = struct {
             length += visibleLatin1Width(input[0..i]);
             input = input[i..];
 
-            if (input.len < 3) return length;
+            if (input.len < 3) {
+                length += visibleLatin1Width(input);
+                return length;
+            }
 
             if (input[1] == '[') {
-                const end = indexFn(input[2..], 'm') orelse return length;
-                input = input[end + 3 ..];
+                if (indexFn(input[2..], 'm')) |end| {
+                    input = input[end + 3 ..];
+                } else {
+                    // No closing 'm' found, treat the rest as visible characters
+                    length += visibleLatin1Width(input);
+                    return length;
+                }
             } else {
                 input = input[1..];
             }
@@ -756,10 +764,19 @@ pub const visible = struct {
                     saw_1b = true;
                     continue;
                 }
-                len += stretch_len;
+                // If we're not in the middle of an ANSI sequence, add stretch_len and reset
+                // If we ARE in a sequence (saw_bracket is true), keep accumulating in stretch_len
+                if (!saw_bracket) {
+                    len += stretch_len;
+                    stretch_len = 0;
+                }
                 input = input[idx..];
             }
-            if (input.len == 0) break;
+            if (input.len == 0) {
+                // If we reach the end with an unclosed ANSI sequence, count the accumulated characters
+                len += stretch_len;
+                break;
+            }
             const replacement = utf16CodepointWithFFFD(input);
             defer input = input[replacement.len..];
             if (replacement.fail) continue;

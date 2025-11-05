@@ -1876,7 +1876,7 @@ export function exampleSite(protocol: "https" | "http" = "https") {
     stop() {
       return server.stop();
     },
-    async [Symbol.dispose]() {
+    async [Symbol.asyncDispose]() {
       await server.stop();
     },
   };

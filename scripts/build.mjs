@@ -101,7 +101,7 @@ async function build(args) {
 
   await startGroup("CMake Build", () => spawn("cmake", buildArgs, { env }));
 
-  if (isBuildkite()) {
+  if (isCI) {
     await startGroup("sccache stats", () => {
       spawn("sccache", ["--show-stats"], { env });
     });

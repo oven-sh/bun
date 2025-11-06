@@ -466,20 +466,18 @@ pub fn spawnMaybeSync(
         !jsc_vm.isInspectorEnabled() and
         !bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH.get();
 
+    const current_event_loop = jsc_vm.eventLoop();
+
     // For spawnSync, use an isolated event loop to prevent JavaScript timers from firing
     // and to avoid interfering with the main event loop
     const sync_event_loop: ?*jsc.EventLoop = if (comptime is_sync) brk: {
-        const sync_loop = jsc_vm.rareData().spawnSyncEventLoop() catch {
-            return globalThis.throwOutOfMemory();
-        };
-        sync_loop.prepare(jsc_vm);
+        const sync_loop = jsc_vm.rareData().spawnSyncEventLoop(jsc_vm);
         break :brk &sync_loop.event_loop;
     } else null;
+
     defer {
         if (comptime is_sync) {
-            if (sync_event_loop) |loop| {
-                jsc_vm.rareData().spawn_sync_event_loop.?.cleanup(jsc_vm, loop);
-            }
+            jsc_vm.rareData().spawnSyncEventLoop(jsc_vm).cleanup(jsc_vm, current_event_loop);
         }
     }
 
@@ -709,14 +707,15 @@ pub fn spawnMaybeSync(
 
     var send_exit_notification = false;
 
-    // This must go before other things happen so that the exit handler is registered before onProcessExit can potentially be called.
-    if (timeout) |timeout_val| {
-        subprocess.event_loop_timer.next = bun.timespec.msFromNow(timeout_val);
-        globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
-        subprocess.setEventLoopTimerRefd(true);
-    }
-
     if (comptime !is_sync) {
+        // This must go before other things happen so that the exit handler is
+        // registered before onProcessExit can potentially be called.
+        if (timeout) |timeout_val| {
+            subprocess.event_loop_timer.next = bun.timespec.msFromNow(timeout_val);
+            globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
+            subprocess.setEventLoopTimerRefd(true);
+        }
+
         bun.debugAssert(out != .zero);
 
         if (on_exit_callback.isCell()) {
@@ -838,7 +837,7 @@ pub fn spawnMaybeSync(
     // This ensures JavaScript timers don't fire and stdin/stdout from the main process aren't affected
     {
         const timespec: bun.timespec = if (timeout) |timeout_ms| bun.timespec.msFromNow(timeout_ms) else undefined;
-        const sync_loop = jsc_vm.rareData().spawn_sync_event_loop.?;
+        const sync_loop = jsc_vm.rareData().spawnSyncEventLoop(jsc_vm);
 
         while (subprocess.computeHasPendingActivity()) {
             if (subprocess.stdin == .buffer) {

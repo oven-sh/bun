@@ -661,6 +661,12 @@ pub fn getActiveTasks(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.
     return result;
 }
 
+pub fn deinit(this: *EventLoop) void {
+    this.tasks.deinit();
+    this.immediate_tasks.clearAndFree(bun.default_allocator);
+    this.next_immediate_tasks.clearAndFree(bun.default_allocator);
+}
+
 pub const AnyEventLoop = @import("./event_loop/AnyEventLoop.zig").AnyEventLoop;
 pub const ConcurrentPromiseTask = @import("./event_loop/ConcurrentPromiseTask.zig").ConcurrentPromiseTask;
 pub const WorkTask = @import("./event_loop/WorkTask.zig").WorkTask;

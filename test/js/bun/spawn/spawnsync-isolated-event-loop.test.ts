@@ -134,8 +134,7 @@ describe.concurrent("spawnSync isolated event loop", () => {
         // Run multiple subprocesses synchronously
         for (let i = 0; i < 3; i++) {
           const result = Bun.spawnSync({
-            cmd: ["sleep", "0.05"],
-            env: process.env,
+            cmd: ["${bunExe()}", "-e", "Bun.sleepSync(50)"],
           });
 
           if (timerCount > 0) {

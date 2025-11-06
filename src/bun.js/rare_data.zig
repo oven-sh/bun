@@ -42,7 +42,7 @@ valkey_context: ValkeyContext = .{},
 
 tls_default_ciphers: ?[:0]const u8 = null,
 
-spawn_sync_event_loop: ?*SpawnSyncEventLoop = null,
+#spawn_sync_event_loop: bun.ptr.Owned(?*SpawnSyncEventLoop) = .initNull(),
 
 const PipeReadBuffer = [256 * 1024]u8;
 const DIGESTED_HMAC_256_LEN = 32;
@@ -539,12 +539,7 @@ pub fn deinit(this: *RareData) void {
         bun.default_allocator.destroy(pipe);
     }
 
-    if (this.spawn_sync_event_loop) |loop| {
-        this.spawn_sync_event_loop = null;
-        loop.deinit();
-        bun.default_allocator.destroy(loop);
-    }
-
+    this.#spawn_sync_event_loop.deinit();
     this.aws_signature_cache.deinit();
 
     this.s3_default_client.deinit();
@@ -579,11 +574,12 @@ pub fn websocketDeflate(this: *RareData) *WebSocketDeflate.RareData {
 
 pub const SpawnSyncEventLoop = @import("./event_loop/SpawnSyncEventLoop.zig");
 
-pub fn spawnSyncEventLoop(this: *RareData) !*SpawnSyncEventLoop {
-    return this.spawn_sync_event_loop orelse brk: {
-        const loop = try SpawnSyncEventLoop.init();
-        this.spawn_sync_event_loop = loop;
-        break :brk loop;
+pub fn spawnSyncEventLoop(this: *RareData, vm: *jsc.VirtualMachine) *SpawnSyncEventLoop {
+    return this.#spawn_sync_event_loop.get() orelse brk: {
+        this.#spawn_sync_event_loop = .new(undefined);
+        const ptr: *SpawnSyncEventLoop = this.#spawn_sync_event_loop.get().?;
+        ptr.init(vm);
+        break :brk ptr;
     };
 }
 

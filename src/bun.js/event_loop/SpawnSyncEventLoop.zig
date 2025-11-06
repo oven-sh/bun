@@ -49,12 +49,7 @@ const Handler = struct {
     }
 };
 
-pub fn init() !*SpawnSyncEventLoop {
-    const self = try bun.default_allocator.create(SpawnSyncEventLoop);
-
-    // Create a COMPLETELY SEPARATE uws.Loop for spawnSync
-    // This is critical - we cannot use the main loop as that would cause recursive execution
-    // This creates a new kqueue/epoll fd (POSIX) or new libuv loop (Windows)
+pub fn init(self: *SpawnSyncEventLoop, vm: *jsc.VirtualMachine) void {
     const loop = uws.Loop.create(Handler);
 
     self.* = .{
@@ -66,18 +61,14 @@ pub fn init() !*SpawnSyncEventLoop {
     // CRITICAL: On Windows, store our isolated loop pointer
     self.event_loop = .{
         .tasks = jsc.EventLoop.Queue.init(bun.default_allocator),
-        .global = undefined, // Will be set when used
-        .virtual_machine = undefined, // Will be set when used
+        .global = vm.global,
+        .virtual_machine = vm,
         .uws_loop = if (bun.Environment.isWindows) self.uws_loop else {},
     };
 
     // Set up the loop's internal data to point to this isolated event loop
     self.uws_loop.internal_loop_data.setParentEventLoop(jsc.EventLoopHandle.init(&self.event_loop));
-
-    // Critically: Set jsc_vm to null to prevent JavaScript from running
     self.uws_loop.internal_loop_data.jsc_vm = null;
-
-    return self;
 }
 
 fn onCloseUVTimer(timer: *bun.windows.libuv.Timer) callconv(.C) void {
@@ -85,16 +76,17 @@ fn onCloseUVTimer(timer: *bun.windows.libuv.Timer) callconv(.C) void {
 }
 
 pub fn deinit(this: *SpawnSyncEventLoop) void {
-    // Clean up tasks queue
-    this.event_loop.tasks.deinit();
-
     if (comptime bun.Environment.isWindows) {
         if (this.uv_timer) |timer| {
             timer.stop();
             timer.unref();
+            this.uv_timer = null;
             libuv.uv_close(@alignCast(@ptrCast(timer)), @ptrCast(&onCloseUVTimer));
         }
     }
+
+    this.event_loop.deinit();
+    this.uws_loop.deinit();
 }
 
 /// Configure the event loop for a specific VM context
@@ -166,7 +158,7 @@ pub fn tickWithTimeout(this: *SpawnSyncEventLoop, timeout: ?*const bun.timespec)
             this.uv_timer.?.unref();
             this.uv_timer.?.stop();
         } else {
-            this.did_timeout = bun.timespec.now().order(ts) == .lt;
+            this.did_timeout = bun.timespec.now().order(ts) != .lt;
         }
     }
 

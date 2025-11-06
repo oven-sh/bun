@@ -53,7 +53,7 @@ pub const BuildCommand = struct {
 
         this_transpiler.options.compile = ctx.bundler_options.compile;
 
-        if (this_transpiler.options.source_map == .external and ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile) {
+        if (this_transpiler.options.source_map == .external and ctx.bundler_options.outdir.len == 0) {
             Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use an external source map without --outdir", .{});
             Global.exit(1);
             return;
@@ -96,8 +96,8 @@ pub const BuildCommand = struct {
         var was_renamed_from_index = false;
 
         if (ctx.bundler_options.compile) {
-            if (ctx.bundler_options.outdir.len > 0) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --outdir", .{});
+            if (ctx.bundler_options.outdir.len > 0 and this_transpiler.options.source_map != .external) {
+                Output.prettyErrorln("<r><red>error<r><d>:<r> cannot use --compile with --outdir (unless using --sourcemap=external)", .{});
                 Global.exit(1);
                 return;
             }
@@ -440,6 +440,8 @@ pub const BuildCommand = struct {
                     ctx.bundler_options.windows,
                     ctx.bundler_options.compile_exec_argv orelse "",
                     null,
+                    this_transpiler.options.source_map,
+                    ctx.bundler_options.outdir,
                 ) catch |err| {
                     Output.printErrorln("failed to create executable: {s}", .{@errorName(err)});
                     Global.exit(1);
@@ -468,6 +470,10 @@ pub const BuildCommand = struct {
                     outfile,
                     if (compile_target.os == .windows and !strings.hasSuffixComptime(outfile, ".exe")) ".exe" else "",
                 });
+
+                if (this_transpiler.options.source_map == .external and ctx.bundler_options.outdir.len > 0) {
+                    Output.pretty(", <d>{s}.map<r>", .{outfile});
+                }
 
                 if (is_cross_compile) {
                     Output.pretty(" <r><d>{s}<r>\n", .{compile_target});

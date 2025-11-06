@@ -349,7 +349,7 @@ pub const StandaloneModuleGraph = struct {
         return bytes[ptr.offset..][0..ptr.length :0];
     }
 
-    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format, compile_exec_argv: []const u8) ![]u8 {
+    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format, compile_exec_argv: []const u8, source_map: bun.options.SourceMapOption) ![]u8 {
         var serialize_trace = bun.perf.trace("StandaloneModuleGraph.serialize");
         defer serialize_trace.end();
 
@@ -475,7 +475,7 @@ pub const StandaloneModuleGraph = struct {
                 },
             };
 
-            if (output_file.source_map_index != std.math.maxInt(u32)) {
+            if (output_file.source_map_index != std.math.maxInt(u32) and source_map != .external) {
                 defer source_map_header_list.clearRetainingCapacity();
                 defer source_map_string_list.clearRetainingCapacity();
                 _ = source_map_arena.reset(.retain_capacity);
@@ -921,6 +921,48 @@ pub const StandaloneModuleGraph = struct {
 
     pub const CompileTarget = @import("./compile_target.zig");
 
+    fn writeSourceMapsToExternalFiles(
+        allocator: std.mem.Allocator,
+        output_files: []const bun.options.OutputFile,
+        outdir: []const u8,
+        outfile_basename: []const u8,
+    ) !void {
+        // Find the entry point sourcemap
+        for (output_files) |output_file| {
+            if (output_file.output_kind == .@"entry-point" and output_file.source_map_index != std.math.maxInt(u32)) {
+                const sourcemap_file = &output_files[output_file.source_map_index];
+                if (sourcemap_file.value == .buffer) {
+                    // Build the sourcemap filename based on the executable name
+                    const sourcemap_filename = try std.fmt.allocPrint(
+                        allocator,
+                        "{s}.map",
+                        .{outfile_basename},
+                    );
+                    defer allocator.free(sourcemap_filename);
+
+                    // Build the full path
+                    const sourcemap_path = try std.fs.path.join(
+                        allocator,
+                        &[_][]const u8{ outdir, sourcemap_filename },
+                    );
+                    defer allocator.free(sourcemap_path);
+
+                    // Write the sourcemap to disk
+                    const file = std.fs.cwd().createFile(sourcemap_path, .{}) catch |err| {
+                        Output.prettyErrorln("<r><red>error<r><d>:<r> failed to create sourcemap file {s}: {s}", .{ sourcemap_path, @errorName(err) });
+                        return err;
+                    };
+                    defer file.close();
+
+                    file.writeAll(sourcemap_file.value.buffer.bytes) catch |err| {
+                        Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write sourcemap file {s}: {s}", .{ sourcemap_path, @errorName(err) });
+                        return err;
+                    };
+                }
+            }
+        }
+    }
+
     pub fn download(allocator: std.mem.Allocator, target: *const CompileTarget, env: *bun.DotEnv.Loader) ![:0]const u8 {
         var exe_path_buf: bun.PathBuffer = undefined;
         var version_str_buf: [1024]u8 = undefined;
@@ -982,8 +1024,10 @@ pub const StandaloneModuleGraph = struct {
         windows_options: bun.options.WindowsOptions,
         compile_exec_argv: []const u8,
         self_exe_path: ?[]const u8,
+        source_map: bun.options.SourceMapOption,
+        outdir: []const u8,
     ) !CompileResult {
-        const bytes = toBytes(allocator, module_prefix, output_files, output_format, compile_exec_argv) catch |err| {
+        const bytes = toBytes(allocator, module_prefix, output_files, output_format, compile_exec_argv, source_map) catch |err| {
             return CompileResult.failFmt("failed to generate module graph bytes: {s}", .{@errorName(err)});
         };
         if (bytes.len == 0) return CompileResult.fail(.no_output_files);
@@ -1110,6 +1154,12 @@ pub const StandaloneModuleGraph = struct {
                     return CompileResult.failFmt("Failed to set Windows metadata: {s}", .{@errorName(err)});
                 };
             }
+
+            // Write sourcemaps to disk if using external mode
+            if (source_map == .external and outdir.len > 0) {
+                try writeSourceMapsToExternalFiles(allocator, output_files, outdir, outfile);
+            }
+
             return .success;
         }
 
@@ -1143,6 +1193,11 @@ pub const StandaloneModuleGraph = struct {
                 return CompileResult.failFmt("failed to rename {s} to {s}: {s}", .{ temp_location, outfile, @errorName(err) });
             }
         };
+
+        // Write sourcemaps to disk if using external mode
+        if (source_map == .external and outdir.len > 0) {
+            try writeSourceMapsToExternalFiles(allocator, output_files, outdir, outfile);
+        }
 
         return .success;
     }

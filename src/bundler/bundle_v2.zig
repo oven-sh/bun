@@ -2043,6 +2043,8 @@ pub const BundleV2 = struct {
                     compile_options.executable_path.slice()
                 else
                     null,
+                this.config.source_map,
+                this.config.outdir.slice(),
             ) catch |err| {
                 return bun.StandaloneModuleGraph.CompileResult.failFmt("{s}", .{@errorName(err)});
             };

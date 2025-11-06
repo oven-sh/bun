@@ -1189,12 +1189,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Global.crash();
             }
 
-            // when using --compile, only `external` works, as we do not
-            // look at the source map comment. so after we validate the
-            // user's choice was in the list, we secretly override it
-            if (ctx.bundler_options.compile) {
-                opts.source_map = .external;
-            }
+            // when using --compile with --sourcemap=external, sourcemaps are written to disk
+            // other sourcemap modes are embedded in the executable (inline, linked) or disabled (none)
         }
     }
 

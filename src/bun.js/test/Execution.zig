@@ -91,13 +91,18 @@ pub const ExecutionSequence = struct {
     } = .not_set,
     maybe_skip: bool = false,
 
-    pub fn init(first_entry: ?*ExecutionEntry, test_entry: ?*ExecutionEntry, retry_count: u32, repeat_count: u32) ExecutionSequence {
+    pub fn init(cfg: struct {
+        first_entry: ?*ExecutionEntry,
+        test_entry: ?*ExecutionEntry,
+        retry_count: u32 = 0,
+        repeat_count: u32 = 0,
+    }) ExecutionSequence {
         return .{
-            .first_entry = first_entry,
-            .active_entry = first_entry,
-            .test_entry = test_entry,
-            .remaining_repeat_count = repeat_count,
-            .remaining_retry_count = retry_count,
+            .first_entry = cfg.first_entry,
+            .active_entry = cfg.first_entry,
+            .test_entry = cfg.test_entry,
+            .remaining_repeat_count = cfg.repeat_count,
+            .remaining_retry_count = cfg.retry_count,
         };
     }
 
@@ -601,7 +606,12 @@ pub fn resetSequence(this: *Execution, sequence: *ExecutionSequence) void {
     }
 
     // Preserve the current remaining_repeat_count and remaining_retry_count
-    sequence.* = .init(sequence.first_entry, sequence.test_entry, sequence.remaining_retry_count, sequence.remaining_repeat_count);
+    sequence.* = .init(.{
+        .first_entry = sequence.first_entry,
+        .test_entry = sequence.test_entry,
+        .retry_count = sequence.remaining_retry_count,
+        .repeat_count = sequence.remaining_repeat_count,
+    });
     _ = this;
 }
 

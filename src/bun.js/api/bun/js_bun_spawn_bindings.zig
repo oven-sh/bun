@@ -938,4 +938,4 @@ const windows = bun.windows;
 const uv = windows.libuv;
 const Subprocess = jsc.Subprocess;
 
-const SignalCode = jsc.SignalCode;
+const SignalCode = bun.SignalCode;

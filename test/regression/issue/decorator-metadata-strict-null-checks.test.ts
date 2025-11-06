@@ -1,8 +1,8 @@
 import { test, expect } from "bun:test";
-import { tempDir, bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
-test("strictNullChecks: true - unions with null emit Object", async () => {
-  using dir = tempDir("strict-null-checks-true", {
+test.concurrent("strictNullChecks: true - unions with null emit Object", async () => {
+  const files = {
     "tsconfig.json": JSON.stringify({
       compilerOptions: {
         experimentalDecorators: true,
@@ -10,7 +10,7 @@ test("strictNullChecks: true - unions with null emit Object", async () => {
         strictNullChecks: true,
       },
     }),
-    "index.ts": `
+    "test.ts": `
       import "reflect-metadata";
 
       function Property() {
@@ -32,31 +32,23 @@ test("strictNullChecks: true - unions with null emit Object", async () => {
 
       console.log("SUCCESS");
     `,
-    "package.json": JSON.stringify({
-      dependencies: {
-        "reflect-metadata": "latest",
-      },
-    }),
-  });
+  };
 
-  const installProc = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  await installProc.exited;
+  const dir = tempDirWithFiles("strict-null-checks-true", files);
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "index.ts"],
+    cmd: [bunExe(), "test.ts"],
     env: bunEnv,
-    cwd: String(dir),
+    cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
 
   expect(stderr).not.toContain("Cannot access");
   expect(stderr).not.toContain("before initialization");
@@ -64,10 +56,10 @@ test("strictNullChecks: true - unions with null emit Object", async () => {
   expect(stdout).toContain("user: Object");
   expect(stdout).toContain("SUCCESS");
   expect(exitCode).toBe(0);
-}, 30000);
+});
 
-test("strictNullChecks: false - unions with null emit actual type (causes TDZ in circular refs)", async () => {
-  using dir = tempDir("strict-null-checks-false", {
+test.concurrent("strictNullChecks: false - unions with null emit actual type (causes TDZ)", async () => {
+  const files = {
     "tsconfig.json": JSON.stringify({
       compilerOptions: {
         experimentalDecorators: true,
@@ -75,7 +67,7 @@ test("strictNullChecks: false - unions with null emit actual type (causes TDZ in
         strictNullChecks: false,
       },
     }),
-    "index.ts": `
+    "test.ts": `
       import "reflect-metadata";
 
       function Property() {
@@ -97,41 +89,27 @@ test("strictNullChecks: false - unions with null emit actual type (causes TDZ in
 
       console.log("SUCCESS");
     `,
-    "package.json": JSON.stringify({
-      dependencies: {
-        "reflect-metadata": "latest",
-      },
-    }),
-  });
+  };
 
-  const installProc = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  await installProc.exited;
+  const dir = tempDirWithFiles("strict-null-checks-false", files);
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "index.ts"],
+    cmd: [bunExe(), "test.ts"],
     env: bunEnv,
-    cwd: String(dir),
+    cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
   });
 
-  const [_, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  // With strictNullChecks: false, we emit the actual class type
-  // This causes TDZ errors in circular reference cases (matching TypeScript behavior)
   expect(stderr).toContain("Cannot access");
   expect(stderr).toContain("before initialization");
   expect(exitCode).not.toBe(0);
-}, 30000);
+});
 
-test("strict: true enables strictNullChecks by default", async () => {
-  using dir = tempDir("strict-true", {
+test.concurrent("strict: true enables strictNullChecks by default", async () => {
+  const files = {
     "tsconfig.json": JSON.stringify({
       compilerOptions: {
         experimentalDecorators: true,
@@ -139,7 +117,7 @@ test("strict: true enables strictNullChecks by default", async () => {
         strict: true,
       },
     }),
-    "index.ts": `
+    "test.ts": `
       import "reflect-metadata";
 
       function Property() {
@@ -161,40 +139,33 @@ test("strict: true enables strictNullChecks by default", async () => {
 
       console.log("SUCCESS");
     `,
-    "package.json": JSON.stringify({
-      dependencies: {
-        "reflect-metadata": "latest",
-      },
-    }),
-  });
+  };
 
-  const installProc = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  await installProc.exited;
+  const dir = tempDirWithFiles("strict-true", files);
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "index.ts"],
+    cmd: [bunExe(), "test.ts"],
     env: bunEnv,
-    cwd: String(dir),
+    cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
 
   expect(stderr).not.toContain("Cannot access");
-  expect(stdout).toContain("profile: Object"); // strict: true enables strictNullChecks
+  expect(stdout).toContain("profile: Object");
+  expect(stdout).toContain("bio: String");
   expect(stdout).toContain("SUCCESS");
   expect(exitCode).toBe(0);
-}, 30000);
+});
 
-test("explicit strictNullChecks: false overrides strict: true", async () => {
-  using dir = tempDir("strict-override", {
+test.concurrent("explicit strictNullChecks: false overrides strict: true", async () => {
+  const files = {
     "tsconfig.json": JSON.stringify({
       compilerOptions: {
         experimentalDecorators: true,
@@ -203,7 +174,7 @@ test("explicit strictNullChecks: false overrides strict: true", async () => {
         strictNullChecks: false,
       },
     }),
-    "index.ts": `
+    "test.ts": `
       import "reflect-metadata";
 
       function Property() {
@@ -225,47 +196,34 @@ test("explicit strictNullChecks: false overrides strict: true", async () => {
 
       console.log("SUCCESS");
     `,
-    "package.json": JSON.stringify({
-      dependencies: {
-        "reflect-metadata": "latest",
-      },
-    }),
-  });
+  };
 
-  const installProc = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  await installProc.exited;
+  const dir = tempDirWithFiles("strict-override", files);
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "index.ts"],
+    cmd: [bunExe(), "test.ts"],
     env: bunEnv,
-    cwd: String(dir),
+    cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
   });
 
-  const [_, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  // Explicit strictNullChecks: false overrides strict: true, causing TDZ
   expect(stderr).toContain("Cannot access");
   expect(stderr).toContain("before initialization");
   expect(exitCode).not.toBe(0);
-}, 30000);
+});
 
-test("no strictNullChecks config defaults to false (causes TDZ)", async () => {
-  using dir = tempDir("no-strict-config", {
+test.concurrent("no strictNullChecks config defaults to false (causes TDZ)", async () => {
+  const files = {
     "tsconfig.json": JSON.stringify({
       compilerOptions: {
         experimentalDecorators: true,
         emitDecoratorMetadata: true,
       },
     }),
-    "index.ts": `
+    "test.ts": `
       import "reflect-metadata";
 
       function Property() {
@@ -287,34 +245,21 @@ test("no strictNullChecks config defaults to false (causes TDZ)", async () => {
 
       console.log("SUCCESS");
     `,
-    "package.json": JSON.stringify({
-      dependencies: {
-        "reflect-metadata": "latest",
-      },
-    }),
-  });
+  };
 
-  const installProc = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  await installProc.exited;
+  const dir = tempDirWithFiles("no-strict-config", files);
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "index.ts"],
+    cmd: [bunExe(), "test.ts"],
     env: bunEnv,
-    cwd: String(dir),
+    cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
   });
 
-  const [_, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  // Default is false when neither strict nor strictNullChecks is specified, causing TDZ
   expect(stderr).toContain("Cannot access");
   expect(stderr).toContain("before initialization");
   expect(exitCode).not.toBe(0);
-}, 30000);
+});

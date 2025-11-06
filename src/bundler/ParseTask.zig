@@ -1176,8 +1176,8 @@ fn runWithSourceCode(
     opts.features.minify_identifiers = transpiler.options.minify_identifiers;
     opts.features.minify_keep_names = transpiler.options.keep_names;
     opts.features.minify_whitespace = transpiler.options.minify_whitespace;
-    opts.features.emit_decorator_metadata = transpiler.options.emit_decorator_metadata;
-    opts.features.strict_null_checks = transpiler.options.strict_null_checks;
+    opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
+    opts.features.strict_null_checks = task.strict_null_checks;
     opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;
     opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
     opts.features.auto_polyfill_require = output_format == .esm and !opts.features.hot_module_reloading;

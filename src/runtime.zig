@@ -227,6 +227,7 @@ pub const Runtime = struct {
             .dont_bundle_twice,
             .commonjs_at_runtime,
             .emit_decorator_metadata,
+            .strict_null_checks,
             .lower_using,
 
             // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true

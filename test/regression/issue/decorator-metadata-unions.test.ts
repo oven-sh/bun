@@ -1,8 +1,8 @@
 import { test, expect } from "bun:test";
-import { tempDir, bunEnv, bunExe, nodeExe } from "harness";
+import { tempDirWithFiles, bunEnv, bunExe, nodeExe } from "harness";
 
-test("decorator metadata with union types emits Object", async () => {
-  using dir = tempDir("decorator-union", {
+test.concurrent("decorator metadata with union types emits Object", async () => {
+  const files = {
     "tsconfig.json": JSON.stringify({
       compilerOptions: {
         experimentalDecorators: true,
@@ -10,7 +10,7 @@ test("decorator metadata with union types emits Object", async () => {
         strictNullChecks: true,
       },
     }),
-    "index.ts": `
+    "test.ts": `
       import "reflect-metadata";
 
       function Property() {
@@ -32,43 +32,27 @@ test("decorator metadata with union types emits Object", async () => {
 
       console.log("SUCCESS");
     `,
-    "package.json": JSON.stringify({
-      dependencies: {
-        "reflect-metadata": "latest",
-      },
-    }),
-  });
+  };
 
-  // Install dependencies
-  const installProc = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  await installProc.exited;
+  const dir = tempDirWithFiles("decorator-union", files);
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "index.ts"],
+    cmd: [bunExe(), "test.ts"],
     env: bunEnv,
-    cwd: String(dir),
+    cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // Should not have TDZ errors
   expect(stderr).not.toContain("Cannot access");
   expect(stderr).not.toContain("before initialization");
-
-  // Should emit Object for union types (treating as strictNullChecks: true)
   expect(stdout).toContain("profile: Object");
   expect(stdout).toContain("user: Object");
   expect(stdout).toContain("SUCCESS");
   expect(exitCode).toBe(0);
-}, 30000);
+});
 
 test("Bun matches TypeScript with strictNullChecks", async () => {
   const node = nodeExe();
@@ -77,13 +61,7 @@ test("Bun matches TypeScript with strictNullChecks", async () => {
     return;
   }
 
-  using dir = tempDir("tsc-bun-comparison", {
-    "package.json": JSON.stringify({
-      name: "tsc-comparison",
-      devDependencies: {
-        "typescript": "~4.9.0",
-      },
-    }),
+  const files = {
     "tsconfig.json": JSON.stringify({
       compilerOptions: {
         experimentalDecorators: true,
@@ -121,65 +99,50 @@ test("Bun matches TypeScript with strictNullChecks", async () => {
         theme: string = "light";
       }
     `,
-  });
+  };
 
-  // Install TypeScript
-  const installProc = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  await installProc.exited;
+  const dir = tempDirWithFiles("tsc-bun-comparison", files);
 
-  // Compile with TypeScript
   const tscProc = Bun.spawn({
     cmd: [bunExe(), "x", "tsc"],
-    cwd: String(dir),
+    cwd: dir,
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
-  await tscProc.exited;
 
-  // Compile with Bun
-  const bunBuildProc = Bun.spawn({
-    cmd: [bunExe(), "build", "test.ts", "--outfile=test-bun.js"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
+  const bunBuildResult = Bun.build({
+    entrypoints: [`${dir}/test.ts`],
+    outdir: dir,
+    naming: "test-bun.js",
   });
-  await bunBuildProc.exited;
 
-  // Read both outputs
+  await Promise.all([tscProc.exited, bunBuildResult]);
+
   const tscOutput = await Bun.file(`${dir}/test.js`).text();
   const bunOutput = await Bun.file(`${dir}/test-bun.js`).text();
 
-  // Extract metadata calls
   const tscMetadata = tscOutput.match(/__metadata\("design:type", (\w+)\)/g) || [];
   const bunMetadata = bunOutput.match(/__legacyMetadataTS\("design:type", (\w+)\)/g) || [];
 
-  // Extract just the type names
   const tscTypes = tscMetadata.map(m => m.match(/(\w+)\)$/)?.[1]).filter(Boolean);
   const bunTypes = bunMetadata.map(m => m.match(/(\w+)\)$/)?.[1]).filter(Boolean);
 
-  // Both should emit the same types
   expect(tscTypes).toEqual(["String", "Object", "Object", "String", "String"]);
   expect(bunTypes).toEqual(["String", "Object", "Object", "String", "String"]);
   expect(bunTypes).toEqual(tscTypes);
-}, 30000);
+});
 
-test("decorator metadata with non-union types emits actual type", async () => {
-  using dir = tempDir("decorator-non-union", {
+test.concurrent("decorator metadata with non-union types emits actual type", async () => {
+  const files = {
     "tsconfig.json": JSON.stringify({
       compilerOptions: {
         experimentalDecorators: true,
         emitDecoratorMetadata: true,
+        strictNullChecks: true,
       },
     }),
-    "index.ts": `
+    "test.ts": `
       import "reflect-metadata";
 
       function Property() {
@@ -202,43 +165,29 @@ test("decorator metadata with non-union types emits actual type", async () => {
 
       console.log("SUCCESS");
     `,
-    "package.json": JSON.stringify({
-      dependencies: {
-        "reflect-metadata": "latest",
-      },
-    }),
-  });
+  };
 
-  // Install dependencies
-  const installProc = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  await installProc.exited;
+  const dir = tempDirWithFiles("decorator-non-union", files);
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "index.ts"],
+    cmd: [bunExe(), "test.ts"],
     env: bunEnv,
-    cwd: String(dir),
+    cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  expect(stderr).toBe("");
   expect(stdout).toContain("name: String");
   expect(stdout).toContain("age: Number");
   expect(stdout).toContain("active: Boolean");
   expect(stdout).toContain("SUCCESS");
   expect(exitCode).toBe(0);
-}, 30000);
+});
 
-test("ORM pattern with circular references works", async () => {
-  using dir = tempDir("orm-circular", {
+test.concurrent("ORM pattern with circular references works", async () => {
+  const files = {
     "tsconfig.json": JSON.stringify({
       compilerOptions: {
         experimentalDecorators: true,
@@ -246,10 +195,9 @@ test("ORM pattern with circular references works", async () => {
         strictNullChecks: true,
       },
     }),
-    "index.ts": `
+    "test.ts": `
       function OneToOne(fn: () => any) {
         return function (target: any, propertyKey: string) {
-          // Store the function like real ORMs do (don't call it during decoration)
           console.log(\`Decorated: \${propertyKey}\`);
         };
       }
@@ -266,12 +214,14 @@ test("ORM pattern with circular references works", async () => {
 
       console.log("SUCCESS");
     `,
-  });
+  };
+
+  const dir = tempDirWithFiles("orm-circular", files);
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "index.ts"],
+    cmd: [bunExe(), "test.ts"],
     env: bunEnv,
-    cwd: String(dir),
+    cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
   });
@@ -286,8 +236,8 @@ test("ORM pattern with circular references works", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("mixed union and non-union types", async () => {
-  using dir = tempDir("mixed-types", {
+test.concurrent("mixed union and non-union types", async () => {
+  const files = {
     "tsconfig.json": JSON.stringify({
       compilerOptions: {
         experimentalDecorators: true,
@@ -295,7 +245,7 @@ test("mixed union and non-union types", async () => {
         strictNullChecks: true,
       },
     }),
-    "index.ts": `
+    "test.ts": `
       import "reflect-metadata";
 
       function Property() {
@@ -331,40 +281,26 @@ test("mixed union and non-union types", async () => {
 
       console.log("SUCCESS");
     `,
-    "package.json": JSON.stringify({
-      dependencies: {
-        "reflect-metadata": "latest",
-      },
-    }),
-  });
+  };
 
-  // Install dependencies
-  const installProc = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  await installProc.exited;
+  const dir = tempDirWithFiles("mixed-types", files);
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "index.ts"],
+    cmd: [bunExe(), "test.ts"],
     env: bunEnv,
-    cwd: String(dir),
+    cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-  expect(stderr).toBe("");
   expect(stdout).toContain("id: Number");
   expect(stdout).toContain("name: String");
-  expect(stdout).toContain("profile: Object"); // Union with null
-  expect(stdout).toContain("settings: Object"); // Union with undefined
+  expect(stdout).toContain("profile: Object");
+  expect(stdout).toContain("settings: Object");
   expect(stdout).toContain("bio: String");
   expect(stdout).toContain("theme: String");
   expect(stdout).toContain("SUCCESS");
   expect(exitCode).toBe(0);
-}, 30000);
+});

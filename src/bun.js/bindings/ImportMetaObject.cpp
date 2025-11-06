@@ -335,6 +335,13 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     auto bunStr = Bun::toString(parentIdStr);
                     args.append(jsBoolean(Bun__isBunMain(lexicalGlobalObject, &bunStr)));
 
+                    // Pass options object with paths if provided
+                    if (!userPathList.isUndefinedOrNull()) {
+                        JSObject* options = JSC::constructEmptyObject(globalObject);
+                        options->putDirect(vm, JSC::Identifier::fromString(vm, "paths"_s), userPathList);
+                        args.append(options);
+                    }
+
                     JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), parentModuleObject, args);
                     RETURN_IF_EXCEPTION(scope, {});
                     if (!isRequireDotResolve) {

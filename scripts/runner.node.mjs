@@ -81,6 +81,7 @@ function getNodeParallelTestTimeout(testPath) {
     return 90_000;
   }
   if (!isCI) return 60_000; // everything slower in debug mode
+  if (options["step"]?.includes("-asan-")) return 60_000;
   return 20_000;
 }
 
@@ -202,12 +203,12 @@ if (isBuildkite) {
       const doc = await res.json();
       console.log(`-> page ${i}, found ${doc.length} items`);
       if (doc.length === 0) break;
-      if (doc.length < per_page) break;
       for (const { filename, status } of doc) {
         prFileCount += 1;
         if (status !== "added") continue;
         newFiles.push(filename);
       }
+      if (doc.length < per_page) break;
     }
     console.log(`- PR ${process.env.BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
   } catch (e) {
@@ -1579,8 +1580,7 @@ function isJavaScriptTest(path) {
  * @returns {boolean}
  */
 function isNodeTest(path) {
-  // Do not run node tests on macOS x64 in CI
-  // TODO: Unclear why we decided to do this?
+  // Do not run node tests on macOS x64 in CI, those machines are slow and expensive.
   if (isCI && isMacOS && isX64) {
     return false;
   }

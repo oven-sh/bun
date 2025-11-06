@@ -23,8 +23,8 @@ To listen to changes in subdirectories, pass the `recursive: true` option to `fs
 ```ts
 import { watch } from "fs";
 
-const watcher = watch(import.meta.dir, { recursive: true }, (event, filename) => {
-  console.log(`Detected ${event} in ${filename}`);
+const watcher = watch(import.meta.dir, { recursive: true }, (event, relativePath) => {
+  console.log(`Detected ${event} in ${relativePath}`);
 });
 ```
 

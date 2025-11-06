@@ -27,14 +27,47 @@ Use `bun:test` with files that end in `*.test.{ts,js,jsx,tsx,mjs,cjs}`. If it's 
 
 When spawning Bun processes, use `bunExe` and `bunEnv` from `harness`. This ensures the same build of Bun is used to run the test and ensures debug logging is silenced.
 
+##### Use `-e` for single-file tests
+
 ```ts
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test, expect } from "bun:test";
 
-test("spawns a Bun process", async () => {
+test("single-file test spawns a Bun process", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", "console.log('Hello, world!')"],
+    env: bunEnv,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([
+    proc.stdout.text(),
+    proc.stderr.text(),
+    proc.exited,
+  ]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("Hello, world!\n");
+  expect(exitCode).toBe(0);
+});
+```
+
+##### When multi-file tests are required:
+
+```ts
+import { bunEnv, bunExe, tempDir } from "harness";
+import { test, expect } from "bun:test";
+
+test("multi-file test spawns a Bun process", async () => {
+  // If a test MUST use multiple files:
   using dir = tempDir("my-test-prefix", {
     "my.fixture.ts": `
-      console.log("Hello, world!");
+      import { foo } from "./foo.ts";
+      foo();
+    `,
+    "foo.ts": `
+      export function foo() {
+        console.log("Hello, world!");
+      }
     `,
   });
 

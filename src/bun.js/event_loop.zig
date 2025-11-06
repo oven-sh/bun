@@ -512,6 +512,15 @@ pub fn tick(this: *EventLoop) void {
     this.global.handleRejectedPromises();
 }
 
+pub fn tickWithoutJS(this: *EventLoop) void {
+    const ctx = this.virtual_machine;
+    this.tickConcurrent();
+
+    while (this.tickWithCount(ctx) > 0) {
+        this.tickConcurrent();
+    }
+}
+
 pub fn waitForPromise(this: *EventLoop, promise: jsc.AnyPromise) void {
     const jsc_vm = this.virtual_machine.jsc_vm;
     switch (promise.status(jsc_vm)) {

@@ -250,7 +250,7 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
                 .has_done_parameter = has_done_parameter,
                 .timeout = options.timeout,
                 .retry_count = options.retry,
-                .repeat_count = options.repeat,
+                .repeat_count = options.repeats,
             }, base, .collection);
         },
     }

@@ -5,6 +5,7 @@ const { urlToHttpOptions } = require("internal/url");
 const { isValidTLSArray } = require("internal/tls");
 const { validateHeaderName } = require("node:_http_common");
 const { getTimerDuration } = require("internal/timers");
+const { ConnResetException } = require("internal/shared");
 const {
   kBodyChunks,
   abortedSymbol,
@@ -41,7 +42,6 @@ const {
   reqSymbol,
   callCloseCallback,
   emitCloseNTAndComplete,
-  ConnResetException,
 } = require("internal/http");
 
 const { globalAgent } = require("node:_http_agent");

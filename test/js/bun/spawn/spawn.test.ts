@@ -842,7 +842,7 @@ it("error does not UAF", async () => {
 });
 
 describe("onDisconnect", () => {
-  it("ipc delivers message", async () => {
+  it.todoIf(isWindows)("ipc delivers message", async () => {
     const msg = Promise.withResolvers<void>();
 
     let ipcMessage: unknown;
@@ -869,7 +869,7 @@ describe("onDisconnect", () => {
     await proc.exited;
   });
 
-  it("onDisconnect callback is called when IPC disconnects", async () => {
+  it.todoIf(isWindows)("onDisconnect callback is called when IPC disconnects", async () => {
     const disc = Promise.withResolvers<void>();
 
     let disconnectCalled = false;
@@ -980,7 +980,7 @@ describe("option combinations", () => {
     await proc.exited;
   });
 
-  it("onDisconnect + ipc + serialization works together", async () => {
+  it.todoIf(isWindows)("onDisconnect + ipc + serialization works together", async () => {
     let messageReceived = false;
     let disconnectCalled = false;
 

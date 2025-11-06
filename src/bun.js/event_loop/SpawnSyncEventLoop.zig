@@ -26,7 +26,7 @@ uws_loop: *uws.Loop,
 
 /// On POSIX, we need to temporarily override the VM's event_loop_handle
 /// Store the original so we can restore it
-original_event_loop_handle: if (bun.Environment.isWindows) void else ?*uws.Loop = if (bun.Environment.isWindows) {} else null,
+original_event_loop_handle: @FieldType(jsc.VirtualMachine, "event_loop_handle") = undefined,
 
 uv_timer: if (bun.Environment.isWindows) ?*bun.windows.libuv.Timer else void = if (bun.Environment.isWindows) null else {},
 did_timeout: bool = false,
@@ -92,7 +92,7 @@ pub fn deinit(this: *SpawnSyncEventLoop) void {
         if (this.uv_timer) |timer| {
             timer.stop();
             timer.unref();
-            libuv.uv_close(@alignCast(@ptrCast(&timer)), &onCloseUVTimer);
+            libuv.uv_close(@alignCast(@ptrCast(timer)), @ptrCast(&onCloseUVTimer));
         }
     }
 }
@@ -103,24 +103,13 @@ pub fn prepare(this: *SpawnSyncEventLoop, vm: *jsc.VirtualMachine) void {
     this.did_timeout = false;
     this.event_loop.virtual_machine = vm;
 
-    // CRITICAL: On POSIX, temporarily override the VM's event_loop_handle to point to our isolated loop
-    // This ensures that when code calls usocketsLoop(), it gets our isolated loop instead of the main one
-    // We'll restore this after spawnSync completes
-    if (comptime !bun.Environment.isWindows) {
-        // Store the original handle so we can restore it later
-        this.original_event_loop_handle = vm.event_loop_handle;
-        vm.event_loop_handle = this.uws_loop;
-    }
+    this.original_event_loop_handle = vm.event_loop_handle;
+    vm.event_loop_handle = if (bun.Environment.isPosix) this.uws_loop else this.uws_loop.uv_loop;
 }
 
 /// Restore the original event loop handle after spawnSync completes
 pub fn cleanup(this: *SpawnSyncEventLoop, vm: *jsc.VirtualMachine, prev_event_loop: *jsc.EventLoop) void {
-    if (comptime !bun.Environment.isWindows) {
-        if (this.original_event_loop_handle) |orig| {
-            vm.event_loop_handle = orig;
-        }
-    }
-
+    vm.event_loop_handle = this.original_event_loop_handle;
     vm.event_loop = prev_event_loop;
 
     if (bun.Environment.isWindows) {
@@ -137,8 +126,7 @@ pub fn handle(this: *SpawnSyncEventLoop) jsc.EventLoopHandle {
 }
 
 fn onUVTimer(timer_: *bun.windows.libuv.Timer) callconv(.C) void {
-    const timer: ?*bun.windows.libuv.Timer = @alignCast(@ptrCast(timer_));
-    const this: *SpawnSyncEventLoop = @fieldParentPtr("uv_timer", timer);
+    const this: *SpawnSyncEventLoop = @ptrCast(@alignCast(timer_.data));
     this.did_timeout = true;
     this.uws_loop.uv_loop.stop();
 }
@@ -156,6 +144,7 @@ fn prepareTimerOnWindows(this: *SpawnSyncEventLoop, ts: *const bun.timespec) voi
     timer.start(ts.msUnsigned(), 0, &onUVTimer);
     timer.ref();
     this.uv_timer = timer;
+    timer.data = this;
 }
 
 /// Tick the isolated event loop with an optional timeout

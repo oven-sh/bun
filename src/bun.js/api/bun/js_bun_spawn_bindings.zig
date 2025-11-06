@@ -475,6 +475,13 @@ pub fn spawnMaybeSync(
         sync_loop.prepare(jsc_vm);
         break :brk &sync_loop.event_loop;
     } else null;
+    defer {
+        if (comptime is_sync) {
+            if (sync_event_loop) |loop| {
+                jsc_vm.rareData().spawn_sync_event_loop.?.cleanup(jsc_vm, loop);
+            }
+        }
+    }
 
     const loop_handle = if (sync_event_loop) |loop_ptr|
         jsc.EventLoopHandle.init(loop_ptr)
@@ -830,11 +837,8 @@ pub fn spawnMaybeSync(
     // Use the isolated event loop to tick instead of the main event loop
     // This ensures JavaScript timers don't fire and stdin/stdout from the main process aren't affected
     {
-        const sync_loop = jsc_vm.rareData().spawn_sync_event_loop.?;
-        const prev_event_loop = jsc_vm.event_loop;
-        defer sync_loop.cleanup(jsc_vm, prev_event_loop);
-
         const timespec: bun.timespec = if (timeout) |timeout_ms| bun.timespec.msFromNow(timeout_ms) else undefined;
+        const sync_loop = jsc_vm.rareData().spawn_sync_event_loop.?;
 
         while (subprocess.computeHasPendingActivity()) {
             if (subprocess.stdin == .buffer) {
@@ -848,8 +852,6 @@ pub fn spawnMaybeSync(
             if (subprocess.stdout == .pipe) {
                 subprocess.stdout.pipe.watch();
             }
-
-            // Calculate remaining timeout
 
             // Tick the isolated event loop with the calculated timeout
             switch (sync_loop.tickWithTimeout(if (timeout != null) &timespec else null)) {

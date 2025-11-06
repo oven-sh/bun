@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import { CodeStyle, Type, toASCIILiteral } from "./base";
 
-export const String: Type = new (class extends Type {
+export const String = new (class extends Type {
   /** Converts to a string, as if by calling `String`. */
   get loose() {
     return LooseString;
@@ -25,7 +25,7 @@ export const String: Type = new (class extends Type {
   }
 })();
 
-export const LooseString: Type = new (class extends Type {
+export const LooseString = new (class extends Type {
   get idlType() {
     return "::Bun::IDLDOMString";
   }

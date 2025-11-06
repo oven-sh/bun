@@ -256,6 +256,30 @@ function Install-Tailscale {
   Install-Package tailscale
 }
 
+function Create-Buildkite-Environment-Hooks {
+  param (
+    [Parameter(Mandatory = $true)]
+    [string]$BuildkiteHome
+  )
+
+  Write-Output "Creating Buildkite environment hooks..."
+  $hooksDir = Join-Path $BuildkiteHome "hooks"
+
+  if (-not (Test-Path $hooksDir)) {
+    New-Item -Path $hooksDir -ItemType Directory -Force | Out-Null
+  }
+
+  $environmentHook = Join-Path $hooksDir "environment.ps1"
+  $buildPath = Join-Path $BuildkiteHome "build"
+
+  @"
+# Buildkite environment hook
+`$env:BUILDKITE_BUILD_CHECKOUT_PATH = "$buildPath"
+"@ | Set-Content -Path $environmentHook -Encoding UTF8
+
+  Write-Output "Environment hook created at $environmentHook"
+}
+
 function Install-Buildkite {
   if (Which buildkite-agent) {
     return
@@ -266,6 +290,14 @@ function Install-Buildkite {
   $installScript = Download-File "https://raw.githubusercontent.com/buildkite/agent/main/install.ps1"
   Execute-Script $installScript
   Refresh-Path
+
+  if ($CI) {
+    $buildkiteHome = "C:\buildkite-agent"
+    if (-not (Test-Path $buildkiteHome)) {
+      New-Item -Path $buildkiteHome -ItemType Directory -Force | Out-Null
+    }
+    Create-Buildkite-Environment-Hooks -BuildkiteHome $buildkiteHome
+  }
 }
 
 function Install-Build-Essentials {

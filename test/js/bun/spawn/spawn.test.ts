@@ -843,7 +843,8 @@ it("error does not UAF", async () => {
 
 describe("onDisconnect", () => {
   it("onDisconnect callback is called when IPC disconnects", async () => {
-    const { promise, resolve } = Promise.withResolvers<void>();
+    const msg = Promise.withResolvers<void>();
+    const disc = Promise.withResolvers<void>();
 
     let ipcMessage: unknown;
     let disconnectCalled = false;
@@ -860,16 +861,17 @@ describe("onDisconnect", () => {
       ],
       ipc: (message, subprocess) => {
         ipcMessage = message;
+        msg.resolve();
       },
       onDisconnect: () => {
         disconnectCalled = true;
-        resolve();
+        disc.resolve();
       },
       stdio: ["inherit", "inherit", "inherit"],
       env: bunEnv,
     });
 
-    await promise;
+    await Promise.all([msg.promise, disc.promise]);
     expect(ipcMessage).toBe("hello");
     expect(disconnectCalled).toBe(true);
   });

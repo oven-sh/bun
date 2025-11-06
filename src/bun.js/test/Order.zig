@@ -48,7 +48,7 @@ pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry) bun.JSEr
         entry.next = null;
         entry.skip_to_next = null;
         const sequences_start = this.sequences.items.len;
-        try this.sequences.append(.init(entry, null, 0, 1)); // add sequence to concurrentgroup
+        try this.sequences.append(.init(entry, null, 0, 0)); // add sequence to concurrentgroup
         const sequences_end = this.sequences.items.len;
         try this.groups.append(.init(sequences_start, sequences_end, this.groups.items.len + 1)); // add a new concurrentgroup to order
         this.previous_group_was_concurrent = false;

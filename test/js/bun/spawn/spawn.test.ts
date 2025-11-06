@@ -152,7 +152,7 @@ for (let [gcTick, label] of [
       });
 
       it("nothing to stdout and sleeping doesn't keep process open 4ever", async () => {
-        await using proc = spawn({
+        const proc = spawn({
           cmd: [shellExe(), "-c", "sleep 0.1"],
         });
         gcTick();

@@ -842,27 +842,51 @@ it("error does not UAF", async () => {
 });
 
 describe("onDisconnect", () => {
-  it("onDisconnect callback is called when IPC disconnects", async () => {
+  it("ipc delivers message", async () => {
     const msg = Promise.withResolvers<void>();
-    const disc = Promise.withResolvers<void>();
 
     let ipcMessage: unknown;
-    let disconnectCalled = false;
 
-    await using _ = spawn({
+    await using proc = spawn({
       cmd: [
         bunExe(),
         "-e",
         `
           process.send("hello");
-          process.disconnect();
           Promise.resolve().then(() => process.exit(0));
         `,
       ],
-      ipc: (message, subprocess) => {
+      ipc: message => {
         ipcMessage = message;
         msg.resolve();
       },
+      stdio: ["inherit", "inherit", "inherit"],
+      env: bunEnv,
+    });
+
+    await msg.promise;
+    expect(ipcMessage).toBe("hello");
+    await proc.exited;
+  });
+
+  it("onDisconnect callback is called when IPC disconnects", async () => {
+    const disc = Promise.withResolvers<void>();
+
+    let disconnectCalled = false;
+
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          Promise.resolve().then(() => {
+            process.disconnect();
+            process.exit(0);
+          });
+        `,
+      ],
+      // Ensure IPC channel is opened without relying on a message
+      ipc: () => {},
       onDisconnect: () => {
         disconnectCalled = true;
         disc.resolve();
@@ -871,9 +895,9 @@ describe("onDisconnect", () => {
       env: bunEnv,
     });
 
-    await Promise.all([msg.promise, disc.promise]);
-    expect(ipcMessage).toBe("hello");
+    await disc.promise;
     expect(disconnectCalled).toBe(true);
+    await proc.exited;
   });
 
   it("onDisconnect is not called when IPC is not used", async () => {
@@ -969,8 +993,10 @@ describe("option combinations", () => {
         "-e",
         `
          process.send({type: "hello", data: "world"});
-         process.disconnect();
-         Promise.resolve().then(() => process.exit(0));
+         Promise.resolve().then(() => {
+           process.disconnect();
+           process.exit(0);
+         });
         `,
       ],
       ipc: message => {

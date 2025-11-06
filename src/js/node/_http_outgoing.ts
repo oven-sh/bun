@@ -1,3 +1,5 @@
+// Hardcoded module "node:_http_outgoing"
+
 const { Stream } = require("internal/stream");
 const { isUint8Array, validateString } = require("internal/validators");
 const { deprecate } = require("internal/util/deprecate");

@@ -67,7 +67,7 @@ server.listen(0, function() {
                 '-cert', fixtures.path('keys/rsa_cert_foafssl_b.crt'),
                 '-key', fixtures.path('keys/rsa_private_b.pem')];
 
-  const client = spawn(common.opensslCli, args);
+  const client = spawn(opensslCli, args);
 
   client.stdout.on('data', function(data) {
     console.log('response received');

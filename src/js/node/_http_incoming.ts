@@ -1,3 +1,5 @@
+// Hardcoded module "node:_http_incoming"
+
 const Readable = require("internal/streams/readable");
 
 const {

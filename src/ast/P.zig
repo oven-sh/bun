@@ -6491,7 +6491,11 @@ pub fn NewParser_(
                     break :brk p.hmr_api_ref;
                 }
 
-                if (p.options.bundle and p.needsWrapperRef(parts.items)) {
+                // Always create a wrapper symbol, even if we don't think we need it yet.
+                // The wrapping decision may be made later during linking (e.g., when we
+                // discover a file is require'd), but the symbol must exist before then.
+                // This matches esbuild's behavior.
+                if (p.options.bundle) {
                     break :brk p.newSymbol(
                         .other,
                         std.fmt.allocPrint(

@@ -199,23 +199,12 @@ const CrossChunkDependencies = struct {
 
                 // Ensure "exports" is included if the current output format needs it
                 if (flags.force_include_exports_for_entry_point) {
-                    const wrapper_ref = deps.wrapper_refs[chunk.entry_point.source_index];
-                    // Only import the wrapper if it exists. Some files have wrap != .none but
-                    // no wrapper_ref because they don't need wrapping (simple exports that can
-                    // be moved). This can happen when an ESM file is require'd but has simple
-                    // exports - wrap gets set to .esm but no wrapper symbol was created.
-                    if (!wrapper_ref.isEmpty()) {
-                        imports.put(wrapper_ref, {}) catch unreachable;
-                    }
+                    imports.put(deps.wrapper_refs[chunk.entry_point.source_index], {}) catch unreachable;
                 }
 
                 // Include the wrapper if present
                 if (flags.wrap != .none) {
-                    const wrapper_ref = deps.wrapper_refs[chunk.entry_point.source_index];
-                    // Only import the wrapper if it exists (see comment above)
-                    if (!wrapper_ref.isEmpty()) {
-                        imports.put(wrapper_ref, {}) catch unreachable;
-                    }
+                    imports.put(deps.wrapper_refs[chunk.entry_point.source_index], {}) catch unreachable;
                 }
             }
         }

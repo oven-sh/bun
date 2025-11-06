@@ -38,7 +38,7 @@ pub noinline fn computeChunks(
         // For entry point chunks, create a bitset with ONLY this entry point's bit
         // Don't use the file's accumulated entry_bits which may have multiple bits
         // set from markFileReachableForCodeSplitting
-        var entry_point_bits = try AutoBitSet.initEmpty(temp_allocator, this.graph.entry_points.len);
+        var entry_point_bits = try AutoBitSet.initEmpty(this.allocator(), this.graph.entry_points.len);
         entry_point_bits.set(entry_bit);
 
         const has_html_chunk = loaders[source_index] == .html;

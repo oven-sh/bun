@@ -125,7 +125,7 @@ setx(CWD ${CMAKE_SOURCE_DIR})
 setx(BUILD_PATH ${CMAKE_BINARY_DIR})
 
 optionx(CACHE_PATH FILEPATH "The path to the cache directory" DEFAULT ${BUILD_PATH}/cache)
-optionx(CACHE_STRATEGY "read-write|read-only|write-only|none" "The strategy to use for caching" DEFAULT "read-write")
+optionx(CACHE_STRATEGY "read-write|read-only|none" "The strategy to use for caching" DEFAULT "read-write")
 
 optionx(CI BOOL "If CI is enabled" DEFAULT OFF)
 optionx(ENABLE_ANALYSIS BOOL "If static analysis targets should be enabled" DEFAULT OFF)
@@ -135,13 +135,6 @@ if(CI)
 else()
   set(WARNING WARNING)
 endif()
-
-# TODO: This causes flaky zig builds in CI, so temporarily disable it.
-# if(CI)
-#   set(DEFAULT_VENDOR_PATH ${CACHE_PATH}/vendor)
-# else()
-#   set(DEFAULT_VENDOR_PATH ${CWD}/vendor)
-# endif()
 
 optionx(VENDOR_PATH FILEPATH "The path to the vendor directory" DEFAULT ${CWD}/vendor)
 optionx(TMP_PATH FILEPATH "The path to the temporary directory" DEFAULT ${BUILD_PATH}/tmp)
@@ -915,10 +908,6 @@ function(register_compiler_flags)
       endforeach()
     endforeach()
   endforeach()
-endfunction()
-
-function(register_compiler_definitions)
-
 endfunction()
 
 # register_linker_flags()

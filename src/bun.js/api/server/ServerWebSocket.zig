@@ -1232,6 +1232,18 @@ pub fn isSubscribed(
     return JSValue.jsBoolean(this.websocket().isSubscribed(topic.slice()));
 }
 
+pub fn getSubscriptions(
+    this: *ServerWebSocket,
+    globalThis: *jsc.JSGlobalObject,
+) bun.JSError!JSValue {
+    if (this.isClosed()) {
+        return try JSValue.createEmptyArray(globalThis, 0);
+    }
+
+    // Get the JSValue directly from C++
+    return this.websocket().getTopicsAsJSArray(globalThis);
+}
+
 pub fn getRemoteAddress(
     this: *ServerWebSocket,
     globalThis: *jsc.JSGlobalObject,

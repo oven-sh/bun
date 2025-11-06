@@ -26,8 +26,11 @@ error() {
 }
 
 execute() {
-	print "$ $@" >&2
-	if ! "$@"; then
+	local opts=$-
+	set -x
+	"$@"
+	{ local status=$?; set +x "$opts"; } 2> /dev/null
+	if [ "$status" -ne 0 ]; then
 		error "Command failed: $@"
 	fi
 }
@@ -907,7 +910,7 @@ setup_node_gyp_cache() {
 }
 
 bun_version_exact() {
-	print "1.2.17"
+	print "1.3.1"
 }
 
 install_bun() {
@@ -986,6 +989,7 @@ install_build_essentials() {
 			xz-utils \
 			pkg-config \
 			golang
+		install_packages apache2-utils
 		;;
 	dnf | yum)
 		install_packages \
@@ -1013,6 +1017,7 @@ install_build_essentials() {
 			ninja \
 			go \
 			xz
+		install_packages apache2-utils
 		;;
 	esac
 
@@ -1033,7 +1038,7 @@ install_build_essentials() {
 	install_llvm
 	install_osxcross
 	install_gcc
-	install_ccache
+	install_sccache
 	install_rust
 	install_docker
 }
@@ -1060,12 +1065,11 @@ install_llvm() {
 		install_packages "llvm@$(llvm_version)"
 		;;
 	apk)
-		# alpine doesn't have a lld19 package on 3.21 atm so use bare one for now
 		install_packages \
 			"llvm$(llvm_version)" \
 			"clang$(llvm_version)" \
 			"scudo-malloc" \
-			"lld" \
+			"lld$(llvm_version)" \
 			"llvm$(llvm_version)-dev" # Ensures llvm-symbolizer is installed
 		;;
 	esac
@@ -1145,12 +1149,31 @@ install_gcc() {
 	execute_sudo ln -sf $(which llvm-symbolizer-$llvm_v) /usr/bin/llvm-symbolizer
 }
 
-install_ccache() {
-	case "$pm" in
-	apt | apk | brew)
-		install_packages ccache
-		;;
-	esac
+install_sccache() {
+	# Alright, look, this function is cobbled together but it's only as cobbled
+	# together as this whole script is.
+	#
+	# For some reason, move_to_bin doesn't work here due to permissions so I'm
+	# avoiding that function. It's also wrong with permissions and so on.
+	#
+	# Unfortunately, we cannot use install_packages since many package managers
+	# don't compile `sccache` with S3 support.
+	local opts=$-
+	set -ef
+
+	local sccache_http
+	sccache_http="https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-$(uname -m)-unknown-linux-musl.tar.gz"
+
+	local file
+	file=$(download_file "$sccache_http")
+
+	local tmpdir
+	tmpdir=$(mktemp -d)
+
+	execute tar -xzf "$file" -C "$tmpdir"
+	execute_sudo install -m755 "$tmpdir/sccache-v0.12.0-$(uname -m)-unknown-linux-musl/sccache" "/usr/local/bin"
+
+	set +ef -"$opts"
 }
 
 install_rust() {
@@ -1401,10 +1424,10 @@ install_chromium() {
 	apk)
 		install_packages \
 			chromium \
-      nss \
-      freetype \
-      harfbuzz \
-      ttf-freefont
+			nss \
+			freetype \
+			harfbuzz \
+			ttf-freefont
 		;;
 	apt)
 		install_packages \

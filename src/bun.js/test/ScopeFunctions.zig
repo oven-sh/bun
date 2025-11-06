@@ -246,14 +246,11 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
             bun.assert(!bunTest.collection.locked);
             groupLog.log("enqueueTestCallback / {s} / in scope: {s}", .{ description orelse "(unnamed)", bunTest.collection.active_scope.base.name orelse "(unnamed)" });
 
-            const retry_count: u32 = options.retry;
-            const repeat_count: u32 = options.repeats;
-
             _ = try bunTest.collection.active_scope.appendTest(bunTest.gpa, description, if (matches_filter) callback else null, .{
                 .has_done_parameter = has_done_parameter,
                 .timeout = options.timeout,
-                .retry_count = retry_count,
-                .repeat_count = repeat_count,
+                .retry_count = options.retry,
+                .repeat_count = options.repeat,
             }, base, .collection);
         },
     }

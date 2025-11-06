@@ -966,14 +966,13 @@ describe("option combinations", () => {
         bunExe(),
         "-e",
         `
-         process.send("hello");
+         process.send({type: "hello", data: "world"});
          process.disconnect();
          Promise.resolve().then(() => process.exit(0));
         `,
       ],
-      ipc: (message: any) => {
-        expect(message.type).toBe("hello");
-        expect(message.data).toBe("world");
+      ipc: message => {
+        expect(message).toEqual({ type: "hello", data: "world" });
         messageReceived = true;
         msg.resolve();
       },

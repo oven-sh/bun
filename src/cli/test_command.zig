@@ -607,7 +607,7 @@ pub const CommandLineReporter = struct {
         const initial_retry_count = test_entry.retry_count;
         const attempts = (initial_retry_count - sequence.remaining_retry_count) + 1;
         const initial_repeat_count = test_entry.repeat_count;
-        const repeats = initial_repeat_count - sequence.remaining_repeat_count;
+        const repeats = (initial_repeat_count - sequence.remaining_repeat_count) + 1;
         var scopes_stack = bun.BoundedArray(*bun_test.DescribeScope, 64).init(0) catch unreachable;
         var parent_: ?*bun_test.DescribeScope = test_entry.base.parent;
 

@@ -482,14 +482,10 @@ fn advanceSequence(this: *Execution, sequence: *ExecutionSequence, group: *Concu
         }
 
         // Handle repeat logic: if test passed and we have repeats remaining, repeat it
-        if (test_passed) {
-            if (sequence.remaining_repeat_count > 0) {
-                sequence.remaining_repeat_count -= 1;
-            } else if (bun.Environment.ci_assert) bun.assert(false);
-            if (sequence.remaining_repeat_count > 0) {
-                this.resetSequence(sequence);
-                return;
-            }
+        if (test_passed and sequence.remaining_repeat_count > 0) {
+            sequence.remaining_repeat_count -= 1;
+            this.resetSequence(sequence);
+            return;
         }
 
         // Only report the final result after all retries/repeats are done

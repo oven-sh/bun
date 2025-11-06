@@ -926,8 +926,8 @@ pub const ExecutionEntryCfg = struct {
     has_done_parameter: bool,
     /// Number of times to retry a failed test (0 = no retries)
     retry_count: u32 = 0,
-    /// Number of times to repeat a test (1 = run once, no repeats)
-    repeat_count: u32 = 1,
+    /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
+    repeat_count: u32 = 0,
 };
 pub const ExecutionEntry = struct {
     base: BaseScope,
@@ -941,7 +941,7 @@ pub const ExecutionEntry = struct {
     added_in_phase: AddedInPhase,
     /// Number of times to retry a failed test (0 = no retries)
     retry_count: u32,
-    /// Number of times to repeat a test (1 = run once, no repeats)
+    /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
     repeat_count: u32,
 
     next: ?*ExecutionEntry = null,

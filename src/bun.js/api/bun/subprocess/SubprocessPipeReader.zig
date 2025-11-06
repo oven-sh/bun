@@ -189,8 +189,12 @@ pub fn eventLoop(this: *PipeReader) *jsc.EventLoop {
     return this.event_loop;
 }
 
-pub fn loop(this: *PipeReader) *uws.Loop {
-    return this.event_loop.virtual_machine.uwsLoop();
+pub fn loop(this: *PipeReader) *bun.Async.Loop {
+    if (comptime bun.Environment.isWindows) {
+        return this.event_loop.virtual_machine.uwsLoop().uv_loop;
+    } else {
+        return this.event_loop.virtual_machine.uwsLoop();
+    }
 }
 
 fn deinit(this: *PipeReader) void {

@@ -466,6 +466,21 @@ pub fn spawnMaybeSync(
         !jsc_vm.isInspectorEnabled() and
         !bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH.get();
 
+    // For spawnSync, use an isolated event loop to prevent JavaScript timers from firing
+    // and to avoid interfering with the main event loop
+    const sync_event_loop: ?*jsc.EventLoop = if (comptime is_sync) brk: {
+        const sync_loop = jsc_vm.rareData().spawnSyncEventLoop() catch {
+            return globalThis.throwOutOfMemory();
+        };
+        sync_loop.prepare(jsc_vm);
+        break :brk &sync_loop.event_loop;
+    } else null;
+
+    const loop_handle = if (sync_event_loop) |loop_ptr|
+        jsc.EventLoopHandle.init(loop_ptr)
+    else
+        jsc.EventLoopHandle.init(jsc_vm);
+
     const spawn_options = bun.spawn.SpawnOptions{
         .cwd = cwd,
         .detached = detached,
@@ -488,7 +503,7 @@ pub fn spawnMaybeSync(
         .windows = if (Environment.isWindows) .{
             .hide_window = windows_hide,
             .verbatim_arguments = windows_verbatim_arguments,
-            .loop = jsc.EventLoopHandle.init(jsc_vm),
+            .loop = loop_handle,
         },
     };
 
@@ -534,9 +549,8 @@ pub fn spawnMaybeSync(
         .result => |result| result,
     };
 
-    const loop = jsc_vm.eventLoop();
-
-    const process = spawned.toProcess(loop, is_sync);
+    // Use the isolated loop for spawnSync operations
+    const process = spawned.toProcess(loop_handle, is_sync);
 
     var subprocess = bun.new(Subprocess, .{
         .ref_count = .init(),
@@ -571,7 +585,7 @@ pub fn spawnMaybeSync(
         .pid_rusage = null,
         .stdin = Writable.init(
             &stdio[0],
-            loop,
+            sync_event_loop orelse jsc_vm.eventLoop(),
             subprocess,
             spawned.stdin,
             &promise_for_stream,
@@ -581,7 +595,7 @@ pub fn spawnMaybeSync(
         },
         .stdout = Readable.init(
             stdio[1],
-            loop,
+            sync_event_loop orelse jsc_vm.eventLoop(),
             subprocess,
             spawned.stdout,
             jsc_vm.allocator,
@@ -590,7 +604,7 @@ pub fn spawnMaybeSync(
         ),
         .stderr = Readable.init(
             stdio[2],
-            loop,
+            sync_event_loop orelse jsc_vm.eventLoop(),
             subprocess,
             spawned.stderr,
             jsc_vm.allocator,
@@ -743,7 +757,7 @@ pub fn spawnMaybeSync(
     }
 
     if (subprocess.stdout == .pipe) {
-        if (subprocess.stdout.pipe.start(subprocess, loop).asErr()) |err| {
+        if (subprocess.stdout.pipe.start(subprocess, sync_event_loop orelse jsc_vm.eventLoop()).asErr()) |err| {
             _ = subprocess.tryKill(subprocess.killSignal);
             _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
             return error.JSError;
@@ -754,7 +768,7 @@ pub fn spawnMaybeSync(
     }
 
     if (subprocess.stderr == .pipe) {
-        if (subprocess.stderr.pipe.start(subprocess, loop).asErr()) |err| {
+        if (subprocess.stderr.pipe.start(subprocess, sync_event_loop orelse jsc_vm.eventLoop()).asErr()) |err| {
             _ = subprocess.tryKill(subprocess.killSignal);
             _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
             return error.JSError;
@@ -813,13 +827,15 @@ pub fn spawnMaybeSync(
         jsc_vm.onSubprocessSpawn(subprocess.process);
     }
 
-    // We cannot release heap access while JS is running
+    // Use the isolated event loop to tick instead of the main event loop
+    // This ensures JavaScript timers don't fire and stdin/stdout from the main process aren't affected
     {
-        const old_vm = jsc_vm.uwsLoop().internal_loop_data.jsc_vm;
-        jsc_vm.uwsLoop().internal_loop_data.jsc_vm = null;
-        defer {
-            jsc_vm.uwsLoop().internal_loop_data.jsc_vm = old_vm;
-        }
+        const sync_loop = jsc_vm.rareData().spawn_sync_event_loop.?;
+        const prev_event_loop = jsc_vm.event_loop;
+        defer sync_loop.cleanup(jsc_vm, prev_event_loop);
+
+        const timespec: bun.timespec = if (timeout) |timeout_ms| bun.timespec.msFromNow(timeout_ms) else undefined;
+
         while (subprocess.computeHasPendingActivity()) {
             if (subprocess.stdin == .buffer) {
                 subprocess.stdin.buffer.watch();
@@ -833,8 +849,15 @@ pub fn spawnMaybeSync(
                 subprocess.stdout.pipe.watch();
             }
 
-            jsc_vm.tick();
-            jsc_vm.eventLoop().autoTick();
+            // Calculate remaining timeout
+
+            // Tick the isolated event loop with the calculated timeout
+            switch (sync_loop.tickWithTimeout(if (timeout != null) &timespec else null)) {
+                .timeout => {
+                    _ = subprocess.tryKill(subprocess.killSignal);
+                },
+                .completed => {},
+            }
         }
     }
 

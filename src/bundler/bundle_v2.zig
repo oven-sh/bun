@@ -1367,6 +1367,7 @@ pub const BundleV2 = struct {
             .source_index = source_index,
             .module_type = .unknown,
             .emit_decorator_metadata = false, // TODO
+            .strict_null_checks = false, // TODO
             .package_version = "",
             .loader = loader,
             .tree_shaking = this.linker.options.tree_shaking,

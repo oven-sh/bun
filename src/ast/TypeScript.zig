@@ -90,17 +90,18 @@ pub const Metadata = union(enum) {
         };
     }
 
-    pub fn mergeUnion(result: *@This(), left: @This()) void {
+    pub fn mergeUnion(result: *@This(), left: @This(), strict_null_checks: bool) void {
         if (left != .m_none) {
             if (std.meta.activeTag(result.*) != std.meta.activeTag(left)) {
                 result.* = switch (result.*) {
                     .m_never => left,
 
-                    // Unions with null or undefined should emit Object (treating as if strictNullChecks is enabled)
+                    // When strictNullChecks is enabled, unions with null or undefined should emit Object
                     // This matches TypeScript's behavior with strictNullChecks: true
+                    // When strictNullChecks is disabled, we emit the actual type (which may cause TDZ errors at runtime)
                     .m_null, .m_undefined => switch (left) {
                         .m_never, .m_undefined, .m_null => left,
-                        else => .m_object,
+                        else => if (strict_null_checks) .m_object else left,
                     },
 
                     else => .m_object,

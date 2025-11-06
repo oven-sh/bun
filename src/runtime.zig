@@ -201,6 +201,7 @@ pub const Runtime = struct {
         unwrap_commonjs_to_esm: bool = false,
 
         emit_decorator_metadata: bool = false,
+        strict_null_checks: bool = false,
 
         /// If true and if the source is transpiled as cjs, don't wrap the module.
         /// This is used for `--print` entry points so we can get the result.

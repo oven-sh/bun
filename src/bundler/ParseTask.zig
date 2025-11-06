@@ -31,6 +31,7 @@ tree_shaking: bool = false,
 known_target: options.Target,
 module_type: options.ModuleType = .unknown,
 emit_decorator_metadata: bool = false,
+strict_null_checks: bool = false,
 ctx: *BundleV2,
 package_version: string = "",
 is_entry_point: bool = false,
@@ -118,6 +119,7 @@ pub fn init(resolve_result: *const _resolver.Result, source_index: Index, ctx: *
         .source_index = source_index,
         .module_type = resolve_result.module_type,
         .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
+        .strict_null_checks = resolve_result.strict_null_checks,
         .package_version = if (resolve_result.package_json) |package_json| package_json.version else "",
         .known_target = ctx.transpiler.options.target,
     };
@@ -1175,6 +1177,7 @@ fn runWithSourceCode(
     opts.features.minify_keep_names = transpiler.options.keep_names;
     opts.features.minify_whitespace = transpiler.options.minify_whitespace;
     opts.features.emit_decorator_metadata = transpiler.options.emit_decorator_metadata;
+    opts.features.strict_null_checks = transpiler.options.strict_null_checks;
     opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;
     opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
     opts.features.auto_polyfill_require = output_format == .esm and !opts.features.hot_module_reloading;

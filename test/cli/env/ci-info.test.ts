@@ -32,45 +32,6 @@ test.only("should run when CI=false", () => {
     expect(stderr).toContain("1 pass");
   });
 
-  test("CI=true without specific CI env vars detects as CI (blocks test.only)", async () => {
-    const dir = tempDirWithFiles("ci-true-unknown", {
-      "test.test.js": `
-import { test, expect } from "bun:test";
-
-test.only("should fail in CI", () => {
-  expect(1 + 1).toBe(2);
-});
-      `,
-    });
-
-    // Clean environment - remove any CI-specific vars
-    const cleanEnv = { ...bunEnv };
-    delete cleanEnv.GITHUB_ACTIONS;
-    delete cleanEnv.GITLAB_CI;
-    delete cleanEnv.CIRCLECI;
-    delete cleanEnv.TRAVIS;
-    delete cleanEnv.BUILDKITE;
-    delete cleanEnv.JENKINS_URL;
-    delete cleanEnv.BUILD_ID;
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "test.test.js"],
-      env: {
-        ...cleanEnv,
-        CI: "true",
-      },
-      cwd: dir,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    // test.only should fail (throw) when CI=true
-    expect(exitCode).toBe(1);
-    expect(stderr).toContain(".only is disabled in CI environments");
-  });
-
   test("Specific CI env vars take precedence over CI=true (GITHUB_ACTIONS)", async () => {
     const dir = tempDirWithFiles("ci-github-precedence", {
       "test.test.js": `

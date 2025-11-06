@@ -475,6 +475,10 @@ pub fn spawnMaybeSync(
         break :brk &sync_loop.event_loop;
     } else null;
 
+    if (comptime is_sync) {
+        jsc_vm.rareData().spawnSyncEventLoop(jsc_vm).prepare(jsc_vm);
+    }
+
     defer {
         if (comptime is_sync) {
             jsc_vm.rareData().spawnSyncEventLoop(jsc_vm).cleanup(jsc_vm, current_event_loop);

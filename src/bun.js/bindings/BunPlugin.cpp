@@ -47,6 +47,57 @@ static bool isValidNamespaceString(String& namespaceString)
     return namespaceRegex->match(namespaceString) > -1;
 }
 
+static JSC::EncodedJSValue jsFunctionOnStartForRuntimePlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callframe->argumentCount() < 1) {
+        throwException(globalObject, scope, createError(globalObject, "onStart() requires a callback function"_s));
+        return {};
+    }
+
+    auto callbackValue = callframe->uncheckedArgument(0);
+    if (!callbackValue.isCell() || !callbackValue.isCallable()) {
+        throwException(globalObject, scope, createError(globalObject, "onStart() expects a function as first argument"_s));
+        return {};
+    }
+
+    JSObject* callback = jsCast<JSObject*>(callbackValue);
+    JSC::CallData callData = JSC::getCallData(callback);
+    if (callData.type == JSC::CallData::Type::None) {
+        throwException(globalObject, scope, createError(globalObject, "onStart() expects a callable function"_s));
+        return {};
+    }
+
+    // Get the promises array from the builder object
+    JSObject* builder = jsDynamicCast<JSObject*>(callframe->thisValue());
+    if (!builder) {
+        throwException(globalObject, scope, createError(globalObject, "onStart() must be called on a builder object"_s));
+        return {};
+    }
+
+    auto promisesArrayValue = builder->getDirect(vm, Identifier::fromString(vm, "__onStartPromises"_s));
+    auto* promisesArray = jsDynamicCast<JSC::JSArray*>(promisesArrayValue);
+    if (!promisesArray) {
+        throwException(globalObject, scope, createError(globalObject, "onStart() promises array not found on builder"_s));
+        return {};
+    }
+
+    // Call the callback immediately
+    JSValue result = call(globalObject, callback, callData, JSC::jsUndefined(), ArgList());
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // If it returns a promise, store it in the array
+    if (auto* promise = JSC::jsDynamicCast<JSC::JSPromise*>(result)) {
+        promisesArray->push(globalObject, promise);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    // Return the builder (this) for chaining
+    return JSValue::encode(callframe->thisValue());
+}
+
 static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin, void* ctx, OnAppendPluginCallback callback)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -307,7 +358,12 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
         }
     }
 
+    // Create an array to track onStart promises
+    auto* promisesArray = JSC::constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
     JSObject* builderObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
+    builderObject->putDirect(vm, Identifier::fromString(vm, "__onStartPromises"_s), promisesArray, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
     builderObject->putDirect(vm, Identifier::fromString(vm, "target"_s), jsString(vm, String("bun"_s)), 0);
     builderObject->putDirectNativeFunction(
@@ -339,6 +395,16 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
         NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
 
+    builderObject->putDirectNativeFunction(
+        vm,
+        globalObject,
+        JSC::Identifier::fromString(vm, "onStart"_s),
+        1,
+        jsFunctionOnStartForRuntimePlugin,
+        ImplementationVisibility::Public,
+        NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+
     JSC::MarkedArgumentBuffer args;
     args.append(builderObject);
 
@@ -348,8 +414,47 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
 
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    if (auto* promise = JSC::jsDynamicCast<JSC::JSPromise*>(result)) {
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(promise));
+    // Check if there are any onStart promises
+    uint32_t promisesCount = promisesArray->length();
+    bool setupReturnedPromise = result.inherits<JSC::JSPromise>();
+
+    // If both setup() and onStart() returned promises, combine them
+    if (setupReturnedPromise && promisesCount > 0) {
+        // Add setup's promise to the array
+        promisesArray->push(globalObject, result);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        promisesCount++;
+    }
+
+    // If we have promises to wait for
+    if (promisesCount > 0) {
+        if (promisesCount == 1 && !setupReturnedPromise) {
+            // Single promise from onStart, return it directly
+            auto singlePromise = promisesArray->getIndex(globalObject, 0);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            RELEASE_AND_RETURN(throwScope, JSValue::encode(singlePromise));
+        }
+
+        // Multiple promises or setup returned a promise, use Promise.all()
+        JSValue promiseConstructorValue = globalObject->get(globalObject, Identifier::fromString(vm, "Promise"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+
+        auto allMethod = promiseConstructorValue.get(globalObject, Identifier::fromString(vm, "all"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+
+        JSC::CallData allCallData = JSC::getCallData(allMethod);
+        if (allCallData.type != JSC::CallData::Type::None) {
+            JSC::MarkedArgumentBuffer allArgs;
+            allArgs.append(promisesArray);
+            auto allResult = call(globalObject, allMethod, allCallData, promiseConstructorValue, allArgs);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            RELEASE_AND_RETURN(throwScope, JSValue::encode(allResult));
+        }
+    }
+
+    // If setup() returned a promise but onStart didn't
+    if (setupReturnedPromise) {
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
     }
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));

@@ -846,6 +846,14 @@ pub fn spawnMaybeSync(
         const sync_loop = jsc_vm.rareData().spawnSyncEventLoop(jsc_vm);
 
         while (subprocess.computeHasPendingActivity()) {
+            // Check if we've exceeded the timeout deadline before processing I/O
+            if (timeout != null and !did_timeout) {
+                if (bun.timespec.now().order(&timespec) != .lt) {
+                    _ = subprocess.tryKill(subprocess.killSignal);
+                    did_timeout = true;
+                }
+            }
+
             if (subprocess.stdin == .buffer) {
                 subprocess.stdin.buffer.watch();
             }
@@ -858,14 +866,9 @@ pub fn spawnMaybeSync(
                 subprocess.stdout.pipe.watch();
             }
 
-            // Tick the isolated event loop with the calculated timeout
-            switch (sync_loop.tickWithTimeout(if (timeout != null) &timespec else null)) {
-                .timeout => {
-                    _ = subprocess.tryKill(subprocess.killSignal);
-                    did_timeout = true;
-                },
-                .completed => {},
-            }
+            // Tick the isolated event loop without passing timeout to avoid blocking
+            // The timeout check is done at the top of the loop
+            _ = sync_loop.tickWithTimeout(null);
         }
     }
 

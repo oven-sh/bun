@@ -17,6 +17,9 @@ class NotImplementedError extends Error {
     // in the definition so that it isn't bundled unless used
     hideFromStack(NotImplementedError);
   }
+  get ["constructor"]() {
+    return Error;
+  }
 }
 
 function throwNotImplemented(feature: string, issue?: number, extra?: string): never {
@@ -78,6 +81,9 @@ class ExceptionWithHostPort extends Error {
       this.port = port;
     }
   }
+  get ["constructor"]() {
+    return Error;
+  }
 }
 
 class NodeAggregateError extends AggregateError {
@@ -85,9 +91,18 @@ class NodeAggregateError extends AggregateError {
     super(new SafeArrayIterator(errors), message);
     this.code = errors[0]?.code;
   }
-
   get ["constructor"]() {
     return AggregateError;
+  }
+}
+
+class ConnResetException extends Error {
+  constructor(msg) {
+    super(msg);
+    this.code = "ECONNRESET";
+  }
+  get ["constructor"]() {
+    return Error;
   }
 }
 
@@ -106,7 +121,6 @@ class ErrnoException extends Error {
     this.code = code;
     this.syscall = syscall;
   }
-
   get ["constructor"]() {
     return Error;
   }
@@ -146,6 +160,7 @@ export default {
   warnNotImplementedOnce,
   ExceptionWithHostPort,
   NodeAggregateError,
+  ConnResetException,
   ErrnoException,
   once,
   getLazy,

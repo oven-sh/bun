@@ -125,12 +125,8 @@ function createWindow(windowUrl) {
   const originalDocumentCreateElement = window.document.createElement;
   const originalElementAppendChild = window.document.head.appendChild;
   class ScriptTag {
-    constructor() {
-      this.src = "";
-      this.className = "";
-      this.dataset = Object.create(null);
-      this.onerror = null;
-    }
+    src;
+    constructor() {}
     remove() {}
   }
   window.document.createElement = function (tagName) {
@@ -149,15 +145,7 @@ function createWindow(windowUrl) {
         assert(blob);
         blob.arrayBuffer().then(buffer => {
           const code = new TextDecoder().decode(buffer);
-          try {
-            (0, window.eval)(code);
-          } catch (err) {
-            if (typeof element.onerror === "function") {
-              element.onerror(err);
-            } else {
-              throw err;
-            }
-          }
+          (0, window.eval)(code);
         });
         return;
       }

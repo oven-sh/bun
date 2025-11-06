@@ -85,23 +85,10 @@ globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
   }
 
   if (!entry) {
-    const currentScript = document.currentScript as HTMLScriptElement | null;
-    if (currentScript && currentScript.dataset?.bunHmrSourceMapId === id) {
-      entry = {
-        script: currentScript,
-        size: Number(currentScript.dataset.bunHmrSourceMapSize ?? "0") || 0,
-        url: currentScript.dataset.bunHmrSourceMapUrl ?? currentScript.src,
-      };
-    }
+    throw new Error("Unknown HMR script: " + id);
   }
 
-  if (!entry) {
-    console.error("Unknown HMR script: " + id);
-    fullReload();
-    return;
-  }
   const { script, size, url } = entry;
-  scriptTags.delete(id);
   const map: SourceMapURL = {
     id,
     url,
@@ -214,9 +201,6 @@ const handlers = {
       const blob = new Blob([rest], { type: "application/javascript" });
       const url = URL.createObjectURL(blob);
       const script = document.createElement("script");
-      script.dataset.bunHmrSourceMapId = sourceMapId;
-      script.dataset.bunHmrSourceMapSize = String(sourceMapSize);
-      script.dataset.bunHmrSourceMapUrl = url;
       const pendingScripts = scriptTags.get(sourceMapId);
       const entry: PendingHmrScript = {
         script,

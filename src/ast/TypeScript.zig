@@ -94,10 +94,14 @@ pub const Metadata = union(enum) {
         if (left != .m_none) {
             if (std.meta.activeTag(result.*) != std.meta.activeTag(left)) {
                 result.* = switch (result.*) {
-                    .m_never,
-                    .m_undefined,
-                    .m_null,
-                    => left,
+                    .m_never => left,
+
+                    // Unions with null or undefined should emit Object (treating as if strictNullChecks is enabled)
+                    // This matches TypeScript's behavior with strictNullChecks: true
+                    .m_null, .m_undefined => switch (left) {
+                        .m_never, .m_undefined, .m_null => left,
+                        else => .m_object,
+                    },
 
                     else => .m_object,
                 };

@@ -893,7 +893,7 @@ pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, 
         var value = object_iter.value;
         if (value.isUndefined()) continue;
 
-        const line = try std.fmt.allocPrintSentinel(envp.allocator, "{}={}", .{ key, try value.getZigString(globalThis) }, 0);
+        const line = try std.fmt.allocPrintSentinel(envp.allocator, "{f}={f}", .{ key, try value.getZigString(globalThis) }, 0);
 
         if (key.eqlComptime("PATH")) {
             PATH.* = bun.asByteSlice(line["PATH=".len..]);

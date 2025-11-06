@@ -1,4 +1,4 @@
-import { normalizeBunSnapshot, bunExe, bunEnv } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 
 // the test should time out, not crash
 test("23865", async () => {

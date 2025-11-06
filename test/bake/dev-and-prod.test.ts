@@ -247,7 +247,6 @@ devTest("hmr handles rapid consecutive edits", {
     await dev.write("index.ts", hmrSelfAcceptingModule("render 2"));
     await dev.write("index.ts", hmrSelfAcceptingModule("render 3"));
 
-    await client.expectMessage("render 2");
-    await client.expectMessage("render 3");
+    await client.expectMessage("render 2", "render 3");
   },
 });

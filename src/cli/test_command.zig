@@ -687,8 +687,8 @@ pub const CommandLineReporter = struct {
             };
 
             // Print repeat count if test failed on a repeat (repeats > 1)
-            if (repeats > 1 and !status.isPass(.pending_is_fail)) switch (Output.enable_ansi_colors_stderr) {
-                inline else => |enable_ansi_colors_stderr| writer.print(comptime Output.prettyFmt(" <d>(repeat {d})<r>", enable_ansi_colors_stderr), .{repeats}) catch unreachable,
+            if (repeats > 1) switch (Output.enable_ansi_colors_stderr) {
+                inline else => |enable_ansi_colors_stderr| writer.print(comptime Output.prettyFmt(" <d>(run {d})<r>", enable_ansi_colors_stderr), .{repeats}) catch unreachable,
             };
 
             if (elapsed_ns > (std.time.ns_per_us * 10)) {

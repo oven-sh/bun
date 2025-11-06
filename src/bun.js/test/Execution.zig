@@ -177,7 +177,7 @@ pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSEr
     defer groupLog.end();
 
     // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
-    //   request a termination exception and kill any dangling processes
+    //   kill any dangling processes
     // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
     if (this.activeGroup()) |current_group| {
         const sequences = current_group.sequences(this);
@@ -186,7 +186,6 @@ pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSEr
             if (sequence.active_entry) |entry| {
                 const now = bun.timespec.now();
                 if (entry.timespec.order(&now) == .lt) {
-                    globalThis.requestTermination();
                     const kill_count = globalThis.bunVM().auto_killer.kill();
                     if (kill_count.processes > 0) {
                         bun.Output.prettyErrorln("<d>killed {d} dangling process{s}<r>", .{ kill_count.processes, if (kill_count.processes != 1) "es" else "" });

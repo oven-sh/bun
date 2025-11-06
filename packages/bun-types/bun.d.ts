@@ -5289,7 +5289,12 @@ declare module "bun" {
     options: udp.ConnectSocketOptions<DataBinaryType>,
   ): Promise<udp.ConnectedSocket<DataBinaryType>>;
 
-  namespace SpawnOptions {
+  /**
+   * @deprecated use {@link Bun.Spawn} instead
+   */
+  export import SpawnOptions = Spawn;
+
+  namespace Spawn {
     /**
      * Option for stdout/stderr
      */
@@ -5320,7 +5325,12 @@ declare module "bun" {
       | Response
       | Request;
 
-    interface OptionsObject<In extends Writable, Out extends Readable, Err extends Readable> {
+    /**
+     * @deprecated use BaseOptions or the specific options for the specific {@link spawn} or {@link spawnSync} usage
+     */
+    type OptionsObject<In extends Writable, Out extends Readable, Err extends Readable> = BaseOptions<In, Out, Err>;
+
+    interface BaseOptions<In extends Writable, Out extends Readable, Err extends Readable> {
       /**
        * The current working directory of the process
        *
@@ -5607,6 +5617,34 @@ declare module "bun" {
       maxBuffer?: number;
     }
 
+    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable>
+      extends BaseOptions<In, Out, Err> {}
+
+    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable>
+      extends BaseOptions<In, Out, Err> {
+      /**
+       * If true, stdout and stderr pipes will not automatically start reading
+       * data. Reading will only begin when you access the `stdout` or `stderr`
+       * properties.
+       *
+       * This can improve performance when you don't need to read output
+       * immediately.
+       *
+       * @default false
+       *
+       * @example
+       * ```ts
+       * const subprocess = Bun.spawn({
+       *   cmd: ["echo", "hello"],
+       *   lazy: true, // Don't start reading stdout until accessed
+       * });
+       * // stdout reading hasn't started yet
+       * await subprocess.stdout.text(); // Now reading starts
+       * ```
+       */
+      lazy?: boolean;
+    }
+
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
       ? ReadableStream<Uint8Array<ArrayBuffer>>
       : X extends BunFile | ArrayBufferView | number
@@ -5864,29 +5902,7 @@ declare module "bun" {
     const Out extends SpawnOptions.Readable = "pipe",
     const Err extends SpawnOptions.Readable = "inherit",
   >(
-    options: SpawnOptions.OptionsObject<In, Out, Err> & {
-      /**
-       * If true, stdout and stderr pipes will not automatically start reading
-       * data. Reading will only begin when you access the `stdout` or `stderr`
-       * properties.
-       *
-       * This can improve performance when you don't need to read output
-       * immediately.
-       *
-       * @default false
-       *
-       * @example
-       * ```ts
-       * const subprocess = Bun.spawn({
-       *   cmd: ["echo", "hello"],
-       *   lazy: true, // Don't start reading stdout until accessed
-       * });
-       * // stdout reading hasn't started yet
-       * await subprocess.stdout.text(); // Now reading starts
-       * ```
-       */
-      lazy?: boolean;
-
+    options: SpawnOptions.SpawnOptions<In, Out, Err> & {
       /**
        * The command to run
        *
@@ -5936,29 +5952,7 @@ declare module "bun" {
      * ```
      */
     cmds: string[],
-    options?: SpawnOptions.OptionsObject<In, Out, Err> & {
-      /**
-       * If true, stdout and stderr pipes will not automatically start reading
-       * data. Reading will only begin when you access the `stdout` or `stderr`
-       * properties.
-       *
-       * This can improve performance when you don't need to read output
-       * immediately.
-       *
-       * @default false
-       *
-       * @example
-       * ```ts
-       * const subprocess = Bun.spawn({
-       *   cmd: ["echo", "hello"],
-       *   lazy: true, // Don't start reading stdout until accessed
-       * });
-       * // stdout reading hasn't started yet
-       * await subprocess.stdout.text(); // Now reading starts
-       * ```
-       */
-      lazy?: boolean;
-    },
+    options?: SpawnOptions.SpawnOptions<In, Out, Err>,
   ): Subprocess<In, Out, Err>;
 
   /**
@@ -5980,7 +5974,7 @@ declare module "bun" {
     const Out extends SpawnOptions.Readable = "pipe",
     const Err extends SpawnOptions.Readable = "pipe",
   >(
-    options: SpawnOptions.OptionsObject<In, Out, Err> & {
+    options: SpawnOptions.SpawnSyncOptions<In, Out, Err> & {
       /**
        * The command to run
        *
@@ -6031,7 +6025,7 @@ declare module "bun" {
      * ```
      */
     cmds: string[],
-    options?: SpawnOptions.OptionsObject<In, Out, Err>,
+    options?: SpawnOptions.SpawnSyncOptions<In, Out, Err>,
   ): SyncSubprocess<Out, Err>;
 
   /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */

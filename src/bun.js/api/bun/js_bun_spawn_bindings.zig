@@ -837,6 +837,8 @@ pub fn spawnMaybeSync(
         jsc_vm.onSubprocessSpawn(subprocess.process);
     }
 
+    var did_timeout = false;
+
     // Use the isolated event loop to tick instead of the main event loop
     // This ensures JavaScript timers don't fire and stdin/stdout from the main process aren't affected
     {
@@ -860,6 +862,7 @@ pub fn spawnMaybeSync(
             switch (sync_loop.tickWithTimeout(if (timeout != null) &timespec else null)) {
                 .timeout => {
                     _ = subprocess.tryKill(subprocess.killSignal);
+                    did_timeout = true;
                 },
                 .completed => {},
             }
@@ -873,7 +876,7 @@ pub fn spawnMaybeSync(
     const stdout = try subprocess.stdout.toBufferedValue(globalThis);
     const stderr = try subprocess.stderr.toBufferedValue(globalThis);
     const resource_usage: JSValue = if (!globalThis.hasException()) try subprocess.createResourceUsageObject(globalThis) else .zero;
-    const exitedDueToTimeout = subprocess.event_loop_timer.state == .FIRED;
+    const exitedDueToTimeout = did_timeout;
     const exitedDueToMaxBuffer = subprocess.exited_due_to_maxbuf;
     const resultPid = jsc.JSValue.jsNumberFromInt32(subprocess.pid());
     subprocess.finalize();

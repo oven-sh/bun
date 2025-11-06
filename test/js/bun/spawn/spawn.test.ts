@@ -560,7 +560,7 @@ describe("spawn unref and kill should not hang", () => {
   it("kill and await exited", async () => {
     const promises = new Array(10);
     for (let i = 0; i < promises.length; i++) {
-      await using proc = spawn({
+      const proc = spawn({
         cmd,
         stdout: "ignore",
         stderr: "ignore",
@@ -576,7 +576,7 @@ describe("spawn unref and kill should not hang", () => {
   });
   it("unref", async () => {
     for (let i = 0; i < 10; i++) {
-      await using proc = spawn({
+      const proc = spawn({
         cmd,
         stdout: "ignore",
         stderr: "ignore",
@@ -591,7 +591,7 @@ describe("spawn unref and kill should not hang", () => {
   });
   it("kill and unref", async () => {
     for (let i = 0; i < (isWindows ? 10 : 100); i++) {
-      await using proc = spawn({
+      const proc = spawn({
         cmd,
         stdout: "ignore",
         stderr: "ignore",
@@ -609,7 +609,7 @@ describe("spawn unref and kill should not hang", () => {
   });
   it("unref and kill", async () => {
     for (let i = 0; i < (isWindows ? 10 : 100); i++) {
-      await using proc = spawn({
+      const proc = spawn({
         cmd,
         stdout: "ignore",
         stderr: "ignore",
@@ -626,7 +626,7 @@ describe("spawn unref and kill should not hang", () => {
 
   // process.unref() on Windows does not work ye :(
   it("should not hang after unref", async () => {
-    await using proc = spawn({
+    const proc = spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "does-not-hang.js")],
     });
 
@@ -638,7 +638,7 @@ describe("spawn unref and kill should not hang", () => {
 async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited"]) {
   console.log("running", order.join(","), "x 100");
   for (let i = 0; i < (isWindows ? 10 : 100); i++) {
-    await using proc = spawn({
+    const proc = spawn({
       cmd: [shellExe(), "-c", `sleep ${sleep}`],
       stdout: "ignore",
       stderr: "ignore",

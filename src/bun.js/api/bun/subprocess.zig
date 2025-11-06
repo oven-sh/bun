@@ -316,7 +316,7 @@ pub fn asyncDispose(this: *Subprocess, global: *JSGlobalObject, callframe: *jsc.
     return this.getExited(this_jsvalue, global);
 }
 
-fn setEventLoopTimerRefd(this: *Subprocess, refd: bool) void {
+pub fn setEventLoopTimerRefd(this: *Subprocess, refd: bool) void {
     if (this.event_loop_timer_refd == refd) return;
     this.event_loop_timer_refd = refd;
     if (refd) {

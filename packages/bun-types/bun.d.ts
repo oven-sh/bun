@@ -5791,11 +5791,11 @@ declare module "bun" {
    * @category Process Management
    *
    * ```js
-   * const subprocess = Bun.spawn({
+   * const proc = Bun.spawn({
    *  cmd: ["echo", "hello"],
    *  stdout: "pipe",
    * });
-   * const text = await readableStreamToText(subprocess.stdout);
+   * const text = await proc.stdout.text();
    * console.log(text); // "hello\n"
    * ```
    *
@@ -5829,8 +5829,8 @@ declare module "bun" {
    * Spawn a new process
    *
    * ```js
-   * const {stdout} = Bun.spawn(["echo", "hello"]);
-   * const text = await readableStreamToText(stdout);
+   * const proc = Bun.spawn(["echo", "hello"]);
+   * const text = await proc.stdout.text();
    * console.log(text); // "hello\n"
    * ```
    *

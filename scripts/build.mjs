@@ -1,5 +1,6 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { cpus } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
 import {
   formatAnnotationToHtml,
@@ -13,6 +14,15 @@ import {
   reportAnnotationToBuildKite,
   startGroup,
 } from "./utils.mjs";
+
+/**
+ * Control how many parallel jobs are run per CPU core in CI C++ builds.
+ *
+ * Note that this number may be large for C++ builds because those builds are
+ * heavily cached and we want to send out as many requests as possible to
+ * saturate the network.
+ */
+const CPP_JOBS_PER_CORE = 2;
 
 if (globalThis.Bun) {
   await import("./glob-sources.mjs");
@@ -63,10 +73,26 @@ async function build(args) {
 
   const generateOptions = parseOptions(args, generateFlags);
   const buildOptions = parseOptions(args, buildFlags);
+  const ciCppBuild = isCI && !!process.env.BUN_CPP_ONLY;
 
   const buildPath = resolve(generateOptions["-B"] || buildOptions["--build"] || "build");
   generateOptions["-B"] = buildPath;
   buildOptions["--build"] = buildPath;
+  if (ciCppBuild) {
+    // cpp-builds are more-often-than-not extremely highly cached. The cache
+    // lives in an S3 bucket so querying the cache is mostly an IO-bound
+    // operation. To combat this, we run the cpp-build with a very large number
+    // of parallel jobs.
+    //
+    // Unfortunately, we cannot offer this performance boost to non-CI builds,
+    // since those are very likely not going to be cached due to the fact that
+    // sccache expects absolute paths to cache properly, and local builds are
+    // extremely likely not to have the same absolute path as the CI builds.
+    //
+    // Since CMake has no way of knowing that it's likely going to be IO-bound,
+    // we just crank up the number of parallel jobs to a very high number.
+    buildOptions["--parallel"] = `${cpus().length * CPP_JOBS_PER_CORE}`;
+  }
 
   if (!generateOptions["-S"]) {
     generateOptions["-S"] = process.cwd();
@@ -103,8 +129,7 @@ async function build(args) {
 
   await startGroup("CMake Build", () => spawn("cmake", buildArgs, { env }));
 
-  const target = buildOptions["--target"] || buildOptions["-t"];
-  if (isCI && target === "build-cpp") {
+  if (ciCppBuild) {
     await startGroup("sccache stats", () => {
       spawn("sccache", ["--show-stats"], { env });
     });

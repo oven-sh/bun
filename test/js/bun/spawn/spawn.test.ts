@@ -866,7 +866,7 @@ describe("onDisconnect", () => {
 
     await msg.promise;
     expect(ipcMessage).toBe("hello");
-    await proc.exited;
+    expect(await proc.exited).toBe(0);
   });
 
   it.todoIf(isWindows)("onDisconnect callback is called when IPC disconnects", async () => {
@@ -897,7 +897,7 @@ describe("onDisconnect", () => {
 
     await disc.promise;
     expect(disconnectCalled).toBe(true);
-    await proc.exited;
+    expect(await proc.exited).toBe(0);
   });
 
   it("onDisconnect is not called when IPC is not used", async () => {
@@ -1016,5 +1016,6 @@ describe("option combinations", () => {
     await Promise.all([msg.promise, disc.promise]);
     expect(messageReceived).toBe(true);
     expect(disconnectCalled).toBe(true);
+    expect(await proc.exited).toBe(0);
   });
 });

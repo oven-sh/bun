@@ -73,8 +73,7 @@ async function build(args) {
   }
 
   if (!generateOptions["-DCACHE_STRATEGY"]) {
-    generateOptions["-DCACHE_STRATEGY"] =
-      parseBoolean(getEnv("RELEASE", false) || "false") ? "none" : "read-write";
+    generateOptions["-DCACHE_STRATEGY"] = parseBoolean(getEnv("RELEASE", false) || "false") ? "none" : "read-write";
   }
 
   const toolchain = generateOptions["--toolchain"];

@@ -461,7 +461,7 @@ fn advanceSequence(this: *Execution, sequence: *ExecutionSequence, group: *Concu
         sequence.executing = false;
         if (sequence.maybe_skip) {
             sequence.maybe_skip = false;
-            sequence.active_entry = if (entry.skip_to_after) |skip_to_after| skip_to_after.next else null;
+            sequence.active_entry = if (entry.skip_to_next) |skip_to_next| skip_to_next.next else null;
         } else {
             sequence.active_entry = entry.next;
         }

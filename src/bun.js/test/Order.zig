@@ -46,7 +46,7 @@ pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry) bun.JSEr
     for (entries) |entry| {
         if (bun.Environment.ci_assert and entry.added_in_phase != .preload) bun.assert(entry.next == null);
         entry.next = null;
-        entry.skip_to_after = null;
+        entry.skip_to_next = null;
         const sequences_start = this.sequences.items.len;
         try this.sequences.append(.init(entry, null, 0, 1)); // add sequence to concurrentgroup
         const sequences_end = this.sequences.items.len;
@@ -139,10 +139,10 @@ pub fn generateOrderTest(this: *Order, current: *ExecutionEntry) bun.JSError!voi
 
     // set skip_to values
     var index = list.first;
-    var skip_to_after: ?*ExecutionEntry = current;
+    var skip_to_next: ?*ExecutionEntry = current;
     while (index) |entry| : (index = entry.next) {
-        entry.skip_to_after = skip_to_after; // we could consider matching skip_to in beforeAll to skip directly to the first afterAll from its own scope rather than skipping to the first afterAll from any scope
-        if (entry == skip_to_after) skip_to_after = null;
+        entry.skip_to_next = skip_to_next; // we could consider matching skip_to in beforeAll to skip directly to the first afterAll from its own scope rather than skipping to the first afterAll from any scope
+        if (entry == skip_to_next) skip_to_next = null;
     }
 
     // add these as a single sequence

@@ -5,13 +5,14 @@ const { urlToHttpOptions } = require("internal/url");
 const { isValidTLSArray } = require("internal/tls");
 const { validateHeaderName } = require("node:_http_common");
 const { getTimerDuration } = require("internal/timers");
-
-// Diagnostics channel support
+const { ConnResetException } = require("internal/shared");
 const dc = require("node:diagnostics_channel");
+
 const onClientRequestCreatedChannel = dc.channel("http.client.request.created");
 const onClientRequestStartChannel = dc.channel("http.client.request.start");
 const onClientRequestErrorChannel = dc.channel("http.client.request.error");
 const onClientResponseFinishChannel = dc.channel("http.client.response.finish");
+
 const {
   kBodyChunks,
   abortedSymbol,
@@ -48,7 +49,6 @@ const {
   reqSymbol,
   callCloseCallback,
   emitCloseNTAndComplete,
-  ConnResetException,
 } = require("internal/http");
 
 const { globalAgent } = require("node:_http_agent");

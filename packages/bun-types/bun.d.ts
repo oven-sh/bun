@@ -5447,9 +5447,32 @@ declare module "bun" {
       ): void | Promise<void>;
 
       /**
-       * Callback that runs when the IPC channel is disconnected.
+       * Called exactly once when the IPC channel between the parent and this
+       * subprocess is closed. After this runs, no further IPC messages will be
+       * delivered.
        *
-       * This is only called when `ipc` is enabled.
+       * When it fires:
+       * - The child called `process.disconnect()` or the parent called
+       *   `subprocess.disconnect()`.
+       * - The child exited for any reason (normal exit or due to a signal like
+       *   `SIGILL`, `SIGKILL`, etc.).
+       * - The child replaced itself with a program that does not support Bun
+       *   IPC.
+       *
+       * Notes:
+       * - This callback indicates that the pipe is closed; it is not an error
+       *   by itself. Use {@link onExit} or {@link Subprocess.exited} to
+       *   determine why the process ended.
+       * - It may occur before or after {@link onExit} depending on timing; do
+       *   not rely on ordering. Typically, if you or the child call
+       *   `disconnect()` first, this fires before {@link onExit}; if the
+       *   process exits without an explicit disconnect, either may happen
+       *   first.
+       * - Only runs when {@link ipc} is enabled and runs at most once per
+       *   subprocess.
+       * - If the child becomes a zombie (exited but not yet reaped), the IPC is
+       *   already closed, and this callback will fire (or may already have
+       *   fired).
        *
        * @example
        *

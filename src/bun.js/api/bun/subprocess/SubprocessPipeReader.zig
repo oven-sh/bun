@@ -217,7 +217,6 @@ fn deinit(this: *PipeReader) void {
 const bun = @import("bun");
 const Environment = bun.Environment;
 const default_allocator = bun.default_allocator;
-const uws = bun.uws;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

@@ -199,8 +199,8 @@ pub fn isActive(this: *const SpawnSyncEventLoop) bool {
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
 const jsc = bun.jsc;
 const uws = bun.uws;
-const TimerHeap = @import("../api/Timer.zig").TimerHeap;
 const libuv = bun.windows.libuv;

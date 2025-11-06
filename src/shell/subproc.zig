@@ -1410,7 +1410,6 @@ const Output = bun.Output;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const strings = bun.strings;
-const uws = bun.uws;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

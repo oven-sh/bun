@@ -136,7 +136,6 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const jsc = bun.jsc;
-const uws = bun.uws;
 
 const Subprocess = jsc.API.Subprocess;
 const Source = Subprocess.Source;

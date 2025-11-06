@@ -903,39 +903,32 @@ pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, 
     }
 }
 
-const MaxBuf = bun.io.MaxBuf;
-const Writable = Subprocess.Writable;
-const Readable = Subprocess.Readable;
 const log = Output.scoped(.Subprocess, .hidden);
 extern "C" const BUN_DEFAULT_PATH_FOR_SPAWN: [*:0]const u8;
 
 const IPC = @import("../../ipc.zig");
-const node_cluster_binding = @import("../../node/node_cluster_binding.zig");
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
-const Async = bun.Async;
 const Environment = bun.Environment;
 const Output = bun.Output;
+const SignalCode = bun.SignalCode;
 const default_allocator = bun.default_allocator;
 const strings = bun.strings;
 const uws = bun.uws;
-const webcore = bun.webcore;
 const which = bun.which;
-const CowString = bun.ptr.CowString;
+const windows = bun.windows;
+const MaxBuf = bun.io.MaxBuf;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
 
-const PosixSpawn = bun.spawn;
+const Subprocess = jsc.Subprocess;
+const Readable = Subprocess.Readable;
+const Writable = Subprocess.Writable;
+
 const Process = bun.spawn.Process;
 const Rusage = bun.spawn.Rusage;
 const Stdio = bun.spawn.Stdio;
-
-const windows = bun.windows;
-const uv = windows.libuv;
-const Subprocess = jsc.Subprocess;
-
-const SignalCode = bun.SignalCode;

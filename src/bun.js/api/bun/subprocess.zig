@@ -898,20 +898,16 @@ pub const MaxBuf = bun.io.MaxBuf;
 pub const spawnSync = js_bun_spawn_bindings.spawnSync;
 pub const spawn = js_bun_spawn_bindings.spawn;
 
-const string = []const u8;
-
 const IPC = @import("../../ipc.zig");
+const js_bun_spawn_bindings = @import("./js_bun_spawn_bindings.zig");
 const node_cluster_binding = @import("../../node/node_cluster_binding.zig");
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
 const Async = bun.Async;
 const Environment = bun.Environment;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const strings = bun.strings;
-const uws = bun.uws;
 const webcore = bun.webcore;
 const which = bun.which;
 const CowString = bun.ptr.CowString;
@@ -923,8 +919,6 @@ const JSValue = jsc.JSValue;
 const PosixSpawn = bun.spawn;
 const Process = bun.spawn.Process;
 const Rusage = bun.spawn.Rusage;
-const Stdio = bun.spawn.Stdio;
 
 const windows = bun.windows;
 const uv = windows.libuv;
-const js_bun_spawn_bindings = @import("./js_bun_spawn_bindings.zig");

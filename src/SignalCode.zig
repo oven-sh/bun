@@ -157,11 +157,13 @@ pub const SignalCode = enum(u8) {
     }
 };
 
-const bun = @import("bun");
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const JSGlobalObject = jsc.JSGlobalObject;
-const ComptimeEnumMap = bun.ComptimeEnumMap;
-const asByteSlice = bun.asByteSlice;
 const std = @import("std");
+
+const bun = @import("bun");
+const ComptimeEnumMap = bun.ComptimeEnumMap;
 const Output = bun.Output;
+const asByteSlice = bun.asByteSlice;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

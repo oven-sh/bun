@@ -47,6 +47,33 @@ static bool isValidNamespaceString(String& namespaceString)
     return namespaceRegex->match(namespaceString) > -1;
 }
 
+static JSC::EncodedJSValue jsFunctionOnEndForRuntimePlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    throwException(globalObject, scope, createTypeError(globalObject, "onEnd() is not supported for runtime plugins. onEnd() only works in Bun.build() plugins where there is a build process that completes."_s));
+    return {};
+}
+
+static JSC::EncodedJSValue jsFunctionOnDisposeForRuntimePlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    throwException(globalObject, scope, createTypeError(globalObject, "onDispose() is not supported for runtime plugins yet. There is currently no API to unload plugins at runtime."_s));
+    return {};
+}
+
+static JSC::EncodedJSValue jsFunctionResolveForRuntimePlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    throwException(globalObject, scope, createTypeError(globalObject, "resolve() is not implemented yet. See https://github.com/oven-sh/bun/issues/2771"_s));
+    return {};
+}
+
 static JSC::EncodedJSValue jsFunctionOnStartForRuntimePlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -401,6 +428,36 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
         JSC::Identifier::fromString(vm, "onStart"_s),
         1,
         jsFunctionOnStartForRuntimePlugin,
+        ImplementationVisibility::Public,
+        NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    builderObject->putDirectNativeFunction(
+        vm,
+        globalObject,
+        JSC::Identifier::fromString(vm, "onEnd"_s),
+        1,
+        jsFunctionOnEndForRuntimePlugin,
+        ImplementationVisibility::Public,
+        NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    builderObject->putDirectNativeFunction(
+        vm,
+        globalObject,
+        JSC::Identifier::fromString(vm, "onDispose"_s),
+        1,
+        jsFunctionOnDisposeForRuntimePlugin,
+        ImplementationVisibility::Public,
+        NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    builderObject->putDirectNativeFunction(
+        vm,
+        globalObject,
+        JSC::Identifier::fromString(vm, "resolve"_s),
+        1,
+        jsFunctionResolveForRuntimePlugin,
         ImplementationVisibility::Public,
         NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);

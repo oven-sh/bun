@@ -371,6 +371,12 @@ pub const JSValue = enum(i64) {
         return bun.cpp.JSC__JSValue__putMayBeIndex(this, globalObject, key, value);
     }
 
+    /// Same as `putMayBeIndex` but ignores `__proto__` and `constructor` keys to prevent prototype pollution.
+    /// Use this when setting properties from untrusted input (e.g., parsing YAML, JSON, etc.).
+    pub fn putMayBeIndexProtoCheck(this: JSValue, globalObject: *JSGlobalObject, key: *const String, value: JSValue) bun.JSError!void {
+        return bun.cpp.JSC__JSValue__putMayBeIndexProtoCheck(this, globalObject, key, value);
+    }
+
     extern fn JSC__JSValue__putToPropertyKey(target: JSValue, globalObject: *JSGlobalObject, key: jsc.JSValue, value: jsc.JSValue) void;
     pub fn putToPropertyKey(target: JSValue, globalObject: *JSGlobalObject, key: jsc.JSValue, value: jsc.JSValue) bun.JSError!void {
         return bun.jsc.host_fn.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__putToPropertyKey, .{ target, globalObject, key, value });

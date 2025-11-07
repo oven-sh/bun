@@ -1041,7 +1041,7 @@ const ParserCtx = struct {
                     const key_str = try key.toBunString(ctx.global);
                     defer key_str.deref();
 
-                    try obj.putMayBeIndex(ctx.global, &key_str, value);
+                    try obj.putMayBeIndexProtoCheck(ctx.global, &key_str, value);
                 }
 
                 return obj;

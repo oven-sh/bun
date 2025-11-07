@@ -3745,6 +3745,28 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putMayBeIndex(JSC::Enco
     RETURN_IF_EXCEPTION(scope, );
 }
 
+extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putMayBeIndexProtoCheck(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const BunString* key, JSC::EncodedJSValue value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+
+    WTF::String keyStr = key->tag == BunStringTag::Empty ? WTF::emptyString() : key->toWTFString();
+    JSC::Identifier identifier = JSC::Identifier::fromString(vm, keyStr);
+
+    // Prevent prototype pollution by ignoring __proto__, constructor, and prototype keys
+    auto* propertyNames = vm.propertyNames;
+    auto uid = identifier.impl();
+    if (uid == propertyNames->underscoreProto.impl()
+        || uid == propertyNames->constructor.impl()
+        || uid == propertyNames->prototype.impl()) {
+        return;
+    }
+
+    JSC::JSObject* object = JSC::JSValue::decode(target).asCell()->getObject();
+    object->putDirectMayBeIndex(globalObject, JSC::PropertyName(identifier), JSC::JSValue::decode(value));
+    RETURN_IF_EXCEPTION(scope, );
+}
+
 bool JSC__JSValue__isClass(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
 {
     JSValue value = JSValue::decode(JSValue0);

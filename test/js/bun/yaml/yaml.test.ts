@@ -2392,4 +2392,82 @@ refs:
       });
     });
   });
+
+  describe("security", () => {
+    test("prevents prototype pollution via __proto__", () => {
+      const yaml = `
+__proto__:
+  polluted: true
+normalKey: normalValue
+`;
+      const parsed = YAML.parse(yaml);
+
+      // The parsed object should have the normal key
+      expect(parsed.normalKey).toBe("normalValue");
+
+      // But __proto__ should be ignored, not set as a property
+      expect(parsed.__proto__).not.toHaveProperty("polluted");
+      expect(parsed.hasOwnProperty("__proto__")).toBe(false);
+
+      // Verify the prototype chain is not polluted
+      const clean = {};
+      expect(clean.polluted).toBeUndefined();
+    });
+
+    test("prevents prototype pollution via constructor", () => {
+      const yaml = `
+constructor:
+  polluted: true
+normalKey: normalValue
+`;
+      const parsed = YAML.parse(yaml);
+
+      // The parsed object should have the normal key
+      expect(parsed.normalKey).toBe("normalValue");
+
+      // Constructor should be ignored
+      expect(parsed.hasOwnProperty("constructor")).toBe(false);
+
+      // Verify no pollution occurred
+      const clean = {};
+      expect(clean.polluted).toBeUndefined();
+    });
+
+    test("prevents prototype pollution via prototype", () => {
+      const yaml = `
+prototype:
+  polluted: true
+normalKey: normalValue
+`;
+      const parsed = YAML.parse(yaml);
+
+      // The parsed object should have the normal key
+      expect(parsed.normalKey).toBe("normalValue");
+
+      // Prototype should be ignored
+      expect(parsed.hasOwnProperty("prototype")).toBe(false);
+
+      // Verify no pollution occurred
+      const clean = {};
+      expect(clean.polluted).toBeUndefined();
+    });
+
+    test("allows nested objects with normal keys after ignoring __proto__", () => {
+      const yaml = `
+nested:
+  __proto__:
+    bad: value
+  good: value
+normalKey: test
+`;
+      const parsed = YAML.parse(yaml);
+
+      // Normal keys should work
+      expect(parsed.normalKey).toBe("test");
+      expect(parsed.nested.good).toBe("value");
+
+      // __proto__ should be ignored in nested object
+      expect(parsed.nested.hasOwnProperty("__proto__")).toBe(false);
+    });
+  });
 });

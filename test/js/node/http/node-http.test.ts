@@ -832,7 +832,12 @@ describe("node:http", () => {
 
     it("should correctly stream a multi-chunk response #5320", async done => {
       runTest(done, (server, serverPort, done) => {
-        const req = request({ host: "localhost", port: `${serverPort}`, path: "/multi-chunk-response", method: "GET" });
+        const req = request({
+          host: "localhost",
+          port: `${serverPort}`,
+          path: "/multi-chunk-response",
+          method: "GET",
+        });
 
         req.on("error", err => done(err));
 
@@ -1046,9 +1051,10 @@ describe("node:http", () => {
     });
   });
 
-  test("test unix socket server", done => {
+  test("test unix socket server", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
     const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
-    const server = createServer((req, res) => {
+    await using server = createServer((req, res) => {
       expect(req.method).toStrictEqual("GET");
       expect(req.url).toStrictEqual("/bun?a=1");
       res.writeHead(200, {
@@ -1059,18 +1065,20 @@ describe("node:http", () => {
       res.end();
     });
 
-    server.listen(socketPath, () => {
-      // TODO: unix socket is not implemented in fetch.
-      const output = spawnSync("curl", ["--unix-socket", socketPath, "http://localhost/bun?a=1"]);
+    server.listen(socketPath, async () => {
       try {
-        expect(output.stdout.toString()).toStrictEqual("Bun\n");
-        done();
+        const response = await fetch(`http://localhost/bun?a=1`, {
+          unix: socketPath,
+        });
+        const text = await response.text();
+        expect(text).toBe("Bun\n");
+        resolve();
       } catch (err) {
-        done(err);
-      } finally {
-        server.close();
+        reject(err);
       }
     });
+
+    await promise;
   });
 
   test("should not decompress gzip, issue#4397", async () => {
@@ -1284,26 +1292,26 @@ describe("server.address should be valid IP", () => {
 });
 
 it("should propagate exception in sync data handler", async () => {
-  const { exitCode, stdout } = Bun.spawnSync({
+  await using proc = Bun.spawn({
     cmd: [bunExe(), "run", path.join(import.meta.dir, "node-http-error-in-data-handler-fixture.1.js")],
     stdout: "pipe",
     stderr: "inherit",
     env: bunEnv,
   });
-
-  expect(stdout.toString()).toContain("Test passed");
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toContain("Test passed");
   expect(exitCode).toBe(0);
 });
 
 it("should propagate exception in async data handler", async () => {
-  const { exitCode, stdout } = Bun.spawnSync({
+  await using proc = Bun.spawn({
     cmd: [bunExe(), "run", path.join(import.meta.dir, "node-http-error-in-data-handler-fixture.2.js")],
     stdout: "pipe",
     stderr: "inherit",
     env: bunEnv,
   });
-
-  expect(stdout.toString()).toContain("Test passed");
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toContain("Test passed");
   expect(exitCode).toBe(0);
 });
 

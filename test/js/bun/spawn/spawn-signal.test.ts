@@ -67,23 +67,3 @@ test("spawnSync AbortSignal works as timeout", async () => {
   const end = performance.now();
   expect(end - start).toBeLessThan(100);
 });
-
-test.failing("spawnSync AbortSignal...executes javascript?", async () => {
-  const start = performance.now();
-  var signal = AbortSignal.timeout(10);
-  signal.addEventListener("abort", () => {
-    console.log("abort", performance.now());
-  });
-  const subprocess = Bun.spawnSync({
-    cmd: [bunExe(), "--eval", "await Bun.sleep(100000)"],
-    env: bunEnv,
-    stdout: "inherit",
-    stderr: "inherit",
-    stdin: "inherit",
-    signal,
-  });
-  console.log("after", performance.now());
-  expect(subprocess.success).toBeFalse();
-  const end = performance.now();
-  expect(end - start).toBeLessThan(100);
-});

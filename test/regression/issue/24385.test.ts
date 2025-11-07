@@ -31,7 +31,7 @@ test.concurrent.each(
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr.toString()).not.toContain("Expected url protocol to be one of");
-  expect(stdout.toString()).toContain("success");
+  expect(stderr).not.toContain("Expected url protocol to be one of");
+  expect(stdout).toContain("success");
   expect(exitCode).toBe(0);
 });

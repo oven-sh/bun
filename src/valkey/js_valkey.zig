@@ -281,30 +281,31 @@ pub const JSValkeyClient = struct {
         // the case right now and I do not understand why. It will take some work in JSC to
         // understand why this is happening, but since I need to uncork valkey, I'm adding this as
         // a stop-gap.
-        var url_buf: [2048]u8 = undefined;
-        const corrected_url = get_url: {
+        const parsed_url = get_url: {
             const url_byte_slice = url_str.byteSlice();
-            const url_len = url_byte_slice.len;
 
             if (bun.strings.contains(url_byte_slice, "://")) {
-                if (url_len > url_buf.len) {
-                    return globalObject.throwInvalidArguments("URL is too long.", .{});
-                }
-
-                @memcpy(url_buf[0..url_len], url_byte_slice);
-                break :get_url url_buf[0..url_len];
+                break :get_url URL.fromString(url_str) orelse {
+                    return globalObject.throwInvalidArguments("Invalid URL format", .{});
+                };
             }
 
-            const written = std.fmt.bufPrintZ(&url_buf, "valkey://{s}", .{url_byte_slice}) catch {
-                return globalObject.throwInvalidArguments("UURL is too long.", .{});
+            var url_buf: [2048]u8 = undefined;
+            const corrected_url = get_url_slice: {
+                const written = std.fmt.bufPrintZ(
+                    &url_buf,
+                    "valkey://{s}",
+                    .{url_byte_slice},
+                ) catch {
+                    return globalObject.throwInvalidArguments("URL is too long.", .{});
+                };
+
+                break :get_url_slice url_buf[0..written.len];
             };
 
-            break :get_url url_buf[0..written.len];
-        };
-
-        const parsed_url = URL.fromUTF8(corrected_url) orelse {
-            // This should never happen since our default URL is valid
-            return globalObject.throwInvalidArguments("Invalid URL format", .{});
+            break :get_url URL.fromUTF8(corrected_url) orelse {
+                return globalObject.throwInvalidArguments("Invalid URL format", .{});
+            };
         };
         defer parsed_url.deinit();
 

@@ -11,9 +11,16 @@ pub const deref = RefCount.deref;
 pub const CompressedVariant = struct {
     data: []u8,
     encoding: bun.http.Encoding,
+    created_at_ms: u64, // Timestamp for TTL checking
 
     pub fn deinit(this: *CompressedVariant, allocator: std.mem.Allocator) void {
         allocator.free(this.data);
+    }
+
+    pub fn isExpired(this: *const CompressedVariant, ttl_ms: u64) bool {
+        if (ttl_ms == 0) return false; // TTL of 0 means infinite
+        const now_ms = @as(u64, @intCast(std.time.milliTimestamp()));
+        return (now_ms - this.created_at_ms) > ttl_ms;
     }
 };
 
@@ -113,6 +120,16 @@ pub fn memoryCost(this: *const StaticRoute) usize {
     if (this.compressed_zstd) |variant| cost += variant.data.len;
     if (this.compressed_deflate) |variant| cost += variant.data.len;
 
+    return cost;
+}
+
+/// Get memory used by compressed variants only (for cache size checking)
+fn compressedMemoryCost(this: *const StaticRoute) usize {
+    var cost: usize = 0;
+    if (this.compressed_br) |variant| cost += variant.data.len;
+    if (this.compressed_gzip) |variant| cost += variant.data.len;
+    if (this.compressed_zstd) |variant| cost += variant.data.len;
+    if (this.compressed_deflate) |variant| cost += variant.data.len;
     return cost;
 }
 
@@ -315,9 +332,31 @@ fn getOrCreateCompressed(
         else => return error.UnsupportedEncoding,
     };
 
-    // Return cached if exists
+    // Check if cached variant exists and is still valid
     if (variant_slot.*) |*cached| {
-        return cached;
+        // Check if expired (TTL check)
+        if (config.cache) |cache_config| {
+            if (cached.isExpired(cache_config.ttl_ms)) {
+                // Expired - free it and recreate
+                cached.deinit(bun.default_allocator);
+                variant_slot.* = null;
+            } else {
+                return cached;
+            }
+        } else {
+            return cached;
+        }
+    }
+
+    // Check if we have room for another variant (max cache size check)
+    if (config.cache) |cache_config| {
+        const current_compressed_size = this.compressedMemoryCost();
+        // Estimate compressed size (assume 50% compression ratio as upper bound)
+        const estimated_size = this.blob.size() / 2;
+        if (current_compressed_size + estimated_size > cache_config.max_size) {
+            // Would exceed max cache size - don't compress
+            return error.CompressionFailed;
+        }
     }
 
     // Compress the blob
@@ -341,10 +380,31 @@ fn getOrCreateCompressed(
         return error.CompressionFailed;
     }
 
-    // Store in cache (no need to store ETag - we'll use the original)
+    // Check min/max entry size constraints
+    if (config.cache) |cache_config| {
+        if (compressed_data.len < cache_config.min_entry_size or
+            compressed_data.len > cache_config.max_entry_size)
+        {
+            // Outside cache size constraints - free and return error
+            bun.default_allocator.free(compressed_data);
+            return error.CompressionFailed;
+        }
+
+        // Final check: verify we still have room (actual size)
+        const current_compressed_size = this.compressedMemoryCost();
+        if (current_compressed_size + compressed_data.len > cache_config.max_size) {
+            // Would exceed max cache size - don't cache
+            bun.default_allocator.free(compressed_data);
+            return error.CompressionFailed;
+        }
+    }
+
+    // Store in cache with timestamp
+    const now_ms = @as(u64, @intCast(std.time.milliTimestamp()));
     variant_slot.* = .{
         .data = compressed_data,
         .encoding = encoding,
+        .created_at_ms = now_ms,
     };
 
     return &variant_slot.*.?;

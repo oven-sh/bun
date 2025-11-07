@@ -874,7 +874,7 @@ pub fn spawnMaybeSync(
 
             // Tick the isolated event loop without passing timeout to avoid blocking
             // The timeout check is done at the top of the loop
-            switch (sync_loop.tickWithTimeout(if (has_timespec and !did_timeout) &timeout else null)) {
+            switch (sync_loop.tickWithTimeout(if (has_timespec and !did_timeout) &timespec else null)) {
                 .completed => {},
                 .timeout => {
                     var did_user_timeout = has_user_timespec and !has_bun_test_timeout;

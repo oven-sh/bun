@@ -842,7 +842,7 @@ pub fn spawnMaybeSync(
         var now = bun.timespec.now();
         var user_timespec: bun.timespec = if (timeout) |timeout_ms| now.addMs(timeout_ms) else absolute_timespec;
 
-        // Support`AbortSignal.timeout`, but it's best-effort.
+        // Support `AbortSignal.timeout`, but it's best-effort.
         // Specifying both `timeout: number` and `AbortSignal.timeout` chooses the soonest one.
         // This does mean if an AbortSignal times out it will throw
         if (subprocess.abort_signal) |signal| {

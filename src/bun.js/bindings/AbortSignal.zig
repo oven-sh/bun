@@ -138,6 +138,15 @@ pub const AbortSignal = opaque {
         return WebCore__AbortSignal__new(global);
     }
 
+    /// Returns a borrowed handle to the internal Timeout, or null.
+    ///
+    /// Lifetime: owned by AbortSignal; may become invalid if the timer fires/cancels.
+    ///
+    /// Thread-safety: not thread-safe; call only on the owning thread/loop.
+    ///
+    /// Usage: if you need to operate on the Timeout (run/cancel/deinit), hold a ref
+    /// to `this` for the duration (e.g., `this.ref(); defer this.unref();`) and avoid
+    /// caching the pointer across turns.
     pub fn getTimeout(this: *AbortSignal) ?*Timeout {
         return WebCore__AbortSignal__getTimeout(this);
     }

@@ -66,25 +66,37 @@ foreach(arg ${SCCACHE_ARGS})
   list(APPEND CMAKE_ARGS -D${arg}=${${arg}})
 endforeach()
 
-# Configure S3 bucket for distributed caching
-setenv(SCCACHE_BUCKET "bun-build-sccache-store")
-setenv(SCCACHE_REGION "us-west-1")
 setenv(SCCACHE_DIR "${CACHE_PATH}/sccache")
-
-# Handle credentials based on cache strategy
-if (CACHE_STRATEGY STREQUAL "read-only")
-  setenv(SCCACHE_S3_NO_CREDENTIALS "1")
-  message(STATUS "sccache configured in read-only mode.")
-else()
-  # Check for AWS credentials and enable anonymous access if needed
-  check_aws_credentials(HAS_AWS_CREDENTIALS)
-  if(NOT IS_IN_CI AND NOT HAS_AWS_CREDENTIALS)
-    setenv(SCCACHE_S3_NO_CREDENTIALS "1")
-    message(NOTICE "sccache: No AWS credentials found, enabling anonymous S3 "
-      "access. Writing to the cache will be disabled.")
-  endif()
-endif()
-
 setenv(SCCACHE_LOG "info")
 
-message(STATUS "sccache configured for bun-build-sccache-store (us-west-1).")
+# Handle S3 configuration based on cache strategy and credentials
+check_aws_credentials(HAS_AWS_CREDENTIALS)
+
+if(IS_IN_CI)
+  # In CI, always configure S3 bucket
+  setenv(SCCACHE_BUCKET "bun-build-sccache-store")
+  setenv(SCCACHE_REGION "us-west-1")
+  message(STATUS "sccache configured for bun-build-sccache-store (us-west-1).")
+elseif(CACHE_STRATEGY STREQUAL "read-only")
+  # In read-only mode, configure S3 with anonymous access
+  setenv(SCCACHE_BUCKET "bun-build-sccache-store")
+  setenv(SCCACHE_REGION "us-west-1")
+  setenv(SCCACHE_S3_NO_CREDENTIALS "1")
+  message(STATUS "sccache configured in read-only mode for bun-build-sccache-store (us-west-1).")
+elseif(HAS_AWS_CREDENTIALS)
+  # User has explicit credentials, configure S3
+  setenv(SCCACHE_BUCKET "bun-build-sccache-store")
+  setenv(SCCACHE_REGION "us-west-1")
+  message(STATUS "sccache configured for bun-build-sccache-store (us-west-1) with credentials.")
+else()
+  # No credentials found - disable S3 entirely to avoid errors from other AWS credential sources
+  # that sccache might pick up (IAM roles, instance profiles, etc.) that don't have access to
+  # the Bun S3 bucket.
+  # We must explicitly disable AWS credentials to prevent sccache from trying to use
+  # AWS credentials from IAM roles, instance metadata, or other sources.
+  # Setting these to empty strings prevents sccache from detecting AWS credentials.
+  setenv(AWS_ACCESS_KEY_ID "UNSET")
+  setenv(AWS_SECRET_ACCESS_KEY "UNSET")
+  message(NOTICE "sccache: No AWS credentials found, S3 caching disabled. "
+    "Local disk caching will be used instead.")
+endif()

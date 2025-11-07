@@ -97,6 +97,15 @@ async function build(args) {
     }
   }
 
+  // Stop any running sccache daemon to ensure it picks up the new environment variables
+  // from .env (particularly AWS credential settings)
+  try {
+    const { execSync } = await import("child_process");
+    execSync("sccache --stop-server", { stdio: "ignore" });
+  } catch (e) {
+    // Ignore errors if sccache is not running or not found
+  }
+
   const buildArgs = Object.entries(buildOptions)
     .sort(([a], [b]) => (a === "--build" ? -1 : a.localeCompare(b)))
     .flatMap(([flag, value]) => [flag, value]);

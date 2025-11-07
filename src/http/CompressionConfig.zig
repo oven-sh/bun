@@ -24,21 +24,84 @@ pub const COMPRESSION_ENABLED_BY_DEFAULT = false;
 /// - Only caches variants that clients actually request (lazy)
 /// - Compression often makes files smaller, but we store BOTH original and compressed
 ///
-/// ## Not Supported:
+/// ## Not Supported (Yet):
 /// - **Dynamic routes** - Responses from fetch() handlers (would need LRU cache with TTL)
 /// - **Streaming responses** - ReadableStream bodies are rejected from static routes (see StaticRoute.zig:160)
-/// - **Cache eviction** - No memory limits or LRU eviction
+/// - **Cache enforcement** - Cache config exists but limits not enforced yet (TODO)
+///   - cache.maxSize, cache.ttl, cache.minEntrySize, cache.maxEntrySize are parsed but not checked
+///   - Setting cache: false disables caching immediately
+///   - --smol mode uses smaller defaults which will matter once enforcement is added
 /// - **Per-route control** - Can only enable/disable globally or per-algorithm
 ///
 /// ## Usage:
 /// ```js
 /// Bun.serve({
-///   compression: true, // Use defaults (br=4, gzip=6, zstd=3)
-///   compression: { brotli: 6, gzip: false }, // Custom config, disable specific algorithms
+///   compression: true, // Use defaults (br=4, gzip=6, zstd=3, 50MB cache, 24h TTL)
+///   compression: {
+///     brotli: 6,
+///     gzip: false, // Disable specific algorithm
+///     cache: false, // Disable caching entirely (compress on-demand)
+///     cache: {
+///       maxSize: 100 * 1024 * 1024, // 100MB total cache
+///       ttl: 3600, // 1 hour (seconds)
+///       minEntrySize: 512, // Don't cache < 512 bytes
+///       maxEntrySize: 5 * 1024 * 1024, // Don't cache > 5MB
+///     }
+///   },
 ///   compression: false, // Disable (default)
 /// })
 /// ```
+///
+/// ## --smol Mode:
+/// When `bun --smol` is used, compression defaults to more conservative limits:
+/// - maxSize: 5MB (vs 50MB normal)
+/// - ttl: 1 hour (vs 24 hours normal)
+/// - maxEntrySize: 1MB (vs 10MB normal)
 pub const CompressionConfig = struct {
+    pub const CacheConfig = struct {
+        /// Maximum total size of all cached compressed variants (bytes)
+        max_size: usize,
+        /// Time-to-live for cached variants (milliseconds), 0 = infinite
+        ttl_ms: u64,
+        /// Minimum size of entry to cache (bytes)
+        min_entry_size: usize,
+        /// Maximum size of single entry to cache (bytes)
+        max_entry_size: usize,
+
+        pub const DEFAULT = CacheConfig{
+            .max_size = 50 * 1024 * 1024, // 50MB total cache
+            .ttl_ms = 24 * 60 * 60 * 1000, // 24 hours
+            .min_entry_size = 128, // Don't cache tiny files
+            .max_entry_size = 10 * 1024 * 1024, // Don't cache > 10MB
+        };
+
+        pub const SMOL = CacheConfig{
+            .max_size = 5 * 1024 * 1024, // 5MB total cache for --smol
+            .ttl_ms = 60 * 60 * 1000, // 1 hour
+            .min_entry_size = 512, // Higher threshold
+            .max_entry_size = 1 * 1024 * 1024, // Max 1MB per entry
+        };
+
+        pub fn fromJS(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!CacheConfig {
+            var config = CacheConfig.DEFAULT;
+
+            if (try value.getOptional(globalThis, "maxSize", i32)) |max_size| {
+                config.max_size = @intCast(@max(0, max_size));
+            }
+            if (try value.getOptional(globalThis, "ttl", i32)) |ttl_seconds| {
+                config.ttl_ms = @intCast(@max(0, ttl_seconds) * 1000);
+            }
+            if (try value.getOptional(globalThis, "minEntrySize", i32)) |min_size| {
+                config.min_entry_size = @intCast(@max(0, min_size));
+            }
+            if (try value.getOptional(globalThis, "maxEntrySize", i32)) |max_size| {
+                config.max_entry_size = @intCast(@max(0, max_size));
+            }
+
+            return config;
+        }
+    };
+
     pub const AlgorithmConfig = struct {
         level: u8,
         threshold: usize,
@@ -74,6 +137,7 @@ pub const CompressionConfig = struct {
 
     threshold: usize,
     disable_for_localhost: bool,
+    cache: ?CacheConfig,
 
     pub const DEFAULT_THRESHOLD: usize = 1024;
 
@@ -85,6 +149,7 @@ pub const CompressionConfig = struct {
         .deflate = null, // Disabled by default (obsolete)
         .threshold = DEFAULT_THRESHOLD,
         .disable_for_localhost = true,
+        .cache = CacheConfig.DEFAULT,
     };
 
     /// Parse compression config from JavaScript
@@ -93,14 +158,20 @@ pub const CompressionConfig = struct {
     /// - false: disable compression (returns null)
     /// - { brotli: 4, gzip: 6, zstd: false, ... }: custom config
     pub fn fromJS(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!?*CompressionConfig {
+        // Check if --smol mode is enabled
+        const is_smol = globalThis.bunVM().smol;
+
         if (value.isBoolean()) {
             if (!value.toBoolean()) {
                 // compression: false -> return null to indicate disabled
                 return null;
             }
-            // compression: true -> use defaults
+            // compression: true -> use defaults (smol-aware)
             const config = bun.handleOom(bun.default_allocator.create(CompressionConfig));
             config.* = DEFAULT;
+            if (is_smol and config.cache != null) {
+                config.cache = CacheConfig.SMOL;
+            }
             return config;
         }
 
@@ -111,8 +182,11 @@ pub const CompressionConfig = struct {
         const config = bun.handleOom(bun.default_allocator.create(CompressionConfig));
         errdefer bun.default_allocator.destroy(config);
 
-        // Start with defaults
+        // Start with defaults (smol-aware)
         config.* = DEFAULT;
+        if (is_smol and config.cache != null) {
+            config.cache = CacheConfig.SMOL;
+        }
 
         // Parse brotli config (supports false, number, or object)
         if (try value.get(globalThis, "brotli")) |brotli_val| {
@@ -170,6 +244,17 @@ pub const CompressionConfig = struct {
         if (try value.get(globalThis, "disableForLocalhost")) |disable_val| {
             if (disable_val.isBoolean()) {
                 config.disable_for_localhost = disable_val.toBoolean();
+            }
+        }
+
+        // Parse cache config
+        if (try value.get(globalThis, "cache")) |cache_val| {
+            if (cache_val.isBoolean()) {
+                if (!cache_val.toBoolean()) {
+                    config.cache = null; // false = disable caching
+                }
+            } else if (cache_val.isObject()) {
+                config.cache = try CacheConfig.fromJS(globalThis, cache_val);
             }
         }
 

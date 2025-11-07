@@ -256,6 +256,9 @@ fn tryServeCompressed(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) 
     const server = this.server orelse return false;
     const config = server.compressionConfig() orelse return false;
 
+    // Skip if caching is disabled
+    if (config.cache == null) return false;
+
     // Check Accept-Encoding header (must be lowercase for uws)
     const accept_encoding = req.header("accept-encoding") orelse return false;
     if (accept_encoding.len == 0) return false;

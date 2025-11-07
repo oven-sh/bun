@@ -1,3 +1,5 @@
+// Hardcoded module "node:_http_agent"
+
 const EventEmitter = require("node:events");
 const { parseProxyConfigFromEnv, kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
 const { getLazy, kEmptyObject, once } = require("internal/shared");
@@ -146,7 +148,7 @@ Agent.prototype.createConnection = function createConnection(...args) {
   const shouldUseProxy = checkShouldUseProxy(this[kProxyConfig], options);
   $debug(`http createConnection should use proxy for ${options.host}:${options.port}:`, shouldUseProxy);
   if (!shouldUseProxy) {
-    // @ts-ignore
+    // @ts-expect-error
     return net().createConnection(...args);
   }
 
@@ -155,10 +157,10 @@ Agent.prototype.createConnection = function createConnection(...args) {
   };
   const proxyProtocol = this[kProxyConfig].protocol;
   if (proxyProtocol === "http:") {
-    // @ts-ignore
+    // @ts-expect-error
     return net().connect(connectOptions, cb);
   } else if (proxyProtocol === "https:") {
-    // @ts-ignore
+    // @ts-expect-error
     return tls().connect(connectOptions, cb);
   }
   // This should be unreachable because proxy config should be null for other protocols.

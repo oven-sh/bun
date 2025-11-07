@@ -766,6 +766,8 @@ declare function $ERR_ASYNC_CALLBACK(name): TypeError;
 declare function $ERR_AMBIGUOUS_ARGUMENT(arg, message): TypeError;
 declare function $ERR_INVALID_FD_TYPE(type): TypeError;
 declare function $ERR_IP_BLOCKED(ip): Error;
+declare function $ERR_HTTP_CONTENT_LENGTH_MISMATCH(bodylen: number, headerlen: number): Error;
+declare function $ERR_PROXY_TUNNEL(msg: string): Error;
 
 declare function $ERR_IPC_DISCONNECTED(): Error;
 declare function $ERR_SERVER_NOT_RUNNING(): Error;
@@ -837,6 +839,7 @@ declare function $ERR_HTTP2_CONNECT_SCHEME(): Error;
 declare function $ERR_HTTP2_CONNECT_PATH(): Error;
 declare function $ERR_HTTP2_TOO_MANY_INVALID_FRAMES(): Error;
 declare function $ERR_HTTP2_PING_CANCEL(): Error;
+declare function $ERR_HTTP_TRAILER_INVALID(): Error;
 
 /**
  * Convert a function to a class-like object.

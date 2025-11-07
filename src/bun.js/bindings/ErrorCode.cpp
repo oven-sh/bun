@@ -2382,6 +2382,17 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(err);
     }
 
+    case Bun::ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Response body's content-length of "_s, str0, " byte(s) does not match the content-length of "_s, str1, " byte(s) set in header"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH, message));
+    }
+
     case ErrorCode::ERR_IPC_DISCONNECTED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_DISCONNECTED, "IPC channel is already disconnected"_s));
     case ErrorCode::ERR_SERVER_NOT_RUNNING:
@@ -2518,6 +2529,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_TOO_MANY_INVALID_FRAMES, "Too many invalid HTTP/2 frames"_s));
     case ErrorCode::ERR_HTTP2_PING_CANCEL:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP2_PING_CANCEL, "HTTP2 ping cancelled"_s));
+    case ErrorCode::ERR_HTTP_TRAILER_INVALID:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_TRAILER_INVALID, "Trailers are invalid with this transfer encoding"_s));
 
     default: {
         break;

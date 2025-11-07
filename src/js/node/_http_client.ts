@@ -1,3 +1,5 @@
+// Hardcoded module "node:_http_client"
+
 const { isIP, isIPv6 } = require("internal/net/isIP");
 
 const { checkIsHttpToken, validateFunction, validateInteger, validateBoolean } = require("internal/validators");
@@ -67,7 +69,7 @@ function emitErrorEventNT(self, err) {
   }
 }
 
-function ClientRequest(input, options, cb) {
+function ClientRequest(input, options, cb): void {
   if (!(this instanceof ClientRequest)) {
     return new (ClientRequest as any)(input, options, cb);
   }
@@ -910,11 +912,11 @@ function ClientRequest(input, options, cb) {
   this[kEmitState] = 0;
 
   this.setSocketKeepAlive = (_enable = true, _initialDelay = 0) => {
-    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
+    $debug("WARN: ClientRequest.setSocketKeepAlive is a no-op");
   };
 
   this.setNoDelay = (_noDelay = true) => {
-    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setNoDelay is a no-op");
+    $debug("WARN: ClientRequest.setNoDelay is a no-op");
   };
 
   this[kClearTimeout] = () => {

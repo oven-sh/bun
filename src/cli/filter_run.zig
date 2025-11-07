@@ -127,8 +127,12 @@ pub const ProcessHandle = struct {
         return this.state.event_loop;
     }
 
-    pub fn loop(this: *This) *bun.uws.Loop {
-        return this.state.event_loop.loop;
+    pub fn loop(this: *This) *bun.Async.Loop {
+        if (comptime bun.Environment.isWindows) {
+            return this.state.event_loop.loop.uv_loop;
+        } else {
+            return this.state.event_loop.loop;
+        }
     }
 };
 

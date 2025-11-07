@@ -709,6 +709,7 @@ const WindowsBufferedReaderVTable = struct {
         chunk: []const u8,
         hasMore: ReadState,
     ) bool = null,
+    loop: *const fn (*anyopaque) *Async.Loop,
 };
 
 pub const WindowsBufferedReader = struct {
@@ -757,12 +758,16 @@ pub const WindowsBufferedReader = struct {
             fn onReaderError(this: *anyopaque, err: bun.sys.Error) void {
                 return Type.onReaderError(@as(*Type, @alignCast(@ptrCast(this))), err);
             }
+            fn loop(this: *anyopaque) *Async.Loop {
+                return Type.loop(@as(*Type, @alignCast(@ptrCast(this))));
+            }
         };
         return .{
             .vtable = .{
                 .onReadChunk = if (@hasDecl(Type, "onReadChunk")) &fns.onReadChunk else null,
                 .onReaderDone = &fns.onReaderDone,
                 .onReaderError = &fns.onReaderError,
+                .loop = &fns.loop,
             },
         };
     }
@@ -909,7 +914,10 @@ pub const WindowsBufferedReader = struct {
 
     pub fn start(this: *WindowsBufferedReader, fd: bun.FileDescriptor, _: bool) bun.sys.Maybe(void) {
         bun.assert(this.source == null);
-        const source = switch (Source.open(uv.Loop.get(), fd)) {
+        // Use the event loop from the parent, not the global one
+        // This is critical for spawnSync to use its isolated loop
+        const loop = this.vtable.loop(this.parent);
+        const source = switch (Source.open(loop, fd)) {
             .err => |err| return .{ .err = err },
             .result => |source| source,
         };
@@ -1058,7 +1066,7 @@ pub const WindowsBufferedReader = struct {
                                     file_ptr.iov = uv.uv_buf_t.init(buf);
                                     this.flags.has_inflight_read = true;
 
-                                    if (uv.uv_fs_read(uv.Loop.get(), &file_ptr.fs, file_ptr.file, @ptrCast(&file_ptr.iov), 1, if (this.flags.use_pread) @intCast(this._offset) else -1, onFileRead).toError(.write)) |err| {
+                                    if (uv.uv_fs_read(this.vtable.loop(this.parent), &file_ptr.fs, file_ptr.file, @ptrCast(&file_ptr.iov), 1, if (this.flags.use_pread) @intCast(this._offset) else -1, onFileRead).toError(.write)) |err| {
                                         file_ptr.complete(false);
                                         this.flags.has_inflight_read = false;
                                         this.flags.is_paused = true;
@@ -1108,7 +1116,7 @@ pub const WindowsBufferedReader = struct {
                 file.iov = uv.uv_buf_t.init(buf);
                 this.flags.has_inflight_read = true;
 
-                if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, if (this.flags.use_pread) @intCast(this._offset) else -1, onFileRead).toError(.write)) |err| {
+                if (uv.uv_fs_read(this.vtable.loop(this.parent), &file.fs, file.file, @ptrCast(&file.iov), 1, if (this.flags.use_pread) @intCast(this._offset) else -1, onFileRead).toError(.write)) |err| {
                     file.complete(false);
                     this.flags.has_inflight_read = false;
                     return .{ .err = err };

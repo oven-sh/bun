@@ -185,6 +185,14 @@ pub fn eventLoop(this: *IOWriter) jsc.EventLoopHandle {
     return this.evtloop;
 }
 
+pub fn loop(this: *IOWriter) *bun.Async.Loop {
+    if (comptime bun.Environment.isWindows) {
+        return this.evtloop.loop().uv_loop;
+    } else {
+        return this.evtloop.loop();
+    }
+}
+
 /// Idempotent write call
 fn write(this: *IOWriter) enum {
     suspended,

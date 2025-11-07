@@ -10,23 +10,32 @@ pub const COMPRESSION_ENABLED_BY_DEFAULT = false;
 
 /// Compression Configuration for Bun.serve()
 ///
-/// ## Current Implementation (v1):
-/// - **Static routes only** - Compression is applied only to static routes (files served via `static` option)
+/// ## Current Implementation:
+/// - **Static routes only** - Only compresses Response objects defined in routes
 /// - **Lazy caching** - First request compresses and caches, subsequent requests serve cached version
-/// - **Per-encoding cache** - Separate cached variant for each encoding (br, gzip, zstd, deflate)
-/// - **Automatic** - No user code needed, just enable `compression: true`
+/// - **Per-encoding cache** - Stores separate compressed variant for EACH encoding client requests
+/// - **Memory cost** - Each static route stores original + up to 4 compressed variants
+///   - Small files (< 10KB): negligible extra memory (~200 bytes total for all variants)
+///   - Large files (1MB+): significant extra memory (~300-400KB for all variants)
 ///
-/// ## Future Work:
-/// - **Dynamic routes** - Requires caching API to avoid compressing on every request
-/// - **Streaming** - Need to ensure streaming responses aren't broken
-/// - **Cache control** - Let users control what gets cached and for how long
+/// ## Memory Implications:
+/// Static routes already cache the original file data. This adds compressed variants:
+/// - If you have 100 static routes with 1MB files = ~40MB extra for compression cache
+/// - Only caches variants that clients actually request (lazy)
+/// - Compression often makes files smaller, but we store BOTH original and compressed
+///
+/// ## Not Supported (Yet):
+/// - Dynamic routes (would need LRU cache with TTL and size limits)
+/// - Streaming responses
+/// - Cache eviction or memory limits
+/// - Selective caching per-route
 ///
 /// ## Usage:
 /// ```js
 /// Bun.serve({
 ///   compression: true, // Use defaults (br=4, gzip=6, zstd=3)
-///   compression: { brotli: 6, gzip: false }, // Custom config
-///   compression: false, // Disable
+///   compression: { brotli: 6, gzip: false }, // Custom config, disable specific algorithms
+///   compression: false, // Disable (default)
 /// })
 /// ```
 pub const CompressionConfig = struct {

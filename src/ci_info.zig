@@ -6,421 +6,75 @@
 // `name.toLowerCase().split(' ').join('-')`
 
 var ci_initialized = false;
-var ci_value: ?CI = null;
+var ci_value: ?[]const u8 = null;
 
-pub fn detectCI() ?CI {
+pub fn detectCI() ?[]const u8 {
     if (ci_initialized) return ci_value;
 
-    ci_value = CI.detectUncached();
+    ci_value = detectUncached();
     ci_initialized = true;
 
     return ci_value;
 }
 
-const CI = enum {
-    @"agola-ci",
-    appcircle,
-    appveyor,
-    @"aws-codebuild",
-    @"azure-pipelines",
-    bamboo,
-    @"bitbucket-pipelines",
-    bitrise,
-    buddy,
-    buildkite,
-    circleci,
-    @"cirrus-ci",
-    codefresh,
-    codemagic,
-    codeship,
-    drone,
-    dsari,
-    earthly,
-    @"expo-application-services",
-    gerrit,
-    @"gitea-actions",
-    @"github-actions",
-    @"gitlab-ci",
-    gocd,
-    @"google-cloud-build",
-    @"harness-ci",
-    // heroku,
-    hudson,
-    jenkins,
-    layerci,
-    @"magnum-ci",
-    @"netlify-ci",
-    nevercode,
-    prow,
-    releasehub,
-    render,
-    @"sail-ci",
-    screwdriver,
-    semaphore,
-    sourcehut,
-    @"strider-cd",
-    taskcluster,
-    teamcity,
-    @"travis-ci",
-    vela,
-    vercel,
-    @"visual-studio-app-center",
-    woodpecker,
-    @"xcode-cloud",
-    @"xcode-server",
-    heroku,
-    unknown,
+fn detectUncached() ?[]const u8 {
+    if (bun.env_var.CI.get() == false) return null;
 
-    fn detectUncached() ?CI {
-        {
-            var force_ci = false;
-            if (bun.env_var.CI.get()) |ci| switch (ci) {
-                false => return .unknown,
-                true => force_ci = true,
-            };
+    if (bun.getenvZ("AGOLA_GIT_REF") != null) return "agola-ci";
+    if (bun.getenvZ("AC_APPCIRCLE") != null) return "appcircle";
+    if (bun.getenvZ("APPVEYOR") != null) return "appveyor";
+    if (bun.getenvZ("CODEBUILD_BUILD_ARN") != null) return "aws-codebuild";
+    if (bun.getenvZ("TF_BUILD") != null) return "azure-pipelines";
+    if (bun.getenvZ("bamboo_planKey") != null) return "bamboo";
+    if (bun.getenvZ("BITBUCKET_COMMIT") != null) return "bitbucket-pipelines";
+    if (bun.getenvZ("BITRISE_IO") != null) return "bitrise";
+    if (bun.getenvZ("BUDDY_WORKSPACE_ID") != null) return "buddy";
+    if (bun.getenvZ("BUILDKITE") != null) return "buildkite";
+    if (bun.getenvZ("CIRCLECI") != null) return "circleci";
+    if (bun.getenvZ("CIRRUS_CI") != null) return "cirrus-ci";
+    if (bun.getenvZ("CF_BUILD_ID") != null) return "codefresh";
+    if (bun.getenvZ("CM_BUILD_ID") != null) return "codemagic";
+    if (bun.getenvZ("CI_NAME")) |val| if (bun.strings.eqlComptime(val, "codeship")) return "codeship";
+    if (bun.getenvZ("DRONE") != null) return "drone";
+    if (bun.getenvZ("DSARI") != null) return "dsari";
+    if (bun.getenvZ("EARTHLY_CI") != null) return "earthly";
+    if (bun.getenvZ("EAS_BUILD") != null) return "expo-application-services";
+    if (bun.getenvZ("GERRIT_PROJECT") != null) return "gerrit";
+    if (bun.getenvZ("GITEA_ACTIONS") != null) return "gitea-actions";
+    if (bun.getenvZ("GITHUB_ACTIONS") != null) return "github-actions";
+    if (bun.getenvZ("GITLAB_CI") != null) return "gitlab-ci";
+    if (bun.getenvZ("GO_PIPELINE_LABEL") != null) return "gocd";
+    if (bun.getenvZ("BUILDER_OUTPUT") != null) return "google-cloud-build";
+    if (bun.getenvZ("HARNESS_BUILD_ID") != null) return "harness-ci";
+    if (bun.getenvZ("HUDSON_URL") != null) return "hudson";
+    if (bun.getenvZ("JENKINS_URL") != null and bun.getenvZ("BUILD_ID") != null) return "jenkins";
+    if (bun.getenvZ("LAYERCI") != null) return "layerci";
+    if (bun.getenvZ("MAGNUM") != null) return "magnum-ci";
+    if (bun.getenvZ("NETLIFY") != null) return "netlify-ci";
+    if (bun.getenvZ("NEVERCODE") != null) return "nevercode";
+    if (bun.getenvZ("PROW_JOB_ID") != null) return "prow";
+    if (bun.getenvZ("RELEASE_BUILD_ID") != null) return "releasehub";
+    if (bun.getenvZ("RENDER") != null) return "render";
+    if (bun.getenvZ("SAILCI") != null) return "sail-ci";
+    if (bun.getenvZ("SCREWDRIVER") != null) return "screwdriver";
+    if (bun.getenvZ("SEMAPHORE") != null) return "semaphore";
+    if (bun.getenvZ("CI_NAME")) |val| if (bun.strings.eqlComptime(val, "sourcehut")) return "sourcehut";
+    if (bun.getenvZ("STRIDER") != null) return "strider-cd";
+    if (bun.getenvZ("TASK_ID") != null and bun.getenvZ("RUN_ID") != null) return "taskcluster";
+    if (bun.getenvZ("TEAMCITY_VERSION") != null) return "teamcity";
+    if (bun.getenvZ("TRAVIS") != null) return "travis-ci";
+    if (bun.getenvZ("VELA") != null) return "vela";
+    if (bun.getenvZ("NODE")) |node| if (strings.containsComptime(node, "/app/.heroku/node/bin/node")) return "heroku";
+    if (bun.getenvZ("NOW_BUILDER") != null or bun.getenvZ("VERCEL") != null) return "vercel";
+    if (bun.getenvZ("APPCENTER_BUILD_ID") != null) return "visual-studio-app-center";
+    if (bun.getenvZ("CI")) |val| if (bun.strings.eqlComptime(val, "woodpecker")) return "woodpecker";
+    if (bun.getenvZ("CI_XCODE_PROJECT") != null) return "xcode-cloud";
+    if (bun.getenvZ("XCS") != null) return "xcode-server";
+    if (bun.getenvZ("XCS") != null) return "xcode-server";
 
-            // Special case Heroku
-            if (bun.env_var.NODE.get()) |node| {
-                if (strings.containsComptime(node, "/app/.heroku/node/bin/node")) {
-                    return .heroku;
-                }
-            }
-
-            ci: for (CI.array.values, 0..) |item, i| {
-                const any, const pairs = item;
-
-                pairs: for (pairs) |pair| {
-                    const key, const value = pair;
-
-                    if (bun.getenvZ(key)) |env| {
-                        if (value.len == 0 or bun.strings.eqlLong(env, value, true)) {
-                            if (!any) continue :pairs;
-
-                            return Array.Indexer.keyForIndex(i);
-                        }
-                    }
-
-                    if (!any) continue :ci;
-                }
-
-                if (!any) return Array.Indexer.keyForIndex(i);
-            }
-
-            if (force_ci) return .unknown;
-            return null;
-        }
-    }
-
-    pub const Array = std.EnumArray(CI, struct { bool, []const [2][:0]const u8 });
-
-    pub const array = Array.init(.{
-        .@"agola-ci" = .{
-            false,
-            &.{
-                .{ "AGOLA_GIT_REF", "" },
-            },
-        },
-        .appcircle = .{
-            false,
-            &.{
-                .{ "AC_APPCIRCLE", "" },
-            },
-        },
-        .appveyor = .{
-            false,
-            &.{
-                .{ "APPVEYOR", "" },
-            },
-        },
-        .@"aws-codebuild" = .{
-            false,
-            &.{
-                .{ "CODEBUILD_BUILD_ARN", "" },
-            },
-        },
-        .@"azure-pipelines" = .{
-            false,
-            &.{
-                .{ "TF_BUILD", "" },
-            },
-        },
-        .bamboo = .{
-            false,
-            &.{
-                .{ "bamboo_planKey", "" },
-            },
-        },
-        .@"bitbucket-pipelines" = .{
-            false,
-            &.{
-                .{ "BITBUCKET_COMMIT", "" },
-            },
-        },
-        .bitrise = .{
-            false,
-            &.{
-                .{ "BITRISE_IO", "" },
-            },
-        },
-        .buddy = .{
-            false,
-            &.{
-                .{ "BUDDY_WORKSPACE_ID", "" },
-            },
-        },
-        .buildkite = .{
-            false,
-            &.{
-                .{ "BUILDKITE", "" },
-            },
-        },
-        .circleci = .{
-            false,
-            &.{
-                .{ "CIRCLECI", "" },
-            },
-        },
-        .@"cirrus-ci" = .{
-            false,
-            &.{
-                .{ "CIRRUS_CI", "" },
-            },
-        },
-        .codefresh = .{
-            false,
-            &.{
-                .{ "CF_BUILD_ID", "" },
-            },
-        },
-        .codemagic = .{
-            false,
-            &.{
-                .{ "CM_BUILD_ID", "" },
-            },
-        },
-        .codeship = .{
-            false,
-            &.{
-                .{ "CI_NAME", "codeship" },
-            },
-        },
-        .drone = .{
-            false,
-            &.{
-                .{ "DRONE", "" },
-            },
-        },
-        .dsari = .{
-            false,
-            &.{
-                .{ "DSARI", "" },
-            },
-        },
-        .earthly = .{
-            false,
-            &.{
-                .{ "EARTHLY_CI", "" },
-            },
-        },
-        .@"expo-application-services" = .{
-            false,
-            &.{
-                .{ "EAS_BUILD", "" },
-            },
-        },
-        .gerrit = .{
-            false,
-            &.{
-                .{ "GERRIT_PROJECT", "" },
-            },
-        },
-        .@"gitea-actions" = .{
-            false,
-            &.{
-                .{ "GITEA_ACTIONS", "" },
-            },
-        },
-        .@"github-actions" = .{
-            false,
-            &.{
-                .{ "GITHUB_ACTIONS", "" },
-            },
-        },
-        .@"gitlab-ci" = .{
-            false,
-            &.{
-                .{ "GITLAB_CI", "" },
-            },
-        },
-        .gocd = .{
-            false,
-            &.{
-                .{ "GO_PIPELINE_LABEL", "" },
-            },
-        },
-        .@"google-cloud-build" = .{
-            false,
-            &.{
-                .{ "BUILDER_OUTPUT", "" },
-            },
-        },
-        .@"harness-ci" = .{
-            false,
-            &.{
-                .{ "HARNESS_BUILD_ID", "" },
-            },
-        },
-        .hudson = .{
-            false,
-            &.{
-                .{ "HUDSON_URL", "" },
-            },
-        },
-        .jenkins = .{
-            false,
-            &.{
-                .{ "JENKINS_URL", "" },
-                .{ "BUILD_ID", "" },
-            },
-        },
-        .layerci = .{
-            false,
-            &.{
-                .{ "LAYERCI", "" },
-            },
-        },
-        .@"magnum-ci" = .{
-            false,
-            &.{
-                .{ "MAGNUM", "" },
-            },
-        },
-        .@"netlify-ci" = .{
-            false,
-            &.{
-                .{ "NETLIFY", "" },
-            },
-        },
-        .nevercode = .{
-            false,
-            &.{
-                .{ "NEVERCODE", "" },
-            },
-        },
-        .prow = .{
-            false,
-            &.{
-                .{ "PROW_JOB_ID", "" },
-            },
-        },
-        .releasehub = .{
-            false,
-            &.{
-                .{ "RELEASE_BUILD_ID", "" },
-            },
-        },
-        .render = .{
-            false,
-            &.{
-                .{ "RENDER", "" },
-            },
-        },
-        .@"sail-ci" = .{
-            false,
-            &.{
-                .{ "SAILCI", "" },
-            },
-        },
-        .screwdriver = .{
-            false,
-            &.{
-                .{ "SCREWDRIVER", "" },
-            },
-        },
-        .semaphore = .{
-            false,
-            &.{
-                .{ "SEMAPHORE", "" },
-            },
-        },
-        .sourcehut = .{
-            false,
-            &.{
-                .{ "CI_NAME", "sourcehut" },
-            },
-        },
-        .@"strider-cd" = .{
-            false,
-            &.{
-                .{ "STRIDER", "" },
-            },
-        },
-        .taskcluster = .{
-            false,
-            &.{
-                .{ "TASK_ID", "" },
-                .{ "RUN_ID", "" },
-            },
-        },
-        .teamcity = .{
-            false,
-            &.{
-                .{ "TEAMCITY_VERSION", "" },
-            },
-        },
-        .@"travis-ci" = .{
-            false,
-            &.{
-                .{ "TRAVIS", "" },
-            },
-        },
-        .vela = .{
-            false,
-            &.{
-                .{ "VELA", "" },
-            },
-        },
-        .vercel = .{
-            true,
-            &.{
-                .{ "NOW_BUILDER", "" },
-                .{ "VERCEL", "" },
-            },
-        },
-        .@"visual-studio-app-center" = .{
-            false,
-            &.{
-                .{ "APPCENTER_BUILD_ID", "" },
-            },
-        },
-        .woodpecker = .{
-            false,
-            &.{
-                .{ "CI", "woodpecker" },
-            },
-        },
-        .@"xcode-cloud" = .{
-            false,
-            &.{
-                .{ "CI_XCODE_PROJECT", "" },
-            },
-        },
-        .@"xcode-server" = .{
-            false,
-            &.{
-                .{ "XCS", "" },
-            },
-        },
-        .unknown = .{
-            true,
-            &.{},
-        },
-        .heroku = .{
-            true,
-            &.{},
-        },
-    });
-};
+    if (bun.env_var.CI.get() == true) return "unknown";
+    return null;
+}
 
 const std = @import("std");
 

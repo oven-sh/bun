@@ -47,7 +47,7 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
             // TODO: figure out how npm determines workspaces=true
             false,
             if (ci_name != null) " ci/" else "",
-            if (ci_name) |ci| @tagName(ci) else "",
+            ci_name orelse "",
         });
         headers.count("user-agent", print_buf.items);
         print_buf.clearRetainingCapacity();
@@ -69,14 +69,7 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
         headers.append("npm-auth-type", auth_type);
         headers.append("npm-command", "whoami");
 
-        try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{
-            Global.user_agent,
-            Global.os_name,
-            Global.arch_name,
-            false,
-            if (ci_name != null) " ci/" else "",
-            if (ci_name) |ci| @tagName(ci) else "",
-        });
+        try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{ Global.user_agent, Global.os_name, Global.arch_name, false, if (ci_name != null) " ci/" else "", ci_name orelse "" });
         headers.append("user-agent", print_buf.items);
         print_buf.clearRetainingCapacity();
 

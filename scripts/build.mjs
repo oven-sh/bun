@@ -103,7 +103,8 @@ async function build(args) {
 
   await startGroup("CMake Build", () => spawn("cmake", buildArgs, { env }));
 
-  if (isCI) {
+  const target = buildOptions["--target"] || buildOptions["-t"];
+  if (isCI && target === "build-cpp") {
     await startGroup("sccache stats", () => {
       spawn("sccache", ["--show-stats"], { env });
     });

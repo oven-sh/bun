@@ -338,14 +338,8 @@ pub const CompressionConfig = struct {
             }
         }
 
-        // Fallback: use server preference if no quality specified or all equal
-        if (pref_count == 0 or allQualitiesEqual(preferences[0..pref_count])) {
-            if (this.brotli != null) return .brotli;
-            if (this.zstd != null) return .zstd;
-            if (this.gzip != null) return .gzip;
-            if (this.deflate != null) return .deflate;
-        }
-
+        // If client specified encodings but none are enabled on server, return null
+        // Don't fallback to server preference unless client sent no preferences
         return null;
     }
 

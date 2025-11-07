@@ -10,12 +10,10 @@ pub const deref = RefCount.deref;
 /// Compressed variant of the static response
 pub const CompressedVariant = struct {
     data: []u8,
-    etag: []const u8,
     encoding: bun.http.Encoding,
 
     pub fn deinit(this: *CompressedVariant, allocator: std.mem.Allocator) void {
         allocator.free(this.data);
-        allocator.free(this.etag);
     }
 };
 
@@ -109,11 +107,11 @@ pub fn clone(this: *StaticRoute, globalThis: *jsc.JSGlobalObject) !*StaticRoute 
 pub fn memoryCost(this: *const StaticRoute) usize {
     var cost = @sizeOf(StaticRoute) + this.blob.memoryCost() + this.headers.memoryCost();
 
-    // Add compressed variant costs
-    if (this.compressed_br) |variant| cost += variant.data.len + variant.etag.len;
-    if (this.compressed_gzip) |variant| cost += variant.data.len + variant.etag.len;
-    if (this.compressed_zstd) |variant| cost += variant.data.len + variant.etag.len;
-    if (this.compressed_deflate) |variant| cost += variant.data.len + variant.etag.len;
+    // Add compressed variant costs (just the data, ETag is shared with original)
+    if (this.compressed_br) |variant| cost += variant.data.len;
+    if (this.compressed_gzip) |variant| cost += variant.data.len;
+    if (this.compressed_zstd) |variant| cost += variant.data.len;
+    if (this.compressed_deflate) |variant| cost += variant.data.len;
 
     return cost;
 }
@@ -265,6 +263,17 @@ fn tryServeCompressed(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) 
 
     // Skip if localhost and configured to disable
     if (config.disable_for_localhost) {
+        // Check Host header for localhost indicators
+        if (req.header("host")) |host| {
+            if (bun.strings.containsComptime(host, "localhost") or
+                bun.strings.hasPrefixComptime(host, "127.") or
+                bun.strings.containsComptime(host, "[::1]"))
+            {
+                return false;
+            }
+        }
+
+        // Fallback: check socket address
         if (resp.getRemoteSocketInfo()) |addr| {
             if (isLocalhost(addr.ip)) return false;
         }
@@ -332,26 +341,13 @@ fn getOrCreateCompressed(
         return error.CompressionFailed;
     }
 
-    // Generate ETag for compressed variant by hashing the compressed data
-    const compressed_etag = generateCompressedETag(compressed_data);
-
-    // Store in cache
+    // Store in cache (no need to store ETag - we'll use the original)
     variant_slot.* = .{
         .data = compressed_data,
-        .etag = compressed_etag,
         .encoding = encoding,
     };
 
     return &variant_slot.*.?;
-}
-
-/// Generate ETag for compressed variant by hashing the compressed bytes
-/// This ensures the ETag accurately represents the compressed content
-fn generateCompressedETag(compressed_data: []const u8) []const u8 {
-    const hash = std.hash.XxHash64.hash(0, compressed_data);
-    var etag_buf: [40]u8 = undefined;
-    const etag_str = std.fmt.bufPrint(&etag_buf, "\"{}\"", .{bun.fmt.hexIntLower(hash)}) catch unreachable;
-    return bun.handleOom(bun.default_allocator.dupe(u8, etag_str));
 }
 
 /// Serve a compressed response
@@ -365,8 +361,8 @@ fn serveCompressed(this: *StaticRoute, variant: *CompressedVariant, resp: AnyRes
     // Write status
     this.doWriteStatus(this.status_code, resp);
 
-    // Write headers, but skip ETag and Content-Length (we'll set them for compressed data)
-    this.doWriteHeadersExcluding(resp, &[_][]const u8{ "etag", "content-length" });
+    // Write headers, but skip Content-Length (we'll override for compressed data)
+    this.doWriteHeadersExcluding(resp, &[_][]const u8{"content-length"});
 
     // Add Vary: Accept-Encoding (critical for caching!)
     resp.writeHeader("Vary", "Accept-Encoding");
@@ -374,8 +370,8 @@ fn serveCompressed(this: *StaticRoute, variant: *CompressedVariant, resp: AnyRes
     // Set Content-Encoding
     resp.writeHeader("Content-Encoding", variant.encoding.toString());
 
-    // Set ETag for compressed variant
-    resp.writeHeader("ETag", variant.etag);
+    // ETag stays the same - it represents the uncompressed content
+    // Vary: Accept-Encoding tells caches that different encodings exist
 
     // Set Content-Length for compressed data
     var content_length_buf: [64]u8 = undefined;
@@ -385,14 +381,6 @@ fn serveCompressed(this: *StaticRoute, variant: *CompressedVariant, resp: AnyRes
     // Send body
     resp.end(variant.data, resp.shouldCloseConnection());
     this.onResponseComplete(resp);
-}
-
-/// Check if remote address is localhost
-fn isLocalhost(addr: []const u8) bool {
-    if (addr.len == 0) return false;
-    return bun.strings.hasPrefixComptime(addr, "127.") or
-        bun.strings.eqlComptime(addr, "::1") or
-        bun.strings.eqlComptime(addr, "localhost");
 }
 
 pub fn onGET(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
@@ -597,6 +585,7 @@ const jsc = bun.jsc;
 const api = bun.schema.api;
 const AnyServer = jsc.API.AnyServer;
 const writeStatus = bun.api.server.writeStatus;
+const isLocalhost = bun.api.server.isLocalhost;
 const AnyBlob = jsc.WebCore.Blob.Any;
 
 const ETag = bun.http.ETag;

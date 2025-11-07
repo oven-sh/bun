@@ -77,7 +77,6 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
         additional_on_abort: ?AdditionalOnAbortCallback = null,
 
-        // TODO: support builtin compression
         const can_sendfile = !ssl_enabled and !Environment.isWindows;
 
         pub fn setSignalAborted(this: *RequestContext, reason: bun.jsc.CommonAbortReason) void {
@@ -2320,10 +2319,122 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
             writeHeaders(headers, ssl_enabled, this.resp);
         }
 
+        /// Try to compress the response body for dynamic routes (on-demand, no caching)
+        /// Returns true if compression was applied, false otherwise
+        /// If true, compressed_data and selected_encoding will be populated
+        fn tryCompressResponse(
+            this: *RequestContext,
+            original_bytes: *const []const u8,
+            compressed_data: *?[]u8,
+            selected_encoding: *?bun.http.Encoding,
+        ) bool {
+            const server = this.server orelse return false;
+            const any_server = jsc.API.AnyServer.from(server);
+            const config = any_server.compressionConfig() orelse return false;
+            const resp = this.resp orelse return false;
+            const req = this.req orelse return false;
+
+            // Skip if localhost
+            if (config.disable_for_localhost) {
+                // Check Host header for localhost indicators
+                if (req.header("host")) |host| {
+                    if (bun.strings.containsComptime(host, "localhost") or
+                        bun.strings.hasPrefixComptime(host, "127.") or
+                        bun.strings.containsComptime(host, "[::1]"))
+                    {
+                        return false;
+                    }
+                }
+
+                // Fallback: check socket address
+                if (resp.getRemoteSocketInfo()) |addr| {
+                    if (isLocalhost(addr.ip)) return false;
+                }
+            }
+
+            // Check accept-encoding header
+            const accept_encoding = req.header("accept-encoding") orelse return false;
+
+            // Select best encoding
+            const encoding = config.selectBestEncoding(accept_encoding) orelse return false;
+
+            // Skip if too small
+            if (original_bytes.len < config.threshold) return false;
+
+            // Check MIME type
+            const content_type_str = if (this.response_ptr) |response|
+                if (response.getInitHeaders()) |headers|
+                    headers.fastGet(.ContentType)
+                else
+                    null
+            else
+                null;
+
+            if (content_type_str) |ct| {
+                if (!bun.http.Compressor.shouldCompressMIME(ct.slice())) return false;
+            }
+
+            // Skip if already encoded
+            if (this.response_ptr) |response| {
+                if (response.getInitHeaders()) |headers| {
+                    if (headers.fastHas(.ContentEncoding)) return false;
+                }
+            }
+
+            // Get compression level for this encoding
+            const level = switch (encoding) {
+                .brotli => if (config.brotli) |br| br.level else return false,
+                .gzip => if (config.gzip) |gz| gz.level else return false,
+                .zstd => if (config.zstd) |zs| zs.level else return false,
+                .deflate => if (config.deflate) |df| df.level else return false,
+                else => return false,
+            };
+
+            // Compress the data
+            const result = bun.http.Compressor.compress(
+                this.allocator,
+                original_bytes.*,
+                encoding,
+                level,
+            );
+
+            if (result.len == 0) return false;
+
+            // Only use compression if it actually saved space
+            if (result.len >= original_bytes.len) {
+                this.allocator.free(result);
+                return false;
+            }
+
+            // Success - populate output parameters
+            // Headers will be written by caller after renderMetadata()
+            compressed_data.* = result;
+            selected_encoding.* = encoding;
+
+            return true;
+        }
+
         pub fn renderBytes(this: *RequestContext) void {
             // copy it to stack memory to prevent aliasing issues in release builds
             const blob = this.blob;
-            const bytes = blob.slice();
+            var bytes = blob.slice();
+
+            // Try to compress the response if enabled
+            var compressed_data: ?[]u8 = null;
+            var selected_encoding: ?bun.http.Encoding = null;
+            defer if (compressed_data) |data| this.allocator.free(data);
+
+            const was_compressed = this.tryCompressResponse(&bytes, &compressed_data, &selected_encoding);
+            if (was_compressed) {
+                // Compression succeeded, use compressed data and write compression headers
+                bytes = compressed_data.?;
+
+                if (this.resp) |resp| {
+                    resp.writeHeader("Content-Encoding", selected_encoding.?.toString());
+                    resp.writeHeader("Vary", "Accept-Encoding");
+                }
+            }
+
             if (this.resp) |resp| {
                 if (!resp.tryEnd(
                     bytes,
@@ -2670,6 +2781,7 @@ const logger = bun.logger;
 const uws = bun.uws;
 const Api = bun.schema.api;
 const writeStatus = bun.api.server.writeStatus;
+const isLocalhost = bun.api.server.isLocalhost;
 
 const HTTP = bun.http;
 const MimeType = bun.http.MimeType;

@@ -16,6 +16,14 @@ pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, sta
     }
 }
 
+/// Check if an IP address is localhost (used for compression detection)
+pub fn isLocalhost(addr: []const u8) bool {
+    if (addr.len == 0) return false;
+    return bun.strings.hasPrefixComptime(addr, "127.") or
+        bun.strings.eqlComptime(addr, "::1") or
+        bun.strings.eqlComptime(addr, "localhost");
+}
+
 // TODO: rename to StaticBlobRoute? the html bundle is sometimes a static route
 pub const StaticRoute = @import("./server/StaticRoute.zig");
 pub const FileRoute = @import("./server/FileRoute.zig");

@@ -113,32 +113,41 @@ pub const Compressor = struct {
     pub fn shouldCompressMIME(content_type: ?[]const u8) bool {
         const mime = content_type orelse return true;
 
-        // Skip already-compressed formats
-        if (bun.strings.hasPrefixComptime(mime, "image/")) return false;
-        if (bun.strings.hasPrefixComptime(mime, "video/")) return false;
-        if (bun.strings.hasPrefixComptime(mime, "audio/")) return false;
-        if (bun.strings.hasPrefixComptime(mime, "application/zip")) return false;
-        if (bun.strings.hasPrefixComptime(mime, "application/gzip")) return false;
-        if (bun.strings.hasPrefixComptime(mime, "application/x-gzip")) return false;
-        if (bun.strings.hasPrefixComptime(mime, "application/x-bzip")) return false;
-        if (bun.strings.hasPrefixComptime(mime, "application/x-bzip2")) return false;
-        if (bun.strings.hasPrefixComptime(mime, "application/x-7z-compressed")) return false;
-        if (bun.strings.hasPrefixComptime(mime, "application/x-rar-compressed")) return false;
-        if (bun.strings.hasPrefixComptime(mime, "application/octet-stream")) return false;
+        // Parse the MIME type to get its category
+        const category = bun.http.MimeType.Category.init(mime);
 
-        // Compress text-based formats
-        if (bun.strings.hasPrefixComptime(mime, "text/")) return true;
-        if (bun.strings.hasPrefixComptime(mime, "application/json")) return true;
-        if (bun.strings.hasPrefixComptime(mime, "application/javascript")) return true;
-        if (bun.strings.hasPrefixComptime(mime, "application/xml")) return true;
-        if (bun.strings.hasPrefixComptime(mime, "application/xhtml+xml")) return true;
-        if (bun.strings.hasPrefixComptime(mime, "application/rss+xml")) return true;
-        if (bun.strings.hasPrefixComptime(mime, "application/atom+xml")) return true;
-        if (bun.strings.hasPrefixComptime(mime, "application/wasm")) return true;
-        if (bun.strings.hasPrefixComptime(mime, "image/svg+xml")) return true;
-        if (bun.strings.hasPrefixComptime(mime, "font/")) return true;
+        // Check for categories that should always be compressed
+        switch (category) {
+            .text, .html, .css, .json, .javascript, .wasm, .font => return true,
+            .image, .video, .audio => {
+                // Special case: SVG is compressible even though it's an image
+                if (bun.strings.hasPrefixComptime(mime, "image/svg+xml")) return true;
+                return false;
+            },
+            .application => {
+                // Check for XML-based formats (application/*+xml)
+                if (bun.strings.containsComptime(mime, "+xml")) return true;
+                // Check for JSON-based formats (application/*+json)
+                if (bun.strings.containsComptime(mime, "+json")) return true;
+                // Check for other XML formats
+                if (bun.strings.hasPrefixComptime(mime, "application/xml")) return true;
 
-        return false;
+                // Explicitly exclude pre-compressed formats
+                if (bun.strings.containsComptime(mime, "zip")) return false;
+                if (bun.strings.containsComptime(mime, "gzip")) return false;
+                if (bun.strings.containsComptime(mime, "bzip")) return false;
+                if (bun.strings.containsComptime(mime, "compress")) return false;
+                if (bun.strings.containsComptime(mime, "zstd")) return false;
+                if (bun.strings.containsComptime(mime, "rar")) return false;
+
+                // Exclude binary streams
+                if (bun.strings.hasPrefixComptime(mime, "application/octet-stream")) return false;
+
+                // Compress other application types by default
+                return true;
+            },
+            else => return false,
+        }
     }
 };
 

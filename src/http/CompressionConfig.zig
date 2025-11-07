@@ -24,11 +24,11 @@ pub const COMPRESSION_ENABLED_BY_DEFAULT = false;
 /// - Only caches variants that clients actually request (lazy)
 /// - Compression often makes files smaller, but we store BOTH original and compressed
 ///
-/// ## Not Supported (Yet):
-/// - Dynamic routes (would need LRU cache with TTL and size limits)
-/// - Streaming responses
-/// - Cache eviction or memory limits
-/// - Selective caching per-route
+/// ## Not Supported:
+/// - **Dynamic routes** - Responses from fetch() handlers (would need LRU cache with TTL)
+/// - **Streaming responses** - ReadableStream bodies are rejected from static routes (see StaticRoute.zig:160)
+/// - **Cache eviction** - No memory limits or LRU eviction
+/// - **Per-route control** - Can only enable/disable globally or per-algorithm
 ///
 /// ## Usage:
 /// ```js

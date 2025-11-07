@@ -249,6 +249,9 @@ pub fn onRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void 
 }
 
 /// Try to serve a compressed variant if compression is enabled and conditions are met
+///
+/// NOTE: Streaming responses are NOT handled here - they're rejected at fromJS() line 160
+/// and go through RequestContext instead. This only compresses fully buffered static responses.
 fn tryServeCompressed(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) bool {
     const server = this.server orelse return false;
     const config = server.compressionConfig() orelse return false;

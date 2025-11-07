@@ -14,7 +14,7 @@ delete cleanEnv.CI;
 async function performTest(env: Record<string, string | undefined>, result: "deny-only" | "allow-only") {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "./ci-info.fixture.ts"],
-    env: cleanEnv,
+    env,
     cwd: import.meta.dir,
     stdout: "pipe",
     stderr: "pipe",
@@ -24,11 +24,11 @@ async function performTest(env: Record<string, string | undefined>, result: "den
 
   // test.only should work (not throw) when CI=false
   if (result === "deny-only") {
-    expect(exitCode).toBe(1);
     expect(stderr).toContain(".only is disabled in CI environments");
+    expect(exitCode).toBe(1);
   } else {
-    expect(exitCode).toBe(0);
     expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
   }
 }
 

@@ -34,7 +34,7 @@ async function performTest(env: Record<string, string | undefined>, result: "den
 
 describe("CI detection", () => {
   test("Without CI env vars, test.only should work", async () => {
-    await performTest(cleanEnv, "deny-only");
+    await performTest(cleanEnv, "allow-only");
   });
   test("CI=false disables CI detection even with GITHUB_ACTIONS=true", async () => {
     await performTest({ ...cleanEnv, CI: "false", GITHUB_ACTIONS: "true" }, "allow-only");

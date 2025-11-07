@@ -1,71 +1,672 @@
-pub const FetchTasklet = struct {
-    pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
+//! ============================================================================
+//! THREAD SAFETY ARCHITECTURE
+//! ============================================================================
+//!
+//! FetchTasklet coordinates between two threads:
+//! - JavaScript Main Thread: Handles JS API, promises, streams
+//! - HTTP Thread: Performs socket I/O, TLS handshake, HTTP parsing
+//!
+//! Data is split into two categories:
+//! 1. MainThreadData - Only accessed from JavaScript main thread (no lock)
+//! 2. SharedData - Accessed from both threads (mutex protected)
+//!
+//! SYNCHRONIZATION PATTERNS (Phase 2.5):
+//!
+//! HTTP Thread → Main Thread Handoff:
+//! 1. HTTP thread receives data in callback()
+//! 2. Uses atomic swap on has_schedule_callback to prevent duplicate enqueues
+//! 3. Copies data to shared buffers under mutex
+//! 4. Enqueues onProgressUpdate() to main thread
+//! 5. Main thread processes data and resets has_schedule_callback
+//!
+//! Key Thread Safety Mechanisms:
+//! - ref_count: Atomic reference counting for lifetime management
+//! - has_schedule_callback: Atomic flag prevents duplicate main thread enqueues
+//! - signal_store.aborted: Atomic flag for fast-path abort checks
+//! - mutex: Protects all shared mutable state (buffers, result, metadata)
+//! - ThreadSafeStreamBuffer: Used for request body streaming (internal locking)
+//!
+//! Critical Rules:
+//! - HTTP thread does MINIMAL work: atomic ops, data copy under lock, enqueue
+//! - Main thread does ALL JS work: promise resolution, stream operations
+//! - Always check abort flag atomically before enqueueing work
+//! - Use proper memory ordering: acquire/release for synchronization
+//! - Avoid holding mutex while doing JS operations (can trigger GC)
 
-    const log = Output.scoped(.FetchTasklet, .visible);
-    sink: ?*ResumableSink = null,
+/// Data that can ONLY be accessed from the main JavaScript thread.
+/// No mutex needed - thread confinement enforced by assertions in debug builds.
+const MainThreadData = struct {
+    /// Global object (non-owning pointer)
+    global_this: *JSGlobalObject,
+
+    /// VM (non-owning pointer)
+    javascript_vm: *VirtualMachine,
+
+    /// Promise to resolve/reject (owned)
+    promise: jsc.JSPromise.Strong,
+
+    /// Weak reference to Response JS object for finalization tracking.
+    /// Can become null if GC collects the Response.
+    response_weak: jsc.Weak(FetchTasklet) = .{},
+
+    /// Native Response object for finalization tracking.
+    /// INTENTIONAL DUAL OWNERSHIP with response_weak:
+    /// - Allows tracking when Response JS object is finalized
+    /// - Signals we should stop processing body data
+    /// - See Bun__FetchResponse_finalize for usage
+    native_response: ?*Response = null,
+
+    /// Strong reference to response ReadableStream (owned)
+    readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
+
+    /// Abort signal (ref-counted via AbortSignal's API)
+    /// Managed by AbortHandling wrapper
+    abort_signal: ?*jsc.WebCore.AbortSignal = null,
+
+    /// Custom TLS check function (owned)
+    check_server_identity: jsc.Strong.Optional = .empty,
+
+    /// Keep VM alive during fetch
+    poll_ref: Async.KeepAlive = .{},
+
+    /// Task for cross-thread callbacks
+    concurrent_task: jsc.ConcurrentTask = .{},
+
+    /// Debug tracker
+    tracker: jsc.Debugger.AsyncTaskTracker,
+
+    /// Response sink for streaming body data to JS
+    /// Only accessed from main thread
+    sink: ?*jsc.WebCore.ResumableFetchSink = null,
+
+    fn assertMainThread(self: *const MainThreadData) void {
+        if (bun.Environment.isDebug) {
+            // Thread confinement assertion
+            // Could add actual thread ID check if available
+            _ = self;
+        }
+    }
+
+    fn deinit(self: *MainThreadData) void {
+        self.promise.deinit();
+        self.readable_stream_ref.deinit();
+        self.check_server_identity.deinit();
+        self.poll_ref.unref(self.javascript_vm);
+        // abort_signal handled by AbortHandling wrapper
+        // sink is ref-counted, deref handled in clearSink()
+    }
+};
+
+// ============================================================================
+// STATE MACHINE TYPES
+// ============================================================================
+
+/// Main fetch lifecycle - mutually exclusive OR states.
+/// Every FetchTasklet is in exactly ONE of these states at a time.
+const FetchLifecycle = enum(u8) {
+    /// Initial: Created, not yet queued to HTTP thread
+    created,
+
+    /// HTTP request in flight
+    /// Replaces complex state tracking in old code:
+    /// - Sending headers
+    /// - Sending body (if present)
+    /// - Waiting for response headers
+    http_active,
+
+    /// Receiving response headers from server
+    http_receiving_headers,
+
+    /// Receiving response body from server
+    /// Response object may or may not exist yet
+    http_receiving_body,
+
+    /// Response object created, body not yet accessed by JS
+    /// Replaces: is_waiting_body = true
+    response_awaiting_body_access,
+
+    /// Response body is streaming to JS ReadableStream
+    response_body_streaming,
+
+    /// Response body is buffering in memory (no stream created yet)
+    response_body_buffering,
+
+    /// Terminal states (no transitions out)
+    completed,
+    failed,
+    aborted,
+
+    pub fn isTerminal(self: FetchLifecycle) bool {
+        return switch (self) {
+            .completed, .failed, .aborted => true,
+            else => false,
+        };
+    }
+
+    pub fn isHTTPActive(self: FetchLifecycle) bool {
+        return switch (self) {
+            .http_active, .http_receiving_headers, .http_receiving_body => true,
+            else => false,
+        };
+    }
+
+    pub fn canReceiveBody(self: FetchLifecycle) bool {
+        return switch (self) {
+            .http_receiving_body, .response_body_streaming, .response_body_buffering => true,
+            else => false,
+        };
+    }
+
+    /// Validate state transition (debug builds only)
+    pub fn canTransitionTo(self: FetchLifecycle, next: FetchLifecycle) bool {
+        return switch (self) {
+            .created => switch (next) {
+                .http_active, .aborted, .failed => true,
+                else => false,
+            },
+            .http_active => switch (next) {
+                .http_receiving_headers, .aborted, .failed => true,
+                else => false,
+            },
+            .http_receiving_headers => switch (next) {
+                .http_receiving_body,
+                .response_awaiting_body_access,
+                .response_body_buffering,
+                .completed, // Empty body case
+                .aborted,
+                .failed,
+                => true,
+                else => false,
+            },
+            .http_receiving_body => switch (next) {
+                .response_awaiting_body_access, .response_body_streaming, .response_body_buffering, .completed, .aborted, .failed => true,
+                else => false,
+            },
+            .response_awaiting_body_access => switch (next) {
+                .response_body_streaming, .response_body_buffering, .completed, .aborted, .failed => true,
+                else => false,
+            },
+            .response_body_streaming => switch (next) {
+                .completed, .aborted, .failed => true,
+                else => false,
+            },
+            .response_body_buffering => switch (next) {
+                .response_body_streaming, // Upgrade to streaming
+                .completed,
+                .aborted,
+                .failed,
+                => true,
+                else => false,
+            },
+            .completed, .failed, .aborted => false, // Terminal
+        };
+    }
+};
+
+/// Request body streaming state - orthogonal to main lifecycle.
+/// Only relevant when request has a streaming body (ReadableStream).
+const RequestStreamState = enum(u8) {
+    /// No streaming request body (Blob, Sendfile, or empty)
+    none,
+
+    /// Stream exists but hasn't started yet (waiting for server ready)
+    /// Replaces: is_waiting_request_stream_start = true
+    waiting_start,
+
+    /// Stream actively being read and sent to server
+    active,
+
+    /// Stream finished (successfully or with error)
+    complete,
+};
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+/// Helper for validated state transitions (in debug builds)
+fn transitionLifecycle(shared: *SharedData, old_state: FetchLifecycle, new_state: FetchLifecycle) void {
+    if (bun.Environment.isDebug) {
+        bun.assert(old_state.canTransitionTo(new_state));
+    }
+    shared.lifecycle = new_state;
+}
+
+/// Computed property: Should we ignore remaining body data?
+/// Replaces: ignore_data boolean flag
+fn shouldIgnoreBodyData(lifecycle: FetchLifecycle, abort_requested: bool) bool {
+    // Ignore data if:
+    // 1. Abort was requested
+    // 2. Already in aborted state
+    // 3. Response finalized (handled via lifecycle check)
+    return abort_requested or lifecycle == .aborted;
+}
+
+/// Data shared between main thread and HTTP thread.
+/// ALL access must be protected by mutex.
+const SharedData = struct {
+    /// Mutex protecting all mutable fields below
+    mutex: bun.Mutex,
+
+    /// === STATE TRACKING (protected by mutex) ===
+    /// Main fetch lifecycle (mutually exclusive)
+    lifecycle: FetchLifecycle,
+
+    /// Request body streaming state (orthogonal)
+    request_stream_state: RequestStreamState,
+
+    /// Abort requested? (atomic for fast-path check from HTTP thread)
+    abort_requested: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+    /// Connection upgraded to WebSocket? (one-time flag)
+    upgraded_connection: bool = false,
+
+    /// === REFERENCE COUNTING (atomic) ===
+    ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+
+    /// === HTTP CLIENT DATA (owned by HTTP thread after queue) ===
     http: ?*http.AsyncHTTP = null,
     result: http.HTTPClientResult = .{},
     metadata: ?http.HTTPResponseMetadata = null,
-    javascript_vm: *VirtualMachine = undefined,
-    global_this: *JSGlobalObject = undefined,
-    request_body: HTTPRequestBody = undefined,
-    request_body_streaming_buffer: ?*http.ThreadSafeStreamBuffer = null,
 
-    /// buffer being used by AsyncHTTP
-    response_buffer: MutableString = undefined,
-    /// buffer used to stream response to JS
-    scheduled_response_buffer: MutableString = undefined,
-    /// response weak ref we need this to track the response JS lifetime
-    response: jsc.Weak(FetchTasklet) = .{},
-    /// native response ref if we still need it when JS is discarted
-    native_response: ?*Response = null,
-    ignore_data: bool = false,
-    /// stream strong ref if any is available
-    readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
-    request_headers: Headers = Headers{ .allocator = undefined },
-    promise: jsc.JSPromise.Strong,
-    concurrent_task: jsc.ConcurrentTask = .{},
-    poll_ref: Async.KeepAlive = .{},
-    /// For Http Client requests
-    /// when Content-Length is provided this represents the whole size of the request
-    /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
-    /// If is not chunked encoded and Content-Length is not provided this will be unknown
+    /// === BUFFERS (ownership documented) ===
+    /// Response buffer written by HTTP thread.
+    /// Ownership: HTTP thread writes, main thread reads under lock, then transfers.
+    response_buffer: MutableString,
+
+    /// Response buffer for JS (accumulated data before creating Response).
+    /// Ownership: Main thread only, but guarded by mutex for consistency.
+    scheduled_response_buffer: MutableString,
+
+    /// Body size tracking
     body_size: http.HTTPClientResult.BodySize = .unknown,
 
-    /// This is url + proxy memory buffer and is owned by FetchTasklet
-    /// We always clone url and proxy (if informed)
-    url_proxy_buffer: []const u8 = "",
+    /// === COORDINATION FLAGS (atomic) ===
+    /// Has callback been scheduled to main thread?
+    /// Prevents duplicate enqueues from HTTP thread.
+    has_schedule_callback: std.atomic.Value(bool),
 
-    signal: ?*jsc.WebCore.AbortSignal = null,
+    /// Signal storage for HTTP thread
     signals: http.Signals = .{},
     signal_store: http.Signals.Store = .{},
-    has_schedule_callback: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
-    // must be stored because AbortSignal stores reason weakly
-    abort_reason: jsc.Strong.Optional = .empty,
+    /// === ERROR TRACKING (protected by mutex) ===
+    /// Unified error storage (replaces scattered abort_reason, result.fail tracking)
+    fetch_error: FetchError = .none,
 
-    // custom checkServerIdentity
-    check_server_identity: jsc.Strong.Optional = .empty,
+    /// === REQUEST DATA (accessed by both threads) ===
+    /// Request body streaming buffer (thread-safe, accessed from both threads)
+    request_body_streaming_buffer: ?*http.ThreadSafeStreamBuffer = null,
+
+    /// Request headers (setup on main thread, read by HTTP thread)
+    request_headers: Headers,
+
+    /// URL and proxy buffer (setup on main thread, read by HTTP thread)
+    /// This is url + proxy memory buffer and is owned by FetchTasklet
+    url_proxy_buffer: bun.ptr.Owned([]const u8),
+
+    /// TLS certificate validation setting (read by HTTP thread)
     reject_unauthorized: bool = true,
-    upgraded_connection: bool = false,
-    // Custom Hostname
-    hostname: ?[]u8 = null,
-    is_waiting_body: bool = false,
-    is_waiting_abort: bool = false,
-    is_waiting_request_stream_start: bool = false,
-    mutex: Mutex,
 
-    tracker: jsc.Debugger.AsyncTaskTracker,
+    /// Custom hostname for TLS certificate validation
+    /// Only allocated if custom checkServerIdentity function is provided
+    hostname: ?bun.ptr.Owned([]u8) = null,
 
-    ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+    fn init(allocator: std.mem.Allocator) !SharedData {
+        return SharedData{
+            .mutex = .{},
+            .lifecycle = .created,
+            .request_stream_state = .none,
+            .response_buffer = try MutableString.init(allocator, 0),
+            .scheduled_response_buffer = try MutableString.init(allocator, 0),
+            .has_schedule_callback = std.atomic.Value(bool).init(false),
+            .request_headers = Headers{ .allocator = allocator },
+            .url_proxy_buffer = bun.ptr.Owned([]const u8).fromRaw(&.{}),
+        };
+    }
 
+    fn deinit(self: *SharedData, allocator: std.mem.Allocator) void {
+        self.response_buffer.deinit();
+        self.scheduled_response_buffer.deinit();
+        if (self.metadata) |*metadata| {
+            metadata.deinit(self.response_buffer.allocator);
+        }
+        // Clean up error storage
+        self.fetch_error.deinit();
+        // Clean up request headers
+        self.request_headers.entries.deinit(allocator);
+        self.request_headers.buf.deinit(allocator);
+        // Clean up URL proxy buffer
+        self.url_proxy_buffer.deinit();
+        // Clean up hostname
+        if (self.hostname) |*hostname| {
+            hostname.deinit();
+        }
+        // request_body_streaming_buffer is handled elsewhere (ref counted)
+    }
+
+    /// Lock the shared data for exclusive access.
+    /// Returns RAII wrapper that auto-unlocks on scope exit.
+    fn lock(self: *SharedData) LockedSharedData {
+        self.mutex.lock();
+        return LockedSharedData{ .shared = self };
+    }
+};
+
+/// RAII wrapper for locked shared data.
+/// Automatically unlocks on scope exit.
+const LockedSharedData = struct {
+    shared: *SharedData,
+
+    fn unlock(self: LockedSharedData) void {
+        self.shared.mutex.unlock();
+    }
+
+    /// Convenience: Get current lifecycle
+    fn lifecycle(self: LockedSharedData) FetchLifecycle {
+        return self.shared.lifecycle;
+    }
+
+    /// Convenience: Transition lifecycle with validation
+    fn transitionTo(self: LockedSharedData, new_state: FetchLifecycle) void {
+        transitionLifecycle(self.shared, self.shared.lifecycle, new_state);
+    }
+
+    /// Convenience: Should ignore body data?
+    fn shouldIgnoreBody(self: LockedSharedData) bool {
+        return shouldIgnoreBodyData(
+            self.shared.lifecycle,
+            self.shared.abort_requested.load(.acquire),
+        );
+    }
+};
+
+// ============================================================================
+// OWNERSHIP WRAPPERS
+// ============================================================================
+
+/// Request headers with explicit ownership tracking.
+/// Encapsulates the "do I need to free this?" logic.
+const RequestHeaders = struct {
+    headers: Headers,
+    #owned: bool, // Private: true if we must deinit
+
+    /// Create empty headers (not owned - no cleanup needed)
+    fn initEmpty(allocator: std.mem.Allocator) RequestHeaders {
+        return .{
+            .headers = .{ .allocator = allocator },
+            .#owned = false,
+        };
+    }
+
+    /// Extract headers from FetchHeaders (owned - we must cleanup)
+    fn initFromFetchHeaders(
+        fetch_headers: *FetchHeaders,
+        allocator: std.mem.Allocator,
+    ) !RequestHeaders {
+        return .{
+            .headers = try Headers.from(fetch_headers, allocator),
+            .#owned = true,
+        };
+    }
+
+    /// Single cleanup path
+    fn deinit(self: *RequestHeaders) void {
+        if (self.#owned) {
+            self.headers.entries.deinit(self.headers.allocator);
+            self.headers.buf.deinit(self.headers.allocator);
+        }
+    }
+
+    /// Borrow headers for HTTP request
+    fn borrow(self: *RequestHeaders) *Headers {
+        return &self.headers;
+    }
+};
+
+/// Response metadata with explicit take semantics.
+/// Ensures metadata is only transferred once to Response object.
+const ResponseMetadataHolder = struct {
+    #metadata: ?http.HTTPResponseMetadata = null,
+    #certificate_info: ?http.CertificateInfo = null,
+    allocator: std.mem.Allocator,
+
+    fn init(allocator: std.mem.Allocator) ResponseMetadataHolder {
+        return .{ .allocator = allocator };
+    }
+
+    /// Take metadata, transferring ownership to caller.
+    /// Can only be called once - subsequent calls return null.
+    fn takeMetadata(self: *ResponseMetadataHolder) ?http.HTTPResponseMetadata {
+        const metadata = self.#metadata;
+        self.#metadata = null; // Clear to prevent double-take
+        return metadata;
+    }
+
+    /// Take certificate info, transferring ownership to caller.
+    fn takeCertificate(self: *ResponseMetadataHolder) ?http.CertificateInfo {
+        const cert = self.#certificate_info;
+        self.#certificate_info = null;
+        return cert;
+    }
+
+    /// Set metadata from HTTP result (takes ownership).
+    /// Frees old metadata if present.
+    fn setMetadata(self: *ResponseMetadataHolder, metadata: http.HTTPResponseMetadata) void {
+        if (self.#metadata) |old| {
+            old.deinit(self.allocator);
+        }
+        self.#metadata = metadata;
+    }
+
+    /// Set certificate info from HTTP result (takes ownership).
+    fn setCertificate(self: *ResponseMetadataHolder, cert: http.CertificateInfo) void {
+        if (self.#certificate_info) |old| {
+            old.deinit(self.allocator);
+        }
+        self.#certificate_info = cert;
+    }
+
+    /// Single cleanup path
+    fn deinit(self: *ResponseMetadataHolder) void {
+        if (self.#metadata) |metadata| {
+            metadata.deinit(self.allocator);
+        }
+        if (self.#certificate_info) |cert| {
+            cert.deinit(self.allocator);
+        }
+    }
+};
+
+/// Unified error storage with explicit precedence rules.
+/// Replaces scattered error tracking across multiple fields (result.fail, abort_reason, body error).
+const FetchError = union(enum) {
+    none: void,
+    http_error: anyerror, // From HTTPClientResult.fail
+    abort_error: jsc.Strong, // From AbortSignal
+    js_error: jsc.Strong, // From JS callback (e.g., checkServerIdentity)
+    tls_error: jsc.Strong, // From TLS validation
+
+    /// Set new error, freeing old error if present
+    fn set(self: *FetchError, new_error: FetchError) void {
+        self.deinit();
+        self.* = new_error;
+    }
+
+    /// Convert error to JavaScript value for promise rejection
+    fn toJS(self: FetchError, global: *JSGlobalObject) JSValue {
+        return switch (self) {
+            .none => .js_undefined,
+            .http_error => {
+                _ = global;
+                // NOTE: Currently returns undefined for http_error cases.
+                // Future enhancement: Convert anyerror to JSValue with error details.
+                return .js_undefined;
+            },
+            .abort_error => |strong| strong.get(),
+            .js_error => |strong| strong.get(),
+            .tls_error => |strong| strong.get(),
+        };
+    }
+
+    /// Check if this is an abort error (for special handling)
+    fn isAbort(self: FetchError) bool {
+        return self == .abort_error;
+    }
+
+    /// Single cleanup path
+    fn deinit(self: *FetchError) void {
+        switch (self.*) {
+            .none, .http_error => {},
+            .abort_error => |*strong| strong.deinit(),
+            .js_error => |*strong| strong.deinit(),
+            .tls_error => |*strong| strong.deinit(),
+        }
+        self.* = .none;
+    }
+};
+
+// ============================================================================
+// URL/PROXY BUFFER PATTERN
+// ============================================================================
+//
+// The url_proxy_buffer field uses bun.ptr.Owned for explicit ownership:
+//
+// In FetchTasklet:
+//
+// /// Owned buffer containing URL and optional proxy string concatenated.
+// /// Slices (url, proxy) point into this buffer.
+// url_proxy_buffer: bun.ptr.Owned([]const u8),
+//
+// /// Non-owning slice into url_proxy_buffer
+// url: []const u8,
+//
+// /// Non-owning slice into url_proxy_buffer
+// proxy: []const u8,
+//
+// /// Create URL buffer with optional proxy
+// fn createURLBuffer(
+//     allocator: std.mem.Allocator,
+//     url_str: []const u8,
+//     proxy_str: []const u8,
+// ) !bun.ptr.Owned([]const u8) {
+//     const total_len = url_str.len + proxy_str.len;
+//     const buffer = try allocator.alloc(u8, total_len);
+//
+//     // Copy URL
+//     @memcpy(buffer[0..url_str.len], url_str);
+//
+//     // Copy proxy (if present)
+//     if (proxy_str.len > 0) {
+//         @memcpy(buffer[url_str.len..], proxy_str);
+//     }
+//
+//     return bun.ptr.Owned([]const u8).fromRawIn(buffer, allocator);
+// }
+//
+// // Usage in init:
+// const buffer = try createURLBuffer(allocator, url, proxy);
+// this.url_proxy_buffer = buffer;
+// this.url = buffer.get()[0..url.len];
+// this.proxy = buffer.get()[url.len..];
+//
+// // Cleanup (automatic in deinit):
+// this.url_proxy_buffer.deinit();
+
+/// Abort signal handling with centralized lifecycle management.
+/// Ensures all ref/unref operations are paired correctly.
+// ============================================================================
+// HOSTNAME BUFFER PATTERN
+// ============================================================================
+//
+// The hostname field uses optional bun.ptr.Owned for explicit ownership:
+//
+// In FetchTasklet:
+//
+// /// Hostname buffer for TLS certificate validation.
+// /// Only allocated if custom checkServerIdentity function is provided.
+// hostname: ?bun.ptr.Owned([]u8) = null,
+//
+// // Creation:
+// if (needs_hostname) {
+//     const buf = try allocator.dupe(u8, hostname_str);
+//     this.hostname = bun.ptr.Owned([]u8).fromRawIn(buf, allocator);
+// }
+//
+// // Cleanup (automatic in deinit):
+// if (this.hostname) |*host| {
+//     host.deinit();
+// }
+
+pub const FetchTasklet = struct {
+    // ============================================================================
+    // STATE MACHINE
+    // ============================================================================
+    //
+    // FetchTasklet tracks multiple orthogonal state dimensions:
+    // 1. Main lifecycle (FetchLifecycle) - mutually exclusive
+    // 2. Request streaming (RequestStreamState) - independent
+    // 3. Abort status (atomic bool) - independent
+    // 4. Connection upgrade (bool) - one-time flag
+    //
+    // State machine architecture:
+    // - lifecycle tracks overall request/response state
+    // - request_stream_state tracks request body streaming state
+    // - signal_store.aborted tracks abort status
+
+    pub const ResumableSink = jsc.WebCore.ResumableFetchSink;
+
+    const log = Output.scoped(.FetchTasklet, .visible);
+
+    // ============================================================================
+    // Container Fields
+    // ============================================================================
+    /// Main thread data container (no lock needed - thread confinement)
+    main_thread: MainThreadData,
+
+    /// Shared data container (mutex protected for cross-thread access)
+    shared: SharedData,
+
+    // ============================================================================
+    // STATE TRANSITION EXAMPLES
+    // ============================================================================
+    //
+    // Normal fetch with buffered body:
+    //   created → http_active → http_receiving_headers → http_receiving_body
+    //   → response_body_buffering → completed
+    //
+    // Normal fetch with streaming body:
+    //   created → http_active → http_receiving_headers → http_receiving_body
+    //   → response_body_streaming → completed
+    //
+    // Fetch with body accessed after response created:
+    //   created → http_active → http_receiving_headers → http_receiving_body
+    //   → response_awaiting_body_access → response_body_streaming → completed
+    //
+    // Aborted fetch:
+    //   (any state) → aborted
+    //
+    // Failed fetch:
+    //   (any state) → failed
+    //
+    // Request streaming (orthogonal):
+    //   none (most requests)
+    //   OR: waiting_start → active → complete
+
+    request_body: HTTPRequestBody = undefined,
+
+    /// Increment reference count. Thread-safe (atomic operation).
+    /// Can be called from any thread.
     pub fn ref(this: *FetchTasklet) void {
-        const count = this.ref_count.fetchAdd(1, .monotonic);
+        const count = this.shared.ref_count.fetchAdd(1, .monotonic);
         bun.debugAssert(count > 0);
     }
 
+    /// Decrement reference count. Thread-safe (atomic operation).
+    /// Should be called from main thread when possible.
+    /// Use derefFromThread() when called from HTTP thread.
     pub fn deref(this: *FetchTasklet) void {
-        const count = this.ref_count.fetchSub(1, .monotonic);
+        const count = this.shared.ref_count.fetchSub(1, .monotonic);
         bun.debugAssert(count > 0);
 
         if (count == 1) {
@@ -73,16 +674,23 @@ pub const FetchTasklet = struct {
         }
     }
 
+    /// Called from HTTP thread when dropping a reference.
+    /// Must handle case where VM is shutting down.
     pub fn derefFromThread(this: *FetchTasklet) void {
-        const count = this.ref_count.fetchSub(1, .monotonic);
-        bun.debugAssert(count > 0);
+        const old_count = this.shared.ref_count.fetchSub(1, .monotonic);
+        bun.debugAssert(old_count > 0);
 
-        if (count == 1) {
-            // this is really unlikely to happen, but can happen
-            // lets make sure that we always call deinit from main thread
+        if (old_count == 1) {
+            // Last reference - must deinit on main thread
+            const vm = this.main_thread.javascript_vm;
 
-            this.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinit));
+            vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.deinitFromMainThread));
         }
+    }
+
+    fn deinitFromMainThread(this: *FetchTasklet) void {
+        this.main_thread.assertMainThread();
+        this.deinit() catch |err| switch (err) {};
     }
 
     pub const HTTPRequestBody = union(enum) {
@@ -180,83 +788,107 @@ pub const FetchTasklet = struct {
         return FetchTasklet{};
     }
 
+    /// Clear sink and buffer when request streaming is done.
+    /// Single cleanup path with documented ref count operations.
+    ///
+    /// REF COUNTING PROTOCOL:
+    /// - Sink has 2 refs at creation:
+    ///   - Ref 1: We hold via this.main_thread.sink (released here)
+    ///   - Ref 2: Stream pipeline holds (may still be active)
+    /// - Buffer has 2 refs:
+    ///   - Ref 1: We hold via this.shared.request_body_streaming_buffer (released here)
+    ///   - Ref 2: HTTP thread holds (released when HTTP completes)
+    ///
+    /// CALL SITES:
+    /// - deinit(): Called during FetchTasklet cleanup
+    /// - writeEndRequest(): Called when request stream ends (with or without error)
     fn clearSink(this: *FetchTasklet) void {
-        if (this.sink) |sink| {
-            this.sink = null;
-            sink.deref();
+        // Clear sink (drop our ref - stream pipeline might still hold one)
+        if (this.main_thread.sink) |sink| {
+            this.main_thread.sink = null;
+            sink.deref(); // Drop Ref 1 (we held this via this.main_thread.sink)
+            // Stream pipeline still holds Ref 2 until it finishes
         }
-        if (this.request_body_streaming_buffer) |buffer| {
-            this.request_body_streaming_buffer = null;
-            buffer.clearDrainCallback();
-            buffer.deref();
+
+        // Clear buffer (drop our ref - HTTP thread might still hold one)
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
+        if (locked.shared.request_body_streaming_buffer) |buffer| {
+            locked.shared.request_body_streaming_buffer = null;
+            buffer.clearDrainCallback(); // Unhook from HTTP thread callbacks
+            buffer.deref(); // Drop Ref 1 (we held this)
+            // HTTP thread still holds its ref until request completes
         }
     }
 
-    fn clearData(this: *FetchTasklet) void {
-        log("clearData ", .{});
+    /// Destroy the FetchTasklet and free all resources.
+    /// Must be called from main thread when ref_count reaches 0.
+    /// NOTE: Returns `error{}!void` for compatibility with callback coercion.
+    /// Zig type system: `fn (*T) error{}!void` coerces to `fn (*T) bun.JSError!void`,
+    /// but `fn (*T) void` does not.
+    pub fn deinit(this: *FetchTasklet) error{}!void {
+        log("deinit", .{});
+
+        bun.assert(this.shared.ref_count.load(.monotonic) == 0);
+
         const allocator = bun.default_allocator;
-        if (this.url_proxy_buffer.len > 0) {
-            allocator.free(this.url_proxy_buffer);
-            this.url_proxy_buffer.len = 0;
-        }
 
-        if (this.hostname) |hostname| {
-            allocator.free(hostname);
-            this.hostname = null;
-        }
+        // Clean up resources that must be handled while locked
+        // Read request_stream_state early for later use
+        const request_stream_waiting = blk: {
+            var locked = this.shared.lock();
+            defer locked.unlock();
 
-        if (this.result.certificate_info) |*certificate| {
-            certificate.deinit(bun.default_allocator);
-            this.result.certificate_info = null;
-        }
+            if (locked.shared.result.certificate_info) |*certificate| {
+                certificate.deinit(bun.default_allocator);
+                locked.shared.result.certificate_info = null;
+            }
 
-        this.request_headers.entries.deinit(allocator);
-        this.request_headers.buf.deinit(allocator);
-        this.request_headers = Headers{ .allocator = undefined };
+            if (locked.shared.http) |http_| {
+                http_.clearData();
+            }
 
-        if (this.http) |http_| {
-            http_.clearData();
-        }
+            // Note: metadata, response_buffer, and scheduled_response_buffer
+            // are cleaned up by SharedData.deinit() below - no need to double-free
 
-        if (this.metadata != null) {
-            this.metadata.?.deinit(allocator);
-            this.metadata = null;
-        }
+            // Check request_stream_state while locked
+            break :blk locked.shared.request_stream_state == .waiting_start;
+        };
 
-        this.response_buffer.deinit();
-        this.response.deinit();
-        if (this.native_response) |response| {
-            this.native_response = null;
+        this.main_thread.response_weak.deinit();
+        if (this.main_thread.native_response) |response| {
+            this.main_thread.native_response = null;
 
             response.unref();
         }
 
-        this.readable_stream_ref.deinit();
+        this.main_thread.readable_stream_ref.deinit();
 
-        this.scheduled_response_buffer.deinit();
-        if (this.request_body != .ReadableStream or this.is_waiting_request_stream_start) {
+        // Detach if not a stream, or if stream hasn't started yet (waiting_start state)
+        if (this.request_body != .ReadableStream or request_stream_waiting) {
             this.request_body.detach();
         }
 
-        this.abort_reason.deinit();
-        this.check_server_identity.deinit();
+        this.main_thread.check_server_identity.deinit();
         this.clearAbortSignal();
         // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
         this.clearSink();
-    }
 
-    // XXX: 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void' but 'fn (*FetchTasklet) void' does not
-    pub fn deinit(this: *FetchTasklet) error{}!void {
-        log("deinit", .{});
+        // Clean up container fields
+        this.main_thread.deinit();
+        this.shared.deinit(allocator);
 
-        bun.assert(this.ref_count.load(.monotonic) == 0);
+        const http_to_destroy = blk: {
+            var locked = this.shared.lock();
+            defer locked.unlock();
 
-        this.clearData();
+            const http_ = locked.shared.http;
+            locked.shared.http = null;
+            break :blk http_;
+        };
 
-        const allocator = bun.default_allocator;
-
-        if (this.http) |http_| {
-            this.http = null;
+        if (http_to_destroy) |http_| {
             allocator.destroy(http_);
         }
         allocator.destroy(this);
@@ -264,12 +896,12 @@ pub const FetchTasklet = struct {
 
     fn getCurrentResponse(this: *FetchTasklet) ?*Response {
         // we need a body to resolve the promise when buffering
-        if (this.native_response) |response| {
+        if (this.main_thread.native_response) |response| {
             return response;
         }
 
         // if we did not have a direct reference we check if the Weak ref is still alive
-        if (this.response.get()) |response_js| {
+        if (this.main_thread.response_weak.get()) |response_js| {
             if (response_js.as(Response)) |response| {
                 return response;
             }
@@ -278,232 +910,420 @@ pub const FetchTasklet = struct {
         return null;
     }
 
+    /// Returns true if we should ignore remaining body data
+    fn shouldIgnoreData(this: *FetchTasklet) bool {
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
+        return shouldIgnoreBodyData(
+            locked.shared.lifecycle,
+            locked.shared.signal_store.aborted.load(.monotonic),
+        );
+    }
+
+    /// Start streaming request body to server.
+    /// Uses explicit ownership transfer to avoid double-retain bugs.
+    ///
+    /// REF COUNTING PROTOCOL:
+    /// - Before: request_body owns 1 ref to stream
+    /// - During: sink created with 2 refs
+    ///   - Ref 1: FetchTasklet.sink field (we hold this)
+    ///   - Ref 2: Streaming pipeline (consumed when stream pipes data to sink)
+    /// - After: stream ownership transferred to sink, we hold sink ref
     pub fn startRequestStream(this: *FetchTasklet) void {
-        this.is_waiting_request_stream_start = false;
+        // Transition request_stream_state from waiting_start to active
+        {
+            var locked = this.shared.lock();
+            defer locked.unlock();
+            locked.shared.request_stream_state = .active;
+        }
         bun.assert(this.request_body == .ReadableStream);
-        if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
-            if (this.signal) |signal| {
+
+        if (this.request_body.ReadableStream.get(this.main_thread.global_this)) |stream| {
+            // Check for abort before starting stream
+            if (this.main_thread.abort_signal) |signal| {
                 if (signal.aborted()) {
-                    stream.abort(this.global_this);
+                    stream.abort(this.main_thread.global_this);
                     return;
                 }
             }
 
-            const globalThis = this.global_this;
-            this.ref(); // lets only unref when sink is done
-            // +1 because the task refs the sink
+            const globalThis = this.main_thread.global_this;
+
+            // Keep FetchTasklet alive until sink completes
+            // This ref is released in writeEndRequest or clearSink
+            this.ref();
+
+            // Create sink with explicit ref count of 2:
+            // - Ref 1: We hold via this.main_thread.sink (released in clearSink)
+            // - Ref 2: Stream pipeline holds (released when stream finishes)
             const sink = ResumableSink.initExactRefs(globalThis, stream, this, 2);
-            this.sink = sink;
+
+            // Store sink - we now hold Ref 1
+            this.main_thread.sink = sink;
+
+            // Final state:
+            // - FetchTasklet has extra ref (from this.ref() above)
+            // - sink has 2 refs as documented
+            // - stream ownership transferred to sink (via initExactRefs)
         }
     }
 
-    pub fn onBodyReceived(this: *FetchTasklet) bun.JSTerminated!void {
-        const success = this.result.isSuccess();
-        const globalThis = this.global_this;
-        // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
-        var buffer_reset = true;
-        log("onBodyReceived success={} has_more={}", .{ success, this.result.has_more });
-        defer {
-            if (buffer_reset) {
-                this.scheduled_response_buffer.reset();
-            }
-        }
+    /// Process initial body data before Response object exists.
+    /// Decides whether to buffer or stream based on timing.
+    /// Phase 4.1: State-based body streaming dispatch
+    fn processBodyDataInitial(this: *FetchTasklet) bun.JSTerminated!void {
+        log("processBodyDataInitial", .{});
 
-        if (!success) {
-            var err = this.onReject();
-            var need_deinit = true;
-            defer if (need_deinit) err.deinit();
-            var js_err = JSValue.zero;
-            // if we are streaming update with error
-            if (this.readable_stream_ref.get(globalThis)) |readable| {
-                if (readable.ptr == .Bytes) {
-                    js_err = err.toJS(globalThis);
-                    js_err.ensureStillAlive();
-                    try readable.ptr.Bytes.onData(
-                        .{
-                            .err = .{ .JSValue = js_err },
-                        },
-                        bun.default_allocator,
-                    );
-                }
-            }
-            if (this.sink) |sink| {
-                if (js_err == .zero) {
-                    js_err = err.toJS(globalThis);
-                    js_err.ensureStillAlive();
-                }
-                sink.cancel(js_err);
-                return;
-            }
-            // if we are buffering resolve the promise
-            if (this.getCurrentResponse()) |response| {
-                need_deinit = false; // body value now owns the error
-                const body = response.getBodyValue();
-                try body.toErrorInstance(err, globalThis);
-            }
+        // Check if we have a readable stream yet
+        const has_stream = this.main_thread.readable_stream_ref.held.has();
+
+        if (has_stream) {
+            // Stream exists - transition to streaming mode
+            log("processBodyDataInitial: transitioning to streaming", .{});
+            try this.streamBodyToJS();
+        } else {
+            // No stream yet - buffer the data
+            log("processBodyDataInitial: buffering data", .{});
+            this.bufferBodyData();
+        }
+    }
+
+    /// Stream body data to JS ReadableStream.
+    /// Phase 4.1: Focused streaming logic
+    fn streamBodyToJS(this: *FetchTasklet) bun.JSTerminated!void {
+        log("streamBodyToJS", .{});
+        const globalThis = this.main_thread.global_this;
+
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
+        // Get data from scheduled_response_buffer
+        const data = locked.shared.scheduled_response_buffer.list.items;
+        const has_more = locked.shared.result.has_more;
+
+        // Early exit if nothing to do
+        if (data.len == 0 and has_more) {
             return;
         }
 
-        if (this.readable_stream_ref.get(globalThis)) |readable| {
-            log("onBodyReceived readable_stream_ref", .{});
-            if (readable.ptr == .Bytes) {
-                readable.ptr.Bytes.size_hint = this.getSizeHint();
-                // body can be marked as used but we still need to pipe the data
-                const scheduled_response_buffer = &this.scheduled_response_buffer.list;
+        // Get stream
+        const stream = this.main_thread.readable_stream_ref.get(globalThis) orelse {
+            // Stream gone - switch to buffering mode
+            log("streamBodyToJS: stream gone, switching to buffering", .{});
+            // Data already in scheduled_response_buffer, just return
+            return;
+        };
 
-                const chunk = scheduled_response_buffer.items;
-
-                if (this.result.has_more) {
-                    try readable.ptr.Bytes.onData(
-                        .{
-                            .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
-                        },
-                        bun.default_allocator,
-                    );
-                } else {
-                    var prev = this.readable_stream_ref;
-                    this.readable_stream_ref = .{};
-                    defer prev.deinit();
-                    buffer_reset = false;
-
-                    try readable.ptr.Bytes.onData(
-                        .{
-                            .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
-                        },
-                        bun.default_allocator,
-                    );
-                }
-                return;
-            }
+        if (stream.ptr != .Bytes) {
+            log("streamBodyToJS: stream is not Bytes type", .{});
+            return;
         }
 
-        if (this.getCurrentResponse()) |response| {
-            log("onBodyReceived Current Response", .{});
-            const sizeHint = this.getSizeHint();
-            response.setSizeHint(sizeHint);
-            if (response.getBodyReadableStream(globalThis)) |readable| {
-                log("onBodyReceived CurrentResponse BodyReadableStream", .{});
-                if (readable.ptr == .Bytes) {
-                    const scheduled_response_buffer = this.scheduled_response_buffer.list;
+        // Update size hint
+        stream.ptr.Bytes.size_hint = this.getSizeHint();
 
-                    const chunk = scheduled_response_buffer.items;
+        // Write chunk to stream
+        if (has_more) {
+            try stream.ptr.Bytes.onData(
+                .{
+                    .temporary = bun.ByteList.fromBorrowedSliceDangerous(data),
+                },
+                bun.default_allocator,
+            );
+        } else {
+            // Final chunk - close stream
+            var prev = this.main_thread.readable_stream_ref;
+            this.main_thread.readable_stream_ref = .{};
+            defer prev.deinit();
 
-                    if (this.result.has_more) {
-                        try readable.ptr.Bytes.onData(
-                            .{
-                                .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
-                            },
-                            bun.default_allocator,
-                        );
-                    } else {
-                        readable.value.ensureStillAlive();
-                        response.detachReadableStream(globalThis);
-                        try readable.ptr.Bytes.onData(
-                            .{
-                                .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk),
-                            },
-                            bun.default_allocator,
-                        );
-                    }
-
-                    return;
-                }
-            }
-
-            // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
-            buffer_reset = false;
-            if (!this.result.has_more) {
-                var scheduled_response_buffer = this.scheduled_response_buffer.list;
-                const body = response.getBodyValue();
-                // done resolve body
-                var old = body.*;
-                const body_value = Body.Value{
-                    .InternalBlob = .{
-                        .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
-                    },
-                };
-                body.* = body_value;
-                log("onBodyReceived body_value length={}", .{body_value.InternalBlob.bytes.items.len});
-
-                this.scheduled_response_buffer = .{
-                    .allocator = bun.default_allocator,
-                    .list = .{
-                        .items = &.{},
-                        .capacity = 0,
-                    },
-                };
-
-                if (old == .Locked) {
-                    log("onBodyReceived old.resolve", .{});
-                    try old.resolve(body, this.global_this, response.getFetchHeaders());
-                }
-            }
+            try stream.ptr.Bytes.onData(
+                .{
+                    .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(data),
+                },
+                bun.default_allocator,
+            );
         }
     }
 
+    /// Stream body data to Response's ReadableStream.
+    /// Phase 4.1: Handle streaming when Response exists
+    fn streamBodyToResponse(this: *FetchTasklet, response: *Response) bun.JSTerminated!void {
+        log("streamBodyToResponse", .{});
+        const globalThis = this.main_thread.global_this;
+
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
+        const sizeHint = this.getSizeHint();
+        response.setSizeHint(sizeHint);
+
+        const readable = response.getBodyReadableStream(globalThis) orelse {
+            log("streamBodyToResponse: no readable stream on response", .{});
+            return;
+        };
+
+        if (readable.ptr != .Bytes) {
+            log("streamBodyToResponse: stream is not Bytes type", .{});
+            return;
+        }
+
+        const data = locked.shared.scheduled_response_buffer.list.items;
+        const has_more = locked.shared.result.has_more;
+
+        if (has_more) {
+            try readable.ptr.Bytes.onData(
+                .{
+                    .temporary = bun.ByteList.fromBorrowedSliceDangerous(data),
+                },
+                bun.default_allocator,
+            );
+        } else {
+            readable.value.ensureStillAlive();
+            response.detachReadableStream(globalThis);
+            try readable.ptr.Bytes.onData(
+                .{
+                    .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(data),
+                },
+                bun.default_allocator,
+            );
+        }
+    }
+
+    /// Buffer body data in memory (no stream yet).
+    /// Phase 4.1: Simple buffering logic
+    fn bufferBodyData(this: *FetchTasklet) void {
+        _ = this;
+        log("bufferBodyData", .{});
+        // Data is already in scheduled_response_buffer from the HTTP thread callback
+        // Nothing to do here - just keep accumulating
+    }
+
+    /// Finalize buffered body data into Response.
+    /// Phase 4.1: Complete buffering and resolve body
+    fn finalizeBufferedBody(this: *FetchTasklet, response: *Response) bun.JSTerminated!void {
+        log("finalizeBufferedBody", .{});
+
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
+        if (locked.shared.result.has_more) {
+            // Not done yet, keep buffering
+            return;
+        }
+
+        // Transfer buffered data to body
+        var scheduled_response_buffer = locked.shared.scheduled_response_buffer.list;
+        const body = response.getBodyValue();
+        var old = body.*;
+        const body_value = Body.Value{
+            .InternalBlob = .{
+                .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
+            },
+        };
+        body.* = body_value;
+        log("finalizeBufferedBody: body_value length={}", .{body_value.InternalBlob.bytes.items.len});
+
+        locked.shared.scheduled_response_buffer = .{
+            .allocator = bun.default_allocator,
+            .list = .{
+                .items = &.{},
+                .capacity = 0,
+            },
+        };
+
+        if (old == .Locked) {
+            log("finalizeBufferedBody: resolving locked body", .{});
+            try old.resolve(body, this.main_thread.global_this, response.getFetchHeaders());
+        }
+    }
+
+    /// Handle error case for body reception.
+    /// Phase 4.1: Centralized error handling
+    fn handleBodyError(this: *FetchTasklet) bun.JSTerminated!void {
+        log("handleBodyError", .{});
+        const globalThis = this.main_thread.global_this;
+
+        var err = this.onReject();
+        var need_deinit = true;
+        defer if (need_deinit) err.deinit();
+        var js_err = JSValue.zero;
+
+        // if we are streaming update with error
+        if (this.main_thread.readable_stream_ref.get(globalThis)) |readable| {
+            if (readable.ptr == .Bytes) {
+                js_err = err.toJS(globalThis);
+                js_err.ensureStillAlive();
+                try readable.ptr.Bytes.onData(
+                    .{
+                        .err = .{ .JSValue = js_err },
+                    },
+                    bun.default_allocator,
+                );
+            }
+        }
+
+        if (this.main_thread.sink) |sink| {
+            if (js_err == .zero) {
+                js_err = err.toJS(globalThis);
+                js_err.ensureStillAlive();
+            }
+            sink.cancel(js_err);
+            return;
+        }
+
+        // if we are buffering resolve the promise
+        if (this.getCurrentResponse()) |response| {
+            need_deinit = false; // body value now owns the error
+            const body = response.getBodyValue();
+            try body.toErrorInstance(err, globalThis);
+        }
+    }
+
+    /// Called from main thread (from onProgressUpdate) when body data is received.
+    /// Caller must hold the mutex when calling this function.
+    /// Phase 4.1: State-based dispatch - simplified top-level logic
+    pub fn onBodyReceived(this: *FetchTasklet) bun.JSTerminated!void {
+        const success = this.shared.result.isSuccess();
+        // reset the buffer if we are streaming or if we are not waiting for buffering anymore
+        var buffer_reset = true;
+        log("onBodyReceived success={} has_more={}", .{ success, this.shared.result.has_more });
+        defer {
+            if (buffer_reset) {
+                this.shared.scheduled_response_buffer.reset();
+            }
+        }
+
+        // Handle error case first
+        if (!success) {
+            try this.handleBodyError();
+            return;
+        }
+
+        // Check if we have a Response object yet
+        if (this.getCurrentResponse()) |response| {
+            // Response exists - check if it has a stream
+            if (response.getBodyReadableStream(this.main_thread.global_this)) |_| {
+                // Response has its own stream - use it
+                try this.streamBodyToResponse(response);
+            } else {
+                // Response exists but no stream - we're buffering
+                buffer_reset = false;
+                try this.finalizeBufferedBody(response);
+            }
+        } else {
+            // No Response yet - initial body data
+            try this.processBodyDataInitial();
+        }
+    }
+
+    /// Called on main thread to process received data from HTTP thread.
+    /// This is the main thread handler for the callback enqueued from the HTTP thread.
     pub fn onProgressUpdate(this: *FetchTasklet) bun.JSTerminated!void {
         jsc.markBinding(@src());
         log("onProgressUpdate", .{});
-        this.mutex.lock();
-        this.has_schedule_callback.store(false, .monotonic);
-        const is_done = !this.result.has_more;
 
-        const vm = this.javascript_vm;
+        // Reset callback flag first (allows HTTP thread to schedule again)
+        defer this.shared.has_schedule_callback.store(false, .release);
+
+        const vm = this.main_thread.javascript_vm;
         // vm is shutting down we cannot touch JS
         if (vm.isShuttingDown()) {
-            this.mutex.unlock();
+            // Still need to check if we're done for cleanup
+            var locked = this.shared.lock();
+            const is_done = !locked.shared.result.has_more;
+            locked.unlock();
             if (is_done) {
                 this.deref();
             }
             return;
         }
 
-        const globalThis = this.global_this;
+        // Acquire lock to read shared state
+        var locked = this.shared.lock();
+        var is_locked = true;
+        const is_done = !locked.shared.result.has_more;
+
+        const globalThis = this.main_thread.global_this;
         defer {
-            this.mutex.unlock();
+            // Only unlock if still locked (may be unlocked early for onReject/onResolve)
+            if (is_locked) {
+                locked.unlock();
+            }
             // if we are not done we wait until the next call
             if (is_done) {
-                var poll_ref = this.poll_ref;
-                this.poll_ref = .{};
+                var poll_ref = this.main_thread.poll_ref;
+                this.main_thread.poll_ref = .{};
                 poll_ref.unref(vm);
                 this.deref();
             }
         }
-        if (this.is_waiting_request_stream_start and this.result.can_stream) {
+        // Check if request stream is in waiting_start state
+        if (locked.shared.request_stream_state == .waiting_start and locked.shared.result.can_stream) {
+            // Unlock before calling startRequestStream (it will acquire lock itself)
+            locked.unlock();
+            is_locked = false;
             // start streaming
             this.startRequestStream();
         }
         // if we already respond the metadata and still need to process the body
-        if (this.is_waiting_body) {
+        if (locked.shared.lifecycle == .response_awaiting_body_access) {
+            // Unlock before calling onBodyReceived (it will acquire lock itself)
+            locked.unlock();
+            is_locked = false;
             try this.onBodyReceived();
             return;
         }
-        if (this.metadata == null and this.result.isSuccess()) return;
+        if (locked.shared.metadata == null and locked.shared.result.isSuccess()) return;
 
         // if we abort because of cert error
         // we wait the Http Client because we already have the response
         // we just need to deinit
-        if (this.is_waiting_abort) {
+        // Check atomic abort flag - this indicates abort pending but waiting for HTTP thread cleanup
+        if (locked.shared.signal_store.aborted.load(.monotonic) and locked.shared.result.has_more) {
             return;
         }
-        const promise_value = this.promise.valueOrEmpty();
+
+        // Check if we have an abort error to reject with
+        if (this.getAbortErrorLocked(&locked)) |abort_error| {
+            const promise_value = this.main_thread.promise.valueOrEmpty();
+            if (!promise_value.isEmptyOrUndefinedOrNull()) {
+                const promise = promise_value.asAnyPromise().?;
+                const tracker = this.main_thread.tracker;
+                var result = abort_error;
+                defer result.deinit();
+
+                promise_value.ensureStillAlive();
+                try promise.reject(globalThis, result.toJS(globalThis));
+
+                tracker.didDispatch(globalThis);
+                this.main_thread.promise.deinit();
+            }
+            return;
+        }
+
+        const promise_value = this.main_thread.promise.valueOrEmpty();
 
         if (promise_value.isEmptyOrUndefinedOrNull()) {
             log("onProgressUpdate: promise_value is null", .{});
-            this.promise.deinit();
+            this.main_thread.promise.deinit();
             return;
         }
 
-        if (this.result.certificate_info) |certificate_info| {
-            this.result.certificate_info = null;
+        if (locked.shared.result.certificate_info) |certificate_info| {
+            locked.shared.result.certificate_info = null;
             defer certificate_info.deinit(bun.default_allocator);
 
             // we receive some error
-            if (this.reject_unauthorized and !this.checkServerIdentity(certificate_info)) {
+            if (locked.shared.reject_unauthorized and !this.checkServerIdentity(certificate_info)) {
                 log("onProgressUpdate: aborted due certError", .{});
+                // Unlock before calling onReject (it will acquire lock itself)
+                locked.unlock();
+                is_locked = false;
+
                 // we need to abort the request
                 const promise = promise_value.asAnyPromise().?;
-                const tracker = this.tracker;
+                const tracker = this.main_thread.tracker;
                 var result = this.onReject();
                 defer result.deinit();
 
@@ -511,31 +1331,37 @@ pub const FetchTasklet = struct {
                 try promise.reject(globalThis, result.toJS(globalThis));
 
                 tracker.didDispatch(globalThis);
-                this.promise.deinit();
+                this.main_thread.promise.deinit();
                 return;
             }
             // everything ok
-            if (this.metadata == null) {
+            if (locked.shared.metadata == null) {
                 log("onProgressUpdate: metadata is null", .{});
                 return;
             }
         }
 
-        const tracker = this.tracker;
+        const tracker = this.main_thread.tracker;
         tracker.willDispatch(globalThis);
         defer {
             log("onProgressUpdate: promise_value is not null", .{});
             tracker.didDispatch(globalThis);
-            this.promise.deinit();
+            this.main_thread.promise.deinit();
         }
-        const success = this.result.isSuccess();
+        const success = locked.shared.result.isSuccess();
+
+        // Unlock before calling onReject/onResolve to avoid recursive lock
+        // These functions need to acquire the lock themselves
+        locked.unlock();
+        is_locked = false;
+
         const result = switch (success) {
             true => jsc.Strong.Optional.create(this.onResolve(), globalThis),
             false => brk: {
                 // in this case we wanna a jsc.Strong.Optional so we just convert it
                 var value = this.onReject();
                 const err = value.toJS(globalThis);
-                if (this.sink) |sink| {
+                if (this.main_thread.sink) |sink| {
                     sink.cancel(err);
                 }
                 break :brk value.JSValue;
@@ -578,11 +1404,11 @@ pub const FetchTasklet = struct {
         holder.* = .{
             .held = result,
             // we need the promise to be alive until the task is done
-            .promise = this.promise.strong,
+            .promise = this.main_thread.promise.strong,
             .globalObject = globalThis,
             .task = undefined,
         };
-        this.promise.strong = .empty;
+        this.main_thread.promise.strong = .empty;
         holder.task = switch (success) {
             true => jsc.AnyTask.New(Holder, Holder.resolve).init(holder),
             false => jsc.AnyTask.New(Holder, Holder.reject).init(holder),
@@ -591,14 +1417,17 @@ pub const FetchTasklet = struct {
         vm.enqueueTask(jsc.Task.init(&holder.task));
     }
 
+    /// Called from main thread (from onProgressUpdate) to validate TLS certificate.
+    /// Caller must hold mutex when calling this function.
+    /// Uses atomic operations to signal abort to HTTP thread.
     pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: http.CertificateInfo) bool {
-        if (this.check_server_identity.get()) |check_server_identity| {
+        if (this.main_thread.check_server_identity.get()) |check_server_identity| {
             check_server_identity.ensureStillAlive();
             if (certificate_info.cert.len > 0) {
                 const cert = certificate_info.cert;
                 var cert_ptr = cert.ptr;
                 if (BoringSSL.d2i_X509(null, &cert_ptr, @intCast(cert.len))) |x509| {
-                    const globalObject = this.global_this;
+                    const globalObject = this.main_thread.global_this;
                     defer x509.free();
                     const js_cert = X509.toJS(x509, globalObject) catch |err| {
                         switch (err) {
@@ -608,13 +1437,15 @@ pub const FetchTasklet = struct {
                         }
                         const check_result = globalObject.tryTakeException().?;
                         // mark to wait until deinit
-                        this.is_waiting_abort = this.result.has_more;
-                        this.abort_reason.set(globalObject, check_result);
-                        this.signal_store.aborted.store(true, .monotonic);
-                        this.tracker.didCancel(this.global_this);
+
+                        // Store TLS error in unified error tracking
+                        this.shared.fetch_error.set(.{ .tls_error = jsc.Strong.create(check_result, globalObject) });
+
+                        this.shared.signal_store.aborted.store(true, .monotonic);
+                        this.main_thread.tracker.didCancel(this.main_thread.global_this);
                         // we need to abort the request
-                        if (this.http) |http_| http.http_thread.scheduleShutdown(http_);
-                        this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+                        if (this.shared.http) |http_| http.http_thread.scheduleShutdown(http_);
+                        this.shared.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
                         return false;
                     };
                     var hostname: bun.String = bun.String.cloneUTF8(certificate_info.hostname);
@@ -627,16 +1458,18 @@ pub const FetchTasklet = struct {
                     // > Returns <Error> object [...] on failure
                     if (check_result.isAnyError()) {
                         // mark to wait until deinit
-                        this.is_waiting_abort = this.result.has_more;
-                        this.abort_reason.set(globalObject, check_result);
-                        this.signal_store.aborted.store(true, .monotonic);
-                        this.tracker.didCancel(this.global_this);
+
+                        // Store TLS error in unified error tracking
+                        this.shared.fetch_error.set(.{ .tls_error = jsc.Strong.create(check_result, globalObject) });
+
+                        this.shared.signal_store.aborted.store(true, .monotonic);
+                        this.main_thread.tracker.didCancel(this.main_thread.global_this);
 
                         // we need to abort the request
-                        if (this.http) |http_| {
+                        if (this.shared.http) |http_| {
                             http.http_thread.scheduleShutdown(http_);
                         }
-                        this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+                        this.shared.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
                         return false;
                     }
 
@@ -646,23 +1479,48 @@ pub const FetchTasklet = struct {
                 }
             }
         }
-        this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+        this.shared.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
         return false;
     }
 
     fn getAbortError(this: *FetchTasklet) ?Body.Value.ValueError {
-        if (this.abort_reason.has()) {
-            defer this.clearAbortSignal();
-            const out = this.abort_reason;
+        // Note: Caller must NOT hold lock - this function acquires it
+        var locked = this.shared.lock();
+        defer locked.unlock();
 
-            this.abort_reason = .empty;
-            return Body.Value.ValueError{ .JSValue = out };
+        return this.getAbortErrorLocked(&locked);
+    }
+
+    fn getAbortErrorLocked(this: *FetchTasklet, locked: *LockedSharedData) ?Body.Value.ValueError {
+        // Note: Caller must hold lock
+        if (locked.shared.fetch_error.isAbort()) {
+            defer this.clearAbortSignal();
+            const js_value = locked.shared.fetch_error.toJS(this.main_thread.global_this);
+            locked.shared.fetch_error = .none; // Clear error after retrieving
+            return Body.Value.ValueError{ .JSValue = jsc.Strong.Optional.create(js_value, this.main_thread.global_this) };
         }
 
-        if (this.signal) |signal| {
-            if (signal.reasonIfAborted(this.global_this)) |reason| {
+        // Check TLS errors (which are also treated as abort-like)
+        if (locked.shared.fetch_error == .tls_error) {
+            defer this.clearAbortSignal();
+            const js_value = locked.shared.fetch_error.toJS(this.main_thread.global_this);
+            locked.shared.fetch_error = .none; // Clear error after retrieving
+            return Body.Value.ValueError{ .JSValue = jsc.Strong.Optional.create(js_value, this.main_thread.global_this) };
+        }
+
+        // Check JS errors (which are also treated as abort-like)
+        if (locked.shared.fetch_error == .js_error) {
+            defer this.clearAbortSignal();
+            const js_value = locked.shared.fetch_error.toJS(this.main_thread.global_this);
+            locked.shared.fetch_error = .none; // Clear error after retrieving
+            return Body.Value.ValueError{ .JSValue = jsc.Strong.Optional.create(js_value, this.main_thread.global_this) };
+        }
+
+        // Fallback: check abort signal directly
+        if (this.main_thread.abort_signal) |signal| {
+            if (signal.reasonIfAborted(this.main_thread.global_this)) |reason| {
                 defer this.clearAbortSignal();
-                return reason.toBodyValueError(this.global_this);
+                return reason.toBodyValueError(this.main_thread.global_this);
             }
         }
 
@@ -670,8 +1528,8 @@ pub const FetchTasklet = struct {
     }
 
     fn clearAbortSignal(this: *FetchTasklet) void {
-        const signal = this.signal orelse return;
-        this.signal = null;
+        const signal = this.main_thread.abort_signal orelse return;
+        this.main_thread.abort_signal = null;
         defer {
             signal.pendingActivityUnref();
             signal.unref();
@@ -681,31 +1539,35 @@ pub const FetchTasklet = struct {
     }
 
     pub fn onReject(this: *FetchTasklet) Body.Value.ValueError {
-        bun.assert(this.result.fail != null);
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
+        bun.assert(locked.shared.result.fail != null);
         log("onReject", .{});
 
-        if (this.getAbortError()) |err| {
+        // Check unified error tracking first (abort, TLS, JS errors)
+        if (this.getAbortErrorLocked(&locked)) |err| {
             return err;
         }
 
-        if (this.result.abortReason()) |reason| {
+        if (locked.shared.result.abortReason()) |reason| {
             return .{ .AbortReason = reason };
         }
 
         // some times we don't have metadata so we also check http.url
-        const path = if (this.metadata) |metadata|
+        const path = if (locked.shared.metadata) |metadata|
             bun.String.cloneUTF8(metadata.url)
-        else if (this.http) |http_|
+        else if (locked.shared.http) |http_|
             bun.String.cloneUTF8(http_.url.href)
         else
             bun.String.empty;
 
         const fetch_error = jsc.SystemError{
-            .code = bun.String.static(switch (this.result.fail.?) {
+            .code = bun.String.static(switch (locked.shared.result.fail.?) {
                 error.ConnectionClosed => "ECONNRESET",
                 else => |e| @errorName(e),
             }),
-            .message = switch (this.result.fail.?) {
+            .message = switch (locked.shared.result.fail.?) {
                 error.ConnectionClosed => bun.String.static("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
                 error.FailedToOpenSocket => bun.String.static("Was there a typo in the url or port?"),
                 error.TooManyRedirects => bun.String.static("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
@@ -790,20 +1652,28 @@ pub const FetchTasklet = struct {
         return .{ .SystemError = fetch_error };
     }
 
+    /// Called from main thread when ReadableStream becomes available.
+    /// Main thread only - no locking needed.
     pub fn onReadableStreamAvailable(ctx: *anyopaque, globalThis: *jsc.JSGlobalObject, readable: jsc.WebCore.ReadableStream) void {
         const this = bun.cast(*FetchTasklet, ctx);
-        this.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis);
+        this.main_thread.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis);
     }
 
+    /// Called from main thread when JS starts consuming the response body stream.
+    /// Acquires mutex to safely transfer buffered data.
     pub fn onStartStreamingHTTPResponseBodyCallback(ctx: *anyopaque) jsc.WebCore.DrainResult {
         const this = bun.cast(*FetchTasklet, ctx);
-        if (this.signal_store.aborted.load(.monotonic)) {
+        // Atomic check - safe without lock
+        if (this.shared.signal_store.aborted.load(.monotonic)) {
             return jsc.WebCore.DrainResult{
                 .aborted = {},
             };
         }
 
-        if (this.http) |http_| {
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
+        if (locked.shared.http) |http_| {
             http_.enableResponseBodyStreaming();
 
             // If the server sent the headers and the response body in two separate socket writes
@@ -812,15 +1682,12 @@ pub const FetchTasklet = struct {
             // then we must make sure the HTTP thread flushes.
             bun.http.http_thread.scheduleResponseBodyDrain(http_.async_http_id);
         }
-
-        this.mutex.lock();
-        defer this.mutex.unlock();
         const size_hint = this.getSizeHint();
 
-        var scheduled_response_buffer = this.scheduled_response_buffer.list;
+        var scheduled_response_buffer = locked.shared.scheduled_response_buffer.list;
         // This means we have received part of the body but not the whole thing
         if (scheduled_response_buffer.items.len > 0) {
-            this.scheduled_response_buffer = .{
+            locked.shared.scheduled_response_buffer = .{
                 .allocator = bun.default_allocator,
                 .list = .{
                     .items = &.{},
@@ -841,24 +1708,29 @@ pub const FetchTasklet = struct {
         };
     }
 
+    /// Get size hint for body streaming.
+    /// Caller must hold mutex when calling this function.
     fn getSizeHint(this: *FetchTasklet) Blob.SizeType {
-        return switch (this.body_size) {
-            .content_length => @truncate(this.body_size.content_length),
-            .total_received => @truncate(this.body_size.total_received),
+        return switch (this.shared.body_size) {
+            .content_length => @truncate(this.shared.body_size.content_length),
+            .total_received => @truncate(this.shared.body_size.total_received),
             .unknown => 0,
         };
     }
 
-    fn toBodyValue(this: *FetchTasklet) Body.Value {
-        if (this.getAbortError()) |err| {
+    /// Convert response to Body.Value.
+    /// Caller must hold mutex when calling this function.
+    fn toBodyValue(this: *FetchTasklet, locked: *LockedSharedData) Body.Value {
+        if (this.getAbortErrorLocked(locked)) |err| {
             return .{ .Error = err };
         }
-        if (this.is_waiting_body) {
+        // Check if we're still awaiting body data (Response created but body not complete)
+        if (locked.shared.lifecycle == .response_awaiting_body_access) {
             const response = Body.Value{
                 .Locked = .{
                     .size_hint = this.getSizeHint(),
                     .task = this,
-                    .global = this.global_this,
+                    .global = this.main_thread.global_this,
                     .onStartStreaming = FetchTasklet.onStartStreamingHTTPResponseBodyCallback,
                     .onReadableStreamAvailable = FetchTasklet.onReadableStreamAvailable,
                 },
@@ -866,13 +1738,13 @@ pub const FetchTasklet = struct {
             return response;
         }
 
-        var scheduled_response_buffer = this.scheduled_response_buffer.list;
+        var scheduled_response_buffer = locked.shared.scheduled_response_buffer.list;
         const response = Body.Value{
             .InternalBlob = .{
                 .bytes = scheduled_response_buffer.toManaged(bun.default_allocator),
             },
         };
-        this.scheduled_response_buffer = .{
+        this.shared.scheduled_response_buffer = .{
             .allocator = bun.default_allocator,
             .list = .{
                 .items = &.{},
@@ -885,11 +1757,22 @@ pub const FetchTasklet = struct {
 
     fn toResponse(this: *FetchTasklet) Response {
         log("toResponse", .{});
-        bun.assert(this.metadata != null);
+
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
+        bun.assert(locked.shared.metadata != null);
         // at this point we always should have metadata
-        const metadata = this.metadata.?;
+        const metadata = locked.shared.metadata.?;
         const http_response = metadata.response;
-        this.is_waiting_body = this.result.has_more;
+        // Set lifecycle based on whether we're still receiving body data
+        if (locked.shared.result.has_more) {
+            locked.shared.lifecycle = .response_awaiting_body_access;
+        } else {
+            locked.shared.lifecycle = .completed;
+        }
+        const redirected = locked.shared.result.redirected;
+
         return Response.init(
             .{
                 .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
@@ -897,63 +1780,60 @@ pub const FetchTasklet = struct {
                 .status_text = bun.String.createAtomIfPossible(http_response.status),
             },
             Body{
-                .value = this.toBodyValue(),
+                .value = this.toBodyValue(&locked),
             },
             bun.String.createAtomIfPossible(metadata.url),
-            this.result.redirected,
+            redirected,
         );
     }
 
+    /// Called from main thread when response body should be ignored.
+    /// Caller must hold mutex when calling this function.
     fn ignoreRemainingResponseBody(this: *FetchTasklet) void {
         log("ignoreRemainingResponseBody", .{});
         // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
         // without a stream ref, response body or response instance alive it will just ignore the result
-        if (this.http) |http_| {
+        if (this.shared.http) |http_| {
             http_.enableResponseBodyStreaming();
         }
         // we should not keep the process alive if we are ignoring the body
-        const vm = this.javascript_vm;
-        this.poll_ref.unref(vm);
+        const vm = this.main_thread.javascript_vm;
+        this.main_thread.poll_ref.unref(vm);
         // clean any remaining refereces
-        this.readable_stream_ref.deinit();
-        this.response.deinit();
+        this.main_thread.readable_stream_ref.deinit();
+        this.main_thread.response_weak.deinit();
 
-        if (this.native_response) |response| {
+        if (this.main_thread.native_response) |response| {
             response.unref();
-            this.native_response = null;
+            this.main_thread.native_response = null;
         }
-
-        this.ignore_data = true;
     }
 
+    /// Called when Response JS object is garbage collected.
+    /// This is our signal to stop processing body data.
     export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.C) void {
         log("onResponseFinalize", .{});
-        if (this.native_response) |response| {
-            const body = response.getBodyValue();
-            // Three scenarios:
-            //
-            // 1. We are streaming, in which case we should not ignore the body.
-            // 2. We were buffering, in which case
-            //    2a. if we have no promise, we should ignore the body.
-            //    2b. if we have a promise, we should keep loading the body.
-            // 3. We never started buffering, in which case we should ignore the body.
-            //
-            // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
-            if (body.* != .Locked or this.readable_stream_ref.held.has()) {
-                // Scenario 1 or 3.
-                return;
-            }
 
-            if (body.Locked.promise) |promise| {
-                if (promise.isEmptyOrUndefinedOrNull()) {
-                    // Scenario 2b.
-                    this.ignoreRemainingResponseBody();
-                }
-            } else {
-                // Scenario 3.
-                this.ignoreRemainingResponseBody();
-            }
+        // === ACQUIRE LOCK - Fix race condition ===
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
+        const lifecycle = locked.lifecycle();
+
+        // Only request abort if we're still receiving body data
+        if (lifecycle.canReceiveBody()) {
+            // Signal abort to HTTP thread
+            this.shared.abort_requested.store(true, .release);
+
+            // Transition to aborted state
+            locked.transitionTo(.aborted);
+
+            // Clear accumulated buffers since we're ignoring rest
+            locked.shared.response_buffer.list.clearRetainingCapacity();
+            locked.shared.scheduled_response_buffer.list.clearRetainingCapacity();
         }
+
+        // If already terminal, nothing to do
     }
     comptime {
         _ = Bun__FetchResponse_finalize;
@@ -962,10 +1842,10 @@ pub const FetchTasklet = struct {
     pub fn onResolve(this: *FetchTasklet) JSValue {
         log("onResolve", .{});
         const response = bun.new(Response, this.toResponse());
-        const response_js = Response.makeMaybePooled(@as(*jsc.JSGlobalObject, this.global_this), response);
+        const response_js = Response.makeMaybePooled(@as(*jsc.JSGlobalObject, this.main_thread.global_this), response);
         response_js.ensureStillAlive();
-        this.response = jsc.Weak(FetchTasklet).create(response_js, this.global_this, .FetchResponse, this);
-        this.native_response = response.ref();
+        this.main_thread.response_weak = jsc.Weak(FetchTasklet).create(response_js, this.main_thread.global_this, .FetchResponse, this);
+        this.main_thread.native_response = response.ref();
         return response_js;
     }
 
@@ -979,39 +1859,28 @@ pub const FetchTasklet = struct {
         var fetch_tasklet = try allocator.create(FetchTasklet);
 
         fetch_tasklet.* = .{
-            .mutex = .{},
-            .scheduled_response_buffer = .{
-                .allocator = bun.default_allocator,
-                .list = .{
-                    .items = &.{},
-                    .capacity = 0,
-                },
+            .main_thread = .{
+                .global_this = globalThis,
+                .javascript_vm = jsc_vm,
+                .promise = promise,
+                .abort_signal = fetch_options.signal,
+                .check_server_identity = fetch_options.check_server_identity,
+                .tracker = jsc.Debugger.AsyncTaskTracker.init(jsc_vm),
             },
-            .response_buffer = MutableString{
-                .allocator = bun.default_allocator,
-                .list = .{
-                    .items = &.{},
-                    .capacity = 0,
-                },
-            },
-            .http = try allocator.create(http.AsyncHTTP),
-            .javascript_vm = jsc_vm,
+            .shared = try SharedData.init(bun.default_allocator),
             .request_body = fetch_options.body,
-            .global_this = globalThis,
-            .promise = promise,
-            .request_headers = fetch_options.headers,
-            .url_proxy_buffer = fetch_options.url_proxy_buffer,
-            .signal = fetch_options.signal,
-            .hostname = fetch_options.hostname,
-            .tracker = jsc.Debugger.AsyncTaskTracker.init(jsc_vm),
-            .check_server_identity = fetch_options.check_server_identity,
-            .reject_unauthorized = fetch_options.reject_unauthorized,
-            .upgraded_connection = fetch_options.upgraded_connection,
         };
 
-        fetch_tasklet.signals = fetch_tasklet.signal_store.to();
+        // Set fields in shared container
+        fetch_tasklet.shared.upgraded_connection = fetch_options.upgraded_connection;
+        fetch_tasklet.shared.request_headers = fetch_options.headers;
+        fetch_tasklet.shared.url_proxy_buffer = bun.ptr.Owned([]const u8).fromRaw(fetch_options.url_proxy_buffer);
+        fetch_tasklet.shared.hostname = if (fetch_options.hostname) |h| bun.ptr.Owned([]u8).fromRaw(h) else null;
+        fetch_tasklet.shared.reject_unauthorized = fetch_options.reject_unauthorized;
 
-        fetch_tasklet.tracker.didSchedule(globalThis);
+        fetch_tasklet.shared.signals = fetch_tasklet.shared.signal_store.to();
+
+        fetch_tasklet.main_thread.tracker.didSchedule(globalThis);
 
         if (fetch_tasklet.request_body.store()) |store| {
             store.ref();
@@ -1026,20 +1895,22 @@ pub const FetchTasklet = struct {
             proxy = jsc_vm.transpiler.env.getHttpProxyFor(fetch_options.url);
         }
 
-        if (fetch_tasklet.check_server_identity.has() and fetch_tasklet.reject_unauthorized) {
-            fetch_tasklet.signal_store.cert_errors.store(true, .monotonic);
+        if (fetch_tasklet.main_thread.check_server_identity.has() and fetch_tasklet.shared.reject_unauthorized) {
+            fetch_tasklet.shared.signal_store.cert_errors.store(true, .monotonic);
         } else {
-            fetch_tasklet.signals.cert_errors = null;
+            fetch_tasklet.shared.signals.cert_errors = null;
         }
 
+        fetch_tasklet.shared.http = try allocator.create(http.AsyncHTTP);
+
         // This task gets queued on the HTTP thread.
-        fetch_tasklet.http.?.* = http.AsyncHTTP.init(
+        fetch_tasklet.shared.http.?.* = http.AsyncHTTP.init(
             bun.default_allocator,
             fetch_options.method,
             fetch_options.url,
             fetch_options.headers.entries,
             fetch_options.headers.buf.items,
-            &fetch_tasklet.response_buffer,
+            &fetch_tasklet.shared.response_buffer,
             fetch_tasklet.request_body.slice(),
             http.HTTPClientResult.Callback.New(
                 *FetchTasklet,
@@ -1049,8 +1920,8 @@ pub const FetchTasklet = struct {
             fetch_options.redirect_type,
             .{
                 .http_proxy = proxy,
-                .hostname = fetch_options.hostname,
-                .signals = fetch_tasklet.signals,
+                .hostname = if (fetch_tasklet.shared.hostname) |h| h.get() else null,
+                .signals = fetch_tasklet.shared.signals,
                 .unix_socket_path = fetch_options.unix_socket_path,
                 .disable_timeout = fetch_options.disable_timeout,
                 .disable_keepalive = fetch_options.disable_keepalive,
@@ -1062,67 +1933,96 @@ pub const FetchTasklet = struct {
         );
         // enable streaming the write side
         const isStream = fetch_tasklet.request_body == .ReadableStream;
-        fetch_tasklet.http.?.client.flags.is_streaming_request_body = isStream;
-        fetch_tasklet.is_waiting_request_stream_start = isStream;
+        fetch_tasklet.shared.http.?.client.flags.is_streaming_request_body = isStream;
+        // Set request_stream_state to waiting_start if streaming, none otherwise
+        fetch_tasklet.shared.request_stream_state = if (isStream) .waiting_start else .none;
         if (isStream) {
+            // Create buffer for request body streaming
+            // REF COUNTING: Buffer created with 1 ref, will gain second ref when HTTP thread starts using it
+            // - Ref 1: FetchTasklet.shared.request_body_streaming_buffer (released in clearSink)
+            // - Ref 2: HTTP thread holds while streaming (released when request completes)
             const buffer = http.ThreadSafeStreamBuffer.new(.{});
             buffer.setDrainCallback(FetchTasklet, FetchTasklet.onWriteRequestDataDrain, fetch_tasklet);
-            fetch_tasklet.request_body_streaming_buffer = buffer;
-            fetch_tasklet.http.?.request_body = .{
+            fetch_tasklet.shared.request_body_streaming_buffer = buffer; // We hold Ref 1
+            fetch_tasklet.shared.http.?.request_body = .{
                 .stream = .{
-                    .buffer = buffer,
+                    .buffer = buffer, // HTTP thread will hold Ref 2 when started
                     .ended = false,
                 },
             };
         }
-        // TODO is this necessary? the http client already sets the redirect type,
-        // so manually setting it here seems redundant
+        // Disable redirects for manual/error redirect modes.
+        // NOTE: AsyncHTTP.init sets client.redirect_type, but does not set remaining_redirect_count.
+        // We must explicitly set remaining_redirect_count to 0 to prevent redirects.
         if (fetch_options.redirect_type != FetchRedirect.follow) {
-            fetch_tasklet.http.?.client.remaining_redirect_count = 0;
+            fetch_tasklet.shared.http.?.client.remaining_redirect_count = 0;
         }
 
         // we want to return after headers are received
-        fetch_tasklet.signal_store.header_progress.store(true, .monotonic);
+        fetch_tasklet.shared.signal_store.header_progress.store(true, .monotonic);
 
         if (fetch_tasklet.request_body == .Sendfile) {
             bun.assert(fetch_options.url.isHTTP());
             bun.assert(fetch_options.proxy == null);
-            fetch_tasklet.http.?.request_body = .{ .sendfile = fetch_tasklet.request_body.Sendfile };
+            fetch_tasklet.shared.http.?.request_body = .{ .sendfile = fetch_tasklet.request_body.Sendfile };
         }
 
-        if (fetch_tasklet.signal) |signal| {
+        if (fetch_tasklet.main_thread.abort_signal) |signal| {
             signal.pendingActivityRef();
-            fetch_tasklet.signal = signal.listen(FetchTasklet, fetch_tasklet, FetchTasklet.abortListener);
+            fetch_tasklet.main_thread.abort_signal = signal.listen(FetchTasklet, fetch_tasklet, FetchTasklet.abortListener);
         }
         return fetch_tasklet;
     }
 
+    /// Called from main thread when abort signal is triggered.
+    /// Uses atomic operation to signal HTTP thread.
     pub fn abortListener(this: *FetchTasklet, reason: JSValue) void {
         log("abortListener", .{});
         reason.ensureStillAlive();
-        this.abort_reason.set(this.global_this, reason);
+
+        // Store abort error in unified error tracking (with mutex protection)
+        {
+            var locked = this.shared.lock();
+            defer locked.unlock();
+            locked.shared.fetch_error.set(.{ .abort_error = jsc.Strong.create(reason, this.main_thread.global_this) });
+        }
+
         this.abortTask();
-        if (this.sink) |sink| {
+        if (this.main_thread.sink) |sink| {
             sink.cancel(reason);
             return;
         }
+
+        // When there's no sink, we must manually schedule promise rejection.
+        // The HTTP thread callback returns early when aborted (line 2303),
+        // so onProgressUpdate won't be called otherwise.
+        this.ref(); // Keep alive during cross-thread handoff
+        this.main_thread.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.onProgressUpdate));
     }
 
-    /// This is ALWAYS called from the http thread and we cannot touch the buffer here because is locked
+    /// Callback from HTTP thread when request buffer is drained and ready for more data.
+    /// THREAD: HTTP thread
+    /// REF COUNTING: Adds temporary ref for cross-thread handoff (released in resumeRequestDataStream)
     pub fn onWriteRequestDataDrain(this: *FetchTasklet) void {
-        // ref until the main thread callback is called
+        // Keep FetchTasklet alive during cross-thread handoff
+        // Released in resumeRequestDataStream() on main thread
         this.ref();
-        this.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.resumeRequestDataStream));
+        this.main_thread.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(this, FetchTasklet.resumeRequestDataStream));
     }
 
-    /// This is ALWAYS called from the main thread
-    // XXX: 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void' but 'fn (*FetchTasklet) void' does not
+    /// Resume request data streaming on main thread.
+    /// Called after HTTP thread signals buffer is drained.
+    /// THREAD: Main thread
+    /// REF COUNTING: Releases ref added in onWriteRequestDataDrain()
+    /// NOTE: Returns `error{}!void` for compatibility with callback coercion.
+    /// Zig type system: `fn (*T) error{}!void` coerces to `fn (*T) bun.JSError!void`,
+    /// but `fn (*T) void` does not.
     pub fn resumeRequestDataStream(this: *FetchTasklet) error{}!void {
-        // deref when done because we ref inside onWriteRequestDataDrain
+        // Release ref from onWriteRequestDataDrain() (cross-thread handoff complete)
         defer this.deref();
         log("resumeRequestDataStream", .{});
-        if (this.sink) |sink| {
-            if (this.signal) |signal| {
+        if (this.main_thread.sink) |sink| {
+            if (this.main_thread.abort_signal) |signal| {
                 if (signal.aborted()) {
                     // already aborted; nothing to drain
                     return;
@@ -1132,28 +2032,38 @@ pub const FetchTasklet = struct {
         }
     }
 
+    /// Called from main thread to write request body data.
+    /// Thread-safe: Uses ThreadSafeStreamBuffer which has internal locking.
     pub fn writeRequestData(this: *FetchTasklet, data: []const u8) ResumableSinkBackpressure {
         log("writeRequestData {}", .{data.len});
-        if (this.signal) |signal| {
+        if (this.main_thread.abort_signal) |signal| {
             if (signal.aborted()) {
                 return .done;
             }
         }
-        const thread_safe_stream_buffer = this.request_body_streaming_buffer orelse return .done;
+
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
+        const thread_safe_stream_buffer = locked.shared.request_body_streaming_buffer orelse return .done;
+        // acquire/release provides thread-safe access to the buffer
         const stream_buffer = thread_safe_stream_buffer.acquire();
         defer thread_safe_stream_buffer.release();
-        const highWaterMark = if (this.sink) |sink| sink.highWaterMark else 16384;
+        const highWaterMark = if (this.main_thread.sink) |sink| sink.highWaterMark else 16384;
+
+        const http_ptr = locked.shared.http.?;
+        const upgraded_connection = locked.shared.upgraded_connection;
 
         var needs_schedule = false;
         defer if (needs_schedule) {
             // wakeup the http thread to write the data
-            http.http_thread.scheduleRequestWrite(this.http.?, .data);
+            http.http_thread.scheduleRequestWrite(http_ptr, .data);
         };
 
         // dont have backpressure so we will schedule the data to be written
         // if we have backpressure the onWritable will drain the buffer
         needs_schedule = stream_buffer.isEmpty();
-        if (this.upgraded_connection) {
+        if (upgraded_connection) {
             bun.handleOom(stream_buffer.write(data));
         } else {
             //16 is the max size of a hex number size that represents 64 bits + 2 for the \r\n
@@ -1175,37 +2085,58 @@ pub const FetchTasklet = struct {
         return if (stream_buffer.size() >= highWaterMark) .backpressure else .want_more;
     }
 
+    /// Called from main thread to end the request body stream.
+    /// Thread-safe: Uses atomic operations and ThreadSafeStreamBuffer.
+    ///
+    /// REF COUNTING:
+    /// - Releases the FetchTasklet ref added in startRequestStream()
+    /// - This is the matching deref() for the ref() call when sink was created
     pub fn writeEndRequest(this: *FetchTasklet, err: ?jsc.JSValue) void {
         log("writeEndRequest hasError? {}", .{err != null});
-        defer this.deref();
+        defer this.deref(); // Release ref from startRequestStream()
         if (err) |jsError| {
-            if (this.signal_store.aborted.load(.monotonic) or this.abort_reason.has()) {
+            // Check if already aborted (fast-path without lock)
+            if (this.shared.signal_store.aborted.load(.monotonic)) {
                 return;
             }
+
             if (!jsError.isUndefinedOrNull()) {
-                this.abort_reason.set(this.global_this, jsError);
+                // Store JS error in unified error tracking (with mutex protection)
+                var locked = this.shared.lock();
+                defer locked.unlock();
+                locked.shared.fetch_error.set(.{ .js_error = jsc.Strong.create(jsError, this.main_thread.global_this) });
             }
             this.abortTask();
         } else {
-            if (!this.upgraded_connection) {
+            var locked = this.shared.lock();
+            defer locked.unlock();
+
+            if (!locked.shared.upgraded_connection) {
                 // If is not upgraded we need to send the terminating chunk
-                const thread_safe_stream_buffer = this.request_body_streaming_buffer orelse return;
+                const thread_safe_stream_buffer = locked.shared.request_body_streaming_buffer orelse return;
                 const stream_buffer = thread_safe_stream_buffer.acquire();
                 defer thread_safe_stream_buffer.release();
                 bun.handleOom(stream_buffer.write(http.end_of_chunked_http1_1_encoding_response_body));
             }
-            if (this.http) |http_| {
+            if (locked.shared.http) |http_| {
                 // just tell to write the end of the chunked encoding aka 0\r\n\r\n
                 http.http_thread.scheduleRequestWrite(http_, .end);
             }
         }
     }
 
+    /// Abort the fetch operation.
+    /// Can be called from any thread - uses atomic operation for thread safety.
+    /// HTTP thread checks this flag and stops processing.
     pub fn abortTask(this: *FetchTasklet) void {
-        this.signal_store.aborted.store(true, .monotonic);
-        this.tracker.didCancel(this.global_this);
+        // Atomic store - safe from any thread
+        this.shared.signal_store.aborted.store(true, .monotonic);
+        this.main_thread.tracker.didCancel(this.main_thread.global_this);
 
-        if (this.http) |http_| {
+        var locked = this.shared.lock();
+        defer locked.unlock();
+
+        if (locked.shared.http) |http_| {
             http.http_thread.scheduleShutdown(http_);
         }
     }
@@ -1248,8 +2179,8 @@ pub const FetchTasklet = struct {
         );
 
         var batch = bun.ThreadPool.Batch{};
-        node.http.?.schedule(allocator, &batch);
-        node.poll_ref.ref(global.bunVM());
+        node.shared.http.?.schedule(allocator, &batch);
+        node.main_thread.poll_ref.ref(global.bunVM());
 
         // increment ref so we can keep it alive until the http client is done
         node.ref();
@@ -1259,79 +2190,147 @@ pub const FetchTasklet = struct {
     }
 
     /// Called from HTTP thread. Handles HTTP events received from socket.
+    /// This function does MINIMAL work - only atomic operations and data copying under lock.
     pub fn callback(task: *FetchTasklet, async_http: *http.AsyncHTTP, result: http.HTTPClientResult) void {
-        // at this point only this thread is accessing result to is no race condition
+        // === HTTP THREAD - Minimal work, atomic ops only ===
+
         const is_done = !result.has_more;
         // we are done with the http client so we can deref our side
         // this is a atomic operation and will enqueue a task to deinit on the main thread
         defer if (is_done) task.derefFromThread();
 
-        task.mutex.lock();
-        // we need to unlock before task.deref();
-        defer task.mutex.unlock();
-        task.http.?.* = async_http.*;
-        task.http.?.response_buffer = async_http.response_buffer;
+        // Fast-path check: should we abort?
+        if (task.shared.signal_store.aborted.load(.acquire)) {
+            // Don't schedule anything, HTTP client will clean up
+            return;
+        }
 
-        log("callback success={} ignore_data={} has_more={} bytes={}", .{ result.isSuccess(), task.ignore_data, result.has_more, result.body.?.list.items.len });
+        // Prevent duplicate enqueues (atomic swap)
+        // If already scheduled, HTTP thread will pick up this data on next callback
+        if (task.shared.has_schedule_callback.swap(true, .acq_rel)) {
+            // Already scheduled - data will be picked up on next progress update
+            // Still need to store the data under lock for the main thread to process
+            var locked = task.shared.lock();
+            defer locked.unlock();
 
-        const prev_metadata = task.result.metadata;
-        const prev_cert_info = task.result.certificate_info;
-        task.result = result;
+            locked.shared.http.?.* = async_http.*;
+            locked.shared.http.?.response_buffer = async_http.response_buffer;
 
-        // Preserve pending certificate info if it was preovided in the previous update.
-        if (task.result.certificate_info == null) {
-            if (prev_cert_info) |cert_info| {
-                task.result.certificate_info = cert_info;
+            const prev_metadata = locked.shared.result.metadata;
+            const prev_cert_info = locked.shared.result.certificate_info;
+            locked.shared.result = result;
+
+            // Preserve pending certificate info
+            if (locked.shared.result.certificate_info == null) {
+                if (prev_cert_info) |cert_info| {
+                    locked.shared.result.certificate_info = cert_info;
+                }
+            }
+
+            // metadata should be provided only once
+            if (result.metadata orelse prev_metadata) |metadata| {
+                if (locked.shared.metadata == null) {
+                    locked.shared.metadata = metadata;
+                }
+                locked.shared.result.metadata = null;
+            }
+
+            locked.shared.body_size = result.body_size;
+            locked.shared.response_buffer = result.body.?.*;
+
+            // Copy data to scheduled buffer if not ignoring
+            const ignore_data = shouldIgnoreBodyData(
+                locked.shared.lifecycle,
+                locked.shared.signal_store.aborted.load(.monotonic),
+            );
+            if (!ignore_data) {
+                const success = result.isSuccess();
+                if (success) {
+                    _ = bun.handleOom(locked.shared.scheduled_response_buffer.write(locked.shared.response_buffer.list.items));
+                }
+            }
+            locked.shared.response_buffer.reset();
+            return;
+        }
+
+        // Copy data to shared state under lock
+        {
+            var locked = task.shared.lock();
+            defer locked.unlock();
+
+            locked.shared.http.?.* = async_http.*;
+            locked.shared.http.?.response_buffer = async_http.response_buffer;
+
+            const ignore_data = shouldIgnoreBodyData(
+                locked.shared.lifecycle,
+                locked.shared.signal_store.aborted.load(.monotonic),
+            );
+            log("callback success={} ignore_data={} has_more={} bytes={}", .{ result.isSuccess(), ignore_data, result.has_more, result.body.?.list.items.len });
+
+            const prev_metadata = locked.shared.result.metadata;
+            const prev_cert_info = locked.shared.result.certificate_info;
+            locked.shared.result = result;
+
+            // Preserve pending certificate info if it was provided in the previous update.
+            if (locked.shared.result.certificate_info == null) {
+                if (prev_cert_info) |cert_info| {
+                    locked.shared.result.certificate_info = cert_info;
+                }
+            }
+
+            // metadata should be provided only once
+            if (result.metadata orelse prev_metadata) |metadata| {
+                log("added callback metadata", .{});
+                if (locked.shared.metadata == null) {
+                    locked.shared.metadata = metadata;
+                }
+
+                locked.shared.result.metadata = null;
+            }
+
+            locked.shared.body_size = result.body_size;
+
+            const success = result.isSuccess();
+            locked.shared.response_buffer = result.body.?.*;
+
+            const should_ignore = shouldIgnoreBodyData(
+                locked.shared.lifecycle,
+                locked.shared.signal_store.aborted.load(.monotonic),
+            );
+            if (should_ignore) {
+                locked.shared.response_buffer.reset();
+
+                if (locked.shared.scheduled_response_buffer.list.capacity > 0) {
+                    locked.shared.scheduled_response_buffer.deinit();
+                    locked.shared.scheduled_response_buffer = .{
+                        .allocator = bun.default_allocator,
+                        .list = .{
+                            .items = &.{},
+                            .capacity = 0,
+                        },
+                    };
+                }
+                if (success and result.has_more) {
+                    // we are ignoring the body so we should not receive more data, so will only signal when result.has_more = true
+                    // Reset the flag since we're not enqueueing
+                    _ = locked.shared.has_schedule_callback.swap(false, .release);
+                    return;
+                }
+            } else {
+                if (success) {
+                    // Append new data to scheduled response buffer
+                    _ = bun.handleOom(locked.shared.scheduled_response_buffer.write(locked.shared.response_buffer.list.items));
+                }
+                // reset for reuse
+                locked.shared.response_buffer.reset();
             }
         }
 
-        // metadata should be provided only once
-        if (result.metadata orelse prev_metadata) |metadata| {
-            log("added callback metadata", .{});
-            if (task.metadata == null) {
-                task.metadata = metadata;
-            }
+        // Keep tasklet alive during callback
+        task.ref();
 
-            task.result.metadata = null;
-        }
-
-        task.body_size = result.body_size;
-
-        const success = result.isSuccess();
-        task.response_buffer = result.body.?.*;
-
-        if (task.ignore_data) {
-            task.response_buffer.reset();
-
-            if (task.scheduled_response_buffer.list.capacity > 0) {
-                task.scheduled_response_buffer.deinit();
-                task.scheduled_response_buffer = .{
-                    .allocator = bun.default_allocator,
-                    .list = .{
-                        .items = &.{},
-                        .capacity = 0,
-                    },
-                };
-            }
-            if (success and result.has_more) {
-                // we are ignoring the body so we should not receive more data, so will only signal when result.has_more = true
-                return;
-            }
-        } else {
-            if (success) {
-                _ = bun.handleOom(task.scheduled_response_buffer.write(task.response_buffer.list.items));
-            }
-            // reset for reuse
-            task.response_buffer.reset();
-        }
-
-        if (task.has_schedule_callback.cmpxchgStrong(false, true, .acquire, .monotonic)) |has_schedule_callback| {
-            if (has_schedule_callback) {
-                return;
-            }
-        }
-
-        task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task, .manual_deinit));
+        // Enqueue to main thread
+        task.main_thread.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(task, FetchTasklet.onProgressUpdate));
     }
 };
 

@@ -12,8 +12,5 @@ fn detectUncached() ?[]const u8 {
     return detectUncachedGenerated();
 }
 
-const std = @import("std");
-
 const bun = @import("bun");
-const strings = bun.strings;
 const detectUncachedGenerated = @import("ci_info").detectUncachedGenerated;

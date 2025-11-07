@@ -1272,7 +1272,7 @@ pub const PublishCommand = struct {
             if (auth_type) |auth| @tagName(auth) else "web"
         else
             "legacy";
-        const ci_name = bun.detectCI();
+        const ci_name = bun.ci.detectCIName();
 
         {
             headers.count("accept", "*/*");

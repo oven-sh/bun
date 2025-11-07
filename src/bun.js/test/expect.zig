@@ -744,7 +744,7 @@ pub const Expect = struct {
         }
 
         if (needs_write) {
-            if (bun.detectCI()) |_| {
+            if (bun.ci.isCI()) {
                 if (!update) {
                     const signature = comptime getSignature(fn_name, "", false);
                     // Only creating new snapshots can reach here (updating with mismatches errors earlier with diff)

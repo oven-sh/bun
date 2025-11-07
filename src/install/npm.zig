@@ -20,7 +20,7 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
     }
 
     const auth_type = if (manager.options.publish_config.auth_type) |auth_type| @tagName(auth_type) else "web";
-    const ci_name = bun.detectCI();
+    const ci_name = bun.ci.detectCIName();
 
     var print_buf = std.ArrayList(u8).init(allocator);
     defer print_buf.deinit();

@@ -700,9 +700,9 @@ const string = []const u8;
 const Dependency = @import("./dependency.zig");
 const DotEnv = @import("../env_loader.zig");
 const Environment = @import("../env.zig");
+const hosted_git_info = @import("./hosted_git_info.zig");
 const std = @import("std");
 const FileSystem = @import("../fs.zig").FileSystem;
-const hosted_git_info = @import("./hosted_git_info.zig");
 
 const Install = @import("./install.zig");
 const ExtractData = Install.ExtractData;

@@ -547,7 +547,7 @@ import dashboard from "./public/dashboard.html";
 
 // Initialize database
 const db = new Database("app.db");
-db.exec(`
+db.run(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,

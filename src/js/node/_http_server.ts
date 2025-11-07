@@ -477,6 +477,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     }
     this[serverSymbol] = Bun.serve<any>({
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
+      compression: false, // node:http doesn't support auto-compression
       tls,
       port,
       hostname: host,

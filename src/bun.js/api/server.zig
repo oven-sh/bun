@@ -1678,10 +1678,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             server.request_pool_allocator = RequestContext.pool.?;
 
             // Transfer compression config from ServerConfig to Server
-            // Disable if onNodeHTTPRequest is set (node:http compatibility)
-            server.compression_config = if (!config.onNodeHTTPRequest.isEmptyOrUndefinedOrNull())
-                null // node:http: always disable compression
-            else if (config.compression_config_from_js) |comp_config| switch (comp_config) {
+            server.compression_config = if (config.compression_config_from_js) |comp_config| switch (comp_config) {
                 .use_default => brk: {
                     const default_config = bun.handleOom(bun.default_allocator.create(bun.http.CompressionConfig));
                     default_config.* = bun.http.CompressionConfig.DEFAULT;

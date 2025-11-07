@@ -24,7 +24,16 @@ if(CMAKE_HOST_APPLE)
   include(SetupMacSDK)
 endif()
 include(SetupLLVM)
-include(SetupSccache)
+
+find_program(SCCACHE_PROGRAM sccache)
+if(SCCACHE_PROGRAM)
+  include(SetupSccache)
+else()
+  find_program(CCACHE_PROGRAM ccache)
+  if(CCACHE_PROGRAM)
+    include(SetupCcache)
+  endif()
+endif()
 
 # --- Project ---
 

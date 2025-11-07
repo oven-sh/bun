@@ -1903,7 +1903,7 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
     );
 
     if (modifiedTests.size > 0) {
-      filteredTests
+      return filteredTests
         .map(testPath => testPath.replaceAll("\\", "/"))
         .sort((a, b) => {
           const aModified = modifiedTests.has(a);

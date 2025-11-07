@@ -7,21 +7,21 @@ const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
 pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
-/// Compressed variant of the static response
 pub const CompressedVariant = struct {
     data: []u8,
     encoding: bun.http.Encoding,
-    created_at_ms: u64, // Timestamp for TTL checking
 
     pub fn deinit(this: *CompressedVariant, allocator: std.mem.Allocator) void {
         allocator.free(this.data);
     }
+};
 
-    pub fn isExpired(this: *const CompressedVariant, ttl_ms: u64) bool {
-        if (ttl_ms == 0) return false; // TTL of 0 means infinite
-        const now_ms = @as(u64, @intCast(std.time.milliTimestamp()));
-        return (now_ms - this.created_at_ms) > ttl_ms;
-    }
+pub const CompressionFailed = struct {};
+
+pub const CompressedSlot = union(enum) {
+    none,
+    failed: CompressionFailed,
+    cached: CompressedVariant,
 };
 
 // TODO: Remove optional. StaticRoute requires a server object or else it will
@@ -36,11 +36,10 @@ headers: Headers = .{
     .allocator = bun.default_allocator,
 },
 
-// Lazy-initialized compressed variants (cached)
-compressed_br: ?CompressedVariant = null,
-compressed_gzip: ?CompressedVariant = null,
-compressed_zstd: ?CompressedVariant = null,
-compressed_deflate: ?CompressedVariant = null,
+compressed_br: CompressedSlot = .none,
+compressed_gzip: CompressedSlot = .none,
+compressed_zstd: CompressedSlot = .none,
+compressed_deflate: CompressedSlot = .none,
 
 pub const InitFromBytesOptions = struct {
     server: ?AnyServer,
@@ -58,7 +57,6 @@ pub fn initFromAnyBlob(blob: *const AnyBlob, options: InitFromBytesOptions) *Sta
         }
     }
 
-    // Generate ETag if not already present
     if (headers.get("etag") == null) {
         if (blob.slice().len > 0) {
             bun.handleOom(ETag.appendToHeaders(blob.slice(), &headers));
@@ -87,11 +85,22 @@ fn deinit(this: *StaticRoute) void {
     this.blob.detach();
     this.headers.deinit();
 
-    // Clean up compressed variants
-    if (this.compressed_br) |*variant| variant.deinit(bun.default_allocator);
-    if (this.compressed_gzip) |*variant| variant.deinit(bun.default_allocator);
-    if (this.compressed_zstd) |*variant| variant.deinit(bun.default_allocator);
-    if (this.compressed_deflate) |*variant| variant.deinit(bun.default_allocator);
+    switch (this.compressed_br) {
+        .cached => |*variant| variant.deinit(bun.default_allocator),
+        else => {},
+    }
+    switch (this.compressed_gzip) {
+        .cached => |*variant| variant.deinit(bun.default_allocator),
+        else => {},
+    }
+    switch (this.compressed_zstd) {
+        .cached => |*variant| variant.deinit(bun.default_allocator),
+        else => {},
+    }
+    switch (this.compressed_deflate) {
+        .cached => |*variant| variant.deinit(bun.default_allocator),
+        else => {},
+    }
 
     bun.destroy(this);
 }
@@ -113,23 +122,22 @@ pub fn clone(this: *StaticRoute, globalThis: *jsc.JSGlobalObject) !*StaticRoute 
 
 pub fn memoryCost(this: *const StaticRoute) usize {
     var cost = @sizeOf(StaticRoute) + this.blob.memoryCost() + this.headers.memoryCost();
-
-    // Add compressed variant costs (just the data, ETag is shared with original)
-    if (this.compressed_br) |variant| cost += variant.data.len;
-    if (this.compressed_gzip) |variant| cost += variant.data.len;
-    if (this.compressed_zstd) |variant| cost += variant.data.len;
-    if (this.compressed_deflate) |variant| cost += variant.data.len;
-
-    return cost;
-}
-
-/// Get memory used by compressed variants only (for cache size checking)
-fn compressedMemoryCost(this: *const StaticRoute) usize {
-    var cost: usize = 0;
-    if (this.compressed_br) |variant| cost += variant.data.len;
-    if (this.compressed_gzip) |variant| cost += variant.data.len;
-    if (this.compressed_zstd) |variant| cost += variant.data.len;
-    if (this.compressed_deflate) |variant| cost += variant.data.len;
+    switch (this.compressed_br) {
+        .cached => |variant| cost += variant.data.len,
+        else => {},
+    }
+    switch (this.compressed_gzip) {
+        .cached => |variant| cost += variant.data.len,
+        else => {},
+    }
+    switch (this.compressed_zstd) {
+        .cached => |variant| cost += variant.data.len,
+        else => {},
+    }
+    switch (this.compressed_deflate) {
+        .cached => |variant| cost += variant.data.len,
+        else => {},
+    }
     return cost;
 }
 
@@ -263,24 +271,14 @@ pub fn onRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void 
     }
 }
 
-/// Try to serve a compressed variant if compression is enabled and conditions are met
-///
-/// NOTE: Streaming responses are NOT handled here - they're rejected at fromJS() line 160
-/// and go through RequestContext instead. This only compresses fully buffered static responses.
 fn tryServeCompressed(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) bool {
     const server = this.server orelse return false;
     const config = server.compressionConfig() orelse return false;
 
-    // Skip if caching is disabled
-    if (config.cache == null) return false;
-
-    // Check Accept-Encoding header (must be lowercase for uws)
     const accept_encoding = req.header("accept-encoding") orelse return false;
     if (accept_encoding.len == 0) return false;
 
-    // Skip if localhost and configured to disable
     if (config.disable_for_localhost) {
-        // Check Host header for localhost indicators
         if (req.header("host")) |host| {
             if (bun.strings.containsComptime(host, "localhost") or
                 bun.strings.hasPrefixComptime(host, "127.") or
@@ -290,41 +288,32 @@ fn tryServeCompressed(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) 
             }
         }
 
-        // Fallback: check socket address
         if (resp.getRemoteSocketInfo()) |addr| {
             if (isLocalhost(addr.ip)) return false;
         }
     }
 
-    // Skip if too small
     if (this.cached_blob_size < config.threshold) return false;
 
-    // Skip if wrong MIME type
     const content_type = this.headers.getContentType();
     if (!bun.http.Compressor.shouldCompressMIME(content_type)) return false;
 
-    // Skip if already has Content-Encoding
     if (this.headers.get("Content-Encoding")) |_| return false;
 
-    // Select best encoding
     const encoding = config.selectBestEncoding(accept_encoding) orelse return false;
 
-    // Get or create compressed variant
     const variant = this.getOrCreateCompressed(encoding, config) catch return false;
 
-    // Serve compressed response
     this.serveCompressed(variant, resp);
     return true;
 }
 
-/// Get or create a compressed variant (lazy compression with caching)
 fn getOrCreateCompressed(
     this: *StaticRoute,
     encoding: bun.http.Encoding,
     config: *const bun.http.CompressionConfig,
 ) !*CompressedVariant {
-    // Get pointer to the variant slot
-    const variant_slot: *?CompressedVariant = switch (encoding) {
+    const variant_slot = switch (encoding) {
         .brotli => &this.compressed_br,
         .gzip => &this.compressed_gzip,
         .zstd => &this.compressed_zstd,
@@ -332,34 +321,12 @@ fn getOrCreateCompressed(
         else => return error.UnsupportedEncoding,
     };
 
-    // Check if cached variant exists and is still valid
-    if (variant_slot.*) |*cached| {
-        // Check if expired (TTL check)
-        if (config.cache) |cache_config| {
-            if (cached.isExpired(cache_config.ttl_ms)) {
-                // Expired - free it and recreate
-                cached.deinit(bun.default_allocator);
-                variant_slot.* = null;
-            } else {
-                return cached;
-            }
-        } else {
-            return cached;
-        }
+    switch (variant_slot.*) {
+        .cached => |*cached| return cached,
+        .failed => return error.CompressionFailed,
+        .none => {},
     }
 
-    // Check if we have room for another variant (max cache size check)
-    if (config.cache) |cache_config| {
-        const current_compressed_size = this.compressedMemoryCost();
-        // Estimate compressed size (assume 50% compression ratio as upper bound)
-        const estimated_size = this.blob.size() / 2;
-        if (current_compressed_size + estimated_size > cache_config.max_size) {
-            // Would exceed max cache size - don't compress
-            return error.CompressionFailed;
-        }
-    }
-
-    // Compress the blob
     const level = switch (encoding) {
         .brotli => config.brotli.?.level,
         .gzip => config.gzip.?.level,
@@ -375,42 +342,22 @@ fn getOrCreateCompressed(
         level,
     );
 
-    // Check if compression failed (empty slice returned)
-    if (compressed_data.len == 0) {
+    if (compressed_data.len == 0 or compressed_data.len >= this.blob.slice().len) {
+        if (compressed_data.len > 0) bun.default_allocator.free(compressed_data);
+        variant_slot.* = .{ .failed = .{} };
         return error.CompressionFailed;
     }
 
-    // Check min/max entry size constraints
-    if (config.cache) |cache_config| {
-        if (compressed_data.len < cache_config.min_entry_size or
-            compressed_data.len > cache_config.max_entry_size)
-        {
-            // Outside cache size constraints - free and return error
-            bun.default_allocator.free(compressed_data);
-            return error.CompressionFailed;
-        }
-
-        // Final check: verify we still have room (actual size)
-        const current_compressed_size = this.compressedMemoryCost();
-        if (current_compressed_size + compressed_data.len > cache_config.max_size) {
-            // Would exceed max cache size - don't cache
-            bun.default_allocator.free(compressed_data);
-            return error.CompressionFailed;
-        }
-    }
-
-    // Store in cache with timestamp
-    const now_ms = @as(u64, @intCast(std.time.milliTimestamp()));
     variant_slot.* = .{
-        .data = compressed_data,
-        .encoding = encoding,
-        .created_at_ms = now_ms,
+        .cached = .{
+            .data = compressed_data,
+            .encoding = encoding,
+        },
     };
 
-    return &variant_slot.*.?;
+    return &variant_slot.cached;
 }
 
-/// Serve a compressed response
 fn serveCompressed(this: *StaticRoute, variant: *CompressedVariant, resp: AnyResponse) void {
     this.ref();
     if (this.server) |server| {
@@ -418,45 +365,30 @@ fn serveCompressed(this: *StaticRoute, variant: *CompressedVariant, resp: AnyRes
         resp.timeout(server.config().idleTimeout);
     }
 
-    // Write status
     this.doWriteStatus(this.status_code, resp);
-
-    // Write headers, but skip Content-Length (we'll override for compressed data)
     this.doWriteHeadersExcluding(resp, &[_][]const u8{"content-length"});
 
-    // Add Vary: Accept-Encoding (critical for caching!)
     resp.writeHeader("Vary", "Accept-Encoding");
-
-    // Set Content-Encoding
     resp.writeHeader("Content-Encoding", variant.encoding.toString());
 
-    // ETag stays the same - it represents the uncompressed content
-    // Vary: Accept-Encoding tells caches that different encodings exist
-
-    // Set Content-Length for compressed data
     var content_length_buf: [64]u8 = undefined;
     const content_length = std.fmt.bufPrint(&content_length_buf, "{d}", .{variant.data.len}) catch unreachable;
     resp.writeHeader("Content-Length", content_length);
 
-    // Send body
     resp.end(variant.data, resp.shouldCloseConnection());
     this.onResponseComplete(resp);
 }
 
 pub fn onGET(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
-    // Check If-None-Match for GET requests with 200 status
     if (this.status_code == 200) {
         if (this.render304NotModifiedIfNoneMatch(req, resp)) {
             return;
         }
     }
 
-    // Try compression if configured
     if (this.tryServeCompressed(req, resp)) {
         return;
     }
-
-    // Continue with normal GET request handling
     req.setYield(false);
     this.on(resp);
 }

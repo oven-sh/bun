@@ -3,105 +3,7 @@ const bun = @import("bun");
 const jsc = bun.jsc;
 const Encoding = @import("./Encoding.zig").Encoding;
 
-/// EASY DEFAULT TOGGLE: Change this to switch compression on/off by default
-/// NOTE: Compression is OPT-IN because it requires caching for performance.
-/// Enable explicitly with `compression: true` or `compression: { ... }` in Bun.serve()
-pub const COMPRESSION_ENABLED_BY_DEFAULT = false;
-
-/// Compression Configuration for Bun.serve()
-///
-/// ## Features:
-/// - ✅ **Static routes** - Lazy caching (compress once, serve many)
-/// - ✅ **Dynamic routes** - On-demand compression per request
-/// - ✅ **Multiple algorithms** - Brotli, Gzip, Zstd, Deflate (configurable levels)
-/// - ✅ **Cache enforcement** - TTL, max size, min/max entry size actively enforced
-/// - ✅ **RFC 9110 compliant** - Quality value negotiation, proper headers
-/// - ✅ **Memory safety** - 50MB default limit, 24hr TTL, automatic cleanup
-/// - ✅ **--smol mode** - 5MB limit, 1hr TTL for constrained environments
-/// - ✅ **Smart defaults** - Localhost disabled, MIME filtering, already-encoded detection
-///
-/// ## Memory Safety:
-/// Default limits prevent unbounded growth:
-/// - maxSize: 50MB total per-route compressed cache (5MB with --smol)
-/// - ttl: 24 hours, expired variants auto-recreated (1hr with --smol)
-/// - minEntrySize: 128 bytes (512 with --smol)
-/// - maxEntrySize: 10MB (1MB with --smol)
-/// - Lazy initialization: only creates variants clients actually request
-///
-/// ## Not Supported:
-/// - **Streaming responses** - ReadableStream bodies rejected from static routes
-/// - **Per-route control** - Can only enable/disable globally or per-algorithm
-/// - **Global cache limit** - Limit is per-StaticRoute, not server-wide
-///
-/// ## Usage:
-/// ```js
-/// Bun.serve({
-///   compression: true, // Use defaults (br=4, gzip=6, zstd=3, 50MB cache, 24h TTL)
-///   compression: {
-///     brotli: 6,
-///     gzip: false, // Disable specific algorithm
-///     cache: false, // Disable caching entirely (compress on-demand)
-///     cache: {
-///       maxSize: 100 * 1024 * 1024, // 100MB total cache
-///       ttl: 3600, // 1 hour (seconds)
-///       minEntrySize: 512, // Don't cache < 512 bytes
-///       maxEntrySize: 5 * 1024 * 1024, // Don't cache > 5MB
-///     }
-///   },
-///   compression: false, // Disable (default)
-/// })
-/// ```
-///
-/// ## --smol Mode:
-/// When `bun --smol` is used, compression defaults to more conservative limits:
-/// - maxSize: 5MB (vs 50MB normal)
-/// - ttl: 1 hour (vs 24 hours normal)
-/// - maxEntrySize: 1MB (vs 10MB normal)
 pub const CompressionConfig = struct {
-    pub const CacheConfig = struct {
-        /// Maximum total size of all cached compressed variants (bytes)
-        max_size: usize,
-        /// Time-to-live for cached variants (milliseconds), 0 = infinite
-        ttl_ms: u64,
-        /// Minimum size of entry to cache (bytes)
-        min_entry_size: usize,
-        /// Maximum size of single entry to cache (bytes)
-        max_entry_size: usize,
-
-        pub const DEFAULT = CacheConfig{
-            .max_size = 50 * 1024 * 1024, // 50MB total cache
-            .ttl_ms = 24 * 60 * 60 * 1000, // 24 hours
-            .min_entry_size = 128, // Don't cache tiny files
-            .max_entry_size = 10 * 1024 * 1024, // Don't cache > 10MB
-        };
-
-        pub const SMOL = CacheConfig{
-            .max_size = 5 * 1024 * 1024, // 5MB total cache for --smol
-            .ttl_ms = 60 * 60 * 1000, // 1 hour
-            .min_entry_size = 512, // Higher threshold
-            .max_entry_size = 1 * 1024 * 1024, // Max 1MB per entry
-        };
-
-        pub fn fromJS(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!CacheConfig {
-            var config = CacheConfig.DEFAULT;
-
-            if (try value.getOptional(globalThis, "maxSize", i32)) |max_size| {
-                config.max_size = @intCast(@max(0, max_size));
-            }
-            if (try value.getOptional(globalThis, "ttl", i32)) |ttl_seconds| {
-                config.ttl_ms = @intCast(@max(0, ttl_seconds) * 1000);
-            }
-            if (try value.getOptional(globalThis, "minEntrySize", i32)) |min_size| {
-                config.min_entry_size = @intCast(@max(0, min_size));
-            }
-            if (try value.getOptional(globalThis, "maxEntrySize", i32)) |max_size| {
-                config.max_entry_size = @intCast(@max(0, max_size));
-            }
-
-            return config;
-        }
-    };
-
     pub const AlgorithmConfig = struct {
         level: u8,
         threshold: usize,
@@ -137,41 +39,23 @@ pub const CompressionConfig = struct {
 
     threshold: usize,
     disable_for_localhost: bool,
-    cache: ?CacheConfig,
 
     pub const DEFAULT_THRESHOLD: usize = 1024;
 
-    /// Default compression configuration - modify these values to change defaults
     pub const DEFAULT = CompressionConfig{
-        .brotli = .{ .level = 4, .threshold = DEFAULT_THRESHOLD }, // Sweet spot for speed/compression
-        .gzip = .{ .level = 6, .threshold = DEFAULT_THRESHOLD }, // Standard default
-        .zstd = .{ .level = 3, .threshold = DEFAULT_THRESHOLD }, // Fast default
-        .deflate = null, // Disabled by default (obsolete)
+        .brotli = .{ .level = 4, .threshold = DEFAULT_THRESHOLD },
+        .gzip = .{ .level = 6, .threshold = DEFAULT_THRESHOLD },
+        .zstd = .{ .level = 3, .threshold = DEFAULT_THRESHOLD },
+        .deflate = null,
         .threshold = DEFAULT_THRESHOLD,
         .disable_for_localhost = true,
-        .cache = CacheConfig.DEFAULT,
     };
 
-    /// Parse compression config from JavaScript
-    /// Supports:
-    /// - true: use defaults
-    /// - false: disable compression (returns null)
-    /// - { brotli: 4, gzip: 6, zstd: false, ... }: custom config
     pub fn fromJS(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!?*CompressionConfig {
-        // Check if --smol mode is enabled
-        const is_smol = globalThis.bunVM().smol;
-
         if (value.isBoolean()) {
-            if (!value.toBoolean()) {
-                // compression: false -> return null to indicate disabled
-                return null;
-            }
-            // compression: true -> use defaults (smol-aware)
+            if (!value.toBoolean()) return null;
             const config = bun.handleOom(bun.default_allocator.create(CompressionConfig));
             config.* = DEFAULT;
-            if (is_smol and config.cache != null) {
-                config.cache = CacheConfig.SMOL;
-            }
             return config;
         }
 
@@ -182,79 +66,49 @@ pub const CompressionConfig = struct {
         const config = bun.handleOom(bun.default_allocator.create(CompressionConfig));
         errdefer bun.default_allocator.destroy(config);
 
-        // Start with defaults (smol-aware)
         config.* = DEFAULT;
-        if (is_smol and config.cache != null) {
-            config.cache = CacheConfig.SMOL;
-        }
 
-        // Parse brotli config (supports false, number, or object)
         if (try value.get(globalThis, "brotli")) |brotli_val| {
             if (brotli_val.isBoolean()) {
-                if (!brotli_val.toBoolean()) {
-                    config.brotli = null; // Explicitly disabled
-                }
-                // If true, keep default
+                if (!brotli_val.toBoolean()) config.brotli = null;
             } else {
                 config.brotli = try AlgorithmConfig.fromJS(globalThis, brotli_val, 0, 11, 4);
             }
         }
 
-        // Parse gzip config
         if (try value.get(globalThis, "gzip")) |gzip_val| {
             if (gzip_val.isBoolean()) {
-                if (!gzip_val.toBoolean()) {
-                    config.gzip = null;
-                }
+                if (!gzip_val.toBoolean()) config.gzip = null;
             } else {
                 config.gzip = try AlgorithmConfig.fromJS(globalThis, gzip_val, 1, 9, 6);
             }
         }
 
-        // Parse zstd config
         if (try value.get(globalThis, "zstd")) |zstd_val| {
             if (zstd_val.isBoolean()) {
-                if (!zstd_val.toBoolean()) {
-                    config.zstd = null;
-                }
+                if (!zstd_val.toBoolean()) config.zstd = null;
             } else {
                 config.zstd = try AlgorithmConfig.fromJS(globalThis, zstd_val, 1, 22, 3);
             }
         }
 
-        // Parse deflate config
         if (try value.get(globalThis, "deflate")) |deflate_val| {
             if (deflate_val.isBoolean()) {
-                if (!deflate_val.toBoolean()) {
-                    config.deflate = null;
-                }
+                if (!deflate_val.toBoolean()) config.deflate = null;
             } else {
                 config.deflate = try AlgorithmConfig.fromJS(globalThis, deflate_val, 1, 9, 6);
             }
         }
 
-        // Parse threshold
         if (try value.get(globalThis, "threshold")) |threshold_val| {
             if (threshold_val.isNumber()) {
                 config.threshold = @intCast(try threshold_val.coerce(i32, globalThis));
             }
         }
 
-        // Parse disableForLocalhost
         if (try value.get(globalThis, "disableForLocalhost")) |disable_val| {
             if (disable_val.isBoolean()) {
                 config.disable_for_localhost = disable_val.toBoolean();
-            }
-        }
-
-        // Parse cache config
-        if (try value.get(globalThis, "cache")) |cache_val| {
-            if (cache_val.isBoolean()) {
-                if (!cache_val.toBoolean()) {
-                    config.cache = null; // false = disable caching
-                }
-            } else if (cache_val.isObject()) {
-                config.cache = try CacheConfig.fromJS(globalThis, cache_val);
             }
         }
 
@@ -266,13 +120,10 @@ pub const CompressionConfig = struct {
         quality: f32,
     };
 
-    /// Select best encoding based on Accept-Encoding header and available config
-    /// Returns null if no compression should be used
     pub fn selectBestEncoding(this: *const CompressionConfig, accept_encoding: []const u8) ?Encoding {
         var preferences: [8]Preference = undefined;
         var pref_count: usize = 0;
 
-        // Parse Accept-Encoding header
         var iter = std.mem.splitScalar(u8, accept_encoding, ',');
         while (iter.next()) |token| {
             if (pref_count >= preferences.len) break;
@@ -283,7 +134,6 @@ pub const CompressionConfig = struct {
             var quality: f32 = 1.0;
             var encoding_name = trimmed;
 
-            // Parse quality value
             if (std.mem.indexOf(u8, trimmed, ";q=")) |q_pos| {
                 encoding_name = std.mem.trim(u8, trimmed[0..q_pos], " \t");
                 const q_str = std.mem.trim(u8, trimmed[q_pos + 3 ..], " \t");
@@ -294,10 +144,8 @@ pub const CompressionConfig = struct {
                 quality = std.fmt.parseFloat(f32, q_str) catch 1.0;
             }
 
-            // Skip if quality is 0 (explicitly disabled)
             if (quality <= 0.0) continue;
 
-            // Map to encoding enum
             const encoding: ?Encoding = if (bun.strings.eqlComptime(encoding_name, "br"))
                 .brotli
             else if (bun.strings.eqlComptime(encoding_name, "gzip"))
@@ -309,9 +157,9 @@ pub const CompressionConfig = struct {
             else if (bun.strings.eqlComptime(encoding_name, "identity"))
                 .identity
             else if (bun.strings.eqlComptime(encoding_name, "*"))
-                null // wildcard
+                null
             else
-                continue; // unknown encoding
+                continue;
 
             if (encoding) |enc| {
                 preferences[pref_count] = .{ .encoding = enc, .quality = quality };
@@ -319,37 +167,24 @@ pub const CompressionConfig = struct {
             }
         }
 
-        // Sort by quality (descending)
         std.mem.sort(Preference, preferences[0..pref_count], {}, struct {
             fn lessThan(_: void, a: Preference, b: Preference) bool {
                 return a.quality > b.quality;
             }
         }.lessThan);
 
-        // Select first available encoding that's enabled
         for (preferences[0..pref_count]) |pref| {
             switch (pref.encoding) {
                 .brotli => if (this.brotli != null) return .brotli,
                 .zstd => if (this.zstd != null) return .zstd,
                 .gzip => if (this.gzip != null) return .gzip,
                 .deflate => if (this.deflate != null) return .deflate,
-                .identity => return null, // Client wants no compression
+                .identity => return null,
                 else => continue,
             }
         }
 
-        // If client specified encodings but none are enabled on server, return null
-        // Don't fallback to server preference unless client sent no preferences
         return null;
-    }
-
-    fn allQualitiesEqual(prefs: []const Preference) bool {
-        if (prefs.len == 0) return true;
-        const first = prefs[0].quality;
-        for (prefs[1..]) |p| {
-            if (p.quality != first) return false;
-        }
-        return true;
     }
 
     pub fn deinit(this: *CompressionConfig) void {

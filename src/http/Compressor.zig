@@ -6,8 +6,6 @@ const Brotli = bun.brotli;
 const zstd = bun.zstd;
 
 pub const Compressor = struct {
-    /// Compress data using the specified encoding and level
-    /// Returns empty slice on error (caller should check length)
     pub fn compress(
         allocator: std.mem.Allocator,
         data: []const u8,
@@ -19,12 +17,11 @@ pub const Compressor = struct {
             .gzip => compressGzip(allocator, data, level),
             .zstd => compressZstd(allocator, data, level),
             .deflate => compressDeflate(allocator, data, level),
-            else => &[_]u8{}, // Unsupported encoding
+            else => &[_]u8{},
         };
     }
 
     fn compressBrotli(allocator: std.mem.Allocator, data: []const u8, level: u8) []u8 {
-        // Use brotli encoder
         const max_output_size = Brotli.c.BrotliEncoderMaxCompressedSize(data.len);
         const output = allocator.alloc(u8, max_output_size) catch bun.outOfMemory();
         errdefer allocator.free(output);
@@ -33,7 +30,7 @@ pub const Compressor = struct {
         const result = Brotli.c.BrotliEncoderCompress(
             @intCast(level),
             Brotli.c.BROTLI_DEFAULT_WINDOW,
-            .generic, // BrotliEncoderMode.generic
+            .generic,
             data.len,
             data.ptr,
             &output_size,
@@ -42,21 +39,17 @@ pub const Compressor = struct {
 
         if (result == 0) {
             allocator.free(output);
-            // Compression failed - return empty slice to signal error
             return &[_]u8{};
         }
 
-        // Shrink to actual size
         return allocator.realloc(output, output_size) catch output[0..output_size];
     }
 
     fn compressGzip(allocator: std.mem.Allocator, data: []const u8, level: u8) []u8 {
-        // Use zlib with gzip wrapper (windowBits = 15 | 16)
         return compressZlib(allocator, data, level, Zlib.MAX_WBITS | 16);
     }
 
     fn compressDeflate(allocator: std.mem.Allocator, data: []const u8, level: u8) []u8 {
-        // Use raw deflate (windowBits = -15)
         return compressZlib(allocator, data, level, -Zlib.MAX_WBITS);
     }
 
@@ -64,13 +57,12 @@ pub const Compressor = struct {
         var stream: Zlib.z_stream = undefined;
         @memset(std.mem.asBytes(&stream), 0);
 
-        // Initialize deflate
         const init_result = deflateInit2_(
             &stream,
             @intCast(level),
             Z_DEFLATED,
             window_bits,
-            8, // mem level (default)
+            8,
             Z_DEFAULT_STRATEGY,
             Zlib.zlibVersion(),
             @sizeOf(Zlib.z_stream),
@@ -81,7 +73,6 @@ pub const Compressor = struct {
         }
         defer _ = deflateEnd(&stream);
 
-        // Allocate output buffer (worst case: input size + 0.1% + 12 bytes)
         const max_output_size = deflateBound(&stream, data.len);
         const output = allocator.alloc(u8, max_output_size) catch bun.outOfMemory();
         errdefer allocator.free(output);
@@ -91,7 +82,6 @@ pub const Compressor = struct {
         stream.next_out = output.ptr;
         stream.avail_out = @intCast(max_output_size);
 
-        // Compress
         const deflate_result = deflate(&stream, .Finish);
         if (deflate_result != .StreamEnd) {
             allocator.free(output);
@@ -99,8 +89,6 @@ pub const Compressor = struct {
         }
 
         const compressed_size = stream.total_out;
-
-        // Shrink to actual size
         return allocator.realloc(output, compressed_size) catch output[0..compressed_size];
     }
 
@@ -122,10 +110,8 @@ pub const Compressor = struct {
         return allocator.realloc(output, compressed_size) catch output[0..compressed_size];
     }
 
-    /// Check if a MIME type should be compressed
-    /// Compresses text-based formats, skips already-compressed formats
     pub fn shouldCompressMIME(content_type: ?[]const u8) bool {
-        const mime = content_type orelse return true; // Default: compress
+        const mime = content_type orelse return true;
 
         // Skip already-compressed formats
         if (bun.strings.hasPrefixComptime(mime, "image/")) return false;
@@ -152,7 +138,6 @@ pub const Compressor = struct {
         if (bun.strings.hasPrefixComptime(mime, "image/svg+xml")) return true;
         if (bun.strings.hasPrefixComptime(mime, "font/")) return true;
 
-        // Default: don't compress unknown types
         return false;
     }
 };

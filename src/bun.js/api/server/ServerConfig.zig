@@ -979,19 +979,15 @@ pub fn fromJS(
         // It will be handled separately in serve() function
         args.compression_config_from_js = if (try arg.get(global, "compression")) |compression_val| blk: {
             if (compression_val.isUndefinedOrNull()) {
-                // undefined/null: use default (compression ON)
-                break :blk if (@import("../../../http/CompressionConfig.zig").COMPRESSION_ENABLED_BY_DEFAULT) .use_default else null;
+                break :blk null;
             }
-            // Parse from JS (handles true/false/object)
             if (try bun.http.CompressionConfig.fromJS(global, compression_val)) |config| {
                 break :blk .{ .config = config };
             } else {
-                // false: explicitly disabled
                 break :blk null;
             }
         } else blk: {
-            // No compression option: use default
-            break :blk if (@import("../../../http/CompressionConfig.zig").COMPRESSION_ENABLED_BY_DEFAULT) .use_default else null;
+            break :blk null;
         };
 
         if (global.hasException()) return error.JSError;

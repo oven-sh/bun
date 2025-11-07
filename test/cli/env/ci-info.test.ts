@@ -52,6 +52,7 @@ test.only("should fail in CI", () => {
     delete cleanEnv.BUILDKITE;
     delete cleanEnv.JENKINS_URL;
     delete cleanEnv.BUILD_ID;
+    delete cleanEnv.CI;
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "test.test.js"],
@@ -71,7 +72,7 @@ test.only("should fail in CI", () => {
     expect(stderr).toContain(".only is disabled in CI environments");
   });
 
-  test("No CI detection with CI=false (allows test.only)", async () => {
+  test("Without CI env vars (allows test.only)", async () => {
     const dir = tempDirWithFiles("ci-none-test", {
       "test.test.js": `
 import { test, expect } from "bun:test";
@@ -86,12 +87,19 @@ test("should be skipped", () => {
       `,
     });
 
+    const cleanEnv = {...bunEnv};
+    delete cleanEnv.GITHUB_ACTIONS;
+    delete cleanEnv.GITLAB_CI;
+    delete cleanEnv.CIRCLECI;
+    delete cleanEnv.TRAVIS;
+    delete cleanEnv.BUILDKITE;
+    delete cleanEnv.JENKINS_URL;
+    delete cleanEnv.BUILD_ID;
+    delete cleanEnv.CI;
+
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "test.test.js"],
-      env: {
-        ...bunEnv,
-        CI: "false", // Explicitly disable CI detection
-      },
+      env: cleanEnv,
       cwd: dir,
       stdout: "pipe",
       stderr: "pipe",

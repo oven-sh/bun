@@ -846,7 +846,7 @@ pub fn spawnMaybeSync(
 
         while (subprocess.computeHasPendingActivity()) {
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
-            const bun_test_timeout: bun.timespec = bun.jsc.Jest.Jest.runner.?.getActiveTimeout();
+            const bun_test_timeout: bun.timespec = if (bun.jsc.Jest.Jest.runner) |runner| runner.getActiveTimeout() else .epoch;
             const has_bun_test_timeout = !bun_test_timeout.eql(&.epoch);
 
             if (has_bun_test_timeout) {
@@ -857,6 +857,8 @@ pub fn spawnMaybeSync(
                 }
             } else if (has_user_timespec) {
                 timespec = user_timespec;
+            } else {
+                timespec = .epoch;
             }
             const has_timespec = !timespec.eql(&.epoch);
 
@@ -875,28 +877,38 @@ pub fn spawnMaybeSync(
             // Tick the isolated event loop without passing timeout to avoid blocking
             // The timeout check is done at the top of the loop
             switch (sync_loop.tickWithTimeout(if (has_timespec and !did_timeout) &timespec else null)) {
-                .completed => {},
+                .completed => {
+                    now = bun.timespec.now();
+                },
                 .timeout => {
-                    var did_user_timeout = has_user_timespec and !has_bun_test_timeout;
+                    const did_user_timeout = has_user_timespec and !has_bun_test_timeout;
+                    now = bun.timespec.now();
 
-                    // Support bun:test timeouts AND spwanSync timeout.
+                    // Support bun:test timeouts AND spawnSync() timeout.
                     // There is a scenario where inside of spawnSync() a totally
                     // different test fails, and that SHOULD be okay.
                     if (has_bun_test_timeout) {
-                        now = bun.timespec.now();
                         if (bun_test_timeout.order(&now) == .lt) {
-                            if (bun.jsc.Jest.Jest.runner.?.bun_test_root.getActiveFileUnlessInPreload(jsc_vm)) |buntest| {
-                                // This will kill the process potentially, if it needs to.
-                                buntest.execution.handleTimeout(jsc_vm.global) catch {};
-                            }
+                            // TODO: add a .cloneNonOptional()?
+                            var active_file_strong = bun.jsc.Jest.Jest.runner.?.bun_test_root.active_file.clone();
+                            defer active_file_strong.deinit();
+                            var taken_active_file = active_file_strong.take().?;
+                            defer taken_active_file.deinit();
+
+                            bun.jsc.Jest.Jest.runner.?.removeActiveTimeout(jsc_vm);
+
+                            // This might internally call `std.c.kill` on this
+                            // spawnSync process. Even if we do that, we still
+                            // need to reap the process. So we may go through
+                            // the event loop again, but it should wake up
+                            // ~instantly so we can drain the events.
+                            jsc.Jest.bun_test.BunTest.bunTestTimeoutCallback(taken_active_file, &timespec, jsc_vm);
                         }
 
                         if (has_user_timespec and user_timespec.order(&now) == .lt) {
-                            did_user_timeout = true;
+                            did_timeout = true;
                         }
-                    } else {
-                        now = bun.timespec.now();
-                    }
+                    } else {}
 
                     if (did_user_timeout) {
                         did_timeout = true;

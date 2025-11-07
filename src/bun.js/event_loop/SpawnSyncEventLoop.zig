@@ -142,8 +142,9 @@ fn prepareTimerOnWindows(this: *SpawnSyncEventLoop, ts: *const bun.timespec) voi
 /// Tick the isolated event loop with an optional timeout
 /// This is similar to the main event loop's tick but completely isolated
 pub fn tickWithTimeout(this: *SpawnSyncEventLoop, timeout: ?*const bun.timespec) TickState {
+    const duration: ?*const bun.timespec = if (timeout) |ts| &ts.duration(&.now()) else null;
     if (bun.Environment.isWindows) {
-        if (timeout) |ts| {
+        if (duration) |ts| {
             prepareTimerOnWindows(this, ts);
         }
     }
@@ -151,7 +152,7 @@ pub fn tickWithTimeout(this: *SpawnSyncEventLoop, timeout: ?*const bun.timespec)
     // Tick the isolated uws loop with the specified timeout
     // This will only process I/O related to this subprocess
     // and will NOT interfere with the main event loop
-    this.uws_loop.tickWithTimeout(if (timeout) |ts| &ts.duration(&.now()) else null);
+    this.uws_loop.tickWithTimeout(duration);
 
     if (timeout) |ts| {
         if (bun.Environment.isWindows) {

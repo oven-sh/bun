@@ -7,7 +7,6 @@
  */
 import { bunEnv, bunExe, exampleSite, randomPort } from "harness";
 import { createTest } from "node-harness";
-import { spawnSync } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import nodefs, { unlinkSync } from "node:fs";
 import http, {

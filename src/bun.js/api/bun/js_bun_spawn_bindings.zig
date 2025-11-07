@@ -347,7 +347,7 @@ pub fn spawnMaybeSync(
             if (try args.get(globalThis, "maxBuffer")) |val| {
                 if (val.isNumber() and val.isFinite()) { // 'Infinity' does not set maxBuffer
                     const value = try val.coerce(i64, globalThis);
-                    if (value > 0) {
+                    if (value > 0 and (stdio[0].isPiped() or stdio[1].isPiped() or stdio[2].isPiped())) {
                         maxBuffer = value;
                     }
                 }

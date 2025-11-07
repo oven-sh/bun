@@ -131,7 +131,7 @@ pub const ProgressBuf = struct {
     }
 
     pub fn pretty(comptime fmt: string, args: anytype) !string {
-        if (Output.enable_ansi_colors) {
+        if (Output.enable_ansi_colors_stdout) {
             return ProgressBuf.print(comptime Output.prettyFmt(fmt, true), args);
         } else {
             return ProgressBuf.print(comptime Output.prettyFmt(fmt, false), args);
@@ -1885,7 +1885,7 @@ pub const Example = struct {
                 folders[1] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.stdDir();
             }
 
-            if (env_loader.map.get(bun.DotEnv.home_env)) |home_dir| {
+            if (env_loader.map.get(bun.env_var.HOME.key())) |home_dir| {
                 var parts = [_]string{ home_dir, BUN_CREATE_DIR };
                 const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
                 folders[2] = std.fs.cwd().openDir(outdir_path, .{}) catch bun.invalid_fd.stdDir();
@@ -2212,7 +2212,7 @@ pub const Example = struct {
         );
         async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
-        if (Output.enable_ansi_colors) {
+        if (Output.enable_ansi_colors_stdout) {
             async_http.client.progress_node = progress_node;
         }
 
@@ -2301,7 +2301,7 @@ pub const CreateListExamplesCommand = struct {
 
         Output.prettyln("<r><d>#<r> You can also paste a GitHub repository:\n\n  <b>bun create <cyan>ahfarmer/calculator calc<r>\n\n", .{});
 
-        if (env_loader.map.get(bun.DotEnv.home_env)) |homedir| {
+        if (env_loader.map.get(bun.env_var.HOME.key())) |homedir| {
             Output.prettyln(
                 "<d>This command is completely optional. To add a new local template, create a folder in {s}/.bun-create/. To publish a new template, git clone https://github.com/oven-sh/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
                 .{homedir},

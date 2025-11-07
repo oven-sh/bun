@@ -108,9 +108,9 @@ const buildPlatforms = [
   { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", profile: "asan", distro: "amazonlinux", release: "2023", features: ["docker"] },
-  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.21" },
-  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.21" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.21" },
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.22" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.22" },
+  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.22" },
   { os: "windows", arch: "x64", release: "2019" },
   { os: "windows", arch: "x64", baseline: true, release: "2019" },
 ];
@@ -133,9 +133,9 @@ const testPlatforms = [
   { os: "linux", arch: "x64", distro: "ubuntu", release: "24.04", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "24.04", tier: "latest" },
-  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.21", tier: "latest" },
-  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.21", tier: "latest" },
-  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.21", tier: "latest" },
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.22", tier: "latest" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.22", tier: "latest" },
+  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.22", tier: "latest" },
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
   { os: "windows", arch: "x64", release: "2019", baseline: true, tier: "oldest" },
 ];
@@ -223,7 +223,7 @@ function getImageName(platform, options) {
  * @param {number} [limit]
  * @link https://buildkite.com/docs/pipelines/command-step#retry-attributes
  */
-function getRetry(limit = 0) {
+function getRetry() {
   return {
     manual: {
       permit_on_passed: true,
@@ -292,7 +292,7 @@ function getEc2Agent(platform, options, ec2Options) {
  * @returns {string}
  */
 function getCppAgent(platform, options) {
-  const { os, arch, distro } = platform;
+  const { os, arch } = platform;
 
   if (os === "darwin") {
     return {
@@ -313,7 +313,7 @@ function getCppAgent(platform, options) {
  * @returns {string}
  */
 function getLinkBunAgent(platform, options) {
-  const { os, arch, distro } = platform;
+  const { os, arch } = platform;
 
   if (os === "darwin") {
     return {
@@ -343,7 +343,7 @@ function getZigPlatform() {
     arch: "aarch64",
     abi: "musl",
     distro: "alpine",
-    release: "3.21",
+    release: "3.22",
   };
 }
 
@@ -352,14 +352,7 @@ function getZigPlatform() {
  * @param {PipelineOptions} options
  * @returns {Agent}
  */
-function getZigAgent(platform, options) {
-  const { arch } = platform;
-
-  // Uncomment to restore to using macOS on-prem for Zig.
-  // return {
-  //   queue: "build-zig",
-  // };
-
+function getZigAgent(_platform, options) {
   return getEc2Agent(getZigPlatform(), options, {
     instanceType: "r8g.large",
   });
@@ -466,23 +459,6 @@ function getBuildCommand(target, options, label) {
  * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getBuildVendorStep(platform, options) {
-  return {
-    key: `${getTargetKey(platform)}-build-vendor`,
-    label: `${getTargetLabel(platform)} - build-vendor`,
-    agents: getCppAgent(platform, options),
-    retry: getRetry(),
-    cancel_on_build_failing: isMergeQueue(),
-    env: getBuildEnv(platform, options),
-    command: `${getBuildCommand(platform, options)} --target dependencies`,
-  };
-}
-
-/**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Step}
- */
 function getBuildCppStep(platform, options) {
   const command = getBuildCommand(platform, options);
   return {
@@ -527,9 +503,9 @@ function getBuildZigStep(platform, options) {
   const toolchain = getBuildToolchain(platform);
   return {
     key: `${getTargetKey(platform)}-build-zig`,
+    retry: getRetry(),
     label: `${getTargetLabel(platform)} - build-zig`,
     agents: getZigAgent(platform, options),
-    retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: getBuildEnv(platform, options),
     command: `${getBuildCommand(platform, options)} --target bun-zig --toolchain ${toolchain}`,

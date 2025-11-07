@@ -75,6 +75,15 @@ pub fn refSelf(this: *IOWriter) *IOWriter {
     return this;
 }
 
+pub fn memoryCost(this: *const IOWriter) usize {
+    var cost: usize = @sizeOf(IOWriter);
+    cost += this.buf.allocatedSlice().len;
+    cost += if (comptime bun.Environment.isWindows) this.winbuf.allocatedSlice().len else 0;
+    cost += this.writers.memoryCost();
+    cost += this.writer.memoryCost();
+    return cost;
+}
+
 pub const Flags = packed struct(u8) {
     pollable: bool = false,
     nonblocking: bool = false,
@@ -156,7 +165,9 @@ pub fn __start(this: *IOWriter) Maybe(void) {
             this.writer.getPoll().?.flags.insert(.nonblocking);
         }
 
-        if (this.flags.is_socket) {
+        const sendto_MSG_NOWAIT_blocks = bun.Environment.isMac;
+
+        if (this.flags.is_socket and (!sendto_MSG_NOWAIT_blocks or this.flags.nonblocking)) {
             this.writer.getPoll().?.flags.insert(.socket);
         } else if (this.flags.pollable) {
             this.writer.getPoll().?.flags.insert(.fifo);
@@ -172,6 +183,14 @@ pub fn __start(this: *IOWriter) Maybe(void) {
 
 pub fn eventLoop(this: *IOWriter) jsc.EventLoopHandle {
     return this.evtloop;
+}
+
+pub fn loop(this: *IOWriter) *bun.Async.Loop {
+    if (comptime bun.Environment.isWindows) {
+        return this.evtloop.loop().uv_loop;
+    } else {
+        return this.evtloop.loop();
+    }
 }
 
 /// Idempotent write call
@@ -216,7 +235,13 @@ fn write(this: *IOWriter) enum {
 
     bun.assert(this.writer.handle == .poll);
     if (this.writer.handle.poll.isWatching()) return .suspended;
-    this.writer.start(this.fd, this.flags.pollable).assert();
+    switch (this.writer.start(this.fd, this.flags.pollable)) {
+        .result => |_| {},
+        .err => |err| {
+            this.onError(err);
+            return .failed;
+        },
+    }
     return .suspended;
 }
 

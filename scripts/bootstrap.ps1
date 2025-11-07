@@ -120,18 +120,18 @@ function Refresh-Path {
 function Add-To-Path {
   $absolutePath = Resolve-Path $args[0]
   $currentPath = [Environment]::GetEnvironmentVariable("Path", "Machine")
-  if ($currentPath -like "*$absolutePath*") {  
+  if ($currentPath -like "*$absolutePath*") {
     return
   }
 
   $newPath = $currentPath.TrimEnd(";") + ";" + $absolutePath
   if ($newPath.Length -ge 2048) {
     Write-Warning "PATH is too long, removing duplicate and old entries..."
-    
-    $paths = $currentPath.Split(';', [StringSplitOptions]::RemoveEmptyEntries) | 
+
+    $paths = $currentPath.Split(';', [StringSplitOptions]::RemoveEmptyEntries) |
       Where-Object { $_ -and (Test-Path $_) } |
       Select-Object -Unique
-    
+
     $paths += $absolutePath
     $newPath = $paths -join ';'
     while ($newPath.Length -ge 2048 -and $paths.Count -gt 1) {
@@ -244,7 +244,7 @@ function Install-NodeJs {
 }
 
 function Install-Bun {
-  Install-Package bun -Version "1.2.17"
+  Install-Package bun -Version "1.3.1"
 }
 
 function Install-Cygwin {
@@ -274,7 +274,6 @@ function Install-Build-Essentials {
     cmake `
     make `
     ninja `
-    ccache `
     python `
     golang `
     nasm `
@@ -282,6 +281,7 @@ function Install-Build-Essentials {
     strawberryperl `
     mingw
   Install-Rust
+  Install-Sccache
   # Needed to remap stack traces
   Install-PdbAddr2line
   Install-Llvm
@@ -342,6 +342,10 @@ function Install-Rust {
   Set-Env "CARGO_HOME" "$rustPath\cargo"
   Set-Env "RUSTUP_HOME" "$rustPath\rustup"
   Add-To-Path "$rustPath\cargo\bin"
+}
+
+function Install-Sccache {
+  Install-Package sccache -Version "0.12.0"
 }
 
 function Install-PdbAddr2line {

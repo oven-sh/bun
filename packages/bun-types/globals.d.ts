@@ -1454,7 +1454,6 @@ interface Blob {
    *
    * This first decodes the data from UTF-8, then parses it as JSON.
    */
-  // eslint-disable-next-line @definitelytyped/no-unnecessary-generics
   json(): Promise<any>;
 
   /**

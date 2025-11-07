@@ -357,7 +357,11 @@ pub fn setup(this: *FileSink, options: *const FileSink.Options) bun.sys.Maybe(vo
 }
 
 pub fn loop(this: *FileSink) *bun.Async.Loop {
-    return this.event_loop_handle.loop();
+    if (comptime bun.Environment.isWindows) {
+        return this.event_loop_handle.loop().uv_loop;
+    } else {
+        return this.event_loop_handle.loop();
+    }
 }
 
 pub fn eventLoop(this: *FileSink) jsc.EventLoopHandle {
@@ -735,7 +739,7 @@ pub fn assignToStream(this: *FileSink, stream: *jsc.WebCore.ReadableStream, glob
                 .pending => {
                     this.writer.enableKeepingProcessAlive(this.event_loop_handle);
                     this.ref();
-                    promise_result.then(globalThis, this, onResolveStream, onRejectStream);
+                    promise_result.then(globalThis, this, onResolveStream, onRejectStream) catch {}; // TODO: properly propagate exception upwards
                 },
                 .fulfilled => {
                     // These don't ref().

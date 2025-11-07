@@ -26,13 +26,13 @@ const EventEmitter = require("node:events");
 let dns: typeof import("node:dns");
 
 const normalizedArgsSymbol = Symbol("normalizedArgs");
-const { ExceptionWithHostPort } = require("internal/shared");
+const { ExceptionWithHostPort, ConnResetException, NodeAggregateError, ErrnoException } = require("internal/shared");
 import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
-const { NodeAggregateError, ErrnoException } = require("internal/shared");
+const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypePush = Array.prototype.push;
@@ -54,40 +54,6 @@ const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
 const upgradeDuplexToTLS = $newZigFunction("socket.zig", "jsUpgradeDuplexToTLS", 2);
 const isNamedPipeSocket = $newZigFunction("socket.zig", "jsIsNamedPipeSocket", 1);
 const getBufferedAmount = $newZigFunction("socket.zig", "jsGetBufferedAmount", 1);
-
-// IPv4 Segment
-const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
-const v4Str = `(?:${v4Seg}\\.){3}${v4Seg}`;
-var IPv4Reg;
-
-// IPv6 Segment
-const v6Seg = "(?:[0-9a-fA-F]{1,4})";
-var IPv6Reg;
-
-function isIPv4(s): boolean {
-  return (IPv4Reg ??= new RegExp(`^${v4Str}$`)).test(s);
-}
-
-function isIPv6(s): boolean {
-  return (IPv6Reg ??= new RegExp(
-    "^(?:" +
-      `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` +
-      `(?:${v6Seg}:){6}(?:${v4Str}|:${v6Seg}|:)|` +
-      `(?:${v6Seg}:){5}(?::${v4Str}|(?::${v6Seg}){1,2}|:)|` +
-      `(?:${v6Seg}:){4}(?:(?::${v6Seg}){0,1}:${v4Str}|(?::${v6Seg}){1,3}|:)|` +
-      `(?:${v6Seg}:){3}(?:(?::${v6Seg}){0,2}:${v4Str}|(?::${v6Seg}){1,4}|:)|` +
-      `(?:${v6Seg}:){2}(?:(?::${v6Seg}){0,3}:${v4Str}|(?::${v6Seg}){1,5}|:)|` +
-      `(?:${v6Seg}:){1}(?:(?::${v6Seg}){0,4}:${v4Str}|(?::${v6Seg}){1,6}|:)|` +
-      `(?::(?:(?::${v6Seg}){0,5}:${v4Str}|(?::${v6Seg}){1,7}|:))` +
-      ")(?:%[0-9a-zA-Z-.:]{1,})?$",
-  )).test(s);
-}
-
-function isIP(s): 0 | 4 | 6 {
-  if (isIPv4(s)) return 4;
-  if (isIPv6(s)) return 6;
-  return 0;
-}
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -653,8 +619,6 @@ function kConnectTcp(self, addressType, req, address, port) {
     ipv6Only: addressType === 6,
     allowHalfOpen: self.allowHalfOpen,
     tls: req.tls,
-    localAddress: req.localAddress,
-    localPort: req.localPort,
     data: { self, req },
     socket: self[khandlers],
   });
@@ -1720,9 +1684,13 @@ function internalConnect(self, options, address, port, addressType, localAddress
   if (localAddress || localPort) {
     if (addressType === 4) {
       localAddress ||= "0.0.0.0";
+      // TODO:
+      // err = self._handle.bind(localAddress, localPort);
     } else {
       // addressType === 6
       localAddress ||= "::";
+      // TODO:
+      // err = self._handle.bind6(localAddress, localPort, flags);
     }
     $debug(
       "connect: binding to localAddress: %s and localPort: %d (addressType: %d)",
@@ -1730,6 +1698,13 @@ function internalConnect(self, options, address, port, addressType, localAddress
       localPort,
       addressType,
     );
+
+    err = checkBindError(err, localPort, self._handle);
+    if (err) {
+      const ex = new ExceptionWithHostPort(err, "bind", localAddress, localPort);
+      self.destroy(ex);
+      return;
+    }
   }
 
   //TLS
@@ -1837,9 +1812,13 @@ function internalConnectMultiple(context, canceled?) {
   if (localPort) {
     if (addressType === 4) {
       localAddress = DEFAULT_IPV4_ADDR;
+      // TODO:
+      // err = self._handle.bind(localAddress, localPort);
     } else {
       // addressType === 6
       localAddress = DEFAULT_IPV6_ADDR;
+      // TODO:
+      // err = self._handle.bind6(localAddress, localPort, flags);
     }
 
     $debug(
@@ -1848,6 +1827,13 @@ function internalConnectMultiple(context, canceled?) {
       localPort,
       addressType,
     );
+
+    err = checkBindError(err, localPort, self._handle);
+    if (err) {
+      ArrayPrototypePush.$call(context.errors, new ExceptionWithHostPort(err, "bind", localAddress, localPort));
+      internalConnectMultiple(context);
+      return;
+    }
   }
 
   if (self.blockList?.check(address, `ipv${addressType}`)) {
@@ -2463,17 +2449,6 @@ function addServerAbortSignalOption(self, options) {
     process.nextTick(onAborted);
   } else {
     signal.addEventListener("abort", onAborted);
-  }
-}
-
-class ConnResetException extends Error {
-  constructor(msg) {
-    super(msg);
-    this.code = "ECONNRESET";
-  }
-
-  get ["constructor"]() {
-    return Error;
   }
 }
 

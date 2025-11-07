@@ -142,12 +142,6 @@ void us_connecting_socket_free(int ssl, struct us_connecting_socket_t *c) {
     // instead, we move it to a close list and free it after the iteration
     us_internal_socket_context_unlink_connecting_socket(ssl, c->context, c);
 
-    // Free duplicated local_host string if present
-    if (c->local_host) {
-        free((void*)c->local_host);
-        c->local_host = NULL;
-    }
-
     c->next = c->context->loop->data.closed_connecting_head;
     c->context->loop->data.closed_connecting_head = c;
 }

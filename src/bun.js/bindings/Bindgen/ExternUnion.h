@@ -5,33 +5,32 @@
 #include <variant>
 #include "Macros.h"
 
-#define BUN_BINDGEN_DETAIL_DEFINE_EXTERN_UNION(T0, ...)            \
-    template<typename T0 __VA_OPT__(                               \
-        BUN_BINDGEN_DETAIL_FOREACH(                                \
-            BUN_BINDGEN_DETAIL_EXTERN_UNION_TEMPLATE_PARAM,        \
-            __VA_ARGS__))>                                         \
-    union ExternUnion<T0 __VA_OPT__(, ) __VA_ARGS__> {             \
-        BUN_BINDGEN_DETAIL_FOREACH(                                \
-            BUN_BINDGEN_DETAIL_EXTERN_UNION_FIELD,                 \
-            T0 __VA_OPT__(, ) __VA_ARGS__)                         \
-        void initFromVariant(                                      \
-            std::variant<T0 __VA_OPT__(, ) __VA_ARGS__>&& variant) \
-        {                                                          \
-            const std::size_t index = variant.index();             \
-            std::visit([this, index](auto&& arg) {                 \
-                using Arg = std::decay_t<decltype(arg)>;           \
-                BUN_BINDGEN_DETAIL_FOREACH(                        \
-                    BUN_BINDGEN_DETAIL_EXTERN_UNION_VISIT,         \
-                    T0 __VA_OPT__(, ) __VA_ARGS__)                 \
-            },                                                     \
-                std::move(variant));                               \
-        }                                                          \
+#define BUN_BINDGEN_DETAIL_DEFINE_EXTERN_UNION(T0, ...)                    \
+    template<typename T0 __VA_OPT__(                                       \
+        BUN_BINDGEN_DETAIL_FOREACH(                                        \
+            BUN_BINDGEN_DETAIL_EXTERN_UNION_TEMPLATE_PARAM,                \
+            __VA_ARGS__))>                                                 \
+    union ExternUnion<T0 __VA_OPT__(, ) __VA_ARGS__> {                     \
+        BUN_BINDGEN_DETAIL_FOREACH(                                        \
+            BUN_BINDGEN_DETAIL_EXTERN_UNION_FIELD,                         \
+            T0 __VA_OPT__(, ) __VA_ARGS__)                                 \
+        ExternUnion(std::variant<T0 __VA_OPT__(, ) __VA_ARGS__>&& variant) \
+        {                                                                  \
+            using This = std::decay_t<decltype(*this)>;                    \
+            static_assert(std::is_trivially_copyable_v<This>);             \
+            const std::size_t index = variant.index();                     \
+            std::visit([this, index](auto&& arg) {                         \
+                using Arg = std::decay_t<decltype(arg)>;                   \
+                BUN_BINDGEN_DETAIL_FOREACH(                                \
+                    BUN_BINDGEN_DETAIL_EXTERN_UNION_VISIT,                 \
+                    T0 __VA_OPT__(, ) __VA_ARGS__)                         \
+            },                                                             \
+                std::move(variant));                                       \
+        }                                                                  \
     }
 
 #define BUN_BINDGEN_DETAIL_EXTERN_UNION_TEMPLATE_PARAM(Type) , typename Type
-#define BUN_BINDGEN_DETAIL_EXTERN_UNION_FIELD(Type)    \
-    static_assert(std::is_trivially_copyable_v<Type>); \
-    Type alternative##Type;
+#define BUN_BINDGEN_DETAIL_EXTERN_UNION_FIELD(Type) Type alternative##Type;
 #define BUN_BINDGEN_DETAIL_EXTERN_UNION_VISIT(Type)           \
     if constexpr (std::is_same_v<Arg, Type>) {                \
         if (index == ::Bun::Bindgen::Detail::indexOf##Type) { \

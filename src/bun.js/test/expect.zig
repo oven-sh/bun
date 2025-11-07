@@ -109,7 +109,7 @@ pub const Expect = struct {
     }
 
     pub fn throwPrettyMatcherError(globalThis: *JSGlobalObject, custom_label: bun.String, matcher_name: anytype, matcher_params: anytype, flags: Flags, comptime message_fmt: string, message_args: anytype) bun.JSError {
-        switch (Output.enable_ansi_colors) {
+        switch (Output.enable_ansi_colors_stderr) {
             inline else => |colors| {
                 const chain = switch (flags.promise) {
                     .resolves => if (flags.not) Output.prettyFmt("resolves<d>.<r>not<d>.<r>", colors) else Output.prettyFmt("resolves<d>.<r>", colors),
@@ -164,7 +164,7 @@ pub const Expect = struct {
         };
         value.ensureStillAlive();
 
-        const matcher_params = switch (Output.enable_ansi_colors) {
+        const matcher_params = switch (Output.enable_ansi_colors_stderr) {
             inline else => |colors| comptime Output.prettyFmt(matcher_params_fmt, colors),
         };
         return processPromise(this.custom_label, this.flags, globalThis, value, matcher_name, matcher_params, false);
@@ -747,7 +747,8 @@ pub const Expect = struct {
             if (bun.detectCI()) |_| {
                 if (!update) {
                     const signature = comptime getSignature(fn_name, "", false);
-                    return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Updating inline snapshots is disabled in CI environments unless --update-snapshots is used.\nTo override, set the environment variable CI=false.", .{});
+                    // Only creating new snapshots can reach here (updating with mismatches errors earlier with diff)
+                    return this.throw(globalThis, signature, "\n\n<b>Matcher error<r>: Inline snapshot creation is disabled in CI environments unless --update-snapshots is used.\nTo override, set the environment variable CI=false.\n\nReceived: {s}", .{pretty_value.slice()});
                 }
             }
             var buntest_strong = this.bunTest() orelse {
@@ -827,21 +828,35 @@ pub const Expect = struct {
         try this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value, fn_name);
 
         const existing_value = Jest.runner.?.snapshots.getOrPut(this, pretty_value.slice(), hint) catch |err| {
-            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
-            defer formatter.deinit();
             var buntest_strong = this.bunTest() orelse return globalThis.throw("Snapshot matchers cannot be used outside of a test", .{});
             defer buntest_strong.deinit();
             const buntest = buntest_strong.get();
             const test_file_path = Jest.runner.?.files.get(buntest.file_id).source.path.text;
+            const runner = Jest.runner.?;
             return switch (err) {
                 error.FailedToOpenSnapshotFile => globalThis.throw("Failed to open snapshot file for test file: {s}", .{test_file_path}),
                 error.FailedToMakeSnapshotDirectory => globalThis.throw("Failed to make snapshot directory for test file: {s}", .{test_file_path}),
                 error.FailedToWriteSnapshotFile => globalThis.throw("Failed write to snapshot file: {s}", .{test_file_path}),
                 error.SyntaxError, error.ParseError => globalThis.throw("Failed to parse snapshot file for: {s}", .{test_file_path}),
-                error.SnapshotCreationNotAllowedInCI => globalThis.throw("Snapshot creation is not allowed in CI environments unless --update-snapshots is used\nIf this is not a CI environment, set the environment variable CI=false to force allow.\n\nReceived: {any}", .{value.toFmt(&formatter)}),
+                error.SnapshotCreationNotAllowedInCI => blk: {
+                    const snapshot_name = runner.snapshots.last_error_snapshot_name;
+                    defer if (snapshot_name) |name| {
+                        runner.snapshots.allocator.free(name);
+                        runner.snapshots.last_error_snapshot_name = null;
+                    };
+                    if (snapshot_name) |name| {
+                        break :blk globalThis.throw("Snapshot creation is disabled in CI environments unless --update-snapshots is used\nTo override, set the environment variable CI=false.\n\nSnapshot name: \"{s}\"\nReceived: {s}", .{ name, pretty_value.slice() });
+                    } else {
+                        break :blk globalThis.throw("Snapshot creation is disabled in CI environments unless --update-snapshots is used\nTo override, set the environment variable CI=false.\n\nReceived: {s}", .{pretty_value.slice()});
+                    }
+                },
                 error.SnapshotInConcurrentGroup => globalThis.throw("Snapshot matchers are not supported in concurrent tests", .{}),
                 error.TestNotActive => globalThis.throw("Snapshot matchers are not supported after the test has finished executing", .{}),
-                else => globalThis.throw("Failed to snapshot value: {any}", .{value.toFmt(&formatter)}),
+                else => blk: {
+                    var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
+                    defer formatter.deinit();
+                    break :blk globalThis.throw("Failed to snapshot value: {any}", .{value.toFmt(&formatter)});
+                },
             };
         };
 
@@ -961,7 +976,7 @@ pub const Expect = struct {
         pub fn format(this: CustomMatcherParamsFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             // try to detect param names from matcher_fn (user function) source code
             if (jsc.JSFunction.getSourceCode(this.matcher_fn)) |source_str| {
-                var source_slice = source_str.toSlice(this.globalThis.allocator());
+                const source_slice = source_str.toUTF8(this.globalThis.allocator());
                 defer source_slice.deinit();
 
                 var source: string = source_slice.slice();
@@ -1011,7 +1026,7 @@ pub const Expect = struct {
             "Matcher functions should return an object in the following format:\n" ++
             "  {{message?: string | function, pass: boolean}}\n" ++
             "'{any}' was returned";
-        const err = switch (Output.enable_ansi_colors) {
+        const err = switch (Output.enable_ansi_colors_stderr) {
             inline else => |colors| globalThis.createErrorInstance(Output.prettyFmt(fmt, colors), .{ matcher_name, result.toFmt(&formatter) }),
         };
         err.put(globalThis, ZigString.static("name"), bun.String.static("InvalidMatcherError").toJS(globalThis));
@@ -1097,7 +1112,7 @@ pub const Expect = struct {
         }
 
         const matcher_params = CustomMatcherParamsFormatter{
-            .colors = Output.enable_ansi_colors,
+            .colors = Output.enable_ansi_colors_stderr,
             .globalThis = globalThis,
             .matcher_fn = matcher_fn,
         };
@@ -1128,10 +1143,10 @@ pub const Expect = struct {
         // so now execute the symmetric matching
 
         // retrieve the matcher name
-        const matcher_name = matcher_fn.getName(globalThis);
+        const matcher_name = try matcher_fn.getName(globalThis);
 
         const matcher_params = CustomMatcherParamsFormatter{
-            .colors = Output.enable_ansi_colors,
+            .colors = Output.enable_ansi_colors_stderr,
             .globalThis = globalThis,
             .matcher_fn = matcher_fn,
         };
@@ -1698,7 +1713,9 @@ pub const ExpectCustomAsymmetricMatcher = struct {
         }
 
         // retrieve the matcher name
-        const matcher_name = matcher_fn.getName(globalThis);
+        const matcher_name = matcher_fn.getName(globalThis) catch {
+            return false;
+        };
 
         // retrieve the asymmetric matcher args
         // if null, it means the function has not yet been called to capture the args, which is a misuse of the matcher
@@ -1848,7 +1865,7 @@ pub const ExpectMatcherUtils = struct {
         var writer = buffered_writer.writer();
 
         if (comptime color_or_null) |color| {
-            if (Output.enable_ansi_colors) {
+            if (Output.enable_ansi_colors_stderr) {
                 try writer.writeAll(Output.prettyFmt(color, true));
             }
         }
@@ -1858,7 +1875,7 @@ pub const ExpectMatcherUtils = struct {
         try writer.print("{}", .{value.toFmt(&formatter)});
 
         if (comptime color_or_null) |_| {
-            if (Output.enable_ansi_colors) {
+            if (Output.enable_ansi_colors_stderr) {
                 try writer.writeAll(Output.prettyFmt("<r>", true));
             }
         }

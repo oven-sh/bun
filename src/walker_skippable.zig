@@ -109,7 +109,7 @@ pub fn next(self: *Walker) bun.sys.Maybe(?WalkerEntry) {
     return .initResult(null);
 }
 
-pub fn deinit(self: *const Walker) void {
+pub fn deinit(self: *Walker) void {
     if (self.stack.items.len > 0) {
         for (self.stack.items[1..]) |*item| {
             if (self.stack.items.len != 0) {

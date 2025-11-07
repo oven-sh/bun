@@ -35,12 +35,23 @@ pub fn refSelf(this: *IOReader) *IOReader {
     return this;
 }
 
+pub fn memoryCost(this: *const IOReader) usize {
+    var size: usize = @sizeOf(IOReader);
+    size += this.buf.allocatedSlice().len;
+    size += this.readers.memoryCost();
+    return size;
+}
+
 pub fn eventLoop(this: *IOReader) jsc.EventLoopHandle {
     return this.evtloop;
 }
 
-pub fn loop(this: *IOReader) *bun.uws.Loop {
-    return this.evtloop.loop();
+pub fn loop(this: *IOReader) *bun.Async.Loop {
+    if (comptime bun.Environment.isWindows) {
+        return this.evtloop.loop().uv_loop;
+    } else {
+        return this.evtloop.loop();
+    }
 }
 
 pub fn init(fd: bun.FileDescriptor, evtloop: jsc.EventLoopHandle) *IOReader {
@@ -222,6 +233,14 @@ pub const IOReaderChildPtr = struct {
             .ptr = ChildPtrRaw.init(p),
             // .ptr = @ptrCast(p),
         };
+    }
+
+    pub fn memoryCost(this: IOReaderChildPtr) usize {
+        if (this.ptr.is(Interpreter.Builtin.Cat)) {
+            // TODO:
+            return @sizeOf(Interpreter.Builtin.Cat);
+        }
+        return 0;
     }
 
     /// Return true if the child should be deleted

@@ -47,7 +47,7 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
             // TODO: figure out how npm determines workspaces=true
             false,
             if (ci_name != null) " ci/" else "",
-            ci_name orelse "",
+            if (ci_name) |ci| @tagName(ci) else "",
         });
         headers.count("user-agent", print_buf.items);
         print_buf.clearRetainingCapacity();
@@ -75,7 +75,7 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
             Global.arch_name,
             false,
             if (ci_name != null) " ci/" else "",
-            ci_name orelse "",
+            if (ci_name) |ci| @tagName(ci) else "",
         });
         headers.append("user-agent", print_buf.items);
         print_buf.clearRetainingCapacity();

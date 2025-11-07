@@ -1305,7 +1305,7 @@ pub const PublishCommand = struct {
                 Global.arch_name,
                 uses_workspaces,
                 if (ci_name != null) " ci/" else "",
-                ci_name orelse "",
+                if (ci_name) |ci| @tagName(ci) else "",
             });
             // headers.count("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
             headers.count("user-agent", print_buf.items);
@@ -1354,7 +1354,7 @@ pub const PublishCommand = struct {
                 Global.arch_name,
                 uses_workspaces,
                 if (ci_name != null) " ci/" else "",
-                ci_name orelse "",
+                if (ci_name) |ci| @tagName(ci) else "",
             });
             // headers.append("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
             headers.append("user-agent", print_buf.items);

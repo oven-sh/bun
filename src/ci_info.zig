@@ -5,15 +5,16 @@
 // https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/workspaces/config/lib/definitions/definitions.js#L2129
 // `name.toLowerCase().split(' ').join('-')`
 
-var ci_name: ?[]const u8 = null;
+var ci_initialized = false;
+var ci_value: ?CI = null;
 
-pub fn detectCI() ?[]const u8 {
-    const ci = ci_name orelse ci_name: {
-        CI.once.call();
-        break :ci_name ci_name.?;
-    };
+pub fn detectCI() ?CI {
+    if (ci_initialized) return ci_value;
 
-    return if (ci.len == 0) null else ci;
+    ci_value = CI.detectUncached();
+    ci_initialized = true;
+
+    return ci_value;
 }
 
 const CI = enum {
@@ -67,23 +68,21 @@ const CI = enum {
     woodpecker,
     @"xcode-cloud",
     @"xcode-server",
+    heroku,
     unknown,
 
-    pub var once = std.once(struct {
-        pub fn once() void {
-            var name: []const u8 = "";
-            defer ci_name = name;
-
+    fn detectUncached() ?CI {
+        {
+            var force_ci = false;
             if (bun.env_var.CI.get()) |ci| switch (ci) {
-                false => return,
-                true => name = "unknown", // don't immediately return so we can still determine the CI name
+                false => return .unknown,
+                true => force_ci = true,
             };
 
             // Special case Heroku
             if (bun.env_var.NODE.get()) |node| {
                 if (strings.containsComptime(node, "/app/.heroku/node/bin/node")) {
-                    name = "heroku";
-                    return;
+                    return .heroku;
                 }
             }
 
@@ -97,21 +96,20 @@ const CI = enum {
                         if (value.len == 0 or bun.strings.eqlLong(env, value, true)) {
                             if (!any) continue :pairs;
 
-                            name = @tagName(Array.Indexer.keyForIndex(i));
-                            return;
+                            return Array.Indexer.keyForIndex(i);
                         }
                     }
 
                     if (!any) continue :ci;
                 }
 
-                if (!any) {
-                    name = @tagName(Array.Indexer.keyForIndex(i));
-                    return;
-                }
+                if (!any) return Array.Indexer.keyForIndex(i);
             }
+
+            if (force_ci) return .unknown;
+            return null;
         }
-    }.once);
+    }
 
     pub const Array = std.EnumArray(CI, struct { bool, []const [2][:0]const u8 });
 
@@ -414,6 +412,10 @@ const CI = enum {
             },
         },
         .unknown = .{
+            true,
+            &.{},
+        },
+        .heroku = .{
             true,
             &.{},
         },

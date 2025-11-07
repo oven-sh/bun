@@ -565,6 +565,8 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
         inspector_server_id: jsc.Debugger.DebuggerId = .init(0),
 
+        compression_config: ?*bun.http.CompressionConfig = null,
+
         pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false);
 
         pub const dispose = host_fn.wrapInstanceMethod(ThisServer, "disposeFromJS", false);
@@ -1618,6 +1620,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             this.config.deinit();
 
+            if (this.compression_config) |compression| {
+                compression.deinit();
+            }
+
             this.on_clienterror.deinit();
             if (this.app) |app| {
                 this.app = null;
@@ -1670,6 +1676,22 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
 
             server.request_pool_allocator = RequestContext.pool.?;
+
+            // Transfer compression config from ServerConfig to Server
+            // Disable if onNodeHTTPRequest is set (node:http compatibility)
+            server.compression_config = if (!config.onNodeHTTPRequest.isEmptyOrUndefinedOrNull())
+                null // node:http: always disable compression
+            else if (config.compression_config_from_js) |comp_config| switch (comp_config) {
+                .use_default => brk: {
+                    const default_config = bun.handleOom(bun.default_allocator.create(bun.http.CompressionConfig));
+                    default_config.* = bun.http.CompressionConfig.DEFAULT;
+                    break :brk default_config;
+                },
+                .config => |cfg| cfg,
+            } else null;
+
+            // Clear it from config so deinit doesn't double-free
+            config.compression_config_from_js = null;
 
             if (comptime ssl_enabled) {
                 analytics.Features.https_server += 1;
@@ -3118,6 +3140,16 @@ pub const AnyServer = struct {
             Ptr.case(HTTPSServer) => &this.ptr.as(HTTPSServer).config,
             Ptr.case(DebugHTTPServer) => &this.ptr.as(DebugHTTPServer).config,
             Ptr.case(DebugHTTPSServer) => &this.ptr.as(DebugHTTPSServer).config,
+            else => bun.unreachablePanic("Invalid pointer tag", .{}),
+        };
+    }
+
+    pub fn compressionConfig(this: AnyServer) ?*const bun.http.CompressionConfig {
+        return switch (this.ptr.tag()) {
+            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).compression_config,
+            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).compression_config,
+            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).compression_config,
+            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).compression_config,
             else => bun.unreachablePanic("Invalid pointer tag", .{}),
         };
     }

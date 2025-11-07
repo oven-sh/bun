@@ -1,0 +1,270 @@
+const std = @import("std");
+const bun = @import("bun");
+const jsc = bun.jsc;
+const Encoding = @import("./Encoding.zig").Encoding;
+
+/// EASY DEFAULT TOGGLE: Change this to switch compression on/off by default
+/// NOTE: Compression is OPT-IN because it requires caching for performance.
+/// Enable explicitly with `compression: true` or `compression: { ... }` in Bun.serve()
+pub const COMPRESSION_ENABLED_BY_DEFAULT = false;
+
+/// Compression Configuration for Bun.serve()
+///
+/// ## Current Implementation (v1):
+/// - **Static routes only** - Compression is applied only to static routes (files served via `static` option)
+/// - **Lazy caching** - First request compresses and caches, subsequent requests serve cached version
+/// - **Per-encoding cache** - Separate cached variant for each encoding (br, gzip, zstd, deflate)
+/// - **Automatic** - No user code needed, just enable `compression: true`
+///
+/// ## Future Work:
+/// - **Dynamic routes** - Requires caching API to avoid compressing on every request
+/// - **Streaming** - Need to ensure streaming responses aren't broken
+/// - **Cache control** - Let users control what gets cached and for how long
+///
+/// ## Usage:
+/// ```js
+/// Bun.serve({
+///   compression: true, // Use defaults (br=4, gzip=6, zstd=3)
+///   compression: { brotli: 6, gzip: false }, // Custom config
+///   compression: false, // Disable
+/// })
+/// ```
+pub const CompressionConfig = struct {
+    pub const AlgorithmConfig = struct {
+        level: u8,
+        threshold: usize,
+
+        pub fn fromJS(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue, comptime min_level: u8, comptime max_level: u8, default_level: u8) bun.JSError!AlgorithmConfig {
+            if (value.isNumber()) {
+                const level = try value.coerce(i32, globalThis);
+                if (level < min_level or level > max_level) {
+                    return globalThis.throwInvalidArguments("compression level must be between {d} and {d}", .{ min_level, max_level });
+                }
+                return .{ .level = @intCast(level), .threshold = DEFAULT_THRESHOLD };
+            }
+            if (value.isObject()) {
+                const level_val = try value.get(globalThis, "level") orelse return .{ .level = default_level, .threshold = DEFAULT_THRESHOLD };
+                const level = try level_val.coerce(i32, globalThis);
+                if (level < min_level or level > max_level) {
+                    return globalThis.throwInvalidArguments("compression level must be between {d} and {d}", .{ min_level, max_level });
+                }
+
+                const threshold_val = try value.get(globalThis, "threshold");
+                const threshold = if (threshold_val) |t| @as(usize, @intCast(try t.coerce(i32, globalThis))) else DEFAULT_THRESHOLD;
+
+                return .{ .level = @intCast(level), .threshold = threshold };
+            }
+            return .{ .level = default_level, .threshold = DEFAULT_THRESHOLD };
+        }
+    };
+
+    brotli: ?AlgorithmConfig,
+    gzip: ?AlgorithmConfig,
+    zstd: ?AlgorithmConfig,
+    deflate: ?AlgorithmConfig,
+
+    threshold: usize,
+    disable_for_localhost: bool,
+
+    pub const DEFAULT_THRESHOLD: usize = 1024;
+
+    /// Default compression configuration - modify these values to change defaults
+    pub const DEFAULT = CompressionConfig{
+        .brotli = .{ .level = 4, .threshold = DEFAULT_THRESHOLD }, // Sweet spot for speed/compression
+        .gzip = .{ .level = 6, .threshold = DEFAULT_THRESHOLD }, // Standard default
+        .zstd = .{ .level = 3, .threshold = DEFAULT_THRESHOLD }, // Fast default
+        .deflate = null, // Disabled by default (obsolete)
+        .threshold = DEFAULT_THRESHOLD,
+        .disable_for_localhost = true,
+    };
+
+    /// Parse compression config from JavaScript
+    /// Supports:
+    /// - true: use defaults
+    /// - false: disable compression (returns null)
+    /// - { brotli: 4, gzip: 6, zstd: false, ... }: custom config
+    pub fn fromJS(globalThis: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!?*CompressionConfig {
+        if (value.isBoolean()) {
+            if (!value.toBoolean()) {
+                // compression: false -> return null to indicate disabled
+                return null;
+            }
+            // compression: true -> use defaults
+            const config = bun.handleOom(bun.default_allocator.create(CompressionConfig));
+            config.* = DEFAULT;
+            return config;
+        }
+
+        if (!value.isObject()) {
+            return globalThis.throwInvalidArguments("compression must be a boolean or object", .{});
+        }
+
+        const config = bun.handleOom(bun.default_allocator.create(CompressionConfig));
+        errdefer bun.default_allocator.destroy(config);
+
+        // Start with defaults
+        config.* = DEFAULT;
+
+        // Parse brotli config (supports false, number, or object)
+        if (try value.get(globalThis, "brotli")) |brotli_val| {
+            if (brotli_val.isBoolean()) {
+                if (!brotli_val.toBoolean()) {
+                    config.brotli = null; // Explicitly disabled
+                }
+                // If true, keep default
+            } else {
+                config.brotli = try AlgorithmConfig.fromJS(globalThis, brotli_val, 0, 11, 4);
+            }
+        }
+
+        // Parse gzip config
+        if (try value.get(globalThis, "gzip")) |gzip_val| {
+            if (gzip_val.isBoolean()) {
+                if (!gzip_val.toBoolean()) {
+                    config.gzip = null;
+                }
+            } else {
+                config.gzip = try AlgorithmConfig.fromJS(globalThis, gzip_val, 1, 9, 6);
+            }
+        }
+
+        // Parse zstd config
+        if (try value.get(globalThis, "zstd")) |zstd_val| {
+            if (zstd_val.isBoolean()) {
+                if (!zstd_val.toBoolean()) {
+                    config.zstd = null;
+                }
+            } else {
+                config.zstd = try AlgorithmConfig.fromJS(globalThis, zstd_val, 1, 22, 3);
+            }
+        }
+
+        // Parse deflate config
+        if (try value.get(globalThis, "deflate")) |deflate_val| {
+            if (deflate_val.isBoolean()) {
+                if (!deflate_val.toBoolean()) {
+                    config.deflate = null;
+                }
+            } else {
+                config.deflate = try AlgorithmConfig.fromJS(globalThis, deflate_val, 1, 9, 6);
+            }
+        }
+
+        // Parse threshold
+        if (try value.get(globalThis, "threshold")) |threshold_val| {
+            if (threshold_val.isNumber()) {
+                config.threshold = @intCast(try threshold_val.coerce(i32, globalThis));
+            }
+        }
+
+        // Parse disableForLocalhost
+        if (try value.get(globalThis, "disableForLocalhost")) |disable_val| {
+            if (disable_val.isBoolean()) {
+                config.disable_for_localhost = disable_val.toBoolean();
+            }
+        }
+
+        return config;
+    }
+
+    const Preference = struct {
+        encoding: Encoding,
+        quality: f32,
+    };
+
+    /// Select best encoding based on Accept-Encoding header and available config
+    /// Returns null if no compression should be used
+    pub fn selectBestEncoding(this: *const CompressionConfig, accept_encoding: []const u8) ?Encoding {
+        var preferences: [8]Preference = undefined;
+        var pref_count: usize = 0;
+
+        // Parse Accept-Encoding header
+        var iter = std.mem.splitScalar(u8, accept_encoding, ',');
+        while (iter.next()) |token| {
+            if (pref_count >= preferences.len) break;
+
+            const trimmed = std.mem.trim(u8, token, " \t");
+            if (trimmed.len == 0) continue;
+
+            var quality: f32 = 1.0;
+            var encoding_name = trimmed;
+
+            // Parse quality value
+            if (std.mem.indexOf(u8, trimmed, ";q=")) |q_pos| {
+                encoding_name = std.mem.trim(u8, trimmed[0..q_pos], " \t");
+                const q_str = std.mem.trim(u8, trimmed[q_pos + 3 ..], " \t");
+                quality = std.fmt.parseFloat(f32, q_str) catch 1.0;
+            } else if (std.mem.indexOf(u8, trimmed, "; q=")) |q_pos| {
+                encoding_name = std.mem.trim(u8, trimmed[0..q_pos], " \t");
+                const q_str = std.mem.trim(u8, trimmed[q_pos + 4 ..], " \t");
+                quality = std.fmt.parseFloat(f32, q_str) catch 1.0;
+            }
+
+            // Skip if quality is 0 (explicitly disabled)
+            if (quality <= 0.0) continue;
+
+            // Map to encoding enum
+            const encoding: ?Encoding = if (bun.strings.eqlComptime(encoding_name, "br"))
+                .brotli
+            else if (bun.strings.eqlComptime(encoding_name, "gzip"))
+                .gzip
+            else if (bun.strings.eqlComptime(encoding_name, "zstd"))
+                .zstd
+            else if (bun.strings.eqlComptime(encoding_name, "deflate"))
+                .deflate
+            else if (bun.strings.eqlComptime(encoding_name, "identity"))
+                .identity
+            else if (bun.strings.eqlComptime(encoding_name, "*"))
+                null // wildcard
+            else
+                continue; // unknown encoding
+
+            if (encoding) |enc| {
+                preferences[pref_count] = .{ .encoding = enc, .quality = quality };
+                pref_count += 1;
+            }
+        }
+
+        // Sort by quality (descending)
+        std.mem.sort(Preference, preferences[0..pref_count], {}, struct {
+            fn lessThan(_: void, a: Preference, b: Preference) bool {
+                return a.quality > b.quality;
+            }
+        }.lessThan);
+
+        // Select first available encoding that's enabled
+        for (preferences[0..pref_count]) |pref| {
+            switch (pref.encoding) {
+                .brotli => if (this.brotli != null) return .brotli,
+                .zstd => if (this.zstd != null) return .zstd,
+                .gzip => if (this.gzip != null) return .gzip,
+                .deflate => if (this.deflate != null) return .deflate,
+                .identity => return null, // Client wants no compression
+                else => continue,
+            }
+        }
+
+        // Fallback: use server preference if no quality specified or all equal
+        if (pref_count == 0 or allQualitiesEqual(preferences[0..pref_count])) {
+            if (this.brotli != null) return .brotli;
+            if (this.zstd != null) return .zstd;
+            if (this.gzip != null) return .gzip;
+            if (this.deflate != null) return .deflate;
+        }
+
+        return null;
+    }
+
+    fn allQualitiesEqual(prefs: []const Preference) bool {
+        if (prefs.len == 0) return true;
+        const first = prefs[0].quality;
+        for (prefs[1..]) |p| {
+            if (p.quality != first) return false;
+        }
+        return true;
+    }
+
+    pub fn deinit(this: *CompressionConfig) void {
+        bun.default_allocator.destroy(this);
+    }
+};

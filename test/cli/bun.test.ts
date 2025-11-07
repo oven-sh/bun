@@ -76,5 +76,22 @@ describe("bun", () => {
         fs.unlinkSync(path);
       }
     });
+
+    test("test --config=NUL on Windows should not panic", () => {
+      // On Windows, NUL is a special device file (like /dev/null on Unix)
+      // Using it as --config should not cause a panic due to empty extension slicing
+      const configPath = process.platform === "win32" ? "NUL" : "/dev/null";
+      const p = Bun.spawnSync({
+        cmd: [bunExe(), `--config=${configPath}`],
+        env: {},
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      // Should not panic - may fail to parse, but should not crash
+      // Exit code doesn't matter as long as it doesn't panic
+      const stderr = p.stderr?.toString() || "";
+      expect(stderr).not.toContain("panic:");
+      expect(stderr).not.toContain("start index 1 is larger than end index 0");
+    });
   });
 });

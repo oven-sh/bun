@@ -16,6 +16,7 @@ import {
   getEmoji,
   getEnv,
   getLastSuccessfulBuild,
+  getSecret,
   isBuildkite,
   isBuildManual,
   isFork,

@@ -1,23 +1,23 @@
 ---
-title: Use EdgeDB with Bun
-sidebarTitle: EdgeDB with Bun
+title: Use Gel with Bun
+sidebarTitle: Gel with Bun
 mode: center
 ---
 
-EdgeDB is a graph-relational database powered by Postgres under the hood. It provides a declarative schema language, migrations system, and object-oriented query language, in addition to supporting raw SQL queries. It solves the object-relational mapping problem at the database layer, eliminating the need for an ORM library in your application code.
+Gel (formerly EdgeDB) is a graph-relational database powered by Postgres under the hood. It provides a declarative schema language, migrations system, and object-oriented query language, in addition to supporting raw SQL queries. It solves the object-relational mapping problem at the database layer, eliminating the need for an ORM library in your application code.
 
 ---
 
-First, [install EdgeDB](https://www.edgedb.com/install) if you haven't already.
+First, [install Gel](https://www.geldata.com/install) if you haven't already.
 
 <CodeGroup>
 
 ```sh Linux/macOS terminal icon="terminal"
-curl --proto '=https' --tlsv1.2 -sSf https://sh.edgedb.com | sh
+curl https://www.geldata.com/sh --proto "=https" -sSf1 | sh
 ```
 
 ```sh Windows terminal icon="windows"
-iwr https://ps1.edgedb.com -useb | iex
+irm https://www.geldata.com/ps1 | iex
 ```
 
 </CodeGroup>
@@ -34,35 +34,35 @@ bun init -y
 
 ---
 
-We'll use the EdgeDB CLI to initialize an EdgeDB instance for our project. This creates an `edgedb.toml` file in our project root.
+We'll use the Gel CLI to initialize a Gel instance for our project. This creates a `gel.toml` file in our project root.
 
 ```sh terminal icon="terminal"
-edgedb project init
+gel project init
 ```
 
 ```txt
-No `edgedb.toml` found in `/Users/colinmcd94/Documents/bun/fun/examples/my-edgedb-app` or above
+No `gel.toml` found in `/Users/colinmcd94/Documents/bun/fun/examples/my-gel-app` or above
 Do you want to initialize a new project? [Y/n]
 > Y
-Specify the name of EdgeDB instance to use with this project [default: my_edgedb_app]:
-> my_edgedb_app
-Checking EdgeDB versions...
-Specify the version of EdgeDB to use with this project [default: x.y]:
+Specify the name of Gel instance to use with this project [default: my_gel_app]:
+> my_gel_app
+Checking Gel versions...
+Specify the version of Gel to use with this project [default: x.y]:
 > x.y
-┌─────────────────────┬────────────────────────────────────────────────────────────────────────┐
-│ Project directory   │ /Users/colinmcd94/Documents/bun/fun/examples/my-edgedb-app             │
-│ Project config      │ /Users/colinmcd94/Documents/bun/fun/examples/my-edgedb-app/edgedb.toml │
-│ Schema dir (empty)  │ /Users/colinmcd94/Documents/bun/fun/examples/my-edgedb-app/dbschema    │
-│ Installation method │ portable package                                                       │
-│ Version             │ x.y+6d5921b                                                            │
-│ Instance name       │ my_edgedb_app                                                          │
-└─────────────────────┴────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────┬──────────────────────────────────────────────────────────────────┐
+│ Project directory   │ /Users/colinmcd94/Documents/bun/fun/examples/my-gel-app         │
+│ Project config      │ /Users/colinmcd94/Documents/bun/fun/examples/my-gel-app/gel.toml│
+│ Schema dir (empty)  │ /Users/colinmcd94/Documents/bun/fun/examples/my-gel-app/dbschema│
+│ Installation method │ portable package                                                 │
+│ Version             │ x.y+6d5921b                                                      │
+│ Instance name       │ my_gel_app                                                       │
+└─────────────────────┴──────────────────────────────────────────────────────────────────┘
 Version x.y+6d5921b is already downloaded
-Initializing EdgeDB instance...
+Initializing Gel instance...
 Applying migrations...
 Everything is up to date. Revision initial
 Project initialized.
-To connect to my_edgedb_app, run `edgedb`
+To connect to my_gel_app, run `gel`
 ```
 
 ---
@@ -70,8 +70,8 @@ To connect to my_edgedb_app, run `edgedb`
 To see if the database is running, let's open a REPL and run a simple query.
 
 ```sh terminal icon="terminal"
-edgedb
-edgedb> select 1 + 1;
+gel
+gel> select 1 + 1;
 ```
 
 ```txt
@@ -81,12 +81,12 @@ edgedb> select 1 + 1;
 Then run `\quit` to exit the REPL.
 
 ```sh terminal icon="terminal"
-edgedb> \quit
+gel> \quit
 ```
 
 ---
 
-With the project initialized, we can define a schema. The `edgedb project init` command already created a `dbschema/default.esdl` file to contain our schema.
+With the project initialized, we can define a schema. The `gel project init` command already created a `dbschema/default.esdl` file to contain our schema.
 
 ```txt File Tree icon="folder-tree"
 dbschema
@@ -112,15 +112,15 @@ module default {
 Then generate and apply an initial migration.
 
 ```sh terminal icon="terminal"
-edgedb migration create
+gel migration create
 ```
 
 ```txt
-Created /Users/colinmcd94/Documents/bun/fun/examples/my-edgedb-app/dbschema/migrations/00001.edgeql, id: m1uwekrn4ni4qs7ul7hfar4xemm5kkxlpswolcoyqj3xdhweomwjrq
+Created /Users/colinmcd94/Documents/bun/fun/examples/my-gel-app/dbschema/migrations/00001.edgeql, id: m1uwekrn4ni4qs7ul7hfar4xemm5kkxlpswolcoyqj3xdhweomwjrq
 ```
 
 ```sh terminal icon="terminal"
-edgedb migrate
+gel migrate
 ```
 
 ```txt
@@ -129,11 +129,11 @@ Applied m1uwekrn4ni4qs7ul7hfar4xemm5kkxlpswolcoyqj3xdhweomwjrq (00001.edgeql)
 
 ---
 
-With our schema applied, let's execute some queries using EdgeDB's JavaScript client library. We'll install the client library and EdgeDB's codegen CLI, and create a `seed.ts`.file.
+With our schema applied, let's execute some queries using Gel's JavaScript client library. We'll install the client library and Gel's codegen CLI, and create a `seed.ts`.file.
 
 ```sh terminal icon="terminal"
-bun add edgedb
-bun add -D @edgedb/generate
+bun add gel
+bun add -D @gel/generate
 touch seed.ts
 ```
 
@@ -144,7 +144,7 @@ Paste the following code into `seed.ts`.
 The client auto-connects to the database. We insert a couple movies using the `.execute()` method. We will use EdgeQL's `for` expression to turn this bulk insert into a single optimized query.
 
 ```ts seed.ts icon="/icons/typescript.svg"
-import { createClient } from "edgedb";
+import { createClient } from "gel";
 
 const client = createClient();
 
@@ -184,10 +184,10 @@ Seeding complete.
 
 ---
 
-EdgeDB implements a number of code generation tools for TypeScript. To query our newly seeded database in a typesafe way, we'll use `@edgedb/generate` to code-generate the EdgeQL query builder.
+Gel implements a number of code generation tools for TypeScript. To query our newly seeded database in a typesafe way, we'll use `@gel/generate` to code-generate the EdgeQL query builder.
 
 ```sh terminal icon="terminal"
-bunx @edgedb/generate edgeql-js
+bunx @gel/generate edgeql-js
 ```
 
 ```txt
@@ -213,7 +213,7 @@ the query builder directory? The following line will be added:
 In `index.ts`, we can import the generated query builder from `./dbschema/edgeql-js` and write a simple select query.
 
 ```ts index.ts icon="/icons/typescript.svg"
-import { createClient } from "edgedb";
+import { createClient } from "gel";
 import e from "./dbschema/edgeql-js";
 
 const client = createClient();
@@ -254,4 +254,4 @@ bun run index.ts
 
 ---
 
-For complete documentation, refer to the [EdgeDB docs](https://www.edgedb.com/docs).
+For complete documentation, refer to the [Gel docs](https://www.geldata.com/docs).

@@ -838,9 +838,9 @@ pub fn spawnMaybeSync(
     // Use the isolated event loop to tick instead of the main event loop
     // This ensures JavaScript timers don't fire and stdin/stdout from the main process aren't affected
     {
-        var timespec = bun.timespec.epoch;
+        var absolute_timespec = bun.timespec.epoch;
         var now = bun.timespec.now();
-        var user_timespec: bun.timespec = if (timeout) |timeout_ms| now.addMs(timeout_ms) else timespec;
+        var user_timespec: bun.timespec = if (timeout) |timeout_ms| now.addMs(timeout_ms) else absolute_timespec;
 
         // Support`AbortSignal.timeout`, but it's best-effort.
         // Specifying both `timeout: number` and `AbortSignal.timeout` chooses the soonest one.
@@ -866,16 +866,16 @@ pub fn spawnMaybeSync(
 
             if (has_bun_test_timeout) {
                 switch (bun_test_timeout.orderIgnoreEpoch(user_timespec)) {
-                    .lt => timespec = bun_test_timeout,
+                    .lt => absolute_timespec = bun_test_timeout,
                     .eq => {},
-                    .gt => timespec = user_timespec,
+                    .gt => absolute_timespec = user_timespec,
                 }
             } else if (has_user_timespec) {
-                timespec = user_timespec;
+                absolute_timespec = user_timespec;
             } else {
-                timespec = .epoch;
+                absolute_timespec = .epoch;
             }
-            const has_timespec = !timespec.eql(&.epoch);
+            const has_timespec = !absolute_timespec.eql(&.epoch);
 
             if (subprocess.stdin == .buffer) {
                 subprocess.stdin.buffer.watch();
@@ -891,13 +891,13 @@ pub fn spawnMaybeSync(
 
             // Tick the isolated event loop without passing timeout to avoid blocking
             // The timeout check is done at the top of the loop
-            switch (sync_loop.tickWithTimeout(if (has_timespec and !did_timeout) &timespec else null)) {
+            switch (sync_loop.tickWithTimeout(if (has_timespec and !did_timeout) &absolute_timespec else null)) {
                 .completed => {
                     now = bun.timespec.now();
                 },
                 .timeout => {
                     now = bun.timespec.now();
-                    const did_user_timeout = has_user_timespec and (timespec.eql(&user_timespec) or user_timespec.order(&now) == .lt);
+                    const did_user_timeout = has_user_timespec and (absolute_timespec.eql(&user_timespec) or user_timespec.order(&now) == .lt);
 
                     if (did_user_timeout) {
                         did_timeout = true;
@@ -909,8 +909,10 @@ pub fn spawnMaybeSync(
                     // different test fails, and that SHOULD be okay.
                     if (has_bun_test_timeout) {
                         if (bun_test_timeout.order(&now) == .lt) {
-                            // TODO: add a .cloneNonOptional()?
-                            var active_file_strong = bun.jsc.Jest.Jest.runner.?.bun_test_root.active_file.clone();
+                            var active_file_strong = bun.jsc.Jest.Jest.runner.?.bun_test_root.active_file
+                                // TODO: add a .cloneNonOptional()?
+                                .clone();
+
                             defer active_file_strong.deinit();
                             var taken_active_file = active_file_strong.take().?;
                             defer taken_active_file.deinit();
@@ -922,7 +924,7 @@ pub fn spawnMaybeSync(
                             // need to reap the process. So we may go through
                             // the event loop again, but it should wake up
                             // ~instantly so we can drain the events.
-                            jsc.Jest.bun_test.BunTest.bunTestTimeoutCallback(taken_active_file, &timespec, jsc_vm);
+                            jsc.Jest.bun_test.BunTest.bunTestTimeoutCallback(taken_active_file, &absolute_timespec, jsc_vm);
                         }
                     }
                 },

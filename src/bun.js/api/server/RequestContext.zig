@@ -2333,6 +2333,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
 
             if (config.disable_for_localhost) {
                 if (req.header("host")) |host| {
+                    // Host header may include port (e.g., "localhost:3000")
                     if (bun.strings.containsComptime(host, "localhost") or
                         bun.strings.hasPrefixComptime(host, "127.") or
                         bun.strings.containsComptime(host, "[::1]"))

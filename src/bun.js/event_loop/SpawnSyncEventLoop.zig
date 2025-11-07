@@ -151,7 +151,7 @@ pub fn tickWithTimeout(this: *SpawnSyncEventLoop, timeout: ?*const bun.timespec)
     // Tick the isolated uws loop with the specified timeout
     // This will only process I/O related to this subprocess
     // and will NOT interfere with the main event loop
-    this.uws_loop.tickWithTimeout(timeout);
+    this.uws_loop.tickWithTimeout(if (timeout) |ts| &ts.duration(&.now()) else null);
 
     if (timeout) |ts| {
         if (bun.Environment.isWindows) {

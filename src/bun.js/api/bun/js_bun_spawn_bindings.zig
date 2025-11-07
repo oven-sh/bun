@@ -837,17 +837,28 @@ pub fn spawnMaybeSync(
     // Use the isolated event loop to tick instead of the main event loop
     // This ensures JavaScript timers don't fire and stdin/stdout from the main process aren't affected
     {
-        const timespec: bun.timespec = if (timeout) |timeout_ms| bun.timespec.msFromNow(timeout_ms) else undefined;
+        var timespec = bun.timespec.epoch;
+        var now = bun.timespec.now();
+        const user_timespec: bun.timespec = if (timeout) |timeout_ms| now.addMs(timeout_ms) else timespec;
+        const has_user_timespec = !user_timespec.eql(&.epoch);
+
         const sync_loop = jsc_vm.rareData().spawnSyncEventLoop(jsc_vm);
 
         while (subprocess.computeHasPendingActivity()) {
-            // Check if we've exceeded the timeout deadline before processing I/O
-            if (timeout != null and !did_timeout) {
-                if (bun.timespec.now().order(&timespec) != .lt) {
-                    _ = subprocess.tryKill(subprocess.killSignal);
-                    did_timeout = true;
+            // Re-evaluate this at each iteration of the loop since it may change between iterations.
+            const bun_test_timeout: bun.timespec = bun.jsc.Jest.Jest.runner.?.getActiveTimeout();
+            const has_bun_test_timeout = !bun_test_timeout.eql(&.epoch);
+
+            if (has_bun_test_timeout) {
+                switch (bun_test_timeout.orderIgnoreEpoch(user_timespec)) {
+                    .lt => timespec = bun_test_timeout,
+                    .eq => {},
+                    .gt => timespec = user_timespec,
                 }
+            } else if (has_user_timespec) {
+                timespec = user_timespec;
             }
+            const has_timespec = !timespec.eql(&.epoch);
 
             if (subprocess.stdin == .buffer) {
                 subprocess.stdin.buffer.watch();
@@ -863,8 +874,41 @@ pub fn spawnMaybeSync(
 
             // Tick the isolated event loop without passing timeout to avoid blocking
             // The timeout check is done at the top of the loop
-            _ = sync_loop.tickWithTimeout(null);
+            switch (sync_loop.tickWithTimeout(if (has_timespec and !did_timeout) &timeout else null)) {
+                .completed => {},
+                .timeout => {
+                    var did_user_timeout = has_user_timespec and !has_bun_test_timeout;
+
+                    // Support bun:test timeouts AND spwanSync timeout.
+                    // There is a scenario where inside of spawnSync() a totally
+                    // different test fails, and that SHOULD be okay.
+                    if (has_bun_test_timeout) {
+                        now = bun.timespec.now();
+                        if (bun_test_timeout.order(&now) == .lt) {
+                            if (bun.jsc.Jest.Jest.runner.?.bun_test_root.getActiveFileUnlessInPreload(jsc_vm)) |buntest| {
+                                // This will kill the process potentially, if it needs to.
+                                buntest.execution.handleTimeout(jsc_vm.global) catch {};
+                            }
+                        }
+
+                        if (has_user_timespec and user_timespec.order(&now) == .lt) {
+                            did_user_timeout = true;
+                        }
+                    } else {
+                        now = bun.timespec.now();
+                    }
+
+                    if (did_user_timeout) {
+                        did_timeout = true;
+                        _ = subprocess.tryKill(subprocess.killSignal);
+                    }
+                },
+            }
         }
+    }
+    if (globalThis.hasException()) {
+        // e.g. a termination exception.
+        return .zero;
     }
 
     subprocess.updateHasPendingActivity();
@@ -878,11 +922,6 @@ pub fn spawnMaybeSync(
     const exitedDueToMaxBuffer = subprocess.exited_due_to_maxbuf;
     const resultPid = jsc.JSValue.jsNumberFromInt32(subprocess.pid());
     subprocess.finalize();
-
-    if (globalThis.hasException()) {
-        // e.g. a termination exception.
-        return .zero;
-    }
 
     const sync_value = jsc.JSValue.createEmptyObject(globalThis, 5 + @as(usize, @intFromBool(!signalCode.isEmptyOrUndefinedOrNull())));
     sync_value.put(globalThis, jsc.ZigString.static("exitCode"), exitCode);

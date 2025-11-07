@@ -276,12 +276,33 @@ pub const JSValkeyClient = struct {
         defer url_str.deref();
 
         // Parse and validate the URL using URL.zig's fromString which returns null for invalid URLs
-        const parsed_url = URL.fromString(url_str) orelse {
-            if (url_str.tag != .StaticZigString) {
-                const url_utf8 = url_str.toUTF8WithoutRef(this_allocator);
-                defer url_utf8.deinit();
-                return globalObject.throwInvalidArguments("Invalid URL format: \"{s}\"", .{url_utf8.slice()});
+        // TODO(markovejnovic): The following check for :// is a stop-gap. It is my expectation
+        // that URL.fromString returns null if the protocol is not specified. This is not, in-fact,
+        // the case right now and I do not understand why. It will take some work in JSC to
+        // understand why this is happening, but since I need to uncork valkey, I'm adding this as
+        // a stop-gap.
+        var url_buf: [2048]u8 = undefined;
+        const corrected_url = get_url: {
+            const url_byte_slice = url_str.byteSlice();
+            const url_len = url_byte_slice.len;
+
+            if (bun.strings.contains(url_byte_slice, "://")) {
+                if (url_len > url_buf.len) {
+                    return globalObject.throwInvalidArguments("URL is too long.", .{});
+                }
+
+                @memcpy(url_buf[0..url_len], url_byte_slice);
+                break :get_url url_buf[0..url_len];
             }
+
+            const written = std.fmt.bufPrintZ(&url_buf, "valkey://{s}", .{url_byte_slice}) catch {
+                return globalObject.throwInvalidArguments("UURL is too long.", .{});
+            };
+
+            break :get_url url_buf[0..written.len];
+        };
+
+        const parsed_url = URL.fromUTF8(corrected_url) orelse {
             // This should never happen since our default URL is valid
             return globalObject.throwInvalidArguments("Invalid URL format", .{});
         };

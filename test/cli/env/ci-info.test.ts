@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "../../harness";
+import { bunEnv, bunExe } from "../../harness";
 
 const cleanEnv = { ...bunEnv };
 delete cleanEnv.GITHUB_ACTIONS;

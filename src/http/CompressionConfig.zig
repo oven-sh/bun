@@ -10,28 +10,28 @@ pub const COMPRESSION_ENABLED_BY_DEFAULT = false;
 
 /// Compression Configuration for Bun.serve()
 ///
-/// ## Current Implementation:
-/// - **Static routes only** - Only compresses Response objects defined in routes
-/// - **Lazy caching** - First request compresses and caches, subsequent requests serve cached version
-/// - **Per-encoding cache** - Stores separate compressed variant for EACH encoding client requests
-/// - **Memory cost** - Each static route stores original + up to 4 compressed variants
-///   - Small files (< 10KB): negligible extra memory (~200 bytes total for all variants)
-///   - Large files (1MB+): significant extra memory (~300-400KB for all variants)
+/// ## Features:
+/// - ✅ **Static routes** - Lazy caching (compress once, serve many)
+/// - ✅ **Dynamic routes** - On-demand compression per request
+/// - ✅ **Multiple algorithms** - Brotli, Gzip, Zstd, Deflate (configurable levels)
+/// - ✅ **Cache enforcement** - TTL, max size, min/max entry size actively enforced
+/// - ✅ **RFC 9110 compliant** - Quality value negotiation, proper headers
+/// - ✅ **Memory safety** - 50MB default limit, 24hr TTL, automatic cleanup
+/// - ✅ **--smol mode** - 5MB limit, 1hr TTL for constrained environments
+/// - ✅ **Smart defaults** - Localhost disabled, MIME filtering, already-encoded detection
 ///
-/// ## Memory Implications:
-/// Static routes already cache the original file data. This adds compressed variants:
-/// - If you have 100 static routes with 1MB files = ~40MB extra for compression cache
-/// - Only caches variants that clients actually request (lazy)
-/// - Compression often makes files smaller, but we store BOTH original and compressed
+/// ## Memory Safety:
+/// Default limits prevent unbounded growth:
+/// - maxSize: 50MB total per-route compressed cache (5MB with --smol)
+/// - ttl: 24 hours, expired variants auto-recreated (1hr with --smol)
+/// - minEntrySize: 128 bytes (512 with --smol)
+/// - maxEntrySize: 10MB (1MB with --smol)
+/// - Lazy initialization: only creates variants clients actually request
 ///
-/// ## Not Supported (Yet):
-/// - **Dynamic routes** - Responses from fetch() handlers (would need LRU cache with TTL)
-/// - **Streaming responses** - ReadableStream bodies are rejected from static routes (see StaticRoute.zig:160)
-/// - **Cache enforcement** - Cache config exists but limits not enforced yet (TODO)
-///   - cache.maxSize, cache.ttl, cache.minEntrySize, cache.maxEntrySize are parsed but not checked
-///   - Setting cache: false disables caching immediately
-///   - --smol mode uses smaller defaults which will matter once enforcement is added
+/// ## Not Supported:
+/// - **Streaming responses** - ReadableStream bodies rejected from static routes
 /// - **Per-route control** - Can only enable/disable globally or per-algorithm
+/// - **Global cache limit** - Limit is per-StaticRoute, not server-wide
 ///
 /// ## Usage:
 /// ```js

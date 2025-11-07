@@ -63,6 +63,11 @@ user_routes_to_build: std.ArrayList(UserRouteBuilder) = std.ArrayList(UserRouteB
 
 bake: ?bun.bake.UserOptions = null,
 
+compression_config_from_js: ?union(enum) {
+    use_default,
+    config: *bun.http.CompressionConfig,
+} = null,
+
 pub const DevelopmentOption = enum {
     development,
     production,
@@ -275,6 +280,14 @@ pub fn deinit(this: *ServerConfig) void {
 
     if (this.bake) |*bake| {
         bake.deinit();
+    }
+
+    // Note: compression_config is transferred to server.compression_config
+    // and cleaned up there, but we need to clean it if server creation failed
+    if (this.compression_config_from_js) |comp| {
+        if (comp == .config) {
+            comp.config.deinit();
+        }
     }
 
     for (this.user_routes_to_build.items) |*builder| {
@@ -960,6 +973,28 @@ pub fn fromJS(
                 return error.JSError;
             }
         }
+
+        // Parse compression config
+        // Note: This is stored in the server, not ServerConfig, so we just parse and return it
+        // It will be handled separately in serve() function
+        args.compression_config_from_js = if (try arg.get(global, "compression")) |compression_val| blk: {
+            if (compression_val.isUndefinedOrNull()) {
+                // undefined/null: use default (compression ON)
+                break :blk if (@import("../../../http/CompressionConfig.zig").COMPRESSION_ENABLED_BY_DEFAULT) .use_default else null;
+            }
+            // Parse from JS (handles true/false/object)
+            if (try bun.http.CompressionConfig.fromJS(global, compression_val)) |config| {
+                break :blk .{ .config = config };
+            } else {
+                // false: explicitly disabled
+                break :blk null;
+            }
+        } else blk: {
+            // No compression option: use default
+            break :blk if (@import("../../../http/CompressionConfig.zig").COMPRESSION_ENABLED_BY_DEFAULT) .use_default else null;
+        };
+
+        if (global.hasException()) return error.JSError;
     } else {
         return global.throwInvalidArguments("Bun.serve expects an object", .{});
     }

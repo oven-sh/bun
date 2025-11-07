@@ -326,9 +326,8 @@ fn getOrCreateCompressed(
         return error.CompressionFailed;
     }
 
-    // Generate ETag for compressed variant
-    const original_etag = this.headers.get("etag") orelse "";
-    const compressed_etag = generateCompressedETag(original_etag, encoding);
+    // Generate ETag for compressed variant by hashing the compressed data
+    const compressed_etag = generateCompressedETag(compressed_data);
 
     // Store in cache
     variant_slot.* = .{
@@ -340,10 +339,13 @@ fn getOrCreateCompressed(
     return &variant_slot.*.?;
 }
 
-/// Generate ETag for compressed variant: "original-hash-encoding"
-fn generateCompressedETag(original_etag: []const u8, encoding: bun.http.Encoding) []const u8 {
-    const suffix = encoding.toString();
-    return bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{s}-{s}", .{ original_etag, suffix }));
+/// Generate ETag for compressed variant by hashing the compressed bytes
+/// This ensures the ETag accurately represents the compressed content
+fn generateCompressedETag(compressed_data: []const u8) []const u8 {
+    const hash = std.hash.XxHash64.hash(0, compressed_data);
+    var etag_buf: [40]u8 = undefined;
+    const etag_str = std.fmt.bufPrint(&etag_buf, "\"{}\"", .{bun.fmt.hexIntLower(hash)}) catch unreachable;
+    return bun.handleOom(bun.default_allocator.dupe(u8, etag_str));
 }
 
 /// Serve a compressed response
@@ -357,8 +359,8 @@ fn serveCompressed(this: *StaticRoute, variant: *CompressedVariant, resp: AnyRes
     // Write status
     this.doWriteStatus(this.status_code, resp);
 
-    // Write headers
-    this.doWriteHeaders(resp);
+    // Write headers, but skip ETag and Content-Length (we'll set them for compressed data)
+    this.doWriteHeadersExcluding(resp, &[_][]const u8{ "etag", "content-length" });
 
     // Add Vary: Accept-Encoding (critical for caching!)
     resp.writeHeader("Vary", "Accept-Encoding");
@@ -366,10 +368,10 @@ fn serveCompressed(this: *StaticRoute, variant: *CompressedVariant, resp: AnyRes
     // Set Content-Encoding
     resp.writeHeader("Content-Encoding", variant.encoding.toString());
 
-    // Override ETag with compressed variant's ETag
+    // Set ETag for compressed variant
     resp.writeHeader("ETag", variant.etag);
 
-    // Override Content-Length
+    // Set Content-Length for compressed data
     var content_length_buf: [64]u8 = undefined;
     const content_length = std.fmt.bufPrint(&content_length_buf, "{d}", .{variant.data.len}) catch unreachable;
     resp.writeHeader("Content-Length", content_length);
@@ -498,6 +500,32 @@ fn doWriteHeaders(this: *StaticRoute, resp: AnyResponse) void {
 
             for (names, values) |name, value| {
                 s.writeHeader(name.slice(buf), value.slice(buf));
+            }
+        },
+    }
+}
+
+fn doWriteHeadersExcluding(this: *StaticRoute, resp: AnyResponse, exclude: []const []const u8) void {
+    switch (resp) {
+        inline .SSL, .TCP => |s| {
+            const entries = this.headers.entries.slice();
+            const names: []const api.StringPointer = entries.items(.name);
+            const values: []const api.StringPointer = entries.items(.value);
+            const buf = this.headers.buf.items;
+
+            for (names, values) |name, value| {
+                const header_name = name.slice(buf);
+                // Skip excluded headers (case-insensitive)
+                var skip = false;
+                for (exclude) |excluded| {
+                    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(header_name, excluded)) {
+                        skip = true;
+                        break;
+                    }
+                }
+                if (!skip) {
+                    s.writeHeader(header_name, value.slice(buf));
+                }
             }
         },
     }

@@ -786,15 +786,16 @@ pub fn spawnMaybeSync(
 
     should_close_memfd = false;
 
+    // Once everything is set up, we can add the abort listener
+    // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
+    // Therefore, we must do this at the very end.
+    if (abort_signal) |signal| {
+        signal.pendingActivityRef();
+        subprocess.abort_signal = signal.addListener(subprocess, Subprocess.onAbortSignal);
+        abort_signal = null;
+    }
+
     if (comptime !is_sync) {
-        // Once everything is set up, we can add the abort listener
-        // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
-        // Therefore, we must do this at the very end.
-        if (abort_signal) |signal| {
-            signal.pendingActivityRef();
-            subprocess.abort_signal = signal.addListener(subprocess, Subprocess.onAbortSignal);
-            abort_signal = null;
-        }
         if (!subprocess.process.hasExited()) {
             jsc_vm.onSubprocessSpawn(subprocess.process);
         }
@@ -839,7 +840,21 @@ pub fn spawnMaybeSync(
     {
         var timespec = bun.timespec.epoch;
         var now = bun.timespec.now();
-        const user_timespec: bun.timespec = if (timeout) |timeout_ms| now.addMs(timeout_ms) else timespec;
+        var user_timespec: bun.timespec = if (timeout) |timeout_ms| now.addMs(timeout_ms) else timespec;
+
+        // Support`AbortSignal.timeout`, but it's best-effort.
+        // Specifying both `timeout: number` and `AbortSignal.timeout` chooses the soonest one.
+        // This does mean if an AbortSignal times out it will throw
+        if (subprocess.abort_signal) |signal| {
+            if (signal.getTimeout()) |abort_signal_timeout| {
+                if (abort_signal_timeout.event_loop_timer.state == .ACTIVE) {
+                    if (user_timespec.eql(&.epoch) or abort_signal_timeout.event_loop_timer.next.order(&user_timespec) == .lt) {
+                        user_timespec = abort_signal_timeout.event_loop_timer.next;
+                    }
+                }
+            }
+        }
+
         const has_user_timespec = !user_timespec.eql(&.epoch);
 
         const sync_loop = jsc_vm.rareData().spawnSyncEventLoop(jsc_vm);
@@ -881,8 +896,13 @@ pub fn spawnMaybeSync(
                     now = bun.timespec.now();
                 },
                 .timeout => {
-                    const did_user_timeout = has_user_timespec and !has_bun_test_timeout;
                     now = bun.timespec.now();
+                    const did_user_timeout = has_user_timespec and (timespec.eql(&user_timespec) or user_timespec.order(&now) == .lt);
+
+                    if (did_user_timeout) {
+                        did_timeout = true;
+                        _ = subprocess.tryKill(subprocess.killSignal);
+                    }
 
                     // Support bun:test timeouts AND spawnSync() timeout.
                     // There is a scenario where inside of spawnSync() a totally
@@ -904,15 +924,6 @@ pub fn spawnMaybeSync(
                             // ~instantly so we can drain the events.
                             jsc.Jest.bun_test.BunTest.bunTestTimeoutCallback(taken_active_file, &timespec, jsc_vm);
                         }
-
-                        if (has_user_timespec and user_timespec.order(&now) == .lt) {
-                            did_timeout = true;
-                        }
-                    } else {}
-
-                    if (did_user_timeout) {
-                        did_timeout = true;
-                        _ = subprocess.tryKill(subprocess.killSignal);
                     }
                 },
             }

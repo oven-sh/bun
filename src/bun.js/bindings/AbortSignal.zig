@@ -8,7 +8,7 @@ pub const AbortSignal = opaque {
     extern fn WebCore__AbortSignal__ref(arg0: *AbortSignal) *AbortSignal;
     extern fn WebCore__AbortSignal__toJS(arg0: *AbortSignal, arg1: *JSGlobalObject) JSValue;
     extern fn WebCore__AbortSignal__unref(arg0: *AbortSignal) void;
-
+    extern fn WebCore__AbortSignal__getTimeout(arg0: *AbortSignal) ?*Timeout;
     pub fn listen(
         this: *AbortSignal,
         comptime Context: type,
@@ -136,6 +136,10 @@ pub const AbortSignal = opaque {
     pub fn new(global: *JSGlobalObject) *AbortSignal {
         jsc.markBinding(@src());
         return WebCore__AbortSignal__new(global);
+    }
+
+    pub fn getTimeout(this: *AbortSignal) ?*Timeout {
+        return WebCore__AbortSignal__getTimeout(this);
     }
 
     pub const Timeout = struct {

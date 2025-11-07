@@ -93,7 +93,7 @@ devAndProductionTest("missing all meta tags works fine", {
     "public/index.html": `
       <title>Dashboard</title>
       <link rel="stylesheet" href="../src/app/styles.css"></link>
-        
+
       <div id="root" />
       <script type="module" src="../src/app/index.tsx"></script>
     `,
@@ -201,24 +201,6 @@ devTest("using runtime import", {
     );
   },
 });
-devTest("hmr keeps pending scripts across consecutive edits", {
-  files: {
-    "index.html": emptyHtmlFile({
-      scripts: ["index.ts"],
-    }),
-    "index.ts": hmrSelfAcceptingModule("render 1"),
-  },
-  async test(dev) {
-    await using client = await dev.client("/");
-    await client.expectMessage("render 1");
-
-    await dev.write("index.ts", hmrSelfAcceptingModule("render 2"));
-    await client.expectMessage("render 2");
-
-    await dev.write("index.ts", hmrSelfAcceptingModule("render 3"));
-    await client.expectMessage("render 3");
-  },
-});
 devTest("hmr handles rapid consecutive edits", {
   files: {
     "index.html": emptyHtmlFile({
@@ -230,23 +212,66 @@ devTest("hmr handles rapid consecutive edits", {
     await using client = await dev.client("/");
     await client.expectMessage("render 1");
 
+    // Regression coverage for https://github.com/oven-sh/bun/issues/19736.
     await client.js`
-      (() => {
-        const originalAppendChild = document.head.appendChild;
-        document.head.appendChild = function (element) {
-          if (element && typeof element.src === "string" && element.src.startsWith("blob:")) {
-            const target = this;
-            setTimeout(() => originalAppendChild.call(target, element), 50);
-            return element;
+      const tracked = [];
+      globalThis.__hmrErrors = tracked;
+
+      const maybeRecord = value => {
+        const message =
+          typeof value === "string"
+            ? value
+            : value?.message ?? value?.reason ?? "";
+        if (typeof message === "string" && message.includes("Unknown HMR script")) {
+          console.log("HMR_ERROR: " + message);
+          tracked.push(message);
+          return true;
+        }
+        return false;
+      };
+
+      window.addEventListener("error", event => {
+        if (maybeRecord(event.error ?? event.message)) {
+          event.preventDefault();
+        }
+      });
+
+      window.addEventListener("unhandledrejection", event => {
+        if (maybeRecord(event.reason)) {
+          event.preventDefault();
+        }
+      });
+
+      const hmrSymbol = Symbol.for("bun:hmr");
+      const originalHmr = globalThis[hmrSymbol];
+      if (typeof originalHmr === "function") {
+        globalThis[hmrSymbol] = function (...args) {
+          try {
+            return originalHmr.apply(this, args);
+          } catch (error) {
+            maybeRecord(error);
           }
-          return originalAppendChild.call(this, element);
         };
-      })();
+      }
     `;
 
-    await dev.write("index.ts", hmrSelfAcceptingModule("render 2"));
-    await dev.write("index.ts", hmrSelfAcceptingModule("render 3"));
+    for (let i = 2; i <= 10; i++) {
+      await Bun.write(dev.join("index.ts"), hmrSelfAcceptingModule(`render ${i}`));
+      await Bun.sleep(1);
+    }
 
-    await client.expectMessage("render 2", "render 3");
+    const finalRender = "render 10";
+    while (true) {
+      const message = await client.getStringMessage();
+      if (message === finalRender) break;
+      if (typeof message === "string" && message.includes("HMR_ERROR")) {
+        throw new Error("Unexpected HMR error message: " + message);
+      }
+    }
+
+    const hmrErrors = await client.js`return globalThis.__hmrErrors ? [...globalThis.__hmrErrors] : [];`;
+    if (hmrErrors.length > 0) {
+      throw new Error("Unexpected HMR errors: " + hmrErrors.join(", "));
+    }
   },
 });

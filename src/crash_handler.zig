@@ -163,6 +163,37 @@ pub const Action = union(enum) {
     }
 };
 
+fn captureLibcBacktrace(begin_addr: usize, stack_trace: *std.builtin.StackTrace) void {
+    const backtrace = struct {
+        extern "c" fn backtrace(buffer: [*]*anyopaque, size: c_int) c_int;
+    }.backtrace;
+
+    const addrs = stack_trace.instruction_addresses;
+    const count = backtrace(@ptrCast(addrs), @intCast(addrs.len));
+    stack_trace.index = @intCast(count);
+
+    // Skip frames until we find begin_addr (or close to it)
+    // backtrace() captures everything including crash handler frames
+    const tolerance: usize = 128;
+    const skip: usize = for (addrs[0..stack_trace.index], 0..) |addr, i| {
+        // Check if this address is close to begin_addr (within tolerance)
+        const delta = if (addr >= begin_addr)
+            addr - begin_addr
+        else
+            begin_addr - addr;
+        if (delta <= tolerance) break i;
+        // Give up searching after 8 frames
+        if (i >= 8) break 0;
+    } else 0;
+
+    // Shift the addresses to skip crash handler frames
+    // If begin_addr was not found, use the complete backtrace
+    if (skip > 0) {
+        std.mem.copyForwards(usize, addrs, addrs[skip..stack_trace.index]);
+        stack_trace.index -= skip;
+    }
+}
+
 /// This function is invoked when a crash happens. A crash is classified in `CrashReason`.
 pub fn crashHandler(
     reason: CrashReason,
@@ -318,6 +349,20 @@ pub fn crashHandler(
                     };
                     const desired_begin_addr = begin_addr orelse @returnAddress();
                     std.debug.captureStackTrace(desired_begin_addr, &trace_buf);
+
+                    if (comptime bun.Environment.isLinux and !bun.Environment.isMusl) {
+                        var addr_buf_libc: [20]usize = undefined;
+                        var trace_buf_libc: std.builtin.StackTrace = .{
+                            .index = 0,
+                            .instruction_addresses = &addr_buf_libc,
+                        };
+                        captureLibcBacktrace(desired_begin_addr, &trace_buf_libc);
+                        // Use stack trace from glibc's backtrace() if it has more frames
+                        if (trace_buf_libc.index > trace_buf.index) {
+                            addr_buf = addr_buf_libc;
+                            trace_buf.index = trace_buf_libc.index;
+                        }
+                    }
                     break :blk &trace_buf;
                 };
 

@@ -466,14 +466,12 @@ pub fn spawnMaybeSync(
         !jsc_vm.isInspectorEnabled() and
         !bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH.get();
 
-    const current_event_loop = jsc_vm.eventLoop();
-
     // For spawnSync, use an isolated event loop to prevent JavaScript timers from firing
     // and to avoid interfering with the main event loop
-    const sync_event_loop: ?*jsc.EventLoop = if (comptime is_sync) brk: {
-        const sync_loop = jsc_vm.rareData().spawnSyncEventLoop(jsc_vm);
-        break :brk &sync_loop.event_loop;
-    } else null;
+    const event_loop: *jsc.EventLoop = if (comptime is_sync)
+        &jsc_vm.rareData().spawnSyncEventLoop(jsc_vm).event_loop
+    else
+        jsc_vm.eventLoop();
 
     if (comptime is_sync) {
         jsc_vm.rareData().spawnSyncEventLoop(jsc_vm).prepare(jsc_vm);
@@ -481,14 +479,11 @@ pub fn spawnMaybeSync(
 
     defer {
         if (comptime is_sync) {
-            jsc_vm.rareData().spawnSyncEventLoop(jsc_vm).cleanup(jsc_vm, current_event_loop);
+            jsc_vm.rareData().spawnSyncEventLoop(jsc_vm).cleanup(jsc_vm, jsc_vm.eventLoop());
         }
     }
 
-    const loop_handle = if (sync_event_loop) |loop_ptr|
-        jsc.EventLoopHandle.init(loop_ptr)
-    else
-        jsc.EventLoopHandle.init(jsc_vm);
+    const loop_handle = jsc.EventLoopHandle.init(event_loop);
 
     const spawn_options = bun.spawn.SpawnOptions{
         .cwd = cwd,
@@ -594,7 +589,7 @@ pub fn spawnMaybeSync(
         .pid_rusage = null,
         .stdin = Writable.init(
             &stdio[0],
-            sync_event_loop orelse jsc_vm.eventLoop(),
+            event_loop,
             subprocess,
             spawned.stdin,
             &promise_for_stream,
@@ -604,7 +599,7 @@ pub fn spawnMaybeSync(
         },
         .stdout = Readable.init(
             stdio[1],
-            sync_event_loop orelse jsc_vm.eventLoop(),
+            event_loop,
             subprocess,
             spawned.stdout,
             jsc_vm.allocator,
@@ -613,7 +608,7 @@ pub fn spawnMaybeSync(
         ),
         .stderr = Readable.init(
             stdio[2],
-            sync_event_loop orelse jsc_vm.eventLoop(),
+            event_loop,
             subprocess,
             spawned.stderr,
             jsc_vm.allocator,
@@ -767,7 +762,7 @@ pub fn spawnMaybeSync(
     }
 
     if (subprocess.stdout == .pipe) {
-        if (subprocess.stdout.pipe.start(subprocess, sync_event_loop orelse jsc_vm.eventLoop()).asErr()) |err| {
+        if (subprocess.stdout.pipe.start(subprocess, event_loop).asErr()) |err| {
             _ = subprocess.tryKill(subprocess.killSignal);
             _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
             return error.JSError;
@@ -778,7 +773,7 @@ pub fn spawnMaybeSync(
     }
 
     if (subprocess.stderr == .pipe) {
-        if (subprocess.stderr.pipe.start(subprocess, sync_event_loop orelse jsc_vm.eventLoop()).asErr()) |err| {
+        if (subprocess.stderr.pipe.start(subprocess, event_loop).asErr()) |err| {
             _ = subprocess.tryKill(subprocess.killSignal);
             _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
             return error.JSError;

@@ -46,8 +46,12 @@ pub fn eventLoop(this: *IOReader) jsc.EventLoopHandle {
     return this.evtloop;
 }
 
-pub fn loop(this: *IOReader) *bun.uws.Loop {
-    return this.evtloop.loop();
+pub fn loop(this: *IOReader) *bun.Async.Loop {
+    if (comptime bun.Environment.isWindows) {
+        return this.evtloop.loop().uv_loop;
+    } else {
+        return this.evtloop.loop();
+    }
 }
 
 pub fn init(fd: bun.FileDescriptor, evtloop: jsc.EventLoopHandle) *IOReader {

@@ -549,6 +549,14 @@ describe.concurrent("napi", () => {
     await checkSameOutput("test_deferred_exceptions", []);
   });
 
+  it("behaves as expected when performing operations with numeric string keys", async () => {
+    await checkSameOutput("test_napi_numeric_string_keys", []);
+  });
+
+  it("behaves as expected when performing operations with default values", async () => {
+    await checkSameOutput("test_napi_get_default_values", []);
+  });
+
   it("NAPI finalizer iterator invalidation crash prevention", () => {
     // This test verifies that the DeferGCForAWhile fix prevents iterator invalidation
     // during NAPI finalizer cleanup. While we couldn't reproduce the exact crash

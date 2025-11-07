@@ -554,6 +554,386 @@ static napi_value test_is_typedarray(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static napi_value test_napi_get_default_values(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
+  napi_value obj;
+  NODE_API_CALL(env, napi_create_object(env, &obj));
+
+  // Test 1: Get property that doesn't exist (should return undefined)
+  napi_value unknown_key;
+  NODE_API_CALL(env, napi_create_string_utf8(env, "nonexistent",
+                                             NAPI_AUTO_LENGTH, &unknown_key));
+
+  napi_value result;
+  napi_status get_status = napi_get_property(env, obj, unknown_key, &result);
+
+  if (get_status == napi_ok) {
+    napi_valuetype result_type;
+    napi_status type_status = napi_typeof(env, result, &result_type);
+
+    if (type_status == napi_ok && result_type == napi_undefined) {
+      printf("PASS: napi_get_property for unknown key returned undefined\n");
+    } else {
+      printf("FAIL: napi_get_property for unknown key returned type %d "
+             "(expected napi_undefined)\n",
+             result_type);
+    }
+  } else {
+    printf("FAIL: napi_get_property for unknown key failed with status %d\n",
+           get_status);
+  }
+
+  // Test 2: Get element at index that doesn't exist on array
+  napi_value array;
+  NODE_API_CALL(env, napi_create_array_with_length(env, 2, &array));
+
+  napi_value element_result;
+  napi_status element_status = napi_get_element(env, array, 5, &element_result);
+
+  if (element_status == napi_ok) {
+    napi_valuetype element_type;
+    napi_status element_type_status =
+        napi_typeof(env, element_result, &element_type);
+
+    if (element_type_status == napi_ok && element_type == napi_undefined) {
+      printf("PASS: napi_get_element for out-of-bounds index returned "
+             "undefined\n");
+    } else {
+      printf("FAIL: napi_get_element for out-of-bounds index returned type %d "
+             "(expected napi_undefined)\n",
+             element_type);
+    }
+  } else {
+    printf("FAIL: napi_get_element for out-of-bounds index failed with status "
+           "%d\n",
+           element_status);
+  }
+
+  // Test 3: Get named property that doesn't exist
+  napi_value named_result;
+  napi_status named_status =
+      napi_get_named_property(env, obj, "missing_prop", &named_result);
+
+  if (named_status == napi_ok) {
+    napi_valuetype named_type;
+    napi_status named_type_status = napi_typeof(env, named_result, &named_type);
+
+    if (named_type_status == napi_ok && named_type == napi_undefined) {
+      printf("PASS: napi_get_named_property for unknown property returned "
+             "undefined\n");
+    } else {
+      printf("FAIL: napi_get_named_property for unknown property returned type "
+             "%d (expected napi_undefined)\n",
+             named_type);
+    }
+  } else {
+    printf("FAIL: napi_get_named_property for unknown property failed with "
+           "status %d\n",
+           named_status);
+  }
+
+  // Test 4: Set a property and verify we can get it back
+  napi_value test_key;
+  napi_value test_value;
+  NODE_API_CALL(env, napi_create_string_utf8(env, "test_key", NAPI_AUTO_LENGTH,
+                                             &test_key));
+  NODE_API_CALL(env, napi_create_int32(env, 42, &test_value));
+
+  NODE_API_CALL(env, napi_set_property(env, obj, test_key, test_value));
+
+  napi_value retrieved_value;
+  NODE_API_CALL(env, napi_get_property(env, obj, test_key, &retrieved_value));
+
+  int32_t retrieved_int;
+  napi_status int_status =
+      napi_get_value_int32(env, retrieved_value, &retrieved_int);
+
+  if (int_status == napi_ok && retrieved_int == 42) {
+    printf("PASS: napi_get_property correctly retrieved set value: %d\n",
+           retrieved_int);
+  } else {
+    printf("FAIL: napi_get_property did not retrieve correct value (got %d, "
+           "expected 42)\n",
+           retrieved_int);
+  }
+
+  // Test 5: Use integer as property key (should be converted to string)
+  napi_value int_key;
+  napi_value int_key_value;
+  NODE_API_CALL(env, napi_create_int32(env, 123, &int_key));
+  NODE_API_CALL(env, napi_create_string_utf8(env, "integer_key_value",
+                                             NAPI_AUTO_LENGTH, &int_key_value));
+
+  // Set property using integer key
+  napi_status int_key_set_status =
+      napi_set_property(env, obj, int_key, int_key_value);
+
+  if (int_key_set_status == napi_ok) {
+    printf("PASS: napi_set_property with integer key succeeded\n");
+
+    // Try to get it back using the same integer key
+    napi_value int_key_result;
+    napi_status int_key_get_status =
+        napi_get_property(env, obj, int_key, &int_key_result);
+
+    if (int_key_get_status == napi_ok) {
+      // Check if we got back a string
+      napi_valuetype int_key_result_type;
+      napi_status int_key_type_status =
+          napi_typeof(env, int_key_result, &int_key_result_type);
+
+      if (int_key_type_status == napi_ok &&
+          int_key_result_type == napi_string) {
+        char buffer[256];
+        size_t copied;
+        napi_status str_status = napi_get_value_string_utf8(
+            env, int_key_result, buffer, sizeof(buffer), &copied);
+
+        if (str_status == napi_ok && strcmp(buffer, "integer_key_value") == 0) {
+          printf("PASS: napi_get_property with integer key retrieved correct "
+                 "value: %s\n",
+                 buffer);
+        } else {
+          printf("FAIL: napi_get_property with integer key retrieved wrong "
+                 "value: %s\n",
+                 buffer);
+        }
+      } else {
+        printf("FAIL: napi_get_property with integer key returned type %d "
+               "(expected string)\n",
+               int_key_result_type);
+      }
+    } else {
+      printf("FAIL: napi_get_property with integer key failed with status %d\n",
+             int_key_get_status);
+    }
+
+    // Also try to get it using string "123"
+    napi_value string_123_key;
+    NODE_API_CALL(env, napi_create_string_utf8(env, "123", NAPI_AUTO_LENGTH,
+                                               &string_123_key));
+
+    napi_value string_key_result;
+    napi_status string_key_get_status =
+        napi_get_property(env, obj, string_123_key, &string_key_result);
+
+    if (string_key_get_status == napi_ok) {
+      napi_valuetype string_key_result_type;
+      napi_status string_key_type_status =
+          napi_typeof(env, string_key_result, &string_key_result_type);
+
+      if (string_key_type_status == napi_ok &&
+          string_key_result_type == napi_string) {
+        char buffer2[256];
+        size_t copied2;
+        napi_status str_status2 = napi_get_value_string_utf8(
+            env, string_key_result, buffer2, sizeof(buffer2), &copied2);
+
+        if (str_status2 == napi_ok &&
+            strcmp(buffer2, "integer_key_value") == 0) {
+          printf("PASS: napi_get_property with string '123' key also retrieved "
+                 "correct value: %s\n",
+                 buffer2);
+        } else {
+          printf("FAIL: napi_get_property with string '123' key retrieved "
+                 "wrong value: %s\n",
+                 buffer2);
+        }
+      } else {
+        printf("FAIL: napi_get_property with string '123' key returned type %d "
+               "(expected string)\n",
+               string_key_result_type);
+      }
+    } else {
+      printf("FAIL: napi_get_property with string '123' key failed with status "
+             "%d\n",
+             string_key_get_status);
+    }
+  } else {
+    printf("FAIL: napi_set_property with integer key failed with status %d\n",
+           int_key_set_status);
+  }
+
+  return ok(env);
+}
+
+static napi_value
+test_napi_numeric_string_keys(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
+  napi_value obj;
+  NODE_API_CALL(env, napi_create_object(env, &obj));
+
+  // Test setting property with numeric string key "0"
+  napi_value value_123;
+  NODE_API_CALL(env, napi_create_int32(env, 123, &value_123));
+
+  napi_status set_status = napi_set_named_property(env, obj, "0", value_123);
+  if (set_status == napi_ok) {
+    printf("PASS: napi_set_named_property with key '0' succeeded\n");
+  } else {
+    printf("FAIL: napi_set_named_property with key '0' failed: %d\n",
+           set_status);
+  }
+
+  // Test has property with numeric string key "0"
+  bool has_prop;
+  napi_status has_status = napi_has_named_property(env, obj, "0", &has_prop);
+  if (has_status == napi_ok && has_prop) {
+    printf("PASS: napi_has_named_property with key '0' returned true\n");
+  } else {
+    printf("FAIL: napi_has_named_property with key '0' failed or returned "
+           "false: status=%d, has=%s\n",
+           has_status, has_prop ? "true" : "false");
+  }
+
+  // Test getting property with numeric string key "0"
+  napi_value retrieved_value;
+  napi_status get_status =
+      napi_get_named_property(env, obj, "0", &retrieved_value);
+  if (get_status == napi_ok) {
+    int32_t retrieved_int;
+    napi_status int_status =
+        napi_get_value_int32(env, retrieved_value, &retrieved_int);
+    if (int_status == napi_ok && retrieved_int == 123) {
+      printf("PASS: napi_get_named_property with key '0' returned correct "
+             "value: %d\n",
+             retrieved_int);
+    } else {
+      printf("FAIL: napi_get_named_property with key '0' returned wrong value: "
+             "status=%d, value=%d\n",
+             int_status, retrieved_int);
+    }
+  } else {
+    printf("FAIL: napi_get_named_property with key '0' failed: %d\n",
+           get_status);
+  }
+
+  // Test with another numeric string key "1"
+  napi_value value_456;
+  NODE_API_CALL(env, napi_create_int32(env, 456, &value_456));
+
+  set_status = napi_set_named_property(env, obj, "1", value_456);
+  if (set_status == napi_ok) {
+    printf("PASS: napi_set_named_property with key '1' succeeded\n");
+  } else {
+    printf("FAIL: napi_set_named_property with key '1' failed: %d\n",
+           set_status);
+  }
+
+  has_status = napi_has_named_property(env, obj, "1", &has_prop);
+  if (has_status == napi_ok && has_prop) {
+    printf("PASS: napi_has_named_property with key '1' returned true\n");
+  } else {
+    printf("FAIL: napi_has_named_property with key '1' failed or returned "
+           "false: status=%d, has=%s\n",
+           has_status, has_prop ? "true" : "false");
+  }
+
+  get_status = napi_get_named_property(env, obj, "1", &retrieved_value);
+  if (get_status == napi_ok) {
+    int32_t retrieved_int;
+    napi_status int_status =
+        napi_get_value_int32(env, retrieved_value, &retrieved_int);
+    if (int_status == napi_ok && retrieved_int == 456) {
+      printf("PASS: napi_get_named_property with key '1' returned correct "
+             "value: %d\n",
+             retrieved_int);
+    } else {
+      printf("FAIL: napi_get_named_property with key '1' returned wrong value: "
+             "status=%d, value=%d\n",
+             int_status, retrieved_int);
+    }
+  } else {
+    printf("FAIL: napi_get_named_property with key '1' failed: %d\n",
+           get_status);
+  }
+
+  // Test with napi_get_property using numeric string keys
+  napi_value key_0, key_1;
+  NODE_API_CALL(env,
+                napi_create_string_utf8(env, "0", NAPI_AUTO_LENGTH, &key_0));
+  NODE_API_CALL(env,
+                napi_create_string_utf8(env, "1", NAPI_AUTO_LENGTH, &key_1));
+
+  napi_value prop_value;
+  napi_status prop_status = napi_get_property(env, obj, key_0, &prop_value);
+  if (prop_status == napi_ok) {
+    int32_t prop_int;
+    napi_status int_status = napi_get_value_int32(env, prop_value, &prop_int);
+    if (int_status == napi_ok && prop_int == 123) {
+      printf(
+          "PASS: napi_get_property with key '0' returned correct value: %d\n",
+          prop_int);
+    } else {
+      printf("FAIL: napi_get_property with key '0' returned wrong value: "
+             "status=%d, value=%d\n",
+             int_status, prop_int);
+    }
+  } else {
+    printf("FAIL: napi_get_property with key '0' failed: %d\n", prop_status);
+  }
+
+  // Test napi_has_property
+  bool has_property;
+  napi_status has_prop_status =
+      napi_has_property(env, obj, key_1, &has_property);
+  if (has_prop_status == napi_ok && has_property) {
+    printf("PASS: napi_has_property with key '1' returned true\n");
+  } else {
+    printf("FAIL: napi_has_property with key '1' failed or returned false: "
+           "status=%d, has=%s\n",
+           has_prop_status, has_property ? "true" : "false");
+  }
+
+  // Test napi_has_own_property
+  bool has_own_property;
+  napi_status has_own_status =
+      napi_has_own_property(env, obj, key_0, &has_own_property);
+  if (has_own_status == napi_ok && has_own_property) {
+    printf("PASS: napi_has_own_property with key '0' returned true\n");
+  } else {
+    printf("FAIL: napi_has_own_property with key '0' failed or returned false: "
+           "status=%d, has=%s\n",
+           has_own_status, has_own_property ? "true" : "false");
+  }
+
+  // Test napi_delete_property
+  bool delete_result;
+  napi_status delete_status =
+      napi_delete_property(env, obj, key_1, &delete_result);
+  if (delete_status == napi_ok) {
+    printf("PASS: napi_delete_property with key '1' succeeded, result=%s\n",
+           delete_result ? "true" : "false");
+
+    // Verify the property was actually deleted
+    bool still_has_property;
+    napi_status verify_status =
+        napi_has_property(env, obj, key_1, &still_has_property);
+    if (verify_status == napi_ok && !still_has_property) {
+      printf("PASS: Property '1' was successfully deleted\n");
+    } else {
+      printf(
+          "FAIL: Property '1' still exists after deletion: status=%d, has=%s\n",
+          verify_status, still_has_property ? "true" : "false");
+    }
+  } else {
+    printf("FAIL: napi_delete_property with key '1' failed: %d\n",
+           delete_status);
+  }
+
+  return ok(env);
+}
+
 static napi_value test_deferred_exceptions(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 
@@ -1466,6 +1846,8 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, bigint_to_64_null);
   REGISTER_FUNCTION(env, exports, test_is_buffer);
   REGISTER_FUNCTION(env, exports, test_is_typedarray);
+  REGISTER_FUNCTION(env, exports, test_napi_get_default_values);
+  REGISTER_FUNCTION(env, exports, test_napi_numeric_string_keys);
   REGISTER_FUNCTION(env, exports, test_deferred_exceptions);
   REGISTER_FUNCTION(env, exports, test_napi_strict_equals);
   REGISTER_FUNCTION(env, exports, test_napi_call_function_recv_null);

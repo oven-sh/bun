@@ -414,7 +414,7 @@ const CI = enum {
             },
         },
         .unknown = .{
-            false,
+            true,
             &.{},
         },
     });

@@ -1362,7 +1362,7 @@ it("should successfully install private git+ssh dependency with commit hash", as
     cmd: [
       bunExe(),
       "add",
-      "git+ssh://git@github.com:oven-sh/private-install-test-repo.git#a0f037a3dd1b6ff57c69d822cb01e200b9b14522",
+      "git+ssh://git@github.com:oven-sh/private-install-test-repo.git#5b37e644a2ef23fad0da4027042f01b194b179e8",
     ],
     cwd: package_dir,
     stdout: "pipe",

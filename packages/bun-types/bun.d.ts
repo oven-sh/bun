@@ -5289,7 +5289,12 @@ declare module "bun" {
     options: udp.ConnectSocketOptions<DataBinaryType>,
   ): Promise<udp.ConnectedSocket<DataBinaryType>>;
 
-  namespace SpawnOptions {
+  /**
+   * @deprecated use {@link Bun.Spawn} instead
+   */
+  export import SpawnOptions = Spawn;
+
+  namespace Spawn {
     /**
      * Option for stdout/stderr
      */
@@ -5320,13 +5325,34 @@ declare module "bun" {
       | Response
       | Request;
 
-    interface OptionsObject<In extends Writable, Out extends Readable, Err extends Readable> {
+    /**
+     * @deprecated use BaseOptions or the specific options for the specific {@link spawn} or {@link spawnSync} usage
+     */
+    type OptionsObject<In extends Writable, Out extends Readable, Err extends Readable> = BaseOptions<In, Out, Err>;
+
+    interface BaseOptions<In extends Writable, Out extends Readable, Err extends Readable> {
       /**
        * The current working directory of the process
        *
        * Defaults to `process.cwd()`
        */
       cwd?: string;
+
+      /**
+       * Run the child in a separate process group, detached from the parent.
+       *
+       * - POSIX: calls `setsid()` so the child starts a new session and becomes
+       *   the process group leader. It can outlive the parent and receive
+       *   signals independently of the parent’s terminal/process group.
+       * - Windows: sets `UV_PROCESS_DETACHED`, allowing the child to outlive
+       *   the parent and receive signals independently.
+       *
+       * Note: stdio may keep the parent process alive. Pass `stdio: ["ignore",
+       * "ignore", "ignore"]` to the spawn constructor to prevent this.
+       *
+       * @default false
+       */
+      detached?: boolean;
 
       /**
        * The environment variables of the process
@@ -5429,6 +5455,48 @@ declare module "bun" {
          */
         error?: ErrorLike,
       ): void | Promise<void>;
+
+      /**
+       * Called exactly once when the IPC channel between the parent and this
+       * subprocess is closed. After this runs, no further IPC messages will be
+       * delivered.
+       *
+       * When it fires:
+       * - The child called `process.disconnect()` or the parent called
+       *   `subprocess.disconnect()`.
+       * - The child exited for any reason (normal exit or due to a signal like
+       *   `SIGILL`, `SIGKILL`, etc.).
+       * - The child replaced itself with a program that does not support Bun
+       *   IPC.
+       *
+       * Notes:
+       * - This callback indicates that the pipe is closed; it is not an error
+       *   by itself. Use {@link onExit} or {@link Subprocess.exited} to
+       *   determine why the process ended.
+       * - It may occur before or after {@link onExit} depending on timing; do
+       *   not rely on ordering. Typically, if you or the child call
+       *   `disconnect()` first, this fires before {@link onExit}; if the
+       *   process exits without an explicit disconnect, either may happen
+       *   first.
+       * - Only runs when {@link ipc} is enabled and runs at most once per
+       *   subprocess.
+       * - If the child becomes a zombie (exited but not yet reaped), the IPC is
+       *   already closed, and this callback will fire (or may already have
+       *   fired).
+       *
+       * @example
+       *
+       * ```ts
+       * const subprocess = spawn({
+       *  cmd: ["echo", "hello"],
+       *  ipc: (message) => console.log(message),
+       *  onDisconnect: () => {
+       *    console.log("IPC channel disconnected");
+       *  },
+       * });
+       * ```
+       */
+      onDisconnect?(): void | Promise<void>;
 
       /**
        * When specified, Bun will open an IPC channel to the subprocess. The passed callback is called for
@@ -5547,6 +5615,34 @@ declare module "bun" {
        * @default undefined (no limit)
        */
       maxBuffer?: number;
+    }
+
+    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable>
+      extends BaseOptions<In, Out, Err> {}
+
+    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable>
+      extends BaseOptions<In, Out, Err> {
+      /**
+       * If true, stdout and stderr pipes will not automatically start reading
+       * data. Reading will only begin when you access the `stdout` or `stderr`
+       * properties.
+       *
+       * This can improve performance when you don't need to read output
+       * immediately.
+       *
+       * @default false
+       *
+       * @example
+       * ```ts
+       * const subprocess = Bun.spawn({
+       *   cmd: ["echo", "hello"],
+       *   lazy: true, // Don't start reading stdout until accessed
+       * });
+       * // stdout reading hasn't started yet
+       * await subprocess.stdout.text(); // Now reading starts
+       * ```
+       */
+      lazy?: boolean;
     }
 
     type ReadableToIO<X extends Readable> = X extends "pipe" | undefined
@@ -5806,7 +5902,7 @@ declare module "bun" {
     const Out extends SpawnOptions.Readable = "pipe",
     const Err extends SpawnOptions.Readable = "inherit",
   >(
-    options: SpawnOptions.OptionsObject<In, Out, Err> & {
+    options: SpawnOptions.SpawnOptions<In, Out, Err> & {
       /**
        * The command to run
        *
@@ -5856,7 +5952,7 @@ declare module "bun" {
      * ```
      */
     cmds: string[],
-    options?: SpawnOptions.OptionsObject<In, Out, Err>,
+    options?: SpawnOptions.SpawnOptions<In, Out, Err>,
   ): Subprocess<In, Out, Err>;
 
   /**
@@ -5878,7 +5974,7 @@ declare module "bun" {
     const Out extends SpawnOptions.Readable = "pipe",
     const Err extends SpawnOptions.Readable = "pipe",
   >(
-    options: SpawnOptions.OptionsObject<In, Out, Err> & {
+    options: SpawnOptions.SpawnSyncOptions<In, Out, Err> & {
       /**
        * The command to run
        *
@@ -5929,7 +6025,7 @@ declare module "bun" {
      * ```
      */
     cmds: string[],
-    options?: SpawnOptions.OptionsObject<In, Out, Err>,
+    options?: SpawnOptions.SpawnSyncOptions<In, Out, Err>,
   ): SyncSubprocess<Out, Err>;
 
   /** Utility type for any process from {@link Bun.spawn()} with both stdout and stderr set to `"pipe"` */

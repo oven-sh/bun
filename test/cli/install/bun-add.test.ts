@@ -1349,6 +1349,44 @@ it("git dep without package.json and with default branch", async () => {
   });
 });
 
+it("should successfully install private git+ssh dependency with commit hash", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "test-private-git",
+      version: "1.0.0",
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [
+      bunExe(),
+      "add",
+      "git+ssh://git@github.com:oven-sh/private-install-test-repo.git#a0f037a3dd1b6ff57c69d822cb01e200b9b14522",
+    ],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+
+  const out = await stdout.text();
+  const err = await stderr.text();
+
+  // Assert stdout before exit code (per CLAUDE.md)
+  expect(out).toContain("bun add v1.");
+  expect(err).not.toContain("error:");
+
+  // Finally check exit code
+  expect(await exited).toBe(0);
+
+  // Verify package.json was updated with the dependency
+  const pkg = await file(join(package_dir, "package.json")).json();
+  expect(pkg.dependencies).toBeDefined();
+  expect(pkg.dependencies["private-install-test-repo"]).toBeDefined();
+});
+
 it("should let you add the same package twice", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls, { "0.0.3": {} }));

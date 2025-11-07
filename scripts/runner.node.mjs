@@ -185,6 +185,9 @@ if (options["quiet"]) {
   isQuiet = true;
 }
 
+/** @type {string[]} */
+let allFiles = [];
+/** @type {string[]} */
 let newFiles = [];
 let prFileCount = 0;
 if (isBuildkite) {
@@ -205,6 +208,7 @@ if (isBuildkite) {
       if (doc.length === 0) break;
       for (const { filename, status } of doc) {
         prFileCount += 1;
+        allFiles.push(filename);
         if (status !== "added") continue;
         newFiles.push(filename);
       }
@@ -2615,8 +2619,18 @@ export async function main() {
     ]);
   }
 
-  const results = await runTests();
-  const ok = results.every(({ ok }) => ok);
+  let doRunTests = true;
+  if (isCI) {
+    if (allFiles.every(filename => filename.startsWith("docs/"))) {
+      doRunTests = false;
+    }
+  }
+
+  let ok = true;
+  if (doRunTests) {
+    const results = await runTests();
+    ok = results.every(({ ok }) => ok);
+  }
 
   let waitForUser = false;
   while (isCI) {

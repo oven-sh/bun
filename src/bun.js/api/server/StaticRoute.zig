@@ -14,6 +14,10 @@ pub const CompressedVariant = struct {
     pub fn deinit(this: *CompressedVariant, allocator: std.mem.Allocator) void {
         allocator.free(this.data);
     }
+
+    pub fn memoryCost(this: *const CompressedVariant) usize {
+        return this.data.len;
+    }
 };
 
 pub const CompressionFailed = struct {};
@@ -120,25 +124,29 @@ pub fn clone(this: *StaticRoute, globalThis: *jsc.JSGlobalObject) !*StaticRoute 
     });
 }
 
-pub fn memoryCost(this: *const StaticRoute) usize {
-    var cost = @sizeOf(StaticRoute) + this.blob.memoryCost() + this.headers.memoryCost();
+fn compressedMemoryCost(this: *const StaticRoute) usize {
+    var cost: usize = 0;
     switch (this.compressed_br) {
-        .cached => |variant| cost += variant.data.len,
+        .cached => |variant| cost += variant.memoryCost(),
         else => {},
     }
     switch (this.compressed_gzip) {
-        .cached => |variant| cost += variant.data.len,
+        .cached => |variant| cost += variant.memoryCost(),
         else => {},
     }
     switch (this.compressed_zstd) {
-        .cached => |variant| cost += variant.data.len,
+        .cached => |variant| cost += variant.memoryCost(),
         else => {},
     }
     switch (this.compressed_deflate) {
-        .cached => |variant| cost += variant.data.len,
+        .cached => |variant| cost += variant.memoryCost(),
         else => {},
     }
     return cost;
+}
+
+pub fn memoryCost(this: *const StaticRoute) usize {
+    return @sizeOf(StaticRoute) + this.blob.memoryCost() + this.headers.memoryCost() + this.compressedMemoryCost();
 }
 
 pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSError!?*StaticRoute {

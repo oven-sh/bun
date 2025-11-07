@@ -5,16 +5,9 @@
 // https://github.com/npm/cli/blob/63d6a732c3c0e9c19fd4d147eaa5cc27c29b168d/workspaces/config/lib/definitions/definitions.js#L2129
 // `name.toLowerCase().split(' ').join('-')`
 
-var ci_initialized = false;
-var ci_value: ?[]const u8 = null;
-
+var once = bun.once(detectUncached);
 pub fn detectCI() ?[]const u8 {
-    if (ci_initialized) return ci_value;
-
-    ci_value = detectUncached();
-    ci_initialized = true;
-
-    return ci_value;
+    return once.call(.{});
 }
 
 fn detectUncached() ?[]const u8 {

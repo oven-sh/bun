@@ -1874,12 +1874,10 @@ export function exampleSite(protocol: "https" | "http" = "https") {
     ca: protocol === "https" ? tls.cert : undefined,
     server,
     stop() {
-      server.stop();
+      return server.stop();
     },
-    [Symbol.dispose]() {
-      try {
-        server.stop();
-      } catch {}
+    async [Symbol.asyncDispose]() {
+      await server.stop();
     },
   };
 }

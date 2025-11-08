@@ -357,6 +357,28 @@ pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
         vm.event_loop.next_immediate_tasks.items.len > 0;
 }
 
+/// Check if the event loop should be considered alive for exit purposes
+/// This is more lenient than isEventLoopAlive() to handle native modules
+/// that may create background threads
+pub fn shouldExitProcess(vm: *const VirtualMachine) bool {
+    // If we have explicit tasks or immediates, don't exit
+    if (vm.isEventLoopAlive()) {
+        return false;
+    }
+    
+    // If we only have active handles but no explicit tasks,
+    // this might be from native modules with background threads
+    const handle = vm.event_loop_handle orelse return true;
+    const active_count = if (comptime Environment.isWindows) 
+        handle.active_handles 
+    else 
+        handle.active;
+        
+    // If we have a small number of active handles but no tasks,
+    // it's likely background threads from native modules
+    return active_count <= 2; // Allow for some system handles
+}
+
 pub fn wakeup(this: *VirtualMachine) void {
     this.eventLoop().wakeup();
 }

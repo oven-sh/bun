@@ -1925,7 +1925,39 @@ declare module "bun" {
       development?: boolean;
     };
 
+    /**
+     * The directory to write output files. Use with `naming` to control output file names.
+     */
     outdir?: string;
+
+    /**
+     * The output file path for single-entry builds.
+     *
+     * Restrictions:
+     * - Cannot be used with `outdir`
+     * - Only works with a single entry point (use `outdir` for multiple entries)
+     * - Cannot be used with code splitting (use `outdir` instead)
+     *
+     * When specified, the file will be written to this exact path.
+     * The directory portion becomes the output directory, and the filename
+     * portion becomes the entry file name.
+     *
+     * @example
+     * ```ts
+     * // Single entry point - works
+     * await Bun.build({
+     *   entrypoints: ['./app.ts'],
+     *   outfile: './dist/bundle.js'
+     * });
+     *
+     * // Multiple entry points - use outdir instead
+     * await Bun.build({
+     *   entrypoints: ['./app.ts', './worker.ts'],
+     *   outdir: './dist'  // Not outfile!
+     * });
+     * ```
+     */
+    outfile?: string;
   }
 
   interface CompileBuildOptions {

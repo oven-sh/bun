@@ -11,6 +11,7 @@ pub const JSBundler = struct {
         loaders: ?api.LoaderMap = null,
         dir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         outdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+        outfile: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         rootdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         serve: Serve = .{},
         jsx: api.Jsx = .{
@@ -325,6 +326,11 @@ pub const JSBundler = struct {
                 defer slice.deinit();
                 try this.outdir.appendSliceExact(slice.slice());
                 has_out_dir = true;
+            }
+
+            if (try config.getOptional(globalThis, "outfile", ZigString.Slice)) |slice| {
+                defer slice.deinit();
+                try this.outfile.appendSliceExact(slice.slice());
             }
 
             if (try config.getOptional(globalThis, "banner", ZigString.Slice)) |slice| {
@@ -725,6 +731,19 @@ pub const JSBundler = struct {
                 }
             }
 
+            // Validate outfile usage - matches CLI validation in build_command.zig
+            if (this.outfile.list.items.len > 0 and this.compile == null) {
+                if (this.outdir.list.items.len > 0) {
+                    return globalThis.throwInvalidArguments("Cannot use both 'outfile' and 'outdir'. Use 'outfile' for a single output or 'outdir' for multiple outputs.", .{});
+                }
+                if (this.entry_points.count() > 1) {
+                    return globalThis.throwInvalidArguments("Cannot use 'outfile' with multiple entry points. Use 'outdir' instead.", .{});
+                }
+                if (this.code_splitting) {
+                    return globalThis.throwInvalidArguments("Cannot use 'outfile' when code splitting is enabled. Use 'outdir' instead.", .{});
+                }
+            }
+
             return this;
         }
 
@@ -790,6 +809,7 @@ pub const JSBundler = struct {
             }
             self.names.deinit();
             self.outdir.deinit();
+            self.outfile.deinit();
             self.rootdir.deinit();
             self.public_path.deinit();
             self.conditions.deinit();

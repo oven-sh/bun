@@ -1888,7 +1888,17 @@ pub const BundleV2 = struct {
                 transpiler.options.public_path = config.public_path.list.items;
             }
 
-            transpiler.options.output_dir = config.outdir.slice();
+            // Handle outfile option like the CLI does
+            // Split outfile into entry_naming (basename) and output_dir (dirname)
+            if (config.outfile.list.items.len > 0 and !transpiler.options.compile) {
+                const outfile = config.outfile.slice();
+                transpiler.options.entry_naming = try std.fmt.allocPrint(alloc, "./{s}", .{
+                    std.fs.path.basename(outfile),
+                });
+                transpiler.options.output_dir = std.fs.path.dirname(outfile) orelse ".";
+            } else {
+                transpiler.options.output_dir = config.outdir.slice();
+            }
             transpiler.options.root_dir = config.rootdir.slice();
             transpiler.options.minify_syntax = config.minify.syntax;
             transpiler.options.minify_whitespace = config.minify.whitespace;

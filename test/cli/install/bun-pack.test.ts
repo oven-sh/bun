@@ -615,6 +615,45 @@ describe("workspaces", () => {
       { "pathname": "package/root.js" },
     ]);
   });
+
+  test("uses package.json version not lockfile version when workspace version changes", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-workspace-version-update",
+          version: "3.0.0",
+          workspaces: ["pkgs/*"],
+          dependencies: {
+            "pkg1": "workspace:*",
+          },
+        }),
+      ),
+      write(join(packageDir, "root.js"), "console.log('hello ./root.js')"),
+      write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.0.0" })),
+      write(join(packageDir, "pkgs", "pkg1", "index.js"), "console.log('pkg1')"),
+    ]);
+
+    // Install with version 1.0.0 to create lockfile
+    await runBunInstall(bunEnv, packageDir);
+
+    // Update workspace package version to 2.0.0 without running install
+    await write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "2.0.0" }));
+
+    // Pack should use 2.0.0 from package.json, not 1.0.0 from lockfile
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-workspace-version-update-3.0.0.tgz"));
+    const packageJson = JSON.parse(tarball.entries[0].contents);
+    expect(packageJson).toEqual({
+      name: "pack-workspace-version-update",
+      version: "3.0.0",
+      workspaces: ["pkgs/*"],
+      dependencies: {
+        "pkg1": "2.0.0", // Should be 2.0.0 from package.json, not 1.0.0 from lockfile
+      },
+    });
+  });
 });
 
 test("lifecycle scripts execution order", async () => {

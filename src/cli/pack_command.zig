@@ -1235,7 +1235,7 @@ pub const PackCommand = struct {
             }
         }
 
-        const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, json);
+        const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, json, manager, abs_package_json_path);
 
         var this_transpiler: bun.transpiler.Transpiler = undefined;
 
@@ -2073,6 +2073,8 @@ pub const PackCommand = struct {
         allocator: std.mem.Allocator,
         maybe_lockfile: ?*Lockfile,
         json: *PackageManager.WorkspacePackageJSONCache.MapEntry,
+        manager: *PackageManager,
+        abs_package_json_path: stringZ,
     ) OOM!string {
         for ([_]string{
             "dependencies",
@@ -2116,23 +2118,76 @@ pub const PackCommand = struct {
                                         };
 
                                         failed_to_resolve: {
-                                            // find the current workspace version and append to package spec without `workspace:`
+                                            // find the current workspace version from its package.json and append to package spec without `workspace:`
                                             const lockfile = maybe_lockfile orelse break :failed_to_resolve;
 
-                                            const workspace_version = lockfile.workspace_versions.get(Semver.String.Builder.stringHash(dependency_name)) orelse break :failed_to_resolve;
+                                            const dependency_name_hash = Semver.String.Builder.stringHash(dependency_name);
+                                            const workspace_rel_path = lockfile.workspace_paths.get(dependency_name_hash) orelse break :failed_to_resolve;
+
+                                            // Get the project root directory (where lockfile lives)
+                                            const project_root = std.fs.path.dirname(abs_package_json_path) orelse break :failed_to_resolve;
+
+                                            // Build absolute path to workspace package.json
+                                            const workspace_package_json_path = try std.fs.path.join(allocator, &.{
+                                                project_root,
+                                                workspace_rel_path.slice(lockfile.buffers.string_bytes.items),
+                                                "package.json",
+                                            });
+                                            defer allocator.free(workspace_package_json_path);
+
+                                            // Read the workspace package.json
+                                            const workspace_json = switch (manager.workspace_package_json_cache.getWithPath(
+                                                allocator,
+                                                manager.log,
+                                                workspace_package_json_path,
+                                                .{ .guess_indentation = false },
+                                            )) {
+                                                .entry => |entry| entry,
+                                                .read_err => |err| {
+                                                    Output.err(err, "Failed to read workspace package.json for \"{s}\" at \"{s}\"", .{
+                                                        dependency_name,
+                                                        workspace_package_json_path,
+                                                    });
+                                                    Global.crash();
+                                                },
+                                                .parse_err => |err| {
+                                                    Output.err(err, "Failed to parse workspace package.json for \"{s}\" at \"{s}\"", .{
+                                                        dependency_name,
+                                                        workspace_package_json_path,
+                                                    });
+                                                    manager.log.print(Output.errorWriter()) catch {};
+                                                    Global.crash();
+                                                },
+                                            };
+
+                                            // Extract version from workspace package.json
+                                            const version_expr = workspace_json.root.get("version") orelse {
+                                                Output.errGeneric("Workspace package \"{s}\" at \"{s}\" is missing a `version` field", .{
+                                                    dependency_name,
+                                                    workspace_package_json_path,
+                                                });
+                                                Global.crash();
+                                            };
+                                            const version_str = version_expr.asString(allocator) orelse {
+                                                Output.errGeneric("Workspace package \"{s}\" at \"{s}\" has an invalid `version` field", .{
+                                                    dependency_name,
+                                                    workspace_package_json_path,
+                                                });
+                                                Global.crash();
+                                            };
 
                                             dependency.value = Expr.allocate(
                                                 allocator,
                                                 E.String,
                                                 .{
-                                                    .data = try std.fmt.allocPrint(allocator, "{s}{}", .{
+                                                    .data = try std.fmt.allocPrint(allocator, "{s}{s}", .{
                                                         switch (c) {
                                                             '^' => "^",
                                                             '~' => "~",
                                                             '*' => "",
                                                             else => unreachable,
                                                         },
-                                                        workspace_version.fmt(lockfile.buffers.string_bytes.items),
+                                                        version_str,
                                                     }),
                                                 },
                                                 .{},

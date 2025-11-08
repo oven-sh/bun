@@ -55,7 +55,7 @@ describe("hash", () => {
         expect(() =>
           hash(placeholder, {
             algorithm: "argon2id",
-            parallelism: -1,
+            memoryCost: 0,
           }),
         ).toThrow();
 
@@ -63,6 +63,27 @@ describe("hash", () => {
           hash(placeholder, {
             algorithm: "argon2id",
             timeCost: -1,
+          }),
+        ).toThrow();
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            timeCost: 0,
+          }),
+        ).toThrow();
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            parallelism: -1,
+          }),
+        ).toThrow();
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
+            parallelism: 0,
           }),
         ).toThrow();
 

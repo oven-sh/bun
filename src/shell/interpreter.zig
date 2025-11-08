@@ -280,6 +280,17 @@ pub const Interpreter = struct {
     exit_code: ?ExitCode = 0,
     this_jsvalue: JSValue = .zero,
 
+    /// Tracks which resources have been cleaned up to avoid double-free.
+    /// When the interpreter finishes normally via deinitAfterJSRun, it cleans up
+    /// the runtime resources (IO, shell env) and sets this to mark them as freed.
+    /// The finalizer then only cleans up what remains (buffered IO, args, interpreter itself).
+    cleanup_state: enum {
+        /// Nothing has been cleaned up yet
+        needs_full_cleanup,
+        /// Runtime resources (IO, shell env) have been cleaned up, only buffered IO + args remain
+        runtime_cleaned,
+    } = .needs_full_cleanup,
+
     __alloc_scope: if (bun.Environment.enableAllocScopes) bun.AllocationScope else void,
     estimated_size_for_gc: usize = 0,
 
@@ -1229,15 +1240,34 @@ pub const Interpreter = struct {
         this.keep_alive.disable();
         this.root_shell.deinitImpl(false, false);
         this.this_jsvalue = .zero;
+        // Mark that we've cleaned up runtime resources, so the finalizer knows
+        // it only needs to clean up buffered IO, args, and the interpreter itself
+        this.cleanup_state = .runtime_cleaned;
     }
 
     fn deinitFromFinalizer(this: *ThisInterpreter) void {
+        log("Interpreter(0x{x}) deinitFromFinalizer (cleanup_state={s})", .{ @intFromPtr(this), @tagName(this.cleanup_state) });
+
+        switch (this.cleanup_state) {
+            .needs_full_cleanup => {
+                // The interpreter never finished normally, so we need to clean up everything
+                this.root_io.deref();
+                this.root_shell.deinitImpl(false, false);
+            },
+            .runtime_cleaned => {
+                // deinitAfterJSRun already cleaned up IO and shell env, nothing more to do here
+            },
+        }
+
+        // Clean up the buffered IO that was not freed by deinitImpl
+        // (deinitImpl is called with free_buffered_io=false)
         if (this.root_shell._buffered_stderr == .owned) {
             this.root_shell._buffered_stderr.owned.deinit(bun.default_allocator);
         }
         if (this.root_shell._buffered_stdout == .owned) {
             this.root_shell._buffered_stdout.owned.deinit(bun.default_allocator);
         }
+
         this.this_jsvalue = .zero;
         this.args.deinit();
         this.allocator.destroy(this);

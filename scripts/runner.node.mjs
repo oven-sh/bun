@@ -169,7 +169,7 @@ const { values: options, positionals: filters } = parseArgs({
     },
   },
 });
-startGroup("CLI Options",()=>{
+startGroup("CLI Options", () => {
   console.log(options);
 });
 

@@ -480,8 +480,7 @@ pub const FetchTasklet = struct {
     }
 
     /// This is ALWAYS called from the main thread
-    // XXX: 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void' but 'fn (*FetchTasklet) void' does not
-    pub fn resumeRequestDataStream(this: *FetchTasklet) error{}!void {
+    pub fn resumeRequestDataStream(this: *FetchTasklet) void {
         // deref when done because we ref inside onWriteRequestDataDrain
         defer this.deref();
         log("resumeRequestDataStream", .{});

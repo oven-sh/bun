@@ -83,6 +83,17 @@ pub const PasswordObject = struct {
                                     argon.memory_cost = @as(u32, @intCast(memory_cost));
                                 }
 
+                                if (try value.getTruthy(globalObject, "parallelism")) |parallelism_value| {
+                                    if (!parallelism_value.isNumber()) {
+                                        return globalObject.throwInvalidArgumentType("hash", "parallelism", "number");
+                                    }
+                                    const parallelism = try parallelism_value.coerce(i32, globalObject);
+                                    if (parallelism < 1) {
+                                        return globalObject.throwInvalidArguments("Parallelism must be greater than 0", .{});
+                                    }
+                                    argon.parallelism = @as(u24, @intCast(parallelism));
+                                }
+
                                 return @unionInit(Algorithm.Value, @tagName(tag), argon);
                             },
                         }
@@ -130,12 +141,13 @@ pub const PasswordObject = struct {
             // we don't support the other options right now, but can add them later if someone asks
             memory_cost: u32 = pwhash.argon2.Params.interactive_2id.m,
             time_cost: u32 = pwhash.argon2.Params.interactive_2id.t,
+            parallelism: u24 = pwhash.argon2.Params.interactive_2id.p,
 
             pub fn toParams(this: Argon2Params) pwhash.argon2.Params {
                 return pwhash.argon2.Params{
                     .t = this.time_cost,
                     .m = this.memory_cost,
-                    .p = 1,
+                    .p = this.parallelism,
                 };
             }
         };

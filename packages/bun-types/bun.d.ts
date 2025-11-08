@@ -2017,6 +2017,10 @@ declare module "bun" {
        * time, given in number of iterations.
        */
       timeCost?: number;
+      /**
+       * The number of parallel threads.
+       */
+      parallelism?: number;
     }
 
     interface BCryptAlgorithm {

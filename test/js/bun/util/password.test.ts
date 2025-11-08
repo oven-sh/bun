@@ -55,6 +55,13 @@ describe("hash", () => {
         expect(() =>
           hash(placeholder, {
             algorithm: "argon2id",
+            parallelism: -1,
+          }),
+        ).toThrow();
+
+        expect(() =>
+          hash(placeholder, {
+            algorithm: "argon2id",
             timeCost: -1,
           }),
         ).toThrow();
@@ -237,13 +244,13 @@ for (let algorithmValue of algorithms) {
           }
 
           async function runSlowTestWithOptions(algorithmLabel: any) {
-            const algorithm = { algorithm: algorithmLabel, timeCost: 5, memoryCost: 8 };
+            const algorithm = { algorithm: algorithmLabel, timeCost: 5, memoryCost: 8, parallelism: 2 };
             const hashed = await password.hash(input, algorithm);
             const prefix = "$" + algorithmLabel;
             expect(hashed).toStartWith(prefix);
             expect(hashed).toContain("t=5");
             expect(hashed).toContain("m=8");
-            expect(hashed).toContain("p=1");
+            expect(hashed).toContain("p=2");
             expect(await password.verify(input, hashed, algorithmLabel)).toBeTrue();
             expect(() => password.verify(hashed, input, algorithmLabel)).toThrow();
             expect(await password.verify(input + "\0", hashed, algorithmLabel)).toBeFalse();

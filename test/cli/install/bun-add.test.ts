@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import { bunExe, bunEnv as env, isCI, readdirSorted, tempDir, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
 import { join, relative, resolve } from "path";
 import {
   check_npm_auth_type,
@@ -1349,7 +1349,7 @@ it("git dep without package.json and with default branch", async () => {
   });
 });
 
-it("should successfully install private git+ssh dependency with commit hash", async () => {
+it.skipIf(!isCI)("should successfully install private git+ssh dependency with commit hash", async () => {
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1358,11 +1358,55 @@ it("should successfully install private git+ssh dependency with commit hash", as
     }),
   );
 
+  // This is quite a trick that we employ, but it allows us to test private git+ssh installs, relatively well.
+  // Assuming that there's an `sshd` server running on the current machine, and assuming that the current user can ssh
+  // into itself, we can use a git+ssh URL that points to localhost.
+
+  const user = process.env.USER || process.env.USERNAME;
+
+  await using repo = tempDir("lolcat-repo", {});
+  // Initialize a git repo with a commit
+  await spawn({
+    cmd: ["git", "init"],
+    cwd: repo,
+    stdout: "ignore",
+    stdin: "ignore",
+    stderr: "inherit",
+  }).exited;
+  await writeFile(join(repo, "package.json"), JSON.stringify({
+    name: "private-install-test-repo",
+    version: "1.2.3",
+  }));
+  await spawn({
+    cmd: ["git", "add", "package.json"],
+    cwd: repo,
+    stdout: "ignore",
+    stdin: "ignore",
+    stderr: "inherit",
+  }).exited;
+  await spawn({
+    cmd: ["git", "commit", "-m", "initial commit"],
+    cwd: repo,
+    stdout: "ignore",
+    stdin: "ignore",
+    stderr: "inherit",
+  }).exited;
+  // Get the commit hash
+  const { stdout: git_stdout } = spawn({
+    cmd: ["git", "rev-parse", "HEAD"],
+    cwd: repo,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "inherit",
+  });
+  const commitHash = (await git_stdout.text()).trim();
+
+  // Now, we can attempt to install this repo as a git+ssh dependency, using the commit hash
   const { stdout, stderr, exited } = spawn({
     cmd: [
       bunExe(),
       "add",
-      "git+ssh://git@github.com:oven-sh/private-install-test-repo.git#5b37e644a2ef23fad0da4027042f01b194b179e8",
+      `git+ssh://${user}@localhost:${repo}#${commitHash}`,
     ],
     cwd: package_dir,
     stdout: "pipe",

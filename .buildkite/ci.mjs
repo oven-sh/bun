@@ -1205,7 +1205,7 @@ async function main() {
   }
 
   startGroup("Querying GitHub for files...");
-  if (options && isBuildkite) {
+  if (options && isBuildkite && process.env.BUILDKITE_PULL_REQUEST) {
     /** @type {string[]} */
     let allFiles = [];
     /** @type {string[]} */
@@ -1236,6 +1236,7 @@ async function main() {
       console.error(e);
     }
     if (allFiles.every(filename => filename.startsWith("docs/"))) {
+      console.log(`- PR is only docs, skipping tests!`);
       return;
     }
   }

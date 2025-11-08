@@ -3086,11 +3086,7 @@ bool JSC__JSValue__asArrayBuffer(
     }
     }
     out->_value = JSValue::encode(value);
-    if (data) {
-        // Avoid setting `ptr` to null; the corresponding Zig field is a non-optional pointer.
-        // The caller should have already set `ptr` to a zero-length array.
-        out->ptr = static_cast<char*>(data);
-    }
+    out->ptr = static_cast<char*>(data);
     return true;
 }
 
@@ -5478,6 +5474,15 @@ extern "C" JSC::EncodedJSValue WebCore__AbortSignal__abortReason(WebCore::AbortS
     return JSC::JSValue::encode(abortSignal->reason().getValue(jsNull()));
 }
 
+extern "C" WebCore::AbortSignalTimeout WebCore__AbortSignal__getTimeout(WebCore::AbortSignal* arg0)
+{
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    if (!abortSignal->hasActiveTimeoutTimer()) {
+        return nullptr;
+    }
+    return abortSignal->getTimeout();
+}
+
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__ref(WebCore::AbortSignal* abortSignal)
 {
     abortSignal->ref();
@@ -6071,10 +6076,7 @@ extern "C" void JSC__ArrayBuffer__deref(JSC::ArrayBuffer* self) { self->deref();
 extern "C" void JSC__ArrayBuffer__asBunArrayBuffer(JSC::ArrayBuffer* self, Bun__ArrayBuffer* out)
 {
     const std::size_t byteLength = self->byteLength();
-    if (void* data = self->data()) {
-        // Avoid setting `ptr` to null; it's a non-optional pointer in Zig.
-        out->ptr = static_cast<char*>(data);
-    }
+    out->ptr = static_cast<char*>(self->data());
     out->len = byteLength;
     out->byte_len = byteLength;
     out->_value = 0;

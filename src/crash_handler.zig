@@ -163,6 +163,37 @@ pub const Action = union(enum) {
     }
 };
 
+fn captureLibcBacktrace(begin_addr: usize, stack_trace: *std.builtin.StackTrace) void {
+    const backtrace = struct {
+        extern "c" fn backtrace(buffer: [*]*anyopaque, size: c_int) c_int;
+    }.backtrace;
+
+    const addrs = stack_trace.instruction_addresses;
+    const count = backtrace(@ptrCast(addrs), @intCast(addrs.len));
+    stack_trace.index = @intCast(count);
+
+    // Skip frames until we find begin_addr (or close to it)
+    // backtrace() captures everything including crash handler frames
+    const tolerance: usize = 128;
+    const skip: usize = for (addrs[0..stack_trace.index], 0..) |addr, i| {
+        // Check if this address is close to begin_addr (within tolerance)
+        const delta = if (addr >= begin_addr)
+            addr - begin_addr
+        else
+            begin_addr - addr;
+        if (delta <= tolerance) break i;
+        // Give up searching after 8 frames
+        if (i >= 8) break 0;
+    } else 0;
+
+    // Shift the addresses to skip crash handler frames
+    // If begin_addr was not found, use the complete backtrace
+    if (skip > 0) {
+        std.mem.copyForwards(usize, addrs, addrs[skip..stack_trace.index]);
+        stack_trace.index -= skip;
+    }
+}
+
 /// This function is invoked when a crash happens. A crash is classified in `CrashReason`.
 pub fn crashHandler(
     reason: CrashReason,
@@ -255,11 +286,11 @@ pub fn crashHandler(
                         has_printed_message = true;
                     }
                 } else {
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.writeAll(Output.prettyFmt("<red>", true)) catch std.posix.abort();
                     }
                     writer.writeAll("oh no") catch std.posix.abort();
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.writeAll(Output.prettyFmt("<r><d>: multiple threads are crashing<r>\n", true)) catch std.posix.abort();
                     } else {
                         writer.writeAll(Output.prettyFmt(": multiple threads are crashing\n", true)) catch std.posix.abort();
@@ -267,13 +298,13 @@ pub fn crashHandler(
                 }
 
                 if (reason != .out_of_memory or debug_trace) {
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.writeAll(Output.prettyFmt("<red>", true)) catch std.posix.abort();
                     }
 
                     writer.writeAll("panic") catch std.posix.abort();
 
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.writeAll(Output.prettyFmt("<r><d>", true)) catch std.posix.abort();
                     }
 
@@ -294,7 +325,7 @@ pub fn crashHandler(
                     }
 
                     writer.writeAll(": ") catch std.posix.abort();
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.writeAll(Output.prettyFmt("<r>", true)) catch std.posix.abort();
                     }
                     writer.print("{}\n", .{reason}) catch std.posix.abort();
@@ -308,67 +339,31 @@ pub fn crashHandler(
                 var trace_buf: std.builtin.StackTrace = undefined;
 
                 // If a trace was not provided, compute one now
-                const trace = @as(?*std.builtin.StackTrace, if (error_return_trace) |ert|
-                    if (ert.index > 0)
-                        ert
-                    else
-                        null
-                else
-                    null) orelse get_backtrace: {
+                const trace = blk: {
+                    if (error_return_trace) |ert| {
+                        if (ert.index > 0) break :blk ert;
+                    }
                     trace_buf = std.builtin.StackTrace{
                         .index = 0,
                         .instruction_addresses = &addr_buf,
                     };
                     const desired_begin_addr = begin_addr orelse @returnAddress();
+                    std.debug.captureStackTrace(desired_begin_addr, &trace_buf);
 
-                    // On Linux with glibc, always use backtrace() instead of Zig's StackIterator
-                    // because Zig's frame pointer-based unwinding doesn't work reliably,
-                    // especially on aarch64. glibc's backtrace() uses DWARF unwinding.
-                    if (bun.Environment.isLinux and !bun.Environment.isMusl) {
-                        const backtrace_fn = struct {
-                            extern "c" fn backtrace(buffer: [*]?*anyopaque, size: c_int) c_int;
-                        }.backtrace;
-                        const count = backtrace_fn(@ptrCast(&addr_buf), addr_buf.len);
-                        if (count > 0) {
-                            trace_buf.index = @intCast(count);
-
-                            // Skip frames until we find begin_addr (or close to it)
-                            // backtrace() captures everything including crash handler frames
-                            var skip: usize = 0;
-                            var found_begin = false;
-                            const tolerance: usize = 128;
-                            for (addr_buf[0..trace_buf.index], 0..) |addr, i| {
-                                // Check if this address is close to begin_addr (within tolerance)
-                                const delta = if (addr >= desired_begin_addr)
-                                    addr - desired_begin_addr
-                                else
-                                    desired_begin_addr - addr;
-                                if (delta <= tolerance) {
-                                    skip = i;
-                                    found_begin = true;
-                                    break;
-                                }
-                                // Give up searching after 8 frames
-                                if (i >= 8) break;
-                            }
-
-                            // Shift the addresses to skip crash handler frames
-                            // If begin_addr was not found, use the complete backtrace
-                            if (found_begin and skip > 0 and skip < trace_buf.index) {
-                                const remaining = trace_buf.index - skip;
-                                var j: usize = 0;
-                                while (j < remaining) : (j += 1) {
-                                    addr_buf[j] = addr_buf[skip + j];
-                                }
-                                trace_buf.index = remaining;
-                            }
+                    if (comptime bun.Environment.isLinux and !bun.Environment.isMusl) {
+                        var addr_buf_libc: [20]usize = undefined;
+                        var trace_buf_libc: std.builtin.StackTrace = .{
+                            .index = 0,
+                            .instruction_addresses = &addr_buf_libc,
+                        };
+                        captureLibcBacktrace(desired_begin_addr, &trace_buf_libc);
+                        // Use stack trace from glibc's backtrace() if it has more frames
+                        if (trace_buf_libc.index > trace_buf.index) {
+                            addr_buf = addr_buf_libc;
+                            trace_buf.index = trace_buf_libc.index;
                         }
-                    } else {
-                        // Fall back to Zig's stack capture on other platforms
-                        std.debug.captureStackTrace(desired_begin_addr, &trace_buf);
                     }
-
-                    break :get_backtrace &trace_buf;
+                    break :blk &trace_buf;
                 };
 
                 if (debug_trace) {
@@ -385,7 +380,7 @@ pub fn crashHandler(
                     if (!has_printed_message) {
                         has_printed_message = true;
                         writer.writeAll("oh no") catch std.posix.abort();
-                        if (Output.enable_ansi_colors) {
+                        if (Output.enable_ansi_colors_stderr) {
                             writer.writeAll(Output.prettyFmt("<r><d>:<r> ", true)) catch std.posix.abort();
                         } else {
                             writer.writeAll(Output.prettyFmt(": ", true)) catch std.posix.abort();
@@ -435,7 +430,7 @@ pub fn crashHandler(
                         }
                     }
 
-                    if (Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors_stderr) {
                         writer.print(Output.prettyFmt("<cyan>", true), .{}) catch std.posix.abort();
                     }
 
@@ -452,7 +447,7 @@ pub fn crashHandler(
                     writer.writeAll("\n") catch std.posix.abort();
                 }
 
-                if (Output.enable_ansi_colors) {
+                if (Output.enable_ansi_colors_stderr) {
                     writer.writeAll(Output.prettyFmt("<r>\n", true)) catch std.posix.abort();
                 } else {
                     writer.writeAll("\n") catch std.posix.abort();
@@ -957,7 +952,7 @@ pub fn printMetadata(writer: anytype) !void {
         }
     }
 
-    if (Output.enable_ansi_colors) {
+    if (Output.enable_ansi_colors_stderr) {
         try writer.writeAll(Output.prettyFmt("<r><d>", true));
     }
 
@@ -1045,7 +1040,7 @@ pub fn printMetadata(writer: anytype) !void {
         try writer.writeAll("\n");
     }
 
-    if (Output.enable_ansi_colors) {
+    if (Output.enable_ansi_colors_stderr) {
         try writer.writeAll(Output.prettyFmt("<r>", true));
     }
     try writer.writeAll("\n");

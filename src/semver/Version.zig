@@ -91,7 +91,7 @@ pub fn VersionType(comptime IntType: type) type {
             other_buf: string,
 
             pub fn format(this: DiffFormatter, comptime fmt_: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-                if (!Output.enable_ansi_colors) {
+                if (!Output.enable_ansi_colors_stdout) {
                     // print normally if no colors
                     const formatter: Formatter = .{ .version = this.version, .input = this.buf };
                     return Formatter.format(formatter, fmt_, options, writer);

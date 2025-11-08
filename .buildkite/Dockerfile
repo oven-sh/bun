@@ -48,6 +48,14 @@ RUN --mount=type=tmpfs,target=/tmp \
     wget -O /tmp/cmake.sh "$cmake_url" && \
     sh /tmp/cmake.sh --skip-license --prefix=/usr
 
+RUN --mount=type=tmpfs,target=/tmp \
+    sccache_version="0.12.0" && \
+    arch=$(uname -m) && \
+    sccache_url="https://github.com/mozilla/sccache/releases/download/v${sccache_version}/sccache-v${sccache_version}-${arch}-unknown-linux-musl.tar.gz" && \
+    wget -O /tmp/sccache.tar.gz "$sccache_url" && \
+    tar -xzf /tmp/sccache.tar.gz -C /tmp && \
+    install -m755 /tmp/sccache-v${sccache_version}-${arch}-unknown-linux-musl/sccache /usr/local/bin
+
 RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 130 \
    --slave /usr/bin/g++ g++ /usr/bin/g++-13 \
    --slave /usr/bin/gcc-ar gcc-ar /usr/bin/gcc-ar-13 \

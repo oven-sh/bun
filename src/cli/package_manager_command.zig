@@ -532,6 +532,10 @@ fn printNodeModulesFolderStructure(
         }
 
         const package_id = lockfile.buffers.resolutions.items[dependency_id];
+
+        // Skip packages with invalid package IDs
+        if (package_id == Install.invalid_package_id) continue;
+
         var dir_index: usize = 0;
         var found_node_modules = false;
         while (dir_index < directories.items.len) : (dir_index += 1) {

@@ -274,6 +274,7 @@ pub const JSValkeyClient = struct {
         else
             bun.String.static("valkey://localhost:6379");
         defer url_str.deref();
+        var fallback_url_buf: [2048]u8 = undefined;
 
         // Parse and validate the URL using URL.zig's fromString which returns null for invalid URLs
         // TODO(markovejnovic): The following check for :// is a stop-gap. It is my expectation
@@ -282,7 +283,10 @@ pub const JSValkeyClient = struct {
         // understand why this is happening, but since I need to uncork valkey, I'm adding this as
         // a stop-gap.
         const parsed_url = get_url: {
-            const url_byte_slice = url_str.byteSlice();
+            const url_slice = url_str.toUTF8WithoutRef(this_allocator);
+            defer url_slice.deinit();
+
+            const url_byte_slice = url_slice.slice();
 
             if (url_byte_slice.len == 0) {
                 return globalObject.throwInvalidArguments("Invalid URL format", .{});
@@ -294,17 +298,16 @@ pub const JSValkeyClient = struct {
                 };
             }
 
-            var url_buf: [2048]u8 = undefined;
             const corrected_url = get_url_slice: {
                 const written = std.fmt.bufPrintZ(
-                    &url_buf,
+                    &fallback_url_buf,
                     "valkey://{s}",
                     .{url_byte_slice},
                 ) catch {
                     return globalObject.throwInvalidArguments("URL is too long.", .{});
                 };
 
-                break :get_url_slice url_buf[0..written.len];
+                break :get_url_slice fallback_url_buf[0..written.len];
             };
 
             break :get_url URL.fromUTF8(corrected_url) orelse {

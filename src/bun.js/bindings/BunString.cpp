@@ -8,6 +8,7 @@
 
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/PutPropertySlot.h"
+#include <JavaScriptCore/DeferGC.h>
 
 #include "wtf/SIMDUTF.h"
 #include "JSDOMURL.h"
@@ -108,6 +109,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
 extern "C" JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
+    JSC::DeferGC deferGC(vm);
 
     if (bunString->tag == BunStringTag::Empty || bunString->tag == BunStringTag::Dead) [[unlikely]] {
         return JSValue::encode(JSC::jsEmptyString(vm));

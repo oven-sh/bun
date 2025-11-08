@@ -278,3 +278,25 @@ it("invalid utf-8 at end of stream can sometimes produce more than one replaceme
   expect(decoder.write(Buffer.from("36f5", "hex"))).toEqual("6");
   expect(decoder.end(Buffer.from("9c", "hex"))).toEqual("\uFFFD\uFFFD");
 });
+
+// Regression test for crash when GC is triggered during string allocation in StringDecoder
+it("StringDecoder should handle GC during string allocation", () => {
+  const decoder = new RealStringDecoder("utf-8");
+
+  // Create memory pressure and repeatedly decode strings
+  // This test verifies that DeferGC is properly used in BunString__transferToJS
+  // to prevent crashes when GC is triggered during jsString() allocation
+  for (let i = 0; i < 1000; i++) {
+    const buf = Buffer.from("Hello, world! 🌍 UTF-8 test " + i, "utf-8");
+    const result = decoder.write(buf);
+    expect(result).toContain("Hello, world!");
+
+    // Create some garbage to increase GC pressure
+    if (i % 100 === 0) {
+      Bun.gc(true);
+    }
+  }
+
+  const finalResult = decoder.end();
+  expect(finalResult).toBe("");
+});

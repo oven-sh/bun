@@ -5,17 +5,12 @@ test("declare global with type annotation should not crash", async () => {
   using dir = tempDir("declare-global-test", {
     "test.ts": `
 declare global {
-  TIMER: NodeJS.Timeout;
+  A: 'a';
 }
 
-if (globalThis.TIMER) clearInterval(globalThis.TIMER);
-globalThis.TIMER = setInterval(() => console.log("Started"), 1000);
+() => {};
 
-setTimeout(() => {
-  clearInterval(globalThis.TIMER);
-  console.log("SUCCESS");
-  process.exit(0);
-}, 100);
+console.log("SUCCESS");
 `,
   });
 

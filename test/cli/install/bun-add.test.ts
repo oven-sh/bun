@@ -1368,7 +1368,7 @@ it.skipIf(!(isCI && isMacOS))("should successfully install private git+ssh depen
   // Initialize a git repo with a commit
   await $`git config --global user.name "Automatic CI Tester"`;
   await $`git config --global user.email "noreply@bun.com"`;
-  await $`git init ${repo}`;
+  await $`git init`.cwd(repo);
   await writeFile(join(repo, "package.json"), JSON.stringify({
     name: "private-install-test-repo",
     version: "1.2.3",
@@ -1378,6 +1378,7 @@ it.skipIf(!(isCI && isMacOS))("should successfully install private git+ssh depen
   const commitHash = (await $`git rev-parse HEAD`.cwd(repo)).text().trim();
 
   // Now, we can attempt to install this repo as a git+ssh dependency, using the commit hash
+  console.log()
   const { stdout, stderr, exited } = spawn({
     cmd: [
       bunExe(),

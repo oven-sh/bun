@@ -1205,7 +1205,7 @@ async function main() {
   }
 
   startGroup("Querying GitHub for files...");
-  if (options && isBuildkite && process.env.BUILDKITE_PULL_REQUEST) {
+  if (options && isBuildkite && !isMainBranch()) {
     /** @type {string[]} */
     let allFiles = [];
     /** @type {string[]} */

@@ -3,6 +3,7 @@ request_body: ?HTTPRequestBody = null,
 request_body_streaming_buffer: ?*http.ThreadSafeStreamBuffer = null,
 request_headers: Headers = Headers{ .allocator = undefined },
 sink: ?*ResumableSink = null,
+metadata: ?http.HTTPResponseMetadata = null,
 
 // Custom Hostname
 hostname: ?[]u8 = null,

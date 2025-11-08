@@ -15,7 +15,6 @@ native_response: ?*Response = null,
 /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
 /// If is not chunked encoded and Content-Length is not provided this will be unknown
 body_size: http.HTTPClientResult.BodySize = .unknown,
-metadata: ?http.HTTPResponseMetadata = null,
 
 state: enum {
     created,

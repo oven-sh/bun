@@ -41,20 +41,16 @@ declare global {
 }
 
 // Test nested arrow functions to ensure scope handling is correct
-if (globalThis.TIMER) clearInterval(globalThis.TIMER);
-globalThis.TIMER = setInterval(() => {
+const fn = () => {
   const nested = () => {
-    const deeplyNested = () => console.log("nested");
-    deeplyNested();
+    const deeplyNested = () => "nested";
+    return deeplyNested();
   };
-  nested();
-}, 1000);
+  return nested();
+};
 
-setTimeout(() => {
-  clearInterval(globalThis.TIMER);
-  console.log("SUCCESS");
-  process.exit(0);
-}, 100);
+console.log(fn());
+console.log("SUCCESS");
 `,
   });
 

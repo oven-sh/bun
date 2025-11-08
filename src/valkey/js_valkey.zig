@@ -284,6 +284,10 @@ pub const JSValkeyClient = struct {
         const parsed_url = get_url: {
             const url_byte_slice = url_str.byteSlice();
 
+            if (url_byte_slice.len == 0) {
+                return globalObject.throwInvalidArguments("Invalid URL format", .{});
+            }
+
             if (bun.strings.contains(url_byte_slice, "://")) {
                 break :get_url URL.fromString(url_str) orelse {
                     return globalObject.throwInvalidArguments("Invalid URL format", .{});

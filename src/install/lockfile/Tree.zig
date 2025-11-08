@@ -803,11 +803,11 @@ const OOM = bun.OOM;
 const Output = bun.Output;
 const Path = bun.path;
 const assert = bun.assert;
+const glob = bun.glob;
 const logger = bun.logger;
 const z_allocator = bun.z_allocator;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const String = bun.Semver.String;
-const glob = bun.glob;
 
 const install = bun.install;
 const Dependency = install.Dependency;

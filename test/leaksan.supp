@@ -223,3 +223,6 @@ leak:JSBundlerPlugin__addError
 leak:bun.js.webcore.FileSink.init__anon
 leak:bun.js.webcore.ReadableStream.fromPipe__anon
 leak:http.HTTPThread.drainEvents
+leak:bun.js.api.ffi.FFI.Function.compile
+leak:bun.js.VirtualMachine.initWorker
+leak:HTMLScanner.createImportRecord

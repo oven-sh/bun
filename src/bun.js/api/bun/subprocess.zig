@@ -1740,7 +1740,7 @@ pub fn spawnMaybeSync(
 
     const sync_value = jsc.JSValue.createEmptyObject(globalThis, 7);
     sync_value.put(globalThis, jsc.ZigString.static("exitCode"), exitCode);
-    sync_value.put(globalThis, jsc.ZigString.static("signalCode"), signalCode);
+    sync_value.put(globalThis, jsc.ZigString.static("signalCode"), if (bun.FeatureFlags.breaking_changes_1_4) signalCode else if (signalCode == .null) .js_undefined else signalCode);
     sync_value.put(globalThis, jsc.ZigString.static("stdout"), stdout);
     sync_value.put(globalThis, jsc.ZigString.static("stderr"), stderr);
     sync_value.put(globalThis, jsc.ZigString.static("success"), JSValue.jsBoolean(exitCode.isInt32() and exitCode.asInt32() == 0));

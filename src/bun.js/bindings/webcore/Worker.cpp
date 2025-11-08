@@ -508,7 +508,7 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
 {
     JSValue error = JSC::JSValue::decode(errorValue);
     ErrorEvent::Init init;
-    init.message = message.transferToWTFString();
+    init.message = message.toWTFString(BunString::ZeroCopy).isolatedCopy();
     init.error = error;
     init.cancelable = false;
     init.bubbles = false;

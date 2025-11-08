@@ -434,7 +434,7 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         }
         error_instance = globalObject.tryTakeException().?;
     };
-    buffered_writer.flush() catch bun.outOfMemory();
+    bun.handleOom(buffered_writer.flush());
     jsc.markBinding(@src());
     WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.slice()), error_instance);
     array.deinit(); // worker_.exitAndDeinit() means this function can't use defer.

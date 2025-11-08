@@ -1246,6 +1246,8 @@ pub const StandaloneModuleGraph = struct {
                     to_read_from = try bun.default_allocator.alloc(u8, offsets.byte_count);
                 }
             }
+            const to_read_from_copy = to_read_from;
+            defer if (Environment.allow_assert) if (offsets.byte_count <= 1024 * 3) bun.default_allocator.free(to_read_from_copy);
 
             var remain = to_read_from;
             while (remain.len > 0) {

@@ -30,7 +30,7 @@ pub fn owns(this: *const MutableString, items: []const u8) bool {
     return bun.isSliceInBuffer(items, this.list.items.ptr[0..this.list.capacity]);
 }
 
-pub inline fn growIfNeeded(self: *MutableString, amount: usize) Allocator.Error!void {
+pub fn growIfNeeded(self: *MutableString, amount: usize) Allocator.Error!void {
     try self.list.ensureUnusedCapacity(self.allocator, amount);
 }
 
@@ -173,15 +173,15 @@ pub fn copy(self: *MutableString, str: anytype) Allocator.Error!void {
     }
 }
 
-pub inline fn growBy(self: *MutableString, amount: usize) Allocator.Error!void {
+pub fn growBy(self: *MutableString, amount: usize) Allocator.Error!void {
     try self.list.ensureUnusedCapacity(self.allocator, amount);
 }
 
-pub inline fn appendSlice(self: *MutableString, items: []const u8) Allocator.Error!void {
+pub fn appendSlice(self: *MutableString, items: []const u8) Allocator.Error!void {
     try self.list.appendSlice(self.allocator, items);
 }
 
-pub inline fn appendSliceExact(self: *MutableString, items: []const u8) Allocator.Error!void {
+pub fn appendSliceExact(self: *MutableString, items: []const u8) Allocator.Error!void {
     if (items.len == 0) return;
     try self.list.ensureTotalCapacityPrecise(self.allocator, self.list.items.len + items.len);
     var end = self.list.items.ptr + self.list.items.len;
@@ -189,16 +189,11 @@ pub inline fn appendSliceExact(self: *MutableString, items: []const u8) Allocato
     @memcpy(end[0..items.len], items);
 }
 
-pub inline fn reset(
-    self: *MutableString,
-) void {
+pub fn reset(self: *MutableString) void {
     self.list.clearRetainingCapacity();
 }
 
-pub inline fn resetTo(
-    self: *MutableString,
-    index: usize,
-) void {
+pub fn resetTo(self: *MutableString, index: usize) void {
     bun.assert(index <= self.list.capacity);
     self.list.items.len = index;
 }
@@ -207,20 +202,23 @@ pub fn inflate(self: *MutableString, amount: usize) Allocator.Error!void {
     try self.list.resize(self.allocator, amount);
 }
 
-pub inline fn appendCharNTimes(self: *MutableString, char: u8, n: usize) Allocator.Error!void {
+pub fn appendCharNTimes(self: *MutableString, char: u8, n: usize) Allocator.Error!void {
     try self.list.appendNTimes(self.allocator, char, n);
 }
 
-pub inline fn appendChar(self: *MutableString, char: u8) Allocator.Error!void {
+pub fn appendChar(self: *MutableString, char: u8) Allocator.Error!void {
     try self.list.append(self.allocator, char);
 }
-pub inline fn appendCharAssumeCapacity(self: *MutableString, char: u8) void {
+
+pub fn appendCharAssumeCapacity(self: *MutableString, char: u8) void {
     self.list.appendAssumeCapacity(char);
 }
-pub inline fn append(self: *MutableString, char: []const u8) Allocator.Error!void {
+
+pub fn append(self: *MutableString, char: []const u8) Allocator.Error!void {
     try self.list.appendSlice(self.allocator, char);
 }
-pub inline fn appendInt(self: *MutableString, int: u64) Allocator.Error!void {
+
+pub fn appendInt(self: *MutableString, int: u64) Allocator.Error!void {
     const count = bun.fmt.fastDigitCount(int);
     try self.list.ensureUnusedCapacity(self.allocator, count);
     const old = self.list.items.len;
@@ -228,12 +226,13 @@ pub inline fn appendInt(self: *MutableString, int: u64) Allocator.Error!void {
     bun.assert(count == std.fmt.formatIntBuf(self.list.items.ptr[old .. old + count], int, 10, .lower, .{}));
 }
 
-pub inline fn appendAssumeCapacity(self: *MutableString, char: []const u8) void {
+pub fn appendAssumeCapacity(self: *MutableString, char: []const u8) void {
     self.list.appendSliceAssumeCapacity(
         char,
     );
 }
-pub inline fn lenI(self: *MutableString) i32 {
+
+pub fn lenI(self: *MutableString) i32 {
     return @as(i32, @intCast(self.list.items.len));
 }
 
@@ -318,7 +317,7 @@ pub const BufferedWriter = struct {
 
     pub const Writer = std.io.Writer(*BufferedWriter, Allocator.Error, BufferedWriter.writeAll);
 
-    inline fn remain(this: *BufferedWriter) []u8 {
+    fn remain(this: *BufferedWriter) []u8 {
         return this.buffer[this.pos..];
     }
 

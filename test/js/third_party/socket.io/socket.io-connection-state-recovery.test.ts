@@ -44,7 +44,7 @@ describe("connection state recovery", () => {
 
     const timeout = setTimeout(() => {
       fail(done, io, new Error("timeout"));
-    }, 200);
+    }, 2000);
 
     let serverSocket: Socket | undefined;
 

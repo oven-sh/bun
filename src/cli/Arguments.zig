@@ -27,17 +27,13 @@ pub fn readFile(
 }
 
 pub fn resolve_jsx_runtime(str: string) !Api.JsxRuntime {
-    if (strings.eqlComptime(str, "automatic")) {
-        return Api.JsxRuntime.automatic;
-    } else if (strings.eqlComptime(str, "fallback") or strings.eqlComptime(str, "classic")) {
-        return Api.JsxRuntime.classic;
-    } else if (strings.eqlComptime(str, "solid")) {
-        return Api.JsxRuntime.solid;
-    } else if (strings.eqlComptime(str, "preserve")) {
-        return Api.JsxRuntime.preserve;
-    } else {
-        return error.InvalidJSXRuntime;
+    var lower_buf: [128]u8 = undefined;
+    const len = @min(lower_buf.len, str.len);
+    _ = strings.copyLowercase(str[0..len], lower_buf[0..len]);
+    if (options.JSX.RuntimeMap.get(lower_buf[0..len])) |pair| {
+        return pair.runtime;
     }
+    return error.InvalidJSXRuntime;
 }
 
 pub const ParamType = clap.Param(clap.Help);
@@ -72,7 +68,7 @@ pub const transpiler_params_ = [_]ParamType{
     clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
     clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
     clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
-    clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
+    clap.parseParam("--jsx-runtime <STR>               One of: \"automatic\" (default), \"classic\", \"solid\", \"preserve\", \"react\", \"react-jsx\", \"react-jsxdev\"") catch unreachable,
     clap.parseParam("--jsx-side-effects                Treat JSX elements as having side effects (disable pure annotations)") catch unreachable,
     clap.parseParam("--ignore-dce-annotations          Ignore tree-shaking annotations such as @__PURE__") catch unreachable,
 };

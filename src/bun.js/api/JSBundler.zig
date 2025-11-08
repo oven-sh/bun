@@ -404,7 +404,10 @@ pub const JSBundler = struct {
                             this.jsx.development = dev;
                         }
                     } else {
-                        return globalThis.throwInvalidArguments("Invalid jsx.runtime: '{s}'. Must be one of: 'classic', 'automatic', 'react', 'react-jsx', or 'react-jsxdev'", .{slice.slice()});
+                        return globalThis.throwInvalidArguments(
+                            "Invalid jsx.runtime: '{s}'. Must be one of: 'classic', 'automatic', 'react', 'react-jsx', 'react-jsxdev', 'solid', or 'preserve'",
+                            .{slice.slice()},
+                        );
                     }
                 }
 

@@ -220,7 +220,7 @@ pub fn VisitExpr(
                             }
                         }
 
-                        const runtime = if (p.options.jsx.runtime == .automatic) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
+                        const runtime = p.options.jsx.runtime;
                         const is_key_after_spread = e_.flags.contains(.is_key_after_spread);
                         const children_count = e_.children.len;
 
@@ -370,6 +370,48 @@ pub fn VisitExpr(
                                 .was_jsx_element = true,
                                 .close_paren_loc = e_.close_tag_loc,
                             }, expr.loc);
+                        } else if (runtime == .preserve or runtime == .solid) {
+                            // For preserve mode, keep JSX structure but visit children and properties
+                            // This is needed for minification, renaming, and other transformations
+                            // For solid mode, also preserve for now (solid has its own JSX transform)
+
+                            // Visit the tag if present
+                            if (e_.tag) |tag_expr| {
+                                e_.tag = p.visitExpr(tag_expr);
+                            }
+
+                            // Visit all property values and keys
+                            const props_to_visit: []G.Property = e_.properties.slice();
+                            for (props_to_visit) |*property| {
+                                if (property.kind != .spread) {
+                                    if (property.key) |key| {
+                                        property.key = p.visitExpr(key);
+                                    }
+                                }
+
+                                if (property.value) |value| {
+                                    property.value = p.visitExpr(value);
+                                }
+
+                                if (property.initializer) |initializer| {
+                                    property.initializer = p.visitExpr(initializer);
+                                }
+                            }
+
+                            // Visit all children
+                            var last_child: u32 = 0;
+                            const children = e_.children.slice();
+                            for (children) |child| {
+                                const visited = p.visitExpr(child);
+                                // If tree-shaking removes the element, we must also remove it here
+                                if (visited.data != .e_missing) {
+                                    e_.children.ptr[last_child] = visited;
+                                    last_child += 1;
+                                }
+                            }
+                            e_.children.len = last_child;
+
+                            return expr;
                         } else {
                             unreachable;
                         }

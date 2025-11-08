@@ -159,7 +159,7 @@ pub fn tickWithTimeout(this: *SpawnSyncEventLoop, timeout: ?*const bun.timespec)
             this.uv_timer.?.unref();
             this.uv_timer.?.stop();
         } else {
-            this.did_timeout = bun.timespec.now().order(ts) != .lt;
+            this.did_timeout = bun.timespec.now(.allow_mocked_time).order(ts) != .lt;
         }
     }
 

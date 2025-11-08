@@ -184,7 +184,7 @@ pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSEr
         if (sequences.len == 1) {
             const sequence = sequences[0];
             if (sequence.active_entry) |entry| {
-                const now = bun.timespec.now();
+                const now = bun.timespec.now(.force_real_time);
                 if (entry.timespec.order(&now) == .lt) {
                     const kill_count = globalThis.bunVM().auto_killer.kill();
                     if (kill_count.processes > 0) {
@@ -204,7 +204,7 @@ pub fn step(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGlobalObject
     defer groupLog.end();
     const buntest = buntest_strong.get();
     const this = &buntest.execution;
-    var now = bun.timespec.now();
+    var now = bun.timespec.now(.force_real_time);
 
     switch (data) {
         .start => {
@@ -375,7 +375,7 @@ fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGloba
         groupLog.log("runSequence queued callback: {}", .{callback_data});
 
         if (BunTest.runTestCallback(buntest_strong, globalThis, cb.get(), next_item.has_done_parameter, callback_data, &next_item.timespec) != null) {
-            now.* = bun.timespec.now();
+            now.* = bun.timespec.now(.force_real_time);
             _ = next_item.evaluateTimeout(sequence, now);
 
             // the result is available immediately; advance the sequence and run again.
@@ -490,7 +490,7 @@ fn onGroupCompleted(_: *Execution, _: *ConcurrentGroup, globalThis: *jsc.JSGloba
 fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     if (sequence.test_entry) |entry| if (entry.callback == null) return;
 
-    sequence.started_at = bun.timespec.now();
+    sequence.started_at = bun.timespec.now(.force_real_time);
 
     if (sequence.test_entry) |entry| {
         log("Running test: \"{}\"", .{std.zig.fmtEscapes(entry.base.name orelse "(unnamed)")});

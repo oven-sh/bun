@@ -226,7 +226,7 @@ pub const LifecycleScriptSubprocess = struct {
         };
 
         this.remaining_fds = 0;
-        this.started_at = bun.timespec.now().ns();
+        this.started_at = bun.timespec.now(.allow_mocked_time).ns();
         this.manager.active_lifecycle_scripts.insert(this);
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), this.envp)).unwrap();
 

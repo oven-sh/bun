@@ -839,7 +839,7 @@ pub fn spawnMaybeSync(
     // This ensures JavaScript timers don't fire and stdin/stdout from the main process aren't affected
     {
         var absolute_timespec = bun.timespec.epoch;
-        var now = bun.timespec.now();
+        var now = bun.timespec.now(.allow_mocked_time);
         var user_timespec: bun.timespec = if (timeout) |timeout_ms| now.addMs(timeout_ms) else absolute_timespec;
 
         // Support `AbortSignal.timeout`, but it's best-effort.
@@ -893,10 +893,10 @@ pub fn spawnMaybeSync(
             // The timeout check is done at the top of the loop
             switch (sync_loop.tickWithTimeout(if (has_timespec and !did_timeout) &absolute_timespec else null)) {
                 .completed => {
-                    now = bun.timespec.now();
+                    now = bun.timespec.now(.allow_mocked_time);
                 },
                 .timeout => {
-                    now = bun.timespec.now();
+                    now = bun.timespec.now(.allow_mocked_time);
                     const did_user_timeout = has_user_timespec and (absolute_timespec.eql(&user_timespec) or user_timespec.order(&now) == .lt);
 
                     if (did_user_timeout) {

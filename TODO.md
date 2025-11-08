@@ -1,3 +1,5 @@
+- [ ] test abortsignal
+- [ ] test spawnSync
 - [ ] support performance.now
 - [ ] support Date.now()
 - [ ] support useFakeTimers in combination with setSystemTime

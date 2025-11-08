@@ -135,7 +135,7 @@ pub const All = struct {
 
         if (this.timers.peek()) |timer| {
             uv.uv_update_time(vm.uvLoop());
-            const now = timespec.now();
+            const now = timespec.now(.force_real_time);
             const wait = if (timer.next.greater(&now))
                 timer.next.duration(&now)
             else
@@ -238,7 +238,7 @@ pub const All = struct {
                     vm,
                     // Be careful to avoid adding extra calls to bun.timespec.now()
                     // when it's not needed.
-                    &bun.timespec.now(),
+                    &bun.timespec.now(.allow_mocked_time),
                 );
             }
         } else {
@@ -252,7 +252,7 @@ pub const All = struct {
         var maybe_now: ?timespec = null;
         while (this.timers.peek()) |min| {
             const now = maybe_now orelse now: {
-                const real_now = timespec.now();
+                const real_now = timespec.now(.allow_mocked_time);
                 maybe_now = real_now;
                 break :now real_now;
             };
@@ -298,7 +298,7 @@ pub const All = struct {
 
         if (this.timers.peek()) |timer| {
             if (!has_set_now.*) {
-                now.* = timespec.now();
+                now.* = timespec.now(.allow_mocked_time);
                 has_set_now.* = true;
             }
             if (timer.next.greater(now)) {
@@ -636,7 +636,7 @@ pub const internal_bindings = struct {
     pub fn timerClockMs(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) bun.JSError!JSValue {
         _ = globalThis;
         _ = callFrame;
-        const now = timespec.now().ms();
+        const now = timespec.now(.allow_mocked_time).ms();
         return .jsNumberFromInt64(now);
     }
 };

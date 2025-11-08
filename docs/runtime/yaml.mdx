@@ -528,8 +528,8 @@ const config = {
     { name: "server2", url: "https://api2.example.com" },
   ],
   features: {
-  enabled: ["auth", "logging", "metrics"],
-  disabled: ["experimental"],
+    enabled: ["auth", "logging", "metrics"],
+    disabled: ["experimental"],
   },
 };
 
@@ -543,18 +543,15 @@ deepEqual(config, Bun.YAML.parse(yaml));
 ```
 
 ```yaml output.yaml icon="file-code"
-defaults:
-  &defaults
+defaults: &defaults
   timeout: 30000
   retries: 3
 development:
-  defaults:
-    *defaults
+  defaults: *defaults
   host: localhost
   port: 3000
 production:
-  defaults:
-    *defaults
+  defaults: *defaults
   host: api.example.com
   port: 443
 servers:
@@ -605,4 +602,3 @@ async function loadUserSettings(userId: string) {
   }
 }
 ```
-

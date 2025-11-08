@@ -298,7 +298,14 @@
           {
             "group": "Deployment",
             "icon": "rocket",
-            "pages": ["/guides/deployment/vercel", "/guides/deployment/railway", "/guides/deployment/render"]
+            "pages": [
+              "/guides/deployment/vercel",
+              "/guides/deployment/railway",
+              "/guides/deployment/render",
+              "/guides/deployment/aws-lambda",
+              "/guides/deployment/digital-ocean",
+              "/guides/deployment/google-cloud-run"
+            ]
           },
           {
             "group": "Runtime & Debugging",

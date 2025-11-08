@@ -1,6 +1,6 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tmpdirSync, tempDirWithFiles, runBunInstall } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles, tmpdirSync } from "harness";
 import { join } from "path";
 
 beforeAll(() => {

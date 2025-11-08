@@ -30,16 +30,31 @@ console.log("SUCCESS");
   expect(exitCode).toBe(0);
 });
 
-test("declare global with multiple type annotations", async () => {
+test("declare global with multiple type annotations and nested arrow functions", async () => {
   using dir = tempDir("declare-global-multi", {
     "test.ts": `
 declare global {
+  TIMER: NodeJS.Timeout;
   FOO: string;
   BAR: number;
   BAZ: () => void;
 }
 
-console.log("SUCCESS");
+// Test nested arrow functions to ensure scope handling is correct
+if (globalThis.TIMER) clearInterval(globalThis.TIMER);
+globalThis.TIMER = setInterval(() => {
+  const nested = () => {
+    const deeplyNested = () => console.log("nested");
+    deeplyNested();
+  };
+  nested();
+}, 1000);
+
+setTimeout(() => {
+  clearInterval(globalThis.TIMER);
+  console.log("SUCCESS");
+  process.exit(0);
+}, 100);
 `,
   });
 

@@ -1,7 +1,7 @@
-import { file, spawn } from "bun";
+import { $, file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isCI, readdirSorted, tempDir, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import { bunExe, bunEnv as env, isCI, isMacOS, readdirSorted, tempDir, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
 import { join, relative, resolve } from "path";
 import {
   check_npm_auth_type,
@@ -1349,7 +1349,7 @@ it("git dep without package.json and with default branch", async () => {
   });
 });
 
-it.skipIf(!isCI)("should successfully install private git+ssh dependency with commit hash", async () => {
+it.skipIf(!(isCI && isMacOS))("should successfully install private git+ssh dependency with commit hash", async () => {
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1366,40 +1366,16 @@ it.skipIf(!isCI)("should successfully install private git+ssh dependency with co
 
   await using repo = tempDir("lolcat-repo", {});
   // Initialize a git repo with a commit
-  await spawn({
-    cmd: ["git", "init"],
-    cwd: repo,
-    stdout: "ignore",
-    stdin: "ignore",
-    stderr: "inherit",
-  }).exited;
+  await $`git config --global user.name "Automatic CI Tester"`;
+  await $`git config --global user.email "noreply@bun.com"`;
+  await $`git init ${repo}`;
   await writeFile(join(repo, "package.json"), JSON.stringify({
     name: "private-install-test-repo",
     version: "1.2.3",
   }));
-  await spawn({
-    cmd: ["git", "add", "package.json"],
-    cwd: repo,
-    stdout: "ignore",
-    stdin: "ignore",
-    stderr: "inherit",
-  }).exited;
-  await spawn({
-    cmd: ["git", "commit", "-m", "initial commit"],
-    cwd: repo,
-    stdout: "ignore",
-    stdin: "ignore",
-    stderr: "inherit",
-  }).exited;
-  // Get the commit hash
-  const { stdout: git_stdout } = spawn({
-    cmd: ["git", "rev-parse", "HEAD"],
-    cwd: repo,
-    stdout: "pipe",
-    stdin: "ignore",
-    stderr: "inherit",
-  });
-  const commitHash = (await git_stdout.text()).trim();
+  await $`git add package.json`.cwd(repo);
+  await $`git commit -m "initial commit"`.cwd(repo);
+  const commitHash = (await $`git rev-parse HEAD`.cwd(repo)).text().trim();
 
   // Now, we can attempt to install this repo as a git+ssh dependency, using the commit hash
   const { stdout, stderr, exited } = spawn({

@@ -131,7 +131,7 @@ pub const ProgressBuf = struct {
     }
 
     pub fn pretty(comptime fmt: string, args: anytype) !string {
-        if (Output.enable_ansi_colors) {
+        if (Output.enable_ansi_colors_stdout) {
             return ProgressBuf.print(comptime Output.prettyFmt(fmt, true), args);
         } else {
             return ProgressBuf.print(comptime Output.prettyFmt(fmt, false), args);
@@ -2213,7 +2213,7 @@ pub const Example = struct {
         );
         async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
-        if (Output.enable_ansi_colors) {
+        if (Output.enable_ansi_colors_stdout) {
             async_http.client.progress_node = progress_node;
         }
 

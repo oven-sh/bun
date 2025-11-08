@@ -59,6 +59,7 @@
     "lint": "bunx oxlint --config=oxlint.json --format=github src/js",
     "lint:fix": "oxlint --config oxlint.json --fix",
     "test": "node scripts/runner.node.mjs --exec-path ./build/debug/bun-debug",
+    "testleak": "BUN_DESTRUCT_VM_ON_EXIT=1 ASAN_OPTIONS=detect_leaks=1 LSAN_OPTIONS=malloc_context_size=100:print_suppressions=1:suppressions=$npm_config_local_prefix/test/leaksan.supp ./build/debug/bun-debug",
     "test:release": "node scripts/runner.node.mjs --exec-path ./build/release/bun",
     "testleak": "BUN_DESTRUCT_VM_ON_EXIT=1 ASAN_OPTIONS=allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1 LSAN_OPTIONS=malloc_context_size=200:print_suppressions=1:suppressions=$npm_config_local_prefix/test/leaksan.supp ./build/debug/bun-debug",
     "banned": "bun test test/internal/ban-words.test.ts",
@@ -87,9 +88,10 @@
     "clean:zig": "rm -rf build/debug/cache/zig build/debug/CMakeCache.txt 'build/debug/*.o' .zig-cache zig-out || true",
     "machine:linux:ubuntu": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=linux --distro=ubuntu --release=25.04",
     "machine:linux:debian": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=linux --distro=debian --release=12",
-    "machine:linux:alpine": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=linux --distro=alpine --release=3.21",
+    "machine:linux:alpine": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=linux --distro=alpine --release=3.22",
     "machine:linux:amazonlinux": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=linux --distro=amazonlinux --release=2023",
     "machine:windows:2019": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=windows --release=2019",
+    "machine:freebsd": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.large --os=freebsd --release=14.3",
     "sync-webkit-source": "bun ./scripts/sync-webkit-source.ts"
   }
 }

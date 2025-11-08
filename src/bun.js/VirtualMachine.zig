@@ -48,6 +48,7 @@ unhandled_pending_rejection_to_capture: ?*JSValue = null,
 standalone_module_graph: ?*bun.StandaloneModuleGraph = null,
 smol: bool = false,
 dns_result_order: DNSResolver.Order = .verbatim,
+cpu_profiler_config: ?CPUProfilerConfig = null,
 counters: Counters = .{},
 
 hot_reload: bun.cli.Command.HotReload = .none,
@@ -721,7 +722,7 @@ pub inline fn autoGarbageCollect(this: *const VirtualMachine) void {
 
 pub fn reload(this: *VirtualMachine, _: *HotReloader.Task) void {
     Output.debug("Reloading...", .{});
-    const should_clear_terminal = !this.transpiler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
+    const should_clear_terminal = !this.transpiler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors_stdout);
     if (this.hot_reload == .watch) {
         Output.flush();
         bun.reloadProcess(
@@ -832,6 +833,15 @@ pub fn setEntryPointEvalResultCJS(this: *VirtualMachine, value: JSValue) callcon
 }
 
 pub fn onExit(this: *VirtualMachine) void {
+    // Write CPU profile if profiling was enabled - do this FIRST before any shutdown begins
+    // Grab the config and null it out to make this idempotent
+    if (this.cpu_profiler_config) |config| {
+        this.cpu_profiler_config = null;
+        CPUProfiler.stopAndWriteProfile(this.jsc_vm, config) catch |err| {
+            Output.err(err, "Failed to write CPU profile", .{});
+        };
+    }
+
     this.exit_handler.dispatchOnExit();
     this.is_shutting_down = true;
 
@@ -855,6 +865,7 @@ pub fn globalExit(this: *VirtualMachine) noreturn {
     // FIXME: we should be doing this, but we're not, but unfortunately doing it
     //        causes like 50+ tests to break
     // this.eventLoop().tick();
+
     if (this.shouldDestructMainThreadOnExit()) {
         if (this.eventLoop().forever_timer) |t| t.deinit(true);
         Zig__GlobalObject__destructOnExit(this.global);
@@ -1958,7 +1969,7 @@ pub fn printException(
         .stack_check = bun.StackCheck.init(),
     };
     defer formatter.deinit();
-    if (Output.enable_ansi_colors) {
+    if (Output.enable_ansi_colors_stderr) {
         this.printErrorlikeObject(exception.value(), exception, exception_list, &formatter, Writer, writer, true, allow_side_effects);
     } else {
         this.printErrorlikeObject(exception.value(), exception, exception_list, &formatter, Writer, writer, false, allow_side_effects);
@@ -1997,7 +2008,7 @@ pub noinline fn runErrorHandler(this: *VirtualMachine, result: JSValue, exceptio
             .error_display_level = .full,
         };
         defer formatter.deinit();
-        switch (Output.enable_ansi_colors) {
+        switch (Output.enable_ansi_colors_stderr) {
             inline else => |enable_colors| this.printErrorlikeObject(result, null, exception_list, &formatter, @TypeOf(writer), writer, enable_colors, true),
         }
     }
@@ -3694,6 +3705,9 @@ const PackageManager = @import("../install/install.zig").PackageManager;
 const URL = @import("../url.zig").URL;
 const Allocator = std.mem.Allocator;
 
+const CPUProfiler = @import("./bindings/BunCPUProfiler.zig");
+const CPUProfilerConfig = CPUProfiler.CPUProfilerConfig;
+
 const bun = @import("bun");
 const Async = bun.Async;
 const DotEnv = bun.DotEnv;
@@ -3702,7 +3716,7 @@ const Global = bun.Global;
 const MutableString = bun.MutableString;
 const Ordinal = bun.Ordinal;
 const Output = bun.Output;
-const SourceMap = bun.sourcemap;
+const SourceMap = bun.SourceMap;
 const String = bun.String;
 const Transpiler = bun.Transpiler;
 const Watcher = bun.Watcher;

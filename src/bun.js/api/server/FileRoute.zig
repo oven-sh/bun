@@ -472,7 +472,11 @@ const StreamTransfer = struct {
     }
 
     pub fn loop(this: *StreamTransfer) *Async.Loop {
-        return this.eventLoop().loop();
+        if (comptime bun.Environment.isWindows) {
+            return this.eventLoop().loop().uv_loop;
+        } else {
+            return this.eventLoop().loop();
+        }
     }
 
     fn onWritable(this: *StreamTransfer, _: u64, _: AnyResponse) bool {

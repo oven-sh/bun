@@ -81,7 +81,7 @@ function getNodeParallelTestTimeout(testPath) {
     return 90_000;
   }
   if (!isCI) return 60_000; // everything slower in debug mode
-  if (process.env.BUILDKITE_STEP_KEY?.includes("-asan-")) return 60_000;
+  if (options["step"]?.includes("-asan-")) return 60_000;
   return 20_000;
 }
 
@@ -188,32 +188,33 @@ if (options["quiet"]) {
   isQuiet = true;
 }
 
+/** @type {string[]} */
+let allFiles = [];
+/** @type {string[]} */
 let newFiles = [];
 let prFileCount = 0;
 if (isBuildkite) {
   try {
     console.log("on buildkite: collecting new files from PR");
     const per_page = 50;
-    for (let i = 1; i <= 5; i++) {
+    const { BUILDKITE_PULL_REQUEST } = process.env;
+    for (let i = 1; i <= 10; i++) {
       const res = await fetch(
-        `https://api.github.com/repos/oven-sh/bun/pulls/${process.env.BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
-        {
-          headers: {
-            Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}`,
-          },
-        },
+        `https://api.github.com/repos/oven-sh/bun/pulls/${BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
+        { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
       );
       const doc = await res.json();
       console.log(`-> page ${i}, found ${doc.length} items`);
       if (doc.length === 0) break;
-      if (doc.length < per_page) break;
       for (const { filename, status } of doc) {
         prFileCount += 1;
+        allFiles.push(filename);
         if (status !== "added") continue;
         newFiles.push(filename);
       }
+      if (doc.length < per_page) break;
     }
-    console.log(`- PR ${process.env.BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
+    console.log(`- PR ${BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
   } catch (e) {
     console.error(e);
   }
@@ -1583,8 +1584,7 @@ function isJavaScriptTest(path) {
  * @returns {boolean}
  */
 function isNodeTest(path) {
-  // Do not run node tests on macOS x64 in CI
-  // TODO: Unclear why we decided to do this?
+  // Do not run node tests on macOS x64 in CI, those machines are slow and expensive.
   if (isCI && isMacOS && isX64) {
     return false;
   }
@@ -2630,8 +2630,18 @@ export async function main() {
     ]);
   }
 
-  const results = await runTests();
-  const ok = results.every(({ ok }) => ok);
+  let doRunTests = true;
+  if (isCI) {
+    if (allFiles.every(filename => filename.startsWith("docs/"))) {
+      doRunTests = false;
+    }
+  }
+
+  let ok = true;
+  if (doRunTests) {
+    const results = await runTests();
+    ok = results.every(({ ok }) => ok);
+  }
 
   let waitForUser = false;
   while (isCI) {

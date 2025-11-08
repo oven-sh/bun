@@ -97,19 +97,24 @@ pub const UpdateInteractiveCommand = struct {
         };
 
         const new_package_json_source = try manager.allocator.dupe(u8, package_json_writer.ctx.writtenWithoutTrailingZero());
-        defer manager.allocator.free(new_package_json_source);
 
         // Write the updated package.json
         const write_file = std.fs.cwd().createFile(package_json_path, .{}) catch |err| {
+            manager.allocator.free(new_package_json_source);
             Output.errGeneric("Failed to write package.json at {s}: {s}", .{ package_json_path, @errorName(err) });
             return err;
         };
         defer write_file.close();
 
         write_file.writeAll(new_package_json_source) catch |err| {
+            manager.allocator.free(new_package_json_source);
             Output.errGeneric("Failed to write package.json at {s}: {s}", .{ package_json_path, @errorName(err) });
             return err;
         };
+
+        // Update the cache so installWithManager sees the new package.json
+        // This is critical - without this, installWithManager will use the cached old version
+        package_json.*.source.contents = new_package_json_source;
     }
 
     pub fn exec(ctx: Command.Context) !void {
@@ -1163,7 +1168,7 @@ pub const UpdateInteractiveCommand = struct {
     }
 
     fn processMultiSelect(state: *MultiSelectState, initial_terminal_size: TerminalSize) ![]bool {
-        const colors = Output.enable_ansi_colors;
+        const colors = Output.enable_ansi_colors_stdout;
 
         // Clear any previous progress output
         Output.print("\r\x1B[2K", .{}); // Clear entire line
@@ -1428,7 +1433,7 @@ pub const UpdateInteractiveCommand = struct {
 
                     const uses_default_registry = pkg.manager.options.scope.url_hash == Install.Npm.Registry.default_url_hash and
                         pkg.manager.scopeForPackageName(pkg.name).url_hash == Install.Npm.Registry.default_url_hash;
-                    const package_url = if (Output.enable_ansi_colors and uses_default_registry)
+                    const package_url = if (Output.enable_ansi_colors_stdout and uses_default_registry)
                         try std.fmt.allocPrint(bun.default_allocator, "https://npmjs.org/package/{s}/v/{s}", .{ pkg.name, brk: {
                             if (selected) {
                                 if (pkg.use_latest) {
@@ -1977,10 +1982,39 @@ fn updateNamedCatalog(
 }
 
 fn preserveVersionPrefix(original_version: string, new_version: string, allocator: std.mem.Allocator) !string {
-    if (original_version.len > 0) {
-        const first_char = original_version[0];
+    if (original_version.len > 1) {
+        var orig_version = original_version;
+        var alias: ?string = null;
+
+        // Preserve npm: prefix
+        if (strings.withoutPrefixIfPossibleComptime(original_version, "npm:")) |after_npm| {
+            if (strings.lastIndexOfChar(after_npm, '@')) |i| {
+                alias = after_npm[0..i];
+                if (i + 2 < after_npm.len) {
+                    orig_version = after_npm[i + 1 ..];
+                }
+            } else {
+                alias = after_npm;
+            }
+        }
+
+        // Preserve other version prefixes
+        const first_char = orig_version[0];
         if (first_char == '^' or first_char == '~' or first_char == '>' or first_char == '<' or first_char == '=') {
+            const second_char = orig_version[1];
+            if ((first_char == '>' or first_char == '<') and second_char == '=') {
+                if (alias) |a| {
+                    return try std.fmt.allocPrint(allocator, "npm:{s}@{c}={s}", .{ a, first_char, new_version });
+                }
+                return try std.fmt.allocPrint(allocator, "{c}={s}", .{ first_char, new_version });
+            }
+            if (alias) |a| {
+                return try std.fmt.allocPrint(allocator, "npm:{s}@{c}{s}", .{ a, first_char, new_version });
+            }
             return try std.fmt.allocPrint(allocator, "{c}{s}", .{ first_char, new_version });
+        }
+        if (alias) |a| {
+            return try std.fmt.allocPrint(allocator, "npm:{s}@{s}", .{ a, new_version });
         }
     }
     return try allocator.dupe(u8, new_version);

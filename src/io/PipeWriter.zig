@@ -258,7 +258,9 @@ pub fn PosixBufferedWriter(Parent: type, function_table: anytype) type {
 
         pub fn registerPoll(this: *PosixWriter) void {
             var poll = this.getPoll() orelse return;
-            switch (poll.registerWithFd(bun.uws.Loop.get(), .writable, .dispatch, poll.fd)) {
+            // Use the event loop from the parent, not the global one
+            const loop = this.parent.eventLoop().loop();
+            switch (poll.registerWithFd(loop, .writable, .dispatch, poll.fd)) {
                 .err => |err| {
                     onError(this.parent, err);
                 },
@@ -897,7 +899,10 @@ fn BaseWindowsPipeWriter(
                 else => @compileError("Expected `bun.FileDescriptor` or `*bun.MovableIfWindowsFd` but got: " ++ @typeName(rawfd)),
             };
             bun.assert(this.source == null);
-            const source = switch (Source.open(uv.Loop.get(), fd)) {
+            // Use the event loop from the parent, not the global one
+            // This is critical for spawnSync to use its isolated loop
+            const loop = this.parent.loop();
+            const source = switch (Source.open(loop, fd)) {
                 .result => |source| source,
                 .err => |err| return .{ .err = err },
             };
@@ -1059,7 +1064,7 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
                     file.prepare();
                     this.write_buffer = uv.uv_buf_t.init(buffer);
 
-                    if (uv.uv_fs_write(uv.Loop.get(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
+                    if (uv.uv_fs_write(this.parent.loop(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
                         file.complete(false);
                         this.close();
                         onError(this.parent, err);
@@ -1404,7 +1409,7 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
                     file.prepare();
                     this.write_buffer = uv.uv_buf_t.init(bytes);
 
-                    if (uv.uv_fs_write(uv.Loop.get(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
+                    if (uv.uv_fs_write(this.parent.loop(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
                         file.complete(false);
                         this.last_write_result = .{ .err = err };
                         onError(this.parent, err);

@@ -503,6 +503,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
     vm.setOnComputeErrorInfo(computeErrorInfoWrapperToString);
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);
+    vm.setComputeLineColumnWithSourcemap(computeLineColumnWithSourcemap);
     vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
         // if you process.nextTick on a microtask we need this
         auto* globalObject = defaultGlobalObject();
@@ -2973,7 +2974,10 @@ void GlobalObject::handleRejectedPromises()
             continue;
 
         Bun__handleRejectedPromise(this, promise);
-        if (auto ex = scope.exception()) this->reportUncaughtExceptionAtEventLoop(this, ex);
+        if (auto ex = scope.exception()) {
+            scope.clearException();
+            this->reportUncaughtExceptionAtEventLoop(this, ex);
+        }
     }
 }
 

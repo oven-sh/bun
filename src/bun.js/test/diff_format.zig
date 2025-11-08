@@ -9,7 +9,7 @@ pub const DiffFormatter = struct {
     pub fn format(this: DiffFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         const allocator = default_allocator;
 
-        const diff_config: DiffConfig = .default(Output.isAIAgent(), Output.enable_ansi_colors);
+        const diff_config: DiffConfig = .default(Output.isAIAgent(), Output.enable_ansi_colors_stderr);
 
         if (this.expected_string != null and this.received_string != null) {
             const received = this.received_string.?;

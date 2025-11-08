@@ -312,6 +312,9 @@ export default [
         fn: "isSubscribed",
         length: 1,
       },
+      subscriptions: {
+        getter: "getSubscriptions",
+      },
       remoteAddress: {
         getter: "getRemoteAddress",
         cache: true,

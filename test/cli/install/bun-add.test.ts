@@ -1,7 +1,18 @@
 import { $, file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isCI, isMacOS, readdirSorted, tempDir, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  isCI,
+  isMacOS,
+  readdirSorted,
+  tempDir,
+  tmpdirSync,
+  toBeValidBin,
+  toBeWorkspaceLink,
+  toHaveBins,
+} from "harness";
 import { join, relative, resolve } from "path";
 import {
   check_npm_auth_type,
@@ -1369,22 +1380,21 @@ it.skipIf(!(isCI && isMacOS))("should successfully install private git+ssh depen
   await $`git config --global user.name "Automatic CI Tester"`;
   await $`git config --global user.email "noreply@bun.com"`;
   await $`git init`.cwd(repo);
-  await writeFile(join(repo, "package.json"), JSON.stringify({
-    name: "private-install-test-repo",
-    version: "1.2.3",
-  }));
+  await writeFile(
+    join(repo, "package.json"),
+    JSON.stringify({
+      name: "private-install-test-repo",
+      version: "1.2.3",
+    }),
+  );
   await $`git add package.json`.cwd(repo);
   await $`git commit -m "initial commit"`.cwd(repo);
   const commitHash = (await $`git rev-parse HEAD`.cwd(repo)).text().trim();
 
   // Now, we can attempt to install this repo as a git+ssh dependency, using the commit hash
-  console.log()
+  console.log();
   const { stdout, stderr, exited } = spawn({
-    cmd: [
-      bunExe(),
-      "add",
-      `git+ssh://${user}@localhost:${repo}#${commitHash}`,
-    ],
+    cmd: [bunExe(), "add", `git+ssh://${user}@localhost:${repo}#${commitHash}`],
     cwd: package_dir,
     stdout: "pipe",
     stdin: "ignore",

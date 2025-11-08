@@ -57,6 +57,7 @@ The default linker strategy depends on your project's lockfile `configVersion`:
 **Existing Bun projects (made pre-v1.3.2)**: If your existing lockfile doesn't have a version yet, Bun sets `configVersion = 0` when you run `bun install`, preserving the previous hoisted linker default.
 
 **Migrations from other package managers**:
+
 - From pnpm: `configVersion = 1` (using isolated installs in workspaces)
 - From npm or yarn: `configVersion = 0` (using hoisted installs)
 

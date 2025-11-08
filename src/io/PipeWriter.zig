@@ -1097,7 +1097,7 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
 
 /// Basic std.ArrayList(u8) + usize cursor wrapper
 pub const StreamBuffer = struct {
-    list: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    list: bun.collections.ArrayListDefault(u8) = bun.collections.ArrayListDefault(u8).init(),
     cursor: usize = 0,
 
     pub fn reset(this: *StreamBuffer) void {
@@ -1107,19 +1107,19 @@ pub const StreamBuffer = struct {
     }
 
     pub fn maybeShrink(this: *StreamBuffer) void {
-        if (this.list.capacity > std.heap.pageSize()) {
+        if (this.list.capacity() > std.heap.pageSize()) {
             // workaround insane zig decision to make it undefined behavior to resize .len < .capacity
-            this.list.expandToCapacity();
+            this.list.expandToCapacity(undefined);
             this.list.shrinkAndFree(std.heap.pageSize());
         }
     }
 
     pub fn memoryCost(this: *const StreamBuffer) usize {
-        return this.list.capacity;
+        return this.list.capacity();
     }
 
     pub fn size(this: *const StreamBuffer) usize {
-        return this.list.items.len - this.cursor;
+        return this.list.items().len - this.cursor;
     }
 
     pub fn isEmpty(this: *const StreamBuffer) bool {
@@ -1152,7 +1152,7 @@ pub const StreamBuffer = struct {
 
     pub fn writeTypeAsBytesAssumeCapacity(this: *StreamBuffer, comptime T: type, data: T) void {
         var byte_list = bun.ByteList.moveFromList(&this.list);
-        defer this.list = byte_list.moveToListManaged(this.list.allocator);
+        defer this.list = byte_list.moveToListManaged(this.list.allocator());
         byte_list.writeTypeAsBytesAssumeCapacity(T, data);
     }
 
@@ -1164,20 +1164,20 @@ pub const StreamBuffer = struct {
 
             {
                 var byte_list = bun.ByteList.moveFromList(&this.list);
-                defer this.list = byte_list.moveToListManaged(this.list.allocator);
-                _ = try byte_list.writeLatin1(this.list.allocator, buffer);
+                defer this.list = byte_list.moveToListManaged(this.list.allocator());
+                _ = try byte_list.writeLatin1(this.list.allocator(), buffer);
             }
 
-            return this.list.items[this.cursor..];
+            return this.list.items()[this.cursor..];
         } else if (comptime @TypeOf(writeFn) == @TypeOf(&writeUTF16) and writeFn == &writeUTF16) {
             {
                 var byte_list = bun.ByteList.moveFromList(&this.list);
-                defer this.list = byte_list.moveToListManaged(this.list.allocator);
+                defer this.list = byte_list.moveToListManaged(this.list.allocator());
 
-                _ = try byte_list.writeUTF16(this.list.allocator, buffer);
+                _ = try byte_list.writeUTF16(this.list.allocator(), buffer);
             }
 
-            return this.list.items[this.cursor..];
+            return this.list.items()[this.cursor..];
         } else if (comptime @TypeOf(writeFn) == @TypeOf(&write) and writeFn == &write) {
             return buffer;
         } else {
@@ -1193,25 +1193,25 @@ pub const StreamBuffer = struct {
         }
 
         var byte_list = bun.ByteList.moveFromList(&this.list);
-        defer this.list = byte_list.moveToListManaged(this.list.allocator);
+        defer this.list = byte_list.moveToListManaged(this.list.allocator());
 
-        _ = try byte_list.writeLatin1(this.list.allocator, buffer);
+        _ = try byte_list.writeLatin1(this.list.allocator(), buffer);
     }
 
     pub fn writeUTF16(this: *StreamBuffer, buffer: []const u16) OOM!void {
         var byte_list = bun.ByteList.moveFromList(&this.list);
-        defer this.list = byte_list.moveToListManaged(this.list.allocator);
+        defer this.list = byte_list.moveToListManaged(this.list.allocator());
 
-        _ = try byte_list.writeUTF16(this.list.allocator, buffer);
+        _ = try byte_list.writeUTF16(this.list.allocator(), buffer);
     }
 
     pub fn slice(this: *const StreamBuffer) []const u8 {
-        return this.list.items[this.cursor..];
+        return this.list.items()[this.cursor..];
     }
 
     pub fn deinit(this: *StreamBuffer) void {
         this.cursor = 0;
-        if (this.list.capacity > 0) {
+        if (this.list.capacity() > 0) {
             this.list.clearAndFree();
         }
     }

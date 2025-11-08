@@ -1257,7 +1257,7 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
             break :bytes writer_buf.list.items;
         }
 
-        var bytes = std.ArrayList(u8).init(bun.default_allocator);
+        var bytes = bun.collections.ArrayListDefault(u8).init();
 
         var total_size: usize = 0;
         var end_pos: usize = 0;
@@ -1265,9 +1265,9 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
             Output.err(err, "failed to serialize lockfile", .{});
             Global.crash();
         };
-        if (bytes.items.len >= end_pos)
-            bytes.items[end_pos..][0..@sizeOf(usize)].* = @bitCast(total_size);
-        break :bytes bytes.items;
+        if (bytes.items().len >= end_pos)
+            bytes.items()[end_pos..][0..@sizeOf(usize)].* = @bitCast(total_size);
+        break :bytes bytes.toOwnedSlice() catch bun.outOfMemory();
     };
     defer bun.default_allocator.free(bytes);
 

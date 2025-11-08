@@ -1548,7 +1548,7 @@ pub const BundleV2 = struct {
         bake_options: BakeOptions,
         alloc: std.mem.Allocator,
         event_loop: EventLoop,
-    ) !std.ArrayList(options.OutputFile) {
+    ) !bun.collections.ArrayListDefault(options.OutputFile) {
         var this = try BundleV2.init(
             server_transpiler,
             bake_options,
@@ -1596,7 +1596,7 @@ pub const BundleV2 = struct {
         );
 
         if (chunks.len == 0) {
-            return std.ArrayList(options.OutputFile).init(bun.default_allocator);
+            return bun.collections.ArrayListDefault(options.OutputFile).init();
         }
 
         return try this.linker.generateChunksInParallel(chunks, false);

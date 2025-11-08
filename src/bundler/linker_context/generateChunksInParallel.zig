@@ -2,7 +2,7 @@ pub fn generateChunksInParallel(
     c: *LinkerContext,
     chunks: []Chunk,
     comptime is_dev_server: bool,
-) !if (is_dev_server) void else std.ArrayList(options.OutputFile) {
+) !if (is_dev_server) void else bun.collections.ArrayListDefault(options.OutputFile) {
     const trace = bun.perf.trace("Bundler.generateChunksInParallel");
     defer trace.end();
 

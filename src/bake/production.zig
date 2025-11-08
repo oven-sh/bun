@@ -322,7 +322,7 @@ pub fn buildWithVm(ctx: bun.cli.Command.Context, cwd: []const u8, vm: *VirtualMa
         allocator,
         .{ .js = vm.event_loop },
     );
-    const bundled_outputs = bundled_outputs_list.items;
+    const bundled_outputs = bundled_outputs_list.items();
     if (bundled_outputs.len == 0) {
         Output.prettyln("done", .{});
         Output.flush();

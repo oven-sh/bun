@@ -506,30 +506,30 @@ You can use `Bun.YAML.stringify()` to programmatically create YAML configuration
 import { YAML } from "bun";
 
 const defaults = {
-  timeout: 30000,
-  retries: 3,
+timeout: 30000,
+retries: 3,
 };
 
 const config = {
-  defaults,
-  development: {
-    defaults,
-    host: "localhost",
-    port: 3000,
-  },
-  production: {
-    defaults,
-    host: "api.example.com",
-    port: 443,
-  },
-  servers: [
-    { name: "server1", url: "https://api1.example.com" },
-    { name: "server2", url: "https://api2.example.com" },
-  ],
-  features: {
-    enabled: ["auth", "logging", "metrics"],
-    disabled: ["experimental"],
-  },
+defaults,
+development: {
+defaults,
+host: "localhost",
+port: 3000,
+},
+production: {
+defaults,
+host: "api.example.com",
+port: 443,
+},
+servers: [
+{ name: "server1", url: "https://api1.example.com" },
+{ name: "server2", url: "https://api2.example.com" },
+],
+features: {
+enabled: ["auth", "logging", "metrics"],
+disabled: ["experimental"],
+},
 };
 
 // Generate readable YAML with 2-space indentation
@@ -539,7 +539,8 @@ await Bun.write("config.yaml", yaml);
 // The output is valid YAML that parses back to the original object
 import { deepEqual } from "node:assert";
 deepEqual(config, Bun.YAML.parse(yaml));
-```
+
+````
 
 ```yaml output.yaml icon="file-code"
 defaults:
@@ -568,7 +569,8 @@ features:
     - metrics
   disabled:
     - experimental
-```
+````
+
 </CodeGroup>
 
 ### Bundler Integration

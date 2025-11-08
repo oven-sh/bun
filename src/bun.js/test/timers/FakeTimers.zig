@@ -6,38 +6,35 @@
 timers: TimerHeap = .{ .context = {} },
 
 pub var current_time: struct {
-    const PackedTime = packed struct(u128) {
-        sec: i64,
-        nsec: i64,
-        const min: PackedTime = .{ .sec = std.math.minInt(i64), .nsec = std.math.minInt(i64) };
-    };
-    #timespec_now: std.atomic.Value(PackedTime) = .init(.min),
+    /// starts at 0. offset in milliseconds.
+    #offset: std.atomic.Value(i64) = .init(std.math.minInt(i64)),
     date_now_offset: f64 = 0,
     pub fn getTimespecNow(this: *@This()) ?bun.timespec {
-        const value = this.#timespec_now.load(.seq_cst);
-        if (value == PackedTime.min) return null;
-        return .{ .sec = value.sec, .nsec = value.nsec };
+        const value = this.#offset.load(.seq_cst);
+        if (value == std.math.minInt(i64)) return null;
+        const result: bun.timespec = .{ .sec = 0, .nsec = 0 };
+        return result.addMs(value);
     }
-    pub fn set(this: *@This(), globalObject: *jsc.JSGlobalObject, value: ?struct {
-        timespec: *const bun.timespec,
-        js: ?f64,
+    pub fn set(this: *@This(), globalObject: *jsc.JSGlobalObject, v: struct {
+        offset: i64,
+        js: ?f64 = null,
     }) void {
         const vm = globalObject.bunVM();
-        if (value) |v| {
-            this.#timespec_now.store(.{ .sec = v.timespec.sec, .nsec = v.timespec.nsec }, .seq_cst);
-            const timespec_ms: f64 = @floatFromInt(v.timespec.ms());
-            if (v.js) |js| {
-                this.date_now_offset = js - timespec_ms;
-            }
-            bun.cpp.JSMock__setOverridenDateNow(globalObject, this.date_now_offset + timespec_ms);
-
-            vm.overridden_performance_now = timespec_ms;
-        } else {
-            this.#timespec_now.store(.min, .seq_cst);
-            bun.cpp.JSMock__setOverridenDateNow(globalObject, -1.0);
-            // Clear the performance.now() override
-            vm.overridden_performance_now = null;
+        this.#offset.store(v.offset, .seq_cst);
+        const timespec_ms: f64 = @floatFromInt(v.offset);
+        if (v.js) |js| {
+            this.date_now_offset = js - timespec_ms;
         }
+        bun.cpp.JSMock__setOverridenDateNow(globalObject, this.date_now_offset + timespec_ms);
+
+        var perf_now_value: bun.timespec = .{ .sec = 0, .nsec = 0 };
+        vm.overridden_performance_now = @bitCast(perf_now_value.addMs(v.offset).ns());
+    }
+    pub fn clear(this: *@This(), globalObject: *jsc.JSGlobalObject) void {
+        const vm = globalObject.bunVM();
+        this.#offset.store(std.math.minInt(i64), .seq_cst);
+        bun.cpp.JSMock__setOverridenDateNow(globalObject, -1.0);
+        vm.overridden_performance_now = null;
     }
 } = .{};
 
@@ -56,19 +53,19 @@ pub fn isActive(this: *FakeTimers) bool {
 
     return this.#active;
 }
-fn activate(this: *FakeTimers, timespec_now: bun.timespec, js_now: f64, globalObject: *jsc.JSGlobalObject) void {
+fn activate(this: *FakeTimers, js_now: f64, globalObject: *jsc.JSGlobalObject) void {
     this.assertValid(.locked);
     defer this.assertValid(.locked);
 
     this.#active = true;
-    current_time.set(globalObject, .{ .timespec = &timespec_now, .js = js_now });
+    current_time.set(globalObject, .{ .offset = 0, .js = js_now });
 }
 fn deactivate(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) void {
     this.assertValid(.locked);
     defer this.assertValid(.locked);
 
     this.clear();
-    current_time.set(globalObject, null);
+    current_time.clear(globalObject);
     this.#active = false;
 }
 fn clear(this: *FakeTimers) void {
@@ -79,12 +76,6 @@ fn clear(this: *FakeTimers) void {
         timer.state = .CANCELLED;
         timer.in_heap = .none;
     }
-}
-fn advanceTimeWithoutFiringTimers(this: *FakeTimers, ms: i64) void {
-    this.assertValid(.locked);
-    defer this.assertValid(.locked);
-
-    this.#current_time = this.#current_time.addMs(ms);
 }
 fn executeNext(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) bool {
     this.assertValid(.unlocked);
@@ -112,7 +103,7 @@ fn fire(this: *FakeTimers, globalObject: *jsc.JSGlobalObject, next: *bun.api.Tim
         bun.assert(next.next.eql(&prev.?) or next.next.greater(&prev.?));
     }
     const now = next.next;
-    current_time.set(globalObject, .{ .timespec = &now, .js = null, .perf = null });
+    current_time.set(globalObject, .{ .offset = now.ms() });
     next.fire(&now, vm);
 }
 fn executeUntil(this: *FakeTimers, globalObject: *jsc.JSGlobalObject, until: bun.timespec) void {
@@ -178,12 +169,11 @@ fn useFakeTimers(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     const this = &timers.fake_timers;
 
     const js_now = bun.cpp.JSMock__getCurrentUnixTimeMs();
-    const timespec_now = bun.timespec.now();
 
     {
         timers.lock.lock();
         defer timers.lock.unlock();
-        this.activate(timespec_now, js_now, globalObject);
+        this.activate(js_now, globalObject);
     }
 
     return callframe.this();
@@ -226,7 +216,7 @@ fn advanceTimersByTime(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFr
     const target = current.addMs(timeoutAdd);
 
     this.executeUntil(globalObject, target);
-    current_time.set(globalObject, .{ .timespec = &target, .js = null, .perf = null });
+    current_time.set(globalObject, .{ .offset = target.ms() });
 
     return callframe.this();
 }

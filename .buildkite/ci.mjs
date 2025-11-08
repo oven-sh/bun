@@ -16,6 +16,7 @@ import {
   getEmoji,
   getEnv,
   getLastSuccessfulBuild,
+  getSecret,
   isBuildkite,
   isBuildManual,
   isFork,
@@ -1201,6 +1202,43 @@ async function main() {
   const options = await getPipelineOptions();
   if (options) {
     console.log("Generated options:", options);
+  }
+
+  startGroup("Querying GitHub for files...");
+  if (options && isBuildkite && !isMainBranch()) {
+    /** @type {string[]} */
+    let allFiles = [];
+    /** @type {string[]} */
+    let newFiles = [];
+    let prFileCount = 0;
+    try {
+      console.log("on buildkite: collecting new files from PR");
+      const per_page = 50;
+      const { BUILDKITE_PULL_REQUEST } = process.env;
+      for (let i = 1; i <= 10; i++) {
+        const res = await fetch(
+          `https://api.github.com/repos/oven-sh/bun/pulls/${BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
+          { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
+        );
+        const doc = await res.json();
+        console.log(`-> page ${i}, found ${doc.length} items`);
+        if (doc.length === 0) break;
+        for (const { filename, status } of doc) {
+          prFileCount += 1;
+          allFiles.push(filename);
+          if (status !== "added") continue;
+          newFiles.push(filename);
+        }
+        if (doc.length < per_page) break;
+      }
+      console.log(`- PR ${BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
+    } catch (e) {
+      console.error(e);
+    }
+    if (allFiles.every(filename => filename.startsWith("docs/"))) {
+      console.log(`- PR is only docs, skipping tests!`);
+      return;
+    }
   }
 
   startGroup("Generating pipeline...");

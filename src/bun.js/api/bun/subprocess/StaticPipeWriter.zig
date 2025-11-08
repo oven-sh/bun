@@ -110,8 +110,12 @@ pub fn NewStaticPipeWriter(comptime ProcessType: type) type {
             return @sizeOf(@This()) + this.source.memoryCost() + this.writer.memoryCost();
         }
 
-        pub fn loop(this: *This) *uws.Loop {
-            return this.event_loop.loop();
+        pub fn loop(this: *This) *bun.Async.Loop {
+            if (comptime bun.Environment.isWindows) {
+                return this.event_loop.loop().uv_loop;
+            } else {
+                return this.event_loop.loop();
+            }
         }
 
         pub fn watch(this: *This) void {
@@ -132,7 +136,6 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const jsc = bun.jsc;
-const uws = bun.uws;
 
 const Subprocess = jsc.API.Subprocess;
 const Source = Subprocess.Source;

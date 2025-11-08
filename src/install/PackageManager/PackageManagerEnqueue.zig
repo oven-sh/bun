@@ -166,7 +166,11 @@ pub fn enqueueGitForCheckout(
     const url = this.lockfile.str(&repository.repo);
     const clone_id = Task.Id.forGitClone(url);
     const resolved = this.lockfile.str(&repository.resolved);
-    const checkout_id = Task.Id.forGitCheckout(url, resolved);
+    const subdirectory: ?string = if (!repository.subdirectory.isEmpty())
+        this.lockfile.str(&repository.subdirectory)
+    else
+        null;
+    const checkout_id = Task.Id.forGitCheckout(url, resolved, subdirectory);
     var checkout_queue = this.task_queue.getOrPut(this.allocator, checkout_id) catch unreachable;
     if (!checkout_queue.found_existing) {
         checkout_queue.value_ptr.* = .{};
@@ -846,7 +850,11 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                     this.lockfile.str(&dep.committish),
                     clone_id,
                 );
-                const checkout_id = Task.Id.forGitCheckout(url, resolved);
+                const subdirectory: ?string = if (!dep.subdirectory.isEmpty())
+                    this.lockfile.str(&dep.subdirectory)
+                else
+                    null;
+                const checkout_id = Task.Id.forGitCheckout(url, resolved, subdirectory);
 
                 var entry = this.task_queue.getOrPutContext(this.allocator, checkout_id, .{}) catch unreachable;
                 if (!entry.found_existing) entry.value_ptr.* = .{};
@@ -1264,6 +1272,11 @@ pub fn enqueueGitCheckout(
                 ) catch unreachable,
                 .resolved = strings.StringOrTinyString.initAppendIfNeeded(
                     resolved,
+                    *FileSystem.FilenameStore,
+                    FileSystem.FilenameStore.instance,
+                ) catch unreachable,
+                .subdirectory = strings.StringOrTinyString.initAppendIfNeeded(
+                    this.lockfile.str(&resolution.value.git.subdirectory),
                     *FileSystem.FilenameStore,
                     FileSystem.FilenameStore.instance,
                 ) catch unreachable,

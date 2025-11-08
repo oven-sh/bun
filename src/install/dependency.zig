@@ -606,8 +606,14 @@ pub const Version = struct {
                                             },
                                             else => false,
                                         }) {
+                                            // Check for path: parameter anywhere in the URL before routing to GitHub
+                                            if (strings.indexOf(dependency, "&path:") != null or strings.indexOf(dependency, "#path:") != null) {
+                                                return .git;
+                                            }
+
                                             if (strings.hasPrefixComptime(url, "github.com/")) {
-                                                if (hosted_git_info.isGitHubShorthand(url["github.com/".len..])) return .github;
+                                                const gh_path = url["github.com/".len..];
+                                                if (hosted_git_info.isGitHubShorthand(gh_path)) return .github;
                                             }
 
                                             if (hosted_git_info.HostedGitInfo.fromUrl(allocator, dependency) catch null) |info| {
@@ -621,7 +627,12 @@ pub const Version = struct {
                                 },
                                 'h' => {
                                     if (strings.hasPrefixComptime(url, "hub:")) {
-                                        if (hosted_git_info.isGitHubShorthand(url["hub:".len..])) return .github;
+                                        const shorthand = url["hub:".len..];
+                                        // If it contains path: parameter, use git instead of github API
+                                        if (strings.indexOf(shorthand, "&path:") != null or strings.indexOf(shorthand, "#path:") != null) {
+                                            return .git;
+                                        }
+                                        if (hosted_git_info.isGitHubShorthand(shorthand)) return .github;
                                     }
                                 },
                                 else => {},
@@ -653,6 +664,10 @@ pub const Version = struct {
                             if (strings.hasPrefixComptime(url, "github.com/")) {
                                 const path = url["github.com/".len..];
                                 if (isGitHubTarballPath(path)) return .tarball;
+                                // If it contains path: parameter, use git instead of github API
+                                if (strings.indexOf(path, "&path:") != null or strings.indexOf(path, "#path:") != null) {
+                                    return .git;
+                                }
                                 if (hosted_git_info.isGitHubShorthand(path)) return .github;
                             }
 
@@ -1027,13 +1042,37 @@ pub fn parseWithTag(
             }
             const hash_index = strings.lastIndexOfChar(input, '#');
 
+            // Parse committish and subdirectory
+            var committish_slice: []const u8 = "";
+            var subdirectory_slice: []const u8 = "";
+
+            if (hash_index) |index| {
+                const after_hash = input[index + 1 ..];
+
+                // Check for &path: or #path: format
+                if (strings.indexOf(after_hash, "&path:")) |amp_idx| {
+                    committish_slice = after_hash[0..amp_idx];
+                    subdirectory_slice = after_hash[amp_idx + "&path:".len ..];
+                } else if (strings.hasPrefixComptime(after_hash, "path:")) {
+                    subdirectory_slice = after_hash["path:".len..];
+                } else {
+                    committish_slice = after_hash;
+                }
+            }
+
+            // Normalize subdirectory: strip leading slash once during parsing
+            if (subdirectory_slice.len > 0 and subdirectory_slice[0] == '/') {
+                subdirectory_slice = subdirectory_slice[1..];
+            }
+
             return .{
                 .literal = sliced.value(),
                 .value = .{
                     .git = .{
                         .owner = String.from(""),
                         .repo = sliced.sub(if (hash_index) |index| input[0..index] else input).value(),
-                        .committish = if (hash_index) |index| sliced.sub(input[index + 1 ..]).value() else String.from(""),
+                        .committish = if (committish_slice.len > 0) sliced.sub(committish_slice).value() else String.from(""),
+                        .subdirectory = if (subdirectory_slice.len > 0) sliced.sub(subdirectory_slice).value() else String.from(""),
                     },
                 },
                 .tag = .git,
@@ -1053,7 +1092,22 @@ pub fn parseWithTag(
             // to create String objects that point to the original buffer
             const owner_str = info.user orelse "";
             const repo_str = info.project;
-            const committish_str = info.committish orelse "";
+            var committish_str = info.committish orelse "";
+
+            // Parse subdirectory from committish if present
+            var subdirectory_str: []const u8 = "";
+            if (strings.indexOf(committish_str, "&path:")) |amp_idx| {
+                subdirectory_str = committish_str[amp_idx + "&path:".len ..];
+                committish_str = committish_str[0..amp_idx];
+            } else if (strings.hasPrefixComptime(committish_str, "path:")) {
+                subdirectory_str = committish_str["path:".len..];
+                committish_str = "";
+            }
+
+            // Normalize subdirectory: strip leading slash once during parsing
+            if (subdirectory_str.len > 0 and subdirectory_str[0] == '/') {
+                subdirectory_str = subdirectory_str[1..];
+            }
 
             // Find owner in dependency string
             const owner_idx = strings.indexOf(dependency, owner_str);
@@ -1078,6 +1132,15 @@ pub fn parseWithTag(
                     String.from("");
             } else String.from("");
 
+            // Find subdirectory in dependency string
+            const subdirectory = if (subdirectory_str.len > 0) blk: {
+                const subdir_idx = strings.indexOf(dependency, subdirectory_str);
+                break :blk if (subdir_idx) |idx|
+                    sliced.sub(dependency[idx .. idx + subdirectory_str.len]).value()
+                else
+                    String.from("");
+            } else String.from("");
+
             return .{
                 .literal = sliced.value(),
                 .value = .{
@@ -1085,6 +1148,7 @@ pub fn parseWithTag(
                         .owner = owner,
                         .repo = repo,
                         .committish = committish,
+                        .subdirectory = subdirectory,
                     },
                 },
                 .tag = .github,

@@ -760,7 +760,11 @@ pub fn runTasks(
                         task.id,
                     );
 
-                    const checkout_id = Task.Id.forGitCheckout(repo, resolved);
+                    const subdirectory: ?string = if (!clone.res.value.git.subdirectory.isEmpty())
+                        manager.lockfile.str(&clone.res.value.git.subdirectory)
+                    else
+                        null;
+                    const checkout_id = Task.Id.forGitCheckout(repo, resolved, subdirectory);
 
                     if (manager.hasCreatedNetworkTask(checkout_id, dep.behavior.isRequired())) continue;
 

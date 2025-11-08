@@ -59,11 +59,17 @@ pub const Id = enum(u64) {
         return @enumFromInt(@as(u64, 4 << 61) | @as(u64, @as(u61, @truncate(hasher.final()))));
     }
 
-    pub fn forGitCheckout(url: string, resolved: string) Id {
+    pub fn forGitCheckout(url: string, resolved: string, subdirectory: ?string) Id {
         var hasher = bun.Wyhash11.init(0);
         hasher.update(url);
         hasher.update("@");
         hasher.update(resolved);
+        if (subdirectory) |subdir| {
+            if (subdir.len > 0) {
+                hasher.update("#path:");
+                hasher.update(subdir);
+            }
+        }
         return @enumFromInt(@as(u64, 5 << 61) | @as(u64, @as(u61, @truncate(hasher.final()))));
     }
 };
@@ -208,6 +214,12 @@ pub fn callback(task: *ThreadPool.Task) void {
         },
         .git_checkout => {
             const git_checkout = &this.request.git_checkout;
+            const subdir_slice = git_checkout.subdirectory.slice();
+            const subdirectory: ?string = if (subdir_slice.len == 0)
+                null
+            else
+                subdir_slice;
+
             const data = Repository.checkout(
                 manager.allocator,
                 this.request.git_checkout.env,
@@ -217,6 +229,7 @@ pub fn callback(task: *ThreadPool.Task) void {
                 git_checkout.name.slice(),
                 git_checkout.url.slice(),
                 git_checkout.resolved.slice(),
+                subdirectory,
             ) catch |err| {
                 this.err = err;
                 this.status = Status.fail;
@@ -339,6 +352,7 @@ pub const Request = union {
         name: strings.StringOrTinyString,
         url: strings.StringOrTinyString,
         resolved: strings.StringOrTinyString,
+        subdirectory: strings.StringOrTinyString,
         resolution: Resolution,
         env: DotEnv.Map,
     },

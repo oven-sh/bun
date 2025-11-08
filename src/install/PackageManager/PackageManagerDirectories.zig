@@ -179,12 +179,23 @@ pub fn fetchCacheDirectoryPath(env: *DotEnv.Loader, options: ?*const Options) Ca
     return CacheDir{ .is_node_modules = true, .path = Fs.FileSystem.instance.abs(&fallback_parts) };
 }
 
-pub fn cachedGitFolderNamePrint(buf: []u8, resolved: string, patch_hash: ?u64) stringZ {
+pub fn cachedGitFolderNamePrint(buf: []u8, resolved: string, subdirectory: ?string, patch_hash: ?u64) stringZ {
+    if (subdirectory) |subdir| {
+        if (subdir.len > 0) {
+            // Include subdirectory in cache path to separate different subdirs from same repo
+            const subdir_hash = bun.hash(subdir);
+            return std.fmt.bufPrintZ(buf, "@G@{s}+{x}{}", .{ resolved, subdir_hash, PatchHashFmt{ .hash = patch_hash } }) catch unreachable;
+        }
+    }
     return std.fmt.bufPrintZ(buf, "@G@{s}{}", .{ resolved, PatchHashFmt{ .hash = patch_hash } }) catch unreachable;
 }
 
 pub fn cachedGitFolderName(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {
-    return cachedGitFolderNamePrint(&PackageManager.cached_package_folder_name_buf, this.lockfile.str(&repository.resolved), patch_hash);
+    const subdirectory: ?string = if (!repository.subdirectory.isEmpty())
+        this.lockfile.str(&repository.subdirectory)
+    else
+        null;
+    return cachedGitFolderNamePrint(&PackageManager.cached_package_folder_name_buf, this.lockfile.str(&repository.resolved), subdirectory, patch_hash);
 }
 
 pub fn cachedGitFolderNamePrintAuto(this: *const PackageManager, repository: *const Repository, patch_hash: ?u64) stringZ {

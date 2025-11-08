@@ -105,6 +105,7 @@ pub const Repository = extern struct {
     committish: String = .{},
     resolved: String = .{},
     package_name: String = .{},
+    subdirectory: String = .{},
 
     pub var shared_env: struct {
         env: ?DotEnv.Map = null,
@@ -150,10 +151,37 @@ pub const Repository = extern struct {
             remain = remain["git+".len..];
         }
         if (strings.lastIndexOfChar(remain, '#')) |hash| {
-            return .{
+            // Parse committish and possible path parameter
+            // Formats: repo#committish or repo#path:/subdir or repo#committish&path:/subdir
+            const after_hash = remain[hash + 1 ..];
+
+            // Look for &path: or path: in the committish part
+            var committish_str: []const u8 = after_hash;
+            var subdirectory_str: ?[]const u8 = null;
+
+            if (strings.indexOf(after_hash, "&path:")) |amp_idx| {
+                // Format: committish&path:/subdir
+                committish_str = after_hash[0..amp_idx];
+                subdirectory_str = after_hash[amp_idx + "&path:".len ..];
+            } else if (strings.hasPrefixComptime(after_hash, "path:")) {
+                // Format: path:/subdir (no committish)
+                committish_str = "";
+                subdirectory_str = after_hash["path:".len..];
+            }
+
+            var result = Repository{
                 .repo = try buf.append(remain[0..hash]),
-                .committish = try buf.append(remain[hash + 1 ..]),
             };
+
+            if (committish_str.len > 0) {
+                result.committish = try buf.append(committish_str);
+            }
+
+            if (subdirectory_str) |subdir| {
+                result.subdirectory = try buf.append(subdir);
+            }
+
+            return result;
         }
         return .{
             .repo = try buf.append(remain),
@@ -183,7 +211,29 @@ pub const Repository = extern struct {
         };
 
         if (hash != 0) {
-            result.committish = try buf.append(remain[hash + 1 ..]);
+            const after_hash = remain[hash + 1 ..];
+
+            // Parse committish and possible path parameter
+            var committish_str: []const u8 = after_hash;
+            var subdirectory_str: ?[]const u8 = null;
+
+            if (strings.indexOf(after_hash, "&path:")) |amp_idx| {
+                // Format: committish&path:/subdir
+                committish_str = after_hash[0..amp_idx];
+                subdirectory_str = after_hash[amp_idx + "&path:".len ..];
+            } else if (strings.hasPrefixComptime(after_hash, "path:")) {
+                // Format: path:/subdir (no committish)
+                committish_str = "";
+                subdirectory_str = after_hash["path:".len..];
+            }
+
+            if (committish_str.len > 0) {
+                result.committish = try buf.append(committish_str);
+            }
+
+            if (subdirectory_str) |subdir| {
+                result.subdirectory = try buf.append(subdir);
+            }
         }
 
         return result;
@@ -234,8 +284,10 @@ pub const Repository = extern struct {
         if (owner_order != .eq) return owner_order;
         const repo_order = lhs.repo.order(&rhs.repo, lhs_buf, rhs_buf);
         if (repo_order != .eq) return repo_order;
+        const committish_order = lhs.committish.order(&rhs.committish, lhs_buf, rhs_buf);
+        if (committish_order != .eq) return committish_order;
 
-        return lhs.committish.order(&rhs.committish, lhs_buf, rhs_buf);
+        return lhs.subdirectory.order(&rhs.subdirectory, lhs_buf, rhs_buf);
     }
 
     pub fn count(this: *const Repository, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
@@ -244,6 +296,7 @@ pub const Repository = extern struct {
         builder.count(this.committish.slice(buf));
         builder.count(this.resolved.slice(buf));
         builder.count(this.package_name.slice(buf));
+        builder.count(this.subdirectory.slice(buf));
     }
 
     pub fn clone(this: *const Repository, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) Repository {
@@ -253,12 +306,14 @@ pub const Repository = extern struct {
             .committish = builder.append(String, this.committish.slice(buf)),
             .resolved = builder.append(String, this.resolved.slice(buf)),
             .package_name = builder.append(String, this.package_name.slice(buf)),
+            .subdirectory = builder.append(String, this.subdirectory.slice(buf)),
         };
     }
 
     pub fn eql(lhs: *const Repository, rhs: *const Repository, lhs_buf: []const u8, rhs_buf: []const u8) bool {
         if (!lhs.owner.eql(rhs.owner, lhs_buf, rhs_buf)) return false;
         if (!lhs.repo.eql(rhs.repo, lhs_buf, rhs_buf)) return false;
+        if (!lhs.subdirectory.eql(rhs.subdirectory, lhs_buf, rhs_buf)) return false;
         if (lhs.resolved.isEmpty() or rhs.resolved.isEmpty()) return lhs.committish.eql(rhs.committish, lhs_buf, rhs_buf);
         return lhs.resolved.eql(rhs.resolved, lhs_buf, rhs_buf);
     }
@@ -595,48 +650,153 @@ pub const Repository = extern struct {
         name: string,
         url: string,
         resolved: string,
+        subdirectory: ?string,
     ) !ExtractData {
         bun.analytics.Features.git_dependencies += 1;
-        const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved, null);
+        const folder_name = PackageManager.cachedGitFolderNamePrint(&folder_name_buf, resolved, subdirectory, null);
 
         var package_dir = bun.openDir(cache_dir, folder_name) catch |not_found| brk: {
             if (not_found != error.ENOENT) return not_found;
 
             const target = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
 
-            _ = exec(allocator, env, &[_]string{
-                "git",
-                "clone",
-                "-c core.longpaths=true",
-                "--quiet",
-                "--no-checkout",
-                try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf),
-                target,
-            }) catch |err| {
-                log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    allocator,
-                    "\"git clone\" for \"{s}\" failed",
-                    .{name},
-                ) catch unreachable;
-                return err;
-            };
+            // Modern git sparse checkout approach for subdirectories
+            const use_sparse = subdirectory != null and subdirectory.?.len > 0;
 
-            const folder = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
+            if (use_sparse) {
+                // Clone with sparse checkout support (Git 2.25+)
+                // Note: We're cloning from a local bare repository, so we can't use --filter
+                // The --filter flag was already used when creating the bare repo
+                _ = exec(allocator, env, &[_]string{
+                    "git",
+                    "clone",
+                    "-c core.longpaths=true",
+                    "--quiet",
+                    "--no-checkout",
+                    try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf),
+                    target,
+                }) catch |err| {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "\"git clone\" for \"{s}\" failed",
+                        .{name},
+                    ) catch unreachable;
+                    return err;
+                };
 
-            _ = exec(allocator, env, &[_]string{ "git", "-C", folder, "checkout", "--quiet", resolved }) catch |err| {
-                log.addErrorFmt(
-                    null,
-                    logger.Loc.Empty,
-                    allocator,
-                    "\"git checkout\" for \"{s}\" failed",
-                    .{name},
-                ) catch unreachable;
-                return err;
-            };
+                const folder = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
+
+                // Initialize sparse checkout in cone mode (faster)
+                _ = exec(allocator, env, &[_]string{ "git", "-C", folder, "sparse-checkout", "init", "--cone" }) catch |err| {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "\"git sparse-checkout init\" for \"{s}\" failed",
+                        .{name},
+                    ) catch unreachable;
+                    return err;
+                };
+
+                // Set sparse checkout to only the requested subdirectory
+                // Note: subdirectory is already normalized (no leading slash) during parsing
+                _ = exec(allocator, env, &[_]string{ "git", "-C", folder, "sparse-checkout", "set", subdirectory.? }) catch |err| {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "\"git sparse-checkout set\" for \"{s}\" failed",
+                        .{name},
+                    ) catch unreachable;
+                    return err;
+                };
+
+                // Now checkout the commit
+                _ = exec(allocator, env, &[_]string{ "git", "-C", folder, "checkout", "--quiet", resolved }) catch |err| {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "\"git checkout\" for \"{s}\" failed",
+                        .{name},
+                    ) catch unreachable;
+                    return err;
+                };
+            } else {
+                // Standard clone without sparse checkout
+                _ = exec(allocator, env, &[_]string{
+                    "git",
+                    "clone",
+                    "-c core.longpaths=true",
+                    "--quiet",
+                    "--no-checkout",
+                    try bun.getFdPath(.fromStdDir(repo_dir), &final_path_buf),
+                    target,
+                }) catch |err| {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "\"git clone\" for \"{s}\" failed",
+                        .{name},
+                    ) catch unreachable;
+                    return err;
+                };
+
+                const folder = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{folder_name}, .auto);
+
+                _ = exec(allocator, env, &[_]string{ "git", "-C", folder, "checkout", "--quiet", resolved }) catch |err| {
+                    log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        allocator,
+                        "\"git checkout\" for \"{s}\" failed",
+                        .{name},
+                    ) catch unreachable;
+                    return err;
+                };
+            }
+
             var dir = try bun.openDir(cache_dir, folder_name);
             dir.deleteTree(".git") catch {};
+
+            // For sparse checkout with subdirectories, we need to restructure the directory
+            // Move the subdirectory contents to the root since PackageInstaller expects package at root
+            // Note: subdirectory is already normalized (no leading slash) during parsing
+            if (use_sparse and subdirectory != null and subdirectory.?.len > 0) {
+                // Use a single atomic rename via intermediary to avoid partial state
+                var path_buf: bun.PathBuffer = undefined;
+                const cache_path = PackageManager.get().cache_directory_path;
+
+                // Source: cache/folder/subdir -> Dest: cache/folder
+                const subdir_absolute = std.fmt.bufPrint(&path_buf, "{s}/{s}/{s}", .{ cache_path, folder_name, subdirectory.? }) catch unreachable;
+
+                // Temp path outside the folder to avoid conflicts
+                var temp_buf: bun.PathBuffer = undefined;
+                const temp_path = std.fmt.bufPrintZ(&temp_buf, "{s}/.bun-tmp-{x}", .{ cache_path, @as(u64, @intCast(@intFromPtr(subdirectory.?.ptr))) }) catch unreachable;
+
+                // Atomic operations: 1) move subdir out, 2) delete old structure, 3) move subdir back
+                std.posix.rename(subdir_absolute, temp_path) catch |err| {
+                    log.addErrorFmt(null, logger.Loc.Empty, allocator, "failed to move subdirectory during sparse checkout", .{}) catch unreachable;
+                    return err;
+                };
+
+                // Clean up old structure
+                dir.close();
+                cache_dir.deleteTree(folder_name) catch {};
+
+                // Move temp to final location
+                const final_absolute = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ cache_path, folder_name }) catch unreachable;
+                std.posix.rename(temp_path, final_absolute) catch |err| {
+                    log.addErrorFmt(null, logger.Loc.Empty, allocator, "failed to finalize subdirectory during sparse checkout", .{}) catch unreachable;
+                    return err;
+                };
+
+                // Reopen the directory
+                dir = try bun.openDir(cache_dir, folder_name);
+            }
 
             if (resolved.len > 0) insert_tag: {
                 const git_tag = dir.createFileZ(".bun-tag", .{ .truncate = true }) catch break :insert_tag;

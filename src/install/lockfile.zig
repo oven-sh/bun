@@ -954,15 +954,25 @@ pub fn hoist(
         Tree.root_dep_id,
         Tree.invalid_id,
         method,
+        if (comptime method == .filter) .init() else {},
         &builder,
     );
 
     // This goes breadth-first
     while (builder.queue.readItem()) |item| {
+        var subpath = item.subpath;
+
+        defer {
+            if (comptime method == .filter) {
+                subpath.deinit();
+            }
+        }
+
         try builder.list.items(.tree)[item.tree_id].processSubtree(
             item.dependency_id,
             item.hoist_root_id,
             method,
+            if (comptime method == .filter) subpath else {},
             &builder,
         );
     }

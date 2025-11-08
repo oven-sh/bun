@@ -135,6 +135,8 @@ active_lifecycle_scripts: LifecycleScriptSubprocess.List,
 last_reported_slow_lifecycle_script_at: u64 = 0,
 cached_tick_for_slow_lifecycle_script_logging: u64 = 0,
 
+nohoist_patterns: []const []const u8 = &.{},
+
 /// Corresponds to possible commands from the CLI.
 pub const Subcommand = enum {
     install,

@@ -94,7 +94,7 @@ fn messageWithTypeAndLevel_(
 
     // Lock/unlock a mutex incase two JS threads are console.log'ing at the same time
     // We do this the slightly annoying way to avoid assigning a pointer
-    if (level == .Warning or level == .Error or message_type == .Assert) {
+    if (level == .Warning or level == .Error or message_type == .Assert or message_type == .Trace) {
         if (stderr_lock_count == 0) {
             stderr_mutex.lock();
         }
@@ -109,7 +109,7 @@ fn messageWithTypeAndLevel_(
     }
 
     defer {
-        if (level == .Warning or level == .Error or message_type == .Assert) {
+        if (level == .Warning or level == .Error or message_type == .Assert or message_type == .Trace) {
             stderr_lock_count -= 1;
 
             if (stderr_lock_count == 0) {
@@ -138,12 +138,12 @@ fn messageWithTypeAndLevel_(
         return;
     }
 
-    const enable_colors = if (level == .Warning or level == .Error)
+    const enable_colors = if (level == .Warning or level == .Error or message_type == .Trace)
         Output.enable_ansi_colors_stderr
     else
         Output.enable_ansi_colors_stdout;
 
-    var buffered_writer = if (level == .Warning or level == .Error)
+    var buffered_writer = if (level == .Warning or level == .Error or message_type == .Trace)
         &console.error_writer
     else
         &console.writer;

@@ -29,6 +29,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("--cafile <STR>                        The same as `--ca`, but is a file path to the certificate") catch unreachable,
     clap.parseParam("--dry-run                             Don't install anything") catch unreachable,
     clap.parseParam("--frozen-lockfile                     Disallow changes to lockfile") catch unreachable,
+    clap.parseParam("--offline                             Install packages using only the local cache") catch unreachable,
     clap.parseParam("-f, --force                           Always request the latest versions from the registry & reinstall all dependencies") catch unreachable,
     clap.parseParam("--cache-dir <PATH>                    Store & load cached data from a specific directory path") catch unreachable,
     clap.parseParam("--no-cache                            Ignore manifest cache entirely") catch unreachable,
@@ -184,6 +185,7 @@ positionals: []const string = &[_]string{},
 yarn: bool = false,
 production: bool = false,
 frozen_lockfile: bool = false,
+offline: bool = false,
 no_save: bool = false,
 dry_run: bool = false,
 force: bool = false,
@@ -795,6 +797,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     cli.yarn = args.flag("--yarn");
     cli.production = args.flag("--production") or args.flag("--prod");
     cli.frozen_lockfile = args.flag("--frozen-lockfile") or (cli.positionals.len > 0 and strings.eqlComptime(cli.positionals[0], "ci"));
+    cli.offline = args.flag("--offline");
     cli.no_progress = args.flag("--no-progress");
     cli.dry_run = args.flag("--dry-run");
     cli.global = args.flag("--global");

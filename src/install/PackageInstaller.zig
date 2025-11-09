@@ -996,6 +996,7 @@ pub const PackageInstaller = struct {
                                 is_pending_package_install,
                                 log_level,
                             ),
+                            error.OfflineModePackageNotCached => {},
                         };
                     },
                     .local_tarball => {
@@ -1019,6 +1020,7 @@ pub const PackageInstaller = struct {
                                 is_pending_package_install,
                                 log_level,
                             ),
+                            error.OfflineModePackageNotCached => {},
                         };
                     },
                     .npm => {
@@ -1047,6 +1049,7 @@ pub const PackageInstaller = struct {
                                 is_pending_package_install,
                                 log_level,
                             ),
+                            error.OfflineModePackageNotCached => {},
                         };
                     },
                     else => {

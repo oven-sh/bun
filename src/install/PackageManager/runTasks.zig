@@ -907,6 +907,14 @@ pub inline fn decrementPendingTasks(manager: *PackageManager) void {
 }
 
 pub fn flushNetworkQueue(this: *PackageManager) void {
+    // In offline mode, network queue should be empty
+    if (this.options.enable.offline) {
+        if (this.network_task_fifo.readableLength() > 0) {
+            Output.debug("Warning: network tasks queued in offline mode (this is a bug)", .{});
+        }
+        return;
+    }
+
     var network = &this.network_task_fifo;
 
     while (network.readItem()) |network_task| {

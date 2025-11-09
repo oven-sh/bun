@@ -49,6 +49,10 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             html: ?u32 = 0,
         },
         added_head_tags: bool,
+        /// Track where we found script tags: null = not found, false = in head, true = in body
+        script_in_body: ?bool = null,
+        /// Track which section we're currently in
+        current_section: enum { none, head, body } = .none,
 
         pub fn onWriteHTML(this: *@This(), bytes: []const u8) void {
             bun.handleOom(this.output.appendSlice(bytes));
@@ -58,7 +62,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
             Output.panic("Parsing HTML during replacement phase errored, which should never happen since the first pass succeeded: {s}", .{err});
         }
 
-        pub fn onTag(this: *@This(), element: *lol.Element, _: []const u8, url_attribute: []const u8, _: ImportKind) void {
+        pub fn onTag(this: *@This(), element: *lol.Element, _: []const u8, url_attribute: []const u8, kind: ImportKind) void {
             if (this.current_import_record_index >= this.import_records.len) {
                 Output.panic("Assertion failure in HTMLLoader.onTag: current_import_record_index ({d}) >= import_records.len ({d})", .{ this.current_import_record_index, this.import_records.len });
             }
@@ -73,6 +77,13 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
                 this.linker.parse_graph.input_files.items(.loader)[import_record.source_index.get()]
             else
                 .file;
+
+            // Track if this is a script tag and where it's located
+            const is_script = kind == .stmt and loader.isJavaScriptLike();
+            if (is_script and this.script_in_body == null) {
+                // First script tag - record its location
+                this.script_in_body = (this.current_section == .body);
+            }
 
             if (import_record.is_external_without_side_effects) {
                 debug("Leaving external import: {s}", .{import_record.path.text});
@@ -114,6 +125,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         }
 
         pub fn onHeadTag(this: *@This(), element: *lol.Element) bool {
+            this.current_section = .head;
             element.onEndTag(endHeadTagHandler, this) catch return true;
             return false;
         }
@@ -124,6 +136,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         }
 
         pub fn onBodyTag(this: *@This(), element: *lol.Element) bool {
+            this.current_section = .body;
             element.onEndTag(endBodyTagHandler, this) catch return true;
             return false;
         }
@@ -150,7 +163,7 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
                 array.appendAssumeCapacity(link_tag);
             }
             if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
-                // type="module" scripts do not block rendering, so it is okay to put them in head
+                // type="module" scripts do not block rendering, placement is determined by original script location
                 const script = bun.handleOom(std.fmt.allocPrintZ(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}));
                 array.appendAssumeCapacity(script);
             }
@@ -160,7 +173,14 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         fn endHeadTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
             const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
             if (this.linker.dev_server == null) {
-                this.addHeadTags(end) catch return .stop;
+                // Only inject if scripts were explicitly found in head (script_in_body == false)
+                // If script_in_body is null, we haven't seen any scripts yet, so defer injection
+                if (this.script_in_body) |in_body| {
+                    if (!in_body) {
+                        // Scripts were in head, inject here
+                        this.addHeadTags(end) catch return .stop;
+                    }
+                }
             } else {
                 this.end_tag_indices.head = @intCast(this.output.items.len);
             }
@@ -170,20 +190,27 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         fn endBodyTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
             const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
             if (this.linker.dev_server == null) {
-                this.addHeadTags(end) catch return .stop;
+                // Only inject if scripts were explicitly found in body (script_in_body == true)
+                // If script_in_body is null, we haven't seen any scripts yet, defer to html tag fallback
+                if (this.script_in_body) |in_body| {
+                    if (in_body) {
+                        // Scripts were in body, inject here
+                        this.addHeadTags(end) catch return .stop;
+                    }
+                }
             } else {
                 this.end_tag_indices.body = @intCast(this.output.items.len);
             }
             return .@"continue";
         }
 
-        fn endHtmlTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
+        fn endHtmlTagHandler(_: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
             const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
-            if (this.linker.dev_server == null) {
-                this.addHeadTags(end) catch return .stop;
-            } else {
+            if (this.linker.dev_server != null) {
                 this.end_tag_indices.html = @intCast(this.output.items.len);
             }
+            // For production bundling, don't inject here - let post-processing handle it
+            // so we can search for </head> and inject there for HTML with no scripts
             return .@"continue";
         }
     };
@@ -216,17 +243,17 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         sources[chunk.entry_point.source_index].contents,
     ) catch std.debug.panic("unexpected error from HTMLProcessor.run", .{});
 
-    // There are some cases where invalid HTML will make it so </head> is
+    // There are some cases where invalid HTML will make it so the end tag is
     // never emitted, even if the literal text DOES appear. These cases are
     // along the lines of having a self-closing tag for a non-self closing
-    // element. In this case, head_end_tag_index will be 0, and a simple
-    // search through the page is done to find the "</head>"
+    // element. In this case, we do a simple search through the page.
     // See https://github.com/oven-sh/bun/issues/17554
     const script_injection_offset: u32 = if (c.dev_server != null) brk: {
-        if (html_loader.end_tag_indices.head) |head|
-            break :brk head;
-        if (bun.strings.indexOf(html_loader.output.items, "</head>")) |head|
-            break :brk @intCast(head);
+        // Dev server logic - try head first, then body, then html, then end of file
+        if (html_loader.end_tag_indices.head) |idx|
+            break :brk idx;
+        if (bun.strings.indexOf(html_loader.output.items, "</head>")) |idx|
+            break :brk @intCast(idx);
         if (html_loader.end_tag_indices.body) |body|
             break :brk body;
         if (html_loader.end_tag_indices.html) |html|
@@ -234,13 +261,45 @@ fn generateCompileResultForHTMLChunkImpl(worker: *ThreadPool.Worker, c: *LinkerC
         break :brk @intCast(html_loader.output.items.len); // inject at end of file.
     } else brk: {
         if (!html_loader.added_head_tags) {
-            @branchHint(.cold); // this is if the document is missing all head, body, and html elements.
-            var html_appender = std.heap.stackFallback(256, bun.default_allocator);
-            const allocator = html_appender.get();
-            const slices = html_loader.getHeadTags(allocator);
-            for (slices.slice()) |slice| {
-                bun.handleOom(html_loader.output.appendSlice(slice));
-                allocator.free(slice);
+            // If we never injected during parsing, try to inject at </head> position
+            // This happens when the HTML has no scripts in the source
+            if (bun.strings.indexOf(html_loader.output.items, "</head>")) |head_idx| {
+                // Found </head>, insert before it
+                var html_appender = std.heap.stackFallback(256, bun.default_allocator);
+                const allocator = html_appender.get();
+                const slices = html_loader.getHeadTags(allocator);
+                defer for (slices.slice()) |slice|
+                    allocator.free(slice);
+
+                // Calculate total size needed for inserted tags
+                var total_insert_size: usize = 0;
+                for (slices.slice()) |slice|
+                    total_insert_size += slice.len;
+
+                // Make room for the tags before </head>
+                const old_len = html_loader.output.items.len;
+                bun.handleOom(html_loader.output.resize(old_len + total_insert_size));
+
+                // Move everything after </head> to make room
+                const items = html_loader.output.items;
+                std.mem.copyBackwards(u8, items[head_idx + total_insert_size .. items.len], items[head_idx..old_len]);
+
+                // Insert the tags
+                var offset: usize = head_idx;
+                for (slices.slice()) |slice| {
+                    @memcpy(items[offset .. offset + slice.len], slice);
+                    offset += slice.len;
+                }
+            } else {
+                @branchHint(.cold); // this is if the document is missing all head, body, and html elements.
+                // No </head> tag found - fallback to appending at end
+                var html_appender = std.heap.stackFallback(256, bun.default_allocator);
+                const allocator = html_appender.get();
+                const slices = html_loader.getHeadTags(allocator);
+                for (slices.slice()) |slice| {
+                    bun.handleOom(html_loader.output.appendSlice(slice));
+                    allocator.free(slice);
+                }
             }
         }
         break :brk if (Environment.isDebug) undefined else 0; // value is ignored. fail loud if hit in debug

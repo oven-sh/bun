@@ -469,21 +469,46 @@ pub const prompt = struct {
                             return .null;
                         },
 
-                        // Escape sequence (e.g., arrow keys)
-                        27 => {
-                            // Try to read the next two bytes for [D (left) or [C (right)
-                            const byte2 = reader.readByte() catch continue;
-                            if (byte2 != '[') {
-                                continue;
+                        // Escape sequence (e.g., arrow keys, alt+backspace)
+                        27 => block: {
+                            const byte2 = reader.readByte() catch break :block;
+
+                            // Alt+Backspace -> treat as regular backspace
+                            if (byte2 == 127 or byte2 == 8) {
+                                if (cursor_index > 0) {
+                                    const old_cursor_index = cursor_index;
+                                    const prev_codepoint_start = utf8Prev(input.items, old_cursor_index);
+
+                                    if (prev_codepoint_start) |start| {
+                                        var i: usize = 0;
+                                        while (i < old_cursor_index - start) : (i += 1) {
+                                            _ = input.orderedRemove(start);
+                                        }
+                                        cursor_index = start;
+                                    } else {
+                                        _ = input.orderedRemove(old_cursor_index - 1);
+                                        cursor_index -= 1;
+                                    }
+                                }
+                                break :block; // Exit escape sequence handler to allow redraw
                             }
 
-                            var final_byte = reader.readByte() catch continue;
+                            // Standard escape sequence (e.g., arrow keys)
+                            if (byte2 != '[') {
+                                break :block;
+                            }
 
-                            // Check for modifier sequence (e.g., ESC [ 1 ; 5 D)
+                            var final_byte = reader.readByte() catch break :block;
+
+                            // Check for complex sequence (e.g., ESC [ 3 ~ or ESC [ 1 ; 5 D)
                             if (final_byte >= '0' and final_byte <= '9') {
-                                // Consume the rest of the modifier sequence (e.g., '1', ';', '5')
-                                while (final_byte != 'A' and final_byte != 'B' and final_byte != 'C' and final_byte != 'D' and final_byte != '~') {
-                                    final_byte = reader.readByte() catch break;
+                                // Consume parameters until the final command byte
+                                while (true) {
+                                    const peek = reader.readByte() catch break;
+                                    if ((peek >= 'A' and peek <= 'Z') or peek == '~') {
+                                        final_byte = peek;
+                                        break;
+                                    }
                                 }
                             }
 
@@ -498,27 +523,17 @@ pub const prompt = struct {
                                         cursor_index = utf8Next(input.items, cursor_index) orelse cursor_index + 1;
                                     }
                                 },
-                                '3' => { // DEL
-                                    const next = reader.readByte() catch continue;
-                                    if (next != '~') {
-                                        // Signifies that there is a modifier key (SHIFT, CTRL).
-                                        // We ignore the modifier as that is what canonical mode does.
-                                        if (next == ';') {
-                                            _ = reader.readByte() catch continue; // modifier key skipped
-                                            const final = reader.readByte() catch continue;
-                                            if (final != '~') {
-                                                continue;
-                                            }
-                                        } else {
-                                            continue;
-                                        }
-                                    }
-                                    // Handle Delete key: remove character under cursor
+                                'H' => { // Home
+                                    cursor_index = 0;
+                                },
+                                'F' => { // End
+                                    cursor_index = input.items.len;
+                                },
+                                '~' => { // Handles Delete (e.g. ESC [ 3 ~)
                                     if (cursor_index < input.items.len) {
                                         const next_codepoint_start = utf8Next(input.items, cursor_index);
 
                                         if (next_codepoint_start) |end| {
-                                            // Remove the codepoint bytes
                                             var i: usize = 0;
                                             while (i < end - cursor_index) : (i += 1) {
                                                 _ = input.orderedRemove(cursor_index);

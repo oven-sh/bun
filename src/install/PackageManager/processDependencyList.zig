@@ -235,7 +235,6 @@ pub fn processDependencyListItem(
     this: *PackageManager,
     item: TaskCallbackContext,
     any_root: ?*bool,
-    install_peer: bool,
 ) !void {
     switch (item) {
         .dependency => |dependency_id| {
@@ -246,7 +245,6 @@ pub fn processDependencyListItem(
                 dependency_id,
                 &dependency,
                 resolution,
-                install_peer,
             );
         },
         .root_dependency => |dependency_id| {
@@ -257,7 +255,6 @@ pub fn processDependencyListItem(
                 dependency_id,
                 &dependency,
                 resolution,
-                install_peer,
                 assignRootResolution,
                 failRootResolution,
             );
@@ -272,35 +269,18 @@ pub fn processDependencyListItem(
     }
 }
 
-pub fn processPeerDependencyList(
-    this: *PackageManager,
-) !void {
-    while (this.peer_dependencies.readItem()) |peer_dependency_id| {
-        const dependency = this.lockfile.buffers.dependencies.items[peer_dependency_id];
-        const resolution = this.lockfile.buffers.resolutions.items[peer_dependency_id];
-
-        try this.enqueueDependencyWithMain(
-            peer_dependency_id,
-            &dependency,
-            resolution,
-            true,
-        );
-    }
-}
-
 pub fn processDependencyList(
     this: *PackageManager,
     dep_list: TaskCallbackList,
     comptime Ctx: type,
     ctx: Ctx,
     comptime callbacks: anytype,
-    install_peer: bool,
 ) !void {
     if (dep_list.items.len > 0) {
         var dependency_list = dep_list;
         var any_root = false;
         for (dependency_list.items) |item| {
-            try this.processDependencyListItem(item, &any_root, install_peer);
+            try this.processDependencyListItem(item, &any_root);
         }
 
         if (comptime @TypeOf(callbacks) != void and @TypeOf(callbacks.onResolve) != void) {

@@ -99,14 +99,14 @@ pub fn installHoistedPackages(
                     // ids as dependents for the current tree parent
                     var deps = try Bitset.initEmpty(this.allocator, trees.len);
                     defer deps.deinit(this.allocator);
-                    for (trees) |_curr| {
-                        var curr = _curr;
-                        tree_ids_to_trees_the_id_depends_on.set(curr.id, curr.id);
+                    for (trees) |tree| {
+                        tree_ids_to_trees_the_id_depends_on.set(tree.id.get(), tree.id.get());
 
-                        while (curr.parent != Lockfile.Tree.invalid_id) {
-                            deps.set(curr.id);
-                            tree_ids_to_trees_the_id_depends_on.setUnion(curr.parent, deps);
-                            curr = trees[curr.parent];
+                        var curr = tree;
+                        while (curr.parent != .invalid) {
+                            deps.set(curr.id.get());
+                            tree_ids_to_trees_the_id_depends_on.setUnion(curr.parent.get(), deps);
+                            curr = trees[curr.parent.get()];
                         }
 
                         deps.setAll(false);
@@ -161,7 +161,7 @@ pub fn installHoistedPackages(
                             strings.withoutTrailingSlash(FileSystem.instance.top_level_dir),
                         ),
                     ),
-                    .tree_id = 0,
+                    .tree_id = .root,
                 },
                 .progress = progress,
                 .skip_verify_installed_version_number = skip_verify_installed_version_number,
@@ -205,7 +205,7 @@ pub fn installHoistedPackages(
             installer.current_tree_id = node_modules.tree_id;
 
             if (comptime Environment.allow_assert) {
-                bun.assert(node_modules.dependencies.len == this.lockfile.buffers.trees.items[installer.current_tree_id].dependencies.len);
+                bun.assert(node_modules.dependencies.len == this.lockfile.buffers.trees.items[installer.current_tree_id.get()].dependencies.len);
             }
 
             // cache line is 64 bytes on ARM64 and x64
@@ -232,7 +232,6 @@ pub fn installHoistedPackages(
                             .onPackageManifestError = {},
                             .onPackageDownloadError = {},
                         },
-                        true,
                         log_level,
                     );
                     if (!installer.options.do.install_packages) return error.InstallFailed;
@@ -254,7 +253,6 @@ pub fn installHoistedPackages(
                     .onPackageManifestError = {},
                     .onPackageDownloadError = {},
                 },
-                true,
                 log_level,
             );
             if (!installer.options.do.install_packages) return error.InstallFailed;
@@ -280,7 +278,6 @@ pub fn installHoistedPackages(
                             .onPackageManifestError = {},
                             .onPackageDownloadError = {},
                         },
-                        true,
                         pm.options.log_level,
                     ) catch |err| {
                         closure.err = err;

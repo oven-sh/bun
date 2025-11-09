@@ -81,7 +81,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!j
 
     var array = Array{};
 
-    const update_requests = parseWithError(allocator, null, &log, all_positionals.items, &array, .add, false) catch {
+    const update_requests = parseWithError(allocator, &log, all_positionals.items, &array, .add, false) catch {
         return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to parse dependencies"));
     };
     if (update_requests.len == 0) return .js_undefined;
@@ -103,18 +103,16 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!j
 
 pub fn parse(
     allocator: std.mem.Allocator,
-    pm: ?*PackageManager,
     log: *logger.Log,
     positionals: []const string,
     update_requests: *Array,
     subcommand: Subcommand,
 ) []UpdateRequest {
-    return parseWithError(allocator, pm, log, positionals, update_requests, subcommand, true) catch Global.crash();
+    return parseWithError(allocator, log, positionals, update_requests, subcommand, true) catch Global.crash();
 }
 
 fn parseWithError(
     allocator: std.mem.Allocator,
-    pm: ?*PackageManager,
     log: *logger.Log,
     positionals: []const string,
     update_requests: *Array,
@@ -165,7 +163,6 @@ fn parseWithError(
             null,
             &SlicedString.init(input, value),
             log,
-            pm,
         ) orelse {
             if (fatal) {
                 Output.errGeneric("unrecognised dependency format: {s}", .{
@@ -188,7 +185,6 @@ fn parseWithError(
                 null,
                 &SlicedString.init(input, input),
                 log,
-                pm,
             )) |ver| {
                 alias = null;
                 version = ver;

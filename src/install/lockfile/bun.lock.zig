@@ -1123,7 +1123,6 @@ pub fn parseIntoBinaryLockfile(
     root: JSON.Expr,
     source: *const logger.Source,
     log: *logger.Log,
-    manager: ?*PackageManager,
 ) ParseError!void {
     lockfile.initEmpty(allocator);
 
@@ -1254,7 +1253,6 @@ pub fn parseIntoBinaryLockfile(
                     version_sliced.slice,
                     &version_sliced,
                     log,
-                    manager,
                 ) orelse {
                     try log.addError(source, value.loc, "Invalid override version");
                     return error.InvalidOverridesObject;
@@ -1304,7 +1302,6 @@ pub fn parseIntoBinaryLockfile(
                     version_sliced.slice,
                     &version_sliced,
                     log,
-                    manager,
                 ) orelse {
                     try log.addError(source, value.loc, "Invalid catalog version");
                     return error.InvalidCatalogObject;
@@ -1384,7 +1381,6 @@ pub fn parseIntoBinaryLockfile(
                         version_sliced.slice,
                         &version_sliced,
                         log,
-                        manager,
                     ) orelse {
                         try log.addError(source, value.loc, "Invalid catalog version");
                         return error.InvalidCatalogsObject;
@@ -2144,7 +2140,6 @@ fn parseAppendDependencies(
                         version_sliced.slice,
                         &version_sliced,
                         log,
-                        null,
                     ) orelse {
                         try log.addError(source, value.loc, "Invalid dependency version");
                         return error.InvalidDependencyVersion;
@@ -2235,7 +2230,6 @@ const Bin = Install.Bin;
 const Dependency = Install.Dependency;
 const DependencyID = Install.DependencyID;
 const PackageID = Install.PackageID;
-const PackageManager = bun.install.PackageManager;
 const PackageNameHash = Install.PackageNameHash;
 const Repository = Install.Repository;
 const Resolution = Install.Resolution;

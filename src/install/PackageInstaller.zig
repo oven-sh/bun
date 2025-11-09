@@ -24,7 +24,7 @@ pub const PackageInstaller = struct {
     successfully_installed: Bitset,
     tree_iterator: *Lockfile.Tree.Iterator(.node_modules),
     command_ctx: Command.Context,
-    current_tree_id: Lockfile.Tree.Id = Lockfile.Tree.invalid_id,
+    current_tree_id: Lockfile.Tree.Id = .invalid,
 
     // fields used for running lifecycle scripts when it's safe
     //
@@ -48,7 +48,7 @@ pub const PackageInstaller = struct {
     const debug = Output.scoped(.PackageInstaller, .hidden);
 
     pub const NodeModulesFolder = struct {
-        tree_id: Lockfile.Tree.Id = 0,
+        tree_id: Lockfile.Tree.Id = .root,
         path: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
 
         pub fn deinit(this: *NodeModulesFolder) void {
@@ -208,27 +208,27 @@ pub const PackageInstaller = struct {
         log_level: Options.LogLevel,
     ) void {
         if (comptime Environment.allow_assert) {
-            bun.assertWithLocation(tree_id != Lockfile.Tree.invalid_id, @src());
+            bun.assertWithLocation(tree_id != .invalid, @src());
         }
 
-        const tree = &this.trees[tree_id];
+        const tree = &this.trees[tree_id.get()];
         const current_count = tree.install_count;
-        const max = this.lockfile.buffers.trees.items[tree_id].dependencies.len;
+        const max = this.lockfile.buffers.trees.items[tree_id.get()].dependencies.len;
 
         if (current_count == std.math.maxInt(usize)) {
             if (comptime Environment.allow_assert)
-                Output.panic("Installed more packages than expected for tree id: {d}. Expected: {d}", .{ tree_id, max });
+                Output.panic("Installed more packages than expected for tree id: {d}. Expected: {d}", .{ tree_id.get(), max });
 
             return;
         }
 
         const is_not_done = current_count + 1 < max;
 
-        this.trees[tree_id].install_count = if (is_not_done) current_count + 1 else std.math.maxInt(usize);
+        this.trees[tree_id.get()].install_count = if (is_not_done) current_count + 1 else std.math.maxInt(usize);
 
         if (is_not_done) return;
 
-        this.completed_trees.set(tree_id);
+        this.completed_trees.set(tree_id.get());
 
         if (tree.binaries.count() > 0) {
             this.seen_bin_links.clearRetainingCapacity();
@@ -316,7 +316,7 @@ pub const PackageInstaller = struct {
             // tree (0).
             const global = if (!manager.options.global)
                 false
-            else if (tree_id != 0)
+            else if (tree_id != .root)
                 false
             else global: {
                 for (manager.update_requests) |request| {
@@ -394,7 +394,7 @@ pub const PackageInstaller = struct {
                 this.node_modules.path.items.len = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir).len + 1;
                 const rel_path, _ = Lockfile.Tree.relativePathAndDepth(
                     lockfile,
-                    @intCast(tree_id),
+                    .from(@intCast(tree_id)),
                     &node_modules_rel_path_buf,
                     &depth_buf,
                     .node_modules,
@@ -402,7 +402,7 @@ pub const PackageInstaller = struct {
 
                 bun.handleOom(this.node_modules.path.appendSlice(rel_path));
 
-                this.linkTreeBins(tree, @intCast(tree_id), &link_target_buf, &link_dest_buf, &link_rel_buf, log_level);
+                this.linkTreeBins(tree, .from(@intCast(tree_id)), &link_target_buf, &link_dest_buf, &link_rel_buf, log_level);
             }
         }
     }
@@ -462,7 +462,7 @@ pub const PackageInstaller = struct {
         const resolutions = lockfile.buffers.resolutions.items;
 
         for (this.trees, 0..) |*tree, i| {
-            if (force or this.canInstallPackageForTree(this.lockfile.buffers.trees.items, @intCast(i))) {
+            if (force or this.canInstallPackageForTree(this.lockfile.buffers.trees.items, .from(@intCast(i)))) {
                 defer tree.pending_installs.clearRetainingCapacity();
 
                 // If installing these packages completes the tree, we don't allow it
@@ -550,7 +550,7 @@ pub const PackageInstaller = struct {
 
     /// Check if a tree is ready to start running lifecycle scripts
     pub fn canRunScripts(this: *PackageInstaller, scripts_tree_id: Lockfile.Tree.Id) bool {
-        const deps = this.tree_ids_to_trees_the_id_depends_on.at(scripts_tree_id);
+        const deps = this.tree_ids_to_trees_the_id_depends_on.at(scripts_tree_id.get());
         // .monotonic is okay because this value isn't modified from any other thread.
         return (deps.subsetOf(this.completed_trees) or
             deps.eql(this.completed_trees)) and
@@ -560,10 +560,10 @@ pub const PackageInstaller = struct {
     /// A tree can start installing packages when the parent has installed all its packages. If the parent
     /// isn't finished, we need to wait because it's possible a package installed in this tree will be deleted by the parent.
     pub fn canInstallPackageForTree(this: *const PackageInstaller, trees: []Lockfile.Tree, package_tree_id: Lockfile.Tree.Id) bool {
-        var curr_tree_id = trees[package_tree_id].parent;
-        while (curr_tree_id != Lockfile.Tree.invalid_id) {
-            if (!this.completed_trees.isSet(curr_tree_id)) return false;
-            curr_tree_id = trees[curr_tree_id].parent;
+        var curr_tree_id = trees[package_tree_id.get()].parent;
+        while (curr_tree_id != .invalid) {
+            if (!this.completed_trees.isSet(curr_tree_id.get())) return false;
+            curr_tree_id = trees[curr_tree_id.get()].parent;
         }
 
         return true;
@@ -1082,7 +1082,7 @@ pub const PackageInstaller = struct {
             }
 
             if (!is_pending_package_install and !this.canInstallPackageForTree(this.lockfile.buffers.trees.items, this.current_tree_id)) {
-                this.trees[this.current_tree_id].pending_installs.append(this.manager.allocator, .{
+                this.trees[this.current_tree_id.get()].pending_installs.append(this.manager.allocator, .{
                     .dependency_id = dependency_id,
                     .tree_id = this.current_tree_id,
                     .path = bun.handleOom(this.node_modules.path.clone()),
@@ -1146,7 +1146,7 @@ pub const PackageInstaller = struct {
                     }
 
                     if (this.bins[package_id].tag != .none) {
-                        bun.handleOom(this.trees[this.current_tree_id].binaries.add(dependency_id));
+                        bun.handleOom(this.trees[this.current_tree_id.get()].binaries.add(dependency_id));
                     }
 
                     const dep = this.lockfile.buffers.dependencies.items[dependency_id];
@@ -1318,7 +1318,7 @@ pub const PackageInstaller = struct {
             }
         } else {
             if (this.bins[package_id].tag != .none) {
-                bun.handleOom(this.trees[this.current_tree_id].binaries.add(dependency_id));
+                bun.handleOom(this.trees[this.current_tree_id.get()].binaries.add(dependency_id));
             }
 
             var destination_dir: LazyPackageDestinationDir = .{

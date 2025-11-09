@@ -124,7 +124,6 @@ pub fn populateManifestCache(manager: *PackageManager, packages: Packages) !void
                         .progress_bar = true,
                         .manifests_only = true,
                     },
-                    true,
                     closure.manager.options.log_level,
                 ) catch |err| {
                     closure.err = err;

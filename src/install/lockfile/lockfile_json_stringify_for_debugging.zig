@@ -192,7 +192,7 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
 
             const relative_path, const depth = Lockfile.Tree.relativePathAndDepth(
                 this,
-                @intCast(tree_id),
+                .from(@intCast(tree_id)),
                 &path_buf,
                 &depth_buf,
                 .node_modules,

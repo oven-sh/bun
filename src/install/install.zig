@@ -212,8 +212,8 @@ pub const ExtractData = struct {
 };
 
 pub const DependencyInstallContext = struct {
-    tree_id: Lockfile.Tree.Id = 0,
-    path: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    tree_id: Lockfile.Tree.Id,
+    path: std.ArrayList(u8),
     dependency_id: DependencyID,
 };
 

@@ -303,7 +303,7 @@ pub fn loadFromDir(
             };
         };
 
-        TextLockfile.parseIntoBinaryLockfile(this, allocator, json, source, log, manager) catch |err| {
+        TextLockfile.parseIntoBinaryLockfile(this, allocator, json, source, log) catch |err| {
             switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
                 else => {
@@ -358,7 +358,7 @@ pub fn loadFromDir(
                     Output.panic("failed to print valid json from binary lockfile: {s}", .{@errorName(err)});
                 };
 
-                TextLockfile.parseIntoBinaryLockfile(this, allocator, json, source, log, manager) catch |err| {
+                TextLockfile.parseIntoBinaryLockfile(this, allocator, json, source, log) catch |err| {
                     Output.panic("failed to parse text lockfile converted from binary lockfile: {s}", .{@errorName(err)});
                 };
 
@@ -543,7 +543,6 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                                 sliced.slice,
                                 &sliced,
                                 null,
-                                manager,
                             ) orelse Dependency.Version{};
                         }
                     }
@@ -616,7 +615,7 @@ pub fn getWorkspacePkgIfWorkspaceDep(this: *const Lockfile, id: DependencyID) Pa
 /// Does this tree id belong to a workspace (including workspace root)?
 /// TODO(dylan-conway) fix!
 pub fn isWorkspaceTreeId(this: *const Lockfile, id: Tree.Id) bool {
-    return id == 0 or this.buffers.dependencies.items[this.buffers.trees.items[id].dependency_id].behavior.isWorkspace();
+    return id == .root or this.buffers.dependencies.items[this.buffers.trees.items[id.get()].dependency_id].behavior.isWorkspace();
 }
 
 /// Returns the package id of the workspace the install is taking place in.
@@ -685,8 +684,8 @@ pub fn cleanWithLogger(
         old.overrides.count(old, &builder);
         old.catalogs.count(old, &builder);
         try builder.allocate();
-        new.overrides = try old.overrides.clone(manager, old, new, &builder);
-        new.catalogs = try old.catalogs.clone(manager, old, new, &builder);
+        new.overrides = try old.overrides.clone(old, new, &builder);
+        new.catalogs = try old.catalogs.clone(old, new, &builder);
     }
 
     // Step 1. Recreate the lockfile with only the packages that are still alive
@@ -709,7 +708,7 @@ pub fn cleanWithLogger(
     };
 
     // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
-    _ = try root.clone(manager, old, new, package_id_mapping, &cloner);
+    _ = try root.clone(old, new, package_id_mapping, &cloner);
 
     // Clone workspace_paths and workspace_versions at the end.
     if (old.workspace_paths.count() > 0 or old.workspace_versions.count() > 0) {
@@ -881,7 +880,6 @@ pub const Cloner = struct {
             const old_package = this.old.packages.get(to_clone.old_resolution);
 
             this.lockfile.buffers.resolutions.items[to_clone.resolve_id] = try old_package.clone(
-                this.manager,
                 this.old,
                 this.lockfile,
                 this.mapping,
@@ -952,14 +950,14 @@ pub fn hoist(
 
     try (Tree{}).processSubtree(
         Tree.root_dep_id,
-        Tree.invalid_id,
+        .invalid,
         method,
         &builder,
     );
 
     // This goes breadth-first
     while (builder.queue.readItem()) |item| {
-        try builder.list.items(.tree)[item.tree_id].processSubtree(
+        try builder.list.items(.tree)[item.tree_id.get()].processSubtree(
             item.dependency_id,
             item.hoist_root_id,
             method,
@@ -1374,15 +1372,10 @@ pub fn getPackageID(
     name_hash: u64,
     // If non-null, attempt to use an existing package
     // that satisfies this version range.
-    version: ?Dependency.Version,
     resolution: *const Resolution,
 ) ?PackageID {
     const entry = this.package_index.get(name_hash) orelse return null;
     const resolutions: []const Resolution = this.packages.items(.resolution);
-    const npm_version = if (version) |v| switch (v.tag) {
-        .npm => v.value.npm.version,
-        else => null,
-    } else null;
     const buf = this.buffers.string_bytes.items;
 
     switch (entry) {
@@ -1392,10 +1385,6 @@ pub fn getPackageID(
             if (resolutions[id].eql(resolution, buf, buf)) {
                 return id;
             }
-
-            if (resolutions[id].tag == .npm and npm_version != null) {
-                if (npm_version.?.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
-            }
         },
         .ids => |ids| {
             for (ids.items) |id| {
@@ -1403,10 +1392,6 @@ pub fn getPackageID(
 
                 if (resolutions[id].eql(resolution, buf, buf)) {
                     return id;
-                }
-
-                if (resolutions[id].tag == .npm and npm_version != null) {
-                    if (npm_version.?.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
                 }
             }
         },
@@ -1535,7 +1520,7 @@ pub fn appendPackage(this: *Lockfile, package_: Lockfile.Package) OOM!Lockfile.P
 pub fn appendPackageWithID(this: *Lockfile, package_: Lockfile.Package, id: PackageID) OOM!Lockfile.Package {
     defer {
         if (comptime Environment.allow_assert) {
-            assert(this.getPackageID(package_.name_hash, null, &package_.resolution) != null);
+            assert(this.getPackageID(package_.name_hash, &package_.resolution) != null);
         }
     }
     var package = package_;

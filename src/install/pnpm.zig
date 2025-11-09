@@ -174,7 +174,6 @@ pub fn migratePnpmLockfile(
                         version_sliced.slice,
                         &version_sliced,
                         log,
-                        manager,
                     ) orelse {
                         return invalidPnpmLockfile();
                     },
@@ -908,7 +907,6 @@ fn parseAppendPackageDependencies(
                         version_sliced.slice,
                         &version_sliced,
                         log,
-                        null,
                     ) orelse {
                         return invalidPnpmLockfile();
                     },
@@ -1015,7 +1013,6 @@ fn parseAppendPackageDependencies(
                                 version_sliced.slice,
                                 &version_sliced,
                                 log,
-                                null,
                             ) orelse {
                                 return invalidPnpmLockfile();
                             },
@@ -1038,7 +1035,6 @@ fn parseAppendPackageDependencies(
                     version_sliced.slice,
                     &version_sliced,
                     log,
-                    null,
                 ) orelse {
                     return invalidPnpmLockfile();
                 },
@@ -1157,7 +1153,6 @@ fn parseAppendImporterDependencies(
                         specifier_sliced.slice,
                         &specifier_sliced,
                         log,
-                        null,
                     ) orelse {
                         return invalidPnpmLockfile();
                     },

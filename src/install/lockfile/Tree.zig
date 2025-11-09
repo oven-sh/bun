@@ -1,6 +1,6 @@
 const Tree = @This();
 
-id: Id = invalid_id,
+id: Id = .invalid,
 
 // Should not be used for anything other than name
 // through `folderName()`. There is not guarantee a dependency
@@ -8,14 +8,33 @@ id: Id = invalid_id,
 // same version literal for packages hoisted.
 dependency_id: DependencyID = invalid_dependency_id,
 
-parent: Id = invalid_id,
+parent: Id = .invalid,
 dependencies: Lockfile.DependencyIDSlice = .{},
 
 pub const external_size = @sizeOf(Id) + @sizeOf(PackageID) + @sizeOf(Id) + @sizeOf(Lockfile.DependencyIDSlice);
 pub const External = [external_size]u8;
 pub const Slice = ExternalSlice(Tree);
 pub const List = std.ArrayListUnmanaged(Tree);
-pub const Id = u32;
+pub const Id = enum(u32) {
+    root = 0,
+    invalid = max,
+    _,
+
+    const max = std.math.maxInt(u32);
+
+    pub fn get(id: Id) u32 {
+        bun.debugAssert(id != .invalid);
+        return @intFromEnum(id);
+    }
+
+    pub fn from(id: u32) Id {
+        return @enumFromInt(id);
+    }
+
+    pub fn inc(id: *Id) void {
+        id.* = @enumFromInt(@intFromEnum(id.*) + 1);
+    }
+};
 
 pub fn folderName(this: *const Tree, deps: []const Dependency, buf: string) string {
     const dep_id = this.dependency_id;
@@ -36,9 +55,9 @@ pub fn toExternal(this: Tree) External {
 
 pub fn toTree(out: External) Tree {
     return .{
-        .id = @bitCast(out[0..4].*),
+        .id = .from(@bitCast(out[0..4].*)),
         .dependency_id = @bitCast(out[4..8].*),
-        .parent = @bitCast(out[8..12].*),
+        .parent = .from(@bitCast(out[8..12].*)),
         .dependencies = .{
             .off = @bitCast(out[12..16].*),
             .len = @bitCast(out[16..20].*),
@@ -46,8 +65,7 @@ pub fn toTree(out: External) Tree {
     };
 }
 
-pub const root_dep_id: DependencyID = invalid_package_id - 1;
-pub const invalid_id: Id = std.math.maxInt(Id);
+pub const root_dep_id: DependencyID = invalid_dependency_id - 1;
 
 pub const HoistDependencyResult = union(enum) {
     dependency_loop,
@@ -95,7 +113,7 @@ pub fn Iterator(comptime path_style: IteratorPathStyle) type {
 
         pub fn init(lockfile: *const Lockfile) @This() {
             var iter: @This() = .{
-                .tree_id = 0,
+                .tree_id = .root,
                 .lockfile = lockfile,
             };
             if (comptime path_style == .node_modules) {
@@ -105,7 +123,7 @@ pub fn Iterator(comptime path_style: IteratorPathStyle) type {
         }
 
         pub fn reset(this: *@This()) void {
-            this.tree_id = 0;
+            this.tree_id = .root;
         }
 
         pub const Next = struct {
@@ -126,20 +144,20 @@ pub fn Iterator(comptime path_style: IteratorPathStyle) type {
         pub fn next(this: *@This(), completed_trees: if (path_style == .node_modules) ?*Bitset else void) ?Next {
             const trees = this.lockfile.buffers.trees.items;
 
-            if (this.tree_id >= trees.len) return null;
+            if (this.tree_id.get() >= trees.len) return null;
 
-            while (trees[this.tree_id].dependencies.len == 0) {
+            while (trees[this.tree_id.get()].dependencies.len == 0) {
                 if (comptime path_style == .node_modules) {
                     if (completed_trees) |_completed_trees| {
-                        _completed_trees.set(this.tree_id);
+                        _completed_trees.set(this.tree_id.get());
                     }
                 }
-                this.tree_id += 1;
-                if (this.tree_id >= trees.len) return null;
+                this.tree_id.inc();
+                if (this.tree_id.get() >= trees.len) return null;
             }
 
             const current_tree_id = this.tree_id;
-            const tree = trees[current_tree_id];
+            const tree = trees[current_tree_id.get()];
             const tree_dependencies = tree.dependencies.get(this.lockfile.buffers.hoisted_dependencies.items);
 
             const relative_path, const depth = relativePathAndDepth(
@@ -150,7 +168,7 @@ pub fn Iterator(comptime path_style: IteratorPathStyle) type {
                 path_style,
             );
 
-            this.tree_id += 1;
+            this.tree_id.inc();
 
             return .{
                 .relative_path = relative_path,
@@ -173,7 +191,7 @@ pub fn relativePathAndDepth(
     const trees = lockfile.buffers.trees.items;
     var depth: usize = 0;
 
-    const tree = trees[tree_id];
+    const tree = trees[tree_id.get()];
 
     var parent_id = tree.id;
     var path_written: usize = switch (comptime path_style) {
@@ -181,16 +199,16 @@ pub fn relativePathAndDepth(
         .pkg_path => 0,
     };
 
-    depth_buf[0] = 0;
+    depth_buf[0] = .root;
 
-    if (tree.id > 0) {
+    if (tree.id != .root) {
         const dependencies = lockfile.buffers.dependencies.items;
         const buf = lockfile.buffers.string_bytes.items;
         var depth_buf_len: usize = 1;
 
-        while (parent_id > 0 and parent_id < trees.len) {
+        while (parent_id != .root and parent_id.get() < trees.len) {
             depth_buf[depth_buf_len] = parent_id;
-            parent_id = trees[parent_id].parent;
+            parent_id = trees[parent_id.get()].parent;
             depth_buf_len += 1;
         }
 
@@ -209,7 +227,7 @@ pub fn relativePathAndDepth(
             }
 
             const id = depth_buf[depth_buf_len];
-            const name = trees[id].folderName(dependencies, buf);
+            const name = trees[id.get()].folderName(dependencies, buf);
             @memcpy(path_buf[path_written..][0..name.len], name);
             path_written += name.len;
 
@@ -457,7 +475,7 @@ pub fn processSubtree(
     try builder.list.append(builder.allocator, .{
         .tree = .{
             .parent = this.id,
-            .id = @as(Id, @truncate(builder.list.len)),
+            .id = .from(@truncate(builder.list.len)),
             .dependency_id = dependency_id,
         },
         .dependencies = .{},
@@ -599,7 +617,7 @@ pub fn processSubtree(
                         builder.resolutions[unresolved_dep_id] = pkg_id;
                     }
                 }
-                for (dependency_lists[replace.id].items) |*placed_dep_id| {
+                for (dependency_lists[replace.id.get()].items) |*placed_dep_id| {
                     if (placed_dep_id.* == replace.dep_id) {
                         placed_dep_id.* = dep_id;
                     }
@@ -623,8 +641,8 @@ pub fn processSubtree(
                 try entry.value_ptr.append(dep_id);
             },
             .placement => |dest| {
-                bun.handleOom(dependency_lists[dest.id].append(builder.allocator, dep_id));
-                trees[dest.id].dependencies.len += 1;
+                bun.handleOom(dependency_lists[dest.id.get()].append(builder.allocator, dep_id));
+                trees[dest.id.get()].dependencies.len += 1;
                 if (pkg_id != invalid_package_id and builder.resolution_lists[pkg_id].len > 0) {
                     try builder.queue.writeItem(.{
                         .tree_id = dest.id,
@@ -639,7 +657,7 @@ pub fn processSubtree(
     }
 
     if (next.dependencies.len == 0) {
-        if (comptime Environment.allow_assert) assert(builder.list.len == next.id + 1);
+        if (comptime Environment.allow_assert) assert(builder.list.len == next.id.get() + 1);
         _ = builder.list.pop();
     }
 }
@@ -659,7 +677,7 @@ fn hoistDependency(
     comptime method: BuilderMethod,
     builder: *Builder(method),
 ) !HoistDependencyResult {
-    const this_dependencies = this.dependencies.get(dependency_lists[this.id].items);
+    const this_dependencies = this.dependencies.get(dependency_lists[this.id.get()].items);
     for (0..this_dependencies.len) |i| {
         const dep_id = this_dependencies[i];
         const dep = builder.dependencies[dep_id];
@@ -705,18 +723,13 @@ fn hoistDependency(
         // or hoist if peer version allows it
 
         if (dependency.behavior.isPeer()) {
-            if (dependency.version.tag == .npm) {
-                const resolution: Resolution = builder.lockfile.packages.items(.resolution)[res_id];
-                const version = dependency.version.value.npm.version;
-                if (resolution.tag == .npm and version.satisfies(resolution.value.npm.version, builder.buf(), builder.buf())) {
-                    return .hoisted; // 1
-                }
-            }
+            return .hoisted;
+        }
 
-            // Root dependencies are manually chosen by the user. Allow them
-            // to hoist other peers even if they don't satisfy the version
-            if (builder.lockfile.isWorkspaceRootDependency(dep_id)) {
-                // TODO: warning about peer dependency version mismatch
+        if (dependency.version.tag == .npm) {
+            const resolution: Resolution = builder.lockfile.packages.items(.resolution)[builder.resolutions[dep_id]];
+            const version = dependency.version.value.npm.version;
+            if (resolution.tag == .npm and version.satisfies(resolution.value.npm.version, builder.buf(), builder.buf())) {
                 return .hoisted; // 1
             }
         }
@@ -737,8 +750,8 @@ fn hoistDependency(
     }
 
     // this dependency was not found in this tree, try hoisting or placing in the next parent
-    if (this.parent != invalid_id and this.id != hoist_root_id) {
-        const id = trees[this.parent].hoistDependency(
+    if (this.parent != .invalid and this.id != hoist_root_id) {
+        const id = trees[this.parent.get()].hoistDependency(
             false,
             hoist_root_id,
             package_id,

@@ -193,6 +193,55 @@ describe("jsx:preserve", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("string attribute with triple backticks", () => {
+    using dir = tempDir("bun-jsx-preserve-triple-backticks", {
+      "input.tsx": 'console.log(<div title="```" />);',
+      "tsconfig.json": tsconfig,
+    });
+
+    const input = path.join(String(dir), "input.tsx");
+    const outfile = path.join(String(dir), "out.js");
+
+    const { stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "build", "--jsx-runtime=preserve", input, "--outfile", outfile],
+      cwd: String(dir),
+      env: bunEnv,
+    });
+
+    const out = readFileSync(outfile, "utf8");
+    expect(out).toContain("<div");
+    expect(out).toContain('title="```"');
+    expect(out).not.toContain("createElement");
+    const stderrStr = String(stderr ?? "");
+    expect(stderrStr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("children text with quotes and triple backticks are preserved", () => {
+    using dir = tempDir("bun-jsx-preserve-children-text", {
+      "input.tsx": 'console.log(<div>I\'m `ok` with ``` fences</div>);',
+      "tsconfig.json": tsconfig,
+    });
+
+    const input = path.join(String(dir), "input.tsx");
+    const outfile = path.join(String(dir), "out.js");
+
+    const { stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "build", "--jsx-runtime=preserve", input, "--outfile", outfile],
+      cwd: String(dir),
+      env: bunEnv,
+    });
+
+    const out = readFileSync(outfile, "utf8");
+    expect(out).toContain("<div>");
+    expect(out).toContain("I'm `ok` with ``` fences");
+    expect(out).toContain("</div>");
+    expect(out).not.toContain("createElement");
+    const stderrStr = String(stderr ?? "");
+    expect(stderrStr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("string attribute with expression containing quotes", () => {
     using dir = tempDir("bun-jsx-preserve-mixed-quotes", {
       "input.tsx": `const msg = "It's a \\"test\\" with backticks";\nconsole.log(<div title={msg} />);`,

@@ -91,6 +91,12 @@ pub const PasswordObject = struct {
                                     if (parallelism < 1) {
                                         return globalObject.throwInvalidArguments("Parallelism must be greater than 0", .{});
                                     }
+                                    // Number high enough that it doesn't limit thread count
+                                    // but low enough it doesn't trigger Zig truncation
+                                    const max_p = 65535; // 2^16 - 1
+                                    if (parallelism > max_p) {
+                                        return globalObject.throwInvalidArguments("Parallelism must be between 1 and {d}", .{max_p});
+                                    }
                                     argon.parallelism = @as(u24, @intCast(parallelism));
                                 }
 

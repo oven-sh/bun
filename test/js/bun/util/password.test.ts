@@ -89,6 +89,13 @@ describe("hash", () => {
 
         expect(() =>
           hash(placeholder, {
+            algorithm: "argon2id",
+            parallelism: 65536, // 2^16
+          }),
+        ).toThrow();
+
+        expect(() =>
+          hash(placeholder, {
             algorithm: "bcrypt",
             cost: -999,
           }),

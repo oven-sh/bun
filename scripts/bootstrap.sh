@@ -836,8 +836,7 @@ install_nodejs() {
 		;;
 	esac
 
-	if [ "$os" = "freebsd" ]
-	then
+	if [ "$os" = "freebsd" ]; then
 		# TODO: use nodejs_version_exact
 		install_packages "www/node$(nodejs_version)" "www/npm-node$(nodejs_version)"
 		return
@@ -932,8 +931,7 @@ install_nodejs() {
 }
 
 install_nodejs_headers() {
-	if [ "$os" = "freebsd" ]
-	then
+	if [ "$os" = "freebsd" ]; then
 		return
 	fi
 
@@ -951,8 +949,7 @@ install_nodejs_headers() {
 }
 
 setup_node_gyp_cache() {
-	if [ "$os" = "freebsd" ]
-	then
+	if [ "$os" = "freebsd" ]; then
 		return
 	fi
 
@@ -994,8 +991,7 @@ bun_version_exact() {
 }
 
 install_bun() {
-	if [ "$os" = "freebsd" ]
-	then
+	if [ "$os" = "freebsd" ]; then
 		# TODO: need to complete bun bootstrap for for this work
 		return
 	fi
@@ -1187,8 +1183,7 @@ install_llvm() {
 }
 
 install_gcc() {
-	if ! [ "$os" = "linux" ] || ! [ "$distro" = "ubuntu" ] || [ -z "$gcc_version" ]
-	then
+	if ! [ "$os" = "linux" ] || ! [ "$distro" = "ubuntu" ] || [ -z "$gcc_version" ]; then
 		return
 	fi
 

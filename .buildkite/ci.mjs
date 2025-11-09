@@ -31,7 +31,7 @@ import {
 } from "../scripts/utils.mjs";
 
 /**
- * @typedef {"linux" | "darwin" | "windows"} Os
+ * @typedef {"linux" | "darwin" | "windows" | "freebsd"} Os
  * @typedef {"aarch64" | "x64"} Arch
  * @typedef {"musl"} Abi
  * @typedef {"debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
@@ -1128,9 +1128,12 @@ async function getPipeline(options = {}) {
   const includeASAN = !isMainBranch();
 
   if (!buildId) {
-    const relevantBuildPlatforms = includeASAN
+    let relevantBuildPlatforms = includeASAN
       ? buildPlatforms
       : buildPlatforms.filter(({ profile }) => profile !== "asan");
+
+    // run build-image but no build-bun yet
+    relevantBuildPlatforms = relevantBuildPlatforms.filter(({ os }) => os !== "freebsd");
 
     steps.push(
       ...relevantBuildPlatforms.map(target => {

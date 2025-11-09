@@ -802,7 +802,6 @@ const invalid_package_id = install.invalid_package_id;
 const Lockfile = install.Lockfile;
 const DependencyIDList = Lockfile.DependencyIDList;
 const ExternalSlice = Lockfile.ExternalSlice;
-const PackageIDSlice = Lockfile.PackageIDSlice;
 
 const PackageManager = bun.install.PackageManager;
 const WorkspaceFilter = install.PackageManager.WorkspaceFilter;

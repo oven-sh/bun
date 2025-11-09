@@ -599,13 +599,6 @@ const PmPkgCommand = @import("./pm_pkg_command.zig").PmPkgCommand;
 const PmVersionCommand = @import("./pm_version_command.zig").PmVersionCommand;
 const PmWhyCommand = @import("./pm_why_command.zig").PmWhyCommand;
 
-const install = bun.install;
-const DependencyID = install.DependencyID;
-const Npm = install.Npm;
-const PackageID = install.PackageID;
-const PackageManager = install.PackageManager;
-const invalid_package_id = install.invalid_package_id;
-
 const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrustedCommand;
 const TrustCommand = @import("./pm_trusted_command.zig").TrustCommand;
 const UntrustedCommand = @import("./pm_trusted_command.zig").UntrustedCommand;
@@ -617,3 +610,9 @@ const Output = bun.Output;
 const log = bun.log;
 const strings = bun.strings;
 const File = bun.sys.File;
+
+const install = bun.install;
+const DependencyID = install.DependencyID;
+const Npm = install.Npm;
+const PackageID = install.PackageID;
+const PackageManager = install.PackageManager;

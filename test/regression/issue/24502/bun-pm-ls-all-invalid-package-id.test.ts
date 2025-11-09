@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { tempDirWithFiles, runBunInstall, bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, runBunInstall, tempDirWithFiles } from "harness";
 
 test("unresolved optional peers don't crash", async () => {
   const testDir = tempDirWithFiles("unresolved-optional-peer", {

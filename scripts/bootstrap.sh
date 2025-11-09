@@ -1470,7 +1470,7 @@ install_fuse_python() {
 }
 
 create_buildkite_user() {
-	if ! [ "$ci" = "1" ] || ! [ "$os" = "linux" ]; then
+	if ! [ "$ci" = "1" ]; then
 		return
 	fi
 
@@ -1498,6 +1498,14 @@ create_buildkite_user() {
 				--shell "$(require sh)" \
 				--home "$home" \
 				--disabled-password
+			;;
+		freebsd)
+			execute_sudo pw group add -n "$group"
+			execute_sudo pw user add \
+				-n "$user" \
+				-g "$group" \
+				-s "$(require sh)" \
+				-d "$home" \
 			;;
 		*)
 			execute_sudo useradd "$user" \
@@ -1660,7 +1668,6 @@ install_chromium() {
 }
 
 install_age() {
-	# we only use this to encrypt core dumps, which we only have on Linux
 	age_version="1.2.1"
 	case "$os" in
 	linux)
@@ -1698,7 +1705,6 @@ install_age() {
 }
 
 configure_core_dumps() {
-	# we only have core dumps on Linux
 	case "$os" in
 	linux)
 		# set up a directory that the test runner will look in after running tests

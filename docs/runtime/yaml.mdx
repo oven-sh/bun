@@ -152,7 +152,7 @@ The signature is similar to `JSON.stringify()`:
 Bun.YAML.stringify(value, replacer?, space?)
 ```
 
-The `space` parameter controls indentation (default: 2). With `space: 0`, YAML outputs in compact flow style on a single line:
+The `replacer` parameter is currently not implemented and has no effect. The `space` parameter controls indentation (default: 2). With `space: 0`, YAML outputs in compact flow style on a single line:
 
 ```ts
 const compact = Bun.YAML.stringify(obj, null, 0);

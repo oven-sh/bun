@@ -204,6 +204,7 @@ export async function makeTree(base: string, tree: DirectoryTree) {
       makeTree(joined, contents);
       continue;
     }
+    contents;
     fs.writeFileSync(joined, contents);
   }
 }
@@ -1252,6 +1253,7 @@ export async function runBunInstall(
     stderr: "pipe",
     env,
   });
+
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
   let err: string = stderrForInstall(await stderr.text());

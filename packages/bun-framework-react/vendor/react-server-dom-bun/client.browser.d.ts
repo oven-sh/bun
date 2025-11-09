@@ -1,0 +1,1 @@
+export function createFromReadableStream<T>(readable: ReadableStream<T>): Promise<T>;

@@ -1163,7 +1163,7 @@ pub const BundleV2 = struct {
         this.linker.graph.takeAstOwnership();
     }
 
-    /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
+    /// This generates the two asts for 'bun:app/client' and 'bun:app/server'. Both are generated
     /// at the same time in one pass over the SCB list.
     pub fn processServerComponentManifestFiles(this: *BundleV2) OOM!void {
         // If a server components is not configured, do nothing

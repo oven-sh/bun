@@ -1,4 +1,3 @@
-/// <reference path="../../src/bake/bake.d.ts" />
 /* Dev server tests can be run with `bun test` or in interactive mode with `bun run test.ts "name filter"`
  *
  * Env vars:
@@ -9,17 +8,16 @@
  * To write files to a stable location:
  * export BUN_DEV_SERVER_TEST_TEMP="/Users/clo/scratch/dev"
  */
-import { Bake, BunFile, Subprocess } from "bun";
-import fs, { readFileSync, realpathSync } from "node:fs";
-import path from "node:path";
-import os from "node:os";
+import { $, BunFile, Subprocess } from "bun";
+import * as Bake from "bun:app";
+import { expect, Matchers } from "bun:test";
+import { bunEnv, isASAN, isCI, isWindows, mergeWindowEnvs, tempDirWithFiles } from "harness";
 import assert from "node:assert";
-import { Matchers } from "bun:test";
 import { EventEmitter } from "node:events";
-// @ts-ignore
+import fs, { readFileSync, realpathSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { dedent } from "../bundler/expectBundled.ts";
-import { bunEnv, bunExe, isASAN, isCI, isWindows, mergeWindowEnvs, tempDirWithFiles } from "harness";
-import { expect } from "bun:test";
 import { exitCodeMapStrings } from "./exit-code-map.mjs";
 
 const ASAN_TIMEOUT_MULTIPLIER = isASAN ? 3 : 1;
@@ -1402,8 +1400,10 @@ async function installReactWithCache(root: string) {
       }
     }
   } else {
-    // Install fresh and populate cache
-    await Bun.$`${bunExe()} i --linker=hoisted react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental && ${bunExe()} install --linker=hoisted`
+    await Bun.$`
+      cd ${bunFrameworkReactProjectRoot} && bun pm pack --filename=bun-framework-react.tgz
+      cd ${root} && bun add bun-framework-react@${bunFrameworkReactProjectRoot}/bun-framework-react.tgz
+    `
       .cwd(root)
       .env({ ...bunEnv })
       .throws(true);
@@ -1425,6 +1425,7 @@ async function installReactWithCache(root: string) {
 
 // Global React cache management
 let reactCachePromise: Promise<void> | null = null;
+const bunFrameworkReactProjectRoot = path.join(import.meta.dir, "..", "..", "packages", "bun-framework-react");
 
 /**
  * Ensures the React cache is populated. This is a global operation that
@@ -1437,24 +1438,23 @@ export async function ensureReactCache(): Promise<void> {
       const cacheValid = cacheFiles.every(file => fs.existsSync(path.join(reactCacheDir, file)));
 
       if (!cacheValid) {
-        // Create a temporary directory for installation
         const tempInstallDir = fs.mkdtempSync(path.join(tempDir, "react-install-"));
 
-        // Create a minimal package.json
         fs.writeFileSync(
           path.join(tempInstallDir, "package.json"),
           JSON.stringify({
             name: "react-cache-install",
             version: "1.0.0",
-            private: true,
           }),
         );
 
         try {
-          // Install React packages
-          await Bun.$`${bunExe()} i --linker=hoisted react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental && ${bunExe()} install --linker=hoisted`
+          await $`
+            cd ${bunFrameworkReactProjectRoot} && bun pm pack --filename=bun-framework-react.tgz
+            cd ${tempInstallDir} && bun add bun-framework-react@${bunFrameworkReactProjectRoot}/bun-framework-react.tgz
+          `
             .cwd(tempInstallDir)
-            .env({ ...bunEnv })
+            .env(bunEnv)
             .throws(true);
 
           // Copy to cache
@@ -1514,16 +1514,15 @@ const counts: Record<string, number> = {};
 console.log("Dev server testing directory:", tempDir);
 
 async function writeAll(root: string, files: FileObject) {
-  const promises: Promise<any>[] = [];
+  const promises: Promise<number>[] = [];
   for (const [file, contents] of Object.entries(files)) {
     const filename = path.join(root, file);
     fs.mkdirSync(path.dirname(filename), { recursive: true });
     const formattedContents =
       typeof contents === "string" ? dedent(contents).replaceAll("{{root}}", root.replaceAll("\\", "\\\\")) : contents;
-    // @ts-expect-error the type of Bun.write is too strict
     promises.push(Bun.write(filename, formattedContents));
   }
-  await Promise.all(promises);
+  return await Promise.all(promises);
 }
 
 class OutputLineStream extends EventEmitter {
@@ -1689,15 +1688,10 @@ export function indexHtmlScript(htmlFiles: string[]) {
 
 const skipTargets = [process.platform, isCI ? "ci" : null].filter(Boolean);
 
-function testImpl<T extends DevServerTest>(
-  description: string,
-  options: T,
-  NODE_ENV: "development" | "production",
-  caller: string,
-): T {
+function testImpl(description: string, options: DevServerTest, NODE_ENV: "development" | "production", caller: string) {
   if (interactive) return options;
 
-  const jest = (Bun as any).jest(caller);
+  const jest = Bun.jest(caller);
 
   const basename = path.basename(caller, ".test" + path.extname(caller));
   const count = (counts[basename] = (counts[basename] ?? 0) + 1);
@@ -1742,9 +1736,10 @@ function testImpl<T extends DevServerTest>(
           path.join(root, "bun.app.ts"),
           dedent`
             ${options.pluginFile ? `import plugins from './pluginFile.ts';` : "let plugins = undefined;"}
+            ${options.framework === "react" ? `import reactFramework from 'bun-framework-react';` : ""}
             export default {
               app: {
-                framework: ${JSON.stringify(options.framework)},
+                framework: ${options.framework === "react" ? "reactFramework" : JSON.stringify(options.framework)},
                 plugins,
               },
             };
@@ -1872,7 +1867,9 @@ function testImpl<T extends DevServerTest>(
     }
     using stream = new OutputLineStream("dev", devProcess.stdout, devProcess.stderr);
     devProcess.exited.then(exitCode => (stream.exitCode = exitCode));
-    const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
+    const startupTimeout =
+      (options.timeoutMultiplier ?? 1) * (isWindows ? 5000 : 1000) * (Bun.version.includes("debug") ? 6 : 1);
+    const port = parseInt((await stream.waitForLine(/localhost:(\d+)/, startupTimeout))[1], 10);
     const dev = new Dev(root, port, devProcess, stream, NODE_ENV, options);
     if (dev.nodeEnv === "development") {
       await dev.connectSocket();
@@ -2026,7 +2023,7 @@ process.on("exit", () => {
   }
 });
 
-export function devTest<T extends DevServerTest>(description: string, options: T): T {
+export function devTest(description: string, options: DevServerTest) {
   // Capture the caller name as part of the test tempdir
   const callerLocation = snapshotCallerLocation();
   const caller = stackTraceFileName(callerLocation);
@@ -2049,7 +2046,7 @@ devTest.only = function (description: string, options: DevServerTest) {
   return testImpl(description, { ...options, only: true }, "development", caller);
 };
 
-export function prodTest<T extends DevServerTest>(description: string, options: T): T {
+export function prodTest(description: string, options: DevServerTest) {
   const callerLocation = snapshotCallerLocation();
   const caller = stackTraceFileName(callerLocation);
   assert(

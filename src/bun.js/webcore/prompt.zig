@@ -214,12 +214,14 @@ pub const prompt = struct {
         while (i < input.items.len) {
             const char = input.items[i];
             if (char == '\t') {
-                const spaces_to_add = 8;
+                const tab_width = 8;
+                const next_tab_stop = ((current_column / tab_width) + 1) * tab_width;
+                const spaces_to_add = next_tab_stop - current_column;
                 var j: usize = 0;
                 while (j < spaces_to_add) : (j += 1) {
                     _ = stdout_writer.writeByte(' ') catch {};
                 }
-                current_column += spaces_to_add;
+                current_column = next_tab_stop;
                 i += 1;
             } else {
                 const codepoint_slice = input.items[i..];
@@ -250,8 +252,9 @@ pub const prompt = struct {
         while (i < byte_index) {
             const char = slice[i];
             if (char == '\t') {
-                // Tab stop of 8 columns
-                column += 8;
+                // Align to next tab stop (multiple of 8)
+                const tab_width = 8;
+                column = ((column / tab_width) + 1) * tab_width;
                 i += 1;
             } else {
                 // Use the project's visible width function for other characters

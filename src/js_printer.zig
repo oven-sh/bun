@@ -5284,7 +5284,7 @@ fn NewPrinter(
             writer: Writer,
             import_records: []const ImportRecord,
             opts: Options,
-            renamer: rename.Renamer,
+            renamer: bun.renamer.Renamer,
             source_map_builder: SourceMap.Chunk.Builder,
         ) Printer {
             var printer = Printer{

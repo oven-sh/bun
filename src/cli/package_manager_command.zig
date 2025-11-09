@@ -347,6 +347,10 @@ pub const PackageManagerCommand = struct {
                 });
             }
 
+            if (directories.items.len == 0) {
+                return;
+            }
+
             const first_directory = directories.orderedRemove(0);
 
             var more_packages = try ctx.allocator.alloc(bool, max_depth);

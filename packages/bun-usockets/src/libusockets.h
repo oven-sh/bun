@@ -16,6 +16,12 @@
  */
 // clang-format off
 #pragma once
+
+
+#ifndef LIBUSOCKETS_H
+#define LIBUSOCKETS_H
+
+
 #ifndef us_calloc
 #define us_calloc calloc
 #endif
@@ -31,9 +37,6 @@
 #ifndef us_free
 #define us_free free
 #endif
-
-#ifndef LIBUSOCKETS_H
-#define LIBUSOCKETS_H
 
 #ifdef BUN_DEBUG
 #define nonnull_arg

@@ -196,6 +196,8 @@ void us_loop_run(struct us_loop_t *loop) {
         /* Emit pre callback */
         us_internal_loop_pre(loop);
 
+
+        us_internal_drain_socket_from_pending_read_list(loop);
         /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
         loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, 1024, NULL);
@@ -249,8 +251,10 @@ void us_loop_run(struct us_loop_t *loop) {
 extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm);
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
-    if (loop->num_polls == 0)
+    if (loop->num_polls == 0) {
         return;
+    }
+    
 
     struct us_internal_callback_t *timer_callback = (struct us_internal_callback_t*)loop->data.sweep_timer;
 
@@ -267,6 +271,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     if (loop->data.jsc_vm) 
         Bun__JSC_onBeforeWait(loop->data.jsc_vm);
 
+    us_internal_drain_socket_from_pending_read_list(loop);
+
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
     loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, 1024, timeout);
@@ -275,7 +281,6 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, timeout);
     } while (IS_EINTR(loop->num_ready_polls));
 #endif
-
 
     /* Iterate ready polls, dispatching them by type */
     for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
@@ -302,6 +307,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
                 | ((filter & EVFILT_READ) ? LIBUS_SOCKET_READABLE : 0)
                 | ((filter & EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
 
+            
             // Note: EV_ERROR only sets the error in data as part of changelist. Not in this call!
             const int error = (flags & (EV_ERROR)) ? ((int)fflags || 1) : 0;
             const int eof = (flags & (EV_EOF));
@@ -354,17 +360,17 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
     int is_readable =  (new_events & LIBUS_SOCKET_READABLE);
     int is_writable =  (new_events & LIBUS_SOCKET_WRITABLE);
     if ((new_events & LIBUS_SOCKET_READABLE) != (old_events & LIBUS_SOCKET_READABLE)) {
-        EV_SET64(&change_list[change_length++], fd, EVFILT_READ, is_readable ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+        EV_SET64(&change_list[change_length++], fd, EVFILT_READ, is_readable ? EV_ADD | EV_CLEAR : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
     }
 
     if(!is_readable && !is_writable) {
         if(!(old_events & LIBUS_SOCKET_WRITABLE)) {
             // if we are not reading or writing, we need to add writable to receive FIN
-            EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, EV_ADD, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+            EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, EV_ADD | EV_CLEAR, 0, 0, (uint64_t)(void*)user_data, 0, 0);
         }
     } else if ((new_events & LIBUS_SOCKET_WRITABLE) != (old_events & LIBUS_SOCKET_WRITABLE)) {
         /* Do they differ in writable? */
-        EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
+        EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD | EV_CLEAR : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
     }
     int ret;
     do {
@@ -378,10 +384,9 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
 #endif
 
 struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, unsigned int ext_size) {
+    size_t new_size = ext_size + sizeof(struct us_poll_t);
     int events = us_poll_events(p);
-    
-
-    struct us_poll_t *new_p = us_realloc(p, sizeof(struct us_poll_t) + ext_size);
+    struct us_poll_t *new_p = us_realloc(p, new_size);
     if (p != new_p) {
 #ifdef LIBUS_USE_EPOLL
         /* Hack: forcefully update poll by stripping away already set events */
@@ -406,7 +411,7 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
         // if we are disabling readable, we need to add the other events to detect EOF/HUP/ERR
         events |= EPOLLRDHUP | EPOLLHUP | EPOLLERR;
     }
-    event.events = events;
+    event.events = events | EPOLLET;
     event.data.ptr = p;
     int ret;
     do {
@@ -434,7 +439,7 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
              // if we are disabling readable, we need to add the other events to detect EOF/HUP/ERR
             events |= EPOLLRDHUP | EPOLLHUP | EPOLLERR;
         }
-        event.events = events;
+        event.events = events | EPOLLET;
         event.data.ptr = p;
         int rc;
         do {

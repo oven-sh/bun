@@ -192,7 +192,7 @@ download_file() {
 	file_tmp_dir="$(create_tmp_directory)"
 	file_tmp_path="$file_tmp_dir/$(basename "$file_url")"
 
-	fetch "$file_url" >"$file_tmp_path"
+	fetch "$file_url" > "$file_tmp_path"
 	grant_to_user "$file_tmp_path"
 
 	print "$file_tmp_path"
@@ -204,14 +204,14 @@ download_and_verify_file() {
 	hash="$2"
 
 	path=$(download_file "$file_url")
-	execute sh -c 'echo "'"$hash  $path"'" | sha256sum -c' >/dev/null 2>&1
+	execute sh -c 'echo "'"$hash  $path"'" | sha256sum -c -' >/dev/null 2>&1
 
 	print "$path"
 }
 
 append_to_profile() {
 	content="$1"
-	profiles=".profile .zprofile .bash_profile .bashrc .zshrc"
+	profiles=".profile .zprofile .bash_profile .bashrc .zshrc .cshrc"
 	for profile in $profiles; do
 		for profile_path in "$current_home/$profile" "$home/$profile"; do
 			if [ "$ci" = "1" ] || [ -f "$profile_path" ]; then
@@ -275,11 +275,14 @@ check_operating_system() {
 
 	os="$("$uname" -s)"
 	case "$os" in
-	Linux*)
+	Linux)
 		os="linux"
 		;;
-	Darwin*)
+	Darwin)
 		os="darwin"
+		;;
+	FreeBSD)
+		os="freebsd"
 		;;
 	*)
 		error "Unsupported operating system: $os"
@@ -342,6 +345,11 @@ check_operating_system() {
 			fi
 			;;
 		esac
+		;;
+	freebsd)
+		. /etc/os-release
+		distro="$ID"
+		release="$VERSION_ID"
 		;;
 	esac
 
@@ -426,6 +434,9 @@ check_package_manager() {
 			error "No package manager found. (apt, dnf, yum, apk)"
 		fi
 		;;
+	freebsd)
+		pm="pkg"
+		;;
 	esac
 	print "Package manager: $pm"
 
@@ -437,6 +448,12 @@ check_package_manager() {
 		;;
 	apk)
 		package_manager update
+		;;
+	pkg)
+		mkdir -p /usr/local/etc/pkg/repos
+		echo 'FreeBSD: { url: "pkg+http://pkg.FreeBSD.org/${ABI}/quarterly" }' > /usr/local/etc/pkg/repos/FreeBSD.conf
+		export ASSUME_ALWAYS_YES=yes
+		package_manager update -f
 		;;
 	esac
 }
@@ -478,6 +495,9 @@ check_user() {
 }
 
 check_ulimit() {
+	if ! [ "$os" = "linux" ]; then
+		return
+	fi
 	if ! [ "$ci" = "1" ]; then
 		return
 	fi
@@ -588,6 +608,9 @@ package_manager() {
 	brew)
 		execute_as_user brew "$@"
 		;;
+	pkg)
+		execute_sudo pkg "$@"
+		;;
 	*)
 		error "Unsupported package manager: $pm"
 		;;
@@ -645,6 +668,9 @@ install_packages() {
 			--no-progress \
 			"$@"
 		;;
+	pkg)
+		package_manager install "$@"
+		;;
 	*)
 		error "Unsupported package manager: $pm"
 		;;
@@ -688,12 +714,56 @@ install_common_software() {
 				apt-transport-https \
 				software-properties-common
 		fi
+		# https://packages.debian.org
+		# https://packages.ubuntu.com
 		install_packages \
+			bash \
+			ca-certificates \
+			curl \
+			htop \
+			gnupg \
+			git \
+			unzip \
+			wget \
 			libc6-dbg
 		;;
 	dnf)
+		# https://packages.fedoraproject.org
 		install_packages \
+			bash \
+			ca-certificates \
+			curl \
+			htop \
+			gnupg \
+			git \
+			unzip \
+			wget \
 			dnf-plugins-core
+		;;
+	apk)
+		# https://pkgs.alpinelinux.org/packages
+		install_packages \
+			bash \
+			ca-certificates \
+			curl \
+			htop \
+			gnupg \
+			git \
+			unzip \
+			wget \
+		;;
+	pkg)
+		# https://www.freshports.org
+		install_packages \
+			shells/bash \
+			ftp/curl \
+			sysutils/htop \
+			security/gnupg \
+			devel/git \
+			archivers/unzip \
+			ftp/wget \
+			editors/vim \
+			sysutils/neofetch \
 		;;
 	esac
 
@@ -717,16 +787,6 @@ install_common_software() {
 	if [ -f "$crb" ]; then
 		execute "$crb" enable
 	fi
-
-	install_packages \
-		bash \
-		ca-certificates \
-		curl \
-		htop \
-		gnupg \
-		git \
-		unzip \
-		wget
 
 	install_rosetta
 	install_nodejs
@@ -755,6 +815,9 @@ install_nodejs() {
 	linux)
 		nodejs_platform="linux"
 		;;
+	freebsd)
+		nodejs_platform="freebsd"
+		;;
 	*)
 		error "Unsupported OS for Node.js download: $os"
 		;;
@@ -772,6 +835,13 @@ install_nodejs() {
 		error "Unsupported architecture for Node.js download: $arch"
 		;;
 	esac
+
+	if [ "$os" = "freebsd" ]
+	then
+		# TODO: use nodejs_version_exact
+		install_packages "www/node$(nodejs_version)" "www/npm-node$(nodejs_version)"
+		return
+	fi
 
 	case "$abi" in
 	musl)
@@ -862,6 +932,11 @@ install_nodejs() {
 }
 
 install_nodejs_headers() {
+	if [ "$os" = "freebsd" ]
+	then
+		return
+	fi
+
 	nodejs_version="$(nodejs_version_exact)"
 	nodejs_headers_tar="$(download_file "https://nodejs.org/download/release/v$nodejs_version/node-v$nodejs_version-headers.tar.gz")"
 	nodejs_headers_dir="$(dirname "$nodejs_headers_tar")"
@@ -876,6 +951,11 @@ install_nodejs_headers() {
 }
 
 setup_node_gyp_cache() {
+	if [ "$os" = "freebsd" ]
+	then
+		return
+	fi
+
 	nodejs_version="$1"
 	headers_source="$2"
 
@@ -914,6 +994,12 @@ bun_version_exact() {
 }
 
 install_bun() {
+	if [ "$os" = "freebsd" ]
+	then
+		# TODO: need to complete bun bootstrap for for this work
+		return
+	fi
+
 	install_packages unzip
 
 	case "$pm" in
@@ -964,6 +1050,9 @@ install_cmake() {
 		execute_sudo "$sh" "$cmake_script" \
 			--skip-license \
 			--prefix=/usr
+		;;
+	freebsd-pkg)
+		install_packages devel/cmake
 		;;
 	esac
 }
@@ -1027,12 +1116,27 @@ install_build_essentials() {
 		;;
 	esac
 
-	install_packages \
-		make \
-		python3 \
-		libtool \
-		ruby \
-		perl
+	case "$os" in
+		linux)
+			install_packages \
+				make \
+				python3 \
+				libtool \
+				ruby \
+				perl \
+			;;
+		freebsd)
+			install_packages \
+				devel/ninja \
+				devel/pkgconf \
+				lang/go \
+				devel/gmake \
+				lang/python3 \
+				devel/libtool \
+				lang/ruby33 \
+				perl5 \
+			;;
+	esac
 
 	install_cmake
 	install_llvm
@@ -1071,6 +1175,13 @@ install_llvm() {
 			"scudo-malloc" \
 			"lld$(llvm_version)" \
 			"llvm$(llvm_version)-dev" # Ensures llvm-symbolizer is installed
+		;;
+	esac
+
+	case "$os" in
+		freebsd)
+			# TODO: use llvm_version_exact
+			install_packages "devel/llvm$(llvm_version)"
 		;;
 	esac
 }
@@ -1150,6 +1261,14 @@ install_gcc() {
 }
 
 install_sccache() {
+	case "$os" in
+		linux)
+			;;
+		*)
+			return
+			;;
+	esac
+
 	# Alright, look, this function is cobbled together but it's only as cobbled
 	# together as this whole script is.
 	#
@@ -1211,6 +1330,11 @@ install_docker() {
 		if ! [ -d "/Applications/Docker.app" ]; then
 			package_manager install docker --cask
 		fi
+		;;
+	pkg)
+		install_packages \
+			sysutils/docker \
+			sysutils/docker-compose \
 		;;
 	*)
 		case "$distro-$release" in
@@ -1306,10 +1430,17 @@ install_tailscale() {
 		execute_as_user go install tailscale.com/cmd/tailscale{,d}@latest
 		append_to_path "$home/go/bin"
 		;;
+	freebsd)
+		install_packages security/tailscale
+		;;
 	esac
 }
 
 install_fuse_python() {
+	if ! [ "$os" = "linux" ]; then
+		return
+	fi
+
 	# only linux needs this
 	case "$pm" in
 	apk)
@@ -1514,6 +1645,10 @@ install_chromium() {
 			xorg-x11-fonts-Type1 \
 			xorg-x11-utils
 		;;
+	pkg)
+		install_packages \
+			www/chromium \
+		;;
 	esac
 
 	case "$distro" in
@@ -1526,23 +1661,40 @@ install_chromium() {
 
 install_age() {
 	# we only use this to encrypt core dumps, which we only have on Linux
+	age_version="1.2.1"
 	case "$os" in
 	linux)
-		age_tarball=""
 		case "$arch" in
 		x64)
-			age_tarball="$(download_and_verify_file https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-amd64.tar.gz 7df45a6cc87d4da11cc03a539a7470c15b1041ab2b396af088fe9990f7c79d50)"
+			age_arch="amd64"
+			age_hash="7df45a6cc87d4da11cc03a539a7470c15b1041ab2b396af088fe9990f7c79d50"
 			;;
 		aarch64)
-			age_tarball="$(download_and_verify_file https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-arm64.tar.gz 57fd79a7ece5fe501f351b9dd51a82fbee1ea8db65a8839db17f5c080245e99f)"
+			age_arch="arm64"
+			age_hash="57fd79a7ece5fe501f351b9dd51a82fbee1ea8db65a8839db17f5c080245e99f"
+			;;
+		*)
+			error "Unsupported platform: $os-$arch"
 			;;
 		esac
-
-		age_extract_dir="$(create_tmp_directory)"
-		execute tar -C "$age_extract_dir" -zxf "$age_tarball" age/age
-		move_to_bin "$age_extract_dir/age/age"
+		;;
+	freebsd)
+		case "$arch" in
+		x64)
+			age_arch="amd64"
+			age_hash="943a7510a9973a1e589b913a70228aa1361a63cde39e3ed581435a4d4802df29"
+			;;
+		*)
+			error "Unsupported platform: $os-$arch"
+			;;
+		esac
 		;;
 	esac
+
+	age_tarball="$(download_and_verify_file https://github.com/FiloSottile/age/releases/download/v$age_version/age-v$age_version-$os-$age_arch.tar.gz "$age_hash")"
+	age_extract_dir="$(create_tmp_directory)"
+	execute tar -C "$age_extract_dir" -zxf "$age_tarball" age/age
+	move_to_bin "$age_extract_dir/age/age"
 }
 
 configure_core_dumps() {

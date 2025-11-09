@@ -1507,10 +1507,98 @@ pub fn VisitExpr(
                     arg.* = p.visitExpr(arg.*);
                 }
 
+                // Check if this is a new Worker() call and transform it
+                // Only do this when worker_entrypoint feature is enabled
+                if (p.options.features.worker_entrypoint and
+                    p.worker_ref != Ref.None and
+                    e_.target.data == .e_identifier)
+                {
+                    const target_ref = e_.target.data.e_identifier.ref;
+
+                    // Check if this is the Worker symbol we declared
+                    if (target_ref.eql(p.worker_ref)) {
+                        const args = e_.args.slice();
+
+                        // Preserve semantics when extra arguments (and their side effects) are present
+                        // Worker() only takes 2 arguments, so >2 means there are side-effecting expressions
+                        if (args.len > 2) {
+                            return expr;
+                        }
+
+                        // Try to extract worker path from first argument
+                        var worker_path_string: ?[]const u8 = null;
+                        var worker_path_loc: logger.Loc = undefined;
+
+                        if (args.len > 0) {
+                            // Check if first argument is a string literal
+                            if (args[0].data == .e_string) {
+                                worker_path_string = args[0].data.e_string.slice(p.allocator);
+                                worker_path_loc = args[0].loc;
+                            }
+                            // Check if first argument is new URL(string, import.meta.url)
+                            else if (args[0].data == .e_new) {
+                                const new_expr = args[0].data.e_new;
+                                // Check if it's new URL(...)
+                                if (new_expr.target.data == .e_identifier) {
+                                    const url_ref = new_expr.target.data.e_identifier.ref;
+                                    if (url_ref.innerIndex() < p.symbols.items.len) {
+                                        const url_symbol = &p.symbols.items[url_ref.innerIndex()];
+                                        // Check if this is the global URL constructor
+                                        if (bun.strings.eqlComptime(url_symbol.original_name, "URL") and
+                                            url_symbol.namespace_alias == null and
+                                            url_symbol.import_item_status == .none)
+                                        {
+                                            const url_args = new_expr.args.slice();
+                                            // Check for new URL(string_literal, import.meta.url)
+                                            if (url_args.len >= 2 and url_args[0].data == .e_string) {
+                                                // Check if second arg is import.meta.url
+                                                const is_import_meta_url = blk: {
+                                                    if (url_args[1].data != .e_dot) break :blk false;
+                                                    const dot = url_args[1].data.e_dot;
+                                                    if (!bun.strings.eqlComptime(dot.name, "url")) break :blk false;
+                                                    if (dot.target.data != .e_import_meta) break :blk false;
+                                                    break :blk true;
+                                                };
+
+                                                if (is_import_meta_url) {
+                                                    // Extract the relative path from new URL('./path', import.meta.url)
+                                                    // The bundler's import resolver will handle path resolution
+                                                    worker_path_string = url_args[0].data.e_string.slice(p.allocator);
+                                                    worker_path_loc = url_args[0].loc;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // If we got a worker path, create the e_new_worker expression
+                        if (worker_path_string) |worker_string| {
+                            const import_record_index = p.addImportRecord(.worker, worker_path_loc, worker_string);
+
+                            // Create e_new_worker expression
+                            return Expr.init(E.NewWorker, E.NewWorker{
+                                .import_record_index = @intCast(import_record_index),
+                                .options = if (args.len > 1) args[1] else Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = args[0].loc },
+                                .close_parens_loc = e_.close_parens_loc,
+                            }, expr.loc);
+                        }
+                    }
+                }
+
                 if (p.options.features.minify_syntax) {
                     if (KnownGlobal.minifyGlobalConstructor(p.allocator, e_, p.symbols.items, expr.loc, p.options.features.minify_whitespace)) |minified| {
                         return minified;
                     }
+                }
+                return expr;
+            }
+            pub fn e_new_worker(p: *P, expr: Expr, _: ExprIn) Expr {
+                const e_ = expr.data.e_new_worker;
+                // Visit the options expression if it's not missing
+                if (e_.options.data != .e_missing) {
+                    e_.options = p.visitExpr(e_.options);
                 }
                 return expr;
             }

@@ -154,6 +154,32 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
 }
 
 pub const prompt = struct {
+    const KEY_CTRL_C = 3;
+    const KEY_CTRL_D = 4;
+    const KEY_BACKSPACE = 8;
+    const KEY_TAB = 9;
+    const KEY_ENTER = 13;
+    const KEY_ESC = 27;
+    const KEY_DEL = 127;
+
+    fn handleBackspace(input: *std.ArrayList(u8), cursor_index: *usize) void {
+        if (cursor_index.* > 0) {
+            const old_cursor_index = cursor_index.*;
+            const prev_codepoint_start = utf8Prev(input.items, old_cursor_index);
+
+            if (prev_codepoint_start) |start| {
+                var i: usize = 0;
+                while (i < old_cursor_index - start) : (i += 1) {
+                    _ = input.orderedRemove(start);
+                }
+                cursor_index.* = start;
+            } else {
+                _ = input.orderedRemove(old_cursor_index - 1);
+                cursor_index.* -= 1;
+            }
+        }
+    }
+
     fn utf8Prev(slice: []const u8, index: usize) ?usize {
         if (index == 0) return null;
         var i = index - 1;
@@ -427,14 +453,13 @@ pub const prompt = struct {
                     };
 
                     switch (byte) {
-                        // Tab (ASCII 9)
-                        9 => {
+                        KEY_TAB => {
                             try input.insert(cursor_index, byte);
                             cursor_index += 1;
                         },
 
                         // End of input
-                        '\n', '\r' => {
+                        '\n', KEY_ENTER => {
                             if (input.items.len == 0 and !has_default) return jsc.ZigString.init("").toJS(globalObject);
                             if (input.items.len == 0) return default;
 
@@ -443,53 +468,23 @@ pub const prompt = struct {
                             return result.toJS(globalObject);
                         },
 
-                        // Backspace (ASCII 8) or DEL (ASCII 127)
-                        8, 127 => {
-                            if (cursor_index > 0) {
-                                const old_cursor_index = cursor_index;
-                                const prev_codepoint_start = utf8Prev(input.items, old_cursor_index);
+                        // Backspace
+                        KEY_BACKSPACE, KEY_DEL => handleBackspace(&input, &cursor_index),
 
-                                if (prev_codepoint_start) |start| {
-                                    // Remove the codepoint bytes
-                                    var i: usize = 0;
-                                    while (i < old_cursor_index - start) : (i += 1) {
-                                        _ = input.orderedRemove(start);
-                                    }
-                                    cursor_index = start;
-                                } else {
-                                    // Fallback for invalid UTF-8 or start of string: delete one byte
-                                    _ = input.orderedRemove(old_cursor_index - 1);
-                                    cursor_index -= 1;
-                                }
-                            }
-                        }, // Ctrl+C
-                        3 => {
+                        // Ctrl+C
+                        KEY_CTRL_C => {
                             // This will trigger the defer and restore terminal settings
                             pending_sigint = true;
                             return .null;
                         },
 
                         // Escape sequence (e.g., arrow keys, alt+backspace)
-                        27 => block: {
+                        KEY_ESC => block: {
                             const byte2 = reader.readByte() catch break :block;
 
                             // Alt+Backspace -> treat as regular backspace
-                            if (byte2 == 127 or byte2 == 8) {
-                                if (cursor_index > 0) {
-                                    const old_cursor_index = cursor_index;
-                                    const prev_codepoint_start = utf8Prev(input.items, old_cursor_index);
-
-                                    if (prev_codepoint_start) |start| {
-                                        var i: usize = 0;
-                                        while (i < old_cursor_index - start) : (i += 1) {
-                                            _ = input.orderedRemove(start);
-                                        }
-                                        cursor_index = start;
-                                    } else {
-                                        _ = input.orderedRemove(old_cursor_index - 1);
-                                        cursor_index -= 1;
-                                    }
-                                }
+                            if (byte2 == KEY_DEL or byte2 == KEY_BACKSPACE) {
+                                handleBackspace(&input, &cursor_index);
                                 break :block; // Exit escape sequence handler to allow redraw
                             }
 
@@ -549,7 +544,7 @@ pub const prompt = struct {
                         },
 
                         // Ctrl+D (EOT)
-                        4 => {
+                        KEY_CTRL_D => {
                             return .null;
                         },
 

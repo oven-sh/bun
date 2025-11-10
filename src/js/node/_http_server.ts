@@ -611,6 +611,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_res.end();
           socket.destroy();
         } else if (is_upgrade) {
+          // Enable streaming for WebSocket/upgrade connections
+          socket[kEnableStreaming](true);
           server.emit("upgrade", http_req, socket, kEmptyBuffer);
           if (!socket._httpMessage) {
             if (canUseInternalAssignSocket) {

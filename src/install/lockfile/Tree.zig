@@ -730,7 +730,7 @@ fn hoistDependency(
         }
 
         if (as_defined and !dep.behavior.isPeer()) {
-            builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
+            builder.maybeReportError("Package \"{f}@{f}\" has a dependency loop\n  Resolution: \"{f}@{f}\"\n  Dependency: \"{f}@{f}\"", .{
                 builder.packageName(package_id),
                 builder.packageVersion(package_id),
                 builder.packageName(res_id),
@@ -772,7 +772,7 @@ pub const FillItem = struct {
     hoist_root_id: Tree.Id,
 };
 
-pub const TreeFiller = std.fifo.LinearFifo(FillItem, .Dynamic);
+pub const TreeFiller = bun.LinearFifo(FillItem, .Dynamic);
 
 const string = []const u8;
 const stringZ = [:0]const u8;

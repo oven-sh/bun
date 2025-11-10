@@ -397,7 +397,7 @@ pub const TSConfigJSON = struct {
         // foo.bar.baz == 3
         // foo.bar.baz.bun == 4
         const parts_count = std.mem.count(u8, text, ".") + @as(usize, @intFromBool(text[text.len - 1] != '.'));
-        var parts = std.ArrayList(string).initCapacity(allocator, parts_count) catch unreachable;
+        var parts = std.array_list.Managed(string).initCapacity(allocator, parts_count) catch unreachable;
 
         if (parts_count == 1) {
             if (!js_lexer.isIdentifier(text)) {

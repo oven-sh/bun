@@ -143,7 +143,7 @@ const advanced = struct {
 };
 
 const json = struct {
-    fn jsonIPCDataStringFreeCB(context: *bool, _: *anyopaque, _: u32) callconv(.C) void {
+    fn jsonIPCDataStringFreeCB(context: *bool, _: *anyopaque, _: u32) callconv(.c) void {
         context.* = true;
     }
 
@@ -410,7 +410,7 @@ pub const WindowsWrite = struct {
     }
 };
 pub const SendQueue = struct {
-    queue: std.ArrayList(SendHandle),
+    queue: std.array_list.Managed(SendHandle),
     waiting_for_ack: ?SendHandle = null,
 
     retry_count: u32 = 0,
@@ -530,7 +530,7 @@ pub const SendQueue = struct {
         this._socketClosed();
         this.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, _onAfterIPCClosed).init(this));
     }
-    fn _windowsOnClosed(windows: *uv.Pipe) callconv(.C) void {
+    fn _windowsOnClosed(windows: *uv.Pipe) callconv(.c) void {
         log("SendQueue#_windowsOnClosed", .{});
         bun.default_allocator.destroy(windows);
     }
@@ -693,7 +693,7 @@ pub const SendQueue = struct {
             log("IPC call continueSend() from empty item", .{});
             return continueSend(this, global, reason);
         }
-        // log("sending ipc message: '{'}' (has_handle={})", .{ std.zig.fmtEscapes(to_send), first.handle != null });
+        // log("sending ipc message: '{'}' (has_handle={})", .{ std.zig.fmtString(to_send), first.handle != null });
         bun.assert(!this.write_in_progress);
         this.write_in_progress = true;
         this._write(to_send, if (first.handle) |handle| handle.fd else null);
@@ -764,7 +764,7 @@ pub const SendQueue = struct {
 
         const payload_length = serialize(self.mode, &msg.data, global, value, is_internal) catch return .failure;
         bun.assert(msg.data.list.items.len == start_offset + payload_length);
-        // log("enqueueing ipc message: '{'}'", .{std.zig.fmtEscapes(msg.data.list.items[start_offset..])});
+        // log("enqueueing ipc message: '{'}'", .{std.zig.fmtString(msg.data.list.items[start_offset..])});
 
         log("IPC call continueSend() from serializeAndSend", .{});
         self.continueSend(global, .new_message_appended);
@@ -779,7 +779,7 @@ pub const SendQueue = struct {
             if (item.data.list.items.len > 100) {
                 log(" {d}|{d}", .{ item.data.cursor, item.data.list.items.len - item.data.cursor });
             } else {
-                log("  '{'}'|'{'}'", .{ std.zig.fmtEscapes(item.data.list.items[0..item.data.cursor]), std.zig.fmtEscapes(item.data.list.items[item.data.cursor..]) });
+                log("  \"{f}\"|\"{f}\"", .{ std.zig.fmtString(item.data.list.items[0..item.data.cursor]), std.zig.fmtString(item.data.list.items[item.data.cursor..]) });
             }
         }
     }
@@ -863,7 +863,7 @@ pub const SendQueue = struct {
         };
     }
 
-    fn onServerPipeClose(this: *uv.Pipe) callconv(.C) void {
+    fn onServerPipeClose(this: *uv.Pipe) callconv(.c) void {
         // safely free the pipes
         bun.default_allocator.destroy(this);
     }
@@ -1033,8 +1033,8 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
         defer formatter.deinit();
         switch (message) {
             .version => |version| log("received ipc message: version: {}", .{version}),
-            .data => |jsvalue| log("received ipc message: {}", .{jsvalue.toFmt(&formatter)}),
-            .internal => |jsvalue| log("received ipc message: internal: {}", .{jsvalue.toFmt(&formatter)}),
+            .data => |jsvalue| log("received ipc message: {f}", .{jsvalue.toFmt(&formatter)}),
+            .internal => |jsvalue| log("received ipc message: internal: {f}", .{jsvalue.toFmt(&formatter)}),
         }
     }
     var internal_command: ?IPCCommand = null;
@@ -1126,7 +1126,7 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
 
 fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
     var data = all_data;
-    // log("onData '{'}'", .{std.zig.fmtEscapes(data)});
+    // log("onData '{'}'", .{std.zig.fmtString(data)});
 
     // In the VirtualMachine case, `globalThis` is an optional, in case
     // the vm is freed before the socket closes.

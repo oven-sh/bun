@@ -104,7 +104,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
                 bun.Output.panic(
                     \\<b>{d} JavaScript functions<r> were called outside of the microtask queue without draining microtasks.
                     \\
-                    \\Last function name: {}
+                    \\Last function name: {f}
                     \\
                     \\Use EventLoop.runCallback() to run JavaScript functions outside of the microtask queue.
                     \\

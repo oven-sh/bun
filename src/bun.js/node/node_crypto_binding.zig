@@ -485,7 +485,7 @@ pub fn setEngine(global: *JSGlobalObject, _: *jsc.CallFrame) JSError!JSValue {
 
 fn forEachHash(_: *const BoringSSL.EVP_MD, maybe_from: ?[*:0]const u8, _: ?[*:0]const u8, ctx: *anyopaque) callconv(.c) void {
     const from = maybe_from orelse return;
-    const hashes: *bun.CaseInsensitiveASCIIStringArrayHashMap(void) = @alignCast(@ptrCast(ctx));
+    const hashes: *bun.CaseInsensitiveASCIIStringArrayHashMap(void) = @ptrCast(@alignCast(ctx));
     bun.handleOom(hashes.put(bun.span(from), {}));
 }
 
@@ -494,7 +494,7 @@ fn getHashes(global: *JSGlobalObject, _: *jsc.CallFrame) JSError!JSValue {
     defer hashes.deinit();
 
     // TODO(dylan-conway): cache the names
-    BoringSSL.EVP_MD_do_all_sorted(&forEachHash, @alignCast(@ptrCast(&hashes)));
+    BoringSSL.EVP_MD_do_all_sorted(&forEachHash, @ptrCast(@alignCast(&hashes)));
 
     const array = try JSValue.createEmptyArray(global, hashes.count());
 

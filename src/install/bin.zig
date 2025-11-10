@@ -214,26 +214,26 @@ pub const Bin = extern struct {
         indent: if (style == .multi_line) *u32 else void,
         buf: string,
         extern_strings: []const ExternalString,
-        writer: anytype,
-        writeIndent: *const fn (anytype, *u32) @TypeOf(writer).Error!void,
-    ) @TypeOf(writer).Error!void {
+        writer: *std.Io.Writer,
+        writeIndent: *const fn (*std.Io.Writer, *u32) std.Io.Writer.Error!void,
+    ) std.Io.Writer.Error!void {
         bun.debugAssert(this.tag != .none);
         if (comptime style == .single_line) {
             switch (this.tag) {
                 .none => {},
                 .file => {
-                    try writer.print("{}", .{this.value.file.fmtJson(buf, .{})});
+                    try writer.print("{f}", .{this.value.file.fmtJson(buf, .{})});
                 },
                 .named_file => {
                     try writer.writeByte('{');
-                    try writer.print(" {}: {} ", .{
+                    try writer.print(" {f}: {f} ", .{
                         this.value.named_file[0].fmtJson(buf, .{}),
                         this.value.named_file[1].fmtJson(buf, .{}),
                     });
                     try writer.writeByte('}');
                 },
                 .dir => {
-                    try writer.print("{}", .{this.value.dir.fmtJson(buf, .{})});
+                    try writer.print("{f}", .{this.value.dir.fmtJson(buf, .{})});
                 },
                 .map => {
                     try writer.writeByte('{');
@@ -245,7 +245,7 @@ pub const Bin = extern struct {
                             try writer.writeByte(',');
                         }
                         first = false;
-                        try writer.print(" {}: {}", .{
+                        try writer.print(" {f}: {f}", .{
                             list[i].value.fmtJson(buf, .{}),
                             list[i + 1].value.fmtJson(buf, .{}),
                         });
@@ -260,13 +260,13 @@ pub const Bin = extern struct {
         switch (this.tag) {
             .none => {},
             .file => {
-                try writer.print("{}", .{this.value.file.fmtJson(buf, .{})});
+                try writer.print("{f}", .{this.value.file.fmtJson(buf, .{})});
             },
             .named_file => {
                 try writer.writeAll("{\n");
                 indent.* += 1;
                 try writeIndent(writer, indent);
-                try writer.print("{}: {},\n", .{
+                try writer.print("{f}: {f},\n", .{
                     this.value.named_file[0].fmtJson(buf, .{}),
                     this.value.named_file[1].fmtJson(buf, .{}),
                 });
@@ -275,7 +275,7 @@ pub const Bin = extern struct {
                 try writer.writeByte('}');
             },
             .dir => {
-                try writer.print("{}", .{this.value.dir.fmtJson(buf, .{})});
+                try writer.print("{f}", .{this.value.dir.fmtJson(buf, .{})});
             },
             .map => {
                 try writer.writeByte('{');
@@ -290,7 +290,7 @@ pub const Bin = extern struct {
                         try writer.writeByte('\n');
                     }
                     try writeIndent(writer, indent);
-                    try writer.print("{}: {},\n", .{
+                    try writer.print("{f}: {f},\n", .{
                         list[i].value.fmtJson(buf, .{}),
                         list[i + 1].value.fmtJson(buf, .{}),
                     });
@@ -736,8 +736,9 @@ pub const Bin = extern struct {
 
             const shebang = shebang: {
                 const first_content_chunk = contents: {
-                    const reader = target.stdFile().reader();
-                    const read = reader.read(&read_in_buf) catch break :contents null;
+                    var reader = target.stdFile().readerStreaming(&.{});
+                    var readvec_buf: []u8 = &read_in_buf;
+                    const read = reader.interface.readVec((&readvec_buf)[0..1]) catch break :contents null;
                     if (read == 0) break :contents null;
                     break :contents read_in_buf[0..read];
                 };

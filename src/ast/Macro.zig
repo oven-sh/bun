@@ -584,7 +584,7 @@ pub const Runner = struct {
                 return result;
             }
 
-            pub fn call() callconv(.C) void {
+            pub fn call() callconv(.c) void {
                 const call_args_copy = call_args;
                 const local_result = @call(.auto, Run.runAsync, call_args_copy);
                 result = local_result;

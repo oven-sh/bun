@@ -511,7 +511,7 @@ fn onEntryStarted(_: *Execution, entry: *ExecutionEntry) void {
     defer groupLog.end();
     if (entry.timeout != 0) {
         groupLog.log("-> entry.timeout: {}", .{entry.timeout});
-        entry.timespec = bun.timespec.msFromNow(entry.timeout);
+        entry.timespec = bun.timespec.msFromNow(.force_real_time, entry.timeout);
     } else {
         groupLog.log("-> entry.timeout: 0", .{});
         entry.timespec = .epoch;
@@ -519,7 +519,7 @@ fn onEntryStarted(_: *Execution, entry: *ExecutionEntry) void {
 }
 fn onEntryCompleted(_: *Execution, _: *ExecutionEntry) void {}
 fn onSequenceCompleted(this: *Execution, sequence: *ExecutionSequence) void {
-    const elapsed_ns = if (sequence.started_at.eql(&.epoch)) 0 else sequence.started_at.sinceNow();
+    const elapsed_ns = if (sequence.started_at.eql(&.epoch)) 0 else sequence.started_at.sinceNow(.force_real_time);
     switch (sequence.expect_assertions) {
         .not_set => {},
         .at_least_one => if (sequence.expect_call_count == 0 and sequence.result.isPass(.pending_is_pass)) {

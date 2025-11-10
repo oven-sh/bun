@@ -3203,7 +3203,7 @@ pub const timespec = extern struct {
         return getRoughTickCount(mock_mode);
     }
 
-    pub fn sinceNow(comptime mock_mode: MockMode, start: *const timespec) u64 {
+    pub fn sinceNow(start: *const timespec, comptime mock_mode: MockMode) u64 {
         return now(mock_mode).duration(start).ns();
     }
 
@@ -3242,6 +3242,11 @@ pub const timespec = extern struct {
     }
     pub fn minIgnoreEpoch(a: timespec, b: timespec) timespec {
         return if (a.orderIgnoreEpoch(b) == .lt) a else b;
+    }
+
+    pub fn isMockedTime(this: *const timespec) bool {
+        _ = this;
+        // TODO
     }
 };
 

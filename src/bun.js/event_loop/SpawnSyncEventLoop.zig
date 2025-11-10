@@ -142,7 +142,7 @@ fn prepareTimerOnWindows(this: *SpawnSyncEventLoop, ts: *const bun.timespec) voi
 /// Tick the isolated event loop with an optional timeout
 /// This is similar to the main event loop's tick but completely isolated
 pub fn tickWithTimeout(this: *SpawnSyncEventLoop, timeout: ?*const bun.timespec) TickState {
-    const duration: ?*const bun.timespec = if (timeout) |ts| &ts.duration(&.now()) else null;
+    const duration: ?*const bun.timespec = if (timeout) |ts| &ts.duration(&.now(.allow_mocked_time)) else null;
     if (bun.Environment.isWindows) {
         if (duration) |ts| {
             prepareTimerOnWindows(this, ts);

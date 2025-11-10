@@ -710,7 +710,7 @@ pub fn spawnMaybeSync(
         // This must go before other things happen so that the exit handler is
         // registered before onProcessExit can potentially be called.
         if (timeout) |timeout_val| {
-            subprocess.event_loop_timer.next = bun.timespec.msFromNow(timeout_val);
+            subprocess.event_loop_timer.next = bun.timespec.msFromNow(.allow_mocked_time, timeout_val);
             globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
             subprocess.setEventLoopTimerRefd(true);
         }

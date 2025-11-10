@@ -743,7 +743,7 @@ pub const JSValkeyClient = struct {
         const vm = this.client.vm;
 
         // Set up timer and add to event loop
-        timer.next = bun.timespec.msFromNow(@intCast(next_timeout_ms));
+        timer.next = bun.timespec.msFromNow(.allow_mocked_time, @intCast(next_timeout_ms));
         vm.timer.insert(timer);
         this.ref();
     }

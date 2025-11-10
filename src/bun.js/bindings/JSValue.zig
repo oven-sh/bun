@@ -25,7 +25,7 @@ pub const JSValue = enum(i64) {
     pub const is_pointer = false;
     pub const JSType = @import("./JSType.zig").JSType;
 
-    pub fn format(_: JSValue, comptime _: []const u8, _: std.fmt.FormatOptions, _: anytype) !void {
+    pub fn format(_: JSValue, _: *std.Io.Writer) !void {
         @compileError("Formatting a JSValue directly is not allowed. Use jsc.ConsoleObject.Formatter");
     }
 
@@ -80,9 +80,9 @@ pub const JSValue = enum(i64) {
         value: JSValue,
         is_symbol: bool,
         is_private_symbol: bool,
-    ) callconv(.C) void;
+    ) callconv(.c) void;
 
-    extern fn JSC__JSValue__forEachPropertyNonIndexed(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.C) void) void;
+    extern fn JSC__JSValue__forEachPropertyNonIndexed(JSValue0: JSValue, arg1: *JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*JSGlobalObject, ?*anyopaque, *ZigString, JSValue, bool, bool) callconv(.c) void) void;
 
     pub fn forEachPropertyNonIndexed(
         this: JSValue,
@@ -540,11 +540,7 @@ pub const JSValue = enum(i64) {
         return bun.jsc.fromJSHostCall(globalObject, @src(), JSBuffer__bufferFromLength, .{ globalObject, @intCast(len) });
     }
 
-    pub fn jestSnapshotPrettyFormat(this: JSValue, out: *MutableString, globalObject: *JSGlobalObject) !void {
-        var buffered_writer = MutableString.BufferedWriter{ .context = out };
-        const writer = buffered_writer.writer();
-        const Writer = @TypeOf(writer);
-
+    pub fn jestSnapshotPrettyFormat(this: JSValue, out: *std.Io.Writer, globalObject: *JSGlobalObject) !void {
         const fmt_options = JestPrettyFormat.FormatOptions{
             .enable_colors = false,
             .add_newline = false,
@@ -557,13 +553,11 @@ pub const JSValue = enum(i64) {
             globalObject,
             @as([*]const JSValue, @ptrCast(&this)),
             1,
-            Writer,
-            Writer,
-            writer,
+            out,
             fmt_options,
         );
 
-        try buffered_writer.flush();
+        try out.flush();
     }
 
     extern fn JSBuffer__bufferFromLength(*JSGlobalObject, i64) JSValue;
@@ -727,7 +721,7 @@ pub const JSValue = enum(i64) {
         defer buf.deinit();
 
         var writer = buf.writer();
-        switch (Output.enable_ansi_colors) {
+        switch (Output.enable_ansi_colors_stderr) {
             inline else => |enabled| try writer.print(Output.prettyFmt(fmt, enabled), args),
         }
         return String.init(buf.slice()).toJS(globalThis);
@@ -832,7 +826,7 @@ pub const JSValue = enum(i64) {
             return std.math.minInt(T);
         }
 
-        if (num >= std.math.maxInt(T) or std.math.isPositiveInf(num)) {
+        if (num >= @as(f64, @as(comptime_float, std.math.maxInt(T))) or std.math.isPositiveInf(num)) {
             return std.math.maxInt(T);
         }
 
@@ -1136,9 +1130,6 @@ pub const JSValue = enum(i64) {
 
     pub fn asArrayBuffer(this: JSValue, global: *JSGlobalObject) ?ArrayBuffer {
         var out: ArrayBuffer = undefined;
-        // `ptr` might not get set if the ArrayBuffer is empty, so make sure it starts out with a
-        // defined value.
-        out.ptr = &.{};
         if (JSC__JSValue__asArrayBuffer(this, global, &out)) {
             return out;
         }
@@ -1943,10 +1934,10 @@ pub const JSValue = enum(i64) {
         value: jsc.JSValue,
         globalObject: *jsc.JSGlobalObject,
 
-        pub fn format(this: StringFormatter, comptime text: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-            const str = try this.value.toBunString(this.globalObject);
+        pub fn format(this: StringFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            const str = this.value.toBunString(this.globalObject) catch |e| return bun.deprecated.jsErrorToWriteError(e);
             defer str.deref();
-            try str.format(text, opts, writer);
+            try str.format(writer);
         }
     };
 
@@ -2119,12 +2110,12 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__isAggregateError(this, globalObject);
     }
 
-    extern fn JSC__JSValue__forEach(this: JSValue, globalObject: *JSGlobalObject, ctx: ?*anyopaque, callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void) void;
+    extern fn JSC__JSValue__forEach(this: JSValue, globalObject: *JSGlobalObject, ctx: ?*anyopaque, callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.c) void) void;
     pub fn forEach(
         this: JSValue,
         globalObject: *JSGlobalObject,
         ctx: ?*anyopaque,
-        callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void,
+        callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.c) void,
     ) bun.JSError!void {
         return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__forEach, .{ this, globalObject, ctx, callback });
     }
@@ -2134,9 +2125,9 @@ pub const JSValue = enum(i64) {
         this: JSValue,
         globalObject: *JSGlobalObject,
         ctx: anytype,
-        callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: @TypeOf(ctx), nextValue: JSValue) callconv(.C) void,
+        callback: *const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: @TypeOf(ctx), nextValue: JSValue) callconv(.c) void,
     ) bun.JSError!void {
-        const func = @as(*const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void, @ptrCast(callback));
+        const func = @as(*const fn (vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.c) void, @ptrCast(callback));
         return bun.jsc.fromJSHostCallGeneric(globalObject, @src(), JSC__JSValue__forEach, .{ this, globalObject, ctx, func });
     }
 
@@ -2178,7 +2169,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn uncheckedPtrCast(value: JSValue, comptime T: type) *T {
-        return @alignCast(@ptrCast(value.asEncoded().asPtr));
+        return @ptrCast(@alignCast(value.asEncoded().asPtr));
     }
 
     /// For any callback JSValue created in JS that you will not call *immediately*, you must wrap it
@@ -2365,7 +2356,7 @@ pub const JSValue = enum(i64) {
     pub fn dump(value: jsc.WebCore.JSValue, globalObject: *jsc.JSGlobalObject) !void {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalObject };
         defer formatter.deinit();
-        try Output.errorWriter().print("{}\n", .{value.toFmt(globalObject, &formatter)});
+        try Output.errorWriter().print("{f}\n", .{value.toFmt(globalObject, &formatter)});
         Output.flush();
     }
 

@@ -1,4 +1,4 @@
-const { Readable } = require("internal/streams/readable");
+const Readable = require("internal/streams/readable");
 
 const {
   abortedSymbol,

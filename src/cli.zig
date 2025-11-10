@@ -387,6 +387,11 @@ pub const Command = struct {
         expose_gc: bool = false,
         preserve_symlinks_main: bool = false,
         console_depth: ?u16 = null,
+        cpu_prof: struct {
+            enabled: bool = false,
+            name: []const u8 = "",
+            dir: []const u8 = "",
+        } = .{},
     };
 
     var global_cli_ctx: Context = undefined;
@@ -617,7 +622,7 @@ pub const Command = struct {
             RootCommandMatcher.case("logout") => .ReservedCommand,
             RootCommandMatcher.case("whoami") => .PackageManagerCommand,
             RootCommandMatcher.case("prune") => .ReservedCommand,
-            RootCommandMatcher.case("list") => .ReservedCommand,
+            RootCommandMatcher.case("list") => .PackageManagerCommand,
             RootCommandMatcher.case("why") => .WhyCommand,
 
             RootCommandMatcher.case("-e") => .AutoCommand,
@@ -672,7 +677,7 @@ pub const Command = struct {
                 const ctx: *ContextData = brk: {
                     if (graph.compile_exec_argv.len > 0) {
                         const original_argv_len = bun.argv.len;
-                        var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
+                        var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
                         try bun.appendOptionsEnv(graph.compile_exec_argv, &argv_list, bun.default_allocator);
                         bun.argv = argv_list.items;
 
@@ -712,7 +717,7 @@ pub const Command = struct {
             }
         }
 
-        debug("argv: [{s}]", .{bun.fmt.fmtSlice(bun.argv, ", ")});
+        debug("argv: [{f}]", .{bun.fmt.fmtSlice(bun.argv, ", ")});
 
         const tag = which();
 

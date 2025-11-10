@@ -10,12 +10,13 @@ pub const Snapshots = struct {
     passed: usize = 0,
     failed: usize = 0,
 
-    file_buf: *std.ArrayList(u8),
+    file_buf: *std.array_list.Managed(u8),
     values: *ValuesHashMap,
     counts: *bun.StringHashMap(usize),
     _current_file: ?File = null,
     snapshot_dir_path: ?string = null,
-    inline_snapshots_to_write: *std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(InlineSnapshotToWrite)),
+    inline_snapshots_to_write: *std.AutoArrayHashMap(TestRunner.File.ID, std.array_list.Managed(InlineSnapshotToWrite)),
+    last_error_snapshot_name: ?[]const u8 = null,
 
     pub const InlineSnapshotToWrite = struct {
         line: c_ulong,
@@ -87,6 +88,12 @@ pub const Snapshots = struct {
         // Prevent snapshot creation in CI environments unless --update-snapshots is used
         if (bun.detectCI()) |_| {
             if (!this.update_snapshots) {
+                // Store the snapshot name for error reporting
+                if (this.last_error_snapshot_name) |old_name| {
+                    this.allocator.free(old_name);
+                    this.last_error_snapshot_name = null;
+                }
+                this.last_error_snapshot_name = try this.allocator.dupe(u8, name_with_counter);
                 return error.SnapshotCreationNotAllowedInCI;
             }
         }
@@ -94,7 +101,7 @@ pub const Snapshots = struct {
         const estimated_length = "\nexports[`".len + name_with_counter.len + "`] = `".len + target_value.len + "`;\n".len;
         try this.file_buf.ensureUnusedCapacity(estimated_length + 10);
         try this.file_buf.writer().print(
-            "\nexports[`{}`] = `{}`;\n",
+            "\nexports[`{f}`] = `{f}`;\n",
             .{
                 strings.formatEscapes(name_with_counter, .{ .quote_char = '`' }),
                 strings.formatEscapes(target_value, .{ .quote_char = '`' }),
@@ -206,7 +213,7 @@ pub const Snapshots = struct {
     pub fn addInlineSnapshotToWrite(self: *Snapshots, file_id: TestRunner.File.ID, value: InlineSnapshotToWrite) !void {
         const gpres = try self.inline_snapshots_to_write.getOrPut(file_id);
         if (!gpres.found_existing) {
-            gpres.value_ptr.* = std.ArrayList(InlineSnapshotToWrite).init(self.allocator);
+            gpres.value_ptr.* = std.array_list.Managed(InlineSnapshotToWrite).init(self.allocator);
         }
         try gpres.value_ptr.append(value);
     }
@@ -254,7 +261,7 @@ pub const Snapshots = struct {
 
             const source = &bun.logger.Source.initPathString(test_filename, file_text);
 
-            var result_text = std.ArrayList(u8).init(arena);
+            var result_text = std.array_list.Managed(u8).init(arena);
 
             // 3. start looping, finding bytes from line/col
 
@@ -267,7 +274,7 @@ pub const Snapshots = struct {
                 if (ils.line == last_line and ils.col == last_col) {
                     if (!bun.strings.eql(ils.value, last_value)) {
                         const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
-                        try log.addErrorFmt(source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value:\n{}", .{DiffFormatter{
+                        try log.addErrorFmt(source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value:\n{f}", .{DiffFormatter{
                             .received_string = ils.value,
                             .expected_string = last_value,
                             .globalThis = vm.global,
@@ -411,7 +418,7 @@ pub const Snapshots = struct {
                     break :D source_until_final_start[line_start..][0..indent_count];
                 };
 
-                var re_indented_string = std.ArrayList(u8).init(arena);
+                var re_indented_string = std.array_list.Managed(u8).init(arena);
                 defer re_indented_string.deinit();
                 const re_indented = if (ils.value.len > 0 and ils.value[0] == '\n') blk: {
                     // append starting newline

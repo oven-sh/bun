@@ -4092,7 +4092,7 @@ saveTextLockfile = false
     stderr: stderr1,
     exited: exited1,
   } = spawn({
-    cmd: [bunExe(), "install"],
+    cmd: [bunExe(), "install", "--linker=hoisted"],
     cwd: package_dir,
     stdout: "pipe",
     stdin: "pipe",
@@ -4149,7 +4149,7 @@ saveTextLockfile = false
     stderr: stderr2,
     exited: exited2,
   } = spawn({
-    cmd: [bunExe(), "install"],
+    cmd: [bunExe(), "install", "--linker=hoisted"],
     cwd: package_dir,
     stdout: "pipe",
     stdin: "pipe",
@@ -4998,7 +4998,7 @@ saveTextLockfile = false
     stderr: stderr1,
     exited: exited1,
   } = spawn({
-    cmd: [bunExe(), "install"],
+    cmd: [bunExe(), "install", "--linker=hoisted"],
     cwd: package_dir,
     stdout: "pipe",
     stdin: "pipe",
@@ -5055,7 +5055,7 @@ saveTextLockfile = false
     stderr: stderr2,
     exited: exited2,
   } = spawn({
-    cmd: [bunExe(), "install"],
+    cmd: [bunExe(), "install", "--linker=hoisted"],
     cwd: package_dir,
     stdout: "pipe",
     stdin: "pipe",
@@ -5129,7 +5129,7 @@ saveTextLockfile = false
     stderr: stderr3,
     exited: exited3,
   } = spawn({
-    cmd: [bunExe(), "install"],
+    cmd: [bunExe(), "install", "--linker=hoisted"],
     cwd: package_dir,
     stdout: "pipe",
     stdin: "pipe",
@@ -8380,6 +8380,7 @@ it("should handle modified git resolutions in bun.lock", async () => {
       join(package_dir, "bun.lock"),
       JSON.stringify({
         "lockfileVersion": 0,
+        "configVersion": 1,
         "workspaces": {
           "": {
             "dependencies": {
@@ -8472,6 +8473,7 @@ saveTextLockfile = true
   expect(await file(join(package_dir, "bun.lock")).text()).toMatchInlineSnapshot(`
     "{
       "lockfileVersion": 1,
+      "configVersion": 1,
       "workspaces": {
         "": {
           "name": "foo",

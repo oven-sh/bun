@@ -1035,8 +1035,12 @@ pub const PipeReader = struct {
             return p.reader.buffer().items[this.written..];
         }
 
-        pub fn loop(this: *CapturedWriter) *uws.Loop {
-            return this.parent().event_loop.loop();
+        pub fn loop(this: *CapturedWriter) *bun.Async.Loop {
+            if (comptime bun.Environment.isWindows) {
+                return this.parent().event_loop.loop().uv_loop;
+            } else {
+                return this.parent().event_loop.loop();
+            }
         }
 
         pub fn parent(this: *CapturedWriter) *PipeReader {
@@ -1340,8 +1344,12 @@ pub const PipeReader = struct {
         return this.event_loop;
     }
 
-    pub fn loop(this: *PipeReader) *uws.Loop {
-        return this.event_loop.loop();
+    pub fn loop(this: *PipeReader) *bun.Async.Loop {
+        if (comptime bun.Environment.isWindows) {
+            return this.event_loop.loop().uv_loop;
+        } else {
+            return this.event_loop.loop();
+        }
     }
 
     fn deinit(this: *PipeReader) void {
@@ -1402,7 +1410,6 @@ const Output = bun.Output;
 const assert = bun.assert;
 const default_allocator = bun.default_allocator;
 const strings = bun.strings;
-const uws = bun.uws;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

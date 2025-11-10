@@ -22,7 +22,6 @@ pub const PackageInstaller = struct {
     destination_dir_subpath_buf: bun.PathBuffer = undefined,
     folder_path_buf: bun.PathBuffer = undefined,
     successfully_installed: Bitset,
-    tree_iterator: *Lockfile.Tree.Iterator(.node_modules),
     command_ctx: Command.Context,
     current_tree_id: Lockfile.Tree.Id = Lockfile.Tree.invalid_id,
 

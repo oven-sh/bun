@@ -16,6 +16,7 @@ import {
   getEmoji,
   getEnv,
   getLastSuccessfulBuild,
+  getSecret,
   isBuildkite,
   isBuildManual,
   isFork,
@@ -223,7 +224,7 @@ function getImageName(platform, options) {
  * @param {number} [limit]
  * @link https://buildkite.com/docs/pipelines/command-step#retry-attributes
  */
-function getRetry(limit = 0) {
+function getRetry() {
   return {
     manual: {
       permit_on_passed: true,
@@ -292,7 +293,7 @@ function getEc2Agent(platform, options, ec2Options) {
  * @returns {string}
  */
 function getCppAgent(platform, options) {
-  const { os, arch, distro } = platform;
+  const { os, arch } = platform;
 
   if (os === "darwin") {
     return {
@@ -313,7 +314,7 @@ function getCppAgent(platform, options) {
  * @returns {string}
  */
 function getLinkBunAgent(platform, options) {
-  const { os, arch, distro } = platform;
+  const { os, arch } = platform;
 
   if (os === "darwin") {
     return {
@@ -352,14 +353,7 @@ function getZigPlatform() {
  * @param {PipelineOptions} options
  * @returns {Agent}
  */
-function getZigAgent(platform, options) {
-  const { arch } = platform;
-
-  // Uncomment to restore to using macOS on-prem for Zig.
-  // return {
-  //   queue: "build-zig",
-  // };
-
+function getZigAgent(_platform, options) {
   return getEc2Agent(getZigPlatform(), options, {
     instanceType: "r8g.large",
   });
@@ -466,23 +460,6 @@ function getBuildCommand(target, options, label) {
  * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getBuildVendorStep(platform, options) {
-  return {
-    key: `${getTargetKey(platform)}-build-vendor`,
-    label: `${getTargetLabel(platform)} - build-vendor`,
-    agents: getCppAgent(platform, options),
-    retry: getRetry(),
-    cancel_on_build_failing: isMergeQueue(),
-    env: getBuildEnv(platform, options),
-    command: `${getBuildCommand(platform, options)} --target dependencies`,
-  };
-}
-
-/**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Step}
- */
 function getBuildCppStep(platform, options) {
   const command = getBuildCommand(platform, options);
   return {
@@ -527,9 +504,9 @@ function getBuildZigStep(platform, options) {
   const toolchain = getBuildToolchain(platform);
   return {
     key: `${getTargetKey(platform)}-build-zig`,
+    retry: getRetry(),
     label: `${getTargetLabel(platform)} - build-zig`,
     agents: getZigAgent(platform, options),
-    retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     env: getBuildEnv(platform, options),
     command: `${getBuildCommand(platform, options)} --target bun-zig --toolchain ${toolchain}`,
@@ -1225,6 +1202,43 @@ async function main() {
   const options = await getPipelineOptions();
   if (options) {
     console.log("Generated options:", options);
+  }
+
+  startGroup("Querying GitHub for files...");
+  if (options && isBuildkite && !isMainBranch()) {
+    /** @type {string[]} */
+    let allFiles = [];
+    /** @type {string[]} */
+    let newFiles = [];
+    let prFileCount = 0;
+    try {
+      console.log("on buildkite: collecting new files from PR");
+      const per_page = 50;
+      const { BUILDKITE_PULL_REQUEST } = process.env;
+      for (let i = 1; i <= 10; i++) {
+        const res = await fetch(
+          `https://api.github.com/repos/oven-sh/bun/pulls/${BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
+          { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
+        );
+        const doc = await res.json();
+        console.log(`-> page ${i}, found ${doc.length} items`);
+        if (doc.length === 0) break;
+        for (const { filename, status } of doc) {
+          prFileCount += 1;
+          allFiles.push(filename);
+          if (status !== "added") continue;
+          newFiles.push(filename);
+        }
+        if (doc.length < per_page) break;
+      }
+      console.log(`- PR ${BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
+    } catch (e) {
+      console.error(e);
+    }
+    if (allFiles.every(filename => filename.startsWith("docs/"))) {
+      console.log(`- PR is only docs, skipping tests!`);
+      return;
+    }
   }
 
   startGroup("Generating pipeline...");

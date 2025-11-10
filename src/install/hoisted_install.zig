@@ -172,7 +172,6 @@ pub fn installHoistedPackages(
                     this.allocator,
                     this.lockfile.packages.len,
                 ),
-                .tree_iterator = &iterator,
                 .command_ctx = ctx,
                 .tree_ids_to_trees_the_id_depends_on = tree_ids_to_trees_the_id_depends_on,
                 .completed_trees = completed_trees,
@@ -203,10 +202,6 @@ pub fn installHoistedPackages(
             installer.node_modules.tree_id = node_modules.tree_id;
             var remaining = node_modules.dependencies;
             installer.current_tree_id = node_modules.tree_id;
-
-            if (comptime Environment.allow_assert) {
-                bun.assert(node_modules.dependencies.len == this.lockfile.buffers.trees.items[installer.current_tree_id].dependencies.len);
-            }
 
             // cache line is 64 bytes on ARM64 and x64
             // PackageIDs are 4 bytes

@@ -165,6 +165,10 @@ pub const PosixLoop = extern struct {
     pub fn shouldEnableDateHeaderTimer(this: *const PosixLoop) bool {
         return this.internal_loop_data.shouldEnableDateHeaderTimer();
     }
+
+    pub fn deinit(this: *PosixLoop) void {
+        c.us_loop_free(this);
+    }
 };
 
 pub const WindowsLoop = extern struct {
@@ -259,6 +263,10 @@ pub const WindowsLoop = extern struct {
 
     pub fn updateDate(this: *Loop) void {
         c.uws_loop_date_header_timer_update(this);
+    }
+
+    pub fn deinit(this: *WindowsLoop) void {
+        c.us_loop_free(this);
     }
 
     fn NewHandler(comptime UserType: type, comptime callback_fn: fn (UserType) void) type {

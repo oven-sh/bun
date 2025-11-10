@@ -395,8 +395,33 @@ pub const Repository = extern struct {
             return null;
         }
 
-        if (strings.hasPrefixComptime(url, "git@") or strings.hasPrefixComptime(url, "ssh://")) {
+        if (strings.hasPrefixComptime(url, "git@")) {
             return url;
+        }
+
+        if (strings.hasPrefixComptime(url, "ssh://")) {
+            // TODO(markovejnovic): This is a stop-gap. One of the problems with the implementation
+            // here is that we should integrate hosted_git_info more thoroughly into the codebase
+            // to avoid the allocation and copy here. For now, the thread-local buffer is a good
+            // enough solution to avoid having to handle init/deinit.
+
+            // Fix malformed ssh:// URLs with colons using hosted_git_info.correctUrl
+            // ssh://git@github.com:user/repo -> ssh://git@github.com/user/repo
+            var pair = hosted_git_info.UrlProtocolPair{
+                .url = .{ .unmanaged = url },
+                .protocol = .{ .well_formed = .git_plus_ssh },
+            };
+
+            var corrected = hosted_git_info.correctUrl(&pair, bun.default_allocator) catch {
+                return url; // If correction fails, return original
+            };
+            defer corrected.deinit();
+
+            // Copy corrected URL to thread-local buffer
+            const corrected_str = corrected.urlSlice();
+            const result = ssh_path_buf[0..corrected_str.len];
+            bun.copy(u8, result, corrected_str);
+            return result;
         }
 
         if (Dependency.isSCPLikePath(url)) {
@@ -675,6 +700,7 @@ const string = []const u8;
 const Dependency = @import("./dependency.zig");
 const DotEnv = @import("../env_loader.zig");
 const Environment = @import("../env.zig");
+const hosted_git_info = @import("./hosted_git_info.zig");
 const std = @import("std");
 const FileSystem = @import("../fs.zig").FileSystem;
 

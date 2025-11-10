@@ -97,6 +97,22 @@ pub const TestRunner = struct {
 
     bun_test_root: bun_test.BunTestRoot,
 
+    pub fn getActiveTimeout(this: *const TestRunner) bun.timespec {
+        const active_file = this.bun_test_root.active_file.get() orelse return .epoch;
+        if (active_file.timer.state != .ACTIVE or active_file.timer.next.eql(&.epoch)) {
+            return .epoch;
+        }
+        return active_file.timer.next;
+    }
+
+    pub fn removeActiveTimeout(this: *TestRunner, vm: *jsc.VirtualMachine) void {
+        const active_file = this.bun_test_root.active_file.get() orelse return;
+        if (active_file.timer.state != .ACTIVE or active_file.timer.next.eql(&.epoch)) {
+            return;
+        }
+        vm.timer.remove(&active_file.timer);
+    }
+
     pub const Summary = struct {
         pass: u32 = 0,
         expectations: u32 = 0,

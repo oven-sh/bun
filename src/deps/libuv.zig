@@ -634,6 +634,11 @@ pub const Loop = extern struct {
         this.active_handles -= 1;
     }
 
+    pub fn stop(this: *Loop) void {
+        log("stop", .{});
+        uv_stop(this);
+    }
+
     pub fn isActive(this: *Loop) bool {
         const loop_alive = uv_loop_alive(this) != 0;
         // This log may be helpful if you are curious what exact handles are active

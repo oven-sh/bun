@@ -47,8 +47,12 @@ pub const LifecycleScriptSubprocess = struct {
 
     pub const OutputReader = bun.io.BufferedReader;
 
-    pub fn loop(this: *const LifecycleScriptSubprocess) *bun.uws.Loop {
-        return this.manager.event_loop.loop();
+    pub fn loop(this: *const LifecycleScriptSubprocess) *bun.Async.Loop {
+        if (comptime bun.Environment.isWindows) {
+            return this.manager.event_loop.loop().uv_loop;
+        } else {
+            return this.manager.event_loop.loop();
+        }
     }
 
     pub fn eventLoop(this: *const LifecycleScriptSubprocess) *jsc.AnyEventLoop {

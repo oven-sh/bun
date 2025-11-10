@@ -310,7 +310,7 @@ function(find_command)
     ${FIND_VALIDATOR}
   )
 
-  if(NOT FIND_REQUIRED STREQUAL "OFF" AND ${FIND_VARIABLE} MATCHES "NOTFOUND")
+  if(FIND_REQUIRED AND ${FIND_VARIABLE} MATCHES "NOTFOUND")
     set(error "Command not found: \"${FIND_NAME}\"")
 
     if(FIND_VERSION)

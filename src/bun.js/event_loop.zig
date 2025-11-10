@@ -512,6 +512,15 @@ pub fn tick(this: *EventLoop) void {
     this.global.handleRejectedPromises();
 }
 
+pub fn tickWithoutJS(this: *EventLoop) void {
+    const ctx = this.virtual_machine;
+    this.tickConcurrent();
+
+    while (this.tickWithCount(ctx) > 0) {
+        this.tickConcurrent();
+    }
+}
+
 pub fn waitForPromise(this: *EventLoop, promise: jsc.AnyPromise) void {
     const jsc_vm = this.virtual_machine.jsc_vm;
     switch (promise.status(jsc_vm)) {
@@ -650,6 +659,12 @@ pub fn getActiveTasks(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.
     result.put(globalObject, jsc.ZigString.static("numPolls"), jsc.JSValue.jsNumber(num_polls));
 
     return result;
+}
+
+pub fn deinit(this: *EventLoop) void {
+    this.tasks.deinit();
+    this.immediate_tasks.clearAndFree(bun.default_allocator);
+    this.next_immediate_tasks.clearAndFree(bun.default_allocator);
 }
 
 pub const AnyEventLoop = @import("./event_loop/AnyEventLoop.zig").AnyEventLoop;

@@ -1,5 +1,5 @@
-import { test, beforeAll, afterAll } from "bun:test";
-import { VerdaccioRegistry, runBunInstall, bunEnv } from "harness";
+import { afterAll, beforeAll, test } from "bun:test";
+import { VerdaccioRegistry, bunEnv, runBunInstall } from "harness";
 
 const registry = new VerdaccioRegistry();
 

@@ -262,7 +262,7 @@ declare module "bun:test" {
      */
     each<T extends Readonly<[any, ...any[]]>>(table: readonly T[]): Describe<[...T]>;
     each<T extends any[]>(table: readonly T[]): Describe<[...T]>;
-    each<T>(table: T[]): Describe<[T]>;
+    each<const T>(table: T[]): Describe<[T]>;
   }
   /**
    * Describes a group of related tests.
@@ -552,7 +552,7 @@ declare module "bun:test" {
      */
     each<T extends Readonly<[unknown, ...unknown[]]>>(table: readonly T[]): Test<T>;
     each<T extends unknown[]>(table: readonly T[]): Test<T>;
-    each<T>(table: T[]): Test<[T]>;
+    each<const T>(table: T[]): Test<[T]>;
   }
   /**
    * Runs a test.

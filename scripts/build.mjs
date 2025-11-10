@@ -3,10 +3,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import {
   formatAnnotationToHtml,
+  getEnv,
   getSecret,
   isCI,
   isWindows,
   parseAnnotations,
+  parseBoolean,
   printEnvironment,
   reportAnnotationToBuildKite,
   startGroup,
@@ -71,7 +73,7 @@ async function build(args) {
   }
 
   if (!generateOptions["-DCACHE_STRATEGY"]) {
-    generateOptions["-DCACHE_STRATEGY"] = "read-write";
+    generateOptions["-DCACHE_STRATEGY"] = parseBoolean(getEnv("RELEASE", false) || "false") ? "none" : "read-write";
   }
 
   const toolchain = generateOptions["--toolchain"];
@@ -101,7 +103,8 @@ async function build(args) {
 
   await startGroup("CMake Build", () => spawn("cmake", buildArgs, { env }));
 
-  if (isCI) {
+  const target = buildOptions["--target"] || buildOptions["-t"];
+  if (isCI && target === "build-cpp") {
     await startGroup("sccache stats", () => {
       spawn("sccache", ["--show-stats"], { env });
     });

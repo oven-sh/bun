@@ -8,7 +8,7 @@ pub const fromJS = js.fromJS;
 
 pub fn finalize(
     this: *DoneCallback,
-) callconv(.C) void {
+) callconv(.c) void {
     groupLog.begin(@src());
     defer groupLog.end();
 

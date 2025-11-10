@@ -89,7 +89,7 @@ pub fn Package(comptime SemverIntType: type) type {
             const old_extern_string_buf = old.buffers.extern_strings.items;
             var builder_ = new.stringBuilder();
             var builder = &builder_;
-            debug("Clone: {s}@{any} ({s}, {d} dependencies)", .{
+            debug("Clone: {s}@{f} ({s}, {d} dependencies)", .{
                 this.name.slice(old_string_buf),
                 this.resolution.fmt(old_string_buf, .auto),
                 @tagName(this.resolution.tag),

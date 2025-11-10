@@ -185,7 +185,7 @@ pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSEr
     defer groupLog.end();
 
     // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
-    //   request a termination exception and kill any dangling processes
+    //   kill any dangling processes
     // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
     if (this.activeGroup()) |current_group| {
         const sequences = current_group.sequences(this);
@@ -194,7 +194,6 @@ pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSEr
             if (sequence.active_entry) |entry| {
                 const now = bun.timespec.now();
                 if (entry.timespec.order(&now) == .lt) {
-                    globalThis.requestTermination();
                     const kill_count = globalThis.bunVM().auto_killer.kill();
                     if (kill_count.processes > 0) {
                         bun.Output.prettyErrorln("<d>killed {d} dangling process{s}<r>", .{ kill_count.processes, if (kill_count.processes != 1) "es" else "" });
@@ -383,7 +382,7 @@ fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGloba
                 },
             },
         };
-        groupLog.log("runSequence queued callback: {}", .{callback_data});
+        groupLog.log("runSequence queued callback: {f}", .{callback_data});
 
         if (BunTest.runTestCallback(buntest_strong, globalThis, cb.get(), next_item.has_done_parameter, callback_data, &next_item.timespec) != null) {
             now.* = bun.timespec.now();
@@ -422,7 +421,7 @@ pub fn getCurrentAndValidExecutionSequence(this: *Execution, data: bun_test.BunT
     groupLog.begin(@src());
     defer groupLog.end();
 
-    groupLog.log("runOneCompleted: data: {}", .{data});
+    groupLog.log("runOneCompleted: data: {f}", .{data});
 
     if (data != .execution) {
         groupLog.log("runOneCompleted: the data is not execution", .{});
@@ -518,7 +517,7 @@ fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     sequence.started_at = bun.timespec.now();
 
     if (sequence.test_entry) |entry| {
-        log("Running test: \"{}\"", .{std.zig.fmtEscapes(entry.base.name orelse "(unnamed)")});
+        log("Running test: \"{f}\"", .{std.zig.fmtString(entry.base.name orelse "(unnamed)")});
 
         if (entry.base.test_id_for_debugger != 0) {
             if (jsc.VirtualMachine.get().debugger) |*debugger| {

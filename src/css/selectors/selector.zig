@@ -513,14 +513,14 @@ pub const serialize = struct {
         if (comptime bun.Environment.isDebug) {
             debug("Selector components:\n", .{});
             for (selector.components.items) |*comp| {
-                debug(" {}\n", .{comp});
+                debug(" {f}\n", .{comp});
             }
 
             debug("Compound selector iter\n", .{});
             var compound_selectors = CompoundSelectorIter{ .sel = selector };
             while (compound_selectors.next()) |comp| {
                 for (comp) |c| {
-                    debug("  {}, ", .{c});
+                    debug("  {f}, ", .{c});
                 }
             }
             debug("\n", .{});
@@ -705,14 +705,15 @@ pub const serialize = struct {
                 if (dest.minify) {
                     // PERF: should we put a scratch buffer in the printer
                     // Serialize as both an identifier and a string and choose the shorter one.
-                    var id = std.ArrayList(u8).init(dest.allocator);
-                    const writer = id.writer();
+                    var id = std.Io.Writer.Allocating.init(dest.allocator);
+                    const writer = &id.writer;
                     css.serializer.serializeIdentifier(v.value, writer) catch return dest.addFmtError();
 
                     const s = try css.to_css.string(dest.allocator, CSSString, &v.value, css.PrinterOptions.default(), dest.import_info, dest.local_names, dest.symbols);
 
-                    if (id.items.len > 0 and id.items.len < s.len) {
-                        try dest.writeStr(id.items);
+                    const id_items = id.written();
+                    if (id_items.len > 0 and id_items.len < s.len) {
+                        try dest.writeStr(id_items);
                     } else {
                         try dest.writeStr(s);
                     }

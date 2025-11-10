@@ -228,7 +228,7 @@ pub const Tag = enum(short) {
             }
 
             pub fn init(bytes: []const u8) *@This() {
-                const this: *@This() = @alignCast(@ptrCast(@constCast(bytes.ptr)));
+                const this: *@This() = @ptrCast(@alignCast(@constCast(bytes.ptr)));
                 this.ndim = @byteSwap(this.ndim);
                 this.offset_for_data = @byteSwap(this.offset_for_data);
                 this.element_type = @byteSwap(this.element_type);

@@ -171,7 +171,7 @@ pub const SubscriptionCtx = struct {
         args: []const JSValue,
     ) bun.JSError!void {
         const callbacks = try this.getCallbacks(globalObject, channelName) orelse {
-            debug("No callbacks found for channel {s}", .{channelName.asString().getZigString(globalObject)});
+            debug("No callbacks found for channel {f}", .{channelName.asString().getZigString(globalObject)});
             return;
         };
 
@@ -274,16 +274,45 @@ pub const JSValkeyClient = struct {
         else
             bun.String.static("valkey://localhost:6379");
         defer url_str.deref();
+        var fallback_url_buf: [2048]u8 = undefined;
 
         // Parse and validate the URL using URL.zig's fromString which returns null for invalid URLs
-        const parsed_url = URL.fromString(url_str) orelse {
-            if (url_str.tag != .StaticZigString) {
-                const url_utf8 = url_str.toUTF8WithoutRef(this_allocator);
-                defer url_utf8.deinit();
-                return globalObject.throwInvalidArguments("Invalid URL format: \"{s}\"", .{url_utf8.slice()});
+        // TODO(markovejnovic): The following check for :// is a stop-gap. It is my expectation
+        // that URL.fromString returns null if the protocol is not specified. This is not, in-fact,
+        // the case right now and I do not understand why. It will take some work in JSC to
+        // understand why this is happening, but since I need to uncork valkey, I'm adding this as
+        // a stop-gap.
+        const parsed_url = get_url: {
+            const url_slice = url_str.toUTF8WithoutRef(this_allocator);
+            defer url_slice.deinit();
+
+            const url_byte_slice = url_slice.slice();
+
+            if (url_byte_slice.len == 0) {
+                return globalObject.throwInvalidArguments("Invalid URL format", .{});
             }
-            // This should never happen since our default URL is valid
-            return globalObject.throwInvalidArguments("Invalid URL format", .{});
+
+            if (bun.strings.contains(url_byte_slice, "://")) {
+                break :get_url URL.fromString(url_str) orelse {
+                    return globalObject.throwInvalidArguments("Invalid URL format", .{});
+                };
+            }
+
+            const corrected_url = get_url_slice: {
+                const written = std.fmt.bufPrintZ(
+                    &fallback_url_buf,
+                    "valkey://{s}",
+                    .{url_byte_slice},
+                ) catch {
+                    return globalObject.throwInvalidArguments("URL is too long.", .{});
+                };
+
+                break :get_url_slice fallback_url_buf[0..written.len];
+            };
+
+            break :get_url URL.fromUTF8(corrected_url) orelse {
+                return globalObject.throwInvalidArguments("Invalid URL format", .{});
+            };
         };
         defer parsed_url.deinit();
 

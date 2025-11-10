@@ -5,6 +5,7 @@ const { urlToHttpOptions } = require("internal/url");
 const { isValidTLSArray } = require("internal/tls");
 const { validateHeaderName } = require("node:_http_common");
 const { getTimerDuration } = require("internal/timers");
+const { ConnResetException } = require("internal/shared");
 const {
   kBodyChunks,
   abortedSymbol,
@@ -41,7 +42,6 @@ const {
   reqSymbol,
   callCloseCallback,
   emitCloseNTAndComplete,
-  ConnResetException,
 } = require("internal/http");
 
 const { globalAgent } = require("node:_http_agent");
@@ -909,13 +909,9 @@ function ClientRequest(input, options, cb) {
 
   this[kEmitState] = 0;
 
-  this.setSocketKeepAlive = (_enable = true, _initialDelay = 0) => {
-    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
-  };
+  this.setSocketKeepAlive = (_enable = true, _initialDelay = 0) => {};
 
-  this.setNoDelay = (_noDelay = true) => {
-    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setNoDelay is a no-op");
-  };
+  this.setNoDelay = (_noDelay = true) => {};
 
   this[kClearTimeout] = () => {
     const timeoutTimer = this[kTimeoutTimer];

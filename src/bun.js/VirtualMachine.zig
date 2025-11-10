@@ -2409,27 +2409,146 @@ pub fn printErrorlikeObject(
     }
 
     if (value.isAggregateError(this.global)) {
-        const AggregateErrorIterator = struct {
-            writer: Writer,
-            current_exception_list: ?*ExceptionList = null,
-            formatter: *ConsoleObject.Formatter,
+        was_internal = this.printErrorFromMaybePrivateData(
+            value,
+            exception_list,
+            formatter,
+            Writer,
+            writer,
+            allow_ansi_color,
+            allow_side_effects,
+        );
 
-            pub fn iteratorWithColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
-                iterator(vm, globalObject, nextValue, ctx.?, true);
+        const errors_array = value.getErrorsProperty(this.global);
+        if (!errors_array.isEmptyOrUndefinedOrNull()) {
+            writer.writeAll("\n") catch return;
+
+            const AggregateErrorIterator = struct {
+                writer: Writer,
+                current_exception_list: ?*ExceptionList = null,
+                formatter: *ConsoleObject.Formatter,
+                total_errors: u32,
+                current_index: u32,
+
+                pub fn iteratorWithColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                    iterator(vm, globalObject, nextValue, ctx.?, true);
+                }
+                pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                    iterator(vm, globalObject, nextValue, ctx.?, false);
+                }
+                fn iterator(_: *VM, globalObject: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime allow_colors: bool) void {
+                    const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
+
+                    // Simple indentation without tree characters
+                    const error_indent = "  ";
+                    const stack_indent = "    ";
+
+                    // Format the error line with simple indentation
+                    this_.writer.writeAll(error_indent) catch return;
+
+                    // Get error name and message to format them with the proper prefix
+                    var error_name = bun.String.empty;
+                    var error_message = bun.String.empty;
+                    var stack_trace = bun.String.empty;
+                    defer {
+                        error_name.deref();
+                        error_message.deref();
+                        stack_trace.deref();
+                    }
+
+                    const is_error_instance = nextValue.jsType() == .ErrorInstance;
+
+                    if (nextValue.isObject()) {
+                        // Get name property
+                        if (nextValue.fastGet(globalObject, .name) catch null) |name_val| {
+                            if (name_val.isString()) {
+                                error_name = name_val.toBunString(globalObject) catch bun.String.empty;
+                            }
+                        }
+
+                        // Get message property
+                        if (nextValue.fastGet(globalObject, .message) catch null) |message_val| {
+                            if (message_val.isString()) {
+                                error_message = message_val.toBunString(globalObject) catch bun.String.empty;
+                            }
+                        }
+
+                        // Get stack property for error instances
+                        if (is_error_instance) {
+                            if (nextValue.get(globalObject, "stack") catch null) |stack_val| {
+                                if (stack_val.isString()) {
+                                    stack_trace = stack_val.toBunString(globalObject) catch bun.String.empty;
+                                }
+                            }
+                        }
+                    }
+
+                    // Print with "error: " prefix for consistency
+                    if (allow_colors) {
+                        this_.writer.writeAll(Output.prettyFmt("<r><red>error<r><d>:<r> ", true)) catch return;
+                    } else {
+                        this_.writer.writeAll("error: ") catch return;
+                    }
+
+                    if (!error_name.isEmpty() and !error_name.eqlComptime("Error")) {
+                        this_.writer.writeAll(error_name.byteSlice()) catch return;
+                        if (!error_message.isEmpty()) {
+                            this_.writer.writeAll(": ") catch return;
+                            this_.writer.writeAll(error_message.byteSlice()) catch return;
+                        }
+                    } else if (!error_message.isEmpty()) {
+                        this_.writer.writeAll(error_message.byteSlice()) catch return;
+                    } else {
+                        // Fallback for non-Error objects
+                        var str = bun.String.empty;
+                        defer str.deref();
+                        str = nextValue.toBunString(globalObject) catch bun.String.empty;
+                        if (!str.isEmpty()) {
+                            this_.writer.writeAll(str.byteSlice()) catch return;
+                        } else {
+                            this_.writer.writeAll("[object Object]") catch return;
+                        }
+                    }
+
+                    this_.writer.writeAll("\n") catch return;
+
+                    // Print the stack trace with proper indentation if it exists
+                    if (!stack_trace.isEmpty()) {
+                        const stack_slice = stack_trace.byteSlice();
+
+                        // Find the first newline to skip the error header line that's already printed
+                        var start_idx: usize = 0;
+                        if (std.mem.indexOf(u8, stack_slice, "\n")) |first_newline| {
+                            start_idx = first_newline + 1;
+                        }
+
+                        // Print each line of the stack trace with simple indentation
+                        var iter = std.mem.tokenizeScalar(u8, stack_slice[start_idx..], '\n');
+                        while (iter.next()) |line| {
+                            this_.writer.writeAll(stack_indent) catch return;
+                            this_.writer.writeAll(line) catch return;
+                            this_.writer.writeAll("\n") catch return;
+                        }
+                    }
+
+                    this_.current_index += 1;
+                }
+            };
+
+            // Get the total count of errors for tree formatting
+            const total_errors = @as(u32, @intCast(errors_array.getLength(this.global) catch 0));
+            var iter = AggregateErrorIterator{
+                .writer = writer,
+                .current_exception_list = exception_list,
+                .formatter = formatter,
+                .total_errors = total_errors,
+                .current_index = 0,
+            };
+            if (comptime allow_ansi_color) {
+                errors_array.forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor) catch return;
+            } else {
+                errors_array.forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor) catch return;
             }
-            pub fn iteratorWithOutColor(vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
-                iterator(vm, globalObject, nextValue, ctx.?, false);
-            }
-            fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
-                const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
-                VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, this_.formatter, Writer, this_.writer, color, allow_side_effects);
-            }
-        };
-        var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list, .formatter = formatter };
-        if (comptime allow_ansi_color) {
-            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithColor) catch return; // TODO: properly propagate exception upwards
-        } else {
-            value.getErrorsProperty(this.global).forEach(this.global, &iter, AggregateErrorIterator.iteratorWithOutColor) catch return; // TODO: properly propagate exception upwards
         }
         return;
     }

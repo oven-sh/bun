@@ -779,8 +779,12 @@ pub const SecurityScanSubprocess = struct {
         return &this.manager.event_loop;
     }
 
-    pub fn loop(this: *const SecurityScanSubprocess) *bun.uws.Loop {
-        return this.manager.event_loop.loop();
+    pub fn loop(this: *const SecurityScanSubprocess) *bun.Async.Loop {
+        if (comptime bun.Environment.isWindows) {
+            return this.manager.event_loop.loop().uv_loop;
+        } else {
+            return this.manager.event_loop.loop();
+        }
     }
 
     pub fn onReaderDone(this: *SecurityScanSubprocess) void {

@@ -249,7 +249,7 @@ fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]
         .result => |s| s,
         .err => |err| {
             if (auto_loaded) return;
-            Output.prettyErrorln("{}\nwhile reading config \"{s}\"", .{
+            Output.prettyErrorln("{f}\nwhile reading config \"{s}\"", .{
                 err,
                 config_path,
             });
@@ -536,7 +536,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.test_options.test_filter_pattern = namePattern;
             const regex = RegularExpression.init(bun.String.fromBytes(namePattern), RegularExpression.Flags.none) catch {
                 Output.prettyErrorln(
-                    "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",
+                    "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {f}",
                     .{
                         bun.fmt.QuotedFormatter{
                             .text = namePattern,
@@ -633,7 +633,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
             const total_preloads = ctx.preloads.len + preloads.len + preloads2.len + preloads3.len + (if (preload4 != null) @as(usize, 1) else @as(usize, 0));
             if (total_preloads > 0) {
-                var all = std.ArrayList(string).initCapacity(ctx.allocator, total_preloads) catch unreachable;
+                var all = std.array_list.Managed(string).initCapacity(ctx.allocator, total_preloads) catch unreachable;
                 if (ctx.preloads.len > 0) all.appendSliceAssumeCapacity(ctx.preloads);
                 if (preloads.len > 0) all.appendSliceAssumeCapacity(preloads);
                 if (preloads2.len > 0) all.appendSliceAssumeCapacity(preloads2);
@@ -965,7 +965,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     if (_target.len > 4 and strings.hasPrefixComptime(_target, "bun-")) {
                         ctx.bundler_options.compile_target = CLI.Cli.CompileTarget.from(_target[3..]);
                         if (!ctx.bundler_options.compile_target.isSupported()) {
-                            Output.errGeneric("Unsupported compile target: {}\n", .{ctx.bundler_options.compile_target});
+                            Output.errGeneric("Unsupported compile target: {f}\n", .{ctx.bundler_options.compile_target});
                             Global.exit(1);
                         }
                         opts.target = .bun;

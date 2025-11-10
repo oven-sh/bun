@@ -61,7 +61,7 @@ pub const Linker = struct {
         file_path: Fs.Path,
         fd: ?FileDescriptorType,
     ) !Fs.FileSystem.RealFS.ModKey {
-        var file: std.fs.File = if (fd) |_fd| _fd.stdFile() else try std.fs.openFileAbsolute(file_path.text, .{ .mode = .read_only });
+        var file: std.fs.File = if (fd) |_fd| _fd.stdFile() else try std.fs.cwd().openFile(file_path.text, .{ .mode = .read_only });
         Fs.FileSystem.setMaxFd(file.handle);
         const modkey = try Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs, file_path.text, file);
 
@@ -107,7 +107,7 @@ pub const Linker = struct {
         comptime is_bun: bool,
     ) !void {
         const source_dir = file_path.sourceDir();
-        var externals = std.ArrayList(u32).init(linker.allocator);
+        var externals = std.array_list.Managed(u32).init(linker.allocator);
         var had_resolve_errors = false;
 
         const is_deferred = result.pending_imports.len > 0;

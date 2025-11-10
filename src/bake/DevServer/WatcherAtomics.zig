@@ -175,7 +175,7 @@ pub fn recycleEventFromDevServer(self: *Self, old_event: *HotReloadEvent) ?*HotR
         self.dbg_server_event = null;
         bun.assertf(
             dbg_event == old_event,
-            "recycleEventFromDevServer: old_event: expected {?*}, got {?*}",
+            "recycleEventFromDevServer: old_event: expected {*}, got {*}",
             .{ dbg_event, old_event },
         );
     }

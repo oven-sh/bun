@@ -46,14 +46,14 @@ pub fn toBeLessThan(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Call
     const value_fmt = value.toFmt(&formatter);
     const expected_fmt = other_value.toFmt(&formatter);
     if (not) {
-        const expected_line = "Expected: not \\< <green>{any}<r>\n";
-        const received_line = "Received: <red>{any}<r>\n";
+        const expected_line = "Expected: not \\< <green>{f}<r>\n";
+        const received_line = "Received: <red>{f}<r>\n";
         const signature = comptime getSignature("toBeLessThan", "<green>expected<r>", true);
         return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
     }
 
-    const expected_line = "Expected: \\< <green>{any}<r>\n";
-    const received_line = "Received: <red>{any}<r>\n";
+    const expected_line = "Expected: \\< <green>{f}<r>\n";
+    const received_line = "Received: <red>{f}<r>\n";
     const signature = comptime getSignature("toBeLessThan", "<green>expected<r>", false);
     return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ expected_fmt, value_fmt });
 }

@@ -40,7 +40,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
         bun.Futex.waitForever(&futex_atomic, 1);
     }
     if (comptime Environment.enable_logs)
-        Debugger.log("waitForDebugger: {}", .{Output.ElapsedFormatter{
+        Debugger.log("waitForDebugger: {f}", .{Output.ElapsedFormatter{
             .colors = Output.enable_ansi_colors_stderr,
             .duration_ns = @truncate(@as(u128, @intCast(std.time.nanoTimestamp() - bun.cli.start_time))),
         }});
@@ -60,14 +60,14 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
             timer.* = std.mem.zeroes(uv.Timer);
             timer.init(this.uvLoop());
             const onDebuggerTimer = struct {
-                fn call(handle: *uv.Timer) callconv(.C) void {
+                fn call(handle: *uv.Timer) callconv(.c) void {
                     const vm = VirtualMachine.get();
                     vm.debugger.?.poll_ref.unref(vm);
                     uv.uv_close(@ptrCast(handle), deinitTimer);
                 }
 
-                fn deinitTimer(handle: *anyopaque) callconv(.C) void {
-                    bun.default_allocator.destroy(@as(*uv.Timer, @alignCast(@ptrCast(handle))));
+                fn deinitTimer(handle: *anyopaque) callconv(.c) void {
+                    bun.default_allocator.destroy(@as(*uv.Timer, @ptrCast(@alignCast(handle))));
                 }
             }.call;
             timer.start(wait_for_connection_delay_ms, 0, &onDebuggerTimer);
@@ -82,7 +82,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
                 this.eventLoop().autoTickActive();
 
                 if (comptime Environment.enable_logs)
-                    log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.cli.start_time))))});
+                    log("waited: {D}", .{@as(i64, @truncate(std.time.nanoTimestamp() - bun.cli.start_time))});
             },
             .shortly => {
                 // Handle .incrementRefConcurrently
@@ -97,7 +97,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
                 this.uwsLoop().tickWithTimeout(&deadline);
 
                 if (comptime Environment.enable_logs)
-                    log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.cli.start_time))))});
+                    log("waited: {D}", .{@as(i64, @truncate(std.time.nanoTimestamp() - bun.cli.start_time))});
 
                 const elapsed = bun.timespec.now(.force_real_time);
                 if (elapsed.order(&deadline) != .lt) {

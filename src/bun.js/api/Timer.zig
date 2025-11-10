@@ -155,7 +155,7 @@ pub const All = struct {
         }
     }
 
-    pub fn onUVTimer(uv_timer_t: *uv.Timer) callconv(.C) void {
+    pub fn onUVTimer(uv_timer_t: *uv.Timer) callconv(.c) void {
         const all: *All = @fieldParentPtr("uv_timer", uv_timer_t);
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("timer", all));
         all.drainTimers(vm);
@@ -177,7 +177,7 @@ pub const All = struct {
 
                 // Matches Node.js behavior
                 this.uv_idle.start(struct {
-                    fn cb(_: *uv.uv_idle_t) callconv(.C) void {
+                    fn cb(_: *uv.uv_idle_t) callconv(.c) void {
                         // prevent libuv from polling forever
                     }
                 }.cb);
@@ -222,7 +222,7 @@ pub const All = struct {
         }
     }
 
-    pub fn getNextID() callconv(.C) i32 {
+    pub fn getNextID() callconv(.c) i32 {
         VirtualMachine.get().timer.last_id +%= 1;
         return VirtualMachine.get().timer.last_id;
     }
@@ -279,7 +279,7 @@ pub const All = struct {
         return false;
     }
 
-    export fn Bun__internal_drainTimers(vm: *VirtualMachine) callconv(.C) void {
+    export fn Bun__internal_drainTimers(vm: *VirtualMachine) callconv(.c) void {
         drainTimers(&vm.timer, vm);
     }
 

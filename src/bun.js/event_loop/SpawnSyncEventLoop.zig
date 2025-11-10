@@ -33,17 +33,17 @@ did_timeout: bool = false,
 
 /// Minimal handler for the isolated loop
 const Handler = struct {
-    pub fn wakeup(loop: *uws.Loop) callconv(.C) void {
+    pub fn wakeup(loop: *uws.Loop) callconv(.c) void {
         _ = loop;
         // No-op: we don't need to wake up from another thread for spawnSync
     }
 
-    pub fn pre(loop: *uws.Loop) callconv(.C) void {
+    pub fn pre(loop: *uws.Loop) callconv(.c) void {
         _ = loop;
         // No-op: no pre-tick work needed for spawnSync
     }
 
-    pub fn post(loop: *uws.Loop) callconv(.C) void {
+    pub fn post(loop: *uws.Loop) callconv(.c) void {
         _ = loop;
         // No-op: no post-tick work needed for spawnSync
     }
@@ -71,7 +71,7 @@ pub fn init(self: *SpawnSyncEventLoop, vm: *jsc.VirtualMachine) void {
     self.uws_loop.internal_loop_data.jsc_vm = null;
 }
 
-fn onCloseUVTimer(timer: *bun.windows.libuv.Timer) callconv(.C) void {
+fn onCloseUVTimer(timer: *bun.windows.libuv.Timer) callconv(.c) void {
     bun.default_allocator.destroy(timer);
 }
 
@@ -117,7 +117,7 @@ pub fn handle(this: *SpawnSyncEventLoop) jsc.EventLoopHandle {
     return jsc.EventLoopHandle.init(&this.event_loop);
 }
 
-fn onUVTimer(timer_: *bun.windows.libuv.Timer) callconv(.C) void {
+fn onUVTimer(timer_: *bun.windows.libuv.Timer) callconv(.c) void {
     const this: *SpawnSyncEventLoop = @ptrCast(@alignCast(timer_.data));
     this.did_timeout = true;
     this.uws_loop.uv_loop.stop();

@@ -233,14 +233,14 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
 
                         self.first = false;
                         if (io.Information == 0) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = 0", .{self.dir});
+                            bun.sys.syslog("NtQueryDirectoryFile({f}) = 0", .{self.dir});
                             return .{ .result = null };
                         }
                         self.index = 0;
                         self.end_index = io.Information;
                         // If the handle is not a directory, we'll get STATUS_INVALID_PARAMETER.
                         if (rc == .INVALID_PARAMETER) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ self.dir, @tagName(rc) });
+                            bun.sys.syslog("NtQueryDirectoryFile({f}) = {s}", .{ self.dir, @tagName(rc) });
                             return .{
                                 .err = .{
                                     .errno = @intFromEnum(bun.sys.SystemErrno.ENOTDIR),
@@ -250,13 +250,13 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         }
 
                         if (rc == .NO_MORE_FILES) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ self.dir, @tagName(rc) });
+                            bun.sys.syslog("NtQueryDirectoryFile({f}) = {s}", .{ self.dir, @tagName(rc) });
                             self.end_index = self.index;
                             return .{ .result = null };
                         }
 
                         if (rc != .SUCCESS) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ self.dir, @tagName(rc) });
+                            bun.sys.syslog("NtQueryDirectoryFile({f}) = {s}", .{ self.dir, @tagName(rc) });
 
                             if ((bun.windows.Win32Error.fromNTStatus(rc).toSystemErrno())) |errno| {
                                 return .{
@@ -275,7 +275,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                             };
                         }
 
-                        bun.sys.syslog("NtQueryDirectoryFile({}) = {d}", .{ self.dir, self.end_index });
+                        bun.sys.syslog("NtQueryDirectoryFile({f}) = {d}", .{ self.dir, self.end_index });
                     }
 
                     const dir_info: FILE_DIRECTORY_INFORMATION_PTR = @ptrCast(@alignCast(&self.buf[self.index]));

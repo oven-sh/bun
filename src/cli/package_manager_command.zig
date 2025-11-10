@@ -50,7 +50,7 @@ pub const PackageManagerCommand = struct {
 
         Output.flush();
         Output.disableBuffering();
-        try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
+        try Output.writer().print("{f}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
         Output.enableBuffering();
         Global.exit(0);
     }
@@ -183,7 +183,7 @@ pub const PackageManagerCommand = struct {
                         Output.errGeneric("missing authentication (run <cyan>`bunx npm login`<r>)", .{});
                     },
                     error.ProbablyInvalidAuth => {
-                        Output.errGeneric("failed to authenticate with registry '{}'", .{
+                        Output.errGeneric("failed to authenticate with registry '{f}'", .{
                             bun.fmt.redactedNpmUrl(pm.options.scope.url.href),
                         });
                     },
@@ -230,7 +230,7 @@ pub const PackageManagerCommand = struct {
 
             Output.flush();
             Output.disableBuffering();
-            try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
+            try Output.writer().print("{f}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-print")) {
@@ -239,7 +239,7 @@ pub const PackageManagerCommand = struct {
 
             Output.flush();
             Output.disableBuffering();
-            try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
+            try Output.writer().print("{f}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-string")) {
@@ -326,7 +326,7 @@ pub const PackageManagerCommand = struct {
 
             var max_depth: usize = 0;
 
-            var directories = std.ArrayList(NodeModulesFolder).init(ctx.allocator);
+            var directories = std.array_list.Managed(NodeModulesFolder).init(ctx.allocator);
             defer directories.deinit();
             while (iterator.next(null)) |node_modules| {
                 const path_len = node_modules.relative_path.len;
@@ -389,9 +389,9 @@ pub const PackageManagerCommand = struct {
                     const resolution = resolutions[package_id].fmt(string_bytes, .auto);
 
                     if (index < sorted_dependencies.len - 1) {
-                        Output.prettyln("<d>├──<r> {s}<r><d>@{any}<r>\n", .{ name, resolution });
+                        Output.prettyln("<d>├──<r> {s}<r><d>@{f}<r>\n", .{ name, resolution });
                     } else {
-                        Output.prettyln("<d>└──<r> {s}<r><d>@{any}<r>\n", .{ name, resolution });
+                        Output.prettyln("<d>└──<r> {s}<r><d>@{f}<r>\n", .{ name, resolution });
                     }
                 }
             }
@@ -461,7 +461,7 @@ fn printNodeModulesFolderStructure(
     directory: *const NodeModulesFolder,
     directory_package_id: ?PackageID,
     depth: usize,
-    directories: *std.ArrayList(NodeModulesFolder),
+    directories: *std.array_list.Managed(NodeModulesFolder),
     lockfile: *Lockfile,
     more_packages: []bool,
 ) !void {
@@ -500,7 +500,7 @@ fn printNodeModulesFolderStructure(
                     }
                 }
             }
-            const directory_version = try std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[id].fmt(string_bytes, .auto)});
+            const directory_version = try std.fmt.bufPrint(&resolution_buf, "{f}", .{resolutions[id].fmt(string_bytes, .auto)});
             if (std.mem.indexOf(u8, path, "node_modules")) |j| {
                 Output.prettyln("{s}<d>@{s}<r>", .{ path[0 .. j - 1], directory_version });
             } else {
@@ -581,7 +581,7 @@ fn printNodeModulesFolderStructure(
         }
 
         var resolution_buf: [512]u8 = undefined;
-        const package_version = try std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[package_id].fmt(string_bytes, .auto)});
+        const package_version = try std.fmt.bufPrint(&resolution_buf, "{f}", .{resolutions[package_id].fmt(string_bytes, .auto)});
         Output.prettyln("{s}<d>@{s}<r>", .{ package_name, package_version });
     }
 }

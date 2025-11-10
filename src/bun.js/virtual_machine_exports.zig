@@ -4,7 +4,7 @@ comptime {
     }
 }
 
-pub export fn Bun__VirtualMachine__isShuttingDown(this: *const VirtualMachine) callconv(.C) bool {
+pub export fn Bun__VirtualMachine__isShuttingDown(this: *const VirtualMachine) callconv(.c) bool {
     return this.isShuttingDown();
 }
 
@@ -82,7 +82,7 @@ pub export fn Bun__queueTask(global: *JSGlobalObject, task: *jsc.CppTask) void {
     global.bunVM().eventLoop().enqueueTask(jsc.Task.init(task));
 }
 
-pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.C) JSValue {
+pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.c) JSValue {
     jsc.markBinding(@src());
 
     if (!value.isTerminationException()) {
@@ -146,7 +146,7 @@ pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSG
     jsc_vm.transpiler.linker.plugin_runner = &jsc_vm.plugin_runner.?;
 }
 
-pub fn Bun__ZigGlobalObject__uvLoop(jsc_vm: *VirtualMachine) callconv(.C) *bun.windows.libuv.Loop {
+pub fn Bun__ZigGlobalObject__uvLoop(jsc_vm: *VirtualMachine) callconv(.c) *bun.windows.libuv.Loop {
     return jsc_vm.uvLoop();
 }
 

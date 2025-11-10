@@ -372,7 +372,7 @@ fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGloba
                 },
             },
         };
-        groupLog.log("runSequence queued callback: {}", .{callback_data});
+        groupLog.log("runSequence queued callback: {f}", .{callback_data});
 
         if (BunTest.runTestCallback(buntest_strong, globalThis, cb.get(), next_item.has_done_parameter, callback_data, &next_item.timespec) != null) {
             now.* = bun.timespec.now(.force_real_time);
@@ -411,7 +411,7 @@ pub fn getCurrentAndValidExecutionSequence(this: *Execution, data: bun_test.BunT
     groupLog.begin(@src());
     defer groupLog.end();
 
-    groupLog.log("runOneCompleted: data: {}", .{data});
+    groupLog.log("runOneCompleted: data: {f}", .{data});
 
     if (data != .execution) {
         groupLog.log("runOneCompleted: the data is not execution", .{});
@@ -493,7 +493,7 @@ fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     sequence.started_at = bun.timespec.now(.force_real_time);
 
     if (sequence.test_entry) |entry| {
-        log("Running test: \"{}\"", .{std.zig.fmtEscapes(entry.base.name orelse "(unnamed)")});
+        log("Running test: \"{f}\"", .{std.zig.fmtString(entry.base.name orelse "(unnamed)")});
 
         if (entry.base.test_id_for_debugger != 0) {
             if (jsc.VirtualMachine.get().debugger) |*debugger| {

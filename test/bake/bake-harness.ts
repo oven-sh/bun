@@ -10,16 +10,16 @@
  * export BUN_DEV_SERVER_TEST_TEMP="/Users/clo/scratch/dev"
  */
 import { Bake, BunFile, Subprocess } from "bun";
-import fs, { readFileSync, realpathSync } from "node:fs";
-import path from "node:path";
-import os from "node:os";
-import assert from "node:assert";
 import { Matchers } from "bun:test";
+import assert from "node:assert";
 import { EventEmitter } from "node:events";
+import fs, { readFileSync, realpathSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 // @ts-ignore
-import { dedent } from "../bundler/expectBundled.ts";
-import { bunEnv, bunExe, isASAN, isCI, isWindows, mergeWindowEnvs, tempDirWithFiles } from "harness";
 import { expect } from "bun:test";
+import { bunEnv, bunExe, isASAN, isCI, isWindows, mergeWindowEnvs, tempDirWithFiles } from "harness";
+import { dedent } from "../bundler/expectBundled.ts";
 import { exitCodeMapStrings } from "./exit-code-map.mjs";
 
 const ASAN_TIMEOUT_MULTIPLIER = isASAN ? 3 : 1;
@@ -1514,13 +1514,12 @@ const counts: Record<string, number> = {};
 console.log("Dev server testing directory:", tempDir);
 
 async function writeAll(root: string, files: FileObject) {
-  const promises: Promise<any>[] = [];
+  const promises: Promise<number>[] = [];
   for (const [file, contents] of Object.entries(files)) {
     const filename = path.join(root, file);
     fs.mkdirSync(path.dirname(filename), { recursive: true });
     const formattedContents =
       typeof contents === "string" ? dedent(contents).replaceAll("{{root}}", root.replaceAll("\\", "\\\\")) : contents;
-    // @ts-expect-error the type of Bun.write is too strict
     promises.push(Bun.write(filename, formattedContents));
   }
   await Promise.all(promises);

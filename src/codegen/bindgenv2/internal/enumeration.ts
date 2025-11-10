@@ -15,7 +15,7 @@ abstract class EnumType extends NamedType {}
  * If `values[x]` is an array, all elements of that array will map to the same underlying integral
  * value (that is, `x`). Essentially, they become different spellings of the same enum value.
  */
-export function enumeration(
+export function enumeration(o
   name: string,
   values: readonly (string | readonly string[])[],
 ): EnumType {

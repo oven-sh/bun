@@ -249,7 +249,7 @@ pub fn Builder(comptime method: BuilderMethod) type {
         lockfile: *const Lockfile,
         // unresolved optional peers that might resolve later. if they do we will want to assign
         // builder.resolutions[peer.dep_id] to the resolved pkg_id.
-        pending_optional_peers: std.AutoHashMap(PackageNameHash, bun.collections.ArrayListDefault(DependencyID)),
+        pending_optional_peers: std.AutoArrayHashMap(PackageNameHash, std.AutoArrayHashMap(DependencyID, void)),
         manager: if (method == .filter) *const PackageManager else void,
         sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
         workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{},
@@ -581,29 +581,32 @@ pub fn processSubtree(
             .dependency_loop, .hoisted => continue,
 
             .resolve => |res_id| {
-                bun.assertWithLocation(pkg_id == invalid_package_id, @src());
-                bun.assertWithLocation(res_id != invalid_package_id, @src());
+                bun.debugAssert(pkg_id == invalid_package_id);
+                bun.debugAssert(res_id != invalid_package_id);
                 builder.resolutions[dep_id] = res_id;
                 if (comptime Environment.allow_assert) {
-                    bun.assertWithLocation(!builder.pending_optional_peers.contains(dependency.name_hash), @src());
+                    bun.debugAssert(!builder.pending_optional_peers.contains(dependency.name_hash));
                 }
-                if (builder.pending_optional_peers.fetchRemove(dependency.name_hash)) |entry| {
+
+                if (builder.pending_optional_peers.fetchSwapRemove(dependency.name_hash)) |entry| {
                     var peers = entry.value;
                     defer peers.deinit();
-                    for (peers.items()) |unresolved_dep_id| {
-                        bun.assertWithLocation(builder.resolutions[unresolved_dep_id] == invalid_package_id, @src());
+                    for (peers.keys()) |unresolved_dep_id| {
+                        // the dependency should be either unresolved or the same dependnecy as above
+                        bun.debugAssert(unresolved_dep_id == dep_id or builder.resolutions[unresolved_dep_id] == invalid_package_id);
                         builder.resolutions[unresolved_dep_id] = res_id;
                     }
                 }
             },
             .resolve_replace => |replace| {
-                bun.assertWithLocation(pkg_id != invalid_package_id, @src());
+                bun.debugAssert(pkg_id != invalid_package_id);
                 builder.resolutions[replace.dep_id] = pkg_id;
-                if (builder.pending_optional_peers.fetchRemove(dependency.name_hash)) |entry| {
+                if (builder.pending_optional_peers.fetchSwapRemove(dependency.name_hash)) |entry| {
                     var peers = entry.value;
                     defer peers.deinit();
-                    for (peers.items()) |unresolved_dep_id| {
-                        bun.assertWithLocation(builder.resolutions[unresolved_dep_id] == invalid_package_id, @src());
+                    for (peers.keys()) |unresolved_dep_id| {
+                        // the dependency should be either unresolved or the same dependnecy as above
+                        bun.debugAssert(unresolved_dep_id == replace.dep_id or builder.resolutions[unresolved_dep_id] == invalid_package_id);
                         builder.resolutions[unresolved_dep_id] = pkg_id;
                     }
                 }
@@ -626,9 +629,13 @@ pub fn processSubtree(
                 // later if it's possible to resolve it.
                 const entry = try builder.pending_optional_peers.getOrPut(dependency.name_hash);
                 if (!entry.found_existing) {
-                    entry.value_ptr.* = .init();
+                    entry.value_ptr.* = .init(bun.default_allocator);
                 }
-                try entry.value_ptr.append(dep_id);
+
+                // A set is used because there can be multiple instances of the same package in the
+                // tree, so the same unresolved dependency ID could be visited multiple times before
+                // it's resolved.
+                try entry.value_ptr.put(dep_id, {});
             },
             .placement => |dest| {
                 bun.handleOom(dependency_lists[dest.id].append(builder.allocator, dep_id));
@@ -676,21 +683,21 @@ fn hoistDependency(
         const res_id = builder.resolutions[dep_id];
 
         if (res_id == invalid_package_id and package_id == invalid_package_id) {
-            bun.assertWithLocation(dep.behavior.isOptionalPeer(), @src());
-            bun.assertWithLocation(dependency.behavior.isOptionalPeer(), @src());
+            bun.debugAssert(dep.behavior.isOptionalPeer());
+            bun.debugAssert(dependency.behavior.isOptionalPeer());
             // both optional peers will need to be resolved if they can resolve later.
             // remember input package_id and dependency for later
             return .resolve_later;
         }
 
         if (res_id == invalid_package_id) {
-            bun.assertWithLocation(dep.behavior.isOptionalPeer(), @src());
+            bun.debugAssert(dep.behavior.isOptionalPeer());
             return .{ .resolve_replace = .{ .id = this.id, .dep_id = dep_id } };
         }
 
         if (package_id == invalid_package_id) {
-            bun.assertWithLocation(dependency.behavior.isOptionalPeer(), @src());
-            bun.assertWithLocation(res_id != invalid_package_id, @src());
+            bun.debugAssert(dependency.behavior.isOptionalPeer());
+            bun.debugAssert(res_id != invalid_package_id);
             // resolve optional peer to `builder.resolutions[dep_id]`
             return .{ .resolve = res_id }; // 1
         }

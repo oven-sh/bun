@@ -21,7 +21,7 @@ state: enum {
     failed,
     done,
 } = .created,
-pub fn startRequestStream(this: *FetchTasklet) void {
+pub fn startRequestStream(this: *FetchTaskletRequest) void {
     this.is_waiting_request_stream_start = false;
     bun.assert(this.request_body == .ReadableStream);
     if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
@@ -39,7 +39,7 @@ pub fn startRequestStream(this: *FetchTasklet) void {
         this.sink = sink;
     }
 }
-pub fn writeRequestData(this: *FetchTasklet, data: []const u8) ResumableSinkBackpressure {
+pub fn writeRequestData(this: *FetchTaskletRequest, data: []const u8) ResumableSinkBackpressure {
     log("writeRequestData {}", .{data.len});
     if (this.signal) |signal| {
         if (signal.aborted()) {
@@ -125,5 +125,6 @@ const bun = @import("bun");
 const jsc = bun.jsc;
 const http = bun.http;
 const Headers = http.Headers;
-const ResumableSink = jsc.WebCore.ResumableSink;
+const ResumableSinkBackpressure = jsc.WebCore.ResumableSinkBackpressure;
+const ResumableSink = jsc.WebCore.ResumableFetchSink;
 const log = bun.Output.scoped(.FetchTaskletRequest, .visible);

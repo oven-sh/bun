@@ -141,6 +141,8 @@ pub fn spawnMaybeSync(
     var windows_hide: bool = false;
     var windows_verbatim_arguments: bool = false;
     var abort_signal: ?*jsc.WebCore.AbortSignal = null;
+    var uid: ?u32 = null;
+    var gid: ?u32 = null;
     defer {
         // Ensure we clean it up on error.
         if (abort_signal) |signal| {
@@ -311,6 +313,26 @@ pub fn spawnMaybeSync(
             if (try args.get(globalThis, "detached")) |detached_val| {
                 if (detached_val.isBoolean()) {
                     detached = detached_val.toBoolean();
+                }
+            }
+
+            if (try args.get(globalThis, "uid")) |uid_val| {
+                if (Environment.isWindows) {
+                    return globalThis.throwError(error.UidGidNotSupportedOnWindows, "uid is not supported on Windows");
+                }
+                if (uid_val.isNumber()) {
+                    const uid_int = try globalThis.validateIntegerRange(uid_val, u32, 0, .{ .field_name = "uid" });
+                    uid = uid_int;
+                }
+            }
+
+            if (try args.get(globalThis, "gid")) |gid_val| {
+                if (Environment.isWindows) {
+                    return globalThis.throwError(error.UidGidNotSupportedOnWindows, "gid is not supported on Windows");
+                }
+                if (gid_val.isNumber()) {
+                    const gid_int = try globalThis.validateIntegerRange(gid_val, u32, 0, .{ .field_name = "gid" });
+                    gid = gid_int;
                 }
             }
 
@@ -503,6 +525,8 @@ pub fn spawnMaybeSync(
         .extra_fds = extra_fds.items,
         .argv0 = argv0,
         .can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = can_block_entire_thread_to_reduce_cpu_usage_in_fast_path,
+        .uid = uid,
+        .gid = gid,
 
         .windows = if (Environment.isWindows) .{
             .hide_window = windows_hide,

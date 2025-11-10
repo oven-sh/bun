@@ -543,6 +543,8 @@ function spawnSync(file, args, options) {
       timeout: options.timeout,
       killSignal: options.killSignal,
       maxBuffer: options.maxBuffer,
+      uid: options.uid,
+      gid: options.gid,
     });
   } catch (err) {
     error = err;
@@ -1333,6 +1335,8 @@ class ChildProcess extends EventEmitter {
         cwd: options.cwd || undefined,
         env: env,
         detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
+        uid: options.uid,
+        gid: options.gid,
         onExit: (handle, exitCode, signalCode, err) => {
           this.#handle = handle;
           this.pid = this.#handle.pid;

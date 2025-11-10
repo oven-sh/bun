@@ -5546,6 +5546,20 @@ declare module "bun" {
       argv0?: string;
 
       /**
+       * Sets the user identity of the process (POSIX only, Linux and macOS).
+       *
+       * On Windows, this will throw an error.
+       */
+      uid?: number;
+
+      /**
+       * Sets the group identity of the process (POSIX only, Linux and macOS).
+       *
+       * On Windows, this will throw an error.
+       */
+      gid?: number;
+
+      /**
        * An {@link AbortSignal} that can be used to abort the subprocess.
        *
        * This is useful for aborting a subprocess when some other part of the

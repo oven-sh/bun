@@ -45,6 +45,8 @@ typedef struct bun_spawn_request_t {
     const char* chdir;
     bool detached;
     bun_spawn_file_action_list_t actions;
+    uint32_t uid;
+    uint32_t gid;
 } bun_spawn_request_t;
 
 extern "C" ssize_t posix_spawn_bun(
@@ -85,6 +87,20 @@ extern "C" ssize_t posix_spawn_bun(
         // Make "detached" work
         if (request->detached) {
             setsid();
+        }
+
+        // Set gid first (must be done before setuid for permission reasons)
+        if (request->gid != ~0U) {
+            if (setgid(request->gid) != 0) {
+                return childFailed();
+            }
+        }
+
+        // Set uid
+        if (request->uid != ~0U) {
+            if (setuid(request->uid) != 0) {
+                return childFailed();
+            }
         }
 
         int current_max_fd = 0;

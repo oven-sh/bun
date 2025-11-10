@@ -2168,12 +2168,11 @@ Server.prototype.address = function address() {
 };
 
 Server.prototype.getConnections = function getConnections(callback) {
-  if (typeof callback === "function") {
-    //in Bun case we will never error on getConnections
-    //node only errors if in the middle of the couting the server got disconnected, what never happens in Bun
-    //if disconnected will only pass null as well and 0 connected
-    callback(null, this._handle ? this._connections : 0);
-  }
+  validateFunction(callback, "callback");
+  // In Node.js, this is async because it needs to poll worker processes in cluster mode.
+  // In Bun, we don't use workers (yet), so we just read _connections directly.
+  // We still use process.nextTick to match Node.js's async behavior.
+  process.nextTick(callback, null, this._handle ? this._connections : 0);
   return this;
 };
 

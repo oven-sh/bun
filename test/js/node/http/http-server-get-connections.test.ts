@@ -137,3 +137,35 @@ test("http.Server.getConnections returns 0 when server is closed", async () => {
   });
   expect(count).toBe(0);
 });
+
+test("http.Server.getConnections throws if callback is not a function", async () => {
+  const server = createServer();
+
+  await new Promise<void>(resolve => {
+    server.listen(0, () => {
+      resolve();
+    });
+  });
+
+  // Should throw for undefined
+  expect(() => {
+    (server as any).getConnections();
+  }).toThrow('The "callback" argument must be of type function');
+
+  // Should throw for null
+  expect(() => {
+    (server as any).getConnections(null);
+  }).toThrow('The "callback" argument must be of type function');
+
+  // Should throw for non-function
+  expect(() => {
+    (server as any).getConnections(123);
+  }).toThrow('The "callback" argument must be of type function');
+
+  await new Promise<void>((resolve, reject) => {
+    server.close(err => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+});

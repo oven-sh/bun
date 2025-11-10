@@ -2,7 +2,13 @@
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { Duplex, Stream } = require("node:stream");
 const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
-const { validateObject, validateLinkHeaderValue, validateBoolean, validateInteger } = require("internal/validators");
+const {
+  validateObject,
+  validateLinkHeaderValue,
+  validateBoolean,
+  validateInteger,
+  validateFunction,
+} = require("internal/validators");
 const { ConnResetException } = require("internal/shared");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
@@ -288,12 +294,11 @@ Server.prototype.unref = function () {
 };
 
 Server.prototype.getConnections = function (callback) {
-  if (typeof callback === "function") {
-    // In Bun's case, we will never error on getConnections.
-    // Node only errors if in the middle of counting the server got disconnected,
-    // which never happens in Bun. If disconnected, we only pass null and 0 connected.
-    callback(null, this[serverSymbol] ? this._connections : 0);
-  }
+  validateFunction(callback, "callback");
+  // In Node.js, this is async because it needs to poll worker processes in cluster mode.
+  // In Bun, we don't use workers (yet), so we just read _connections directly.
+  // We still use process.nextTick to match Node.js's async behavior.
+  process.nextTick(callback, null, this[serverSymbol] ? this._connections : 0);
   return this;
 };
 

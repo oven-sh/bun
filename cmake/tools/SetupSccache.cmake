@@ -7,8 +7,8 @@ function(check_aws_credentials OUT_VAR)
 
   if(DEFINED ENV{AWS_ACCESS_KEY_ID} AND DEFINED ENV{AWS_SECRET_ACCESS_KEY})
     set(HAS_CREDENTIALS TRUE)
-    message(NOTICE
-      "sccache: Using AWS credentials found in environment variables")
+    message(STATUS
+      "sccache: Found AWS credentials in environment variables")
   endif()
 
   # Check for ~/.aws directory since sccache may use that.
@@ -21,8 +21,30 @@ function(check_aws_credentials OUT_VAR)
 
     if(EXISTS "${AWS_CONFIG_DIR}/credentials")
       set(HAS_CREDENTIALS TRUE)
-      message(NOTICE
-        "sccache: Using AWS credentials found in ${AWS_CONFIG_DIR}/credentials")
+      message(STATUS
+        "sccache: Found AWS credentials in ${AWS_CONFIG_DIR}/credentials")
+    endif()
+  endif()
+
+  if(HAS_CREDENTIALS)
+    # Great, we found some credentials, but now we need to test whether these credentials are authorized to hit our build
+    # cache.
+    execute_process(
+      COMMAND
+        bun
+        run
+        ${CMAKE_SOURCE_DIR}/scripts/build-cache/have-access.ts
+        --bucket bun-build-sccache-store
+        --region us-west-1
+      OUTPUT_VARIABLE HAVE_ACCESS_EXIT_CODE
+    )
+
+    if(HAVE_ACCESS_EXIT_CODE EQUAL 0)
+      message(NOTICE "sccache: AWS credentials have access to the build cache.")
+      set(HAS_CREDENTIALS TRUE)
+    else()
+      message(NOTICE "sccache: AWS credentials do not have access to the build cache.")
+      set(HAS_CREDENTIALS FALSE)
     endif()
   endif()
 
@@ -66,25 +88,24 @@ foreach(arg ${SCCACHE_ARGS})
   list(APPEND CMAKE_ARGS -D${arg}=${${arg}})
 endforeach()
 
-# Configure S3 bucket for distributed caching
-setenv(SCCACHE_BUCKET "bun-build-sccache-store")
-setenv(SCCACHE_REGION "us-west-1")
-setenv(SCCACHE_DIR "${CACHE_PATH}/sccache")
-
-# Handle credentials based on cache strategy
-if (CACHE_STRATEGY STREQUAL "read-only")
-  setenv(SCCACHE_S3_NO_CREDENTIALS "1")
-  message(STATUS "sccache configured in read-only mode.")
-else()
-  # Check for AWS credentials and enable anonymous access if needed
-  check_aws_credentials(HAS_AWS_CREDENTIALS)
-  if(NOT IS_IN_CI AND NOT HAS_AWS_CREDENTIALS)
-    setenv(SCCACHE_S3_NO_CREDENTIALS "1")
-    message(NOTICE "sccache: No AWS credentials found, enabling anonymous S3 "
-      "access. Writing to the cache will be disabled.")
-  endif()
-endif()
-
 setenv(SCCACHE_LOG "info")
 
-message(STATUS "sccache configured for bun-build-sccache-store (us-west-1).")
+check_aws_credentials(HAS_AWS_CREDENTIALS)
+if (HAS_AWS_CREDENTIALS)
+  setenv(SCCACHE_BUCKET "bun-build-sccache-store")
+  setenv(SCCACHE_REGION "us-west-1")
+  setenv(SCCACHE_DIR "${CACHE_PATH}/sccache")
+  message(STATUS "sccache configured for bun-build-sccache-store (us-west-1).")
+else()
+  unset(ENV{SCCACHE_BUCKET})
+  unset(ENV{SCCACHE_REGION})
+  unset(ENV{SCCACHE_DIR})
+
+  if (IS_IN_CI)
+    message(FATAL_ERROR "In CI environment but no AWS credentials found for sccache.")
+  else()
+    message(WARNING "sccache: No authorized bun build cache AWS credentials found, falling back to "
+      "local filesystem cache.")
+    setenv(SCCACHE_DIR "${CACHE_PATH}/sccache")
+  endif()
+endif()

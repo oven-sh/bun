@@ -125,7 +125,7 @@ setx(CWD ${CMAKE_SOURCE_DIR})
 setx(BUILD_PATH ${CMAKE_BINARY_DIR})
 
 optionx(CACHE_PATH FILEPATH "The path to the cache directory" DEFAULT ${BUILD_PATH}/cache)
-optionx(CACHE_STRATEGY "read-write|read-only|none" "The strategy to use for caching" DEFAULT "read-write")
+optionx(CACHE_STRATEGY "distributed|localfs|none" "The strategy to use for caching" DEFAULT "distributed")
 
 optionx(CI BOOL "If CI is enabled" DEFAULT OFF)
 optionx(ENABLE_ANALYSIS BOOL "If static analysis targets should be enabled" DEFAULT OFF)

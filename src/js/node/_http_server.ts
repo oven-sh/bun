@@ -200,6 +200,7 @@ function Server(options, callback): void {
 
   this.listening = false;
   this._unref = false;
+  this._connections = 0;
   this.maxRequestsPerSocket = 0;
   this[kInternalSocketData] = undefined;
   this[tlsSymbol] = null;
@@ -283,6 +284,16 @@ Server.prototype.ref = function () {
 Server.prototype.unref = function () {
   this._unref = true;
   this[serverSymbol]?.unref?.();
+  return this;
+};
+
+Server.prototype.getConnections = function (callback) {
+  if (typeof callback === "function") {
+    // In Bun's case, we will never error on getConnections.
+    // Node only errors if in the middle of counting the server got disconnected,
+    // which never happens in Bun. If disconnected, we only pass null and 0 connected.
+    callback(null, this[serverSymbol] ? this._connections : 0);
+  }
   return this;
 };
 
@@ -574,6 +585,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         if (isSocketNew && !reachedRequestsLimit) {
+          server._connections++;
           server.emit("connection", socket);
         }
 
@@ -798,6 +810,7 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
   }
   err.rawPacket = rawPacket;
   const nodeSocket = new NodeHTTPServerSocket(self, socket, ssl);
+  self._connections++;
   self.emit("connection", nodeSocket);
   self.emit("clientError", err, nodeSocket);
   if (nodeSocket.listenerCount("error") > 0) {
@@ -900,6 +913,11 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
       } else {
         req.destroy();
       }
+    }
+
+    // Decrement connection count when socket closes
+    if (this.server && this.server._connections > 0) {
+      this.server._connections--;
     }
   }
   #onCloseForDestroy(closeCallback) {

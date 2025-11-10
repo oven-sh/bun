@@ -1,82 +1,72 @@
+# Setup sccache as the C and C++ compiler launcher to speed up builds by caching
 if(CACHE_STRATEGY STREQUAL "none")
   return()
 endif()
 
+set(SCCACHE_SHARED_CACHE_REGION "us-west-1")
+set(SCCACHE_SHARED_CACHE_BUCKET "bun-build-sccache-store")
+
+# Function to check if the system AWS credentials have access to the sccache S3 bucket.
 function(check_aws_credentials OUT_VAR)
-  set(HAS_CREDENTIALS FALSE)
+  # Install dependencies first
+  execute_process(
+    COMMAND
+      ${BUN_EXECUTABLE}
+      install
+      --frozen-lockfile
+    WORKING_DIRECTORY
+      ${CMAKE_SOURCE_DIR}/scripts/build-cache
+    RESULT_VARIABLE INSTALL_EXIT_CODE
+    OUTPUT_VARIABLE INSTALL_OUTPUT
+    ERROR_VARIABLE INSTALL_ERROR
+  )
 
-  if(DEFINED ENV{AWS_ACCESS_KEY_ID} AND DEFINED ENV{AWS_SECRET_ACCESS_KEY})
+  if(NOT INSTALL_EXIT_CODE EQUAL 0)
+    message(FATAL_ERROR "Failed to install dependencies in scripts/build-cache\n"
+      "Exit code: ${INSTALL_EXIT_CODE}\n"
+      "Output: ${INSTALL_OUTPUT}\n"
+      "Error: ${INSTALL_ERROR}")
+    set(${OUT_VAR} FALSE PARENT_SCOPE)
+    return()
+  endif()
+
+  # Check AWS credentials
+  execute_process(
+    COMMAND
+      ${BUN_EXECUTABLE}
+      run
+      have-access.ts
+      --bucket ${SCCACHE_SHARED_CACHE_BUCKET}
+      --region ${SCCACHE_SHARED_CACHE_REGION}
+    WORKING_DIRECTORY
+      ${CMAKE_SOURCE_DIR}/scripts/build-cache
+    RESULT_VARIABLE HAVE_ACCESS_EXIT_CODE
+  )
+
+  if(HAVE_ACCESS_EXIT_CODE EQUAL 0)
     set(HAS_CREDENTIALS TRUE)
-    message(STATUS
-      "sccache: Found AWS credentials in environment variables")
-  endif()
-
-  # Check for ~/.aws directory since sccache may use that.
-  if(NOT HAS_CREDENTIALS)
-    if(WIN32)
-      set(AWS_CONFIG_DIR "$ENV{USERPROFILE}/.aws")
-    else()
-      set(AWS_CONFIG_DIR "$ENV{HOME}/.aws")
-    endif()
-
-    if(EXISTS "${AWS_CONFIG_DIR}/credentials")
-      set(HAS_CREDENTIALS TRUE)
-      message(STATUS
-        "sccache: Found AWS credentials in ${AWS_CONFIG_DIR}/credentials")
-    endif()
-  endif()
-
-  if(HAS_CREDENTIALS)
-    # Great, we found some credentials, but now we need to test whether these credentials are authorized to hit our build
-    # cache.
-    execute_process(
-      COMMAND
-        bun
-        run
-        ${CMAKE_SOURCE_DIR}/scripts/build-cache/have-access.ts
-        --bucket bun-build-sccache-store
-        --region us-west-1
-      OUTPUT_VARIABLE HAVE_ACCESS_EXIT_CODE
-    )
-
-    if(HAVE_ACCESS_EXIT_CODE EQUAL 0)
-      message(NOTICE "sccache: AWS credentials have access to the build cache.")
-      set(HAS_CREDENTIALS TRUE)
-    else()
-      message(NOTICE "sccache: AWS credentials do not have access to the build cache.")
-      set(HAS_CREDENTIALS FALSE)
-    endif()
+  else()
+    set(HAS_CREDENTIALS FALSE)
   endif()
 
   set(${OUT_VAR} ${HAS_CREDENTIALS} PARENT_SCOPE)
 endfunction()
 
-function(check_running_in_ci OUT_VAR)
-  set(IS_CI FALSE)
-
-  # Query EC2 instance metadata service to check if running on buildkite-agent
-  # The IP address 169.254.169.254 is a well-known link-local address for querying EC2 instance
-  # metdata:
-  # https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instancedata-data-retrieval.html
-  execute_process(
-    COMMAND curl -s -m 0.5 http://169.254.169.254/latest/meta-data/tags/instance/Service
-    OUTPUT_VARIABLE METADATA_OUTPUT
-    ERROR_VARIABLE METADATA_ERROR
-    RESULT_VARIABLE METADATA_RESULT
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
-  )
-
-  # Check if the request succeeded and returned exactly "buildkite-agent"
-  if(METADATA_RESULT EQUAL 0 AND METADATA_OUTPUT STREQUAL "buildkite-agent")
-    set(IS_CI TRUE)
-  endif()
-
-  set(${OUT_VAR} ${IS_CI} PARENT_SCOPE)
+# Configure sccache to use the local cache only.
+function(configure_local)
+  unsetenv(SCCACHE_BUCKET)
+  unsetenv(SCCACHE_REGION)
+  setenv(SCCACHE_DIR "${CACHE_PATH}/sccache")
 endfunction()
 
-check_running_in_ci(IS_IN_CI)
-find_command(VARIABLE SCCACHE_PROGRAM COMMAND sccache REQUIRED ${IS_IN_CI})
+# Configure sccache to use the distributed cache (S3 + local).
+function(configure_distributed)
+  setenv(SCCACHE_BUCKET "${SCCACHE_SHARED_CACHE_BUCKET}")
+  setenv(SCCACHE_REGION "${SCCACHE_SHARED_CACHE_REGION}")
+  setenv(SCCACHE_DIR "${CACHE_PATH}/sccache")
+endfunction()
+
+find_command(VARIABLE SCCACHE_PROGRAM COMMAND sccache REQUIRED ${CI})
 if(NOT SCCACHE_PROGRAM)
   message(WARNING "sccache not found. Your builds will be slower.")
   return()
@@ -90,22 +80,42 @@ endforeach()
 
 setenv(SCCACHE_LOG "info")
 
-check_aws_credentials(HAS_AWS_CREDENTIALS)
-if (HAS_AWS_CREDENTIALS)
-  setenv(SCCACHE_BUCKET "bun-build-sccache-store")
-  setenv(SCCACHE_REGION "us-west-1")
-  setenv(SCCACHE_DIR "${CACHE_PATH}/sccache")
-  message(STATUS "sccache configured for bun-build-sccache-store (us-west-1).")
+if (CI)
+  if(CACHE_STRATEGY STREQUAL "auto" OR CACHE_STRATEGY STREQUAL "distributed")
+    check_aws_credentials(HAS_AWS_CREDENTIALS)
+    if(HAS_AWS_CREDENTIALS)
+      configure_distributed()
+      message(NOTICE "sccache: Using distributed cache strategy.")
+    else()
+      message(FATAL_ERROR "CI CACHE_STRATEGY is set to '${CACHE_STRATEGY}', but no valid AWS "
+        "credentials were found. Note that 'auto' requires AWS credentials to access the shared "
+        "cache in CI.")
+    endif()
+  elseif(CACHE_STRATEGY STREQUAL "local")
+    # We disallow this because we want our CI runs to always used the shared cache to accelerate
+    # builds.
+    # none, distributed and auto are all okay.
+    #
+    # If local is configured, it's as good as "none", so this is probably user error.
+    message(FATAL_ERROR "CI CACHE_STRATEGY is set to 'local', which is not allowed.")
+  endif()
 else()
-  unset(ENV{SCCACHE_BUCKET})
-  unset(ENV{SCCACHE_REGION})
-  unset(ENV{SCCACHE_DIR})
-
-  if (IS_IN_CI)
-    message(FATAL_ERROR "In CI environment but no AWS credentials found for sccache.")
-  else()
-    message(WARNING "sccache: No authorized bun build cache AWS credentials found, falling back to "
-      "local filesystem cache.")
-    setenv(SCCACHE_DIR "${CACHE_PATH}/sccache")
+  # Local environments can use any strategy they like. S3 is set up in such a way so as to clean
+  # itself from old entries automatically.
+  if (CACHE_STRATEGY STREQUAL "auto" OR CACHE_STRATEGY STREQUAL "local")
+    # In the local environment, we prioritize using the local cache. This is because sccache takes
+    # into consideration the whole absolute path of the files being compiled, and it's very
+    # unlikely users will have the same absolute paths on their local machines.
+    configure_local()
+    message(NOTICE "sccache: Using local cache strategy.")
+  elseif(CACHE_STRATEGY STREQUAL "distributed")
+    check_aws_credentials(HAS_AWS_CREDENTIALS)
+    if(HAS_AWS_CREDENTIALS)
+      configure_distributed()
+      message(NOTICE "sccache: Using distributed cache strategy.")
+    else()
+      message(FATAL_ERROR "CACHE_STRATEGY is set to 'distributed', but no valid AWS credentials "
+        "were found.")
+    endif()
   endif()
 endif()

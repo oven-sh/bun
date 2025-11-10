@@ -63,6 +63,7 @@ async function build(args) {
 
   const generateOptions = parseOptions(args, generateFlags);
   const buildOptions = parseOptions(args, buildFlags);
+  const ciCppBuild = isCI && !!process.env.BUN_CPP_ONLY;
 
   const buildPath = resolve(generateOptions["-B"] || buildOptions["--build"] || "build");
   generateOptions["-B"] = buildPath;
@@ -73,7 +74,7 @@ async function build(args) {
   }
 
   if (!generateOptions["-DCACHE_STRATEGY"]) {
-    generateOptions["-DCACHE_STRATEGY"] = parseBoolean(getEnv("RELEASE", false) || "false") ? "none" : "distributed";
+    generateOptions["-DCACHE_STRATEGY"] = parseBoolean(getEnv("RELEASE", false) || "false") ? "none" : "auto";
   }
 
   const toolchain = generateOptions["--toolchain"];
@@ -103,8 +104,7 @@ async function build(args) {
 
   await startGroup("CMake Build", () => spawn("cmake", buildArgs, { env }));
 
-  const target = buildOptions["--target"] || buildOptions["-t"];
-  if (isCI && target === "build-cpp") {
+  if (ciCppBuild) {
     await startGroup("sccache stats", () => {
       spawn("sccache", ["--show-stats"], { env });
     });
@@ -146,7 +146,12 @@ function parseOptions(args, flags = []) {
 
 async function spawn(command, args, options, label) {
   const effectiveArgs = args.filter(Boolean);
-  const description = [command, ...effectiveArgs].map(arg => (arg.includes(" ") ? JSON.stringify(arg) : arg)).join(" ");
+  const description = [command, ...effectiveArgs]
+    .map(arg => {
+      const str = String(arg);
+      return str.includes(" ") ? JSON.stringify(str) : str;
+    })
+    .join(" ");
   let env = options?.env;
 
   console.log("$", description);

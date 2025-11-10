@@ -125,7 +125,8 @@ setx(CWD ${CMAKE_SOURCE_DIR})
 setx(BUILD_PATH ${CMAKE_BINARY_DIR})
 
 optionx(CACHE_PATH FILEPATH "The path to the cache directory" DEFAULT ${BUILD_PATH}/cache)
-optionx(CACHE_STRATEGY "distributed|localfs|none" "The strategy to use for caching" DEFAULT "distributed")
+optionx(CACHE_STRATEGY "auto|distributed|local|none" "The strategy to use for caching" DEFAULT
+"auto")
 
 optionx(CI BOOL "If CI is enabled" DEFAULT OFF)
 optionx(ENABLE_ANALYSIS BOOL "If static analysis targets should be enabled" DEFAULT OFF)
@@ -144,6 +145,10 @@ optionx(TMP_PATH FILEPATH "The path to the temporary directory" DEFAULT ${BUILD_
 # setenv()
 # Description:
 #   Sets an environment variable during the build step, and writes it to a .env file.
+#
+# See Also:
+#   unsetenv()
+#
 # Arguments:
 #   variable string - The variable to set
 #   value    string - The value to set the variable to
@@ -176,6 +181,34 @@ function(setenv variable value)
   endif()
 
   message(STATUS "Set ENV ${variable}: ${value}")
+endfunction()
+
+# See setenv()
+# Description:
+#   Exact oppositve of setenv().
+# Arguments:
+#   variable string - The variable to unset.
+# See Also:
+#   setenv()
+function(unsetenv variable)
+  set(ENV_PATH ${BUILD_PATH}/.env)
+  if (NOT EXISTS ${ENV_PATH})
+    return()
+  endif()
+
+  file(STRINGS ${ENV_PATH} ENV_FILE ENCODING UTF-8)
+
+  foreach(line ${ENV_FILE})
+    if(line MATCHES "^${variable}=")
+      list(REMOVE_ITEM ENV_FILE ${line})
+      set(ENV_MODIFIED ON)
+    endif()
+  endforeach()
+
+  if(ENV_MODIFIED)
+    list(JOIN ENV_FILE "\n" ENV_FILE)
+    file(WRITE ${ENV_PATH} ${ENV_FILE})
+  endif()
 endfunction()
 
 # satisfies_range()

@@ -3,8 +3,8 @@
  *
  * Exits with code 0 if access is available, or 1 otherwise.
  */
-import { S3Client, HeadBucketCommand } from "@aws-sdk/client-s3";
-
+import { HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
+import { CredentialsProviderError } from "@aws-sdk/property-provider";
 
 class CacheConfig {
   #bucket: string;
@@ -64,12 +64,16 @@ export async function currentUserHasAccess(cacheConfig: CacheConfig): Promise<bo
     await s3Client.send(new HeadBucketCommand({ Bucket: cacheConfig.bucket }));
     return true;
   } catch (error) {
-    if (error.name === "NotFound" || error.$metadata?.httpStatusCode === 404) {
+    const criteria = [
+      () => error.name == "NotFound" || error.$metadata?.httpStatusCode === 404,
+      () => error.name == "Forbidden" || error.$metadata?.httpStatusCode === 403,
+      () => error instanceof CredentialsProviderError,
+    ];
+
+    if (criteria.some(c => c())) {
       return false;
     }
-    if (error.name === "Forbidden" || error.$metadata?.httpStatusCode === 403) {
-      return false;
-    }
+
     throw error;
   }
 }

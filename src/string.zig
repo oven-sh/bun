@@ -857,10 +857,10 @@ pub const String = extern struct {
 
     pub fn createFormatForJS(globalObject: *jsc.JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError!jsc.JSValue {
         jsc.markBinding(@src());
-        var builder = std.ArrayList(u8).init(bun.default_allocator);
+        var builder = bun.collections.ArrayListDefault(u8).init();
         defer builder.deinit();
         bun.handleOom(builder.writer().print(fmt, args));
-        return bun.cpp.BunString__createUTF8ForJS(globalObject, builder.items.ptr, builder.items.len);
+        return bun.cpp.BunString__createUTF8ForJS(globalObject, builder.items().ptr, builder.items().len);
     }
 
     pub fn parseDate(this: *String, globalObject: *jsc.JSGlobalObject) bun.JSError!f64 {

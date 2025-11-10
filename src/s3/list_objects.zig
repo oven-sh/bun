@@ -59,16 +59,16 @@ pub const S3ListObjectsV2Result = struct {
     continuation_token: ?[]const u8,
     next_continuation_token: ?[]const u8,
     start_after: ?[]const u8,
-    common_prefixes: ?std.ArrayList([]const u8),
-    contents: ?std.ArrayList(S3ListObjectsContents),
+    common_prefixes: ?bun.collections.ArrayListDefault([]const u8),
+    contents: ?bun.collections.ArrayListDefault(S3ListObjectsContents),
 
     pub fn deinit(this: *const @This()) void {
         if (this.contents) |contents| {
-            for (contents.items) |*item| item.deinit();
+            for (contents.items()) |*item| item.deinit();
             contents.deinit();
         }
         if (this.common_prefixes) |common_prefixes| {
-            common_prefixes.deinit();
+            common_prefixes.deinitShallow();
         }
     }
 
@@ -115,9 +115,9 @@ pub const S3ListObjectsV2Result = struct {
         }
 
         if (this.contents) |contents| {
-            const jsContents = try JSValue.createEmptyArray(globalObject, contents.items.len);
+            const jsContents = try JSValue.createEmptyArray(globalObject, contents.items().len);
 
-            for (contents.items, 0..) |item, i| {
+            for (contents.items(), 0..) |item, i| {
                 const objectInfo = JSValue.createEmptyObject(globalObject, 1);
                 objectInfo.put(globalObject, jsc.ZigString.static("key"), try bun.String.createUTF8ForJS(globalObject, item.key));
 
@@ -165,9 +165,9 @@ pub const S3ListObjectsV2Result = struct {
         }
 
         if (this.common_prefixes) |common_prefixes| {
-            const jsCommonPrefixes = try JSValue.createEmptyArray(globalObject, common_prefixes.items.len);
+            const jsCommonPrefixes = try JSValue.createEmptyArray(globalObject, common_prefixes.items().len);
 
-            for (common_prefixes.items, 0..) |prefix, i| {
+            for (common_prefixes.items(), 0..) |prefix, i| {
                 const jsPrefix = JSValue.createEmptyObject(globalObject, 1);
                 jsPrefix.put(globalObject, jsc.ZigString.static("prefix"), try bun.String.createUTF8ForJS(globalObject, prefix));
                 try jsCommonPrefixes.putIndex(globalObject, @intCast(i), jsPrefix);
@@ -196,8 +196,8 @@ pub fn parseS3ListObjectsResult(xml: []const u8) !S3ListObjectsV2Result {
         .start_after = null,
     };
 
-    var contents = std.ArrayList(S3ListObjectsContents).init(bun.default_allocator);
-    var common_prefixes = std.ArrayList([]const u8).init(bun.default_allocator);
+    var contents = bun.collections.ArrayListDefault(S3ListObjectsContents).init();
+    var common_prefixes = bun.collections.ArrayListDefault([]const u8).init();
 
     // we dont use trailing ">" as it may finish with xmlns=...
     if (strings.indexOf(xml, "<ListBucketResult")) |delete_result_pos| {
@@ -482,17 +482,17 @@ pub fn parseS3ListObjectsResult(xml: []const u8) !S3ListObjectsV2Result {
             }
         }
 
-        if (contents.items.len != 0) {
+        if (contents.items().len != 0) {
             result.contents = contents;
         } else {
-            for (contents.items) |*item| item.deinit();
+            for (contents.items()) |*item| item.deinit();
             contents.deinit();
         }
 
-        if (common_prefixes.items.len != 0) {
+        if (common_prefixes.items().len != 0) {
             result.common_prefixes = common_prefixes;
         } else {
-            common_prefixes.deinit();
+            common_prefixes.deinitShallow();
         }
     }
 

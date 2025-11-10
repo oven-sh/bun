@@ -326,14 +326,14 @@ fn refreshWithHeldLock(self: *Progress) void {
                 }
                 if (eti > 0) {
                     if (need_ellipse) self.bufWrite(&end, " ", .{});
-                    switch (node.unit.length == 0) {
+                    switch (node.unit.len == 0) {
                         true => self.bufWrite(&end, "[{Bi:.2}/{Bi:.2}] ", .{ current_item, eti }),
                         false => self.bufWrite(&end, "[{d}/{d}{s}] ", .{ current_item, eti, node.unit }),
                     }
                     need_ellipse = false;
                 } else if (completed_items != 0) {
                     if (need_ellipse) self.bufWrite(&end, " ", .{});
-                    switch (node.unit.length == 0) {
+                    switch (node.unit.len == 0) {
                         true => self.bufWrite(&end, "[{Bi:.2}] ", .{current_item}),
                         false => self.bufWrite(&end, "[{d}{s}] ", .{ current_item, node.unit }),
                     }

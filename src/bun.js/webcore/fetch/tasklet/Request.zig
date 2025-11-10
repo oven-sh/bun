@@ -11,6 +11,16 @@ hostname: ?[]u8 = null,
 /// We always clone url and proxy (if informed)
 url_proxy_buffer: []const u8 = "",
 
+state: enum {
+    created,
+    enqueued,
+    // information_headers,
+    headers_sent,
+    sending_body, // can be sent with the headers or separately
+    // sending_trailer_headers,
+    failed,
+    done,
+} = .created,
 pub fn startRequestStream(this: *FetchTasklet) void {
     this.is_waiting_request_stream_start = false;
     bun.assert(this.request_body == .ReadableStream);
@@ -98,18 +108,6 @@ pub fn writeEndRequest(this: *FetchTaskletRequest, err: ?jsc.JSValue) void {
     }
 }
 
-
-state: enum {
-    created,
-    enqueued,
-    // information_headers,
-    headers_sent,
-    sending_body, // can be sent with the headers or separately
-    // sending_trailer_headers,
-    failed,
-    done,
-} = .created,
-
 pub fn deinit(this: *FetchTaskletRequest) void {
     if (this.request_body) |body| {
         body.detach();
@@ -124,4 +122,8 @@ pub fn deinit(this: *FetchTaskletRequest) void {
 const HTTPRequestBody = @import("HTTPRequestBody.zig").HTTPRequestBody;
 const std = @import("std");
 const bun = @import("bun");
+const jsc = bun.jsc;
 const http = bun.http;
+const Headers = http.Headers;
+const ResumableSink = jsc.WebCore.ResumableSink;
+const log = bun.Output.scoped(.FetchTaskletRequest, .visible);

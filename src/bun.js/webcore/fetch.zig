@@ -197,7 +197,7 @@ pub fn Bun__fetch_(
     // which is important for FormData.
     // https://github.com/oven-sh/bun/issues/2264
     //
-    var body: FetchTasklet.HTTPRequestBody = FetchTasklet.HTTPRequestBody.Empty;
+    var body: HTTPRequestBody = HTTPRequestBody.Empty;
 
     var disable_timeout = false;
     var disable_keepalive = false;
@@ -1425,3 +1425,4 @@ const Response = jsc.WebCore.Response;
 
 const Blob = jsc.WebCore.Blob;
 const AnyBlob = jsc.WebCore.Blob.Any;
+const HTTPRequestBody = @import("fetch/tasklet/HTTPRequestBody.zig").HTTPRequestBody;

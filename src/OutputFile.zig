@@ -368,7 +368,7 @@ pub fn toJS(
             var build_output = bun.new(jsc.API.BuildArtifact, .{
                 .blob = jsc.WebCore.Blob.initWithStore(file_blob, globalObject),
                 .hash = this.hash,
-                .loader = this.input_loader,
+                .loader = this.loader,
                 .output_kind = this.output_kind,
                 .path = bun.default_allocator.dupe(u8, copy.pathname) catch @panic("Failed to allocate path"),
             });
@@ -406,7 +406,7 @@ pub fn toJS(
             build_output.* = jsc.API.BuildArtifact{
                 .blob = jsc.WebCore.Blob.initWithStore(file_blob, globalObject),
                 .hash = this.hash,
-                .loader = this.input_loader,
+                .loader = this.loader,
                 .output_kind = this.output_kind,
                 .path = bun.default_allocator.dupe(u8, path_to_use) catch @panic("Failed to allocate path"),
             };
@@ -428,7 +428,7 @@ pub fn toJS(
             build_output.* = jsc.API.BuildArtifact{
                 .blob = blob,
                 .hash = this.hash,
-                .loader = this.input_loader,
+                .loader = this.loader,
                 .output_kind = this.output_kind,
                 .path = owned_pathname orelse bun.default_allocator.dupe(u8, this.src_path.text) catch unreachable,
             };

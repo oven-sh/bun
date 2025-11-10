@@ -631,7 +631,7 @@ pub fn processSubtree(
                 // later if it's possible to resolve it.
                 const entry = try builder.pending_optional_peers.getOrPut(dependency.name_hash);
                 if (!entry.found_existing) {
-                    entry.value_ptr.* = .init(bun.default_allocator);
+                    entry.value_ptr.* = .init(builder.allocator);
                 }
 
                 try entry.value_ptr.put(dep_id, {});

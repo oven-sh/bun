@@ -375,7 +375,8 @@
               "/guides/ecosystem/stric",
               "/guides/ecosystem/sveltekit",
               "/guides/ecosystem/systemd",
-              "/guides/ecosystem/vite"
+              "/guides/ecosystem/vite",
+              "/guides/ecosystem/upstash"
             ]
           },
           {

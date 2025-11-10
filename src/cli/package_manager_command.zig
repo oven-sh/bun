@@ -347,6 +347,10 @@ pub const PackageManagerCommand = struct {
                 });
             }
 
+            if (directories.items.len == 0) {
+                return;
+            }
+
             const first_directory = directories.orderedRemove(0);
 
             var more_packages = try ctx.allocator.alloc(bool, max_depth);
@@ -532,6 +536,12 @@ fn printNodeModulesFolderStructure(
         }
 
         const package_id = lockfile.buffers.resolutions.items[dependency_id];
+
+        if (package_id >= lockfile.packages.len) {
+            // in case we are loading from a binary lockfile with invalid package ids
+            continue;
+        }
+
         var dir_index: usize = 0;
         var found_node_modules = false;
         while (dir_index < directories.items.len) : (dir_index += 1) {
@@ -589,12 +599,6 @@ const PmPkgCommand = @import("./pm_pkg_command.zig").PmPkgCommand;
 const PmVersionCommand = @import("./pm_version_command.zig").PmVersionCommand;
 const PmWhyCommand = @import("./pm_why_command.zig").PmWhyCommand;
 
-const Install = @import("../install/install.zig");
-const DependencyID = Install.DependencyID;
-const Npm = Install.Npm;
-const PackageID = Install.PackageID;
-const PackageManager = Install.PackageManager;
-
 const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrustedCommand;
 const TrustCommand = @import("./pm_trusted_command.zig").TrustCommand;
 const UntrustedCommand = @import("./pm_trusted_command.zig").UntrustedCommand;
@@ -606,3 +610,9 @@ const Output = bun.Output;
 const log = bun.log;
 const strings = bun.strings;
 const File = bun.sys.File;
+
+const install = bun.install;
+const DependencyID = install.DependencyID;
+const Npm = install.Npm;
+const PackageID = install.PackageID;
+const PackageManager = install.PackageManager;

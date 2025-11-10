@@ -42,14 +42,14 @@ pub const HTTPRequestBody = union(enum) {
         if (body_value == .Locked) {
             if (body_value.Locked.readable.has()) {
                 // just grab the ref
-                return FetchTasklet.HTTPRequestBody{ .ReadableStream = body_value.Locked.readable };
+                return HTTPRequestBody{ .ReadableStream = body_value.Locked.readable };
             }
             const readable = try body_value.toReadableStream(globalThis);
             if (!readable.isEmptyOrUndefinedOrNull() and body_value == .Locked and body_value.Locked.readable.has()) {
-                return FetchTasklet.HTTPRequestBody{ .ReadableStream = body_value.Locked.readable };
+                return HTTPRequestBody{ .ReadableStream = body_value.Locked.readable };
             }
         }
-        return FetchTasklet.HTTPRequestBody{ .AnyBlob = body_value.useAsAnyBlob() };
+        return HTTPRequestBody{ .AnyBlob = body_value.useAsAnyBlob() };
     }
 
     pub fn needsToReadFile(this: *HTTPRequestBody) bool {

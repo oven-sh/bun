@@ -21,6 +21,11 @@ state: enum {
     failed,
     done,
 } = .created,
+
+fn parent(this: *FetchTaskletRequest) *FetchTasklet {
+    return @fieldParentPtr("request", this);
+}
+
 pub fn startRequestStream(this: *FetchTaskletRequest) void {
     this.is_waiting_request_stream_start = false;
     bun.assert(this.request_body == .ReadableStream);
@@ -108,6 +113,21 @@ pub fn writeEndRequest(this: *FetchTaskletRequest, err: ?jsc.JSValue) void {
     }
 }
 
+/// This is ALWAYS called from the main thread
+pub fn resumeRequestDataStream(this: *FetchTaskletRequest) void {
+    // deref when done because we ref inside onWriteRequestDataDrain
+    const tasklet = this.parent();
+    defer tasklet.deref();
+    if (tasklet.isAborted()) {
+        // already aborted; nothing to drain
+        return;
+    }
+    log("resumeRequestDataStream", .{});
+    if (this.sink) |sink| {
+        sink.drain();
+    }
+}
+
 pub fn deinit(this: *FetchTaskletRequest) void {
     if (this.request_body) |body| {
         body.detach();
@@ -128,3 +148,4 @@ const Headers = http.Headers;
 const ResumableSinkBackpressure = jsc.WebCore.ResumableSinkBackpressure;
 const ResumableSink = jsc.WebCore.ResumableFetchSink;
 const log = bun.Output.scoped(.FetchTaskletRequest, .visible);
+const FetchTasklet = @import("../FetchTasklet.zig").FetchTasklet;

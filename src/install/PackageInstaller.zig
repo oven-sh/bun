@@ -48,7 +48,7 @@ pub const PackageInstaller = struct {
 
     pub const NodeModulesFolder = struct {
         tree_id: Lockfile.Tree.Id = 0,
-        path: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+        path: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
 
         pub fn deinit(this: *NodeModulesFolder) void {
             this.path.clearAndFree();
@@ -664,7 +664,7 @@ pub const PackageInstaller = struct {
         }
 
         if (comptime Environment.allow_assert) {
-            Output.panic("Ran callback to install enqueued packages, but there was no task associated with it. {}:{} (dependency_id: {d})", .{
+            Output.panic("Ran callback to install enqueued packages, but there was no task associated with it. {f}:{f} (dependency_id: {d})", .{
                 bun.fmt.quote(name.slice(this.lockfile.buffers.string_bytes.items)),
                 bun.fmt.quote(data.url),
                 dependency_id,
@@ -787,12 +787,12 @@ pub const PackageInstaller = struct {
         var resolution_buf: [512]u8 = undefined;
         const package_version = if (resolution.tag == .workspace) brk: {
             if (this.manager.lockfile.workspace_versions.get(pkg_name_hash)) |workspace_version| {
-                break :brk std.fmt.bufPrint(&resolution_buf, "{}", .{workspace_version.fmt(this.lockfile.buffers.string_bytes.items)}) catch unreachable;
+                break :brk std.fmt.bufPrint(&resolution_buf, "{f}", .{workspace_version.fmt(this.lockfile.buffers.string_bytes.items)}) catch unreachable;
             }
 
             // no version
             break :brk "";
-        } else std.fmt.bufPrint(&resolution_buf, "{}", .{resolution.fmt(this.lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
+        } else std.fmt.bufPrint(&resolution_buf, "{f}", .{resolution.fmt(this.lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
 
         const patch_patch, const patch_contents_hash, const patch_name_and_version_hash, const remove_patch = brk: {
             if (this.manager.lockfile.patched_dependencies.entries.len == 0 and this.manager.patched_dependencies_to_remove.entries.len == 0) break :brk .{ null, null, null, false };
@@ -845,7 +845,7 @@ pub const PackageInstaller = struct {
             .node_modules = &this.node_modules,
             .lockfile = this.lockfile,
         };
-        debug("Installing {s}@{s}", .{
+        debug("Installing {s}@{f}", .{
             pkg_name.slice(this.lockfile.buffers.string_bytes.items),
             resolution.fmt(this.lockfile.buffers.string_bytes.items, .posix),
         });
@@ -1025,7 +1025,7 @@ pub const PackageInstaller = struct {
                             // Very old versions of Bun didn't store the tarball url when it didn't seem necessary
                             // This caused bugs. We can't assert on it because they could come from old lockfiles
                             if (resolution.value.npm.url.isEmpty()) {
-                                Output.debugWarn("package {s}@{} missing tarball_url", .{
+                                Output.debugWarn("package {s}@{f} missing tarball_url", .{
                                     pkg_name.slice(this.lockfile.buffers.string_bytes.items),
                                     resolution.fmt(this.lockfile.buffers.string_bytes.items, .posix),
                                 });
@@ -1092,7 +1092,7 @@ pub const PackageInstaller = struct {
             // creating this directory now, right before installing package
             var destination_dir = this.node_modules.makeAndOpenDir(this.root_node_modules_folder) catch |err| {
                 if (log_level != .silent) {
-                    Output.err(err, "Failed to open node_modules folder for <r><red>{s}<r> in {s}", .{
+                    Output.err(err, "Failed to open node_modules folder for <r><red>{s}<r> in {f}", .{
                         pkg_name.slice(this.lockfile.buffers.string_bytes.items),
                         bun.fmt.fmtPath(u8, this.node_modules.path.items, .{}),
                     });
@@ -1219,7 +1219,7 @@ pub const PackageInstaller = struct {
                             );
                             if (count > 0) {
                                 if (log_level.isVerbose()) {
-                                    Output.prettyError("Blocked {d} scripts for: {s}@{}\n", .{
+                                    Output.prettyError("Blocked {d} scripts for: {s}@{f}\n", .{
                                         count,
                                         alias.slice(this.lockfile.buffers.string_bytes.items),
                                         resolution.fmt(this.lockfile.buffers.string_bytes.items, .posix),

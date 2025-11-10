@@ -1072,7 +1072,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
 
     if (args.option("--registry")) |registry| {
         if (!strings.hasPrefixComptime(registry, "https://") and !strings.hasPrefixComptime(registry, "http://")) {
-            Output.errGeneric("Registry URL must start with 'https://' or 'http://': {}\n", .{bun.fmt.quote(registry)});
+            Output.errGeneric("Registry URL must start with 'https://' or 'http://': {f}\n", .{bun.fmt.quote(registry)});
             Global.crash();
         }
         cli.registry = registry;

@@ -59,8 +59,8 @@ pub const S3ListObjectsV2Result = struct {
     continuation_token: ?[]const u8,
     next_continuation_token: ?[]const u8,
     start_after: ?[]const u8,
-    common_prefixes: ?std.ArrayList([]const u8),
-    contents: ?std.ArrayList(S3ListObjectsContents),
+    common_prefixes: ?std.array_list.Managed([]const u8),
+    contents: ?std.array_list.Managed(S3ListObjectsContents),
 
     pub fn deinit(this: *const @This()) void {
         if (this.contents) |contents| {
@@ -196,8 +196,8 @@ pub fn parseS3ListObjectsResult(xml: []const u8) !S3ListObjectsV2Result {
         .start_after = null,
     };
 
-    var contents = std.ArrayList(S3ListObjectsContents).init(bun.default_allocator);
-    var common_prefixes = std.ArrayList([]const u8).init(bun.default_allocator);
+    var contents = std.array_list.Managed(S3ListObjectsContents).init(bun.default_allocator);
+    var common_prefixes = std.array_list.Managed([]const u8).init(bun.default_allocator);
 
     // we dont use trailing ">" as it may finish with xmlns=...
     if (strings.indexOf(xml, "<ListBucketResult")) |delete_result_pos| {

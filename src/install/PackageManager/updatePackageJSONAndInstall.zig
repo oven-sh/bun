@@ -609,11 +609,11 @@ fn updatePackageJSONAndInstallAndCLI(
                         const ShellPathFormatter = struct {
                             folder: []const u8,
 
-                            pub fn format(instructions: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                            pub fn format(instructions: @This(), writer: *std.Io.Writer) !void {
                                 var remaining = instructions.folder;
                                 while (bun.strings.indexOfChar(remaining, ' ')) |space| {
                                     try writer.print(
-                                        "{}",
+                                        "{f}",
                                         .{bun.fmt.fmtPath(u8, remaining[0..space], .{
                                             .escape_backslashes = true,
                                             .path_sep = if (Environment.isWindows) .windows else .posix,
@@ -624,7 +624,7 @@ fn updatePackageJSONAndInstallAndCLI(
                                 }
 
                                 try writer.print(
-                                    "{}",
+                                    "{f}",
                                     .{bun.fmt.fmtPath(u8, remaining, .{
                                         .escape_backslashes = true,
                                         .path_sep = if (Environment.isWindows) .windows else .posix,
@@ -633,25 +633,25 @@ fn updatePackageJSONAndInstallAndCLI(
                             }
                         };
 
-                        pub fn format(instructions: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                        pub fn format(instructions: @This(), writer: *std.Io.Writer) !void {
                             const path = ShellPathFormatter{ .folder = instructions.folder };
                             switch (instructions.shell) {
                                 .unknown => {
                                     // Unfortunately really difficult to do this in one line on PowerShell.
-                                    try writer.print("{}", .{path});
+                                    try writer.print("{f}", .{path});
                                 },
                                 .bash => {
-                                    try writer.print("export PATH=\"{}:$PATH\"", .{path});
+                                    try writer.print("export PATH=\"{f}:$PATH\"", .{path});
                                 },
                                 .zsh => {
-                                    try writer.print("export PATH=\"{}:$PATH\"", .{path});
+                                    try writer.print("export PATH=\"{f}:$PATH\"", .{path});
                                 },
                                 .fish => {
                                     // Regular quotes will do here.
-                                    try writer.print("fish_add_path {}", .{bun.fmt.quote(instructions.folder)});
+                                    try writer.print("fish_add_path {f}", .{bun.fmt.quote(instructions.folder)});
                                 },
                                 .pwsh => {
-                                    try writer.print("$env:PATH += \";{}\"", .{path});
+                                    try writer.print("$env:PATH += \";{f}\"", .{path});
                                 },
                             }
                         }
@@ -660,9 +660,9 @@ fn updatePackageJSONAndInstallAndCLI(
                     Output.prettyError("\n", .{});
 
                     Output.warn(
-                        \\To run {}, add the global bin folder to $PATH:
+                        \\To run {f}, add the global bin folder to $PATH:
                         \\
-                        \\<cyan>{}<r>
+                        \\<cyan>{f}<r>
                         \\
                     ,
                         .{

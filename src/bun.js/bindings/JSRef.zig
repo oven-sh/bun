@@ -140,7 +140,8 @@ pub const JSRef = union(enum) {
         switch (this.*) {
             .weak => {
                 bun.assert(!this.weak.isEmptyOrUndefinedOrNull());
-                this.* = .{ .strong = .create(this.weak, globalThis) };
+                const weak = this.weak;
+                this.* = .{ .strong = .create(weak, globalThis) };
             },
             .strong => {},
             .finalized => {

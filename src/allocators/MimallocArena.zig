@@ -136,7 +136,7 @@ pub fn backingAllocator(_: Self) std.mem.Allocator {
 
 pub fn dumpThreadStats(_: Self) void {
     const dump_fn = struct {
-        pub fn dump(textZ: [*:0]const u8, _: ?*anyopaque) callconv(.C) void {
+        pub fn dump(textZ: [*:0]const u8, _: ?*anyopaque) callconv(.c) void {
             const text = bun.span(textZ);
             bun.Output.errorWriter().writeAll(text) catch {};
         }
@@ -147,7 +147,7 @@ pub fn dumpThreadStats(_: Self) void {
 
 pub fn dumpStats(_: Self) void {
     const dump_fn = struct {
-        pub fn dump(textZ: [*:0]const u8, _: ?*anyopaque) callconv(.C) void {
+        pub fn dump(textZ: [*:0]const u8, _: ?*anyopaque) callconv(.c) void {
             const text = bun.span(textZ);
             bun.Output.errorWriter().writeAll(text) catch {};
         }

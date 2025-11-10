@@ -149,7 +149,7 @@ pub const LifecycleScriptSubprocess = struct {
         this.current_script_index = next_script_index;
         this.has_called_process_exit = false;
 
-        var copy_script = try std.ArrayList(u8).initCapacity(manager.allocator, original_script.len + 1);
+        var copy_script = try std.array_list.Managed(u8).initCapacity(manager.allocator, original_script.len + 1);
         defer copy_script.deinit();
         try bun.cli.RunCommand.replacePackageManagerRun(&copy_script, original_script);
         try copy_script.append(0);
@@ -302,7 +302,7 @@ pub const LifecycleScriptSubprocess = struct {
             // Reuse the memory
             if (stdout.items.len == 0 and stdout.capacity > 0 and this.stderr.buffer().capacity == 0) {
                 this.stderr.buffer().* = stdout.*;
-                stdout.* = std.ArrayList(u8).init(bun.default_allocator);
+                stdout.* = std.array_list.Managed(u8).init(bun.default_allocator);
             }
 
             var stderr = this.stderr.finalBuffer();
@@ -329,7 +329,7 @@ pub const LifecycleScriptSubprocess = struct {
     }
 
     fn handleExit(this: *LifecycleScriptSubprocess, status: bun.spawn.Status) void {
-        log("{s} - {s} finished {}", .{ this.package_name, this.scriptName(), status });
+        log("{s} - {s} finished {f}", .{ this.package_name, this.scriptName(), status });
 
         if (this.has_incremented_alive_count) {
             this.has_incremented_alive_count = false;
@@ -420,7 +420,7 @@ pub const LifecycleScriptSubprocess = struct {
                 }
 
                 if (PackageManager.verbose_install) {
-                    Output.prettyErrorln("<r><d>[Scripts]<r> Finished scripts for <b>{}<r>", .{
+                    Output.prettyErrorln("<r><d>[Scripts]<r> Finished scripts for <b>{f}<r>", .{
                         bun.fmt.quote(this.package_name),
                     });
                 }
@@ -442,7 +442,7 @@ pub const LifecycleScriptSubprocess = struct {
                 this.printOutput();
                 const signal_code = bun.SignalCode.from(signal);
 
-                Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" terminated by {}<r>", .{
+                Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" terminated by {f}<r>", .{
                     this.scriptName(),
                     this.package_name,
                     signal_code.fmt(Output.enable_ansi_colors_stderr),
@@ -461,7 +461,7 @@ pub const LifecycleScriptSubprocess = struct {
                     return;
                 }
 
-                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to\n{}", .{
+                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to\n{f}", .{
                     this.scriptName(),
                     this.package_name,
                     err,
@@ -471,7 +471,7 @@ pub const LifecycleScriptSubprocess = struct {
                 Global.exit(1);
             },
             else => {
-                Output.panic("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to unexpected status\n{any}", .{
+                Output.panic("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to unexpected status\n{f}", .{
                     this.scriptName(),
                     this.package_name,
                     status,

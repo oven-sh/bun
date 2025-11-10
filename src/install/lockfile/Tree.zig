@@ -592,7 +592,7 @@ pub fn processSubtree(
                     var peers = entry.value;
                     defer peers.deinit();
                     for (peers.keys()) |unresolved_dep_id| {
-                        // the dependency should be either unresolved or the same dependnecy as above
+                        // the dependency should be either unresolved or the same dependency as above
                         bun.debugAssert(unresolved_dep_id == dep_id or builder.resolutions[unresolved_dep_id] == invalid_package_id);
                         builder.resolutions[unresolved_dep_id] = res_id;
                     }

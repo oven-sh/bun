@@ -247,8 +247,10 @@ pub fn Builder(comptime method: BuilderMethod) type {
         queue: TreeFiller,
         log: *logger.Log,
         lockfile: *const Lockfile,
-        // unresolved optional peers that might resolve later. if they do we will want to assign
-        // builder.resolutions[peer.dep_id] to the resolved pkg_id.
+        // Unresolved optional peers that might resolve later. if they do we will want to assign
+        // builder.resolutions[peer.dep_id] to the resolved pkg_id. A dependency ID set is used because there
+        // can be multiple instances of the same package in the tree, so the same unresolved dependency ID
+        // could be visited multiple times before it's resolved.
         pending_optional_peers: std.AutoArrayHashMap(PackageNameHash, std.AutoArrayHashMap(DependencyID, void)),
         manager: if (method == .filter) *const PackageManager else void,
         sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
@@ -632,9 +634,6 @@ pub fn processSubtree(
                     entry.value_ptr.* = .init(bun.default_allocator);
                 }
 
-                // A set is used because there can be multiple instances of the same package in the
-                // tree, so the same unresolved dependency ID could be visited multiple times before
-                // it's resolved.
                 try entry.value_ptr.put(dep_id, {});
             },
             .placement => |dest| {

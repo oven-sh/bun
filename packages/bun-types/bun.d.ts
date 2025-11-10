@@ -2018,7 +2018,8 @@ declare module "bun" {
        */
       timeCost?: number;
       /**
-       * The number of parallel threads.
+       * Number of parallel lanes/threads.
+       * @remarks Minimum 1. Defaults to 1 (single lane).
        */
       parallelism?: number;
     }

@@ -2007,10 +2007,6 @@ exports[`migrate migrate-bun-lockb-v2-most-features 1`] = `
           "id": 44,
           "package_id": 43,
         },
-        "lodash": {
-          "id": 10,
-          "package_id": 4294967295,
-        },
         "loose-envify": {
           "id": 15,
           "package_id": 8,

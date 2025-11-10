@@ -466,6 +466,25 @@ pub fn spawnMaybeSync(
         !jsc_vm.isInspectorEnabled() and
         !bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH.get();
 
+    // For spawnSync, use an isolated event loop to prevent JavaScript timers from firing
+    // and to avoid interfering with the main event loop
+    const event_loop: *jsc.EventLoop = if (comptime is_sync)
+        &jsc_vm.rareData().spawnSyncEventLoop(jsc_vm).event_loop
+    else
+        jsc_vm.eventLoop();
+
+    if (comptime is_sync) {
+        jsc_vm.rareData().spawnSyncEventLoop(jsc_vm).prepare(jsc_vm);
+    }
+
+    defer {
+        if (comptime is_sync) {
+            jsc_vm.rareData().spawnSyncEventLoop(jsc_vm).cleanup(jsc_vm, jsc_vm.eventLoop());
+        }
+    }
+
+    const loop_handle = jsc.EventLoopHandle.init(event_loop);
+
     const spawn_options = bun.spawn.SpawnOptions{
         .cwd = cwd,
         .detached = detached,
@@ -488,7 +507,7 @@ pub fn spawnMaybeSync(
         .windows = if (Environment.isWindows) .{
             .hide_window = windows_hide,
             .verbatim_arguments = windows_verbatim_arguments,
-            .loop = jsc.EventLoopHandle.init(jsc_vm),
+            .loop = loop_handle,
         },
     };
 
@@ -534,9 +553,8 @@ pub fn spawnMaybeSync(
         .result => |result| result,
     };
 
-    const loop = jsc_vm.eventLoop();
-
-    const process = spawned.toProcess(loop, is_sync);
+    // Use the isolated loop for spawnSync operations
+    const process = spawned.toProcess(loop_handle, is_sync);
 
     var subprocess = bun.new(Subprocess, .{
         .ref_count = .init(),
@@ -571,7 +589,7 @@ pub fn spawnMaybeSync(
         .pid_rusage = null,
         .stdin = Writable.init(
             &stdio[0],
-            loop,
+            event_loop,
             subprocess,
             spawned.stdin,
             &promise_for_stream,
@@ -581,7 +599,7 @@ pub fn spawnMaybeSync(
         },
         .stdout = Readable.init(
             stdio[1],
-            loop,
+            event_loop,
             subprocess,
             spawned.stdout,
             jsc_vm.allocator,
@@ -590,7 +608,7 @@ pub fn spawnMaybeSync(
         ),
         .stderr = Readable.init(
             stdio[2],
-            loop,
+            event_loop,
             subprocess,
             spawned.stderr,
             jsc_vm.allocator,
@@ -688,14 +706,15 @@ pub fn spawnMaybeSync(
 
     var send_exit_notification = false;
 
-    // This must go before other things happen so that the exit handler is registered before onProcessExit can potentially be called.
-    if (timeout) |timeout_val| {
-        subprocess.event_loop_timer.next = bun.timespec.msFromNow(timeout_val);
-        globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
-        subprocess.setEventLoopTimerRefd(true);
-    }
-
     if (comptime !is_sync) {
+        // This must go before other things happen so that the exit handler is
+        // registered before onProcessExit can potentially be called.
+        if (timeout) |timeout_val| {
+            subprocess.event_loop_timer.next = bun.timespec.msFromNow(timeout_val);
+            globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
+            subprocess.setEventLoopTimerRefd(true);
+        }
+
         bun.debugAssert(out != .zero);
 
         if (on_exit_callback.isCell()) {
@@ -743,7 +762,7 @@ pub fn spawnMaybeSync(
     }
 
     if (subprocess.stdout == .pipe) {
-        if (subprocess.stdout.pipe.start(subprocess, loop).asErr()) |err| {
+        if (subprocess.stdout.pipe.start(subprocess, event_loop).asErr()) |err| {
             _ = subprocess.tryKill(subprocess.killSignal);
             _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
             return error.JSError;
@@ -754,7 +773,7 @@ pub fn spawnMaybeSync(
     }
 
     if (subprocess.stderr == .pipe) {
-        if (subprocess.stderr.pipe.start(subprocess, loop).asErr()) |err| {
+        if (subprocess.stderr.pipe.start(subprocess, event_loop).asErr()) |err| {
             _ = subprocess.tryKill(subprocess.killSignal);
             _ = globalThis.throwValue(err.toJS(globalThis)) catch {};
             return error.JSError;
@@ -767,15 +786,16 @@ pub fn spawnMaybeSync(
 
     should_close_memfd = false;
 
+    // Once everything is set up, we can add the abort listener
+    // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
+    // Therefore, we must do this at the very end.
+    if (abort_signal) |signal| {
+        signal.pendingActivityRef();
+        subprocess.abort_signal = signal.addListener(subprocess, Subprocess.onAbortSignal);
+        abort_signal = null;
+    }
+
     if (comptime !is_sync) {
-        // Once everything is set up, we can add the abort listener
-        // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
-        // Therefore, we must do this at the very end.
-        if (abort_signal) |signal| {
-            signal.pendingActivityRef();
-            subprocess.abort_signal = signal.addListener(subprocess, Subprocess.onAbortSignal);
-            abort_signal = null;
-        }
         if (!subprocess.process.hasExited()) {
             jsc_vm.onSubprocessSpawn(subprocess.process);
         }
@@ -813,14 +833,50 @@ pub fn spawnMaybeSync(
         jsc_vm.onSubprocessSpawn(subprocess.process);
     }
 
-    // We cannot release heap access while JS is running
+    var did_timeout = false;
+
+    // Use the isolated event loop to tick instead of the main event loop
+    // This ensures JavaScript timers don't fire and stdin/stdout from the main process aren't affected
     {
-        const old_vm = jsc_vm.uwsLoop().internal_loop_data.jsc_vm;
-        jsc_vm.uwsLoop().internal_loop_data.jsc_vm = null;
-        defer {
-            jsc_vm.uwsLoop().internal_loop_data.jsc_vm = old_vm;
+        var absolute_timespec = bun.timespec.epoch;
+        var now = bun.timespec.now();
+        var user_timespec: bun.timespec = if (timeout) |timeout_ms| now.addMs(timeout_ms) else absolute_timespec;
+
+        // Support `AbortSignal.timeout`, but it's best-effort.
+        // Specifying both `timeout: number` and `AbortSignal.timeout` chooses the soonest one.
+        // This does mean if an AbortSignal times out it will throw
+        if (subprocess.abort_signal) |signal| {
+            if (signal.getTimeout()) |abort_signal_timeout| {
+                if (abort_signal_timeout.event_loop_timer.state == .ACTIVE) {
+                    if (user_timespec.eql(&.epoch) or abort_signal_timeout.event_loop_timer.next.order(&user_timespec) == .lt) {
+                        user_timespec = abort_signal_timeout.event_loop_timer.next;
+                    }
+                }
+            }
         }
+
+        const has_user_timespec = !user_timespec.eql(&.epoch);
+
+        const sync_loop = jsc_vm.rareData().spawnSyncEventLoop(jsc_vm);
+
         while (subprocess.computeHasPendingActivity()) {
+            // Re-evaluate this at each iteration of the loop since it may change between iterations.
+            const bun_test_timeout: bun.timespec = if (bun.jsc.Jest.Jest.runner) |runner| runner.getActiveTimeout() else .epoch;
+            const has_bun_test_timeout = !bun_test_timeout.eql(&.epoch);
+
+            if (has_bun_test_timeout) {
+                switch (bun_test_timeout.orderIgnoreEpoch(user_timespec)) {
+                    .lt => absolute_timespec = bun_test_timeout,
+                    .eq => {},
+                    .gt => absolute_timespec = user_timespec,
+                }
+            } else if (has_user_timespec) {
+                absolute_timespec = user_timespec;
+            } else {
+                absolute_timespec = .epoch;
+            }
+            const has_timespec = !absolute_timespec.eql(&.epoch);
+
             if (subprocess.stdin == .buffer) {
                 subprocess.stdin.buffer.watch();
             }
@@ -833,9 +889,51 @@ pub fn spawnMaybeSync(
                 subprocess.stdout.pipe.watch();
             }
 
-            jsc_vm.tick();
-            jsc_vm.eventLoop().autoTick();
+            // Tick the isolated event loop without passing timeout to avoid blocking
+            // The timeout check is done at the top of the loop
+            switch (sync_loop.tickWithTimeout(if (has_timespec and !did_timeout) &absolute_timespec else null)) {
+                .completed => {
+                    now = bun.timespec.now();
+                },
+                .timeout => {
+                    now = bun.timespec.now();
+                    const did_user_timeout = has_user_timespec and (absolute_timespec.eql(&user_timespec) or user_timespec.order(&now) == .lt);
+
+                    if (did_user_timeout) {
+                        did_timeout = true;
+                        _ = subprocess.tryKill(subprocess.killSignal);
+                    }
+
+                    // Support bun:test timeouts AND spawnSync() timeout.
+                    // There is a scenario where inside of spawnSync() a totally
+                    // different test fails, and that SHOULD be okay.
+                    if (has_bun_test_timeout) {
+                        if (bun_test_timeout.order(&now) == .lt) {
+                            var active_file_strong = bun.jsc.Jest.Jest.runner.?.bun_test_root.active_file
+                                // TODO: add a .cloneNonOptional()?
+                                .clone();
+
+                            defer active_file_strong.deinit();
+                            var taken_active_file = active_file_strong.take().?;
+                            defer taken_active_file.deinit();
+
+                            bun.jsc.Jest.Jest.runner.?.removeActiveTimeout(jsc_vm);
+
+                            // This might internally call `std.c.kill` on this
+                            // spawnSync process. Even if we do that, we still
+                            // need to reap the process. So we may go through
+                            // the event loop again, but it should wake up
+                            // ~instantly so we can drain the events.
+                            jsc.Jest.bun_test.BunTest.bunTestTimeoutCallback(taken_active_file, &absolute_timespec, jsc_vm);
+                        }
+                    }
+                },
+            }
         }
+    }
+    if (globalThis.hasException()) {
+        // e.g. a termination exception.
+        return .zero;
     }
 
     subprocess.updateHasPendingActivity();
@@ -845,15 +943,10 @@ pub fn spawnMaybeSync(
     const stdout = try subprocess.stdout.toBufferedValue(globalThis);
     const stderr = try subprocess.stderr.toBufferedValue(globalThis);
     const resource_usage: JSValue = if (!globalThis.hasException()) try subprocess.createResourceUsageObject(globalThis) else .zero;
-    const exitedDueToTimeout = subprocess.event_loop_timer.state == .FIRED;
+    const exitedDueToTimeout = did_timeout;
     const exitedDueToMaxBuffer = subprocess.exited_due_to_maxbuf;
     const resultPid = jsc.JSValue.jsNumberFromInt32(subprocess.pid());
     subprocess.finalize();
-
-    if (globalThis.hasException()) {
-        // e.g. a termination exception.
-        return .zero;
-    }
 
     const sync_value = jsc.JSValue.createEmptyObject(globalThis, 5 + @as(usize, @intFromBool(!signalCode.isEmptyOrUndefinedOrNull())));
     sync_value.put(globalThis, jsc.ZigString.static("exitCode"), exitCode);

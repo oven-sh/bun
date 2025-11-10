@@ -258,6 +258,10 @@ using namespace JSC;
     macro(textDecoderStreamTransform) \
     macro(textEncoderStreamEncoder) \
     macro(textEncoderStreamTransform) \
+    macro(compressionStreamTransform) \
+    macro(compressionStreamCompressor) \
+    macro(decompressionStreamTransform) \
+    macro(decompressionStreamDecompressor) \
     macro(toClass) \
     macro(toNamespacedPath) \
     macro(trace) \

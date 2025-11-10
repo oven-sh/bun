@@ -19,12 +19,7 @@ test("JSX lexer should not crash with slice bounds issues", async () => {
     "1 | export function x(){return<div a=\`\`/>}
                                          ^
     error: Expected "{" but found "\`"
-        at <cwd>/[eval]:1:34
-
-    1 | export function x(){return<div a=\`\`/>}
-                                            ^
-    error: Unexpected >
-        at <cwd>/[eval]:1:37"
+        at <cwd>/[eval]:1:34"
   `);
   expect(normalizeBunSnapshot(stdout.toString())).toMatchInlineSnapshot(`""`);
 });

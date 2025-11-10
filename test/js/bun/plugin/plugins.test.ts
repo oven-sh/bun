@@ -446,7 +446,7 @@ describe("errors", () => {
       globalThis.asyncOnLoad = `const x: string = -NaNAn../!!;`;
       await import("async:fail");
       throw -1;
-    }).toThrow('4 errors building "async:fail"');
+    }).toThrow('Expected ";" but found ":"');
   });
 
   it("onLoad returns the rejected promise", async () => {

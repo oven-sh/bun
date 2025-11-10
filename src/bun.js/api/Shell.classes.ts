@@ -26,6 +26,10 @@ export default [
         fn: "getStarted",
         length: 0,
       },
+      kill: {
+        fn: "kill",
+        length: 1,
+      },
     },
   }),
 ];

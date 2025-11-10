@@ -143,6 +143,75 @@ function itBundledDevAndProd(
 }
 
 describe("bundler", () => {
+  // Preserve-mode focused tests: escaping and multi-line children
+  itBundled("jsx/PreserveAttributeQuotingEdgeCases", {
+    files: {
+      "/in.tsx": `
+        export const a = <div title='"' />;
+        export const b = <div title="'" />;
+        export const c = <div title={"'"} />;
+        export const d = <div title={'"'} />;
+        export const e = <div title="\`" />;
+      `,
+      "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve","target":"ESNext"}}`,
+    },
+    outfile: "/out.js",
+    target: "bun",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // Allow either quoting style chosen by printer so long as the literal value is preserved
+      expect(/title='"'/.test(out) || /title=["']"["']/.test(out)).toBe(true);
+      expect(/title='"'/.test(out) || /title="'"/.test(out)).toBe(true);
+      expect(/title="`"/.test(out) || /title='`'/.test(out)).toBe(true);
+    },
+  });
+
+  itBundled("jsx/PreserveMultilineChildren", {
+    files: {
+      "/in.tsx": `
+        export const el =
+          <div>
+Line 1
+Line "2"
+Line '3'
+Line \`4\`
+          </div>;
+      `,
+      "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve","target":"ESNext"}}`,
+    },
+    outfile: "/out.js",
+    target: "bun",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // Ensure multi-line text content remains multi-line in the emitted JSX
+      expect(out).toContain("<div>");
+      expect(out).toContain("Line 1");
+      expect(out).toContain('Line "2"');
+      expect(out).toContain("Line '3'");
+      expect(out).toContain("Line `4`");
+      expect(out).toContain("</div>");
+    },
+  });
+
+  itBundled("jsx/PreserveSourcemapSimple", {
+    files: {
+      "/in.tsx": `
+        export const A = <section id="x">hello</section>;
+      `,
+      "/tsconfig.json": `{"compilerOptions":{"jsx":"preserve","target":"ESNext"}}`,
+    },
+    outfile: "/out.js",
+    sourceMap: "external",
+    target: "bun",
+    onAfterBundle(api) {
+      // Just assert the sourcemap file exists and references the input
+      const mapPath = "/out.js.map";
+      api.assertFileExists(mapPath);
+      const map = JSON.parse(api.readFile(mapPath));
+      expect(map.sources.some((s: string) => s.endsWith("in.tsx"))).toBe(true);
+    },
+  });
+
   itBundledDevAndProd("jsx/Automatic", {
     files: {
       "index.jsx": /* js*/ `

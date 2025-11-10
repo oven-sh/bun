@@ -31,6 +31,78 @@ describe("jsx:preserve", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("string attribute equal to a single quote", () => {
+    using dir = tempDir("bun-jsx-preserve-attr-single-quote-only", {
+      "input.tsx": `console.log(<div title="'" />);`,
+      "tsconfig.json": tsconfig,
+    });
+
+    const input = path.join(String(dir), "input.tsx");
+    const outfile = path.join(String(dir), "out.js");
+
+    const { stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "build", "--jsx-runtime=preserve", input, "--outfile", outfile],
+      cwd: String(dir),
+      env: bunEnv,
+    });
+
+    const out = readFileSync(outfile, "utf8");
+    expect(out).toContain("<div");
+    expect(out).toContain('title="\'"');
+    expect(out).not.toContain("createElement");
+    const stderrStr = String(stderr ?? "");
+    expect(stderrStr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("string attribute equal to a double quote", () => {
+    using dir = tempDir("bun-jsx-preserve-attr-double-quote-only", {
+      "input.tsx": `console.log(<div title='"' />);`,
+      "tsconfig.json": tsconfig,
+    });
+
+    const input = path.join(String(dir), "input.tsx");
+    const outfile = path.join(String(dir), "out.js");
+
+    const { stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "build", "--jsx-runtime=preserve", input, "--outfile", outfile],
+      cwd: String(dir),
+      env: bunEnv,
+    });
+
+    const out = readFileSync(outfile, "utf8");
+    expect(out).toContain("<div");
+    expect(out).toContain("title='\"'");
+    expect(out).not.toContain("createElement");
+    const stderrStr = String(stderr ?? "");
+    expect(stderrStr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("string attribute equal to a backtick", () => {
+    using dir = tempDir("bun-jsx-preserve-attr-backtick-only", {
+      "input.tsx": 'console.log(<div title="`" />);',
+      "tsconfig.json": tsconfig,
+    });
+
+    const input = path.join(String(dir), "input.tsx");
+    const outfile = path.join(String(dir), "out.js");
+
+    const { stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "build", "--jsx-runtime=preserve", input, "--outfile", outfile],
+      cwd: String(dir),
+      env: bunEnv,
+    });
+
+    const out = readFileSync(outfile, "utf8");
+    expect(out).toContain("<div");
+    expect(out).toContain('title="`"');
+    expect(out).not.toContain("createElement");
+    const stderrStr = String(stderr ?? "");
+    expect(stderrStr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("preserve + `--minify` still emits JSX", () => {
     using dir = tempDir("bun-jsx-preserve-minify", {
       "input.tsx": source,
@@ -219,7 +291,7 @@ describe("jsx:preserve", () => {
 
   test("children text with quotes and triple backticks are preserved", () => {
     using dir = tempDir("bun-jsx-preserve-children-text", {
-      "input.tsx": 'console.log(<div>I\'m `ok` with ``` fences</div>);',
+      "input.tsx": "console.log(<div>I'm `ok` with ``` fences</div>);",
       "tsconfig.json": tsconfig,
     });
 

@@ -283,7 +283,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         }
 
         if (PackageManager.verbose_install) {
-            const elapsed = bun.getRoughTickCount().ns(.allow_mocked_time) - time_started_for_verbose_logs;
+            const elapsed = bun.getRoughTickCount(.allow_mocked_time).ns() - time_started_for_verbose_logs;
             Output.prettyErrorln("[{s}] Extracted to {s} ({D})<r>", .{ name, tmpname, elapsed });
             Output.flush();
         }

@@ -2541,7 +2541,7 @@ pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTra
 
             if (file.len == 0 and func.len == 0) continue;
 
-            const has_name = std.fmt.count("{}", .{frame.nameFormatter(false)}) > 0;
+            const has_name = std.fmt.count("{}", .{frame.nameFormatter(dir, false)}) > 0;
 
             if (has_name and !frame.position.isInvalid()) {
                 try writer.print(
@@ -2551,6 +2551,7 @@ pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTra
                     ),
                     .{
                         frame.nameFormatter(
+                            dir,
                             allow_ansi_colors,
                         ),
                         frame.sourceURLFormatter(
@@ -2584,6 +2585,7 @@ pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTra
                     ),
                     .{
                         frame.nameFormatter(
+                            dir,
                             allow_ansi_colors,
                         ),
                     },
@@ -3443,6 +3445,7 @@ pub noinline fn printGithubAnnotation(exception: *ZigException) void {
             if (file.len == 0 and func.len == 0) continue;
 
             const has_name = std.fmt.count("{any}", .{frame.nameFormatter(
+                file,
                 false,
             )}) > 0;
 
@@ -3451,7 +3454,10 @@ pub noinline fn printGithubAnnotation(exception: *ZigException) void {
                 writer.print(
                     "%0A      at {any} ({any})",
                     .{
-                        frame.nameFormatter(false),
+                        frame.nameFormatter(
+                            file,
+                            false,
+                        ),
                         frame.sourceURLFormatter(
                             file,
                             origin,

@@ -64,13 +64,9 @@ async function currentUserHasAccess(cacheConfig: CacheConfig): Promise<boolean> 
     await s3Client.send(new HeadBucketCommand({ Bucket: cacheConfig.bucket }));
     return true;
   } catch (error) {
-    const criteria = [
-      () => error.name === "NotFound" || error.$metadata?.httpStatusCode === 404,
-      () => error.name === "Forbidden" || error.$metadata?.httpStatusCode === 403,
-      () => error instanceof CredentialsProviderError,
-    ];
-
-    if (criteria.some(c => c())) {
+    if ((error.name === "NotFound" || error.$metadata?.httpStatusCode === 404) ||
+        (error.name === "Forbidden" || error.$metadata?.httpStatusCode === 403) ||
+        (error instanceof CredentialsProviderError)) {
       return false;
     }
 

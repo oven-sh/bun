@@ -150,10 +150,8 @@ void BroadcastChannel::MainThreadBridge::unregisterChannel()
 
 void BroadcastChannel::MainThreadBridge::postMessage(Ref<SerializedScriptValue>&& message)
 {
-    Ref protectedThis { *this };
-
-    ScriptExecutionContext::ensureOnMainThread([protectedThis = WTFMove(protectedThis), message = WTFMove(message)](auto& context) mutable {
-        context.broadcastChannelRegistry().postMessage(protectedThis->m_name, protectedThis->identifier(), WTFMove(message));
+    ScriptExecutionContext::ensureOnMainThread([identifier = this->identifier(), name = this->name(), message = WTFMove(message)](auto& context) mutable {
+        context.broadcastChannelRegistry().postMessage(name, identifier, WTFMove(message));
     });
 }
 
@@ -256,8 +254,8 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
     if (m_isClosed)
         return;
 
-    ScriptExecutionContext::postTaskTo(contextIdForBroadcastChannelId(m_mainThreadBridge->identifier()), [this, message = WTFMove(message)](ScriptExecutionContext& context) mutable {
-        if (m_isClosed)
+    ScriptExecutionContext::postTaskTo(contextIdForBroadcastChannelId(m_mainThreadBridge->identifier()), [protectedThis = Ref { *this }, message = WTFMove(message)](ScriptExecutionContext& context) mutable {
+        if (protectedThis->m_isClosed || context.isJSExecutionForbidden())
             return;
 
         auto* globalObject = context.jsGlobalObject();
@@ -274,7 +272,7 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
             return;
         }
 
-        dispatchEvent(event.event);
+        protectedThis->dispatchEvent(event.event);
     });
 }
 

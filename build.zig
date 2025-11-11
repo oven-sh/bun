@@ -99,7 +99,6 @@ const BunBuildOptions = struct {
         opts.addOption(bool, "enable_asan", this.enable_asan);
         opts.addOption(bool, "enable_mimalloc", this.enable_mimalloc);
         opts.addOption(bool, "enable_valgrind", this.enable_valgrind);
-        opts.addOption(bool, "use_mimalloc", this.use_mimalloc);
         opts.addOption([]const u8, "reported_nodejs_version", b.fmt("{f}", .{this.reported_nodejs_version}));
         opts.addOption(bool, "zig_self_hosted_backend", this.no_llvm);
         opts.addOption(bool, "override_no_export_cpp_apis", this.override_no_export_cpp_apis);

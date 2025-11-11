@@ -93,28 +93,26 @@ pub const Url = struct {
         const url = try dest.getImportRecordUrl(this.import_record_idx);
 
         if (dest.minify and !import_record.is_internal) {
-            var buf = ArrayList(u8){};
+            var buf = std.Io.Writer.Allocating.init(dest.allocator);
+            defer buf.deinit();
             // PERF(alloc) we could use stack fallback here?
-            var bufw = buf.writer(dest.allocator);
-            defer buf.deinit(dest.allocator);
-            css.Token.toCssGeneric(&css.Token{ .unquoted_url = url }, &bufw) catch return dest.addFmtError();
+            css.Token.toCssGeneric(&css.Token{ .unquoted_url = url }, &buf.writer) catch return dest.addFmtError();
 
             // If the unquoted url is longer than it would be quoted (e.g. `url("...")`)
             // then serialize as a string and choose the shorter version.
-            if (buf.items.len > url.len + 7) {
-                var buf2 = ArrayList(u8){};
-                defer buf2.deinit(dest.allocator);
+            if (buf.written().len > url.len + 7) {
+                var buf2 = std.Io.Writer.Allocating.init(dest.allocator);
+                defer buf2.deinit();
                 // PERF(alloc) we could use stack fallback here?
-                bufw = buf2.writer(dest.allocator);
-                css.serializer.serializeString(url, &bufw) catch return dest.addFmtError();
-                if (buf2.items.len + 5 < buf.items.len) {
+                css.serializer.serializeString(url, &buf2.writer) catch return dest.addFmtError();
+                if (buf2.written().len + 5 < buf.written().len) {
                     try dest.writeStr("url(");
-                    try dest.writeStr(buf2.items);
+                    try dest.writeStr(buf2.written());
                     return dest.writeChar(')');
                 }
             }
 
-            try dest.writeStr(buf.items);
+            try dest.writeStr(buf.written());
         } else {
             try dest.writeStr("url(");
             css.serializer.serializeString(url, dest) catch return dest.addFmtError();

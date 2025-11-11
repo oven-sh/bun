@@ -7038,7 +7038,7 @@ pub const to_css = struct {
         return dest.writeStr(str);
     }
 
-    pub fn float32(this: f32, writer: anytype) !void {
+    pub fn float32(this: f32, writer: *Printer) !void {
         var scratch: [129]u8 = undefined;
         const str, _ = try dtoa_short(&scratch, this, 6);
         return writer.writeAll(str);

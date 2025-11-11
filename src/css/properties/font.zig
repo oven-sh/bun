@@ -57,9 +57,9 @@ pub const AbsoluteFontWeight = union(enum) {
 
     pub const parse = css.DeriveParse(@This()).parse;
 
-    pub fn toCss(this: *const AbsoluteFontWeight, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const AbsoluteFontWeight, dest: *css.Printer) css.PrintErr!void {
         return switch (this.*) {
-            .weight => |*weight| CSSNumberFns.toCss(weight, W, dest),
+            .weight => |*weight| CSSNumberFns.toCss(weight, dest),
             .normal => try dest.writeStr(if (dest.minify) "400" else "normal"),
             .bold => try dest.writeStr(if (dest.minify) "700" else "bold"),
         };
@@ -183,15 +183,15 @@ pub const FontStretch = union(enum) {
     // TODO: implement this
     pub const parse = css.DeriveParse(@This()).parse;
 
-    pub fn toCss(this: *const FontStretch, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const FontStretch, dest: *css.Printer) css.PrintErr!void {
         if (dest.minify) {
             const percentage: Percentage = this.intoPercentage();
-            return percentage.toCss(W, dest);
+            return percentage.toCss(dest);
         }
 
         return switch (this.*) {
-            .percentage => |*val| val.toCss(W, dest),
-            .keyword => |*kw| kw.toCss(W, dest),
+            .percentage => |*val| val.toCss(dest),
+            .keyword => |*kw| kw.toCss(dest),
         };
     }
 
@@ -326,10 +326,10 @@ pub const FontFamily = union(enum) {
         return .{ .result = .{ .family_name = final_value } };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
         switch (this.*) {
             .generic => |val| {
-                try val.toCss(W, dest);
+                try val.toCss(dest);
             },
             .family_name => |val| {
                 // Generic family names such as sans-serif must be quoted if parsed as a string.
@@ -469,7 +469,7 @@ pub const FontStyle = union(enum) {
         }
     }
 
-    pub fn toCss(this: *const FontStyle, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const FontStyle, dest: *Printer) PrintErr!void {
         switch (this.*) {
             .normal => try dest.writeStr("normal"),
             .italic => try dest.writeStr("italic"),
@@ -477,7 +477,7 @@ pub const FontStyle = union(enum) {
                 try dest.writeStr("oblique");
                 if (!angle.eql(&FontStyle.defaultObliqueAngle())) {
                     try dest.writeChar(' ');
-                    try angle.toCss(W, dest);
+                    try angle.toCss(dest);
                 }
             },
         }
@@ -697,39 +697,39 @@ pub const Font = struct {
         } };
     }
 
-    pub fn toCss(this: *const Font, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const Font, dest: *Printer) PrintErr!void {
         if (!this.style.eql(&FontStyle.default())) {
-            try this.style.toCss(W, dest);
+            try this.style.toCss(dest);
             try dest.writeChar(' ');
         }
 
         if (!this.variant_caps.eql(&FontVariantCaps.default())) {
-            try this.variant_caps.toCss(W, dest);
+            try this.variant_caps.toCss(dest);
             try dest.writeChar(' ');
         }
 
         if (!this.weight.eql(&FontWeight.default())) {
-            try this.weight.toCss(W, dest);
+            try this.weight.toCss(dest);
             try dest.writeChar(' ');
         }
 
         if (!this.stretch.eql(&FontStretch.default())) {
-            try this.stretch.toCss(W, dest);
+            try this.stretch.toCss(dest);
             try dest.writeChar(' ');
         }
 
-        try this.size.toCss(W, dest);
+        try this.size.toCss(dest);
 
         if (!this.line_height.eql(&LineHeight.default())) {
             try dest.delim('/', true);
-            try this.line_height.toCss(W, dest);
+            try this.line_height.toCss(dest);
         }
 
         try dest.writeChar(' ');
 
         const len = this.family.len;
         for (this.family.sliceConst(), 0..) |*val, idx| {
-            try val.toCss(W, dest);
+            try val.toCss(dest);
             if (idx < len - 1) {
                 try dest.delim(',', false);
             }

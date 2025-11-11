@@ -68,8 +68,7 @@ pub const Url = struct {
 
     pub fn toCss(
         this: *const This,
-        comptime W: type,
-        dest: *Printer(W),
+        dest: *Printer,
     ) PrintErr!void {
         const dep: ?UrlDependency = if (dest.dependencies != null)
             UrlDependency.new(dest.allocator, this, dest.filename(), try dest.getImportRecords())

@@ -1332,33 +1332,33 @@ pub fn Calc(comptime V: type) type {
             return null;
         }
 
-        pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        pub fn toCss(this: *const @This(), dest: *css.Printer) css.PrintErr!void {
             const was_in_calc = dest.in_calc;
             dest.in_calc = true;
 
-            const res = toCssImpl(this, W, dest);
+            const res = toCssImpl(this, dest);
 
             dest.in_calc = was_in_calc;
             return res;
         }
 
-        pub fn toCssImpl(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        pub fn toCssImpl(this: *const @This(), dest: *css.Printer) css.PrintErr!void {
             return switch (this.*) {
-                .value => |v| v.toCss(W, dest),
-                .number => |n| CSSNumberFns.toCss(&n, W, dest),
+                .value => |v| v.toCss(dest),
+                .number => |n| CSSNumberFns.toCss(&n, dest),
                 .sum => |sum| {
                     const a = sum.left;
                     const b = sum.right;
-                    try a.toCss(W, dest);
+                    try a.toCss(dest);
                     // White space is always required.
                     if (b.isSignNegative()) {
                         try dest.writeStr(" - ");
                         var b2 = b.deepClone(dest.allocator).mulF32(dest.allocator, -1.0);
                         defer b2.deinit(dest.allocator);
-                        try b2.toCss(W, dest);
+                        try b2.toCss(dest);
                     } else {
                         try dest.writeStr(" + ");
-                        try b.toCss(W, dest);
+                        try b.toCss(dest);
                     }
                     return;
                 },
@@ -1367,16 +1367,16 @@ pub fn Calc(comptime V: type) type {
                     const calc = this.product.expression;
                     if (@abs(num) < 1.0) {
                         const div = 1.0 / num;
-                        try calc.toCss(W, dest);
+                        try calc.toCss(dest);
                         try dest.delim('/', true);
-                        try CSSNumberFns.toCss(&div, W, dest);
+                        try CSSNumberFns.toCss(&div, dest);
                     } else {
-                        try CSSNumberFns.toCss(&num, W, dest);
+                        try CSSNumberFns.toCss(&num, dest);
                         try dest.delim('*', true);
-                        try calc.toCss(W, dest);
+                        try calc.toCss(dest);
                     }
                 },
-                .function => |f| return f.toCss(W, dest),
+                .function => |f| return f.toCss(dest),
             };
         }
 
@@ -1642,11 +1642,11 @@ pub fn MathFunction(comptime V: type) type {
             }
         }
 
-        pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        pub fn toCss(this: *const @This(), dest: *css.Printer) css.PrintErr!void {
             return switch (this.*) {
                 .calc => |*calc| {
                     try dest.writeStr("calc(");
-                    try calc.toCss(W, dest);
+                    try calc.toCss(dest);
                     try dest.writeChar(')');
                 },
                 .min => |*args| {
@@ -1658,7 +1658,7 @@ pub fn MathFunction(comptime V: type) type {
                         } else {
                             try dest.delim(',', false);
                         }
-                        try arg.toCss(W, dest);
+                        try arg.toCss(dest);
                     }
                     try dest.writeChar(')');
                 },
@@ -1671,52 +1671,52 @@ pub fn MathFunction(comptime V: type) type {
                         } else {
                             try dest.delim(',', false);
                         }
-                        try arg.toCss(W, dest);
+                        try arg.toCss(dest);
                     }
                     try dest.writeChar(')');
                 },
                 .clamp => |*clamp| {
                     try dest.writeStr("clamp(");
-                    try clamp.min.toCss(W, dest);
+                    try clamp.min.toCss(dest);
                     try dest.delim(',', false);
-                    try clamp.center.toCss(W, dest);
+                    try clamp.center.toCss(dest);
                     try dest.delim(',', false);
-                    try clamp.max.toCss(W, dest);
+                    try clamp.max.toCss(dest);
                     try dest.writeChar(')');
                 },
                 .round => |*rnd| {
                     try dest.writeStr("round(");
                     if (rnd.strategy != RoundingStrategy.default()) {
-                        try rnd.strategy.toCss(W, dest);
+                        try rnd.strategy.toCss(dest);
                         try dest.delim(',', false);
                     }
-                    try rnd.value.toCss(W, dest);
+                    try rnd.value.toCss(dest);
                     try dest.delim(',', false);
-                    try rnd.interval.toCss(W, dest);
+                    try rnd.interval.toCss(dest);
                     try dest.writeChar(')');
                 },
                 .rem => |*rem| {
                     try dest.writeStr("rem(");
-                    try rem.dividend.toCss(W, dest);
+                    try rem.dividend.toCss(dest);
                     try dest.delim(',', false);
-                    try rem.divisor.toCss(W, dest);
+                    try rem.divisor.toCss(dest);
                     try dest.writeChar(')');
                 },
                 .mod_ => |*mod_| {
                     try dest.writeStr("mod(");
-                    try mod_.dividend.toCss(W, dest);
+                    try mod_.dividend.toCss(dest);
                     try dest.delim(',', false);
-                    try mod_.divisor.toCss(W, dest);
+                    try mod_.divisor.toCss(dest);
                     try dest.writeChar(')');
                 },
                 .abs => |*v| {
                     try dest.writeStr("abs(");
-                    try v.toCss(W, dest);
+                    try v.toCss(dest);
                     try dest.writeChar(')');
                 },
                 .sign => |*v| {
                     try dest.writeStr("sign(");
-                    try v.toCss(W, dest);
+                    try v.toCss(dest);
                     try dest.writeChar(')');
                 },
                 .hypot => |*args| {
@@ -1728,7 +1728,7 @@ pub fn MathFunction(comptime V: type) type {
                         } else {
                             try dest.delim(',', false);
                         }
-                        try arg.toCss(W, dest);
+                        try arg.toCss(dest);
                     }
                     try dest.writeChar(')');
                 },
@@ -1805,8 +1805,8 @@ pub const RoundingStrategy = enum {
         return css.enum_property_util.parse(@This(), input);
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return css.enum_property_util.toCss(@This(), this, W, dest);
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, dest);
     }
 
     pub fn default() RoundingStrategy {
@@ -1866,8 +1866,8 @@ pub const Constant = enum {
         return css.enum_property_util.parse(@This(), input);
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return css.enum_property_util.toCss(@This(), this, W, dest);
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, dest);
     }
 
     pub fn intoF32(this: *const @This()) f32 {

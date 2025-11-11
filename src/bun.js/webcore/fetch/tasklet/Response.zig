@@ -47,7 +47,7 @@ pub fn onReadableStreamAvailable(ctx: *anyopaque, globalThis: *jsc.JSGlobalObjec
     this.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis);
 }
 
-pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: http.CertificateInfo) bool {
+pub fn checkServerIdentity(this: *Response, certificate_info: http.CertificateInfo) bool {
     if (this.check_server_identity.get()) |check_server_identity| {
         check_server_identity.ensureStillAlive();
         if (certificate_info.cert.len > 0) {
@@ -106,7 +106,7 @@ pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: http.Certifica
     return false;
 }
 
-pub fn onBodyReceived(this: *FetchTasklet) bun.JSTerminated!void {
+pub fn onBodyReceived(this: *Response) bun.JSTerminated!void {
     const success = this.result.isSuccess();
     const globalThis = this.global_this;
     // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
@@ -296,7 +296,7 @@ pub fn onStartStreamingHTTPResponseBodyCallback(ctx: *anyopaque) jsc.WebCore.Dra
     };
 }
 
-fn getSizeHint(this: *FetchTasklet) Blob.SizeType {
+fn getSizeHint(this: *Response) Blob.SizeType {
     return switch (this.body_size) {
         .content_length => @truncate(this.body_size.content_length),
         .total_received => @truncate(this.body_size.total_received),
@@ -304,7 +304,7 @@ fn getSizeHint(this: *FetchTasklet) Blob.SizeType {
     };
 }
 
-fn toBodyValue(this: *FetchTasklet) Body.Value {
+fn toBodyValue(this: *Response) Body.Value {
     if (this.getAbortError()) |err| {
         return .{ .Error = err };
     }
@@ -338,7 +338,7 @@ fn toBodyValue(this: *FetchTasklet) Body.Value {
     return response;
 }
 
-fn ignoreRemainingResponseBody(this: *FetchTasklet) void {
+pub fn ignoreRemainingResponseBody(this: *Response) void {
     log("ignoreRemainingResponseBody", .{});
     // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
     // without a stream ref, response body or response instance alive it will just ignore the result
@@ -360,7 +360,7 @@ fn ignoreRemainingResponseBody(this: *FetchTasklet) void {
     this.ignore_data = true;
 }
 
-fn toResponse(this: *FetchTasklet) Response {
+fn toResponse(this: *Response) Response {
     log("toResponse", .{});
     bun.assert(this.metadata != null);
     // at this point we always should have metadata

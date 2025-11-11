@@ -47,7 +47,7 @@ pub fn updateLifeCycle(this: *FetchTasklet) bun.JSTerminated!void {
     jsc.markBinding(@src());
     log("onProgressUpdate", .{});
     this.mutex.lock();
-    this.has_schedule_callback.store(false, .monotonic);
+    this.shared.has_schedule_callback.store(false, .monotonic);
     const is_done = !this.result.has_more;
 
     const vm = this.javascript_vm;
@@ -247,8 +247,8 @@ fn clearData(this: *FetchTasklet) void {
         this.request.metadata = null;
     }
 
-    this.shared.scheduled_response_buffer.deinit();
-    this.response.deinit();
+    this.response.scheduled_response_buffer.deinit();
+    // this.response.deinit();
     if (this.response.native_response) |response| {
         this.response.native_response = null;
 
@@ -257,7 +257,7 @@ fn clearData(this: *FetchTasklet) void {
 
     this.response.readable_stream_ref.deinit();
 
-    this.shared.scheduled_response_buffer.deinit();
+    this.response.scheduled_response_buffer.deinit();
     if (this.request_body != .ReadableStream or this.is_waiting_request_stream_start) {
         this.request_body.detach();
     }
@@ -455,7 +455,7 @@ export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.c) void {
         // 3. We never started buffering, in which case we should ignore the body.
         //
         // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
-        if (body.* != .Locked or this.readable_stream_ref.held.has()) {
+        if (body.* != .Locked or this.response.readable_stream_ref.held.has()) {
             // Scenario 1 or 3.
             return;
         }
@@ -727,9 +727,9 @@ pub fn callback(task: *FetchTasklet, async_http: *bun.http.AsyncHTTP, result: bu
     if (task.ignore_data) {
         task.response_buffer.reset();
 
-        if (task.scheduled_response_buffer.list.capacity > 0) {
-            task.scheduled_response_buffer.deinit();
-            task.scheduled_response_buffer = .{
+        if (task.response.scheduled_response_buffer.list.capacity > 0) {
+            task.response.scheduled_response_buffer.deinit();
+            task.response.scheduled_response_buffer = .{
                 .allocator = bun.default_allocator,
                 .list = .{
                     .items = &.{},
@@ -743,7 +743,7 @@ pub fn callback(task: *FetchTasklet, async_http: *bun.http.AsyncHTTP, result: bu
         }
     } else {
         if (success) {
-            _ = bun.handleOom(task.scheduled_response_buffer.write(task.response_buffer.list.items));
+            _ = bun.handleOom(task.response.scheduled_response_buffer.write(task.response_buffer.list.items));
         }
         // reset for reuse
         task.response_buffer.reset();

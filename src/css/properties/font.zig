@@ -344,21 +344,22 @@ pub const FontFamily = union(enum) {
                         GenericFontFamily.parse,
                     ).isOk())
                 {
-                    var id = ArrayList(u8){};
-                    defer id.deinit(dest.allocator);
+                    var id = std.Io.Writer.Allocating.init(dest.allocator);
+                    defer id.deinit();
                     var first = true;
                     var split_iter = std.mem.splitScalar(u8, val, ' ');
                     while (split_iter.next()) |slice| {
                         if (first) {
                             first = false;
                         } else {
-                            bun.handleOom(id.append(dest.allocator, ' '));
+                            bun.handleOom(id.writer.writeByte(' ') catch |e| switch (e) {
+                                error.WriteFailed => error.OutOfMemory,
+                            });
                         }
-                        const dest_id = id.writer(dest.allocator);
-                        css.serializer.serializeIdentifier(slice, dest_id) catch return dest.addFmtError();
+                        css.serializer.serializeIdentifier(slice, &id.writer) catch return dest.addFmtError();
                     }
-                    if (id.items.len < val.len + 2) {
-                        return dest.writeStr(id.items);
+                    if (id.written().len < val.len + 2) {
+                        return dest.writeStr(id.written());
                     }
                 }
                 return css.serializer.serializeString(val, dest) catch return dest.addFmtError();

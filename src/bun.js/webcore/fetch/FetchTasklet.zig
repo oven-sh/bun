@@ -437,7 +437,7 @@ pub fn get(
     fetch_tasklet.is_waiting_request_stream_start = isStream;
     if (isStream) {
         const buffer = http.ThreadSafeStreamBuffer.new(.{});
-        buffer.setDrainCallback(FetchTasklet, FetchTasklet.onWriteRequestDataDrain, fetch_tasklet);
+        buffer.setDrainCallback(FetchTaskletSharedData, FetchTaskletSharedData.resumeRequestDataStream, &fetch_tasklet.shared);
         fetch_tasklet.request_body_streaming_buffer = buffer;
         fetch_tasklet.http.?.request_body = .{
             .stream = .{

@@ -1,6 +1,5 @@
 const FetchTaskletRequest = @This();
 request_body: ?HTTPRequestBody = null,
-request_body_streaming_buffer: ?*http.ThreadSafeStreamBuffer = null,
 request_headers: Headers = Headers{ .allocator = undefined },
 sink: ?*ResumableSink = null,
 metadata: ?http.HTTPResponseMetadata = null,
@@ -29,16 +28,15 @@ fn parent(this: *FetchTaskletRequest) *FetchTasklet {
 pub fn startRequestStream(this: *FetchTaskletRequest) void {
     this.is_waiting_request_stream_start = false;
     bun.assert(this.request_body == .ReadableStream);
+    const tasklet = this.parent();
     if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
-        if (this.signal) |signal| {
-            if (signal.aborted()) {
-                stream.abort(this.global_this);
-                return;
-            }
+        const globalThis = tasklet.global_this;
+        if (tasklet.isAborted()) {
+            stream.abort(globalThis);
+            return;
         }
 
-        const globalThis = this.global_this;
-        this.ref(); // lets only unref when sink is done
+        tasklet.ref(); // lets only unref when sink is done
         // +1 because the task refs the sink
         const sink = ResumableSink.initExactRefs(globalThis, stream, this, 2);
         this.sink = sink;
@@ -46,12 +44,11 @@ pub fn startRequestStream(this: *FetchTaskletRequest) void {
 }
 pub fn writeRequestData(this: *FetchTaskletRequest, data: []const u8) ResumableSinkBackpressure {
     log("writeRequestData {}", .{data.len});
-    if (this.signal) |signal| {
-        if (signal.aborted()) {
-            return .done;
-        }
+    const tasklet = this.parent();
+    if (tasklet.isAborted()) {
+        return .done;
     }
-    const thread_safe_stream_buffer = this.request_body_streaming_buffer orelse return .done;
+    const thread_safe_stream_buffer = tasklet.shared.request_body_streaming_buffer orelse return .done;
     const stream_buffer = thread_safe_stream_buffer.acquire();
     defer thread_safe_stream_buffer.release();
     const highWaterMark = if (this.sink) |sink| sink.highWaterMark else 16384;
@@ -59,7 +56,7 @@ pub fn writeRequestData(this: *FetchTaskletRequest, data: []const u8) ResumableS
     var needs_schedule = false;
     defer if (needs_schedule) {
         // wakeup the http thread to write the data
-        http.http_thread.scheduleRequestWrite(this.http.?, .data);
+        http.http_thread.scheduleRequestWrite(tasklet.http.?, .data);
     };
 
     // dont have backpressure so we will schedule the data to be written
@@ -115,7 +112,7 @@ pub fn writeEndRequest(this: *FetchTaskletRequest, err: ?jsc.JSValue) void {
 
 /// This is ALWAYS called from the main thread
 pub fn resumeRequestDataStream(this: *FetchTaskletRequest) void {
-    // deref when done because we ref inside onWriteRequestDataDrain
+    // deref when done because we ref inside SharedData.resumeRequestDataStream
     const tasklet = this.parent();
     defer tasklet.deref();
     if (tasklet.isAborted()) {

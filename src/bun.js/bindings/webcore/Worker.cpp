@@ -490,6 +490,10 @@ extern "C" void WebWorker__dispatchExit(Zig::GlobalObject* globalObject, Worker*
 
         vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
 
+        // Clear thread-local EventNames before destroying the VM to prevent use-after-free
+        // during thread exit when AtomStrings try to deref strings from the already-freed VM
+        clearEventNames();
+
         vm.derefSuppressingSaferCPPChecking(); // NOLINT
         vm.derefSuppressingSaferCPPChecking(); // NOLINT
     }

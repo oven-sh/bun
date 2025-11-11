@@ -838,7 +838,10 @@ pub fn installWithManager(
 
     // It's unnecessary work to re-save the lockfile if there are no changes
     const should_save_lockfile =
-        (load_result == .ok and ((load_result.ok.format == .binary and save_format == .text) or
+        // Format/version conversions are allowed with --frozen-lockfile but NOT with --no-save
+        // When --no-save is used, save_lockfile is false AND write_package_json is false
+        // When --frozen-lockfile is used, only save_lockfile is false
+        (manager.options.do.write_package_json and load_result == .ok and ((load_result.ok.format == .binary and save_format == .text) or
 
             // make sure old versions are updated
             load_result.ok.format == .text and save_format == .text and manager.lockfile.text_lockfile_version != TextLockfile.Version.current)) or

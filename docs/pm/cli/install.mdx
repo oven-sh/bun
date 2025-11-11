@@ -334,7 +334,9 @@ dryRun = false
 concurrentScripts = 16 # (cpu count or GOMAXPROCS) x2
 
 # installation strategy: "hoisted" or "isolated"
-# default varies by project type - see /docs/pm/isolated-installs
+# default depends on lockfile configVersion and workspaces:
+# - configVersion = 1: "isolated" if using workspaces, otherwise "hoisted"
+# - configVersion = 0: "hoisted"
 linker = "hoisted"
 
 

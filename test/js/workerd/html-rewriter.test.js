@@ -685,3 +685,55 @@ payloads.forEach(type => {
     expect(calls).toBeGreaterThan(0);
   });
 });
+
+// Test Blob input directly (without Response wrapper)
+it("works with Blob input directly", async () => {
+  const htmlContent = '<script src="/main.js"></script>';
+  const blob = new Blob([htmlContent]);
+  let srcValue = null;
+
+  const result = new HTMLRewriter()
+    .on("script", {
+      element(element) {
+        srcValue = element.getAttribute("src");
+      },
+    })
+    .transform(blob);
+
+  expect(result).toBeInstanceOf(Response);
+  const text = await result.text();
+  expect(text).toBe(htmlContent);
+  expect(srcValue).toBe("/main.js");
+});
+
+// Test BunFile input
+it("works with BunFile input", async () => {
+  const { mkdtemp, writeFile, rm } = await import("fs/promises");
+  const { tmpdir } = await import("os");
+  const { join } = await import("path");
+
+  const tempDir = await mkdtemp(join(tmpdir(), "htmlrewriter-test-"));
+  const tempFile = join(tempDir, "index.html");
+  const htmlContent = '<div id="test">Hello World</div>';
+
+  try {
+    await writeFile(tempFile, htmlContent);
+    const file = Bun.file(tempFile);
+
+    let divId = null;
+    const result = new HTMLRewriter()
+      .on("div", {
+        element(element) {
+          divId = element.getAttribute("id");
+        },
+      })
+      .transform(file);
+
+    expect(result).toBeInstanceOf(Response);
+    const text = await result.text();
+    expect(text).toBe(htmlContent);
+    expect(divId).toBe("test");
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});

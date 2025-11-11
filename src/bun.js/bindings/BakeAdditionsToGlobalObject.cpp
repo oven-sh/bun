@@ -46,33 +46,33 @@ extern "C" SYSV_ABI EncodedJSValue Bake__createDevServerFrameworkRequestArgsObje
 
 extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getAsyncLocalStorage(JSC::JSGlobalObject* globalObject)
 {
-    auto* zig = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    auto* zig = static_cast<Zig::GlobalObject*>(globalObject);
     auto value = zig->bakeAdditions().getAsyncLocalStorage(zig);
     return JSValue::encode(value);
 }
 
 extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getEnsureAsyncLocalStorageInstanceJSFunction(JSC::JSGlobalObject* globalObject)
 {
-    auto* zig = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    auto* zig = static_cast<Zig::GlobalObject*>(globalObject);
     return JSValue::encode(zig->bakeAdditions().ensureAsyncLocalStorageInstanceJSFunction(globalObject));
 }
 
 extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getSSRResponseConstructor(JSC::JSGlobalObject* globalObject)
 {
-    auto* zig = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    auto* zig = static_cast<Zig::GlobalObject*>(globalObject);
     return JSValue::encode(zig->bakeAdditions().JSBakeResponseConstructor(globalObject));
 }
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeGetAsyncLocalStorage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    auto* zig = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    auto* zig = static_cast<Zig::GlobalObject*>(globalObject);
     return JSValue::encode(zig->bakeAdditions().getAsyncLocalStorage(zig));
 }
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeEnsureAsyncLocalStorage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto* zig = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    auto* zig = static_cast<Zig::GlobalObject*>(globalObject);
     if (callframe->argumentCount() < 1) {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_MISSING_ARGS, "bakeEnsureAsyncLocalStorage requires at least one argument"_s);
         return JSValue::encode(jsUndefined());
@@ -84,7 +84,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeEnsureAsyncLocalStorage, (JSC::JSGlobalOb
 
 extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getBundleNewRouteJSFunction(JSC::JSGlobalObject* globalObject)
 {
-    auto* zig = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    auto* zig = static_cast<Zig::GlobalObject*>(globalObject);
     auto value = zig->bakeAdditions().getBundleNewRouteJSFunction(zig);
     return JSValue::encode(value);
 }
@@ -124,7 +124,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeGetBundleNewRouteJSFunction, (JSC::JSGlob
 
 extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getNewRouteParamsJSFunction(JSC::JSGlobalObject* globalObject)
 {
-    auto* zig = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    auto* zig = static_cast<Zig::GlobalObject*>(globalObject);
     auto value = zig->bakeAdditions().getNewRouteParamsJSFunction(zig);
     return JSValue::encode(value);
 }

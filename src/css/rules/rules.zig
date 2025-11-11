@@ -216,8 +216,8 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         debug("TODO: ContainerRule", .{});
                     },
                     .layer_block => |*lay| {
-                        _ = lay; // autofix
-                        debug("TODO: LayerBlockRule", .{});
+                        try lay.rules.minify(context, parent_is_unused);
+                        if (lay.rules.v.items.len == 0) continue;
                     },
                     .layer_statement => |*lay| {
                         _ = lay; // autofix
@@ -231,7 +231,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         const Selector = css.selector.Selector;
                         const SelectorList = css.selector.SelectorList;
                         const Component = css.selector.Component;
-                        debug("Input style:\n  Selectors: {}\n  Decls: {}\n", .{ sty.selectors.debug(), sty.declarations.debug() });
+                        debug("Input style:\n  Selectors: {f}\n  Decls: {f}\n", .{ sty.selectors.debug(), sty.declarations.debug() });
                         if (parent_is_unused or try sty.minify(context, parent_is_unused)) {
                             continue;
                         }
@@ -400,7 +400,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
 
                         if (logical.items.len > 0) {
                             if (bun.Environment.isDebug and logical.items[0] == .style) {
-                                debug("Adding logical: {}\n", .{logical.items[0].style.selectors.debug()});
+                                debug("Adding logical: {f}\n", .{logical.items[0].style.selectors.debug()});
                             }
                             var log = CssRuleList(AtRule){ .v = logical };
                             try log.minify(context, parent_is_unused);

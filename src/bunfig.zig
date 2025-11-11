@@ -49,12 +49,12 @@ pub const Bunfig = struct {
             // Token
             if (url.username.len == 0 and url.password.len > 0) {
                 registry.token = url.password;
-                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{f}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
             } else if (url.username.len > 0 and url.password.len > 0) {
                 registry.username = url.username;
                 registry.password = url.password;
 
-                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{f}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
             } else {
                 // Do not include a trailing slash. There might be parameters at the end.
                 registry.url = url.href;
@@ -129,7 +129,7 @@ pub const Bunfig = struct {
         ) !void {
             if (expr.asArray()) |array_| {
                 var array = array_;
-                var preloads = try std.ArrayList(string).initCapacity(allocator, array.array.items.len);
+                var preloads = try std.array_list.Managed(string).initCapacity(allocator, array.array.items.len);
                 errdefer preloads.deinit();
                 while (array.next()) |item| {
                     try this.expectString(item);
@@ -237,6 +237,11 @@ pub const Bunfig = struct {
                     if (test_.get("coverage")) |expr| {
                         try this.expect(expr, .e_boolean);
                         this.ctx.test_options.coverage.enabled = expr.data.e_boolean.value;
+                    }
+
+                    if (test_.get("onlyFailures")) |expr| {
+                        try this.expect(expr, .e_boolean);
+                        this.ctx.test_options.reporters.only_failures = expr.data.e_boolean.value;
                     }
 
                     if (test_.get("reporter")) |expr| {
@@ -726,6 +731,30 @@ pub const Bunfig = struct {
                             },
                         }
                     }
+
+                    if (install_obj.get("publicHoistPattern")) |public_hoist_pattern_expr| {
+                        install.public_hoist_pattern = bun.install.PnpmMatcher.fromExpr(
+                            allocator,
+                            public_hoist_pattern_expr,
+                            this.log,
+                            this.source,
+                        ) catch |err| switch (err) {
+                            error.OutOfMemory => |oom| return oom,
+                            error.UnexpectedExpr, error.InvalidRegExp => return error.@"Invalid Bunfig",
+                        };
+                    }
+
+                    if (install_obj.get("hoistPattern")) |hoist_pattern_expr| {
+                        install.hoist_pattern = bun.install.PnpmMatcher.fromExpr(
+                            allocator,
+                            hoist_pattern_expr,
+                            this.log,
+                            this.source,
+                        ) catch |err| switch (err) {
+                            error.OutOfMemory => |oom| return oom,
+                            error.UnexpectedExpr, error.InvalidRegExp => return error.@"Invalid Bunfig",
+                        };
+                    }
                 }
 
                 if (json.get("run")) |run_expr| {
@@ -1096,7 +1125,7 @@ pub const Bunfig = struct {
                 else => {
                     this.log.addErrorFmtOpts(
                         this.allocator,
-                        "expected string but received {}",
+                        "expected string but received {f}",
                         .{
                             @as(js_ast.Expr.Tag, expr.data),
                         },
@@ -1115,7 +1144,7 @@ pub const Bunfig = struct {
             if (@as(js_ast.Expr.Tag, expr.data) != token) {
                 this.log.addErrorFmtOpts(
                     this.allocator,
-                    "expected {} but received {}",
+                    "expected {f} but received {f}",
                     .{
                         token,
                         @as(js_ast.Expr.Tag, expr.data),

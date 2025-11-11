@@ -617,7 +617,7 @@ pub const JSBundler = struct {
                     const value_type = property_value.jsType();
 
                     if (!value_type.isStringLike()) {
-                        return globalThis.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
+                        return globalThis.throwInvalidArguments("define \"{f}\" must be a JSON string", .{prop});
                     }
 
                     var val = jsc.ZigString.init("");
@@ -693,6 +693,12 @@ pub const JSBundler = struct {
 
                 const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(this.compile.?.compile_target.os, "root/");
                 try this.public_path.append(base_public_path);
+
+                // When using --compile, only `external` sourcemaps work, as we do not
+                // look at the source map comment. Override any other sourcemap type.
+                if (this.source_map != .none) {
+                    this.source_map = .external;
+                }
 
                 if (compile.outfile.isEmpty()) {
                     const entry_point = this.entry_points.keys()[0];
@@ -1465,7 +1471,7 @@ pub const BuildArtifact = struct {
         globalThis: *jsc.JSGlobalObject,
     ) JSValue {
         var buf: [512]u8 = undefined;
-        const out = std.fmt.bufPrint(&buf, "{any}", .{bun.fmt.truncatedHash32(this.hash)}) catch @panic("Unexpected");
+        const out = std.fmt.bufPrint(&buf, "{f}", .{bun.fmt.truncatedHash32(this.hash)}) catch @panic("Unexpected");
         return ZigString.init(out).toJS(globalThis);
     }
 
@@ -1489,7 +1495,7 @@ pub const BuildArtifact = struct {
         return jsc.JSValue.jsNull();
     }
 
-    pub fn finalize(this: *BuildArtifact) callconv(.C) void {
+    pub fn finalize(this: *BuildArtifact) callconv(.c) void {
         this.deinit();
 
         bun.default_allocator.destroy(this);
@@ -1546,7 +1552,7 @@ pub const BuildArtifact = struct {
                 try formatter.writeIndent(Writer, writer);
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r>hash<r>: <green>\"{any}\"<r>",
+                        "<r>hash<r>: <green>\"{f}\"<r>",
                         enable_ansi_colors,
                     ),
                     .{bun.fmt.truncatedHash32(this.hash)},

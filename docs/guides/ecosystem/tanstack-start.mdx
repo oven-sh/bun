@@ -1,0 +1,154 @@
+---
+title: Use TanStack Start with Bun
+sidebarTitle: TanStack Start with Bun
+mode: center
+---
+
+[TanStack Start](https://tanstack.com/start/latest) is a full-stack framework powered by TanStack Router. It supports full-document SSR, streaming, server functions, bundling and more, powered by TanStack Router and [Vite](https://vite.dev/).
+
+---
+
+<Steps>
+  <Step title="Create a new TanStack Start app">
+    Use the interactive CLI to create a new TanStack Start app.
+
+    ```sh terminal icon="terminal"
+    bun create @tanstack/start@latest my-tanstack-app
+    ```
+
+  </Step>
+  <Step title="Start the dev server">
+    Change to the project directory and run the dev server with Bun.
+
+    ```sh terminal icon="terminal"
+    cd my-tanstack-app
+    bun --bun run dev
+    ```
+
+    This starts the Vite dev server with Bun.
+
+  </Step>
+  <Step title="Update scripts in package.json">
+   Modify the scripts field in your `package.json` by prefixing the Vite CLI commands with `bun --bun`. This ensures that Bun executes the Vite CLI for common tasks like `dev`, `build`, and `preview`.
+
+    ```json package.json icon="file-json"
+    {
+      "scripts": {
+        "dev": "bun --bun vite dev", // [!code ++]
+        "build": "bun --bun vite build", // [!code ++]
+        "serve": "bun --bun vite preview" // [!code ++]
+      }
+    }
+    ```
+
+  </Step>
+</Steps>
+
+---
+
+## Hosting
+
+<Steps>
+  <Step title="Add Nitro to your project">
+    Add [Nitro](https://nitro.build/) to your project. This tool allows you to deploy your TanStack Start app to different platforms.
+
+    ```sh terminal icon="terminal"
+    bun add nitro
+    ```
+
+  </Step>
+  <Step title={<span>Update your <code>vite.config.ts</code> file</span>}>
+    Update your `vite.config.ts` file to include the necessary plugins for TanStack Start with Bun.
+
+    ```ts vite.config.ts icon="/icons/typescript.svg"
+    // other imports...
+    import { nitro } from "nitro/vite"; // [!code ++]
+
+    const config = defineConfig({
+      plugins: [
+        tanstackStart(),
+        nitro({ preset: "bun" }), // [!code ++]
+        // other plugins...
+      ],
+    });
+
+    export default config;
+    ```
+
+    <Note>
+      The `bun` preset is optional, but it configures the build output specifically for Bun's runtime.
+    </Note>
+
+  </Step>
+  <Step title="Update the start command">
+    Make sure `build` and `start` scripts are present in your `package.json` file:
+
+    ```json package.json icon="file-json"
+      {
+        "scripts": {
+          "build": "bun --bun vite build", // [!code ++]
+          // The .output files are created by Nitro when you run `bun run build`.
+          // Not necessary when deploying to Vercel.
+          "start": "bun run .output/server/index.mjs" // [!code ++]
+        }
+      }
+    ```
+
+
+    <Note>
+      You do **not** need the custom `start` script when deploying to Vercel.
+    </Note>
+
+  </Step>
+  <Step title="Deploy your app">
+    Check out one of our guides to deploy your app to a hosting provider.
+
+    <Note>
+      When deploying to Vercel, you can either add the `"bunVersion": "1.x"` to your `vercel.json` file, or add it to the `nitro` config in your `vite.config.ts` file:
+
+      <Warning>
+        Do **not** use the `bun` Nitro preset when deploying to Vercel.
+      </Warning>
+
+      ```ts vite.config.ts icon="/icons/typescript.svg"
+      export default defineConfig({
+        plugins: [
+          tanstackStart(),
+          nitro({
+            preset: "bun", // [!code --]
+            vercel: { // [!code ++]
+              functions: { // [!code ++]
+                runtime: "bun1.x", // [!code ++]
+              }, // [!code ++]
+            }, // [!code ++]
+          }),
+        ],
+      });
+      ```
+    </Note>
+
+    <Columns cols={3}>
+      <Card title="Vercel" href="/guides/deployment/vercel" icon="/icons/ecosystem/vercel.svg">
+        Deploy on Vercel
+      </Card>
+      <Card title="Render" href="/guides/deployment/render" icon="/icons/ecosystem/render.svg">
+        Deploy on Render
+      </Card>
+      <Card title="Railway" href="/guides/deployment/railway" icon="/icons/ecosystem/railway.svg">
+        Deploy on Railway
+      </Card>
+       <Card title="DigitalOcean" href="/guides/deployment/digital-ocean" icon="/icons/ecosystem/digitalocean.svg">
+        Deploy on DigitalOcean
+      </Card>
+      <Card title="AWS Lambda" href="/guides/deployment/aws-lambda" icon="/icons/ecosystem/aws.svg">
+        Deploy on AWS Lambda
+      </Card>
+      <Card title="Google Cloud Run" href="/guides/deployment/google-cloud-run" icon="/icons/ecosystem/gcp.svg">
+        Deploy on Google Cloud Run
+      </Card>
+    </Columns>
+
+  </Step>
+</Steps>
+
+[→ See TanStack Start's official documentation](https://tanstack.com/start/latest/docs/framework/react/guide/hosting) for more information on hosting.

@@ -24,10 +24,10 @@ pub const BuildCommand = struct {
             const compile_define_values = compile_target.defineValues();
 
             if (ctx.args.define) |*define| {
-                var keys = try std.ArrayList(string).initCapacity(bun.default_allocator, compile_define_keys.len + define.keys.len);
+                var keys = try std.array_list.Managed(string).initCapacity(bun.default_allocator, compile_define_keys.len + define.keys.len);
                 keys.appendSliceAssumeCapacity(compile_define_keys);
                 keys.appendSliceAssumeCapacity(define.keys);
-                var values = try std.ArrayList(string).initCapacity(bun.default_allocator, compile_define_values.len + define.values.len);
+                var values = try std.array_list.Managed(string).initCapacity(bun.default_allocator, compile_define_values.len + define.values.len);
                 values.appendSliceAssumeCapacity(compile_define_values);
                 values.appendSliceAssumeCapacity(define.values);
 
@@ -137,6 +137,17 @@ pub const BuildCommand = struct {
             }
         }
 
+        if (ctx.bundler_options.transform_only) {
+            // Check if any entry point is an HTML file
+            for (this_transpiler.options.entry_points) |entry_point| {
+                if (strings.hasSuffixComptime(entry_point, ".html")) {
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> HTML imports are only supported when bundling", .{});
+                    Global.exit(1);
+                    return;
+                }
+            }
+        }
+
         if (ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile and fetcher == null) {
             if (this_transpiler.options.entry_points.len > 1) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> Must use <b>--outdir<r> when specifying more than one entry point.", .{});
@@ -165,13 +176,13 @@ pub const BuildCommand = struct {
             };
 
             var dir = bun.FD.fromStdDir(bun.openDirForPath(&(try std.posix.toPosixPath(path))) catch |err| {
-                Output.prettyErrorln("<r><red>{s}<r> opening root directory {}", .{ @errorName(err), bun.fmt.quote(path) });
+                Output.prettyErrorln("<r><red>{s}<r> opening root directory {f}", .{ @errorName(err), bun.fmt.quote(path) });
                 Global.exit(1);
             });
             defer dir.close();
 
             break :brk1 dir.getFdPath(&src_root_dir_buf) catch |err| {
-                Output.prettyErrorln("<r><red>{s}<r> resolving root directory {}", .{ @errorName(err), bun.fmt.quote(path) });
+                Output.prettyErrorln("<r><red>{s}<r> resolving root directory {f}", .{ @errorName(err), bun.fmt.quote(path) });
                 Global.exit(1);
             };
         };
@@ -190,18 +201,18 @@ pub const BuildCommand = struct {
         try this_transpiler.configureDefines();
         this_transpiler.configureLinker();
 
-        if (ctx.bundler_options.production) {
-            bun.assert(!this_transpiler.options.jsx.development);
-        }
-
         if (!this_transpiler.options.production) {
             try this_transpiler.options.conditions.appendSlice(&.{"development"});
         }
 
         this_transpiler.resolver.opts = this_transpiler.options;
         this_transpiler.resolver.env_loader = this_transpiler.env;
-        this_transpiler.options.jsx.development = !this_transpiler.options.production;
-        this_transpiler.resolver.opts.jsx.development = this_transpiler.options.jsx.development;
+
+        // Allow tsconfig.json overriding, but always set it to false if --production is passed.
+        if (ctx.bundler_options.production) {
+            this_transpiler.options.jsx.development = false;
+            this_transpiler.resolver.opts.jsx.development = false;
+        }
 
         switch (ctx.debug.macros) {
             .disable => {
@@ -367,7 +378,7 @@ pub const BuildCommand = struct {
                 std.fs.cwd()
             else
                 std.fs.cwd().makeOpenPath(root_path, .{}) catch |err| {
-                    Output.err(err, "could not open output directory {}", .{bun.fmt.quote(root_path)});
+                    Output.err(err, "could not open output directory {f}", .{bun.fmt.quote(root_path)});
                     exitOrWatch(1, ctx.debug.hot_reload == .watch);
                     unreachable;
                 };
@@ -387,7 +398,7 @@ pub const BuildCommand = struct {
                     @max(from_path.len, f.dest_path.len) + 2 - from_path.len,
                     max_path_len,
                 );
-                size_padding = @max(size_padding, std.fmt.count("{}", .{bun.fmt.size(f.size, .{})}));
+                size_padding = @max(size_padding, std.fmt.count("{f}", .{bun.fmt.size(f.size, .{})}));
             }
 
             if (ctx.bundler_options.compile) {
@@ -459,7 +470,7 @@ pub const BuildCommand = struct {
                 });
 
                 if (is_cross_compile) {
-                    Output.pretty(" <r><d>{s}<r>\n", .{compile_target});
+                    Output.pretty(" <r><d>{f}<r>\n", .{compile_target});
                 } else {
                     Output.pretty("\n", .{});
                 }
@@ -484,12 +495,12 @@ pub const BuildCommand = struct {
             }
 
             for (output_files) |f| {
-                size_padding = @max(size_padding, std.fmt.count("{}", .{bun.fmt.size(f.size, .{})}));
+                size_padding = @max(size_padding, std.fmt.count("{f}", .{bun.fmt.size(f.size, .{})}));
             }
 
             for (output_files) |f| {
                 f.writeToDisk(root_dir, from_path) catch |err| {
-                    Output.err(err, "failed to write file '{}'", .{bun.fmt.quote(f.dest_path)});
+                    Output.err(err, "failed to write file '{f}'", .{bun.fmt.quote(f.dest_path)});
                     had_err = true;
                     continue;
                 };
@@ -500,7 +511,7 @@ pub const BuildCommand = struct {
 
                 // Print summary
                 const padding_count = @max(2, @max(rel_path.len, max_path_len) - rel_path.len);
-                try writer.writeByteNTimes(' ', 2);
+                try writer.splatByteAll(' ', 2);
 
                 if (Output.enable_ansi_colors_stdout) try writer.writeAll(switch (f.output_kind) {
                     .@"entry-point" => Output.prettyFmt("<blue>", true),
@@ -525,9 +536,9 @@ pub const BuildCommand = struct {
                     }
                 }
 
-                try writer.writeByteNTimes(' ', padding_count);
-                try writer.print("{s}  ", .{bun.fmt.size(f.size, .{})});
-                try writer.writeByteNTimes(' ', size_padding - std.fmt.count("{}", .{bun.fmt.size(f.size, .{})}));
+                try writer.splatByteAll(' ', padding_count);
+                try writer.print("{f}  ", .{bun.fmt.size(f.size, .{})});
+                try writer.splatByteAll(' ', size_padding - std.fmt.count("{f}", .{bun.fmt.size(f.size, .{})}));
 
                 if (Output.enable_ansi_colors_stdout) {
                     try writer.writeAll("\x1b[2m");
@@ -555,7 +566,7 @@ pub const BuildCommand = struct {
 fn exitOrWatch(code: u8, watch: bool) noreturn {
     if (watch) {
         // the watcher thread will exit the process
-        std.time.sleep(std.math.maxInt(u64) - 1);
+        std.Thread.sleep(std.math.maxInt(u64) - 1);
     }
     Global.exit(code);
 }
@@ -595,14 +606,14 @@ fn printSummary(bundled_end: i128, minify_duration: u64, minified: bool, input_c
         const delta: i64 = @as(i64, @truncate(@as(i65, @intCast(input_code_length)) - @as(i65, @intCast(output_size))));
         if (delta > 1024) {
             Output.prettyln(
-                "  <green>minify<r>  -{} <d>(estimate)<r>",
+                "  <green>minify<r>  -{f} <d>(estimate)<r>",
                 .{
                     bun.fmt.size(@as(usize, @intCast(delta)), .{}),
                 },
             );
         } else if (-delta > 1024) {
             Output.prettyln(
-                "  <b>minify<r>   +{} <d>(estimate)<r>",
+                "  <b>minify<r>   +{f} <d>(estimate)<r>",
                 .{
                     bun.fmt.size(@as(usize, @intCast(-delta)), .{}),
                 },

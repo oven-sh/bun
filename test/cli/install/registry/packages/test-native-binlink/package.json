@@ -1,0 +1,25 @@
+{
+  "_id": "test-native-binlink",
+  "name": "test-native-binlink",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "test-native-binlink",
+      "version": "1.0.0",
+      "_id": "test-native-binlink@1.0.0",
+      "bin": {
+        "test-binlink-cmd": "./bin/main.js"
+      },
+      "optionalDependencies": {
+        "test-native-binlink-target": "1.0.0"
+      },
+      "dist": {
+        "integrity": "sha512-1PqDobvLsa0lFqxrns17u0yfmjgLQeuST8PWNxov09gs+yEm2xoBc5yXx5B6NFcXOY6lu5A62cRgFW8FSOgpJQ==",
+        "shasum": "da15dad1eae537c1341ca87b04d8ae7a52be5e4a",
+        "tarball": "http://localhost:4873/test-native-binlink/-/test-native-binlink-1.0.0.tgz"
+      }
+    }
+  }
+}

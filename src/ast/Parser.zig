@@ -291,10 +291,10 @@ pub const Parser = struct {
                         return data.len;
                     }
                 };
-                const writer = std.io.Writer(fakeWriter, anyerror, fakeWriter.writeAll){
+                const writer = std.Io.GenericWriter(fakeWriter, anyerror, fakeWriter.writeAll){
                     .context = fakeWriter{},
                 };
-                var buffered_writer = std.io.bufferedWriter(writer);
+                var buffered_writer = bun.deprecated.bufferedWriter(writer);
                 const actual = buffered_writer.writer();
                 for (self.log.msgs.items) |msg| {
                     var m: logger.Msg = msg;
@@ -343,14 +343,14 @@ pub const Parser = struct {
         defer p.lexer.deinit();
 
         var binary_expression_stack_heap = std.heap.stackFallback(42 * @sizeOf(ParserType.BinaryExpressionVisitor), bun.default_allocator);
-        p.binary_expression_stack = std.ArrayList(ParserType.BinaryExpressionVisitor).initCapacity(
+        p.binary_expression_stack = std.array_list.Managed(ParserType.BinaryExpressionVisitor).initCapacity(
             binary_expression_stack_heap.get(),
             41, // one less in case of unlikely alignment between the stack buffer and reality
         ) catch unreachable; // stack allocation cannot fail
         defer p.binary_expression_stack.clearAndFree();
 
         var binary_expression_simplify_stack_heap = std.heap.stackFallback(48 * @sizeOf(SideEffects.BinaryExpressionSimplifyVisitor), bun.default_allocator);
-        p.binary_expression_simplify_stack = std.ArrayList(SideEffects.BinaryExpressionSimplifyVisitor).initCapacity(
+        p.binary_expression_simplify_stack = std.array_list.Managed(SideEffects.BinaryExpressionSimplifyVisitor).initCapacity(
             binary_expression_simplify_stack_heap.get(),
             47,
         ) catch unreachable; // stack allocation cannot fail
@@ -1037,7 +1037,7 @@ pub const Parser = struct {
                     var notes = ListManaged(logger.Data).init(p.allocator);
 
                     try notes.append(logger.Data{
-                        .text = try std.fmt.allocPrint(p.allocator, "Try require({}) instead", .{bun.fmt.QuotedFormatter{ .text = record.path.text }}),
+                        .text = try std.fmt.allocPrint(p.allocator, "Try require({f}) instead", .{bun.fmt.QuotedFormatter{ .text = record.path.text }}),
                     });
 
                     if (uses_module_ref) {
@@ -1210,46 +1210,93 @@ pub const Parser = struct {
             if (items_count == 0)
                 break :outer;
 
-            const import_record_id = p.addImportRecord(.stmt, logger.Loc.Empty, "bun:test");
-            var import_record: *ImportRecord = &p.import_records.items[import_record_id];
-            import_record.tag = .bun_test;
-
             var declared_symbols = js_ast.DeclaredSymbol.List{};
             try declared_symbols.ensureTotalCapacity(p.allocator, items_count);
-            var clauses: []js_ast.ClauseItem = p.allocator.alloc(js_ast.ClauseItem, items_count) catch unreachable;
-            var clause_i: usize = 0;
-            inline for (comptime std.meta.fieldNames(Jest)) |symbol_name| {
-                if (p.symbols.items[@field(jest, symbol_name).innerIndex()].use_count_estimate > 0) {
-                    clauses[clause_i] = js_ast.ClauseItem{
-                        .name = .{ .ref = @field(jest, symbol_name), .loc = logger.Loc.Empty },
-                        .alias = symbol_name,
-                        .alias_loc = logger.Loc.Empty,
-                        .original_name = "",
-                    };
-                    declared_symbols.appendAssumeCapacity(.{ .ref = @field(jest, symbol_name), .is_top_level = true });
-                    clause_i += 1;
+
+            // For CommonJS modules, use require instead of import
+            if (exports_kind == .cjs) {
+                var import_record_indices = bun.handleOom(p.allocator.alloc(u32, 1));
+                const import_record_id = p.addImportRecord(.require, logger.Loc.Empty, "bun:test");
+                import_record_indices[0] = import_record_id;
+
+                // Create object binding pattern for destructuring
+                var properties = p.allocator.alloc(B.Property, items_count) catch unreachable;
+                var prop_i: usize = 0;
+                inline for (comptime std.meta.fieldNames(Jest)) |symbol_name| {
+                    if (p.symbols.items[@field(jest, symbol_name).innerIndex()].use_count_estimate > 0) {
+                        properties[prop_i] = .{
+                            .key = p.newExpr(E.String{
+                                .data = symbol_name,
+                            }, logger.Loc.Empty),
+                            .value = p.b(B.Identifier{ .ref = @field(jest, symbol_name) }, logger.Loc.Empty),
+                        };
+                        declared_symbols.appendAssumeCapacity(.{ .ref = @field(jest, symbol_name), .is_top_level = true });
+                        prop_i += 1;
+                    }
                 }
+
+                // Create: const { test, expect, ... } = require("bun:test")
+                var decls = p.allocator.alloc(G.Decl, 1) catch unreachable;
+                decls[0] = .{
+                    .binding = p.b(B.Object{
+                        .properties = properties,
+                    }, logger.Loc.Empty),
+                    .value = p.newExpr(E.RequireString{
+                        .import_record_index = import_record_id,
+                    }, logger.Loc.Empty),
+                };
+
+                var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                part_stmts[0] = p.s(S.Local{
+                    .kind = .k_const,
+                    .decls = Decl.List.fromOwnedSlice(decls),
+                }, logger.Loc.Empty);
+
+                before.append(js_ast.Part{
+                    .stmts = part_stmts,
+                    .declared_symbols = declared_symbols,
+                    .import_record_indices = bun.BabyList(u32).fromOwnedSlice(import_record_indices),
+                    .tag = .bun_test,
+                }) catch unreachable;
+            } else {
+                var import_record_indices = bun.handleOom(p.allocator.alloc(u32, 1));
+                const import_record_id = p.addImportRecord(.stmt, logger.Loc.Empty, "bun:test");
+                import_record_indices[0] = import_record_id;
+
+                // For ESM modules, use import statement
+                var clauses: []js_ast.ClauseItem = p.allocator.alloc(js_ast.ClauseItem, items_count) catch unreachable;
+                var clause_i: usize = 0;
+                inline for (comptime std.meta.fieldNames(Jest)) |symbol_name| {
+                    if (p.symbols.items[@field(jest, symbol_name).innerIndex()].use_count_estimate > 0) {
+                        clauses[clause_i] = js_ast.ClauseItem{
+                            .name = .{ .ref = @field(jest, symbol_name), .loc = logger.Loc.Empty },
+                            .alias = symbol_name,
+                            .alias_loc = logger.Loc.Empty,
+                            .original_name = "",
+                        };
+                        declared_symbols.appendAssumeCapacity(.{ .ref = @field(jest, symbol_name), .is_top_level = true });
+                        clause_i += 1;
+                    }
+                }
+
+                const import_stmt = p.s(
+                    S.Import{
+                        .namespace_ref = p.declareSymbol(.unbound, logger.Loc.Empty, "bun_test_import_namespace_for_internal_use_only") catch unreachable,
+                        .items = clauses,
+                        .import_record_index = import_record_id,
+                    },
+                    logger.Loc.Empty,
+                );
+
+                var part_stmts = try p.allocator.alloc(Stmt, 1);
+                part_stmts[0] = import_stmt;
+                before.append(js_ast.Part{
+                    .stmts = part_stmts,
+                    .declared_symbols = declared_symbols,
+                    .import_record_indices = bun.BabyList(u32).fromOwnedSlice(import_record_indices),
+                    .tag = .bun_test,
+                }) catch unreachable;
             }
-
-            const import_stmt = p.s(
-                S.Import{
-                    .namespace_ref = p.declareSymbol(.unbound, logger.Loc.Empty, "bun_test_import_namespace_for_internal_use_only") catch unreachable,
-                    .items = clauses,
-                    .import_record_index = import_record_id,
-                },
-                logger.Loc.Empty,
-            );
-
-            var part_stmts = try p.allocator.alloc(Stmt, 1);
-            part_stmts[0] = import_stmt;
-            var import_record_indices = try p.allocator.alloc(u32, 1);
-            import_record_indices[0] = import_record_id;
-            before.append(js_ast.Part{
-                .stmts = part_stmts,
-                .declared_symbols = declared_symbols,
-                .import_record_indices = bun.BabyList(u32).fromOwnedSlice(import_record_indices),
-                .tag = .bun_test,
-            }) catch unreachable;
 
             // If we injected jest globals, we need to disable the runtime transpiler cache
             if (p.options.features.runtime_transpiler_cache) |cache| {
@@ -1536,5 +1583,5 @@ const WrapMode = js_parser.WrapMode;
 
 const std = @import("std");
 const List = std.ArrayListUnmanaged;
-const ListManaged = std.ArrayList;
 const Allocator = std.mem.Allocator;
+const ListManaged = std.array_list.Managed;

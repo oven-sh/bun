@@ -5138,6 +5138,25 @@ pub fn NewParser_(
             }
         }
 
+        fn wrapMetadataInArrow(noalias p: *P, inner_expr: Expr) Expr {
+            // Wraps an expression in an arrow function: () => expr
+            // This defers evaluation to avoid TDZ issues with circular imports.
+            // The function can be called later when needed, after modules are fully initialized.
+            return p.newExpr(
+                E.Arrow{
+                    .args = &.{},
+                    .body = .{
+                        .loc = logger.Loc.Empty,
+                        .stmts = p.allocator.dupe(Stmt, &.{
+                            p.s(S.Return{ .value = inner_expr }, logger.Loc.Empty),
+                        }) catch |err| bun.handleOom(err),
+                    },
+                    .prefer_expr = true,
+                },
+                logger.Loc.Empty,
+            );
+        }
+
         fn serializeMetadata(noalias p: *P, ts_metadata: TypeScript.Metadata) !Expr {
             return switch (ts_metadata) {
                 .m_none,
@@ -5219,12 +5238,15 @@ pub fn NewParser_(
                 .m_identifier => |ref| {
                     p.recordUsage(ref);
                     if (p.is_import_item.contains(ref)) {
-                        return p.maybeDefinedHelper(p.newExpr(
+                        // For imported types, wrap in an IIFE that uses typeof to check if defined
+                        // This avoids TDZ errors in circular dependencies
+                        const import_ref = p.newExpr(
                             E.ImportIdentifier{
                                 .ref = ref,
                             },
                             logger.Loc.Empty,
-                        ));
+                        );
+                        return p.wrapMetadataInArrow(try p.maybeDefinedHelper(import_ref));
                     }
 
                     return p.maybeDefinedHelper(p.newExpr(
@@ -5324,6 +5346,11 @@ pub fn NewParser_(
                         },
                         logger.Loc.Empty,
                     );
+
+                    // Wrap in arrow function if it starts with an import to avoid TDZ
+                    if (p.is_import_item.contains(refs.items[0])) {
+                        return p.wrapMetadataInArrow(root);
+                    }
 
                     return root;
                 },

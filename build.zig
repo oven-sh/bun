@@ -18,22 +18,6 @@ const OperatingSystem = @import("src/env.zig").OperatingSystem;
 
 const pathRel = fs.path.relative;
 
-/// When updating this, make sure to adjust SetupZig.cmake
-const recommended_zig_version = "0.14.0";
-
-// comptime {
-//     if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
-//         @compileError(
-//             "" ++
-//                 "Bun requires Zig version " ++ recommended_zig_version ++ ", but you have " ++
-//                 builtin.zig_version_string ++ ". This is automatically configured via Bun's " ++
-//                 "CMake setup. You likely meant to run `bun run build`. If you are trying to " ++
-//                 "upgrade the Zig compiler, edit ZIG_COMMIT in cmake/tools/SetupZig.cmake or " ++
-//                 "comment this error out.",
-//         );
-//     }
-// }
-
 const zero_sha = "0000000000000000000000000000000000000000";
 
 const BunBuildOptions = struct {

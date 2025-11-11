@@ -263,9 +263,9 @@ pub const Repository = extern struct {
         return lhs.resolved.eql(rhs.resolved, lhs_buf, rhs_buf);
     }
 
-    pub fn formatAs(this: *const Repository, label: string, buf: []const u8, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+    pub fn formatAs(this: *const Repository, label: string, buf: []const u8, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         const formatter = Formatter{ .label = label, .repository = this, .buf = buf };
-        return try formatter.format(layout, opts, writer);
+        return try formatter.format(writer);
     }
 
     pub fn fmtStorePath(this: *const Repository, label: string, string_buf: string) StorePathFormatter {
@@ -281,11 +281,11 @@ pub const Repository = extern struct {
         label: string,
         string_buf: string,
 
-        pub fn format(this: StorePathFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
-            try writer.print("{}", .{Install.fmtStorePath(this.label)});
+        pub fn format(this: StorePathFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            try writer.print("{f}", .{Install.fmtStorePath(this.label)});
 
             if (!this.repo.owner.isEmpty()) {
-                try writer.print("{}", .{this.repo.owner.fmtStorePath(this.string_buf)});
+                try writer.print("{f}", .{this.repo.owner.fmtStorePath(this.string_buf)});
                 // try writer.writeByte(if (this.opts.replace_slashes) '+' else '/');
                 try writer.writeByte('+');
             } else if (Dependency.isSCPLikePath(this.repo.repo.slice(this.string_buf))) {
@@ -293,7 +293,7 @@ pub const Repository = extern struct {
                 try writer.writeAll("ssh++");
             }
 
-            try writer.print("{}", .{this.repo.repo.fmtStorePath(this.string_buf)});
+            try writer.print("{f}", .{this.repo.repo.fmtStorePath(this.string_buf)});
 
             if (!this.repo.resolved.isEmpty()) {
                 try writer.writeByte('+'); // this would be '#' but it's not valid on windows
@@ -301,10 +301,10 @@ pub const Repository = extern struct {
                 if (strings.lastIndexOfChar(resolved, '-')) |i| {
                     resolved = resolved[i + 1 ..];
                 }
-                try writer.print("{}", .{Install.fmtStorePath(resolved)});
+                try writer.print("{f}", .{Install.fmtStorePath(resolved)});
             } else if (!this.repo.committish.isEmpty()) {
                 try writer.writeByte('+'); // this would be '#' but it's not valid on windows
-                try writer.print("{}", .{this.repo.committish.fmtStorePath(this.string_buf)});
+                try writer.print("{f}", .{this.repo.committish.fmtStorePath(this.string_buf)});
             }
         }
     };
@@ -321,7 +321,7 @@ pub const Repository = extern struct {
         label: []const u8 = "",
         buf: []const u8,
         repository: *const Repository,
-        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
+        pub fn format(formatter: Formatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             if (comptime Environment.allow_assert) bun.assert(formatter.label.len > 0);
             try writer.writeAll(formatter.label);
 
@@ -500,7 +500,7 @@ pub const Repository = extern struct {
         attempt: u8,
     ) !std.fs.Dir {
         bun.analytics.Features.git_dependencies += 1;
-        const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{any}.git", .{
+        const folder_name = try std.fmt.bufPrintZ(&folder_name_buf, "{f}.git", .{
             bun.fmt.hexIntLower(task_id.get()),
         });
 
@@ -561,7 +561,7 @@ pub const Repository = extern struct {
         committish: string,
         task_id: Install.Task.Id,
     ) !string {
-        const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{try std.fmt.bufPrint(&folder_name_buf, "{any}.git", .{
+        const path = Path.joinAbsString(PackageManager.get().cache_directory_path, &.{try std.fmt.bufPrint(&folder_name_buf, "{f}.git", .{
             bun.fmt.hexIntLower(task_id.get()),
         })}, .auto);
 

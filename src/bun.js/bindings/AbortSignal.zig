@@ -1,7 +1,7 @@
 pub const AbortSignal = opaque {
     extern fn WebCore__AbortSignal__aborted(arg0: *AbortSignal) bool;
     extern fn WebCore__AbortSignal__abortReason(arg0: *AbortSignal) JSValue;
-    extern fn WebCore__AbortSignal__addListener(arg0: *AbortSignal, arg1: ?*anyopaque, ArgFn2: ?*const fn (?*anyopaque, JSValue) callconv(.C) void) *AbortSignal;
+    extern fn WebCore__AbortSignal__addListener(arg0: *AbortSignal, arg1: ?*anyopaque, ArgFn2: ?*const fn (?*anyopaque, JSValue) callconv(.c) void) *AbortSignal;
     extern fn WebCore__AbortSignal__cleanNativeBindings(arg0: *AbortSignal, arg1: ?*anyopaque) void;
     extern fn WebCore__AbortSignal__create(arg0: *JSGlobalObject) JSValue;
     extern fn WebCore__AbortSignal__fromJS(JSValue0: JSValue) ?*AbortSignal;
@@ -20,7 +20,7 @@ pub const AbortSignal = opaque {
             pub fn callback(
                 ptr: ?*anyopaque,
                 reason: JSValue,
-            ) callconv(.C) void {
+            ) callconv(.c) void {
                 const val = bun.cast(*Context, ptr.?);
                 call(val, reason);
             }
@@ -32,7 +32,7 @@ pub const AbortSignal = opaque {
     pub fn addListener(
         this: *AbortSignal,
         ctx: ?*anyopaque,
-        callback: *const fn (?*anyopaque, JSValue) callconv(.C) void,
+        callback: *const fn (?*anyopaque, JSValue) callconv(.c) void,
     ) *AbortSignal {
         return WebCore__AbortSignal__addListener(this, ctx, callback);
     }

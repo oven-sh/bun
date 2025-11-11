@@ -299,7 +299,7 @@ pub fn ParseTypescript(
             try p.lexer.expect(.t_open_brace);
 
             // Parse the body
-            var values = std.ArrayList(js_ast.EnumValue).init(p.allocator);
+            var values = std.array_list.Managed(js_ast.EnumValue).init(p.allocator);
             while (p.lexer.token != .t_close_brace) {
                 var value = js_ast.EnumValue{ .loc = p.lexer.loc(), .ref = Ref.None, .name = undefined, .value = null };
                 var needs_symbol = false;
@@ -462,4 +462,4 @@ const TypeScript = js_parser.TypeScript;
 
 const std = @import("std");
 const List = std.ArrayListUnmanaged;
-const ListManaged = std.ArrayList;
+const ListManaged = std.array_list.Managed;

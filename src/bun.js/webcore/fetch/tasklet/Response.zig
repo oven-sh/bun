@@ -14,7 +14,7 @@ readable_stream_ref: jsc.WebCore.ReadableStream.Strong = .{},
 /// response weak ref we need this to track the response JS lifetime
 response: jsc.Weak(FetchTasklet) = .{},
 /// native response ref if we still need it when JS is discarted
-native_response: ?*Response = null,
+native_response: ?*jsc.WebCore.Response = null,
 
 /// For Http Client requests
 /// when Content-Length is provided this represents the whole size of the request
@@ -22,7 +22,9 @@ native_response: ?*Response = null,
 /// If is not chunked encoded and Content-Length is not provided this will be unknown
 body_size: http.HTTPClientResult.BodySize = .unknown,
 
-state: enum {
+state: ResponseState = .created,
+
+const ResponseState = enum {
     created,
     enqueued,
     // information_headers,
@@ -31,7 +33,7 @@ state: enum {
     // receiving_trailer_headers,
     failed,
     done,
-} = .created,
+};
 
 pub const Flags = packed struct(u8) {
     ignore_data: bool = false,

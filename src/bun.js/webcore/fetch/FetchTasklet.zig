@@ -463,11 +463,11 @@ export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.c) void {
         if (body.Locked.promise) |promise| {
             if (promise.isEmptyOrUndefinedOrNull()) {
                 // Scenario 2b.
-                this.ignoreRemainingResponseBody();
+                this.response.ignoreRemainingResponseBody();
             }
         } else {
             // Scenario 3.
-            this.ignoreRemainingResponseBody();
+            this.response.ignoreRemainingResponseBody();
         }
     }
 }

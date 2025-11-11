@@ -365,7 +365,7 @@ pub fn get(
                 .capacity = 0,
             },
         },
-        .http = try allocator.create(http.AsyncHTTP),
+        .http = try allocator.create(bun.http.AsyncHTTP),
         .javascript_vm = jsc_vm,
         .request_body = fetch_options.body,
         .global_this = globalThis,
@@ -404,7 +404,7 @@ pub fn get(
     }
 
     // This task gets queued on the HTTP thread.
-    fetch_tasklet.http.?.* = http.AsyncHTTP.init(
+    fetch_tasklet.http.?.* = bun.http.AsyncHTTP.init(
         bun.default_allocator,
         fetch_options.method,
         fetch_options.url,
@@ -412,7 +412,7 @@ pub fn get(
         fetch_options.headers.buf.items,
         &fetch_tasklet.response_buffer,
         fetch_tasklet.request_body.slice(),
-        http.HTTPClientResult.Callback.New(
+        bun.http.HTTPClientResult.Callback.New(
             *FetchTasklet,
             // handles response events (on headers, on body, etc.)
             FetchTasklet.callback,
@@ -436,7 +436,7 @@ pub fn get(
     fetch_tasklet.http.?.client.flags.is_streaming_request_body = isStream;
     fetch_tasklet.is_waiting_request_stream_start = isStream;
     if (isStream) {
-        const buffer = http.ThreadSafeStreamBuffer.new(.{});
+        const buffer = bun.http.ThreadSafeStreamBuffer.new(.{});
         buffer.setDrainCallback(FetchTaskletSharedData, FetchTaskletSharedData.resumeRequestDataStream, &fetch_tasklet.shared);
         fetch_tasklet.request_body_streaming_buffer = buffer;
         fetch_tasklet.http.?.request_body = .{
@@ -492,7 +492,7 @@ pub fn abortTask(this: *FetchTasklet) void {
     this.tracker.didCancel(this.global_this);
 
     if (this.http) |http_| {
-        http.http_thread.scheduleShutdown(http_);
+        bun.http.http_thread.scheduleShutdown(http_);
     }
 }
 
@@ -505,7 +505,7 @@ const FetchOptions = struct {
     disable_decompression: bool,
     reject_unauthorized: bool,
     url: ZigURL,
-    verbose: http.HTTPVerboseLevel = .none,
+    verbose: bun.http.HTTPVerboseLevel = .none,
     redirect_type: FetchRedirect = FetchRedirect.follow,
     proxy: ?ZigURL = null,
     url_proxy_buffer: []const u8 = "",
@@ -525,7 +525,7 @@ pub fn queue(
     fetch_options: *const FetchOptions,
     promise: jsc.JSPromise.Strong,
 ) !*FetchTasklet {
-    http.HTTPThread.init(&.{});
+    bun.http.HTTPThread.init(&.{});
     var node = try get(
         allocator,
         global,
@@ -539,13 +539,13 @@ pub fn queue(
 
     // increment ref so we can keep it alive until the http client is done
     node.ref();
-    http.http_thread.schedule(batch);
+    bun.http.http_thread.schedule(batch);
 
     return node;
 }
 
 /// Called from HTTP thread. Handles HTTP events received from socket.
-pub fn callback(task: *FetchTasklet, async_http: *http.AsyncHTTP, result: http.HTTPClientResult) void {
+pub fn callback(task: *FetchTasklet, async_http: *bun.http.AsyncHTTP, result: bun.http.HTTPClientResult) void {
     // at this point only this thread is accessing result to is no race condition
     const is_done = !result.has_more;
     // we are done with the http client so we can deref our side

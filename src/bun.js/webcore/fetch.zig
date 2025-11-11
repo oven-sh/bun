@@ -58,7 +58,7 @@ pub const fetch_type_error_strings: JSTypeErrorEnum = brk: {
     break :brk errors;
 };
 
-pub const FetchTasklet = @import("./fetch/FetchTasklet.zig").FetchTasklet;
+pub const FetchTasklet = @import("./fetch/FetchTasklet.zig");
 
 fn dataURLResponse(
     _data_url: DataURL,
@@ -733,7 +733,7 @@ pub fn Bun__fetch_(
         if (options_object) |options| {
             if (try options.fastGet(globalThis, .body)) |body__| {
                 if (!body__.isUndefined()) {
-                    break :extract_body try FetchTasklet.HTTPRequestBody.fromJS(ctx, body__);
+                    break :extract_body try HTTPRequestBody.fromJS(ctx, body__);
                 }
             }
 
@@ -751,30 +751,30 @@ pub fn Bun__fetch_(
 
             if (bodyValue.* == .Locked) {
                 if (req.getBodyReadableStream(globalThis)) |readable| {
-                    break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis) };
+                    break :extract_body HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis) };
                 }
                 if (bodyValue.Locked.readable.has()) {
-                    break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(bodyValue.Locked.readable.get(globalThis).?, globalThis) };
+                    break :extract_body HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(bodyValue.Locked.readable.get(globalThis).?, globalThis) };
                 }
                 const readable = try bodyValue.toReadableStream(globalThis);
                 if (!readable.isEmptyOrUndefinedOrNull() and bodyValue.* == .Locked and bodyValue.Locked.readable.has()) {
-                    break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(bodyValue.Locked.readable.get(globalThis).?, globalThis) };
+                    break :extract_body HTTPRequestBody{ .ReadableStream = jsc.WebCore.ReadableStream.Strong.init(bodyValue.Locked.readable.get(globalThis).?, globalThis) };
                 }
             }
 
-            break :extract_body FetchTasklet.HTTPRequestBody{ .AnyBlob = bodyValue.useAsAnyBlob() };
+            break :extract_body HTTPRequestBody{ .AnyBlob = bodyValue.useAsAnyBlob() };
         }
 
         if (request_init_object) |req| {
             if (try req.fastGet(globalThis, .body)) |body__| {
                 if (!body__.isUndefined()) {
-                    break :extract_body try FetchTasklet.HTTPRequestBody.fromJS(ctx, body__);
+                    break :extract_body try HTTPRequestBody.fromJS(ctx, body__);
                 }
             }
         }
 
         break :extract_body null;
-    } orelse FetchTasklet.HTTPRequestBody.Empty;
+    } orelse HTTPRequestBody.Empty;
 
     if (globalThis.hasException()) {
         is_error = true;
@@ -1371,7 +1371,7 @@ pub fn Bun__fetch_(
         body.detach();
     } else {
         // These are single-use, and have effectively been moved to the FetchTasklet.
-        body = FetchTasklet.HTTPRequestBody.Empty;
+        body = HTTPRequestBody.Empty;
     }
     proxy = null;
     url_proxy_buffer = "";

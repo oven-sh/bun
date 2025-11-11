@@ -303,9 +303,70 @@ public:
                 return true;
             }
 
-            // For any other frame without parentheses, terminate parsing as before
-            offset = stack.length();
-            return false;
+            // Frames without function names (e.g., top-level code) don't have parentheses
+            // Format: "/path/to/file.ts:line:column" or "/path/to/file.ts:line"
+            // Parse these directly as anonymous frames
+            auto marker1 = 0u;
+            auto marker2 = line.find(':', marker1);
+
+            if (marker2 == WTF::notFound) {
+                // No colons found, treat entire line as source URL
+                frame.sourceURL = line;
+                frame.functionName = StringView();
+                return true;
+            }
+
+            auto marker3 = line.find(':', marker2 + 1);
+            if (marker3 == WTF::notFound) {
+                marker3 = line.length();
+
+                auto segment1 = StringView_slice(line, marker1, marker2);
+                auto segment2 = StringView_slice(line, marker2 + 1, marker3);
+
+                if (auto int1 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment2)) {
+                    frame.sourceURL = segment1;
+                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int1.value());
+                } else {
+                    frame.sourceURL = StringView_slice(line, marker1, marker3);
+                }
+                frame.functionName = StringView();
+                return true;
+            }
+
+            // Find the last two colons to extract line:column
+            while (true) {
+                auto newcolon = line.find(':', marker3 + 1);
+                if (newcolon == WTF::notFound)
+                    break;
+                marker2 = marker3;
+                marker3 = newcolon;
+            }
+
+            auto marker4 = line.length();
+
+            auto segment1 = StringView_slice(line, marker1, marker2);
+            auto segment2 = StringView_slice(line, marker2 + 1, marker3);
+            auto segment3 = StringView_slice(line, marker3 + 1, marker4);
+
+            if (auto int1 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment2)) {
+                if (auto int2 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment3)) {
+                    frame.sourceURL = segment1;
+                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int1.value());
+                    frame.columnNumber = WTF::OrdinalNumber::fromOneBasedInt(int2.value());
+                } else {
+                    frame.sourceURL = segment1;
+                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int1.value());
+                }
+            } else {
+                if (auto int2 = WTF::parseIntegerAllowingTrailingJunk<unsigned int>(segment3)) {
+                    frame.sourceURL = StringView_slice(line, marker1, marker3);
+                    frame.lineNumber = WTF::OrdinalNumber::fromOneBasedInt(int2.value());
+                } else {
+                    frame.sourceURL = StringView_slice(line, marker1, marker4);
+                }
+            }
+            frame.functionName = StringView();
+            return true;
         }
 
         auto lineInner = StringView_slice(line, openingParentheses + 1, closingParentheses);

@@ -185,11 +185,9 @@ function getImageKey(platform) {
   if (features?.length) {
     key += `-with-${features.join("-")}`;
   }
-
   if (abi) {
     key += `-${abi}`;
   }
-
   return key;
 }
 
@@ -1164,6 +1162,17 @@ async function getPipeline(options = {}) {
           steps: [getTestBunStep(target, options, { unifiedTests, testFiles, buildId })],
         })),
       );
+    }
+  }
+  if (includeASAN) {
+    const asan_targets = testPlatforms.filter(v => v.profile === "asan");
+    const lsan_targets = asan_targets.map(v => ({ ...v, profile: "lsan" }));
+    for (let i = 0; i < lsan_targets.length; i++) {
+      steps.push({
+        key: getTargetKey(lsan_targets[i]),
+        group: getTargetLabel(asan_targets[i]),
+        steps: [getTestBunStep(lsan_targets[i], options, { unifiedTests, testFiles, buildId })],
+      })
     }
   }
 

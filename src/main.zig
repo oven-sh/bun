@@ -34,11 +34,11 @@ pub fn main() void {
     // This should appear before we make any calls at all to libuv.
     // So it's safest to put it very early in the main function.
     if (Environment.isWindows) {
-        _ = bun.windows.libuv.uv_replace_allocator(
-            &bun.default_malloc,
-            &bun.default_realloc,
-            &bun.default_calloc,
-            &bun.default_free,
+        _ = _bun.windows.libuv.uv_replace_allocator(
+            &_bun.default_malloc,
+            &_bun.default_realloc,
+            &_bun.default_calloc,
+            &_bun.default_free,
         );
         _bun.handleOom(_bun.windows.env.convertEnvToWTF8());
         environ = @ptrCast(std.os.environ.ptr);

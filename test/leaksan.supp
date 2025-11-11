@@ -158,6 +158,8 @@ leak:js_printer.BufferWriter.writeAll__anon
 leak:logger.Location.clone
 # test/bundler/bundler_browser.test.ts
 leak:bundler.bundle_v2.BundleV2.runResolutionForParseTask
+# test/js/bun/spawn/spawn-streaming-stdin.test.ts
+leak:bun.js.api.bun.js_bun_spawn_bindings.spawnMaybeSync__anon
 
 # fixed by VirtualMachine.globalExit tick
 leak:bun.js.test.bun_test.BunTest.runNextTick
@@ -233,3 +235,7 @@ leak:cli.pm_pkg_command.PmPkgCommand
 leak:cli.pack_command
 leak:cli.update_interactive_command
 leak:cli.audit_command
+leak:bun.js.api.bun.subprocess.SubprocessPipeReader.create
+leak:bun.js.api.ffi.FFI.generateSymbolForFunction
+leak:patch.
+leak:logger.Log.cloneToWithRecycled

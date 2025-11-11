@@ -295,10 +295,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         }
 
         pub inline fn fd(this: ThisSocket) bun.FileDescriptor {
-            if (comptime is_ssl) {
-                @compileError("SSL sockets do not have a file descriptor accessible this way");
-            }
             const socket = this.socket.get() orelse return bun.invalid_fd;
+            if (comptime is_ssl) {
+                if (socket.getNativeHandle(is_ssl)) |handle| {
+                    const ssl_ptr: *BoringSSL.SSL = @as(*BoringSSL.SSL, @ptrCast(handle));
+                    return bun.FileDescriptor.fromNative(BoringSSL.SSL_get_fd(ssl_ptr));
+                }
+                return bun.invalid_fd;
+            }
 
             // on windows uSockets exposes SOCKET
             return if (comptime Environment.isWindows)

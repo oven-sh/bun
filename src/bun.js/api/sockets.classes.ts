@@ -21,6 +21,7 @@ function generate(ssl) {
         fn: "pauseFromJS",
         length: 0,
       },
+
       getTLSFinishedMessage: {
         fn: "getTLSFinishedMessage",
         length: 0,
@@ -90,6 +91,9 @@ function generate(ssl) {
       },
       bytesWritten: {
         getter: "getBytesWritten",
+      },
+      fd: {
+        getter: "getFD",
       },
       setNoDelay: {
         fn: "setNoDelay",

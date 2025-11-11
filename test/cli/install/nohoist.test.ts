@@ -1,0 +1,63 @@
+import { test, expect, describe, beforeAll, afterAll } from "bun:test";
+import { VerdaccioRegistry, runBunInstall, bunEnv, readdirSorted } from "harness";
+import { join } from "path";
+
+var registry = new VerdaccioRegistry();
+
+beforeAll(async () => {
+  await registry.start();
+});
+
+afterAll(() => {
+  registry.stop();
+});
+
+describe("workspaces.nohoist", () => {
+  test("basic", async () => {
+    const { packageDir } = await registry.createTestDir({
+      files: {
+        "package.json": JSON.stringify({
+          name: "basic-nohoist",
+          workspaces: {
+            nohoist: ["one-dep/no-deps"],
+          },
+          dependencies: {
+            "one-dep": "1.0.0",
+          },
+        }),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["one-dep"]);
+  });
+
+  test("can keep package in workspace node_modules", async () => {
+    const { packageDir } = await registry.createTestDir({
+      files: {
+        "package.json": JSON.stringify({
+          name: "workspace-nohoist",
+          workspaces: {
+            packages: ["packages/*"],
+            nohoist: ["**/one-dep"],
+          },
+          dependencies: {
+            "a-dep": "1.0.1",
+          },
+        }),
+        "packages/pkg1/package.json": JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            "one-dep": "1.0.0",
+          },
+        }),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir, { linker: "hoisted" });
+
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["a-dep", "no-deps", "pkg1"]);
+    expect(await readdirSorted(join(packageDir, "packages/pkg1/node_modules"))).toEqual(["one-dep"]);
+  });
+});

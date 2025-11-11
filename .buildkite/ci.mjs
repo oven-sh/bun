@@ -1165,6 +1165,7 @@ async function getPipeline(options = {}) {
     }
   }
   if (includeASAN) {
+    const { unifiedTests, testFiles } = options;
     const asan_targets = testPlatforms.filter(v => v.profile === "asan");
     const lsan_targets = asan_targets.map(v => ({ ...v, profile: "lsan" }));
     for (let i = 0; i < lsan_targets.length; i++) {

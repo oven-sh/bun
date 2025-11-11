@@ -19,7 +19,7 @@ class CacheConfig {
   }
 
   static fromArgv(): CacheConfig {
-    const args = new CacheConfig();
+    const cacheConfig = new CacheConfig();
 
     const exitWithHelp = (reason: string) => {
       console.error(`Error: ${reason}\n`);
@@ -31,33 +31,33 @@ class CacheConfig {
       switch (process.argv[i]) {
         case "-b":
         case "--bucket":
-          args.#bucket = process.argv[++i];
+          cacheConfig.#bucket = process.argv[++i];
           break;
         case "-r":
         case "--region":
-          args.#region = process.argv[++i];
+          cacheConfig.#region = process.argv[++i];
           break;
         default:
           exitWithHelp(`Unknown argument: ${process.argv[i]}`);
       }
     }
 
-    if (!args.#bucket) {
+    if (!cacheConfig.#bucket) {
       exitWithHelp("Missing required argument: --bucket");
     }
 
-    if (!args.#region) {
+    if (!cacheConfig.#region) {
       exitWithHelp("Missing required argument: --region");
     }
 
-    return args;
+    return cacheConfig;
   }
 }
 
 /**
  * Test whether the current user has access to the Bun build-cache.
  */
-export async function currentUserHasAccess(cacheConfig: CacheConfig): Promise<boolean> {
+async function currentUserHasAccess(cacheConfig: CacheConfig): Promise<boolean> {
   const s3Client = new S3Client({ region: cacheConfig.region });
 
   try {
@@ -65,8 +65,8 @@ export async function currentUserHasAccess(cacheConfig: CacheConfig): Promise<bo
     return true;
   } catch (error) {
     const criteria = [
-      () => error.name == "NotFound" || error.$metadata?.httpStatusCode === 404,
-      () => error.name == "Forbidden" || error.$metadata?.httpStatusCode === 403,
+      () => error.name === "NotFound" || error.$metadata?.httpStatusCode === 404,
+      () => error.name === "Forbidden" || error.$metadata?.httpStatusCode === 403,
       () => error instanceof CredentialsProviderError,
     ];
 

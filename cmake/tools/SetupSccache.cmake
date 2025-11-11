@@ -53,38 +53,24 @@ function(check_aws_credentials OUT_VAR)
 endfunction()
 
 # Configure sccache to use the local cache only.
-function(configure_local)
+function(sccache_configure_local_filesystem)
   unsetenv(SCCACHE_BUCKET)
   unsetenv(SCCACHE_REGION)
   setenv(SCCACHE_DIR "${CACHE_PATH}/sccache")
 endfunction()
 
 # Configure sccache to use the distributed cache (S3 + local).
-function(configure_distributed)
+function(sccache_configure_distributed)
   setenv(SCCACHE_BUCKET "${SCCACHE_SHARED_CACHE_BUCKET}")
   setenv(SCCACHE_REGION "${SCCACHE_SHARED_CACHE_REGION}")
   setenv(SCCACHE_DIR "${CACHE_PATH}/sccache")
 endfunction()
 
-find_command(VARIABLE SCCACHE_PROGRAM COMMAND sccache REQUIRED ${CI})
-if(NOT SCCACHE_PROGRAM)
-  message(WARNING "sccache not found. Your builds will be slower.")
-  return()
-endif()
-
-set(SCCACHE_ARGS CMAKE_C_COMPILER_LAUNCHER CMAKE_CXX_COMPILER_LAUNCHER)
-foreach(arg ${SCCACHE_ARGS})
-  setx(${arg} ${SCCACHE_PROGRAM})
-  list(APPEND CMAKE_ARGS -D${arg}=${${arg}})
-endforeach()
-
-setenv(SCCACHE_LOG "info")
-
-if (CI)
+function(sccache_configure_environment_ci)
   if(CACHE_STRATEGY STREQUAL "auto" OR CACHE_STRATEGY STREQUAL "distributed")
     check_aws_credentials(HAS_AWS_CREDENTIALS)
     if(HAS_AWS_CREDENTIALS)
-      configure_distributed()
+      sccache_configure_distributed()
       message(NOTICE "sccache: Using distributed cache strategy.")
     else()
       message(FATAL_ERROR "CI CACHE_STRATEGY is set to '${CACHE_STRATEGY}', but no valid AWS "
@@ -99,23 +85,49 @@ if (CI)
     # If local is configured, it's as good as "none", so this is probably user error.
     message(FATAL_ERROR "CI CACHE_STRATEGY is set to 'local', which is not allowed.")
   endif()
-else()
+endfunction()
+
+function(configure_developer)
   # Local environments can use any strategy they like. S3 is set up in such a way so as to clean
   # itself from old entries automatically.
   if (CACHE_STRATEGY STREQUAL "auto" OR CACHE_STRATEGY STREQUAL "local")
     # In the local environment, we prioritize using the local cache. This is because sccache takes
     # into consideration the whole absolute path of the files being compiled, and it's very
     # unlikely users will have the same absolute paths on their local machines.
-    configure_local()
+    sccache_configure_local_filesystem()
     message(NOTICE "sccache: Using local cache strategy.")
   elseif(CACHE_STRATEGY STREQUAL "distributed")
     check_aws_credentials(HAS_AWS_CREDENTIALS)
     if(HAS_AWS_CREDENTIALS)
-      configure_distributed()
+      sccache_configure_distributed()
       message(NOTICE "sccache: Using distributed cache strategy.")
     else()
       message(FATAL_ERROR "CACHE_STRATEGY is set to 'distributed', but no valid AWS credentials "
         "were found.")
     endif()
   endif()
-endif()
+endfunction()
+
+function(sccache_configure)
+  find_command(VARIABLE SCCACHE_PROGRAM COMMAND sccache REQUIRED ${CI})
+  if(NOT SCCACHE_PROGRAM)
+    message(WARNING "sccache not found. Your builds will be slower.")
+    return()
+  endif()
+
+  set(SCCACHE_ARGS CMAKE_C_COMPILER_LAUNCHER CMAKE_CXX_COMPILER_LAUNCHER)
+  foreach(arg ${SCCACHE_ARGS})
+    setx(${arg} ${SCCACHE_PROGRAM})
+    list(APPEND CMAKE_ARGS -D${arg}=${${arg}})
+  endforeach()
+
+  setenv(SCCACHE_LOG "info")
+
+  if (CI)
+    sccache_configure_environment_ci()
+  else()
+    configure_developer()
+  endif()
+endfunction()
+
+sccache_configure()

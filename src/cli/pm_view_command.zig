@@ -34,7 +34,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
     const scope = manager.scopeForPackageName(name);
 
     var url_buf: bun.PathBuffer = undefined;
-    const encoded_name = try std.fmt.bufPrint(&url_buf, "{s}", .{bun.fmt.dependencyUrl(name)});
+    const encoded_name = try std.fmt.bufPrint(&url_buf, "{f}", .{bun.fmt.dependencyUrl(name)});
     var path_buf: bun.PathBuffer = undefined;
     // Always fetch the full registry manifest, not a specific version
     const url = URL.parse(try std.fmt.bufPrint(&path_buf, "{s}/{s}", .{
@@ -154,14 +154,14 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
         }
 
         if (json_output) {
-            Output.print("{{ \"error\": \"No matching version found\", \"version\": {} }}\n", .{
+            Output.print("{{ \"error\": \"No matching version found\", \"version\": {f} }}\n", .{
                 bun.fmt.formatJSONStringUTF8(spec_, .{
                     .quote = true,
                 }),
             });
             Output.flush();
         } else {
-            Output.errGeneric("No version of <b>{}<r> satisfying <b>{}<r> found", .{
+            Output.errGeneric("No version of <b>{f}<r> satisfying <b>{f}<r> found", .{
                 bun.fmt.quote(name),
                 bun.fmt.quote(version),
             });
@@ -174,7 +174,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
             if (versions_to_display.len > 0) {
                 Output.prettyErrorln("\nRecent versions:<r>", .{});
                 for (versions_to_display) |*v| {
-                    Output.prettyErrorln("<d>-<r> {}", .{v.fmt(parsed_manifest.string_buf)});
+                    Output.prettyErrorln("<d>-<r> {f}", .{v.fmt(parsed_manifest.string_buf)});
                 }
 
                 if (start_index > 0) {
@@ -211,7 +211,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
             if (value.data == .e_string) {
                 const slice = value.data.e_string.slice(allocator);
                 if (json_output) {
-                    Output.println("{s}", .{bun.fmt.formatJSONStringUTF8(slice, .{})});
+                    Output.println("{f}", .{bun.fmt.formatJSONStringUTF8(slice, .{})});
                 } else {
                     Output.println("{s}", .{slice});
                 }
@@ -238,7 +238,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
             Global.exit(0);
         } else {
             if (json_output) {
-                Output.print("{{ \"error\": \"Property not found\", \"version\": {}, \"property\": {} }}\n", .{
+                Output.print("{{ \"error\": \"Property not found\", \"version\": {f}, \"property\": {f} }}\n", .{
                     bun.fmt.formatJSONStringUTF8(spec_, .{
                         .quote = true,
                     }),
@@ -345,7 +345,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
             Output.prettyln(" <d>.<r>integrity<r><d>:<r> <green>{s}<r>", .{i});
         }
         if (dist.getNumber("unpackedSize")) |u| {
-            Output.prettyln(" <d>.<r>unpackedSize<r><d>:<r> <blue>{}<r>", .{bun.fmt.size(@as(u64, @intFromFloat(u[0])), .{})});
+            Output.prettyln(" <d>.<r>unpackedSize<r><d>:<r> <blue>{f}<r>", .{bun.fmt.size(@as(u64, @intFromFloat(u[0])), .{})});
         }
     }
 

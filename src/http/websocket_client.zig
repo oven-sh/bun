@@ -75,7 +75,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             return true;
         }
 
-        pub fn register(global: *jsc.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.C) void {
+        pub fn register(global: *jsc.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.c) void {
             const vm = global.bunVM();
             const loop = @as(*uws.Loop, @ptrCast(@alignCast(loop_)));
 
@@ -119,7 +119,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.deflate = null;
         }
 
-        pub fn cancel(this: *WebSocket) callconv(.C) void {
+        pub fn cancel(this: *WebSocket) callconv(.c) void {
             log("cancel", .{});
             this.clearData();
 
@@ -776,7 +776,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
                 {
                     // Compress the content
-                    var compressed = std.ArrayList(u8).init(allocator);
+                    var compressed = std.array_list.Managed(u8).init(allocator);
                     defer compressed.deinit();
 
                     this.deflate.?.compress(content_to_compress, &compressed) catch {
@@ -965,7 +965,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             ptr: [*]const u8,
             len: usize,
             op: u8,
-        ) callconv(.C) void {
+        ) callconv(.c) void {
             if (!this.hasTCP() or op > 0xF) {
                 this.dispatchAbruptClose(ErrorCode.ended);
                 return;
@@ -993,7 +993,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this: *WebSocket,
             blob_value: jsc.JSValue,
             op: u8,
-        ) callconv(.C) void {
+        ) callconv(.c) void {
             if (!this.hasTCP() or op > 0xF) {
                 this.dispatchAbruptClose(ErrorCode.ended);
                 return;
@@ -1035,7 +1035,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this: *WebSocket,
             str_: *const jsc.ZigString,
             op: u8,
-        ) callconv(.C) void {
+        ) callconv(.c) void {
             const str = str_.*;
             if (!this.hasTCP()) {
                 this.dispatchAbruptClose(ErrorCode.ended);
@@ -1099,7 +1099,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.deref();
         }
 
-        pub fn close(this: *WebSocket, code: u16, reason: ?*const jsc.ZigString) callconv(.C) void {
+        pub fn close(this: *WebSocket, code: u16, reason: ?*const jsc.ZigString) callconv(.c) void {
             if (!this.hasTCP())
                 return;
             const tcp = this.tcp;
@@ -1108,7 +1108,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 inner: {
                     var fixed_buffer = std.heap.FixedBufferAllocator.init(&close_reason_buf);
                     const allocator = fixed_buffer.allocator();
-                    const wrote = std.fmt.allocPrint(allocator, "{}", .{str.*}) catch break :inner;
+                    const wrote = std.fmt.allocPrint(allocator, "{f}", .{str.*}) catch break :inner;
                     this.sendCloseWithBody(tcp, code, wrote.ptr[0..125], wrote.len);
                     return;
                 }
@@ -1157,7 +1157,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             buffered_data: [*]u8,
             buffered_data_len: usize,
             deflate_params: ?*const WebSocketDeflate.Params,
-        ) callconv(.C) ?*anyopaque {
+        ) callconv(.c) ?*anyopaque {
             const tcp = @as(*uws.us_socket_t, @ptrCast(input_socket));
             const ctx = @as(*uws.SocketContext, @ptrCast(socket_ctx));
             var ws = bun.new(WebSocket, .{
@@ -1213,7 +1213,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             );
         }
 
-        pub fn finalize(this: *WebSocket) callconv(.C) void {
+        pub fn finalize(this: *WebSocket) callconv(.c) void {
             log("finalize", .{});
             this.clearData();
 
@@ -1240,7 +1240,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             bun.destroy(this);
         }
 
-        pub fn memoryCost(this: *WebSocket) callconv(.C) usize {
+        pub fn memoryCost(this: *WebSocket) callconv(.c) usize {
             var cost: usize = @sizeOf(WebSocket);
             cost += this.send_buffer.buf.len;
             cost += this.receive_buffer.buf.len;

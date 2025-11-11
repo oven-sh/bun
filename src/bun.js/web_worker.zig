@@ -216,7 +216,7 @@ pub fn create(
 
     const preload_modules = if (preload_modules_ptr) |ptr| ptr[0..preload_modules_len] else &.{};
 
-    var preloads = bun.handleOom(std.ArrayList([]const u8).initCapacity(bun.default_allocator, preload_modules_len));
+    var preloads = bun.handleOom(std.array_list.Managed([]const u8).initCapacity(bun.default_allocator, preload_modules_len));
     for (preload_modules) |module| {
         const utf8_slice = module.toUTF8(bun.default_allocator);
         defer utf8_slice.deinit();
@@ -245,7 +245,7 @@ pub fn create(
         .store_fd = parent.transpiler.resolver.store_fd,
         .name = brk: {
             if (!name_str.isEmpty()) {
-                break :brk bun.handleOom(std.fmt.allocPrintZ(bun.default_allocator, "{}", .{name_str}));
+                break :brk bun.handleOom(std.fmt.allocPrintSentinel(bun.default_allocator, "{f}", .{name_str}, 0));
             }
             break :brk "";
         },
@@ -290,7 +290,7 @@ pub fn start(
     var transform_options = this.parent.transpiler.options.transform_options;
 
     if (this.execArgv) |exec_argv| parse_new_args: {
-        var new_args: std.ArrayList([]const u8) = try .initCapacity(bun.default_allocator, exec_argv.len);
+        var new_args: std.array_list.Managed([]const u8) = try .initCapacity(bun.default_allocator, exec_argv.len);
         defer {
             for (new_args.items) |arg| {
                 bun.default_allocator.free(arg);
@@ -403,13 +403,12 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
 
     var error_instance = error_instance_or_exception.toError() orelse error_instance_or_exception;
 
-    var array = bun.MutableString.init(bun.default_allocator, 0) catch unreachable;
+    var array = std.Io.Writer.Allocating.init(bun.default_allocator);
+    defer array.deinit();
 
-    var buffered_writer = bun.MutableString.BufferedWriter{ .context = &array };
     var worker = vm.worker orelse @panic("Assertion failure: no worker");
 
-    const writer = buffered_writer.writer();
-    const Writer = @TypeOf(writer);
+    const writer = &array.writer;
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
     jsc.ConsoleObject.format2(
@@ -417,8 +416,6 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         globalObject,
         &[_]jsc.JSValue{error_instance},
         1,
-        Writer,
-        Writer,
         writer,
         .{
             .enable_colors = false,
@@ -434,9 +431,9 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         }
         error_instance = globalObject.tryTakeException().?;
     };
-    bun.handleOom(buffered_writer.flush());
+    bun.handleOom(writer.flush());
     jsc.markBinding(@src());
-    WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.slice()), error_instance);
+    WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.written()), error_instance);
     array.deinit(); // worker_.exitAndDeinit() means this function can't use defer.
     if (vm.worker) |worker_| {
         _ = worker.setRequestedTerminate();

@@ -498,7 +498,7 @@ pub const Number = struct {
     }
 
     pub fn to(self: Number, comptime T: type) T {
-        return @as(T, @intFromFloat(@min(@max(@trunc(self.value), 0), comptime @min(std.math.floatMax(f64), std.math.maxInt(T)))));
+        return @as(T, @intFromFloat(@min(@max(@trunc(self.value), 0), comptime @min(std.math.floatMax(f64), @as(f64, @as(comptime_float, std.math.maxInt(T)))))));
     }
 
     pub fn jsonStringify(self: *const Number, writer: anytype) !void {
@@ -963,7 +963,7 @@ pub const String = struct {
 
     pub fn resolveRopeIfNeeded(this: *String, allocator: std.mem.Allocator) void {
         if (this.next == null or !this.isUTF8()) return;
-        var bytes = bun.handleOom(std.ArrayList(u8).initCapacity(allocator, this.rope_len));
+        var bytes = bun.handleOom(std.array_list.Managed(u8).initCapacity(allocator, this.rope_len));
         bytes.appendSliceAssumeCapacity(this.data);
         var str = this.next;
         while (str) |part| {
@@ -1205,16 +1205,14 @@ pub const String = struct {
         }
     }
 
-    pub fn format(s: String, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        comptime bun.assert(fmt.len == 0);
-
+    pub fn format(s: String, writer: *std.Io.Writer) !void {
         try writer.writeAll("E.String");
         if (s.next == null) {
             try writer.writeAll("(");
             if (s.isUTF8()) {
                 try writer.print("\"{s}\"", .{s.data});
             } else {
-                try writer.print("\"{}\"", .{bun.fmt.utf16(s.slice16())});
+                try writer.print("\"{f}\"", .{bun.fmt.utf16(s.slice16())});
             }
             try writer.writeAll(")");
         } else {
@@ -1224,7 +1222,7 @@ pub const String = struct {
                 if (part.isUTF8()) {
                     try writer.print("\"{s}\"", .{part.data});
                 } else {
-                    try writer.print("\"{}\"", .{bun.fmt.utf16(part.slice16())});
+                    try writer.print("\"{f}\"", .{bun.fmt.utf16(part.slice16())});
                 }
                 it = part.next;
                 if (it != null) try writer.writeAll(" ");
@@ -1294,7 +1292,7 @@ pub const Template = struct {
             return Expr.init(E.String, this.head.cooked, loc);
         }
 
-        var parts = std.ArrayList(TemplatePart).initCapacity(allocator, this.parts.len) catch unreachable;
+        var parts = std.array_list.Managed(TemplatePart).initCapacity(allocator, this.parts.len) catch unreachable;
         var head = Expr.init(E.String, this.head.cooked, loc);
         for (this.parts) |part_src| {
             var part = part_src;

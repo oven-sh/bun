@@ -446,8 +446,8 @@ pub const PmPkgCommand = struct {
         return current;
     }
 
-    fn parseKeyPath(allocator: std.mem.Allocator, key: []const u8) !std.ArrayList([]const u8) {
-        var path_parts = std.ArrayList([]const u8).init(allocator);
+    fn parseKeyPath(allocator: std.mem.Allocator, key: []const u8) !std.array_list.Managed([]const u8) {
+        var path_parts = std.array_list.Managed([]const u8).init(allocator);
         errdefer {
             for (path_parts.items) |item| allocator.free(item);
             path_parts.deinit();
@@ -499,7 +499,7 @@ pub const PmPkgCommand = struct {
 
         if (strings.indexOf(key, "[") == null) {
             var parts = std.mem.tokenizeScalar(u8, key, '.');
-            var path_parts = std.ArrayList([]const u8).init(allocator);
+            var path_parts = std.array_list.Managed([]const u8).init(allocator);
             defer path_parts.deinit();
 
             while (parts.next()) |part| {
@@ -643,7 +643,7 @@ pub const PmPkgCommand = struct {
         if (root.data != .e_object) return false;
 
         var parts = std.mem.tokenizeScalar(u8, key, '.');
-        var path_parts = std.ArrayList([]const u8).init(allocator);
+        var path_parts = std.array_list.Managed([]const u8).init(allocator);
         defer path_parts.deinit();
 
         while (parts.next()) |part| {

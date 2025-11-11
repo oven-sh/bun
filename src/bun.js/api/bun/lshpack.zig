@@ -55,8 +55,8 @@ pub const HPACK = extern struct {
     }
 };
 
-const lshpack_wrapper_alloc = ?*const fn (size: usize) callconv(.C) ?*anyopaque;
-const lshpack_wrapper_free = ?*const fn (ptr: ?*anyopaque) callconv(.C) void;
+const lshpack_wrapper_alloc = ?*const fn (size: usize) callconv(.c) ?*anyopaque;
+const lshpack_wrapper_free = ?*const fn (ptr: ?*anyopaque) callconv(.c) void;
 extern fn lshpack_wrapper_init(alloc: lshpack_wrapper_alloc, free: lshpack_wrapper_free, capacity: usize) ?*HPACK;
 extern fn lshpack_wrapper_deinit(self: *HPACK) void;
 extern fn lshpack_wrapper_decode(self: *HPACK, src: [*]const u8, src_len: usize, output: *lshpack_header) usize;

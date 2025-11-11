@@ -677,7 +677,7 @@ pub const Command = struct {
                 const ctx: *ContextData = brk: {
                     if (graph.compile_exec_argv.len > 0) {
                         const original_argv_len = bun.argv.len;
-                        var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
+                        var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(bun.default_allocator, bun.argv);
                         try bun.appendOptionsEnv(graph.compile_exec_argv, &argv_list, bun.default_allocator);
                         bun.argv = argv_list.items;
 
@@ -717,7 +717,7 @@ pub const Command = struct {
             }
         }
 
-        debug("argv: [{s}]", .{bun.fmt.fmtSlice(bun.argv, ", ")});
+        debug("argv: [{f}]", .{bun.fmt.fmtSlice(bun.argv, ", ")});
 
         const tag = which();
 

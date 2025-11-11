@@ -1899,6 +1899,27 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
     filteredTests.push(...availableTests);
   }
 
+  // Prioritize modified test files
+  if (allFiles.length > 0) {
+    const modifiedTests = new Set(
+      allFiles
+        .filter(filename => filename.startsWith("test/") && isTest(filename))
+        .map(filename => filename.slice("test/".length)),
+    );
+
+    if (modifiedTests.size > 0) {
+      return filteredTests
+        .map(testPath => testPath.replaceAll("\\", "/"))
+        .sort((a, b) => {
+          const aModified = modifiedTests.has(a);
+          const bModified = modifiedTests.has(b);
+          if (aModified && !bModified) return -1;
+          if (!aModified && bModified) return 1;
+          return 0;
+        });
+    }
+  }
+
   return filteredTests;
 }
 

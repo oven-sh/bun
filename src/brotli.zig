@@ -3,7 +3,7 @@ const BrotliDecoder = c.BrotliDecoder;
 const BrotliEncoder = c.BrotliEncoder;
 
 pub const BrotliAllocator = struct {
-    pub fn alloc(_: ?*anyopaque, len: usize) callconv(.C) *anyopaque {
+    pub fn alloc(_: ?*anyopaque, len: usize) callconv(.c) *anyopaque {
         if (bun.heap_breakdown.enabled) {
             const zone = bun.heap_breakdown.getZone("brotli");
             return zone.malloc_zone_malloc(len) orelse bun.outOfMemory();
@@ -12,7 +12,7 @@ pub const BrotliAllocator = struct {
         return bun.default_malloc(len) orelse bun.outOfMemory();
     }
 
-    pub fn free(_: ?*anyopaque, data: ?*anyopaque) callconv(.C) void {
+    pub fn free(_: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
         if (bun.heap_breakdown.enabled) {
             const zone = bun.heap_breakdown.getZone("brotli");
             zone.malloc_zone_free(data);
@@ -246,7 +246,7 @@ pub const BrotliCompressionStream = struct {
 
             const Self = @This();
             pub const WriteError = error{BrotliCompressionError} || InputWriter.Error;
-            pub const Writer = std.io.Writer(@This(), WriteError, Self.write);
+            pub const Writer = std.Io.GenericWriter(@This(), WriteError, Self.write);
 
             pub fn init(compressor: *BrotliCompressionStream, input_writer: InputWriter) Self {
                 return Self{

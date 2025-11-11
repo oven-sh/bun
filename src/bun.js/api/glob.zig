@@ -6,7 +6,7 @@ pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 
 pattern: []const u8,
-pattern_codepoints: ?std.ArrayList(u32) = null,
+pattern_codepoints: ?std.array_list.Managed(u32) = null,
 has_pending_activity: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
 
 const ScanOpts = struct {
@@ -281,13 +281,13 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     return glob;
 }
 
-pub fn finalize(this: *Glob) callconv(.C) void {
+pub fn finalize(this: *Glob) callconv(.c) void {
     bun.default_allocator.free(this.pattern);
     if (this.pattern_codepoints) |*codepoints| codepoints.deinit();
     bun.default_allocator.destroy(this);
 }
 
-pub fn hasPendingActivity(this: *Glob) callconv(.C) bool {
+pub fn hasPendingActivity(this: *Glob) callconv(.c) bool {
     return this.has_pending_activity.load(.seq_cst) > 0;
 }
 
@@ -370,7 +370,7 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame
     return jsc.JSValue.jsBoolean(bun.glob.match(this.pattern, str.slice()).matches());
 }
 
-pub fn convertUtf8(codepoints: *std.ArrayList(u32), pattern: []const u8) !void {
+pub fn convertUtf8(codepoints: *std.array_list.Managed(u32), pattern: []const u8) !void {
     const iter = CodepointIterator.init(pattern);
     var cursor = CodepointIterator.Cursor{};
     while (iter.next(&cursor)) {

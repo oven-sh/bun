@@ -60,7 +60,7 @@ pub fn toAnyBlob(this: *Store) ?Blob.Any {
     return null;
 }
 
-pub fn external(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.C) void {
+pub fn external(ptr: ?*anyopaque, _: ?*anyopaque, _: usize) callconv(.c) void {
     if (ptr == null) return;
     var this = bun.cast(*Store, ptr);
     this.deref();
@@ -504,7 +504,7 @@ pub const Bytes = struct {
 
     pub fn toInternalBlob(this: *Bytes) Blob.Internal {
         const ptr = this.ptr orelse return .{
-            .bytes = std.ArrayList(u8){
+            .bytes = std.array_list.Managed(u8){
                 .items = &.{},
                 .capacity = 0,
                 .allocator = this.allocator,

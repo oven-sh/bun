@@ -108,7 +108,7 @@ pub const StdioKind = enum {
     }
 };
 
-pub fn onAbortSignal(subprocess_ctx: ?*anyopaque, _: jsc.JSValue) callconv(.C) void {
+pub fn onAbortSignal(subprocess_ctx: ?*anyopaque, _: jsc.JSValue) callconv(.c) void {
     var this: *Subprocess = @ptrCast(@alignCast(subprocess_ctx.?));
     this.clearAbortSignal();
     _ = this.tryKill(this.killSignal);
@@ -167,7 +167,7 @@ pub fn updateHasPendingActivity(this: *Subprocess) void {
 
     const has_pending = this.computeHasPendingActivity();
     if (comptime Environment.isDebug) {
-        log("updateHasPendingActivity() -> {any}", .{has_pending});
+        log("updateHasPendingActivity() -> {}", .{has_pending});
     }
 
     // Upgrade or downgrade the reference based on pending activity
@@ -574,7 +574,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
             if (existing_stdin_value.isCell()) {
                 if (stdin == null) {
                     // TODO: review this cast
-                    stdin = @alignCast(@ptrCast(jsc.WebCore.FileSink.JSSink.fromJS(existing_value)));
+                    stdin = @ptrCast(@alignCast(jsc.WebCore.FileSink.JSSink.fromJS(existing_value)));
                 }
 
                 if (!this.flags.is_stdin_a_readable_stream) {
@@ -701,7 +701,7 @@ fn closeIO(this: *Subprocess, comptime io: @Type(.enum_literal)) void {
     }
 }
 
-fn onPipeClose(this: *uv.Pipe) callconv(.C) void {
+fn onPipeClose(this: *uv.Pipe) callconv(.c) void {
     // safely free the pipes
     bun.default_allocator.destroy(this);
 }
@@ -747,7 +747,7 @@ fn clearAbortSignal(this: *Subprocess) void {
     }
 }
 
-pub fn finalize(this: *Subprocess) callconv(.C) void {
+pub fn finalize(this: *Subprocess) callconv(.c) void {
     log("finalize", .{});
     // Ensure any code which references the "this" value doesn't attempt to
     // access it after it's been freed We cannot call any methods which

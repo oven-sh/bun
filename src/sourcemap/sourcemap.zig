@@ -713,15 +713,15 @@ pub const SourceMapShifts = struct {
 };
 
 pub const SourceMapPieces = struct {
-    prefix: std.ArrayList(u8),
-    mappings: std.ArrayList(u8),
-    suffix: std.ArrayList(u8),
+    prefix: std.array_list.Managed(u8),
+    mappings: std.array_list.Managed(u8),
+    suffix: std.array_list.Managed(u8),
 
     pub fn init(allocator: std.mem.Allocator) SourceMapPieces {
         return .{
-            .prefix = std.ArrayList(u8).init(allocator),
-            .mappings = std.ArrayList(u8).init(allocator),
-            .suffix = std.ArrayList(u8).init(allocator),
+            .prefix = std.array_list.Managed(u8).init(allocator),
+            .mappings = std.array_list.Managed(u8).init(allocator),
+            .suffix = std.array_list.Managed(u8).init(allocator),
         };
     }
 
@@ -942,12 +942,12 @@ pub const Chunk = @import("./Chunk.zig");
 pub const DebugIDFormatter = struct {
     id: u64 = 0,
 
-    pub fn format(self: DebugIDFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: DebugIDFormatter, writer: *std.Io.Writer) !void {
         // The RFC asks for a UUID, which is 128 bits (32 hex chars). Our hashes are only 64 bits.
         // We fill the end of the id with "bun!bun!" hex encoded
         var buf: [32]u8 = undefined;
         const formatter = bun.fmt.hexIntUpper(self.id);
-        _ = std.fmt.bufPrint(&buf, "{}64756E2164756E21", .{formatter}) catch unreachable;
+        _ = std.fmt.bufPrint(&buf, "{f}64756E2164756E21", .{formatter}) catch unreachable;
         try writer.writeAll(&buf);
     }
 };

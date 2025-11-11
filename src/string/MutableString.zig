@@ -11,7 +11,7 @@ pub fn clone(self: *MutableString) Allocator.Error!MutableString {
     return MutableString.initCopy(self.allocator, self.list.items);
 }
 
-pub const Writer = std.io.Writer(*@This(), Allocator.Error, MutableString.writeAll);
+pub const Writer = std.Io.GenericWriter(*@This(), Allocator.Error, MutableString.writeAll);
 pub fn writer(self: *MutableString) Writer {
     return Writer{
         .context = self,
@@ -223,7 +223,7 @@ pub fn appendInt(self: *MutableString, int: u64) Allocator.Error!void {
     try self.list.ensureUnusedCapacity(self.allocator, count);
     const old = self.list.items.len;
     self.list.items.len += count;
-    bun.assert(count == std.fmt.formatIntBuf(self.list.items.ptr[old .. old + count], int, 10, .lower, .{}));
+    bun.assert(count == std.fmt.printInt(self.list.items.ptr[old .. old + count], int, 10, .lower, .{}));
 }
 
 pub fn appendAssumeCapacity(self: *MutableString, char: []const u8) void {
@@ -315,7 +315,7 @@ pub const BufferedWriter = struct {
 
     const max = 2048;
 
-    pub const Writer = std.io.Writer(*BufferedWriter, Allocator.Error, BufferedWriter.writeAll);
+    pub const Writer = std.Io.GenericWriter(*BufferedWriter, Allocator.Error, BufferedWriter.writeAll);
 
     fn remain(this: *BufferedWriter) []u8 {
         return this.buffer[this.pos..];

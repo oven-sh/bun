@@ -38,12 +38,12 @@ pub fn toSatisfy(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFra
 
     if (not) {
         const signature = comptime getSignature("toSatisfy", "<green>expected<r>", true);
-        return this.throw(globalThis, signature, "\n\nExpected: not <green>{any}<r>\n", .{predicate.toFmt(&formatter)});
+        return this.throw(globalThis, signature, "\n\nExpected: not <green>{f}<r>\n", .{predicate.toFmt(&formatter)});
     }
 
     const signature = comptime getSignature("toSatisfy", "<green>expected<r>", false);
 
-    return this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>\n", .{
+    return this.throw(globalThis, signature, "\n\nExpected: <green>{f}<r>\nReceived: <red>{f}<r>\n", .{
         predicate.toFmt(&formatter),
         value.toFmt(&formatter),
     });

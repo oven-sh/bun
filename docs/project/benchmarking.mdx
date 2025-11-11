@@ -216,3 +216,26 @@ numa nodes:       1
    elapsed:       0.068 s
    process: user: 0.061 s, system: 0.014 s, faults: 0, rss: 57.4 MiB, commit: 64.0 MiB
 ```
+
+## CPU profiling
+
+Profile JavaScript execution to identify performance bottlenecks with the `--cpu-prof` flag.
+
+```sh terminal icon="terminal"
+bun --cpu-prof script.js
+```
+
+This generates a `.cpuprofile` file you can open in Chrome DevTools (Performance tab → Load profile) or VS Code's CPU profiler.
+
+### Options
+
+```sh terminal icon="terminal"
+bun --cpu-prof --cpu-prof-name my-profile.cpuprofile script.js
+bun --cpu-prof --cpu-prof-dir ./profiles script.js
+```
+
+| Flag                         | Description          |
+| ---------------------------- | -------------------- |
+| `--cpu-prof`                 | Enable profiling     |
+| `--cpu-prof-name <filename>` | Set output filename  |
+| `--cpu-prof-dir <dir>`       | Set output directory |

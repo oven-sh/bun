@@ -131,11 +131,11 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
         allocator: std.mem.Allocator,
         state: State = State.Uninitialized,
 
-        pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
+        pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.c) *anyopaque {
             return bun.default_malloc(items * len) orelse unreachable;
         }
 
-        pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {
+        pub fn free(_: *anyopaque, data: *anyopaque) callconv(.c) void {
             bun.default_free(data);
         }
 
@@ -304,7 +304,7 @@ pub const ZlibError = error{
 };
 
 const ZlibAllocator = struct {
-    pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
+    pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.c) *anyopaque {
         if (bun.heap_breakdown.enabled) {
             const zone = bun.heap_breakdown.getZone("zlib");
             return zone.malloc_zone_calloc(items, len) orelse bun.outOfMemory();
@@ -313,7 +313,7 @@ const ZlibAllocator = struct {
         return bun.default_calloc(items, len) orelse bun.outOfMemory();
     }
 
-    pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {
+    pub fn free(_: *anyopaque, data: *anyopaque) callconv(.c) void {
         if (bun.heap_breakdown.enabled) {
             const zone = bun.heap_breakdown.getZone("zlib");
             zone.malloc_zone_free(data);
@@ -772,11 +772,11 @@ pub const ZlibCompressorArrayList = struct {
     allocator: std.mem.Allocator,
     state: State = State.Uninitialized,
 
-    pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
+    pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.c) *anyopaque {
         return bun.default_malloc(items * len) orelse unreachable;
     }
 
-    pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {
+    pub fn free(_: *anyopaque, data: *anyopaque) callconv(.c) void {
         bun.default_free(data);
     }
 

@@ -768,7 +768,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
         fn sendWithoutAutoFlusher(this: *@This(), buf: []const u8) bool {
             bun.assert(!this.done);
-            defer log("send: {d} bytes (backpressure: {any})", .{ buf.len, this.has_backpressure });
+            defer log("send: {d} bytes (backpressure: {})", .{ buf.len, this.has_backpressure });
 
             const res = this.res orelse {
                 return false;
@@ -941,7 +941,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, wait: bool) bun.sys.Maybe(JSValue) {
-            log("flushFromJS({any})", .{wait});
+            log("flushFromJS({})", .{wait});
             this.unregisterAutoFlusher();
 
             if (!wait) {
@@ -1128,7 +1128,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         // In this case, it's always an error
         pub fn end(this: *@This(), err: ?Syscall.Error) bun.sys.Maybe(void) {
-            log("end({any})", .{err});
+            log("end({?f})", .{err});
 
             if (this.requested_end) {
                 return .success;

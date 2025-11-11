@@ -643,7 +643,7 @@ pub const QueryStringMap = struct {
 
         // this over-allocates
         // TODO: refactor this to support multiple slices instead of copying the whole thing
-        var buf = try std.ArrayList(u8).initCapacity(allocator, estimated_str_len);
+        var buf = try std.array_list.Managed(u8).initCapacity(allocator, estimated_str_len);
         var writer = buf.writer();
         var buf_writer_pos: u32 = 0;
 
@@ -758,7 +758,7 @@ pub const QueryStringMap = struct {
             };
         }
 
-        var buf = try std.ArrayList(u8).initCapacity(allocator, estimated_str_len);
+        var buf = try std.array_list.Managed(u8).initCapacity(allocator, estimated_str_len);
         const writer = buf.writer();
         var buf_writer_pos: u32 = 0;
 

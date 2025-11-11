@@ -149,12 +149,13 @@ pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
 
+const std = @import("std");
+
 const bun = @import("bun");
 const BabyList = bun.BabyList;
 const Environment = bun.Environment;
 const ImportRecord = bun.ImportRecord;
 const ThreadPoolLib = bun.ThreadPool;
-const js_printer = bun.js_printer;
 const options = bun.options;
 
 const js_ast = bun.ast;
@@ -167,4 +168,3 @@ const Index = bun.bundle_v2.Index;
 
 const LinkerContext = bun.bundle_v2.LinkerContext;
 const PendingPartRange = LinkerContext.PendingPartRange;
-const std = @import("std");

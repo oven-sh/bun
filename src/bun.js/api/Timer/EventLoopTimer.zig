@@ -226,7 +226,6 @@ const StatWatcherScheduler = @import("../../node/node_fs_stat_watcher.zig").Stat
 const bun = @import("bun");
 const Environment = bun.Environment;
 const timespec = bun.timespec;
-const MaybeMockedTimespec = bun.MaybeMockedTimespec;
 const uws = bun.uws;
 const DNSResolver = bun.api.dns.Resolver;
 

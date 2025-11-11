@@ -20,19 +20,19 @@ const BufferedReaderVTable = struct {
         pub fn init(comptime Type: type) *const BufferedReaderVTable.Fn {
             const fns = struct {
                 fn onReadChunk(this: *anyopaque, chunk: []const u8, hasMore: ReadState) bool {
-                    return Type.onReadChunk(@as(*Type, @alignCast(@ptrCast(this))), chunk, hasMore);
+                    return Type.onReadChunk(@as(*Type, @ptrCast(@alignCast(this))), chunk, hasMore);
                 }
                 fn onReaderDone(this: *anyopaque) void {
-                    return Type.onReaderDone(@as(*Type, @alignCast(@ptrCast(this))));
+                    return Type.onReaderDone(@as(*Type, @ptrCast(@alignCast(this))));
                 }
                 fn onReaderError(this: *anyopaque, err: bun.sys.Error) void {
-                    return Type.onReaderError(@as(*Type, @alignCast(@ptrCast(this))), err);
+                    return Type.onReaderError(@as(*Type, @ptrCast(@alignCast(this))), err);
                 }
                 fn eventLoop(this: *anyopaque) jsc.EventLoopHandle {
-                    return jsc.EventLoopHandle.init(Type.eventLoop(@as(*Type, @alignCast(@ptrCast(this)))));
+                    return jsc.EventLoopHandle.init(Type.eventLoop(@as(*Type, @ptrCast(@alignCast(this)))));
                 }
                 fn loop(this: *anyopaque) *Async.Loop {
-                    return Type.loop(@as(*Type, @alignCast(@ptrCast(this))));
+                    return Type.loop(@as(*Type, @ptrCast(@alignCast(this))));
                 }
             };
             return comptime &BufferedReaderVTable.Fn{
@@ -76,7 +76,7 @@ const BufferedReaderVTable = struct {
 
 const PosixBufferedReader = struct {
     handle: PollOrFd = .{ .closed = {} },
-    _buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    _buffer: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
     _offset: usize = 0,
     vtable: BufferedReaderVTable,
     flags: Flags = .{},
@@ -127,7 +127,7 @@ const PosixBufferedReader = struct {
                 .parent = parent_,
             },
         };
-        other.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
+        other.buffer().* = std.array_list.Managed(u8).init(bun.default_allocator);
         other.flags.is_done = true;
         other.handle = .{ .closed = {} };
         other._offset = 0;
@@ -199,17 +199,17 @@ const PosixBufferedReader = struct {
         // The next read() call will re-register the poll if needed
     }
 
-    pub fn takeBuffer(this: *PosixBufferedReader) std.ArrayList(u8) {
+    pub fn takeBuffer(this: *PosixBufferedReader) std.array_list.Managed(u8) {
         const out = this._buffer;
-        this._buffer = std.ArrayList(u8).init(out.allocator);
+        this._buffer = std.array_list.Managed(u8).init(out.allocator);
         return out;
     }
 
-    pub fn buffer(this: *PosixBufferedReader) *std.ArrayList(u8) {
+    pub fn buffer(this: *PosixBufferedReader) *std.array_list.Managed(u8) {
         return &this._buffer;
     }
 
-    pub fn finalBuffer(this: *PosixBufferedReader) *std.ArrayList(u8) {
+    pub fn finalBuffer(this: *PosixBufferedReader) *std.array_list.Managed(u8) {
         if (this.flags.memfd and this.handle == .fd) {
             defer this.handle.close(null, {});
             _ = bun.sys.File.readToEndWithArrayList(.{ .handle = this.handle.fd }, this.buffer(), .unknown_size).unwrap() catch |err| {
@@ -276,7 +276,8 @@ const PosixBufferedReader = struct {
     pub fn registerPoll(this: *PosixBufferedReader) void {
         const poll = this.handle.getPoll() orelse brk: {
             if (this.handle == .fd and this.flags.pollable) {
-                this.handle = .{ .poll = Async.FilePoll.init(this.eventLoop(), this.handle.fd, .{}, @This(), this) };
+                const fd = this.handle.fd;
+                this.handle = .{ .poll = Async.FilePoll.init(this.eventLoop(), fd, .{}, @This(), this) };
                 break :brk this.handle.poll;
             }
 
@@ -388,7 +389,7 @@ const PosixBufferedReader = struct {
     pub fn onPoll(parent: *PosixBufferedReader, size_hint: isize, received_hup: bool) void {
         const resizable_buffer = parent.buffer();
         const fd = parent.getFd();
-        bun.sys.syslog("onPoll({}) = {d}", .{ fd, size_hint });
+        bun.sys.syslog("onPoll({f}) = {d}", .{ fd, size_hint });
 
         switch (parent.getFileType()) {
             .nonblocking_pipe => {
@@ -425,7 +426,7 @@ const PosixBufferedReader = struct {
         }.call;
     }
 
-    fn readFile(parent: *PosixBufferedReader, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
+    fn readFile(parent: *PosixBufferedReader, resizable_buffer: *std.array_list.Managed(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
         const preadFn = struct {
             pub fn call(fd1: bun.FileDescriptor, buf: []u8, offset: usize) bun.sys.Maybe(usize) {
                 return bun.sys.pread(fd1, buf, @intCast(offset));
@@ -438,15 +439,15 @@ const PosixBufferedReader = struct {
         }
     }
 
-    fn readSocket(parent: *PosixBufferedReader, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
+    fn readSocket(parent: *PosixBufferedReader, resizable_buffer: *std.array_list.Managed(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
         return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .socket, wrapReadFn(bun.sys.recvNonBlock));
     }
 
-    fn readPipe(parent: *PosixBufferedReader, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
+    fn readPipe(parent: *PosixBufferedReader, resizable_buffer: *std.array_list.Managed(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
         return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .nonblocking_pipe, wrapReadFn(bun.sys.readNonblocking));
     }
 
-    fn readBlockingPipe(parent: *PosixBufferedReader, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, _: isize, received_hup: bool) void {
+    fn readBlockingPipe(parent: *PosixBufferedReader, resizable_buffer: *std.array_list.Managed(u8), fd: bun.FileDescriptor, _: isize, received_hup: bool) void {
         while (true) {
             const streaming = parent.vtable.isStreamingEnabled();
 
@@ -524,7 +525,7 @@ const PosixBufferedReader = struct {
         }
     }
 
-    fn readWithFn(parent: *PosixBufferedReader, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool, comptime file_type: FileType, comptime sys_fn: *const fn (bun.FileDescriptor, []u8, usize) bun.sys.Maybe(usize)) void {
+    fn readWithFn(parent: *PosixBufferedReader, resizable_buffer: *std.array_list.Managed(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool, comptime file_type: FileType, comptime sys_fn: *const fn (bun.FileDescriptor, []u8, usize) bun.sys.Maybe(usize)) void {
         _ = size_hint; // autofix
         const streaming = parent.vtable.isStreamingEnabled();
 
@@ -688,7 +689,7 @@ const PosixBufferedReader = struct {
         }
     }
 
-    fn readFromBlockingPipeWithoutBlocking(parent: *PosixBufferedReader, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
+    fn readFromBlockingPipeWithoutBlocking(parent: *PosixBufferedReader, resizable_buffer: *std.array_list.Managed(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
         if (parent.vtable.isStreamingEnabled()) {
             resizable_buffer.clearRetainingCapacity();
         }
@@ -717,7 +718,7 @@ pub const WindowsBufferedReader = struct {
     /// It cannot change because we don't know what libuv will do with it.
     source: ?Source = null,
     _offset: usize = 0,
-    _buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    _buffer: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
     // for compatibility with Linux
     flags: Flags = .{},
     maxbuf: ?*MaxBuf = null,
@@ -750,13 +751,13 @@ pub const WindowsBufferedReader = struct {
     pub fn init(comptime Type: type) WindowsBufferedReader {
         const fns = struct {
             fn onReadChunk(this: *anyopaque, chunk: []const u8, hasMore: ReadState) bool {
-                return Type.onReadChunk(@as(*Type, @alignCast(@ptrCast(this))), chunk, hasMore);
+                return Type.onReadChunk(@as(*Type, @ptrCast(@alignCast(this))), chunk, hasMore);
             }
             fn onReaderDone(this: *anyopaque) void {
-                return Type.onReaderDone(@as(*Type, @alignCast(@ptrCast(this))));
+                return Type.onReaderDone(@as(*Type, @ptrCast(@alignCast(this))));
             }
             fn onReaderError(this: *anyopaque, err: bun.sys.Error) void {
-                return Type.onReaderError(@as(*Type, @alignCast(@ptrCast(this))), err);
+                return Type.onReaderError(@as(*Type, @ptrCast(@alignCast(this))), err);
             }
             fn loop(this: *anyopaque) *Async.Loop {
                 return Type.loop(@as(*Type, @alignCast(@ptrCast(this))));
@@ -787,7 +788,7 @@ pub const WindowsBufferedReader = struct {
         };
         other.flags.is_done = true;
         other._offset = 0;
-        other.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
+        other.buffer().* = std.array_list.Managed(u8).init(bun.default_allocator);
         other.source = null;
         MaxBuf.transferToPipereader(&other.maxbuf, &to.maxbuf);
         to.setParent(parent);
@@ -829,13 +830,13 @@ pub const WindowsBufferedReader = struct {
         this.updateRef(false);
     }
 
-    pub fn takeBuffer(this: *WindowsBufferedReader) std.ArrayList(u8) {
+    pub fn takeBuffer(this: *WindowsBufferedReader) std.array_list.Managed(u8) {
         const out = this._buffer;
-        this._buffer = std.ArrayList(u8).init(out.allocator);
+        this._buffer = std.array_list.Managed(u8).init(out.allocator);
         return out;
     }
 
-    pub fn buffer(this: *WindowsBufferedReader) *std.ArrayList(u8) {
+    pub fn buffer(this: *WindowsBufferedReader) *std.array_list.Managed(u8) {
         return &this._buffer;
     }
 
@@ -953,13 +954,13 @@ pub const WindowsBufferedReader = struct {
         return source.setRawMode(value);
     }
 
-    fn onStreamAlloc(handle: *uv.Handle, suggested_size: usize, buf: *uv.uv_buf_t) callconv(.C) void {
+    fn onStreamAlloc(handle: *uv.Handle, suggested_size: usize, buf: *uv.uv_buf_t) callconv(.c) void {
         var this = bun.cast(*WindowsBufferedReader, handle.data);
         const result = this.getReadBufferWithStableMemoryAddress(suggested_size);
         buf.* = uv.uv_buf_t.init(result);
     }
 
-    fn onStreamRead(handle: *uv.uv_handle_t, nread: uv.ReturnCodeI64, buf: *const uv.uv_buf_t) callconv(.C) void {
+    fn onStreamRead(handle: *uv.uv_handle_t, nread: uv.ReturnCodeI64, buf: *const uv.uv_buf_t) callconv(.c) void {
         const stream = bun.cast(*uv.uv_stream_t, handle);
         var this = bun.cast(*WindowsBufferedReader, stream.data);
 
@@ -998,13 +999,13 @@ pub const WindowsBufferedReader = struct {
 
     /// Callback fired when a file read operation completes or is canceled.
     /// Handles cleanup, cancellation, and normal read processing.
-    fn onFileRead(fs: *uv.fs_t) callconv(.C) void {
+    fn onFileRead(fs: *uv.fs_t) callconv(.c) void {
         const file = Source.File.fromFS(fs);
         const result = fs.result;
         const nread_int = result.int();
         const was_canceled = nread_int == uv.UV_ECANCELED;
 
-        bun.sys.syslog("onFileRead({}) = {d}", .{ bun.FD.fromUV(fs.file.fd), nread_int });
+        bun.sys.syslog("onFileRead({f}) = {d}", .{ bun.FD.fromUV(fs.file.fd), nread_int });
 
         // Get parent before completing (fs.data may be null if detached)
         const parent_ptr = fs.data;
@@ -1197,12 +1198,12 @@ pub const WindowsBufferedReader = struct {
         this.closeImpl(true);
     }
 
-    fn onPipeClose(handle: *uv.Pipe) callconv(.C) void {
+    fn onPipeClose(handle: *uv.Pipe) callconv(.c) void {
         const this = bun.cast(*uv.Pipe, handle.data);
         bun.default_allocator.destroy(this);
     }
 
-    fn onTTYClose(handle: *uv.uv_tty_t) callconv(.C) void {
+    fn onTTYClose(handle: *uv.uv_tty_t) callconv(.c) void {
         const this = bun.cast(*uv.uv_tty_t, handle.data);
         bun.default_allocator.destroy(this);
     }

@@ -526,7 +526,7 @@ pub fn isGitHubShorthand(npa_str: []const u8) bool {
     return seen_slash and does_not_end_with_slash;
 }
 
-const UrlProtocol = union(enum) {
+pub const UrlProtocol = union(enum) {
     well_formed: WellDefinedProtocol,
 
     // A protocol which is not known by the library. Includes the : character, but not the
@@ -545,7 +545,7 @@ const UrlProtocol = union(enum) {
     }
 };
 
-const UrlProtocolPair = struct {
+pub const UrlProtocolPair = struct {
     const Self = @This();
 
     url: union(enum) {
@@ -723,11 +723,10 @@ fn normalizeProtocol(npa_str: []const u8) UrlProtocolPair {
     return .{ .url = .{ .unmanaged = npa_str }, .protocol = .unknown };
 }
 
-/// Attempt to correct an scp-style URL into a proper URL, parsable with jsc.URL. Potentially
-/// mutates the original input.
+/// Attempt to correct an scp-style URL into a proper URL, parsable with jsc.URL.
 ///
 /// This function assumes that the input is an scp-style URL.
-fn correctUrl(
+pub fn correctUrl(
     url_proto_pair: *const UrlProtocolPair,
     allocator: std.mem.Allocator,
 ) error{OutOfMemory}!UrlProtocolPair {

@@ -356,7 +356,7 @@ pub fn helpFull(
             var cs = io.countingWriter(stream);
             try stream.print("\t", .{});
             try printParam(cs.writer(), Id, param, Error, context, valueText);
-            try stream.writeByteNTimes(' ', max_spacing - @as(usize, @intCast(cs.bytes_written)));
+            try stream.splatByteAll(' ', max_spacing - @as(usize, @intCast(cs.bytes_written)));
             try stream.print("\t{s}\n", .{try helpText(context, param)});
         }
     }

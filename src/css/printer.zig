@@ -95,6 +95,7 @@ pub const ImportInfo = struct {
 /// `Printer` also includes helper functions that assist with writing output
 /// that respects options such as `minify`, and `css_modules`.
 pub fn Printer(comptime Writer: type) type {
+    comptime if (Writer != *std.Io.Writer and Writer != *bun.js_printer.BufferWriter) @compileError("Writer must be a *std.Io.Writer or *bun.js_printer.BufferWriter; got " ++ @typeName(Writer));
     return struct {
         // #[cfg(feature = "sourcemap")]
         sources: ?*const ArrayList([]const u8),
@@ -117,9 +118,9 @@ pub fn Printer(comptime Writer: type) type {
         /// A mapping of pseudo classes to replace with class names that can be applied
         /// from JavaScript. Useful for polyfills, for example.
         pseudo_classes: ?PseudoClasses = null,
-        indentation_buf: std.ArrayList(u8),
+        indentation_buf: std.array_list.Managed(u8),
         ctx: ?*const css.StyleContext = null,
-        scratchbuf: std.ArrayList(u8),
+        scratchbuf: std.array_list.Managed(u8),
         error_kind: ?css.PrinterError = null,
         import_info: ?ImportInfo = null,
         public_path: []const u8,
@@ -159,9 +160,15 @@ pub fn Printer(comptime Writer: type) type {
 
         inline fn getWrittenAmt(writer: Writer) usize {
             return switch (Writer) {
-                ArrayList(u8).Writer => writer.context.self.items.len,
                 *bun.js_printer.BufferWriter => writer.written.len,
-                else => @compileError("Dunno what to do with this type yo: " ++ @typeName(Writer)),
+                *std.Io.Writer => {
+                    if (writer.vtable == std.Io.Writer.Allocating.init(undefined).writer.vtable) {
+                        return @as(*std.Io.Writer.Allocating, @fieldParentPtr("writer", writer)).written().len;
+                    } else {
+                        @panic("css: got bad writer type");
+                    }
+                },
+                else => @compileError("css: got bad writer type: " ++ @typeName(Writer)),
             };
         }
 
@@ -236,7 +243,7 @@ pub fn Printer(comptime Writer: type) type {
         /// If `import_records` is null, then the printer will error when it encounters code that relies on import records (urls())
         pub fn new(
             allocator: Allocator,
-            scratchbuf: std.ArrayList(u8),
+            scratchbuf: std.array_list.Managed(u8),
             dest: Writer,
             options: PrinterOptions,
             import_info: ?ImportInfo,
@@ -569,7 +576,7 @@ pub fn Printer(comptime Writer: type) type {
             bun.debugAssert(!this.minify);
             if (this.indent_amt > 0) {
                 // try this.writeStr(this.getIndent(this.ident));
-                this.dest.writeByteNTimes(' ', this.indent_amt) catch return this.addFmtError();
+                this.dest.splatByteAll(' ', this.indent_amt) catch return this.addFmtError();
             }
         }
     };

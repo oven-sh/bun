@@ -270,7 +270,8 @@ const State = struct {
         }
         for (this.handles) |*handle| {
             // normally we truncate the output to 10 lines, but on abort we print everything to aid debugging
-            const elide_lines = if (is_abort) null else handle.config.elide_count orelse 10;
+            // also disable eliding when running under an AI agent to avoid confusing the AI assistant
+            const elide_lines = if (is_abort or Output.isAIAgent()) null else handle.config.elide_count orelse 10;
             const e = elide(handle.buffer.items, elide_lines);
 
             try this.draw_buf.writer().print(fmt("<b>{s}<r> {s} $ <d>{s}<r>\n"), .{ handle.config.package_name, handle.config.script_name, handle.config.script_content });

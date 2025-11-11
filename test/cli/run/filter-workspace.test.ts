@@ -120,7 +120,16 @@ function runInCwdSuccess({
   const { exitCode, stdout, stderr } = spawnSync({
     cwd,
     cmd,
-    env: { ...bunEnv, ...env },
+    env: {
+      ...bunEnv,
+      // Explicitly unset LLM environment variables for tests that expect normal behavior
+      CLAUDECODE: undefined,
+      CURSOR_TRACE_ID: undefined,
+      OPENAI_API_KEY: undefined,
+      ANTHROPIC_API_KEY: undefined,
+      AI_ASSISTANT: undefined,
+      ...env,
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -504,6 +513,75 @@ describe("bun", () => {
       target_pattern: [/(?:log_line[\s\S]*?){20}/],
       antipattern: [/lines elided/],
       win32ExpectedError: /--elide-lines is only supported in terminal environments/,
+    });
+  });
+
+  test("automatically disables elide-lines when running under AI agent", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        dep0: {
+          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
+          "package.json": JSON.stringify({
+            name: "dep0",
+            scripts: {
+              script: `${bunExe()} run index.js`,
+            },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+      }),
+    });
+
+    if (process.platform === "win32") {
+      return; // Skip on Windows (CI limitation)
+    }
+
+    // Test with AGENT=1 which is what Output.isAIAgent() checks first
+    runInCwdSuccess({
+      cwd: dir,
+      pattern: "./packages/dep0",
+      env: { FORCE_COLOR: "1", NO_COLOR: "0", AGENT: "1" },
+      target_pattern: [/(?:log_line[\s\S]*?){20}/],
+      antipattern: [/lines elided/],
+      command: ["script"],
+      // Even though we don't pass --elide-lines, it should be disabled automatically
+    });
+  });
+
+  test("automatically disables elide-lines when CLAUDECODE is set", () => {
+    const dir = tempDirWithFiles("testworkspace", {
+      packages: {
+        dep0: {
+          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
+          "package.json": JSON.stringify({
+            name: "dep0",
+            scripts: {
+              script: `${bunExe()} run index.js`,
+            },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+      }),
+    });
+
+    if (process.platform === "win32") {
+      return; // Skip on Windows (CI limitation)
+    }
+
+    runInCwdSuccess({
+      cwd: dir,
+      pattern: "./packages/dep0",
+      env: { FORCE_COLOR: "1", NO_COLOR: "0", AGENT: undefined, CLAUDECODE: "1" },
+      target_pattern: [/(?:log_line[\s\S]*?){20}/],
+      antipattern: [/lines elided/],
+      command: ["script"],
+      // Even though we don't pass --elide-lines, it should be disabled automatically
     });
   });
 });

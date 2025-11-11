@@ -295,12 +295,6 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         }
 
         pub inline fn fd(this: ThisSocket) bun.FileDescriptor {
-            if (this.socket == .pipe) {
-                if (Environment.isWindows) {
-                    return this.socket.pipe.uvPipe.fd();
-                }
-                return bun.invalid_fd;
-            }
             const socket = this.socket.get() orelse return bun.invalid_fd;
             if (comptime is_ssl) {
                 if (socket.getNativeHandle(is_ssl)) |handle| {

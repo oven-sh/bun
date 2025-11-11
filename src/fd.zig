@@ -346,6 +346,9 @@ pub const FD = packed struct(backing_int) {
     /// After calling, the input file descriptor is no longer valid and must not be used.
     /// If an error is thrown, the file descriptor is cleaned up for you.
     pub fn toJS(any_fd: FD, global: *jsc.JSGlobalObject) JSValue {
+        if (!any_fd.isValid()) {
+            return JSValue.jsNumberFromInt32(-1);
+        }
         const uv_owned_fd = any_fd.makeLibUVOwned() catch {
             any_fd.close();
             return global.throwValue((jsc.SystemError{

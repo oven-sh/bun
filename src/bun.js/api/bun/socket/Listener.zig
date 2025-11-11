@@ -532,14 +532,6 @@ pub fn getFD(this: *Listener, globalObject: *jsc.JSGlobalObject) JSValue {
                 },
             }
         },
-        .namedPipe => |namedPipe| {
-            if (Environment.isWindows) {
-                if (namedPipe.uvPipe.fd().unwrapValid()) |fd| {
-                    return fd.toJS(globalObject);
-                }
-            }
-            return JSValue.jsNumber(-1);
-        },
         else => return JSValue.jsNumber(-1),
     }
 }

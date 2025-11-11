@@ -97,7 +97,7 @@ fn Bun__createObjectURL_(globalObject: *jsc.JSGlobalObject, callframe: *jsc.Call
     };
     const registry = ObjectURLRegistry.singleton();
     const uuid = registry.register(globalObject.bunVM(), blob);
-    var str = bun.handleOom(bun.String.createFormat("blob:{}", .{uuid}));
+    var str = bun.handleOom(bun.String.createFormat("blob:{f}", .{uuid}));
     return str.transferToJS(globalObject);
 }
 

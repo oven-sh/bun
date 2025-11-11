@@ -52,7 +52,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
             const Visitor = struct {
                 inner_visited: *BitSet,
                 composes_visited: *std.AutoArrayHashMap(bun.bundle_v2.Ref, void),
-                parts: *std.ArrayList(E.TemplatePart),
+                parts: *std.array_list.Managed(E.TemplatePart),
                 all_import_records: []const BabyList(bun.css.ImportRecord),
                 all_css_asts: []?*bun.css.BundlerStyleSheet,
                 all_sources: []const Logger.Source,
@@ -109,11 +109,11 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                         &visitor.all_sources[idx],
                         .{ .loc = compose_loc },
                         visitor.allocator,
-                        "The composes property cannot be used with {}, because it is not a single class name.",
+                        "The composes property cannot be used with {f}, because it is not a single class name.",
                         .{
                             bun.fmt.quote(name),
                         },
-                        "The definition of {} is here.",
+                        "The definition of {f} is here.",
                         .{
                             bun.fmt.quote(name),
                         },
@@ -144,7 +144,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                                                 &visitor.all_sources[idx],
                                                 compose.loc,
                                                 visitor.allocator,
-                                                "Cannot use the \"composes\" property with the {} file (it is not a CSS file)",
+                                                "Cannot use the \"composes\" property with the {f} file (it is not a CSS file)",
                                                 .{bun.fmt.quote(visitor.all_sources[import_record.source_index.get()].path.pretty)},
                                             ) catch |err| bun.handleOom(err);
                                             continue;
@@ -188,7 +188,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                                             &visitor.all_sources[idx],
                                             compose.loc,
                                             visitor.allocator,
-                                            "The name {} never appears in {} as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
+                                            "The name {f} never appears in {f} as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
                                             .{
                                                 bun.fmt.quote(name.v),
                                                 bun.fmt.quote(visitor.all_sources[idx].path.pretty),
@@ -227,7 +227,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                 const ref = entry.ref;
                 bun.assert(ref.inner_index < symbols.len);
 
-                var template_parts = std.ArrayList(E.TemplatePart).init(this.allocator());
+                var template_parts = std.array_list.Managed(E.TemplatePart).init(this.allocator());
                 var value = Expr.init(E.NameOfSymbol, E.NameOfSymbol{ .ref = ref.toRealRef(source_index) }, stmt.loc);
 
                 visitor.parts = &template_parts;
@@ -365,7 +365,7 @@ pub fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) 
                     module_ref,
                     try std.fmt.allocPrint(
                         this.allocator(),
-                        "{}_default",
+                        "{f}_default",
                         .{this.parse_graph.input_files.items(.source)[source_index].fmtIdentifier()},
                     ),
                     "default",

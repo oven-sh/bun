@@ -518,7 +518,7 @@ pub fn isGitHubShorthand(npa_str: []const u8) bool {
     // Implements doesNotEndWithSlash
     const does_not_end_with_slash =
         if (pound_idx) |pi|
-            npa_str[pi - 1] != '/'
+            pi == 0 or npa_str[pi - 1] != '/'
         else
             npa_str.len >= 1 and npa_str[npa_str.len - 1] != '/';
 

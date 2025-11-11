@@ -146,12 +146,7 @@ function parseOptions(args, flags = []) {
 
 async function spawn(command, args, options, label) {
   const effectiveArgs = args.filter(Boolean);
-  const description = [command, ...effectiveArgs]
-    .map(arg => {
-      const str = String(arg);
-      return str.includes(" ") ? JSON.stringify(str) : str;
-    })
-    .join(" ");
+  const description = [command, ...effectiveArgs].map(arg => (arg.includes(" ") ? JSON.stringify(arg) : arg)).join(" ");
   let env = options?.env;
 
   console.log("$", description);

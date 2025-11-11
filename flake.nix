@@ -168,6 +168,7 @@
 
           # Additional environment variables
           CMAKE_BUILD_TYPE = "Debug";
+          ENABLE_CCACHE = "1";
         };
       }
     );

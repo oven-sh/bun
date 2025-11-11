@@ -71,7 +71,7 @@
     "zig:check": "bun run zig build check --summary new",
     "zig:check-all": "bun run zig build check-all --summary new",
     "zig:check-windows": "bun run zig build check-windows --summary new",
-    "analysis": "bun ./scripts/build.mjs -DCMAKE_BUILD_TYPE=Debug -DENABLE_ANALYSIS=ON -DCACHE_STRATEGY=none -B build/analysis",
+    "analysis": "bun ./scripts/build.mjs -DCMAKE_BUILD_TYPE=Debug -DENABLE_ANALYSIS=ON -DENABLE_CCACHE=OFF -B build/analysis",
     "analysis:no-llvm": "bun run analysis -DENABLE_LLVM=OFF",
     "clang-format": "./scripts/run-clang-format.sh format",
     "clang-format:check": "./scripts/run-clang-format.sh check",

@@ -48,8 +48,13 @@ include(SetupZig)
 include(SetupRust)
 
 find_program(SCCACHE_PROGRAM sccache)
-if(SCCACHE_PROGRAM)
+if(SCCACHE_PROGRAM AND NOT DEFINED ENV{NO_SCCACHE})
   include(SetupSccache)
+else()
+  find_program(CCACHE_PROGRAM ccache)
+  if(CCACHE_PROGRAM)
+    include(SetupCcache)
+  endif()
 endif()
 
 # Generate dependency versions header

@@ -232,5 +232,16 @@
                 "NAPI_VERSION_EXPERIMENTAL=1",
             ],
         },
+        {
+            "target_name": "test_finalizer_on_teardown",
+            "sources": ["test_finalizer_on_teardown.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
+            ],
+        },
     ]
 }

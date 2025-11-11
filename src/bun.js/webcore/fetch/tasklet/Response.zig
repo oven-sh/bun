@@ -1,6 +1,12 @@
 const Response = @This();
 /// buffer used to stream response to JS
-scheduled_response_buffer: MutableString = undefined,
+scheduled_response_buffer: MutableString = .{
+    .allocator = bun.default_allocator,
+    .list = .{
+        .items = &.{},
+        .capacity = 0,
+    },
+},
 check_server_identity: jsc.Strong.Optional = .empty,
 flags: Flags = .{},
 /// stream strong ref if any is available

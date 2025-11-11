@@ -1,6 +1,5 @@
 const SharedData = @This();
-mutex: bun.Mutex,
-
+mutex: bun.Mutex = .{},
 ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
 
 /// buffer being used by AsyncHTTP

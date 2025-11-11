@@ -18,6 +18,8 @@ let server: Bun.Server;
 
 beforeAll(() => {
   server = Bun.serve({
+    port: 0,
+
     fetch: async req => {
       const body = await gunzipJsonRequest(req);
 

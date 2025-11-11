@@ -46,6 +46,6 @@ export function run(dir: string, test: string) {
     env,
   });
   expect(result.success).toBeTrue();
-  expect(result.signalCode).toBeNull();
+  expect(result.signalCode).toBeUndefined();
   expect(result.exitCode).toBe(0);
 }

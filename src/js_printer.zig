@@ -5344,12 +5344,6 @@ pub const WriteResult = struct {
 
 pub fn NewWriter(
     comptime ContextType: type,
-    comptime writeByte: fn (ctx: *ContextType, char: u8) anyerror!usize,
-    comptime writeAllFn: fn (ctx: *ContextType, buf: anytype) anyerror!usize,
-    comptime getLastByte: fn (ctx: *const ContextType) u8,
-    comptime getLastLastByte: fn (ctx: *const ContextType) u8,
-    comptime reserveNext: fn (ctx: *ContextType, count: u64) anyerror![*]u8,
-    comptime advanceBy: fn (ctx: *ContextType, count: u64) void,
 ) type {
     return struct {
         const Self = @This();
@@ -5360,6 +5354,13 @@ pub fn NewWriter(
         prev_prev_char: u8 = 0,
         err: ?anyerror = null,
         orig_err: ?anyerror = null,
+
+        const writeByte = ContextType.writeByte;
+        const writeAllFn = ContextType.writeAll;
+        const getLastByte = ContextType.getLastByte;
+        const getLastLastByte = ContextType.getLastLastByte;
+        const reserveNext = ContextType.reserveNext;
+        const advanceBy = ContextType.advanceBy;
 
         pub fn init(ctx: ContextType) Self {
             return .{
@@ -5603,14 +5604,9 @@ pub const BufferWriter = struct {
         _: *BufferWriter,
     ) anyerror!void {}
 };
+
 pub const BufferPrinter = NewWriter(
     BufferWriter,
-    BufferWriter.writeByte,
-    BufferWriter.writeAll,
-    BufferWriter.getLastByte,
-    BufferWriter.getLastLastByte,
-    BufferWriter.reserveNext,
-    BufferWriter.advanceBy,
 );
 
 pub const Format = enum {
@@ -5869,7 +5865,7 @@ pub fn printJSON(
     }
     printer.writer.done();
 
-    return @as(usize, @intCast(@max(printer.writer.written, 0)));
+    return @intCast(@max(printer.writer.written, 0));
 }
 
 pub fn print(

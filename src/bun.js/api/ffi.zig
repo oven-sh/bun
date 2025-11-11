@@ -514,7 +514,7 @@ pub const FFI = struct {
             this.define.clearAndFree(bun.default_allocator);
 
             this.source.deinit(bun.default_allocator);
-            bun.default_allocator.free(this.flags);
+            if (this.flags.len > 0) bun.default_allocator.free(this.flags); // len check necessary because nul-terminated
             this.flags = "";
         }
     };
@@ -875,7 +875,7 @@ pub const FFI = struct {
         for (this.functions.values()) |*val| {
             val.deinit(globalThis);
         }
-        this.functions.deinit(bun.default_allocator);
+        this.functions.clearAndFree(bun.default_allocator);
 
         // NOTE: `relocated_bytes_to_free` points to a memory region that was
         // relocated by tinycc. Attempts to free it will cause a bus error,
@@ -1467,7 +1467,7 @@ pub const FFI = struct {
             },
         };
 
-        fn fail(this: *Function, comptime msg: []const u8) void {
+        fn fail(this: *Function, msg: []const u8) void {
             if (this.step != .failed) {
                 @branchHint(.likely);
                 this.step = .{ .failed = .{ .msg = msg, .allocated = false } };

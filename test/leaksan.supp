@@ -159,6 +159,8 @@ leak:logger.Location.clone
 # test/bundler/bundler_browser.test.ts
 leak:bundler.bundle_v2.BundleV2.runResolutionForParseTask
 
+# fixed by VirtualMachine.globalExit tick
+leak:bun.js.test.bun_test.BunTest.runNextTick
 
 # leaks post experiment
 leak:bun.js.webcore.fetch.FetchTasklet.callback
@@ -226,3 +228,8 @@ leak:http.HTTPThread.drainEvents
 leak:bun.js.api.ffi.FFI.Function.compile
 leak:bun.js.VirtualMachine.initWorker
 leak:HTMLScanner.createImportRecord
+leak:bun.js.RuntimeTranspilerStore.RuntimeTranspilerStore.TranspilerJob.runFromJSThread
+leak:cli.pm_pkg_command.PmPkgCommand
+leak:cli.pack_command
+leak:cli.update_interactive_command
+leak:cli.audit_command

@@ -1000,6 +1000,9 @@ pub fn VisitStmt(
                 try stmts.append(stmt.*);
             }
             pub fn s_if(noalias p: *P, noalias stmts: *ListManaged(Stmt), noalias stmt: *Stmt, noalias data: *S.If) !void {
+                // For deeply nested if-else chains, we need to avoid stack overflow.
+                // We do this by handling the "else if" chain iteratively rather than recursively.
+                // Process the test expression and yes branch for the first if statement
                 data.test_ = p.visitExpr(data.test_);
 
                 if (p.options.features.minify_syntax) {
@@ -1017,20 +1020,87 @@ pub fn VisitStmt(
                 }
 
                 // The "else" clause is optional
+                // For else-if chains, process iteratively to avoid stack overflow
                 if (data.no) |no| {
-                    if (effects.ok and effects.value) {
-                        const old = p.is_control_flow_dead;
-                        p.is_control_flow_dead = true;
-                        defer p.is_control_flow_dead = old;
-                        data.no = p.visitSingleStmt(no, .none);
-                    } else {
-                        data.no = p.visitSingleStmt(no, .none);
+                    // Check if this is the start of an else-if chain
+                    var current_no = no;
+                    var parent_data: ?*S.If = data;
+
+                    while (current_no.data == .s_if) {
+                        var current_if_data: *S.If = current_no.data.s_if;
+
+                        // Process this if statement in the chain
+                        current_if_data.test_ = p.visitExpr(current_if_data.test_);
+
+                        if (p.options.features.minify_syntax) {
+                            current_if_data.test_ = SideEffects.simplifyBoolean(p, current_if_data.test_);
+                        }
+
+                        const chain_effects = SideEffects.toBoolean(p, current_if_data.test_.data);
+                        if (chain_effects.ok and !chain_effects.value) {
+                            const old = p.is_control_flow_dead;
+                            p.is_control_flow_dead = true;
+                            current_if_data.yes = p.visitSingleStmt(current_if_data.yes, StmtsKind.none);
+                            p.is_control_flow_dead = old;
+                        } else {
+                            current_if_data.yes = p.visitSingleStmt(current_if_data.yes, StmtsKind.none);
+                        }
+
+                        // Move to the next else clause
+                        if (current_if_data.no) |next_no| {
+                            // Trim unnecessary "else" clauses
+                            if (p.options.features.minify_syntax) {
+                                if (@as(Stmt.Tag, next_no.data) == .s_empty) {
+                                    current_if_data.no = null;
+                                    break;
+                                }
+                            }
+
+                            // Check if the next else is another if (continuing the chain)
+                            if (next_no.data == .s_if) {
+                                current_no = next_no;
+                                parent_data = current_if_data;
+                                continue; // Continue processing the chain
+                            } else {
+                                // Not an else-if, process the final else branch normally
+                                if (chain_effects.ok and chain_effects.value) {
+                                    const old = p.is_control_flow_dead;
+                                    p.is_control_flow_dead = true;
+                                    defer p.is_control_flow_dead = old;
+                                    current_if_data.no = p.visitSingleStmt(next_no, .none);
+                                } else {
+                                    current_if_data.no = p.visitSingleStmt(next_no, .none);
+                                }
+
+                                // Trim unnecessary "else" clauses
+                                if (p.options.features.minify_syntax) {
+                                    if (current_if_data.no != null and @as(Stmt.Tag, current_if_data.no.?.data) == .s_empty) {
+                                        current_if_data.no = null;
+                                    }
+                                }
+                                break;
+                            }
+                        } else {
+                            break; // No more else clauses
+                        }
                     }
 
-                    // Trim unnecessary "else" clauses
-                    if (p.options.features.minify_syntax) {
-                        if (data.no != null and @as(Stmt.Tag, data.no.?.data) == .s_empty) {
-                            data.no = null;
+                    // If we didn't enter the loop (no was not an if statement), process normally
+                    if (parent_data == data and current_no.data != .s_if) {
+                        if (effects.ok and effects.value) {
+                            const old = p.is_control_flow_dead;
+                            p.is_control_flow_dead = true;
+                            defer p.is_control_flow_dead = old;
+                            data.no = p.visitSingleStmt(current_no, .none);
+                        } else {
+                            data.no = p.visitSingleStmt(current_no, .none);
+                        }
+
+                        // Trim unnecessary "else" clauses
+                        if (p.options.features.minify_syntax) {
+                            if (data.no != null and @as(Stmt.Tag, data.no.?.data) == .s_empty) {
+                                data.no = null;
+                            }
                         }
                     }
                 }

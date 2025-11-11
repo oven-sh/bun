@@ -230,17 +230,11 @@ pub const JSValkeyClient = struct {
 
     timer: Timer.EventLoopTimer = .{
         .tag = .ValkeyConnectionTimeout,
-        .next = .{
-            .sec = 0,
-            .nsec = 0,
-        },
+        .next = .epoch,
     },
     reconnect_timer: Timer.EventLoopTimer = .{
         .tag = .ValkeyConnectionReconnect,
-        .next = .{
-            .sec = 0,
-            .nsec = 0,
-        },
+        .next = .epoch,
     },
     ref_count: RefCount,
 

@@ -47,10 +47,7 @@ flags: ConnectionFlags = .{},
 /// After being connected, this is an idle timeout timer.
 timer: bun.api.Timer.EventLoopTimer = .{
     .tag = .PostgresSQLConnectionTimeout,
-    .next = .{
-        .sec = 0,
-        .nsec = 0,
-    },
+    .next = .epoch,
 },
 
 /// This timer controls the maximum lifetime of a connection.
@@ -59,10 +56,7 @@ timer: bun.api.Timer.EventLoopTimer = .{
 max_lifetime_interval_ms: u32 = 0,
 max_lifetime_timer: bun.api.Timer.EventLoopTimer = .{
     .tag = .PostgresSQLConnectionMaxLifetime,
-    .next = .{
-        .sec = 0,
-        .nsec = 0,
-    },
+    .next = .epoch,
 },
 auto_flusher: AutoFlusher = .{},
 

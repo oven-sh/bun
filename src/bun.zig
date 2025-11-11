@@ -3125,6 +3125,17 @@ pub fn getRoughTickCountMs(comptime mock_mode: timespec.MockMode) u64 {
     return spec.ns() / std.time.ns_per_ms;
 }
 
+pub const MaybeMockedTimespec = struct {
+    mocked: u64,
+    timespec: timespec,
+
+    pub const epoch = MaybeMockedTimespec{ .mocked = 0, .timespec = .epoch };
+
+    pub fn eql(this: *const MaybeMockedTimespec, other: *const MaybeMockedTimespec) bool {
+        return this.mocked == other.mocked and this.timespec.eql(&other.timespec);
+    }
+};
+
 pub const timespec = extern struct {
     sec: i64,
     nsec: i64,

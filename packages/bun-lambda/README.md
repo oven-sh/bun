@@ -79,11 +79,14 @@ Once you've written your Lambda function, you need to configure a new Lambda fun
 
 Builds a Lambda layer for Bun and saves it to a `.zip` file.
 
-| Flag        | Description                                                          | Default                |
-| ----------- | -------------------------------------------------------------------- | ---------------------- |
-| `--arch`    | The architecture, either: "x64" or "aarch64"                         | aarch64                |
-| `--release` | The release of Bun, either: "latest", "canary", or a release "x.y.z" | latest                 |
-| `--output`  | The path to write the layer as a `.zip`.                             | ./bun-lambda-layer.zip |
+| Flag        | Description                                                          | Default                  |
+| ----------- | -------------------------------------------------------------------- | ------------------------ |
+| `--arch`    | The architecture, either: `x64` or `aarch64`                         | `aarch64`                |
+| `--clean`   | Clean the temporary directory before building                        | `false`                  |
+| `--keep`    | Keep the temporary directory after building                          | `false`                  |
+| `--output`  | The path to write the layer as a `.zip`                              | `./bun-lambda-layer.zip` |
+| `--release` | The release of Bun, either: `latest`, `canary`, or a release `x.y.z` | `latest`                 |
+| `--tmp`     | Directory to use for temporary files                                 | `/tmp/bun-lambda-layer`  |
 
 Example:
 
@@ -98,11 +101,19 @@ bun run build-layer -- \
 
 Builds a Lambda layer for Bun then publishes it to your AWS account.
 
-| Flag       | Description                               | Default |
-| ---------- | ----------------------------------------- | ------- |
-| `--layer`  | The layer name.                           | bun     |
-| `--region` | The region name, or "\*" for all regions. |         |
-| `--public` | If the layer should be public.            | false   |
+| Flag            | Description                                                          | Default                    |
+| --------------- | -------------------------------------------------------------------- | -------------------------- |
+| `--arch`        | The architecture, either: `x64` or `aarch64`                         | `aarch64`                  |
+| `--clean`       | Clean the temporary directory before building                        | `false`                    |
+| `--description` | Description for the Lambda layer                                     | Bun Runtime for AWS Lambda |
+| `--keep`        | Keep the temporary directory after building                          | `false`                    |
+| `--layer`       | The layer name                                                       | `bun`                      |
+| `--license`     | License information for the layer                                    | MIT                        |
+| `--output`      | The path to write the layer as a `.zip`                              | `./bun-lambda-layer.zip`   |
+| `--public`      | If the layer should be public                                        | `false`                    |
+| `--region`      | The region name, or `*` for all regions                              |                            |
+| `--release`     | The release of Bun, either: `latest`, `canary`, or a release `x.y.z` | `latest`                   |
+| `--tmp`         | Directory to use for temporary files                                 | `/tmp/bun-lambda-layer`    |
 
 Example:
 

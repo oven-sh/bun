@@ -1225,6 +1225,7 @@ export async function runBunInstall(
     saveTextLockfile?: boolean;
     packages?: string[];
     verbose?: boolean;
+    linker?: "hoisted" | "isolated";
   } = {},
 ) {
   const production = options?.production ?? false;
@@ -1234,6 +1235,9 @@ export async function runBunInstall(
   }
   if (production) {
     args.push("--production");
+  }
+  if (options?.linker) {
+    args.push(`--linker=${options?.linker}`);
   }
   if (options?.frozenLockfile) {
     args.push("--frozen-lockfile");

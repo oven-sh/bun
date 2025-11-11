@@ -152,12 +152,18 @@ optionx(TMP_PATH FILEPATH "The path to the temporary directory" DEFAULT ${BUILD_
 #   pattern - The regex pattern to filter out
 #   touched - A variable to set if any items were removed
 function(list_filter_out_regex list pattern touched)
-  foreach(line list)
-    if(line MATCHES "^${variable}=")
-      list(REMOVE_ITEM list ${line})
-      set(touched ON PARENT_SCOPE)
+  set(result_list "${${list}}")
+  set(was_modified OFF)
+
+  foreach(line IN LISTS result_list)
+    if(line MATCHES "${pattern}")
+      list(REMOVE_ITEM result_list ${line})
+      set(was_modified ON)
     endif()
   endforeach()
+
+  set(${list} "${result_list}" PARENT_SCOPE)
+  set(${touched} ${was_modified} PARENT_SCOPE)
 endfunction()
 
 # setenv()

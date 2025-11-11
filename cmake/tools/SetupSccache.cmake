@@ -87,7 +87,7 @@ function(sccache_configure_environment_ci)
   endif()
 endfunction()
 
-function(configure_developer)
+function(sccache_configure_environment_developer)
   # Local environments can use any strategy they like. S3 is set up in such a way so as to clean
   # itself from old entries automatically.
   if (CACHE_STRATEGY STREQUAL "auto" OR CACHE_STRATEGY STREQUAL "local")
@@ -126,7 +126,7 @@ function(sccache_configure)
   if (CI)
     sccache_configure_environment_ci()
   else()
-    configure_developer()
+    sccache_configure_environment_developer()
   endif()
 endfunction()
 

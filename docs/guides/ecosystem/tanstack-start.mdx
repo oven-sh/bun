@@ -58,7 +58,7 @@ mode: center
 
   </Step>
   <Step title={<span>Update your <code>vite.config.ts</code> file</span>}>
-    Update your `vite.config.ts` file to include the necessary plugins for TanStack Start with Bun. Configure Nitro with the `bun` preset for better optimizations:
+    Update your `vite.config.ts` file to include the necessary plugins for TanStack Start with Bun.
 
     ```ts vite.config.ts icon="/icons/typescript.svg"
     // other imports...
@@ -76,7 +76,7 @@ mode: center
     ```
 
     <Note>
-      Using the [`bun` preset](https://nitro.build/deploy/runtimes/bun) provides better optimizations compared to using the default Node.js preset. While Nitro output is compatible with Bun runtime using the default preset, the `bun` preset is recommended for production deployments.
+      The `bun` preset is optional, but it configures the build output specifically for Bun's runtime.
     </Note>
 
   </Step>
@@ -88,14 +88,44 @@ mode: center
         "scripts": {
           "build": "bun --bun vite build", // [!code ++]
           // The .output files are created by Nitro when you run `bun run build`.
-          "start": "bun run ./.output/server/index.mjs" // [!code ++]
+          // Not necessary when deploying to Vercel.
+          "start": "bun run .output/server/index.mjs" // [!code ++]
         }
       }
     ```
 
+
+    <Note>
+      You do **not** need the custom `start` script when deploying to Vercel.
+    </Note>
+
   </Step>
   <Step title="Deploy your app">
     Check out one of our guides to deploy your app to a hosting provider.
+
+    <Note>
+      When deploying to Vercel, you can either add the `"bunVersion": "1.x"` to your `vercel.json` file, or add it to the `nitro` config in your `vite.config.ts` file:
+
+      <Warning>
+        Do **not** use the `bun` Nitro preset when deploying to Vercel.
+      </Warning>
+
+      ```ts vite.config.ts icon="/icons/typescript.svg"
+      export default defineConfig({
+        plugins: [
+          tanstackStart(),
+          nitro({
+            preset: "bun", // [!code --]
+            vercel: { // [!code ++]
+              functions: { // [!code ++]
+                runtime: "bun1.x", // [!code ++]
+              }, // [!code ++]
+            }, // [!code ++]
+          }),
+        ],
+      });
+      ```
+    </Note>
 
     <Columns cols={3}>
       <Card title="Vercel" href="/guides/deployment/vercel" icon="/icons/ecosystem/vercel.svg">

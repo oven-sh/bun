@@ -3,21 +3,21 @@ const Yarn = @This();
 pub fn print(
     this: *Printer,
     comptime Writer: type,
-    writer: Writer,
+    writer: *std.Io.Writer,
 ) !void {
     // internal for debugging, print the lockfile as custom json
     // limited to debug because we don't want people to rely on this format.
     if (Environment.isDebug) {
         if (std.process.hasEnvVarConstant("JSON")) {
-            try std.json.stringify(
-                this.lockfile,
-                .{
+            var stringify = std.json.Stringify{
+                .options = .{
                     .whitespace = .indent_2,
                     .emit_null_optional_fields = true,
                     .emit_nonportable_numbers_as_strings = true,
                 },
-                writer,
-            );
+                .writer = writer,
+            };
+            try stringify.write(this.lockfile);
             try writer.writeAll("\n");
             return;
         }
@@ -29,7 +29,7 @@ pub fn print(
         \\# bun ./bun.lockb --hash:
     );
     try writer.print(
-        " {}\n\n",
+        " {f}\n\n",
         .{this.lockfile.fmtMetaHash()},
     );
 
@@ -138,7 +138,7 @@ fn packages(
                 try writer.writeAll(name);
                 try writer.writeByte('@');
                 if (version_name.len == 0) {
-                    try std.fmt.format(writer, "^{any}", .{version_formatter});
+                    try writer.print("^{f}", .{version_formatter});
                 } else {
                     try writer.writeAll(version_name);
                 }
@@ -157,18 +157,18 @@ fn packages(
             try writer.writeAll("  version ");
 
             // Version is always quoted
-            try std.fmt.format(writer, "\"{any}\"\n", .{version_formatter});
+            try writer.print("\"{f}\"\n", .{version_formatter});
 
             try writer.writeAll("  resolved ");
 
             const url_formatter = resolution.fmtURL(string_buf);
 
             // Resolved URL is always quoted
-            try std.fmt.format(writer, "\"{any}\"\n", .{url_formatter});
+            try writer.print("\"{f}\"\n", .{url_formatter});
 
             if (meta.integrity.tag != .unknown) {
                 // Integrity is...never quoted?
-                try std.fmt.format(writer, "  integrity {any}\n", .{&meta.integrity});
+                try writer.print("  integrity {f}\n", .{&meta.integrity});
             }
 
             if (dependencies.len > 0) {

@@ -177,7 +177,7 @@ pub const Node = struct {
 /// API to return Progress rather than accept it as a parameter.
 /// `estimated_total_items` value of 0 means unknown.
 pub fn start(self: *Progress, name: []const u8, estimated_total_items: usize) *Node {
-    const stderr = std.io.getStdErr();
+    const stderr = std.fs.File.stderr();
     self.terminal = null;
     if (stderr.supportsAnsiEscapeCodes()) {
         self.terminal = stderr;
@@ -326,11 +326,17 @@ fn refreshWithHeldLock(self: *Progress) void {
                 }
                 if (eti > 0) {
                     if (need_ellipse) self.bufWrite(&end, " ", .{});
-                    self.bufWrite(&end, "[{d}/{d}{s}] ", .{ current_item, eti, node.unit });
+                    switch (node.unit.len == 0) {
+                        true => self.bufWrite(&end, "[{Bi:.2}/{Bi:.2}] ", .{ current_item, eti }),
+                        false => self.bufWrite(&end, "[{d}/{d}{s}] ", .{ current_item, eti, node.unit }),
+                    }
                     need_ellipse = false;
                 } else if (completed_items != 0) {
                     if (need_ellipse) self.bufWrite(&end, " ", .{});
-                    self.bufWrite(&end, "[{d}{s}] ", .{ current_item, node.unit });
+                    switch (node.unit.len == 0) {
+                        true => self.bufWrite(&end, "[{Bi:.2}] ", .{current_item}),
+                        false => self.bufWrite(&end, "[{d}{s}] ", .{ current_item, node.unit }),
+                    }
                     need_ellipse = false;
                 }
             }
@@ -355,8 +361,10 @@ pub fn log(self: *Progress, comptime format: []const u8, args: anytype) void {
         (std.debug).print(format, args);
         return;
     };
+    var file_writer = file.writerStreaming(&.{});
+    const writer = &file_writer.interface;
     self.refresh();
-    file.writer().print(format, args) catch {
+    writer.print(format, args) catch {
         self.terminal = null;
         return;
     };
@@ -427,24 +435,24 @@ test "basic functionality" {
         next_sub_task = (next_sub_task + 1) % sub_task_names.len;
 
         node.completeOne();
-        std.time.sleep(5 * speed_factor);
+        std.Thread.sleep(5 * speed_factor);
         node.completeOne();
         node.completeOne();
-        std.time.sleep(5 * speed_factor);
+        std.Thread.sleep(5 * speed_factor);
         node.completeOne();
         node.completeOne();
-        std.time.sleep(5 * speed_factor);
+        std.Thread.sleep(5 * speed_factor);
 
         node.end();
 
-        std.time.sleep(5 * speed_factor);
+        std.Thread.sleep(5 * speed_factor);
     }
     {
         var node = root_node.start("this is a really long name designed to activate the truncation code. let's find out if it works", 0);
         node.activate();
-        std.time.sleep(10 * speed_factor);
+        std.Thread.sleep(10 * speed_factor);
         progress.refresh();
-        std.time.sleep(10 * speed_factor);
+        std.Thread.sleep(10 * speed_factor);
         node.end();
     }
 }

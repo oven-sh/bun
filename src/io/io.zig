@@ -125,7 +125,7 @@ pub const Loop = struct {
                             }
                         },
                         .close => |close| {
-                            log("close({}, registered={any})", .{ close.fd, close.poll.flags.contains(.registered) });
+                            log("close({f}, registered={})", .{ close.fd, close.poll.flags.contains(.registered) });
                             // Only remove from the interest list if it was previously registered.
                             // Otherwise, epoll gets confused.
                             // This state can happen if polling for readable/writable previously failed.
@@ -158,7 +158,7 @@ pub const Loop = struct {
 
             const current_events: []std.os.linux.epoll_event = events[0..rc];
             if (rc != 0) {
-                log("epoll_wait({}) = {d}", .{ this.pollfd(), rc });
+                log("epoll_wait({f}) = {d}", .{ this.pollfd(), rc });
             }
 
             for (current_events) |event| {
@@ -196,7 +196,7 @@ pub const Loop = struct {
 
         while (true) {
             var stack_fallback = std.heap.stackFallback(@sizeOf([256]EventType), bun.default_allocator);
-            var events_list: std.ArrayList(EventType) = std.ArrayList(EventType).initCapacity(stack_fallback.get(), 256) catch unreachable;
+            var events_list: std.array_list.Managed(EventType) = std.array_list.Managed(EventType).initCapacity(stack_fallback.get(), 256) catch unreachable;
             defer events_list.deinit();
 
             // Process pending requests
@@ -495,7 +495,7 @@ pub const Poll = struct {
             fd: bun.FileDescriptor,
             kqueue_event: *std.posix.system.kevent64_s,
         ) void {
-            log("register({s}, {})", .{ @tagName(action), fd });
+            log("register({s}, {f})", .{ @tagName(action), fd });
             defer {
                 switch (comptime action) {
                     .readable => poll.flags.insert(Flags.poll_readable),
@@ -624,7 +624,7 @@ pub const Poll = struct {
     pub fn registerForEpoll(this: *Poll, tag: Pollable.Tag, loop: *Loop, comptime flag: Flags, one_shot: bool, fd: bun.FileDescriptor) bun.sys.Maybe(void) {
         const watcher_fd = loop.pollfd();
 
-        log("register: {s} ({})", .{ @tagName(flag), fd });
+        log("register: {s} ({f})", .{ @tagName(flag), fd });
 
         bun.assert(fd != bun.invalid_fd);
 

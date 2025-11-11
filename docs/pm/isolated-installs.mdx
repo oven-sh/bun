@@ -5,7 +5,7 @@ description: "Strict dependency isolation similar to pnpm's approach"
 
 Bun provides an alternative package installation strategy called **isolated installs** that creates strict dependency isolation similar to pnpm's approach. This mode prevents phantom dependencies and ensures reproducible, deterministic builds.
 
-This is the default installation strategy for monorepo projects.
+This is the default installation strategy for **new** workspace/monorepo projects (with `configVersion = 1` in the lockfile). Existing projects continue using hoisted installs unless explicitly configured.
 
 ## What are isolated installs?
 
@@ -43,8 +43,23 @@ linker = "isolated"
 
 ### Default behavior
 
-- For monorepo projects, Bun uses the **isolated** installation strategy by default.
-- For single-project projects, Bun uses the **hoisted** installation strategy by default.
+The default linker strategy depends on your project's lockfile `configVersion`:
+
+| `configVersion` | Using workspaces? | Default Linker |
+| --------------- | ----------------- | -------------- |
+| `1`             | ✅                | `isolated`     |
+| `1`             | ❌                | `hoisted`      |
+| `0`             | ✅                | `hoisted`      |
+| `0`             | ❌                | `hoisted`      |
+
+**New projects**: Default to `configVersion = 1`. In workspaces, v1 uses the isolated linker by default; otherwise it uses hoisted linking.
+
+**Existing Bun projects (made pre-v1.3.2)**: If your existing lockfile doesn't have a version yet, Bun sets `configVersion = 0` when you run `bun install`, preserving the previous hoisted linker default.
+
+**Migrations from other package managers**:
+
+- From pnpm: `configVersion = 1` (using isolated installs in workspaces)
+- From npm or yarn: `configVersion = 0` (using hoisted installs)
 
 You can override the default behavior by explicitly specifying the `--linker` flag or setting it in your configuration file.
 

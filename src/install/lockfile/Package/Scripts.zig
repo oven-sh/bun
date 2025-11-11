@@ -30,13 +30,13 @@ pub const Scripts = extern struct {
             comptime format_type: enum { completed, info, untrusted },
         ) void {
             if (std.mem.indexOf(u8, this.cwd, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str)) |i| {
-                Output.pretty("<d>.{s}{s} @{}<r>\n", .{
+                Output.pretty("<d>.{s}{s} @{f}<r>\n", .{
                     std.fs.path.sep_str,
                     strings.withoutTrailingSlash(this.cwd[i + 1 ..]),
                     resolution.fmt(resolution_buf, .posix),
                 });
             } else {
-                Output.pretty("<d>{s} @{}<r>\n", .{
+                Output.pretty("<d>{s} @{f}<r>\n", .{
                     strings.withoutTrailingSlash(this.cwd),
                     resolution.fmt(resolution_buf, .posix),
                 });

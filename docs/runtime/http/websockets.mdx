@@ -212,6 +212,9 @@ const server = Bun.serve({
       // this is a group chat
       // so the server re-broadcasts incoming message to everyone
       server.publish("the-group-chat", `${ws.data.username}: ${message}`);
+
+      // inspect current subscriptions
+      console.log(ws.subscriptions); // ["the-group-chat"]
     },
     close(ws) {
       const msg = `${ws.data.username} has left the chat`;
@@ -393,6 +396,7 @@ interface ServerWebSocket {
   readonly data: any;
   readonly readyState: number;
   readonly remoteAddress: string;
+  readonly subscriptions: string[];
   send(message: string | ArrayBuffer | Uint8Array, compress?: boolean): number;
   close(code?: number, reason?: string): void;
   subscribe(topic: string): void;

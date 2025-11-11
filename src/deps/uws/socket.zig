@@ -299,16 +299,25 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             if (comptime is_ssl) {
                 if (socket.getNativeHandle(is_ssl)) |handle| {
                     const ssl_ptr: *BoringSSL.SSL = @as(*BoringSSL.SSL, @ptrCast(handle));
-                    return bun.FileDescriptor.fromNative(BoringSSL.SSL_get_fd(ssl_ptr));
+                    const fd_value = BoringSSL.SSL_get_fd(ssl_ptr);
+                    if (fd_value == -1) {
+                        return bun.invalid_fd;
+                    }
+                    return if (Environment.isWindows)
+                        .fromNative(@ptrFromInt(fd_value))
+                    else
+                        .fromNative(fd_value);
                 }
                 return bun.invalid_fd;
             }
-
-            // on windows uSockets exposes SOCKET
-            return if (comptime Environment.isWindows)
-                .fromNative(@ptrCast(socket.getNativeHandle(is_ssl).?))
-            else
-                .fromNative(@intCast(@intFromPtr(socket.getNativeHandle(is_ssl))));
+            if (socket.getNativeHandle(is_ssl)) |handle| {
+                // on windows uSockets exposes SOCKET
+                return if (comptime Environment.isWindows)
+                    .fromNative(@ptrCast(handle))
+                else
+                    .fromNative(@intCast(@intFromPtr(handle)));
+            }
+            return bun.invalid_fd;
         }
 
         pub fn markNeedsMoreForSendfile(this: ThisSocket) void {

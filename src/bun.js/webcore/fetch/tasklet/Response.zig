@@ -42,12 +42,16 @@ pub const Flags = packed struct(u8) {
     _padding: u5 = 0,
 };
 
+fn parent(this: *Response) *FetchTasklet {
+    return @fieldParentPtr("response", this);
+}
+
 pub fn onReadableStreamAvailable(ctx: *anyopaque, globalThis: *jsc.JSGlobalObject, readable: jsc.WebCore.ReadableStream) void {
     const this = bun.cast(*FetchTasklet, ctx);
     this.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis);
 }
 
-pub fn checkServerIdentity(this: *Response, certificate_info: http.CertificateInfo) bool {
+pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: http.CertificateInfo) bool {
     if (this.check_server_identity.get()) |check_server_identity| {
         check_server_identity.ensureStillAlive();
         if (certificate_info.cert.len > 0) {
@@ -340,14 +344,15 @@ fn toBodyValue(this: *Response) Body.Value {
 
 pub fn ignoreRemainingResponseBody(this: *Response) void {
     log("ignoreRemainingResponseBody", .{});
+    const tasklet = this.parent();
     // enabling streaming will make the http thread to drain into the main thread (aka stop buffering)
     // without a stream ref, response body or response instance alive it will just ignore the result
-    if (this.http) |http_| {
+    if (tasklet.http) |http_| {
         http_.enableResponseBodyStreaming();
     }
     // we should not keep the process alive if we are ignoring the body
-    const vm = this.javascript_vm;
-    this.poll_ref.unref(vm);
+    const vm = tasklet.javascript_vm;
+    tasklet.poll_ref.unref(vm);
     // clean any remaining refereces
     this.readable_stream_ref.deinit();
     this.response.deinit();
@@ -357,7 +362,7 @@ pub fn ignoreRemainingResponseBody(this: *Response) void {
         this.native_response = null;
     }
 
-    this.ignore_data = true;
+    this.flags.ignore_data = true;
 }
 
 fn toResponse(this: *Response) Response {

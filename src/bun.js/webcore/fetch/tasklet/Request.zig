@@ -139,7 +139,7 @@ pub fn deinit(this: *FetchTaskletRequest) void {
     }
 }
 
-const HTTPRequestBody = @import("HTTPRequestBody.zig").HTTPRequestBody;
+const HTTPRequestBody = @import("./HTTPRequestBody.zig").HTTPRequestBody;
 const std = @import("std");
 const bun = @import("bun");
 const jsc = bun.jsc;

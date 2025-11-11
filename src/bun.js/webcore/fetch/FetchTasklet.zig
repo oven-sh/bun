@@ -258,8 +258,10 @@ fn clearData(this: *FetchTasklet) void {
     this.response.readable_stream_ref.deinit();
 
     this.response.scheduled_response_buffer.deinit();
-    if (this.request_body != .ReadableStream or this.is_waiting_request_stream_start) {
-        this.request_body.detach();
+    if (this.request.request_body) |*request_body| {
+        if (request_body.* != .ReadableStream or this.request.is_waiting_request_stream_start) {
+            request_body.detach();
+        }
     }
 
     this.abort_reason.deinit();
@@ -522,8 +524,10 @@ pub fn get(
 
     fetch_tasklet.tracker.didSchedule(globalThis);
 
-    if (fetch_tasklet.request.request_body.store()) |store| {
-        store.ref();
+    if (fetch_tasklet.request.request_body) |*request_body| {
+        if (request_body.store()) |store| {
+            store.ref();
+        }
     }
 
     var proxy: ?ZigURL = null;
@@ -535,10 +539,10 @@ pub fn get(
         proxy = jsc_vm.transpiler.env.getHttpProxyFor(fetch_options.url);
     }
 
-    if (fetch_tasklet.check_server_identity.has() and fetch_tasklet.reject_unauthorized) {
-        fetch_tasklet.signal_store.cert_errors.store(true, .monotonic);
+    if (fetch_tasklet.response.check_server_identity.has() and fetch_tasklet.response.flags.reject_unauthorized) {
+        fetch_tasklet.shared.signal_store.cert_errors.store(true, .monotonic);
     } else {
-        fetch_tasklet.signals.cert_errors = null;
+        fetch_tasklet.shared.signals.cert_errors = null;
     }
 
     // This task gets queued on the HTTP thread.
@@ -548,8 +552,8 @@ pub fn get(
         fetch_options.url,
         fetch_options.headers.entries,
         fetch_options.headers.buf.items,
-        &fetch_tasklet.response_buffer,
-        fetch_tasklet.request_body.slice(),
+        &fetch_tasklet.shared.response_buffer,
+        fetch_tasklet.request.request_body.?.slice(),
         bun.http.HTTPClientResult.Callback.New(
             *FetchTasklet,
             // handles response events (on headers, on body, etc.)

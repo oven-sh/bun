@@ -267,7 +267,9 @@ export default [
         fn: "unref",
         length: 0,
       },
-
+      fd: {
+        getter: "getFD",
+      },
       port: {
         getter: "getPort",
       },

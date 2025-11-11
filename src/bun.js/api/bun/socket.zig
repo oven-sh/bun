@@ -1358,7 +1358,10 @@ pub fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn getFD(this: *This, globalObject: *jsc.JSGlobalObject) JSValue {
-            return this.socket.fd().toJS(globalObject);
+            if (this.socket.fd().unwrapValid()) |fd| {
+                return fd.toJS(globalObject);
+            }
+            return jsc.JSValue.jsNumber(-1);
         }
 
         pub fn getBytesWritten(this: *This, _: *jsc.JSGlobalObject) JSValue {

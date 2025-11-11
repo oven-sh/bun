@@ -1366,6 +1366,7 @@ pub export fn napi_internal_suppress_crash_on_abort_if_desired() void {
 }
 
 extern fn napi_internal_remove_finalizer(env: napi_env, fun: napi_finalize, hint: ?*anyopaque, data: ?*anyopaque) callconv(.C) void;
+extern fn NapiEnv__canRunFinalizer(*NapiEnv) bool;
 
 pub const Finalizer = struct {
     env: NapiEnv.Ref,
@@ -1375,6 +1376,14 @@ pub const Finalizer = struct {
 
     pub fn run(this: *Finalizer) void {
         const env = this.env.get();
+
+        // Safety check: Ensure the env is still valid before running the finalizer.
+        // This prevents crashes when finalizers are enqueued but the NapiEnv is being
+        // torn down (e.g., when a subprocess using NAPI modules is terminating).
+        if (!NapiEnv__canRunFinalizer(env)) {
+            return;
+        }
+
         const handle_scope = NapiHandleScope.open(env, false);
         defer if (handle_scope) |scope| scope.close(env);
 

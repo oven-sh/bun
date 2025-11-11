@@ -2970,4 +2970,10 @@ extern "C" void NapiEnv__deref(napi_env env)
     env->deref();
 }
 
+extern "C" bool NapiEnv__canRunFinalizer(napi_env env)
+{
+    // Check if the global object is still valid and VM is not terminating
+    return env && env->globalObject() && !env->isVMTerminating();
+}
+
 }

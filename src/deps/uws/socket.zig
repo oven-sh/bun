@@ -304,7 +304,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         return bun.invalid_fd;
                     }
                     return if (Environment.isWindows)
-                        .fromNative(@ptrFromInt(fd_value))
+                        .fromNative(@ptrFromInt(@as(usize, @intCast(fd_value))))
                     else
                         .fromNative(fd_value);
                 }

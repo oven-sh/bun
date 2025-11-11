@@ -142,6 +142,24 @@ optionx(TMP_PATH FILEPATH "The path to the temporary directory" DEFAULT ${BUILD_
 
 # --- Helper functions ---
 
+# list_filter_out_regex()
+#
+# Description:
+#   Filters out elements from a list that match a regex pattern.
+#
+# Arguments:
+#   list - The list of strings to traverse
+#   pattern - The regex pattern to filter out
+#   touched - A variable to set if any items were removed
+function(list_filter_out_regex list pattern touched)
+  foreach(line list)
+    if(line MATCHES "^${variable}=")
+      list(REMOVE_ITEM list ${line})
+      set(touched ON PARENT_SCOPE)
+    endif()
+  endforeach()
+endfunction()
+
 # setenv()
 # Description:
 #   Sets an environment variable during the build step, and writes it to a .env file.
@@ -161,13 +179,7 @@ function(setenv variable value)
 
   if(EXISTS ${ENV_PATH})
     file(STRINGS ${ENV_PATH} ENV_FILE ENCODING UTF-8)
-
-    foreach(line ${ENV_FILE})
-      if(line MATCHES "^${variable}=")
-        list(REMOVE_ITEM ENV_FILE ${line})
-        set(ENV_MODIFIED ON)
-      endif()
-    endforeach()
+    list_filter_out_regex(ENV_FILE "^${variable}=" ENV_MODIFIED)
 
     if(ENV_MODIFIED)
       list(APPEND ENV_FILE "${variable}=${value}")
@@ -197,13 +209,7 @@ function(unsetenv variable)
   endif()
 
   file(STRINGS ${ENV_PATH} ENV_FILE ENCODING UTF-8)
-
-  foreach(line ${ENV_FILE})
-    if(line MATCHES "^${variable}=")
-      list(REMOVE_ITEM ENV_FILE ${line})
-      set(ENV_MODIFIED ON)
-    endif()
-  endforeach()
+  list_filter_out_regex(ENV_FILE "^${variable}=" ENV_MODIFIED)
 
   if(ENV_MODIFIED)
     list(JOIN ENV_FILE "\n" ENV_FILE)

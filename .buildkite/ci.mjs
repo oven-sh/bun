@@ -579,7 +579,8 @@ function getTestBunStep(platform, options, testOptions = {}) {
 
   const depends = [];
   if (!buildId) {
-    depends.push(`${getTargetKey(platform)}-build-bun`);
+    const build_platform = profile === "lsan" ? { ...platform, profile: "asan" } : platform;
+    depends.push(`${getTargetKey(build_platform)}-build-bun`);
   }
 
   return {

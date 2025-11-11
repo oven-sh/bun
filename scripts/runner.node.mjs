@@ -1950,8 +1950,9 @@ async function getExecPathFromBuildKite(target, buildId) {
   mkdirSync(releasePath, { recursive: true });
 
   let zipPath;
+  const build_target = target.includes("-lsan-") ? target.replace("-lsan-", "-asan-") : target;
   downloadLoop: for (let i = 0; i < 10; i++) {
-    const args = ["artifact", "download", "**", releasePath, "--step", target];
+    const args = ["artifact", "download", "**", releasePath, "--step", build_target];
     if (buildId) {
       args.push("--build", buildId);
     }
@@ -1972,12 +1973,12 @@ async function getExecPathFromBuildKite(target, buildId) {
       break downloadLoop;
     }
 
-    console.warn(`Waiting for ${target}.zip to be available...`);
-    await new Promise(resolve => setTimeout(resolve, i * 1000));
+    console.warn(`Waiting for ${build_target}.zip to be available...`);
+    await new Promise(resolve => setTimeout(resolve, (i + 1) * 1000));
   }
 
   if (!zipPath) {
-    throw new Error(`Could not find ${target}.zip from Buildkite: ${releasePath}`);
+    throw new Error(`Could not find ${build_target}.zip from Buildkite: ${releasePath}`);
   }
 
   await unzip(zipPath, releasePath);

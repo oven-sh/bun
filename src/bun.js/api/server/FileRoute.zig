@@ -452,7 +452,7 @@ const StreamTransfer = struct {
     }
 
     pub fn onReaderError(this: *StreamTransfer, err: bun.sys.Error) void {
-        log("onReaderError {any}", .{err});
+        log("onReaderError {f}", .{err});
         defer this.deref(); // deref the ref because reader is done
 
         if (!this.state.has_ended_response) {

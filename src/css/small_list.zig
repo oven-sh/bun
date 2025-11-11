@@ -646,6 +646,8 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                     return new;
             }
         }
+
+        pub const looksLikeContainerTypeSmallList = T;
     };
 }
 

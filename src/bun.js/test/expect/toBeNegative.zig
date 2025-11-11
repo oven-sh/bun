@@ -23,11 +23,11 @@ pub fn toBeNegative(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Call
 
     if (not) {
         const signature = comptime getSignature("toBeNegative", "", true);
-        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{f}<r>\n", .{received});
     }
 
     const signature = comptime getSignature("toBeNegative", "", false);
-    return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
+    return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{f}<r>\n", .{received});
 }
 
 const bun = @import("bun");

@@ -981,7 +981,7 @@ pub const SystemErrno = enum(u16) {
                     }
                 }
                 if (comptime bun.Environment.allow_assert)
-                    bun.Output.debugWarn("Unknown error code: {any}\n", .{code});
+                    bun.Output.debugWarn("Unknown error code: {d}\n", .{code});
 
                 return null;
             }

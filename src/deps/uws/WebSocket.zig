@@ -33,7 +33,7 @@ pub fn NewWebSocket(comptime ssl_flag: c_int) type {
         pub fn cork(this: *WebSocket, ctx: anytype, comptime callback: anytype) void {
             const ContextType = @TypeOf(ctx);
             const Wrapper = struct {
-                pub fn wrap(user_data: ?*anyopaque) callconv(.C) void {
+                pub fn wrap(user_data: ?*anyopaque) callconv(.c) void {
                     @call(bun.callmod_inline, callback, .{bun.cast(ContextType, user_data.?)});
                 }
             };
@@ -137,7 +137,7 @@ pub const AnyWebSocket = union(enum) {
     pub fn cork(this: AnyWebSocket, ctx: anytype, comptime callback: anytype) void {
         const ContextType = @TypeOf(ctx);
         const Wrapper = struct {
-            pub fn wrap(user_data: ?*anyopaque) callconv(.C) void {
+            pub fn wrap(user_data: ?*anyopaque) callconv(.c) void {
                 @call(bun.callmod_inline, callback, .{bun.cast(ContextType, user_data.?)});
             }
         };
@@ -172,7 +172,7 @@ pub const AnyWebSocket = union(enum) {
         };
     }
     // pub fn iterateTopics(this: AnyWebSocket) {
-    //     return uws_ws_iterate_topics(ssl_flag, this.raw(), callback: ?*const fn ([*c]const u8, usize, ?*anyopaque) callconv(.C) void, user_data: ?*anyopaque) void;
+    //     return uws_ws_iterate_topics(ssl_flag, this.raw(), callback: ?*const fn ([*c]const u8, usize, ?*anyopaque) callconv(.c) void, user_data: ?*anyopaque) void;
     // }
     pub fn publish(this: AnyWebSocket, topic: []const u8, message: []const u8, opcode: Opcode, compress: bool) bool {
         return switch (this) {
@@ -231,7 +231,7 @@ pub const WebSocketBehavior = extern struct {
 
             const active_field_name = if (is_ssl) "ssl" else "tcp";
 
-            pub fn onOpen(raw_ws: *RawWebSocket) callconv(.C) void {
+            pub fn onOpen(raw_ws: *RawWebSocket) callconv(.c) void {
                 const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
                 @call(bun.callmod_inline, Type.onOpen, .{
@@ -240,7 +240,7 @@ pub const WebSocketBehavior = extern struct {
                 });
             }
 
-            pub fn onMessage(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize, opcode: Opcode) callconv(.C) void {
+            pub fn onMessage(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize, opcode: Opcode) callconv(.c) void {
                 const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
                 @call(bun.callmod_inline, Type.onMessage, .{
@@ -251,7 +251,7 @@ pub const WebSocketBehavior = extern struct {
                 });
             }
 
-            pub fn onDrain(raw_ws: *RawWebSocket) callconv(.C) void {
+            pub fn onDrain(raw_ws: *RawWebSocket) callconv(.c) void {
                 const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
                 @call(bun.callmod_inline, Type.onDrain, .{
@@ -260,7 +260,7 @@ pub const WebSocketBehavior = extern struct {
                 });
             }
 
-            pub fn onPing(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
+            pub fn onPing(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.c) void {
                 const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
                 @call(bun.callmod_inline, Type.onPing, .{
@@ -270,7 +270,7 @@ pub const WebSocketBehavior = extern struct {
                 });
             }
 
-            pub fn onPong(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.C) void {
+            pub fn onPong(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize) callconv(.c) void {
                 const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
                 @call(bun.callmod_inline, Type.onPong, .{
@@ -280,7 +280,7 @@ pub const WebSocketBehavior = extern struct {
                 });
             }
 
-            pub fn onClose(raw_ws: *RawWebSocket, code: i32, message: [*c]const u8, length: usize) callconv(.C) void {
+            pub fn onClose(raw_ws: *RawWebSocket, code: i32, message: [*c]const u8, length: usize) callconv(.c) void {
                 const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
                 @call(bun.callmod_inline, Type.onClose, .{
@@ -291,7 +291,7 @@ pub const WebSocketBehavior = extern struct {
                 });
             }
 
-            pub fn onUpgrade(ptr: *anyopaque, res: *uws_res, req: *Request, context: *uws.SocketContext, id: usize) callconv(.C) void {
+            pub fn onUpgrade(ptr: *anyopaque, res: *uws_res, req: *Request, context: *uws.SocketContext, id: usize) callconv(.c) void {
                 @call(bun.callmod_inline, Server.onWebSocketUpgrade, .{
                     bun.cast(*Server, ptr),
                     @as(*NewApp(is_ssl).Response, @ptrCast(res)),
@@ -323,11 +323,11 @@ pub const WebSocketBehavior = extern struct {
         };
     }
 
-    const uws_websocket_handler = ?*const fn (*RawWebSocket) callconv(.C) void;
-    const uws_websocket_message_handler = ?*const fn (*RawWebSocket, [*c]const u8, usize, Opcode) callconv(.C) void;
-    const uws_websocket_close_handler = ?*const fn (*RawWebSocket, i32, [*c]const u8, usize) callconv(.C) void;
-    const uws_websocket_upgrade_handler = ?*const fn (*anyopaque, *uws_res, *Request, *SocketContext, usize) callconv(.C) void;
-    const uws_websocket_ping_pong_handler = ?*const fn (*RawWebSocket, [*c]const u8, usize) callconv(.C) void;
+    const uws_websocket_handler = ?*const fn (*RawWebSocket) callconv(.c) void;
+    const uws_websocket_message_handler = ?*const fn (*RawWebSocket, [*c]const u8, usize, Opcode) callconv(.c) void;
+    const uws_websocket_close_handler = ?*const fn (*RawWebSocket, i32, [*c]const u8, usize) callconv(.c) void;
+    const uws_websocket_upgrade_handler = ?*const fn (*anyopaque, *uws_res, *Request, *SocketContext, usize) callconv(.c) void;
+    const uws_websocket_ping_pong_handler = ?*const fn (*RawWebSocket, [*c]const u8, usize) callconv(.c) void;
 };
 
 pub const c = struct {
@@ -342,11 +342,11 @@ pub const c = struct {
     pub extern fn uws_ws_send_first_fragment_with_opcode(ssl: i32, ws: ?*RawWebSocket, message: [*c]const u8, length: usize, opcode: Opcode, compress: bool) SendStatus;
     pub extern fn uws_ws_send_last_fragment(ssl: i32, ws: ?*RawWebSocket, message: [*c]const u8, length: usize, compress: bool) SendStatus;
     pub extern fn uws_ws_end(ssl: i32, ws: ?*RawWebSocket, code: i32, message: [*c]const u8, length: usize) void;
-    pub extern fn uws_ws_cork(ssl: i32, ws: ?*RawWebSocket, handler: ?*const fn (?*anyopaque) callconv(.C) void, user_data: ?*anyopaque) void;
+    pub extern fn uws_ws_cork(ssl: i32, ws: ?*RawWebSocket, handler: ?*const fn (?*anyopaque) callconv(.c) void, user_data: ?*anyopaque) void;
     pub extern fn uws_ws_subscribe(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, length: usize) bool;
     pub extern fn uws_ws_unsubscribe(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, length: usize) bool;
     pub extern fn uws_ws_is_subscribed(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, length: usize) bool;
-    pub extern fn uws_ws_iterate_topics(ssl: i32, ws: ?*RawWebSocket, callback: ?*const fn ([*c]const u8, usize, ?*anyopaque) callconv(.C) void, user_data: ?*anyopaque) void;
+    pub extern fn uws_ws_iterate_topics(ssl: i32, ws: ?*RawWebSocket, callback: ?*const fn ([*c]const u8, usize, ?*anyopaque) callconv(.c) void, user_data: ?*anyopaque) void;
     pub extern fn uws_ws_get_topics_as_js_array(ssl: i32, ws: *RawWebSocket, globalObject: *JSGlobalObject) JSValue;
     pub extern fn uws_ws_publish(ssl: i32, ws: ?*RawWebSocket, topic: [*]const u8, topic_length: usize, message: [*]const u8, message_length: usize) bool;
     pub extern fn uws_ws_publish_with_options(ssl: i32, ws: ?*RawWebSocket, topic: [*c]const u8, topic_length: usize, message: [*c]const u8, message_length: usize, opcode: Opcode, compress: bool) bool;

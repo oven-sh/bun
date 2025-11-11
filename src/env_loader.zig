@@ -380,20 +380,23 @@ pub const Loader = struct {
             if (key_buf_len > 0) {
                 iter.reset();
                 key_buf = try allocator.alloc(u8, key_buf_len + key_count * "process.env.".len);
+                var key_writer = std.Io.Writer.fixed(key_buf);
                 const js_ast = bun.ast;
 
                 var e_strings = try allocator.alloc(js_ast.E.String, e_strings_to_allocate * 2);
                 errdefer allocator.free(e_strings);
                 errdefer allocator.free(key_buf);
-                var key_fixed_allocator = std.heap.FixedBufferAllocator.init(key_buf);
-                const key_allocator = key_fixed_allocator.allocator();
 
                 if (behavior == .prefix) {
                     while (iter.next()) |entry| {
                         const value: string = entry.value_ptr.value;
 
                         if (strings.startsWith(entry.key_ptr.*, prefix)) {
-                            const key_str = try std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*});
+                            key_writer.print("process.env.{s}", .{entry.key_ptr.*}) catch |err| switch (err) {
+                                error.WriteFailed => unreachable, // miscalculated length of key_buf above
+                            };
+                            const key_str = key_writer.buffered();
+                            key_writer = std.Io.Writer.fixed(key_writer.unusedCapacitySlice());
 
                             e_strings[0] = js_ast.E.String{
                                 .data = if (value.len > 0)
@@ -442,7 +445,12 @@ pub const Loader = struct {
                 } else {
                     while (iter.next()) |entry| {
                         const value: string = entry.value_ptr.value;
-                        const key = try std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*});
+
+                        key_writer.print("process.env.{s}", .{entry.key_ptr.*}) catch |err| switch (err) {
+                            error.WriteFailed => unreachable, // miscalculated length of key_buf above
+                        };
+                        const key_str = key_writer.buffered();
+                        key_writer = std.Io.Writer.fixed(key_writer.unusedCapacitySlice());
 
                         e_strings[0] = js_ast.E.String{
                             .data = if (entry.value_ptr.value.len > 0)
@@ -454,7 +462,7 @@ pub const Loader = struct {
                         const expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
 
                         _ = try to_string.getOrPutValue(
-                            key,
+                            key_str,
                             .init(.{
                                 .can_be_removed_if_unused = true,
                                 .call_can_be_unwrapped_if_unused = .if_unused,
@@ -508,7 +516,7 @@ pub const Loader = struct {
     // mostly for tests
     pub fn loadFromString(this: *Loader, str: string, comptime overwrite: bool, comptime expand: bool) OOM!void {
         const source = &logger.Source.initPathString("test", str);
-        var value_buffer = std.ArrayList(u8).init(this.allocator);
+        var value_buffer = std.array_list.Managed(u8).init(this.allocator);
         defer value_buffer.deinit();
         try Parser.parse(source, this.allocator, this.map, &value_buffer, overwrite, false, expand);
         std.mem.doNotOptimizeAway(&source);
@@ -525,7 +533,7 @@ pub const Loader = struct {
 
         // Create a reusable buffer with stack fallback for parsing multiple files
         var stack_fallback = std.heap.stackFallback(4096, this.allocator);
-        var value_buffer = std.ArrayList(u8).init(stack_fallback.get());
+        var value_buffer = std.array_list.Managed(u8).init(stack_fallback.get());
         defer value_buffer.deinit();
 
         if (env_files.len > 0) {
@@ -548,7 +556,7 @@ pub const Loader = struct {
     fn loadExplicitFiles(
         this: *Loader,
         env_files: []const []const u8,
-        value_buffer: *std.ArrayList(u8),
+        value_buffer: *std.array_list.Managed(u8),
     ) !void {
         // iterate backwards, so the latest entry in the latest arg instance assumes the highest priority
         var i: usize = env_files.len;
@@ -574,7 +582,7 @@ pub const Loader = struct {
         this: *Loader,
         dir: *Fs.FileSystem.DirEntry,
         comptime suffix: DotEnvFileSuffix,
-        value_buffer: *std.ArrayList(u8),
+        value_buffer: *std.array_list.Managed(u8),
     ) !void {
         const dir_handle: std.fs.Dir = std.fs.cwd();
 
@@ -703,7 +711,7 @@ pub const Loader = struct {
         dir: std.fs.Dir,
         comptime base: string,
         comptime override: bool,
-        value_buffer: *std.ArrayList(u8),
+        value_buffer: *std.array_list.Managed(u8),
     ) !void {
         if (@field(this, base) != null) {
             return;
@@ -792,7 +800,7 @@ pub const Loader = struct {
         this: *Loader,
         file_path: []const u8,
         comptime override: bool,
-        value_buffer: *std.ArrayList(u8),
+        value_buffer: *std.array_list.Managed(u8),
     ) !void {
         if (this.custom_files_loaded.contains(file_path)) {
             return;
@@ -865,7 +873,7 @@ pub const Loader = struct {
 const Parser = struct {
     pos: usize = 0,
     src: string,
-    value_buffer: *std.ArrayList(u8),
+    value_buffer: *std.array_list.Managed(u8),
 
     const whitespace_chars = "\t\x0B\x0C \xA0\n\r";
 
@@ -1110,7 +1118,7 @@ const Parser = struct {
         source: *const logger.Source,
         allocator: std.mem.Allocator,
         map: *Map,
-        value_buffer: *std.ArrayList(u8),
+        value_buffer: *std.array_list.Managed(u8),
         comptime override: bool,
         comptime is_process: bool,
         comptime expand: bool,

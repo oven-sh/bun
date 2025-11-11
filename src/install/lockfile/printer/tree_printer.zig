@@ -180,9 +180,9 @@ fn printUpdatedPackage(
 
     const fmt = comptime brk: {
         if (enable_ansi_colors) {
-            break :brk Output.prettyFmt("<r><cyan>↑<r> <b>{s}<r><d> <b>{} →<r> <b><cyan>{}<r>\n", enable_ansi_colors);
+            break :brk Output.prettyFmt("<r><cyan>↑<r> <b>{s}<r><d> <b>{f} →<r> <b><cyan>{f}<r>\n", enable_ansi_colors);
         }
-        break :brk Output.prettyFmt("<r>^ <b>{s}<r><d> <b>{} -\\><r> <b>{}<r>\n", enable_ansi_colors);
+        break :brk Output.prettyFmt("<r>^ <b>{s}<r><d> <b>{f} -\\><r> <b>{f}<r>\n", enable_ansi_colors);
     };
 
     try writer.print(
@@ -213,9 +213,9 @@ fn printInstalledPackage(
     if (manager.formatLaterVersionInCache(package_name, dependency.name_hash, resolution)) |later_version_fmt| {
         const fmt = comptime brk: {
             if (enable_ansi_colors) {
-                break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{}<r> <d>(<blue>v{} available<r><d>)<r>\n", enable_ansi_colors);
+                break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{f}<r> <d>(<blue>v{f} available<r><d>)<r>\n", enable_ansi_colors);
             } else {
-                break :brk Output.prettyFmt("<r>+ {s}<r><d>@{}<r> <d>(v{} available)<r>\n", enable_ansi_colors);
+                break :brk Output.prettyFmt("<r>+ {s}<r><d>@{f}<r> <d>(v{f} available)<r>\n", enable_ansi_colors);
             }
         };
         try writer.print(
@@ -232,9 +232,9 @@ fn printInstalledPackage(
 
     const fmt = comptime brk: {
         if (enable_ansi_colors) {
-            break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
+            break :brk Output.prettyFmt("<r><green>+<r> <b>{s}<r><d>@{f}<r>\n", enable_ansi_colors);
         } else {
-            break :brk Output.prettyFmt("<r>+ {s}<r><d>@{}<r>\n", enable_ansi_colors);
+            break :brk Output.prettyFmt("<r>+ {s}<r><d>@{f}<r>\n", enable_ansi_colors);
         }
     };
 
@@ -372,7 +372,7 @@ pub fn print(
             }
 
             try writer.print(
-                comptime Output.prettyFmt(" <r><b>{s}<r><d>@<b>{}<r>\n", enable_ansi_colors),
+                comptime Output.prettyFmt(" <r><b>{s}<r><d>@<b>{f}<r>\n", enable_ansi_colors),
                 .{
                     package_name,
                     resolved[package_id].fmt(string_buf, .auto),
@@ -402,7 +402,7 @@ pub fn print(
             .none, .dir => {
                 printed_installed_update_request = true;
 
-                const fmt = comptime Output.prettyFmt("<r><green>installed<r> <b>{s}<r><d>@{}<r>\n", enable_ansi_colors);
+                const fmt = comptime Output.prettyFmt("<r><green>installed<r> <b>{s}<r><d>@{f}<r>\n", enable_ansi_colors);
 
                 try writer.print(
                     fmt,
@@ -423,7 +423,7 @@ pub fn print(
                 };
 
                 {
-                    const fmt = comptime Output.prettyFmt("<r><green>installed<r> {s}<r><d>@{}<r> with binaries:\n", enable_ansi_colors);
+                    const fmt = comptime Output.prettyFmt("<r><green>installed<r> {s}<r><d>@{f}<r> with binaries:\n", enable_ansi_colors);
 
                     try writer.print(
                         fmt,

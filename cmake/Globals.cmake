@@ -185,7 +185,7 @@ endfunction()
 
 # See setenv()
 # Description:
-#   Exact oppositve of setenv().
+#   Exact opposite of setenv().
 # Arguments:
 #   variable string - The variable to unset.
 # See Also:

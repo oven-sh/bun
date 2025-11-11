@@ -38,7 +38,7 @@ class CacheConfig {
           args.#region = process.argv[++i];
           break;
         default:
-          throw new Error(`Unknown argument: ${process.argv[i]}`);
+          exitWithHelp(`Unknown argument: ${process.argv[i]}`);
       }
     }
 

@@ -295,4 +295,83 @@ import path from "path";
     expect(fs.existsSync(path.join(temp, "src/components"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/components/ui"))).toBe(true);
   }, 30_000);
+
+  test("bun init in non-empty directory with --yes skips prompt", async () => {
+    const temp = tempDirWithFiles("bun-init-non-empty-auto-yes", {
+      "existing-file.txt": "I exist",
+    });
+
+    const { exited } = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: temp,
+      stdio: ["ignore", "inherit", "inherit"],
+      env: bunEnv,
+    });
+
+    expect(await exited).toBe(0);
+
+    // With -y flag, should proceed in current directory without prompting
+    expect(fs.existsSync(path.join(temp, "existing-file.txt"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "package.json"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(true);
+  }, 30_000);
+
+  test("bun init --react in non-empty directory skips prompt (auto-yes)", async () => {
+    const temp = tempDirWithFiles("bun-init-react-non-empty", {
+      "existing-file.txt": "I exist",
+    });
+
+    const { exited } = Bun.spawn({
+      cmd: [bunExe(), "init", "--react"],
+      cwd: temp,
+      stdio: ["ignore", "inherit", "inherit"],
+      env: bunEnv,
+    });
+
+    expect(await exited).toBe(0);
+
+    // --react flag implies auto-yes, should proceed in current directory
+    expect(fs.existsSync(path.join(temp, "existing-file.txt"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "package.json"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
+  }, 30_000);
+
+  test("bun init with explicit folder ignores non-empty directory check", async () => {
+    const temp = tempDirWithFiles("bun-init-explicit-folder", {
+      "existing-file.txt": "I exist",
+    });
+
+    const { exited } = Bun.spawn({
+      cmd: [bunExe(), "init", "-y", "new-folder"],
+      cwd: temp,
+      stdio: ["ignore", "inherit", "inherit"],
+      env: bunEnv,
+    });
+
+    expect(await exited).toBe(0);
+
+    // Should create in specified folder without prompting
+    expect(fs.existsSync(path.join(temp, "existing-file.txt"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "new-folder"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "new-folder/package.json"))).toBe(true);
+  }, 30_000);
+
+  test("bun init in directory with only .DS_Store is considered empty", async () => {
+    const temp = tempDirWithFiles("bun-init-only-ds-store", {
+      ".DS_Store": "macOS metadata",
+    });
+
+    const { exited } = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: temp,
+      stdio: ["ignore", "inherit", "inherit"],
+      env: bunEnv,
+    });
+
+    expect(await exited).toBe(0);
+
+    // Should proceed without prompting since .DS_Store is ignored
+    expect(fs.existsSync(path.join(temp, "package.json"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(true);
+  }, 30_000);
 });

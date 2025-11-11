@@ -339,6 +339,72 @@ pub const InitCommand = struct {
         private: bool = true,
     };
 
+    fn isDirectoryEmpty() bool {
+        var dir = std.fs.cwd().openDir(".", .{ .iterate = true }) catch return true;
+        defer dir.close();
+        var it = bun.DirIterator.iterate(.fromStdDir(dir), .u8);
+        while (it.next().unwrap() catch return true) |entry| {
+            const name = entry.name.slice();
+            // Ignore common hidden files that don't count as "project files"
+            if (strings.eqlComptime(name, ".") or
+                strings.eqlComptime(name, "..") or
+                strings.eqlComptime(name, ".DS_Store") or
+                strings.eqlComptime(name, "Thumbs.db"))
+            {
+                continue;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    fn promptForNonEmptyDirectory(alloc: std.mem.Allocator) !?[]const u8 {
+        Output.prettyln("<r><yellow>⚠<r>  The current directory is not empty.", .{});
+        Output.flush();
+
+        const selected = try radio("What would you like to do?", enum {
+            create_subdirectory,
+            use_current,
+            cancel,
+
+            pub const default: @This() = .create_subdirectory;
+
+            pub fn fmt(self: @This()) []const u8 {
+                return switch (self) {
+                    .create_subdirectory => "<cyan>Create in a new subdirectory<r>",
+                    .use_current => "<yellow>Use current directory (may overwrite files)<r>",
+                    .cancel => "<red>Cancel<r>",
+                };
+            }
+        });
+
+        switch (selected) {
+            .create_subdirectory => {
+                const folder_name = prompt(
+                    alloc,
+                    "<r><cyan>subdirectory name<r> ",
+                    "my-app",
+                ) catch |err| {
+                    if (err == error.EndOfStream) return null;
+                    return err;
+                };
+
+                if (folder_name.len == 0) {
+                    Output.prettyErrorln("Subdirectory name cannot be empty", .{});
+                    return null;
+                }
+
+                return folder_name;
+            },
+            .use_current => {
+                return "";
+            },
+            .cancel => {
+                return null;
+            },
+        }
+    }
+
     pub fn exec(alloc: std.mem.Allocator, init_args: [][:0]const u8) !void {
         // --minimal is a special preset to create only empty package.json + tsconfig.json
         var minimal = false;
@@ -383,6 +449,34 @@ pub const InitCommand = struct {
                     initialize_in_folder = arg;
                 } else {
                     // invalid positional; ignore
+                }
+            }
+        }
+
+        // Check if directory is non-empty and we're in a TTY environment
+        // Only prompt if no folder was explicitly specified and stdin is a TTY
+        const stdin_is_tty = std.posix.isatty(bun.FD.stdin().native());
+
+        if (initialize_in_folder == null and !auto_yes and Output.enable_ansi_colors_stderr and stdin_is_tty) {
+            if (!isDirectoryEmpty()) {
+                const result = promptForNonEmptyDirectory(alloc) catch |err| {
+                    if (err == error.EndOfStream) {
+                        Output.prettyln("<r><d>Cancelled.<r>", .{});
+                        Global.exit(0);
+                    }
+                    return err;
+                };
+
+                if (result) |folder| {
+                    if (folder.len > 0) {
+                        // User wants to create a subdirectory
+                        initialize_in_folder = folder;
+                    }
+                    // else: folder.len == 0 means use current directory
+                } else {
+                    // User cancelled
+                    Output.prettyln("<r><d>Cancelled.<r>", .{});
+                    Global.exit(0);
                 }
             }
         }

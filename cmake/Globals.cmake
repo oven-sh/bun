@@ -210,7 +210,7 @@ endfunction()
 #   setenv()
 function(unsetenv variable)
   set(ENV_PATH ${BUILD_PATH}/.env)
-  if (NOT EXISTS ${ENV_PATH})
+  if(NOT EXISTS ${ENV_PATH})
     return()
   endif()
 

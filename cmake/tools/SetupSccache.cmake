@@ -26,8 +26,6 @@ function(check_aws_credentials OUT_VAR)
       "Exit code: ${INSTALL_EXIT_CODE}\n"
       "Output: ${INSTALL_OUTPUT}\n"
       "Error: ${INSTALL_ERROR}")
-    set(${OUT_VAR} FALSE PARENT_SCOPE)
-    return()
   endif()
 
   # Check AWS credentials

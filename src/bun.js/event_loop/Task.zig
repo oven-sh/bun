@@ -196,7 +196,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
             },
             @field(Task.Tag, @typeName(FetchTasklet)) => {
                 var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
-                try fetch_task.onProgressUpdate();
+                try fetch_task.updateLifeCycle();
             },
             @field(Task.Tag, @typeName(S3HttpSimpleTask)) => {
                 var s3_task: *S3HttpSimpleTask = task.get(S3HttpSimpleTask).?;

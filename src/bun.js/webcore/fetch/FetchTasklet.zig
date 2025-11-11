@@ -43,6 +43,156 @@ pub fn deref(this: *FetchTasklet) void {
     }
 }
 
+pub fn updateLifeCycle(this: *FetchTasklet) bun.JSTerminated!void {
+    jsc.markBinding(@src());
+    log("onProgressUpdate", .{});
+    this.mutex.lock();
+    this.has_schedule_callback.store(false, .monotonic);
+    const is_done = !this.result.has_more;
+
+    const vm = this.javascript_vm;
+    // vm is shutting down we cannot touch JS
+    if (vm.isShuttingDown()) {
+        this.mutex.unlock();
+        if (is_done) {
+            this.deref();
+        }
+        return;
+    }
+
+    const globalThis = this.global_this;
+    defer {
+        this.mutex.unlock();
+        // if we are not done we wait until the next call
+        if (is_done) {
+            var poll_ref = this.poll_ref;
+            this.poll_ref = .{};
+            poll_ref.unref(vm);
+            this.deref();
+        }
+    }
+    if (this.is_waiting_request_stream_start and this.result.can_stream) {
+        // start streaming
+        this.startRequestStream();
+    }
+    // if we already respond the metadata and still need to process the body
+    if (this.is_waiting_body) {
+        try this.onBodyReceived();
+        return;
+    }
+    if (this.metadata == null and this.result.isSuccess()) return;
+
+    // if we abort because of cert error
+    // we wait the Http Client because we already have the response
+    // we just need to deinit
+    if (this.is_waiting_abort) {
+        return;
+    }
+    const promise_value = this.promise.valueOrEmpty();
+
+    if (promise_value.isEmptyOrUndefinedOrNull()) {
+        log("onProgressUpdate: promise_value is null", .{});
+        this.promise.deinit();
+        return;
+    }
+
+    if (this.result.certificate_info) |certificate_info| {
+        this.result.certificate_info = null;
+        defer certificate_info.deinit(bun.default_allocator);
+
+        // we receive some error
+        if (this.reject_unauthorized and !this.checkServerIdentity(certificate_info)) {
+            log("onProgressUpdate: aborted due certError", .{});
+            // we need to abort the request
+            const promise = promise_value.asAnyPromise().?;
+            const tracker = this.tracker;
+            var result = this.onReject();
+            defer result.deinit();
+
+            promise_value.ensureStillAlive();
+            try promise.reject(globalThis, result.toJS(globalThis));
+
+            tracker.didDispatch(globalThis);
+            this.promise.deinit();
+            return;
+        }
+        // everything ok
+        if (this.metadata == null) {
+            log("onProgressUpdate: metadata is null", .{});
+            return;
+        }
+    }
+
+    const tracker = this.tracker;
+    tracker.willDispatch(globalThis);
+    defer {
+        log("onProgressUpdate: promise_value is not null", .{});
+        tracker.didDispatch(globalThis);
+        this.promise.deinit();
+    }
+    const success = this.result.isSuccess();
+    const result = switch (success) {
+        true => jsc.Strong.Optional.create(this.onResolve(), globalThis),
+        false => brk: {
+            // in this case we wanna a jsc.Strong.Optional so we just convert it
+            var value = this.onReject();
+            const err = value.toJS(globalThis);
+            if (this.sink) |sink| {
+                sink.cancel(err);
+            }
+            break :brk value.JSValue;
+        },
+    };
+
+    promise_value.ensureStillAlive();
+    const Holder = struct {
+        held: jsc.Strong.Optional,
+        promise: jsc.Strong.Optional,
+        globalObject: *jsc.JSGlobalObject,
+        task: jsc.AnyTask,
+
+        pub fn resolve(self: *@This()) bun.JSTerminated!void {
+            // cleanup
+            defer bun.default_allocator.destroy(self);
+            defer self.held.deinit();
+            defer self.promise.deinit();
+            // resolve the promise
+            var prom = self.promise.swap().asAnyPromise().?;
+            const res = self.held.swap();
+            res.ensureStillAlive();
+            try prom.resolve(self.globalObject, res);
+        }
+
+        pub fn reject(self: *@This()) bun.JSTerminated!void {
+            // cleanup
+            defer bun.default_allocator.destroy(self);
+            defer self.held.deinit();
+            defer self.promise.deinit();
+
+            // reject the promise
+            var prom = self.promise.swap().asAnyPromise().?;
+            const res = self.held.swap();
+            res.ensureStillAlive();
+            try prom.reject(self.globalObject, res);
+        }
+    };
+    var holder = bun.handleOom(bun.default_allocator.create(Holder));
+    holder.* = .{
+        .held = result,
+        // we need the promise to be alive until the task is done
+        .promise = this.promise.strong,
+        .globalObject = globalThis,
+        .task = undefined,
+    };
+    this.promise.strong = .empty;
+    holder.task = switch (success) {
+        true => jsc.AnyTask.New(Holder, Holder.resolve).init(holder),
+        false => jsc.AnyTask.New(Holder, Holder.reject).init(holder),
+    };
+
+    vm.enqueueTask(jsc.Task.init(&holder.task));
+}
+
 pub fn derefFromThread(this: *FetchTasklet) void {
     const count = this.ref_count.fetchSub(1, .monotonic);
     bun.debugAssert(count > 0);
@@ -74,45 +224,40 @@ fn clearSink(this: *FetchTasklet) void {
 fn clearData(this: *FetchTasklet) void {
     log("clearData ", .{});
     const allocator = bun.default_allocator;
-    if (this.url_proxy_buffer.len > 0) {
-        allocator.free(this.url_proxy_buffer);
-        this.url_proxy_buffer.len = 0;
+    if (this.request.url_proxy_buffer.len > 0) {
+        allocator.free(this.request.url_proxy_buffer);
+        this.request.url_proxy_buffer.len = 0;
     }
 
-    if (this.hostname) |hostname| {
-        allocator.free(hostname);
-        this.hostname = null;
-    }
-
-    if (this.result.certificate_info) |*certificate| {
+    if (this.shared.result.certificate_info) |*certificate| {
         certificate.deinit(bun.default_allocator);
-        this.result.certificate_info = null;
+        this.shared.result.certificate_info = null;
     }
 
-    this.request_headers.entries.deinit(allocator);
-    this.request_headers.buf.deinit(allocator);
-    this.request_headers = Headers{ .allocator = undefined };
+    this.request.request_headers.entries.deinit(allocator);
+    this.request.request_headers.buf.deinit(allocator);
+    this.request.request_headers = Headers{ .allocator = undefined };
 
     if (this.http) |http_| {
         http_.clearData();
     }
 
-    if (this.metadata != null) {
-        this.metadata.?.deinit(allocator);
-        this.metadata = null;
+    if (this.request.metadata != null) {
+        this.request.metadata.?.deinit(allocator);
+        this.request.metadata = null;
     }
 
-    this.response_buffer.deinit();
+    this.shared.scheduled_response_buffer.deinit();
     this.response.deinit();
-    if (this.native_response) |response| {
-        this.native_response = null;
+    if (this.response.native_response) |response| {
+        this.response.native_response = null;
 
         response.unref();
     }
 
-    this.readable_stream_ref.deinit();
+    this.response.readable_stream_ref.deinit();
 
-    this.scheduled_response_buffer.deinit();
+    this.shared.scheduled_response_buffer.deinit();
     if (this.request_body != .ReadableStream or this.is_waiting_request_stream_start) {
         this.request_body.detach();
     }
@@ -299,7 +444,7 @@ pub fn onReject(this: *FetchTasklet) Body.Value.ValueError {
 
 export fn Bun__FetchResponse_finalize(this: *FetchTasklet) callconv(.c) void {
     log("onResponseFinalize", .{});
-    if (this.native_response) |response| {
+    if (this.response.native_response) |response| {
         const body = response.getBodyValue();
         // Three scenarios:
         //
@@ -351,40 +496,33 @@ pub fn get(
 
     fetch_tasklet.* = .{
         .mutex = .{},
-        .scheduled_response_buffer = .{
-            .allocator = bun.default_allocator,
-            .list = .{
-                .items = &.{},
-                .capacity = 0,
-            },
-        },
-        .response_buffer = MutableString{
-            .allocator = bun.default_allocator,
-            .list = .{
-                .items = &.{},
-                .capacity = 0,
-            },
-        },
+        .shared = .{},
         .http = try allocator.create(bun.http.AsyncHTTP),
         .javascript_vm = jsc_vm,
-        .request_body = fetch_options.body,
+        .request = .{
+            .request_body = fetch_options.body,
+            .request_headers = fetch_options.headers,
+            .url_proxy_buffer = fetch_options.url_proxy_buffer,
+            .hostname = fetch_options.hostname,
+        },
+        .response = .{
+            .flags = .{
+                .reject_unauthorized = fetch_options.reject_unauthorized,
+                .upgraded_connection = fetch_options.upgraded_connection,
+            },
+            .check_server_identity = fetch_options.check_server_identity,
+        },
         .global_this = globalThis,
         .promise = promise,
-        .request_headers = fetch_options.headers,
-        .url_proxy_buffer = fetch_options.url_proxy_buffer,
         .signal = fetch_options.signal,
-        .hostname = fetch_options.hostname,
         .tracker = jsc.Debugger.AsyncTaskTracker.init(jsc_vm),
-        .check_server_identity = fetch_options.check_server_identity,
-        .reject_unauthorized = fetch_options.reject_unauthorized,
-        .upgraded_connection = fetch_options.upgraded_connection,
     };
 
-    fetch_tasklet.signals = fetch_tasklet.signal_store.to();
+    fetch_tasklet.shared.signals = fetch_tasklet.shared.signal_store.to();
 
     fetch_tasklet.tracker.didSchedule(globalThis);
 
-    if (fetch_tasklet.request_body.store()) |store| {
+    if (fetch_tasklet.request.request_body.store()) |store| {
         store.ref();
     }
 
@@ -479,16 +617,16 @@ pub fn abortListener(this: *FetchTasklet, reason: JSValue) void {
     }
 }
 pub fn isAborted(this: *FetchTasklet) bool {
-    if (this.signal_store.aborted.load(.monotonic)) {
+    if (this.abort_reason.has()) {
         return true;
     }
     if (this.signal) |signal| {
         return signal.aborted();
     }
-    return false;
+    return this.shared.signal_store.aborted.load(.monotonic);
 }
 pub fn abortTask(this: *FetchTasklet) void {
-    this.signal_store.aborted.store(true, .monotonic);
+    this.shared.signal_store.aborted.store(true, .monotonic);
     this.tracker.didCancel(this.global_this);
 
     if (this.http) |http_| {

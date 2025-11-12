@@ -59,7 +59,15 @@ describe("bun", () => {
       );
     });
   });
-
+  describe("getcompletes", () => {
+    test("getcompletes should not panic and should not be empty", () => {
+      const { stdout } = spawnSync({
+        cmd: [bunExe(), "getcompletes"],
+        env: bunEnv,
+      });
+      expect(stdout.toString()).not.toBeEmpty();
+    });
+  });
   describe("test command line arguments", () => {
     test("test --config, issue #4128", () => {
       const path = `${tmpdir()}/bunfig-${Date.now()}.toml`;

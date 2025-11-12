@@ -61,10 +61,11 @@ describe("bun", () => {
   });
   describe("getcompletes", () => {
     test("getcompletes should not panic and should not be empty", () => {
-      const { stdout } = spawnSync({
+      const { stdout, exitCode } = spawnSync({
         cmd: [bunExe(), "getcompletes"],
         env: bunEnv,
       });
+      expect(exitCode).toBe(0);
       expect(stdout.toString()).not.toBeEmpty();
     });
   });

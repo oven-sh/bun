@@ -570,6 +570,24 @@ pub fn processSubtree(
 
                     for (builder.manager.nohoist_patterns) |nohoist_pattern| {
                         if (glob.match(nohoist_pattern, dep_subpath.items()).matches()) {
+                            // make sure it's not circular
+                            var curr = trees[next.id].parent;
+                            while (curr != invalid_id) {
+                                const curr_dep_id = trees[curr].dependency_id;
+                                const curr_pkg_id = switch (curr_dep_id) {
+                                    root_dep_id => 0,
+                                    else => builder.resolutions[curr_dep_id],
+                                };
+                                var curr_resolutions = builder.resolution_lists[curr_pkg_id];
+                                for (curr_resolutions.begin()..curr_resolutions.end()) |tree_dep_id| {
+                                    const res_id = builder.resolutions[tree_dep_id];
+                                    if (res_id == pkg_id) {
+                                        break :hoisted .hoisted;
+                                    }
+                                }
+
+                                curr = trees[curr].parent;
+                            }
                             break :hoisted .{ .placement = .{ .id = next.id } };
                         }
                     }

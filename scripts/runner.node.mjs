@@ -143,10 +143,6 @@ const { values: options, positionals: filters } = parseArgs({
       type: "string",
       default: undefined,
     },
-    ["retries"]: {
-      type: "string",
-      default: isCI ? "3" : "0", // N retries = N+1 attempts
-    },
     ["junit"]: {
       type: "boolean",
       default: false, // Disabled for now, because it's too much $
@@ -385,6 +381,25 @@ function getTestModifiers(testPath) {
   return modifiers.map(value => value.toUpperCase());
 }
 
+const testRetriesJson = readFileSync(join(cwd, "test/test-retries.json"), "utf-8");
+
+/** @type {Record<string, {"*"?: number, "linux"?: number, "windows"?: number, "mac"?: number, "note"?: string, "asan"?: number}>} */
+const testRetries = JSON.parse(testRetriesJson);
+
+function getDefaultTestOptionRetries(testPath, execPath) {
+  if (!isCI) return 0;
+  const record = testRetries[testPath] ?? {};
+
+  const isAsan = basename(execPath).includes("asan");
+  if (isAsan && record.asan) return record.asan;
+
+  const os = getOs();
+  if (record[os]) return record[os];
+
+  if (record["*"]) return record["*"];
+  return 1;
+}
+
 /**
  * @returns {Promise<TestResult[]>}
  */
@@ -426,7 +441,6 @@ async function runTests() {
   const flakyResultsTitles = [];
   const failedResults = [];
   const failedResultsTitles = [];
-  const maxAttempts = 1 + (parseInt(options["retries"]) || 0);
 
   const parallelism = options["parallel"] ? availableParallelism() : 1;
   console.log("parallelism", parallelism);
@@ -440,6 +454,7 @@ async function runTests() {
   const runTest = async (title, fn) => {
     const index = ++i;
 
+    const maxAttempts = 1 + getDefaultTestOptionRetries(title, execPath);
     let result, failure, flaky;
     let attempt = 1;
     for (; attempt <= maxAttempts; attempt++) {

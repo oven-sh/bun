@@ -1,0 +1,252 @@
+{
+  "test/bake/dev/stress.test.ts": {
+    "*": 8,
+    "note": ""
+  },
+  "test/cli/install/bun-install.test.ts": {
+    "*": 8,
+    "note": ""
+  },
+  "test/regression/issue/11297/11297.test.ts": {
+    "windows": 8,
+    "note": "regression introduced between 1.2.19 and 1.2.20. maybe caused by https://github.com/oven-sh/bun/commit/408fda7ad2865a761a97c57d597e84877c7d3ff4"
+  },
+  "test/cli/hot/watch-many-dirs.test.ts": {
+    "linux": 8,
+    "note": "flaky timeouts since it was added"
+  },
+  "test/js/node/test/parallel/test-worker-uncaught-exception-async.js": {
+    "linux": 8,
+    "note": "flaky error since it was added"
+  },
+  "test/js/web/fetch/fetch-leak.test.ts": {
+    "*": 8,
+    "note": "didn't used to be as flaky. became flaky between 1.3.0 and 1.3.1."
+  },
+  "test/napi/napi.test.ts": {
+    "*": 8,
+    "note": "became flaky between 1.2.16 and 1.2.18"
+  },
+  "test/js/bun/util/bun-file.test.ts": {
+    "darwin": 8,
+    "linux": 8,
+    "note": "flaky since <1.2.14"
+  },
+  "test/integration/next-pages/test/next-build.test.ts": {
+    "*": 8,
+    "note": "flaky since <1.2.14"
+  },
+  "test/integration/next-pages/test/dev-server-ssr-100.test.ts": {
+    "*": 8,
+    "note": "flaky since <1.2.14"
+  },
+  "test/bake/dev/incremental-graph-edge-deletion.test.ts": {
+    "*": 8,
+    "note": "flaky since it was added"
+  },
+  "test/js/web/fetch/chunked-trailing.test.js": {
+    "windows": 8,
+    "note": "flaky since it was added. got flakier between 1.2.22 and 1.3.0"
+  },
+  "test/js/node/test/parallel/test-performance-measure.js": {
+    "windows": 8,
+    "note": "flaky since <1.2.14"
+  },
+  "test/js/bun/s3/s3.leak.test.ts": {
+    "darwin": 8,
+    "linux": 8,
+    "note": "maybe became flaky between 1.2.14 and 1.2.16"
+  },
+  "test/bundler/css/wpt/color-computed-rgb.test.ts": {
+    "darwin": 8,
+    "linux": 8,
+    "note": "became flaky between 1.2.21 and 1.2.23"
+  },
+  "test/js/node/test/parallel/test-http-url.parse-https.request.js": {
+    "*": 8,
+    "note": "became flaky between 1.3.1 and 1.3.2. maybe caused by https://github.com/oven-sh/bun/commit/fa219a2f8e62bee6a3a4cb312540284b6cf145cd"
+  },
+  "test/js/bun/spawn/spawn-stdin-readable-stream.test.ts": {
+    "windows": 8,
+    "note": "became more flaky between 1.2.22 and 1.2.23. "
+  },
+  "test/js/node/worker_threads/worker_threads.test.ts": {
+    "linux": 8,
+    "darwin": 8,
+    "note": "flaky since <1.2.14"
+  },
+  "test/js/bun/s3/s3.test.ts": {
+    "*": 8,
+    "note": "flaky since <1.2.14"
+  },
+  "test/regression/issue/09041.test.ts": {
+    "linux": 8,
+    "windows": 8,
+    "note": "flaky since <1.2.14"
+  },
+  "test/js/bun/spawn/spawn.test.ts": {
+    "linux": 8,
+    "windows": 8,
+    "note": "flaky since <1.2.14"
+  },
+  "test/js/node/http/node-http-connect.test.ts": {
+    "windows": 8,
+    "note": "flaky since 1.2.22-1.2.23, maybe caused by https://github.com/oven-sh/bun/commit/85271f9dd917f0cc0c902660907742ae02b7f2c1"
+  },
+  "test/bundler/cli.test.ts": {
+    "windows": 8,
+    "note": "flaky since 1.2.22-1.2.23, maybe caused by https://github.com/oven-sh/bun/commit/0b549321e9e2bfab51ba1f1ab6215159b9987b22#diff-2d1811283ece6e60a92c79f3b4b481d7de0e1ca364d3021d5fa322c3e70b1685"
+  },
+  "test/js/node/watch/fs.watchFile.test.ts": {
+    "windows": 8,
+    "note": "flaky since <1.2.14"
+  },
+  "test/js/bun/test/parallel/test-http-client-should-use-chunked-encoding-if-more-than-one-write-is-called.ts": {
+    "windows": 8,
+    "linux": 8
+  },
+  "test/js/bun/shell/shell-blocking-pipe.test.ts": {
+    "linux": 8,
+    "note": "flaky since it was added"
+  },
+  "test/js/bun/net/socket.test.ts": {
+    "*": 8,
+    "note": "became significantly more flaky between 1.3.1 and 1.3.2"
+  },
+  "test/bake/dev/request-cookies.test.ts": {
+    "linux": 8,
+    "note": "flaky since it was added"
+  },
+  "test/bake/deinitialization.test.ts": {
+    "asan": 8
+  },
+  "test/cli/install/bun-install-registry.test.ts": { "*": 8 },
+  "test/cli/install/bun-add.test.ts": { "*": 8 },
+  "test/cli/hot/hot.test.ts": { "*": 8 },
+  "test/js/node/test/parallel/test-stdin-pipe-large.js": { "*": 8 },
+  "test/js/bun/css/doesnt_crash.test.ts": { "*": 8 },
+  "test/cli/install/bun-install-lifecycle-scripts.test.ts": { "*": 8 },
+  "test/js/bun/spawn/spawn-pipe-leak.test.ts": { "*": 8 },
+  "test/bake/dev/ssg-pages-router.test.ts": { "*": 8 },
+  "test/js/web/fetch/fetch.test.ts": { "*": 8 },
+  "test/js/bun/test/parallel/test-http-should-emit-close-when-connection-is-aborted.ts": { "*": 8 },
+  "test/bundler/css/wpt/relative_color_out_of_gamut.test.ts": { "*": 8 },
+  "test/bake/dev/bundle.test.ts": { "*": 8 },
+  "test/js/node/http/node-http-backpressure-max.test.ts": { "*": 8 },
+  "test/integration/vite-build/vite-build.test.ts": { "*": 8 },
+  "test/bundler/bundler_compile.test.ts": { "*": 8 },
+  "test/js/node/dns/node-dns.test.js": { "*": 8 },
+  "test/js/bun/udp/udp_socket.test.ts": { "*": 8 },
+  "test/bake/dev/html.test.ts": { "*": 8 },
+  "test/cli/install/bad-workspace.test.ts": { "*": 8 },
+  "vendor/elysia/test/response/stream.test.ts": { "*": 8 },
+  "test/cli/update_interactive_install.test.ts": { "*": 8 },
+  "test/cli/run/cpu-prof.test.ts": { "*": 8 },
+  "test/cli/install/catalogs.test.ts": { "*": 8 },
+  "test/js/node/test/parallel/test-fs-promises-writefile.js": { "*": 8 },
+  "test/js/web/fetch/fetch.tls.test.ts": { "*": 8 },
+  "test/js/node/test/parallel/test-https-eof-for-eom.js": { "*": 8 },
+  "test/js/bun/glob/scan.test.ts": { "*": 8 },
+  "test/js/bun/shell/leak.test.ts": { "*": 8 },
+  "test/bake/dev-and-prod.test.ts": { "*": 8 },
+  "test/integration/next-pages/test/dev-server.test.ts": { "*": 8 },
+  "test/js/web/fetch/fetch.upgrade.test.ts": { "*": 8 },
+  "test/js/bun/http/serve.test.ts": { "*": 8 },
+  "test/bake/dev/production.test.ts": { "*": 8 },
+  "test/js/third_party/jsonwebtoken/async_sign.test.js": { "*": 8 },
+  "test/cli/install/bun-security-scanner-matrix-with-node-modules.test.ts": { "*": 8 },
+  "test/js/node/test/parallel/test-worker-heap-snapshot.js": { "*": 8 },
+  "test/cli/install/bun-install-proxy.test.ts": { "*": 8 },
+  "test/js/node/test/parallel/test-file-write-stream4.js": { "*": 8 },
+  "test/js/node/fs/fs.test.ts": { "*": 8 },
+  "test/bake/dev/sourcemap.test.ts": { "*": 8 },
+  "test/js/node/test/parallel/test-http-no-content-length.js": { "*": 8 },
+  "test/bundler/css/wpt/background-computed.test.ts": { "*": 8 },
+  "test/js/bun/http/bun-server.test.ts": { "*": 8 },
+  "test/cli/install/bunx.test.ts": { "*": 8 },
+  "test/bundler/compile-windows-metadata.test.ts": { "*": 8 },
+  "test/cli/update_interactive_formatting.test.ts": { "*": 8 },
+  "test/cli/install/bun-patch.test.ts": { "*": 8 },
+  "test/bake/dev/react-response.test.ts": { "*": 8 },
+  "test/cli/install/bun-lock.test.ts": { "*": 8 },
+  "test/js/node/net/handle-leak.test.ts": { "*": 8 },
+  "test/js/third_party/@azure/service-bus/azure-service-bus.test.ts": { "*": 8 },
+  "test/js/sql/tls-sql.test.ts": { "*": 8 },
+  "test/js/third_party/@duckdb/node-api/duckdb.test.ts": { "*": 8 },
+  "test/js/bun/spawn/spawn-streaming-stdin.test.ts": { "*": 8 },
+  "test/bundler/esbuild/dce.test.ts": { "*": 8 },
+  "test/cli/init/init.test.ts": { "*": 8 },
+  "test/js/node/tls/node-tls-connect.test.ts": { "*": 8 },
+  "test/bundler/bundler_browser.test.ts": { "*": 8 },
+  "test/cli/install/public-hoist-pattern.test.ts": { "*": 8 },
+  "test/package.json": { "*": 8 },
+  "test/bake/dev/esm.test.ts": { "*": 8 },
+  "test/js/node/http2/node-http2.test.js": { "*": 8 },
+  "test/js/third_party/grpc-js/test-tonic.test.ts": { "*": 8 },
+  "test/js/node/test/parallel/test-fs-read-position-validation.mjs": { "*": 8 },
+  "test/bundler/css/wpt/color-computed.test.ts": { "*": 8 },
+  "test/cli/install/bun-run-dir.test.ts": { "*": 8 },
+  "test/js/third_party/grpc-js/test-pick-first.test.ts": { "*": 8 },
+  "test/bundler/esbuild/extra.test.ts": { "*": 8 },
+  "test/js/third_party/pg-gateway/pglite.test.ts": { "*": 8 },
+  "test/js/third_party/next-auth/next-auth.test.ts": { "*": 8 },
+  "test/cli/install/npmrc.test.ts": { "*": 8 },
+  "test/js/third_party/body-parser/express-bun-build-compile.test.ts": { "*": 8 },
+  "test/js/node/zlib/bytesWritten.test.ts": { "*": 8 },
+  "test/integration/expo-app/expo.test.ts": { "*": 8 },
+  "test/js/bun/http/bun-serve-html.test.ts": { "*": 8 },
+  "test/cli/install/migration/complex-workspace.test.ts": { "*": 8 },
+  "test/bundler/bun-build-api.test.ts": { "*": 8 },
+  "test/cli/install/isolated-install.test.ts": { "*": 8 },
+  "test/js/deno/performance/performance.test.ts": { "*": 8 },
+  "test/bundler/esbuild/css.test.ts": { "*": 8 },
+  "test/js/web/fetch/fetch.stream.test.ts": { "*": 8 },
+  "test/js/node/zlib/leak.test.ts": { "*": 8 },
+  "test/js/bun/http/serve-body-leak.test.ts": { "*": 8 },
+  "test/js/node/http/node-http.test.ts": { "*": 8 },
+  "test/js/node/test/parallel/test-stream-readable-to-web.js": { "*": 8 },
+  "test/js/bun/http/proxy.test.ts": { "*": 8 },
+  "test/js/third_party/grpc-js/test-outlier-detection.test.ts": { "*": 8 },
+  "test/bundler/esbuild/default.test.ts": { "*": 8 },
+  "test/js/third_party/astro/astro-post.test.js": { "*": 8 },
+  "test/js/bun/stream/direct-readable-stream.test.tsx": { "*": 8 },
+  "test/js/node/test/parallel/test-async-local-storage-http-multiclients.js": { "*": 8 },
+  "test/js/bun/http/fetch-file-upload.test.ts": { "*": 8 },
+  "test/bundler/bundler_defer.test.ts": { "*": 8 },
+  "test/js/web/structured-clone-fastpath.test.ts": { "*": 8 },
+  "test/bundler/bundler_cjs2esm.test.ts": { "*": 8 },
+  "test/bundler/bundler_promiseall_deadcode.test.ts": { "*": 8 },
+  "test/bundler/esbuild/importstar.test.ts": { "*": 8 },
+  "test/js/node/test/parallel/test-fs-write-stream-double-close.js": { "*": 8 },
+  "test/js/web/html/FormData.test.ts": { "*": 8 },
+  "test/cli/install/migration/migrate.test.ts": { "*": 8 },
+  "test/js/bun/io/fetch/fetch-abort-slow-connect.test.ts": { "*": 8 },
+  "test/regression/issue/21677.test.ts": { "*": 8 },
+  "test/js/node/test/parallel/test-cluster-send-deadlock.js": { "*": 8 },
+  "test/js/node/test/parallel/test-http-extra-response.js": { "*": 8 },
+  "test/cli/inspect/BunFrontendDevServer.test.ts": { "*": 8 },
+  "test/js/sql/sql-mysql.test.ts": { "*": 8 },
+  "test/js/node/http/node-http-backpressure.test.ts": { "*": 8 },
+  "test/js/node/async_hooks/AsyncLocalStorage-tracking.test.ts": { "*": 8 },
+  "test/js/bun/s3/s3-list-objects.test.ts": { "*": 8 },
+  "test/js/bun/http/proxy.test.js": { "*": 8 },
+  "test/js/node/test/parallel/test-http-buffer-sanity.js": { "*": 8 },
+  "test/js/node/test/parallel/test-http-aborted.js": { "*": 8 },
+  "test/integration/svelte/client-side.test.ts": { "*": 8 },
+  "test/js/node/test/parallel/test-stream-readable-unpipe-resume.js": { "*": 8 },
+  "test/js/bun/http/req-url-leak.test.ts": { "*": 8 },
+  "test/js/bun/sqlite/sqlite.test.js": { "*": 8 },
+  "test/js/node/test/parallel/test-timers-immediate-queue.js": { "*": 8 },
+  "test/cli/install/bun-lockb.test.ts": { "*": 8 },
+  "test/js/web/websocket/websocket-client.test.ts": { "*": 8 },
+  "test/js/node/test/parallel/test-http-client-timeout.js": { "*": 8 },
+  "test/js/node/test/parallel/test-async-hooks-worker-asyncfn-terminate-4.js": { "*": 8 },
+  "package.json": { "*": 8 },
+  "test/napi/node-napi-tests/test/js-native-api/test_instance_data/do.test.ts": { "*": 8 },
+  "test/js/sql/local-sql.test.ts": { "*": 8 },
+  "vendor/elysia/test/tracer/trace.test.ts": { "*": 8 },
+  "test/js/bun/shell/commands/mv.test.ts": { "*": 8 },
+  "test/js/bun/shell/bunshell.test.ts": { "*": 8 },
+  "test/cli/install/test-dev-peer-dependency-priority.test.ts": { "*": 8 },
+  "test/cli/install/bun-create.test.ts": { "*": 8 }
+}

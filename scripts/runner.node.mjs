@@ -1318,9 +1318,9 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   const args = opts["args"] ?? [];
 
   const testArgs = ["test", ...args];
-  if (options["step"].includes("-ubuntu-")) testArgs.push(`--timeout=${10_000}`);
-  if (options["step"].includes("-alpine-")) testArgs.push(`--timeout=${10_000}`);
-  if (options["step"].includes("-windows-")) testArgs.push(`--timeout=${10_000}`);
+  if (process.env.BUILDKITE_STEP_IDENTIFIER?.includes("-ubuntu-")) testArgs.push(`--timeout=${10_000}`);
+  if (process.env.BUILDKITE_STEP_IDENTIFIER?.includes("-alpine-")) testArgs.push(`--timeout=${10_000}`);
+  if (process.env.BUILDKITE_STEP_IDENTIFIER?.includes("-windows-")) testArgs.push(`--timeout=${10_000}`);
   if (isASAN) testArgs.push(`--timeout=${30_000}`);
 
   // This will be set if a JUnit file is generated

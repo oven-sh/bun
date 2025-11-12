@@ -6432,7 +6432,7 @@ declare module "bun" {
 
     /**
      * `0` for projects created before v1.3.2, `1` for projects created after
-     * 
+     *
      * ---
      * Right now this only changes the default [install linker strategy](https://bun.com/docs/pm/cli/install#isolated-installs):
      * - With `0`, the linker is hoisted.

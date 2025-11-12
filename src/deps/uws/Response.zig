@@ -190,8 +190,9 @@ pub fn NewResponse(ssl_flag: i32) type {
                 pub fn handle(this: *c.uws_res, user_data: ?*anyopaque) callconv(.c) void {
                     if (comptime UserDataType == void) {
                         @call(bun.callmod_inline, handler, .{ {}, castRes(this), {} });
-                    } else {
-                        @call(bun.callmod_inline, handler, .{ @as(UserDataType, @ptrCast(@alignCast(user_data.?))), castRes(this) });
+                    } else if (user_data) |user_data_ptr| {
+                        // null should always be treated as a no-op, there's no case where it should have any effect.
+                        @call(bun.callmod_inline, handler, .{ @as(UserDataType, @ptrCast(@alignCast(user_data_ptr))), castRes(this) });
                     }
                 }
             };
@@ -206,8 +207,9 @@ pub fn NewResponse(ssl_flag: i32) type {
                 pub fn handle(this: *c.uws_res, user_data: ?*anyopaque) callconv(.c) void {
                     if (comptime UserDataType == void) {
                         @call(bun.callmod_inline, handler, .{ {}, castRes(this) });
-                    } else {
-                        @call(bun.callmod_inline, handler, .{ @as(UserDataType, @ptrCast(@alignCast(user_data.?))), castRes(this) });
+                    } else if (user_data) |user_data_ptr| {
+                        // null should always be treated as a no-op, there's no case where it should have any effect.
+                        @call(bun.callmod_inline, handler, .{ @as(UserDataType, @ptrCast(@alignCast(user_data_ptr))), castRes(this) });
                     }
                 }
             };
@@ -237,9 +239,10 @@ pub fn NewResponse(ssl_flag: i32) type {
                             if (len > 0) chunk_ptr[0..len] else "",
                             last,
                         });
-                    } else {
+                    } else if (user_data) |user_data_ptr| {
+                        // null should always be treated as a no-op, there's no case where it should have any effect.
                         @call(bun.callmod_inline, handler_fn, .{
-                            @as(UserDataType, @ptrCast(@alignCast(user_data.?))),
+                            @as(UserDataType, @ptrCast(@alignCast(user_data_ptr))),
                             castRes(this),
                             if (len > 0) chunk_ptr[0..len] else "",
                             last,

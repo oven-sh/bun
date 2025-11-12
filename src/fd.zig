@@ -359,6 +359,19 @@ pub const FD = packed struct(backing_int) {
         return JSValue.jsNumberFromInt32(uv_owned_fd.uv());
     }
 
+    pub fn toJSWithoutMakingLibUVOwned(any_fd: FD) JSValue {
+        if (!any_fd.isValid()) {
+            return JSValue.jsNumberFromInt32(-1);
+        }
+        if (Environment.isWindows) {
+            return switch (any_fd.kind) {
+                .system => JSValue.jsNumberFromUint64(@intCast(any_fd.value.as_system)),
+                .uv => JSValue.jsNumberFromInt32(any_fd.value.as_uv),
+            };
+        }
+        return JSValue.jsNumberFromInt32(any_fd.value.as_system);
+    }
+
     pub const Stdio = enum(u8) {
         std_in = 0,
         std_out = 1,

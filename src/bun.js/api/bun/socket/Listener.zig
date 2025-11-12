@@ -523,12 +523,12 @@ pub fn getPort(this: *Listener, _: *jsc.JSGlobalObject) JSValue {
     return JSValue.jsNumber(this.connection.host.port);
 }
 
-pub fn getFD(this: *Listener, globalObject: *jsc.JSGlobalObject) JSValue {
+pub fn getFD(this: *Listener, _: *jsc.JSGlobalObject) JSValue {
     switch (this.listener) {
         .uws => |uws_listener| {
             switch (this.ssl) {
                 inline else => |ssl| {
-                    return if (uws_listener.socket(ssl).fd().unwrapValid()) |fd| fd.toJS(globalObject) else JSValue.jsNumber(-1);
+                    return uws_listener.socket(ssl).fd().toJSWithoutMakingLibUVOwned();
                 },
             }
         },

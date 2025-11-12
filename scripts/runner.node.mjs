@@ -1309,12 +1309,11 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  */
 async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   const timeout = getTestTimeout(testPath);
-  const perTestTimeout = Math.ceil(timeout / 2);
   const absPath = join(opts["cwd"], testPath);
   const isReallyTest = isTestStrict(testPath) || absPath.includes("vendor");
   const args = opts["args"] ?? [];
 
-  const testArgs = ["test", ...args, `--timeout=${perTestTimeout}`];
+  const testArgs = ["test", ...args];
 
   // This will be set if a JUnit file is generated
   let junitFilePath = null;

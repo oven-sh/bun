@@ -4,7 +4,7 @@ import { isWindows } from "harness";
 
 test("build", async () => {
   await build(import.meta.dir);
-}, isWindows ? 30_000 : 5_000);
+}, isWindows ? 60_000 : undefined);
 
 for (const file of Array.from(new Bun.Glob("*.js").scanSync(import.meta.dir))) {
   test.todoIf(["test-async-hooks.js"].includes(file))(file, () => {

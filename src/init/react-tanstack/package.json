@@ -1,5 +1,5 @@
 {
-  "name": "bun-react-tanstack-template",
+  "name": "bun-tanstack-start-template",
   "type": "module",
   "scripts": {
     "dev": "bun --bun vite dev",
@@ -21,7 +21,6 @@
     "@tailwindcss/vite": "^4.1.17",
     "@tanstack/react-router": "^1.135.2",
     "@tanstack/react-start": "^1.135.2",
-    "nitro": "^3.0.1-alpha.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwindcss": "^4.1.17"

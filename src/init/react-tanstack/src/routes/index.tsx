@@ -19,7 +19,7 @@ function Home() {
               <div className="text-center space-y-3 w-full">
                 <div>
                   <h1
-                    className="text-xl sm:text-3xl font-semibold tracking-tight text-card-foreground leading-tight"
+                    className="text-2xl sm:text-3xl font-semibold tracking-tight text-card-foreground leading-tight"
                     style={{ letterSpacing: "-0.02em" }}
                   >
                     Welcome to TanStack Start

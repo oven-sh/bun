@@ -95,11 +95,11 @@ pub const us_socket_t = opaque {
     }
 
     pub fn setTimeout(this: *us_socket_t, ssl: bool, seconds: u32) void {
-        c.us_socket_timeout(@intFromBool(ssl), this, @intCast(@min(seconds, std.math.maxInt(c_uint))));
+        c.us_socket_timeout(@intFromBool(ssl), this, seconds);
     }
 
     pub fn setLongTimeout(this: *us_socket_t, ssl: bool, minutes: u32) void {
-        c.us_socket_long_timeout(@intFromBool(ssl), this, @intCast(@min(minutes, std.math.maxInt(c_uint))));
+        c.us_socket_long_timeout(@intFromBool(ssl), this, minutes);
     }
 
     pub fn setNodelay(this: *us_socket_t, enabled: bool) void {
@@ -109,7 +109,7 @@ pub const us_socket_t = opaque {
     /// Returns error code. `0` on success. error codes depend on platform an
     /// configured event loop.
     pub fn setKeepalive(this: *us_socket_t, enabled: bool, delay: u32) i32 {
-        return c.us_socket_keepalive(this, @intFromBool(enabled), @intCast(@min(delay, std.math.maxInt(c_int))));
+        return c.us_socket_keepalive(this, @intFromBool(enabled), delay);
     }
 
     pub fn getNativeHandle(this: *us_socket_t, ssl: bool) ?*anyopaque {

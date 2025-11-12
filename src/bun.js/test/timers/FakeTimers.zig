@@ -6,29 +6,39 @@
 timers: TimerHeap = .{ .context = {} },
 
 pub var current_time: struct {
+    const Offset = packed struct(u128) {
+        sec: i64,
+        nsec: i64,
+        const none = Offset{ .sec = std.math.minInt(i64), .nsec = std.math.minInt(i64) };
+        fn fromTimespec(timespec: *const bun.timespec) Offset {
+            return Offset{ .sec = timespec.sec, .nsec = timespec.nsec };
+        }
+        fn toTimespec(this: Offset) bun.timespec {
+            return bun.timespec{ .sec = this.sec, .nsec = this.nsec };
+        }
+    };
     /// starts at 0. offset in milliseconds.
-    #offset: std.atomic.Value(i64) = .init(std.math.minInt(i64)),
+    #offset: std.atomic.Value(Offset) = .init(Offset.none),
     date_now_offset: f64 = 0,
     pub fn getTimespecNow(this: *@This()) ?bun.timespec {
         const value = this.#offset.load(.seq_cst);
-        if (value == std.math.minInt(i64)) return null;
+        if (value == Offset.none) return null;
         const result: bun.timespec = .{ .sec = 0, .nsec = 0 };
         return result.addMs(value);
     }
     pub fn set(this: *@This(), globalObject: *jsc.JSGlobalObject, v: struct {
-        offset: i64,
+        offset: bun.timespec,
         js: ?f64 = null,
     }) void {
         const vm = globalObject.bunVM();
-        this.#offset.store(v.offset, .seq_cst);
-        const timespec_ms: f64 = @floatFromInt(v.offset);
+        this.#offset.store(.fromTimespec(&v.offset), .seq_cst);
+        const timespec_ms: f64 = @floatFromInt(v.offset.msUnsigned());
         if (v.js) |js| {
             this.date_now_offset = js - timespec_ms;
         }
         bun.cpp.JSMock__setOverridenDateNow(globalObject, this.date_now_offset + timespec_ms);
 
-        var perf_now_value: bun.timespec = .{ .sec = 0, .nsec = 0 };
-        vm.overridden_performance_now = @bitCast(perf_now_value.addMs(v.offset).ns());
+        vm.overridden_performance_now = @bitCast(v.offset.ns());
     }
     pub fn clear(this: *@This(), globalObject: *jsc.JSGlobalObject) void {
         const vm = globalObject.bunVM();

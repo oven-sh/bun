@@ -3446,7 +3446,7 @@ pub fn isExecutableFileOSPath(path: bun.OSPathSliceZ) bool {
         // The security policy Microsoft Management Console (MMC) snap-in (Secpol.msc) controls which extensions are considered executable file types.
 
         // we pass false to include .exe files (see https://learn.microsoft.com/en-us/windows/win32/api/winsafer/nf-winsafer-saferiisexecutablefiletype)
-        return bun.windows.SaferiIsExecutableFileType(path, w.FALSE);
+        return bun.windows.SaferiIsExecutableFileType(path, w.FALSE) != w.FALSE;
     }
 
     @compileError("TODO: isExecutablePath");

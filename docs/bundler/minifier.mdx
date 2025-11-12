@@ -854,11 +854,11 @@ x
 
 Renames object properties to shorter names when configured.
 
-```ts Input.ts (with property mangling enabled)
+```ts Input
 obj.longPropertyName
 ```
 
-```js Output
+```js Output (with property mangling enabled)
 obj.a
 ```
 
@@ -1074,7 +1074,8 @@ throw(console.log(x),new Error());
 
 Inlines enum values across module boundaries.
 
-```ts Input.ts (lib.ts)
+```ts Input 
+// lib.ts
 export enum Color { Red, Green, Blue }
 
 // Input (main.ts)
@@ -1210,12 +1211,12 @@ x=void 0;
 
 Removes calls to specified global functions or methods.
 
-```ts Input.ts with --drop=assert
+```ts Input
 assert(condition);
 obj.assert(test);
 ```
 
-```js Output
+```js Output with --drop=assert
 void 0;
 void 0;
 ```
@@ -1247,7 +1248,7 @@ This preserves the `.name` property on functions and classes while still minifyi
 
 Using all three minification modes together:
 
-```ts Input.ts (158 bytes)
+```ts input.ts (158 bytes)
 const myVariable = 42;
 
 const myFunction = () => {
@@ -1259,7 +1260,7 @@ const myFunction = () => {
 const output = myFunction();
 ```
 
-```js output.ts
+```js output.js
 // Output with --minify (49 bytes, 69% reduction)
 const a=42,b=()=>{const c=!0,d=void 0;return c?a:d},e=b();
 ```

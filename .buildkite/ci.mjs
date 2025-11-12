@@ -1119,15 +1119,16 @@ async function getPipeline(options = {}) {
           dependsOn.push(`${imageKey}-build-image`);
         }
 
+        const steps = [];
+        steps.push(getBuildCppStep(target, options));
+        steps.push(getBuildZigStep(target, options));
+        steps.push(getLinkBunStep(target, options));
+
         return getStepWithDependsOn(
           {
             key: getTargetKey(target),
             group: getTargetLabel(target),
-            steps: [
-              getBuildCppStep(target, options),
-              getBuildZigStep(target, options),
-              getLinkBunStep(target, options),
-            ],
+            steps,
           },
           ...dependsOn,
         );

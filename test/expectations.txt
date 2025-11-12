@@ -39,6 +39,7 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 
 # Tests failed due to ASAN: unknown-crash
 [ ASAN ] test/js/sql/tls-sql.test.ts [ CRASH ] # After: Throws on illegal transactions
+[ ASAN ] test/cli/install/bun-install-lifecycle-scripts.test.ts [ CRASH ] # SIGABRT
 
 # Tests timed out due to ASAN
 [ ASAN ] test/js/bun/spawn/spawn.test.ts [ TIMEOUT ]

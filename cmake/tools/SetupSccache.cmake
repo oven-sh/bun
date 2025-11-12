@@ -10,12 +10,8 @@ set(SCCACHE_SHARED_CACHE_BUCKET "bun-build-sccache-store")
 function(check_aws_credentials OUT_VAR)
   # Install dependencies first
   execute_process(
-    COMMAND
-      ${BUN_EXECUTABLE}
-      install
-      --frozen-lockfile
-    WORKING_DIRECTORY
-      ${CMAKE_SOURCE_DIR}/scripts/build-cache
+    COMMAND ${BUN_EXECUTABLE} install --frozen-lockfile
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/scripts/build-cache
     RESULT_VARIABLE INSTALL_EXIT_CODE
     OUTPUT_VARIABLE INSTALL_OUTPUT
     ERROR_VARIABLE INSTALL_ERROR
@@ -106,26 +102,22 @@ function(sccache_configure_environment_developer)
   endif()
 endfunction()
 
-function(sccache_configure)
-  find_command(VARIABLE SCCACHE_PROGRAM COMMAND sccache REQUIRED ${CI})
-  if(NOT SCCACHE_PROGRAM)
-    message(WARNING "sccache not found. Your builds will be slower.")
-    return()
-  endif()
+find_command(VARIABLE SCCACHE_PROGRAM COMMAND sccache REQUIRED ${CI})
+if(NOT SCCACHE_PROGRAM)
+  message(WARNING "sccache not found. Your builds will be slower.")
+  return()
+endif()
 
-  set(SCCACHE_ARGS CMAKE_C_COMPILER_LAUNCHER CMAKE_CXX_COMPILER_LAUNCHER)
-  foreach(arg ${SCCACHE_ARGS})
-    setx(${arg} ${SCCACHE_PROGRAM})
-    list(APPEND CMAKE_ARGS -D${arg}=${${arg}})
-  endforeach()
+set(SCCACHE_ARGS CMAKE_C_COMPILER_LAUNCHER CMAKE_CXX_COMPILER_LAUNCHER)
+foreach(arg ${SCCACHE_ARGS})
+  setx(${arg} ${SCCACHE_PROGRAM})
+  list(APPEND CMAKE_ARGS -D${arg}=${${arg}})
+endforeach()
 
-  setenv(SCCACHE_LOG "info")
+setenv(SCCACHE_LOG "info")
 
-  if (CI)
-    sccache_configure_environment_ci()
-  else()
-    sccache_configure_environment_developer()
-  endif()
-endfunction()
-
-sccache_configure()
+if (CI)
+  sccache_configure_environment_ci()
+else()
+  sccache_configure_environment_developer()
+endif()

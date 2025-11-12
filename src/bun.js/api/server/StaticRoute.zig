@@ -103,7 +103,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
                 .Null, .Empty => {
                     break :brk .{
                         .InternalBlob = .{
-                            .bytes = std.ArrayList(u8).init(bun.default_allocator),
+                            .bytes = std.array_list.Managed(u8).init(bun.default_allocator),
                         },
                     };
                 },

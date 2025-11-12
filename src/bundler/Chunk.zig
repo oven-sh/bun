@@ -216,7 +216,7 @@ pub const Chunk = struct {
                                     .chunk => chunks[index].final_rel_path,
                                     .scb => chunks[entry_point_chunks_for_scb[index]].final_rel_path,
                                     .html_import => {
-                                        count += std.fmt.count("{}", .{HTMLImportManifest.formatEscapedJSON(.{
+                                        count += std.fmt.count("{f}", .{HTMLImportManifest.formatEscapedJSON(.{
                                             .index = index,
                                             .graph = graph,
                                             .chunks = chunks,
@@ -245,7 +245,7 @@ pub const Chunk = struct {
                     }
 
                     const debug_id_len = if (enable_source_map_shifts and FeatureFlags.source_map_debug_id)
-                        std.fmt.count("\n//# debugId={}\n", .{bun.SourceMap.DebugIDFormatter{ .id = chunk.isolated_hash }})
+                        std.fmt.count("\n//# debugId={f}\n", .{bun.SourceMap.DebugIDFormatter{ .id = chunk.isolated_hash }})
                     else
                         0;
 
@@ -352,7 +352,7 @@ pub const Chunk = struct {
                         // This comment must go before the //# sourceMappingURL comment
                         remain = remain[(std.fmt.bufPrint(
                             remain,
-                            "\n//# debugId={}\n",
+                            "\n//# debugId={f}\n",
                             .{bun.SourceMap.DebugIDFormatter{ .id = chunk.isolated_hash }},
                         ) catch |err| switch (err) {
                             error.NoSpaceLeft => std.debug.panic(
@@ -385,7 +385,7 @@ pub const Chunk = struct {
                             // This comment must go before the //# sourceMappingURL comment
                             const debug_id_fmt = std.fmt.allocPrint(
                                 graph.heap.allocator(),
-                                "\n//# debugId={}\n",
+                                "\n//# debugId={f}\n",
                                 .{bun.SourceMap.DebugIDFormatter{ .id = chunk.isolated_hash }},
                             ) catch |err| bun.handleOom(err);
 
@@ -572,7 +572,7 @@ pub const Chunk = struct {
             inner: *const CssImportOrder,
             ctx: *LinkerContext,
 
-            pub fn format(this: *const CssImportOrderDebug, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(this: *const CssImportOrderDebug, writer: *std.Io.Writer) !void {
                 try writer.print("{s} = ", .{@tagName(this.inner.kind)});
                 switch (this.inner.kind) {
                     .layers => |layers| {
@@ -580,7 +580,7 @@ pub const Chunk = struct {
                         const l = layers.inner();
                         for (l.sliceConst(), 0..) |*layer, i| {
                             if (i > 0) try writer.print(", ", .{});
-                            try writer.print("\"{}\"", .{layer});
+                            try writer.print("\"{f}\"", .{layer});
                         }
 
                         try writer.print("]", .{});

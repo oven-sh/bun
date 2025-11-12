@@ -97,7 +97,6 @@ pub const JENKINS_URL = New(kind.string, "JENKINS_URL", .{});
 /// `MIMALLOC_VERBOSE`, documented here: https://microsoft.github.io/mimalloc/environment.html
 pub const MI_VERBOSE = New(kind.boolean, "MI_VERBOSE", .{ .default = false });
 pub const NO_COLOR = New(kind.boolean, "NO_COLOR", .{ .default = false });
-pub const NODE = New(kind.string, "NODE", .{});
 pub const NODE_CHANNEL_FD = New(kind.string, "NODE_CHANNEL_FD", .{});
 pub const NODE_PRESERVE_SYMLINKS_MAIN = New(kind.boolean, "NODE_PRESERVE_SYMLINKS_MAIN", .{ .default = false });
 pub const NODE_USE_SYSTEM_CA = New(kind.boolean, "NODE_USE_SYSTEM_CA", .{ .default = false });
@@ -137,6 +136,13 @@ pub const feature_flag = struct {
     pub const BUN_BE_BUN = newFeatureFlag("BUN_BE_BUN", .{});
     pub const BUN_DEBUG_NO_DUMP = newFeatureFlag("BUN_DEBUG_NO_DUMP", .{});
     pub const BUN_DESTRUCT_VM_ON_EXIT = newFeatureFlag("BUN_DESTRUCT_VM_ON_EXIT", .{});
+
+    /// Disable "nativeDependencies"
+    pub const BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER", .{});
+
+    /// Disable "ignoreScripts" in package.json
+    pub const BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS", .{});
+
     pub const BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER", .{});
     pub const BUN_FEATURE_FLAG_DISABLE_DNS_CACHE = newFeatureFlag("BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", .{});

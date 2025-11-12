@@ -221,7 +221,7 @@ pub const ShellLsTask = struct {
 
     cwd: bun.FileDescriptor,
     path: [:0]const u8 = &[0:0]u8{},
-    output: std.ArrayList(u8),
+    output: std.array_list.Managed(u8),
     is_absolute: bool = false,
     err: ?Syscall.Error = null,
     result_kind: enum { file, dir, idk } = .idk,
@@ -256,7 +256,7 @@ pub const ShellLsTask = struct {
             .event_loop = event_loop,
             .task_count = task_count,
             .path = path,
-            .output = std.ArrayList(u8).init(ls.alloc_scope.allocator()),
+            .output = std.array_list.Managed(u8).init(ls.alloc_scope.allocator()),
             .owned_string = owned_string,
         };
 
@@ -320,7 +320,7 @@ pub const ShellLsTask = struct {
         if (!this.opts.list_directories) {
             if (this.print_directory) {
                 const writer = this.output.writer();
-                bun.handleOom(std.fmt.format(writer, "{s}:\n", .{this.path}));
+                bun.handleOom(writer.print("{s}:\n", .{this.path}));
             }
 
             var iterator = DirIterator.iterate(fd, .u8);
@@ -348,7 +348,7 @@ pub const ShellLsTask = struct {
         }
 
         const writer = this.output.writer();
-        bun.handleOom(std.fmt.format(writer, "{s}\n", .{this.path}));
+        bun.handleOom(writer.print("{s}\n", .{this.path}));
         return;
     }
 
@@ -403,9 +403,9 @@ pub const ShellLsTask = struct {
         }
     }
 
-    pub fn takeOutput(this: *@This()) std.ArrayList(u8) {
+    pub fn takeOutput(this: *@This()) std.array_list.Managed(u8) {
         const ret = this.output;
-        this.output = std.ArrayList(u8).init(this.ls.alloc_scope.allocator());
+        this.output = std.array_list.Managed(u8).init(this.ls.alloc_scope.allocator());
         return ret;
     }
 

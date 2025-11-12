@@ -10,6 +10,7 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/JSInternalPromise.h>
+#include <JavaScriptCore/IteratorOperations.h>
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JSCommonJSExtensions.h"
@@ -311,31 +312,106 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
     default: {
         JSC::JSValue moduleName = callFrame->argument(0);
         JSC::JSValue fromValue = callFrame->argument(1);
+        JSC::JSValue optionsValue = callFrame->argument(3); // 4th argument is options
+        auto& names = builtinNames(vm);
 
         if (moduleName.isUndefinedOrNull()) {
             JSC::throwTypeError(globalObject, scope, "Module._resolveFilename expects a string"_s);
             return {};
         }
 
-        if (
-            // fast path: it's a real CommonJS module object.
-            auto* cjs = jsDynamicCast<Bun::JSCommonJSModule*>(fromValue)) {
-            fromValue = cjs->filename();
-        } else if
-            // slow path: userland code did something weird. lets let them do that
-            // weird thing.
-            (fromValue.isObject()) {
+        // Extract filename string from fromValue
+        // Follows pattern: typeof this === "string" ? this : (this?.filename ?? this?.id ?? "")
+        if (!fromValue.isString()) {
+            if (
+                // fast path: it's a real CommonJS module object.
+                auto* cjs = jsDynamicCast<Bun::JSCommonJSModule*>(fromValue)) {
+                fromValue = cjs->filename();
+            } else if (fromValue.isObject()) {
+                // slow path: userland code did something weird. Try filename first, then id
+                auto* obj = fromValue.getObject();
+                auto filenameValue = obj->getIfPropertyExists(globalObject, names.filenamePublicName());
+                RETURN_IF_EXCEPTION(scope, {});
 
-            auto idValue = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).filenamePublicName());
-            RETURN_IF_EXCEPTION(scope, {});
-            if (idValue) {
-                if (idValue.isString()) {
-                    fromValue = idValue;
+                if (filenameValue && filenameValue.isString()) {
+                    fromValue = filenameValue;
+                } else {
+                    auto idValue = obj->getIfPropertyExists(globalObject, vm.propertyNames->id);
+                    RETURN_IF_EXCEPTION(scope, {});
+
+                    if (idValue && idValue.isString()) {
+                        fromValue = idValue;
+                    } else {
+                        // Fallback to empty string if no valid filename or id
+                        fromValue = jsEmptyString(vm);
+                    }
                 }
+            } else {
+                // Not a string, not an object - use empty string
+                fromValue = jsEmptyString(vm);
             }
         }
 
-        auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true);
+        // Handle options.paths if provided
+        JSC::JSValue pathsValue = JSC::jsUndefined();
+        if (optionsValue.isObject()) {
+            pathsValue = optionsValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+
+        JSC::EncodedJSValue result;
+
+        // If paths are provided, use Bun__resolveSyncWithPaths
+        if (!pathsValue.isUndefinedOrNull()) {
+            // Node.js requires options.paths to be an array
+            if (!JSC::isArray(globalObject, pathsValue)) {
+                Bun::throwError(globalObject, scope,
+                    Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
+                    "options.paths must be an array"_s);
+                return {};
+            }
+
+            WTF::Vector<BunString> paths;
+
+            // Iterate through the array using forEachInIterable
+            forEachInIterable(globalObject, pathsValue, [&](JSC::VM&, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue item) {
+                if (scope.exception())
+                    return;
+
+                WTF::String pathStr = item.toWTFString(lexicalGlobalObject);
+                if (scope.exception())
+                    return;
+
+                paths.append(Bun::toStringRef(pathStr));
+            });
+
+            if (scope.exception()) {
+                // Clean up on exception
+                for (auto& path : paths) {
+                    path.deref();
+                }
+                return {};
+            }
+
+            result = Bun__resolveSyncWithPaths(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true, paths.begin(), paths.size());
+
+            // Clean up BunStrings to avoid leaking
+            for (auto& path : paths) {
+                path.deref();
+            }
+
+            RETURN_IF_EXCEPTION(scope, {});
+
+            if (!JSC::JSValue::decode(result).isString()) {
+                JSC::throwException(globalObject, scope, JSC::JSValue::decode(result));
+                return {};
+            }
+
+            return result;
+        }
+
+        // No paths provided, use regular resolution
+        result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true);
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!JSC::JSValue::decode(result).isString()) {

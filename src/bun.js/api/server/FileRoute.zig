@@ -452,7 +452,7 @@ const StreamTransfer = struct {
     }
 
     pub fn onReaderError(this: *StreamTransfer, err: bun.sys.Error) void {
-        log("onReaderError {any}", .{err});
+        log("onReaderError {f}", .{err});
         defer this.deref(); // deref the ref because reader is done
 
         if (!this.state.has_ended_response) {
@@ -472,7 +472,11 @@ const StreamTransfer = struct {
     }
 
     pub fn loop(this: *StreamTransfer) *Async.Loop {
-        return this.eventLoop().loop();
+        if (comptime bun.Environment.isWindows) {
+            return this.eventLoop().loop().uv_loop;
+        } else {
+            return this.eventLoop().loop();
+        }
     }
 
     fn onWritable(this: *StreamTransfer, _: u64, _: AnyResponse) bool {

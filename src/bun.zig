@@ -18,7 +18,7 @@ pub const DefaultAllocator = allocators.Default;
 pub const z_allocator: std.mem.Allocator = allocators.z_allocator;
 
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
-pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
+pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .auto else .@"inline";
 
 /// In debug builds, this will catch memory leaks. In release builds, it is mimalloc.
 pub const debug_allocator: std.mem.Allocator = if (Environment.isDebug or Environment.enable_asan)
@@ -174,7 +174,7 @@ pub const JSTerminated = error{
 
 pub const JSOOM = OOM || JSError;
 
-pub const detectCI = @import("./ci_info.zig").detectCI;
+pub const ci = @import("./ci_info.zig");
 
 /// Cross-platform system APIs
 pub const sys = @import("./sys.zig");
@@ -480,6 +480,7 @@ pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
 }
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
+pub const LinearFifoBufferType = @import("./linear_fifo.zig").LinearFifoBufferType;
 
 /// hash a string
 pub fn hash(content: []const u8) u64 {
@@ -569,7 +570,7 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
         PollFlag.ready
     else
         PollFlag.not_ready;
-    global_scope_log("poll({}, .readable): {any} ({s}{s})", .{
+    global_scope_log("poll({f}, .readable): {} ({s}{s})", .{
         fd,
         result,
         @tagName(rc),
@@ -590,7 +591,7 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
         };
         const rc = std.os.windows.ws2_32.WSAPoll(&polls, 1, 0);
         const result = (if (rc != std.os.windows.ws2_32.SOCKET_ERROR) @as(usize, @intCast(rc)) else 0) != 0;
-        global_scope_log("poll({}) writable: {any} ({d})", .{ fd, result, polls[0].revents });
+        global_scope_log("poll({f}) writable: {f} ({d})", .{ fd, result, polls[0].revents });
         if (result and polls[0].revents & std.posix.POLL.WRNORM != 0) {
             return .hup;
         } else if (result) {
@@ -617,7 +618,7 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
         PollFlag.ready
     else
         PollFlag.not_ready;
-    global_scope_log("poll({}, .writable): {any} ({s}{s})", .{
+    global_scope_log("poll({f}, .writable): {} ({s}{s})", .{
         fd,
         result,
         @tagName(rc),
@@ -1069,129 +1070,7 @@ pub fn parseDouble(input: []const u8) !f64 {
     return jsc.wtf.parseDouble(input);
 }
 
-pub const SignalCode = enum(u8) {
-    SIGHUP = 1,
-    SIGINT = 2,
-    SIGQUIT = 3,
-    SIGILL = 4,
-    SIGTRAP = 5,
-    SIGABRT = 6,
-    SIGBUS = 7,
-    SIGFPE = 8,
-    SIGKILL = 9,
-    SIGUSR1 = 10,
-    SIGSEGV = 11,
-    SIGUSR2 = 12,
-    SIGPIPE = 13,
-    SIGALRM = 14,
-    SIGTERM = 15,
-    SIG16 = 16,
-    SIGCHLD = 17,
-    SIGCONT = 18,
-    SIGSTOP = 19,
-    SIGTSTP = 20,
-    SIGTTIN = 21,
-    SIGTTOU = 22,
-    SIGURG = 23,
-    SIGXCPU = 24,
-    SIGXFSZ = 25,
-    SIGVTALRM = 26,
-    SIGPROF = 27,
-    SIGWINCH = 28,
-    SIGIO = 29,
-    SIGPWR = 30,
-    SIGSYS = 31,
-    _,
-
-    // The `subprocess.kill()` method sends a signal to the child process. If no
-    // argument is given, the process will be sent the 'SIGTERM' signal.
-    pub const default = SignalCode.SIGTERM;
-    pub const Map = ComptimeEnumMap(SignalCode);
-    pub fn name(value: SignalCode) ?[]const u8 {
-        if (@intFromEnum(value) <= @intFromEnum(SignalCode.SIGSYS)) {
-            return asByteSlice(@tagName(value));
-        }
-
-        return null;
-    }
-
-    pub fn valid(value: SignalCode) bool {
-        return @intFromEnum(value) <= @intFromEnum(SignalCode.SIGSYS) and @intFromEnum(value) >= @intFromEnum(SignalCode.SIGHUP);
-    }
-
-    /// Shell scripts use exit codes 128 + signal number
-    /// https://tldp.org/LDP/abs/html/exitcodes.html
-    pub fn toExitCode(value: SignalCode) ?u8 {
-        return switch (@intFromEnum(value)) {
-            1...31 => 128 +% @intFromEnum(value),
-            else => null,
-        };
-    }
-
-    pub fn description(signal: SignalCode) ?[]const u8 {
-        // Description names copied from fish
-        // https://github.com/fish-shell/fish-shell/blob/00ffc397b493f67e28f18640d3de808af29b1434/fish-rust/src/signal.rs#L420
-        return switch (signal) {
-            .SIGHUP => "Terminal hung up",
-            .SIGINT => "Quit request",
-            .SIGQUIT => "Quit request",
-            .SIGILL => "Illegal instruction",
-            .SIGTRAP => "Trace or breakpoint trap",
-            .SIGABRT => "Abort",
-            .SIGBUS => "Misaligned address error",
-            .SIGFPE => "Floating point exception",
-            .SIGKILL => "Forced quit",
-            .SIGUSR1 => "User defined signal 1",
-            .SIGUSR2 => "User defined signal 2",
-            .SIGSEGV => "Address boundary error",
-            .SIGPIPE => "Broken pipe",
-            .SIGALRM => "Timer expired",
-            .SIGTERM => "Polite quit request",
-            .SIGCHLD => "Child process status changed",
-            .SIGCONT => "Continue previously stopped process",
-            .SIGSTOP => "Forced stop",
-            .SIGTSTP => "Stop request from job control (^Z)",
-            .SIGTTIN => "Stop from terminal input",
-            .SIGTTOU => "Stop from terminal output",
-            .SIGURG => "Urgent socket condition",
-            .SIGXCPU => "CPU time limit exceeded",
-            .SIGXFSZ => "File size limit exceeded",
-            .SIGVTALRM => "Virtual timefr expired",
-            .SIGPROF => "Profiling timer expired",
-            .SIGWINCH => "Window size change",
-            .SIGIO => "I/O on asynchronous file descriptor is possible",
-            .SIGSYS => "Bad system call",
-            .SIGPWR => "Power failure",
-            else => null,
-        };
-    }
-
-    pub fn from(value: anytype) SignalCode {
-        return @enumFromInt(std.mem.asBytes(&value)[0]);
-    }
-
-    // This wrapper struct is lame, what if bun's color formatter was more versatile
-    const Fmt = struct {
-        signal: SignalCode,
-        enable_ansi_colors: bool,
-        pub fn format(this: Fmt, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            const signal = this.signal;
-            switch (this.enable_ansi_colors) {
-                inline else => |enable_ansi_colors| {
-                    if (signal.name()) |str| if (signal.description()) |desc| {
-                        try writer.print(Output.prettyFmt("{s} <d>({s})<r>", enable_ansi_colors), .{ str, desc });
-                        return;
-                    };
-                    try writer.print("code {d}", .{@intFromEnum(signal)});
-                },
-            }
-        }
-    };
-
-    pub fn fmt(signal: SignalCode, enable_ansi_colors: bool) Fmt {
-        return .{ .signal = signal, .enable_ansi_colors = enable_ansi_colors };
-    }
-};
+pub const SignalCode = @import("./SignalCode.zig").SignalCode;
 
 pub fn isMissingIOUring() bool {
     if (comptime !Environment.isLinux)
@@ -2037,7 +1916,7 @@ pub const StatFS = switch (Environment.os) {
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
-pub fn appendOptionsEnv(env: []const u8, args: *std.ArrayList([:0]const u8), allocator: std.mem.Allocator) !void {
+pub fn appendOptionsEnv(env: []const u8, args: *std.array_list.Managed([:0]const u8), allocator: std.mem.Allocator) !void {
     var i: usize = 0;
     var offset_in_args: usize = 1;
     while (i < env.len) {
@@ -2093,7 +1972,7 @@ pub fn appendOptionsEnv(env: []const u8, args: *std.ArrayList([:0]const u8), all
         }
 
         // Non-option arguments or standalone values
-        var buf = std.ArrayList(u8).init(allocator);
+        var buf = std.array_list.Managed(u8).init(allocator);
 
         var in_single = false;
         var in_double = false;
@@ -2208,7 +2087,7 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
     }
 
     if (bun.env_var.BUN_OPTIONS.get()) |opts| {
-        var argv_list = std.ArrayList([:0]const u8).fromOwnedSlice(allocator, argv);
+        var argv_list = std.array_list.Managed([:0]const u8).fromOwnedSlice(allocator, argv);
         try appendOptionsEnv(opts, &argv_list, allocator);
         argv = argv_list.items;
     }
@@ -2454,7 +2333,7 @@ pub const MakePath = struct {
         }
     }
 
-    pub fn makeOpenPath(self: std.fs.Dir, sub_path: anytype, opts: std.fs.Dir.OpenDirOptions) !std.fs.Dir {
+    pub fn makeOpenPath(self: std.fs.Dir, sub_path: anytype, opts: std.fs.Dir.OpenOptions) !std.fs.Dir {
         if (comptime Environment.isWindows) {
             return makeOpenPathAccessMaskW(
                 self,
@@ -2843,8 +2722,10 @@ pub inline fn resolveSourcePath(
         var fba = std.heap.FixedBufferAllocator.init(&buf);
         const resolved = (std.fs.path.resolve(fba.allocator(), &.{
             switch (root) {
-                .codegen => Environment.codegen_path,
-                .src => Environment.base_path ++ "/src",
+                .codegen,
+                => Environment.codegen_path,
+                .src,
+                => Environment.base_path ++ "/src",
             },
             sub_path,
         }) catch
@@ -2892,7 +2773,7 @@ pub fn runtimeEmbedFile(
                 abs_path,
                 std.math.maxInt(usize),
                 null,
-                @alignOf(u8),
+                .fromByteUnits(@alignOf(u8)),
                 '\x00',
             ) catch |e| {
                 Output.panic(
@@ -3131,10 +3012,12 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
 pub inline fn assert_eql(a: anytype, b: anytype) void {
     if (a == b) return;
     if (@inComptime()) {
-        @compileError(std.fmt.comptimePrint("Assertion failure: {any} != {any}", .{ a, b }));
+        @compileError(std.fmt.comptimePrint("Assertion failure: {f} != {f}", .{ a, b }));
     }
     if (!Environment.allow_assert) return;
-    Output.panic("Assertion failure: {any} != {any}", .{ a, b });
+    // Output.panic("Assertion failure: " ++ bun.deprecated.autoFormatLabelFallback(@TypeOf(a), "{f}") ++ " != " ++ bun.deprecated.autoFormatLabelFallback(@TypeOf(b), "{f}"), .{ a, b });
+    // TODO
+    Output.panic("Assertion failure.", .{});
 }
 
 /// This has no effect on the real code but capturing 'a' and 'b' into
@@ -3495,10 +3378,8 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
             return a.get() < b.get();
         }
 
-        pub fn format(this: @This(), comptime f: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-            comptime if (strings.eql(f, "d") or strings.eql(f, "any"))
-                @compileError("Invalid format specifier: " ++ f ++ ". To use these, call .get() first");
-            try std.fmt.formatInt(@intFromEnum(this), 10, .lower, opts, writer);
+        pub fn format(this: @This(), writer: *std.Io.Writer) !void {
+            return writer.print("{d}", .{@intFromEnum(this)});
         }
 
         pub const Optional = enum(backing_int) {
@@ -3756,6 +3637,7 @@ pub fn contains(item: anytype, list: *const std.ArrayListUnmanaged(@TypeOf(item)
 }
 
 pub const safety = @import("./safety.zig");
+pub const deprecated = @import("./deprecated.zig");
 
 // Export function to check if --use-system-ca flag is set
 pub fn getUseSystemCA(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) error{ JSError, OutOfMemory }!jsc.JSValue {
@@ -3767,6 +3649,8 @@ pub fn getUseSystemCA(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFra
 
 // Claude thinks its bun.JSC when we renamed it to bun.jsc months ago.
 pub const JSC = @compileError("Deprecated: Use @import(\"bun\").jsc instead");
+
+pub const ConfigVersion = @import("./ConfigVersion.zig").ConfigVersion;
 
 const CopyFile = @import("./copy_file.zig");
 const builtin = @import("builtin");

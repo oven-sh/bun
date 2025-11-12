@@ -1,6 +1,7 @@
 ---
 title: TypeScript
 description: Using TypeScript with Bun, including type definitions and compiler options
+mode: center
 ---
 
 To install the TypeScript definitions for Bun's built-in APIs, install `@types/bun`.
@@ -10,6 +11,15 @@ bun add -d @types/bun # dev dependency
 ```
 
 At this point, you should be able to reference the `Bun` global in your TypeScript files without seeing errors in your editor.
+
+
+<Note>
+  You don't need to manually configure anything in your `tsconfig.json` for Bun's types to work.
+
+  Once you install `@types/bun`, TypeScript automatically loads the type definitions for `"bun"`'s modules and the global `Bun` namespace, no extra setup required.
+
+  If you ever encounter older guides or projects that mention `bun-types`, that's just a legacy setup. It's not necessary in new Bun projects.
+</Note>
 
 ## Suggested `compilerOptions`
 

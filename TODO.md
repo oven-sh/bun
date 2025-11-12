@@ -1,3 +1,6 @@
+- [ ] process.hrtime (same as performance.now, resets to [0, 0] when fake timers are enabled)
+- [ ] decimal ticks should be supported: https://github.com/sinonjs/fake-timers/blob/main/test/issue-207-test.js
+
 - [ ] test abortsignal
 - [ ] test spawnSync
 - [ ] support performance.now

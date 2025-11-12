@@ -558,6 +558,10 @@ pub fn load(
             this.do.run_scripts = false;
         }
 
+        if (cli.no_bin_links) {
+            this.do.link_bins = false;
+        }
+
         if (cli.trusted) {
             this.do.trust_dependencies_from_args = true;
         }
@@ -715,7 +719,8 @@ pub const Do = packed struct(u16) {
     analyze: bool = false,
     recursive: bool = false,
     prefetch_resolved_tarballs: bool = true,
-    _: u2 = 0,
+    link_bins: bool = true,
+    _: u1 = 0,
 };
 
 pub const Enable = packed struct(u16) {

@@ -230,7 +230,7 @@ pub const PackageInstaller = struct {
 
         this.completed_trees.set(tree_id);
 
-        if (tree.binaries.count() > 0) {
+        if (tree.binaries.count() > 0 and this.options.do.link_bins) {
             this.seen_bin_links.clearRetainingCapacity();
 
             var link_target_buf: bun.PathBuffer = undefined;

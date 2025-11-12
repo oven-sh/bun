@@ -341,7 +341,9 @@ pub fn installHoistedPackages(
 
         // need to make sure bins are linked before completing any remaining scripts.
         // this can happen if a package fails to download
-        installer.linkRemainingBins(log_level);
+        if (installer.options.do.link_bins) {
+            installer.linkRemainingBins(log_level);
+        }
         installer.completeRemainingScripts(log_level);
 
         // .monotonic is okay because this value is only accessed on this thread.

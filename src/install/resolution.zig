@@ -370,7 +370,10 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                     lhs_string_buf,
                     rhs_string_buf,
                 ),
-                else => unreachable,
+                // if we are comparing two ininitialized resolutions, they are not equal because we dont know what they are yet
+                .uninitialized => false,
+                // This should not happen but is an exhaustive check, better than panicking
+                else => false,
             };
         }
 

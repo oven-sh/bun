@@ -172,6 +172,7 @@ pub fn NewResponse(ssl_flag: i32) type {
                             castRes(this),
                         });
                     }
+                    return true;
                 }
             };
             c.uws_res_on_writable(ssl_flag, res.downcast(), Wrapper.handle, user_data);

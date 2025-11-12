@@ -1598,7 +1598,7 @@ pub fn Package(comptime SemverIntType: type) type {
                             nohoist_patterns.appendAssumeCapacity(try nohoist_item.data.e_string.stringCloned(bun.default_allocator));
                         }
 
-                        pm.nohoist_patterns = nohoist_patterns.items();
+                        pm.nohoist_patterns = nohoist_patterns;
                     }
                 }
 

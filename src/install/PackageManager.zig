@@ -1,3 +1,5 @@
+/// PackageManager is a singleton and is not deinitialized on program exit.
+/// Most of these fields (like `nohoist_patterns`) will stay alive forever.
 cache_directory_: ?std.fs.Dir = null,
 cache_directory_path: stringZ = "",
 root_dir: *Fs.FileSystem.DirEntry,
@@ -135,7 +137,7 @@ active_lifecycle_scripts: LifecycleScriptSubprocess.List,
 last_reported_slow_lifecycle_script_at: u64 = 0,
 cached_tick_for_slow_lifecycle_script_logging: u64 = 0,
 
-nohoist_patterns: []const []const u8 = &.{},
+nohoist_patterns: bun.collections.ArrayListDefault([]const u8) = .init(),
 
 /// Corresponds to possible commands from the CLI.
 pub const Subcommand = enum {

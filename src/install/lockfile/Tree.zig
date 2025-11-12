@@ -554,7 +554,7 @@ pub fn processSubtree(
         const hoisted: HoistDependencyResult = hoisted: {
             if (comptime method == .filter) {
                 // not filtered, but does it match a nohoist pattern?
-                if (builder.manager.nohoist_patterns.len != 0) try_nohoist: {
+                if (builder.manager.nohoist_patterns.items().len != 0) try_nohoist: {
                     const string_buf = builder.lockfile.buffers.string_bytes.items;
 
                     try dep_subpath.ensureTotalCapacity(subpath.items().len + @intFromBool(subpath.items().len != 0) + dependency.name.len());
@@ -568,7 +568,7 @@ pub fn processSubtree(
                         break :try_nohoist;
                     }
 
-                    for (builder.manager.nohoist_patterns) |nohoist_pattern| {
+                    for (builder.manager.nohoist_patterns.items()) |nohoist_pattern| {
                         if (glob.match(nohoist_pattern, dep_subpath.items()).matches()) {
                             // make sure it's not circular
                             var curr = trees[next.id].parent;

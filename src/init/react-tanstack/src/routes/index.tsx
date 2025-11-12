@@ -14,7 +14,7 @@ function Home() {
             <img src={headerImage} alt="TanStack Logo" className="w-full h-full object-cover object-center" />
           </div>
 
-          <div className="px-4 sm:px-8 overflow-y-auto">
+          <div className="px-4 sm:px-8 overflow-hidden">
             <div className="flex flex-col items-center justify-center py-6 min-h-full">
               <div className="text-center space-y-3 w-full">
                 <div>

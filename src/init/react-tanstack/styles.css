@@ -30,7 +30,6 @@
   --color-muted-foreground: var(--muted-foreground);
   --color-border: var(--border);
   --color-ring: var(--ring);
-  --font-sans: "Geist", "Geist Fallback";
 }
 
 @layer base {
@@ -46,7 +45,6 @@
   body {
     @apply bg-background text-foreground;
     font-family:
-      var(--font-sans),
       system-ui,
       -apple-system,
       sans-serif;

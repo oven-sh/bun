@@ -154,14 +154,6 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
 }
 
 pub const prompt = struct {
-    const KEY_CTRL_C = 3;
-    const KEY_CTRL_D = 4;
-    const KEY_BACKSPACE = 8;
-    const KEY_TAB = 9;
-    const KEY_ENTER = 13;
-    const KEY_ESC = 27;
-    const KEY_DEL = 127;
-
     fn handleBackspace(input: *std.ArrayList(u8), cursor_index: *usize) void {
         if (cursor_index.* > 0) {
             const old_cursor_index = cursor_index.*;
@@ -206,7 +198,7 @@ pub const prompt = struct {
 
     fn fullRedraw(stdout_writer: anytype, input: *std.ArrayList(u8), cursor_index: usize, prompt_width: usize) !void {
         // 1. Move cursor to the start of the input area using absolute positioning (column prompt_width + 1).
-        _ = stdout_writer.print("\x1b[{d}G", .{prompt_width + 1}) catch {};
+        _ = try stdout_writer.print("\x1b[{d}G", .{prompt_width + 1});
 
         // 2. Write the entire input buffer, expanding tabs to spaces to ensure correct alignment.
         var i: usize = 0;
@@ -391,173 +383,171 @@ pub const prompt = struct {
         };
 
         // 7. Pause while waiting for the user's response.
-        if (comptime !Environment.isWindows) {
+        if ((comptime !Environment.isWindows) and bun.c.isatty(bun.FD.stdin().native()) == 1) {
             const c_termios = @cImport({
                 @cInclude("termios.h");
                 @cInclude("unistd.h");
                 @cInclude("signal.h");
             });
 
-            if (c_termios.isatty(bun.FD.stdin().native()) == 1) {
-                var original_termios: c_termios.termios = undefined;
-                var pending_sigint: bool = false;
-                if (c_termios.tcgetattr(bun.FD.stdin().native(), &original_termios) != 0) {
+            var original_termios: c_termios.termios = undefined;
+            var pending_sigint: bool = false;
+            if (c_termios.tcgetattr(bun.FD.stdin().native(), &original_termios) != 0) {
+                return .null;
+            }
+
+            defer {
+                _ = c_termios.tcsetattr(bun.FD.stdin().native(), c_termios.TCSADRAIN, &original_termios);
+                // Move cursor to next line after input is done
+                _ = bun.Output.writer().writeAll("\n") catch {};
+                bun.Output.flush();
+                if (pending_sigint) {
+                    _ = c_termios.raise(c_termios.SIGINT);
+                }
+            }
+
+            var raw_termios = original_termios;
+            // Unset canonical mode, echo, signal generation, and extended input processing
+            raw_termios.c_lflag &= ~@as(c_termios.tcflag_t, c_termios.ICANON | c_termios.ECHO | c_termios.ISIG | c_termios.IEXTEN);
+            // Set VMIN=1 and VTIME=0 for non-canonical read (read returns after 1 byte)
+            raw_termios.c_cc[c_termios.VMIN] = 1;
+            raw_termios.c_cc[c_termios.VTIME] = 0;
+
+            if (c_termios.tcsetattr(bun.FD.stdin().native(), c_termios.TCSADRAIN, &raw_termios) != 0) {
+                return .null;
+            }
+
+            var input = std.ArrayList(u8).init(allocator);
+            defer input.deinit();
+            var cursor_index: usize = 0;
+            var prompt_width: usize = 0;
+
+            // Calculate prompt width for redraws
+            if (has_message) {
+                const message = try arguments[0].toSlice(globalObject, allocator);
+                defer message.deinit();
+                prompt_width += columnWidth(message.slice());
+            }
+            prompt_width += columnWidth(if (has_message) " " else "Prompt ");
+
+            if (has_default) {
+                const default_string = try arguments[1].toSlice(globalObject, allocator);
+                defer default_string.deinit();
+
+                prompt_width += columnWidth("[") + columnWidth(default_string.slice()) + columnWidth("] ");
+            }
+
+            const reader = bun.Output.buffered_stdin.reader();
+            const stdout_writer = bun.Output.writer();
+
+            while (true) {
+                const byte = reader.readByte() catch {
+                    // Real I/O error or EOF from upstream (not user EOT)
                     return .null;
-                }
+                };
 
-                defer {
-                    _ = c_termios.tcsetattr(bun.FD.stdin().native(), c_termios.TCSADRAIN, &original_termios);
-                    // Move cursor to next line after input is done
-                    _ = bun.Output.writer().writeAll("\n") catch {};
-                    bun.Output.flush();
-                    if (pending_sigint) {
-                        _ = c_termios.raise(c_termios.SIGINT);
-                    }
-                }
+                switch (byte) {
+                    std.ascii.control_code.ht => {
+                        try input.insert(cursor_index, byte);
+                        cursor_index += 1;
+                    },
 
-                var raw_termios = original_termios;
-                // Unset canonical mode, echo, signal generation, and extended input processing
-                raw_termios.c_lflag &= ~@as(c_termios.tcflag_t, c_termios.ICANON | c_termios.ECHO | c_termios.ISIG | c_termios.IEXTEN);
-                // Set VMIN=1 and VTIME=0 for non-canonical read (read returns after 1 byte)
-                raw_termios.c_cc[c_termios.VMIN] = 1;
-                raw_termios.c_cc[c_termios.VTIME] = 0;
+                    // End of input
+                    std.ascii.control_code.lf, std.ascii.control_code.cr => {
+                        if (input.items.len == 0 and !has_default) return bun.String.empty.toJS(globalObject);
+                        if (input.items.len == 0) return default;
 
-                if (c_termios.tcsetattr(bun.FD.stdin().native(), c_termios.TCSADRAIN, &raw_termios) != 0) {
-                    return .null;
-                }
+                        return bun.String.createUTF8ForJS(globalObject, input.items);
+                    },
 
-                var input = std.ArrayList(u8).init(allocator);
-                defer input.deinit();
-                var cursor_index: usize = 0;
-                var prompt_width: usize = 0;
+                    // Backspace
+                    std.ascii.control_code.bs, std.ascii.control_code.del => handleBackspace(&input, &cursor_index),
 
-                // Calculate prompt width for redraws
-                if (has_message) {
-                    const message = try arguments[0].toSlice(globalObject, allocator);
-                    defer message.deinit();
-                    prompt_width += columnWidth(message.slice());
-                }
-                prompt_width += columnWidth(if (has_message) " " else "Prompt ");
-
-                if (has_default) {
-                    const default_string = try arguments[1].toSlice(globalObject, allocator);
-                    defer default_string.deinit();
-
-                    prompt_width += columnWidth("[") + columnWidth(default_string.slice()) + columnWidth("] ");
-                }
-
-                const reader = bun.Output.buffered_stdin.reader();
-                const stdout_writer = bun.Output.writer();
-
-                while (true) {
-                    const byte = reader.readByte() catch {
-                        // Real I/O error or EOF from upstream (not user EOT)
+                    // Ctrl+C
+                    std.ascii.control_code.etx => {
+                        // This will trigger the defer and restore terminal settings
+                        pending_sigint = true;
                         return .null;
-                    };
+                    },
 
-                    switch (byte) {
-                        KEY_TAB => {
-                            try input.insert(cursor_index, byte);
-                            cursor_index += 1;
-                        },
+                    // Escape sequence (e.g., arrow keys, alt+backspace)
+                    std.ascii.control_code.esc => block: {
+                        const byte2 = reader.readByte() catch break :block;
 
-                        // End of input
-                        '\n', KEY_ENTER => {
-                            if (input.items.len == 0 and !has_default) return jsc.ZigString.init("").toJS(globalObject);
-                            if (input.items.len == 0) return default;
+                        // Alt+Backspace -> treat as regular backspace
+                        if (byte2 == std.ascii.control_code.del or byte2 == std.ascii.control_code.bs) {
+                            handleBackspace(&input, &cursor_index);
+                            break :block; // Exit escape sequence handler to allow redraw
+                        }
 
-                            var result = jsc.ZigString.init(input.items);
-                            result.markUTF8();
-                            return result.toJS(globalObject);
-                        },
+                        // Standard escape sequence (e.g., arrow keys)
+                        if (byte2 != '[') {
+                            break :block;
+                        }
 
-                        // Backspace
-                        KEY_BACKSPACE, KEY_DEL => handleBackspace(&input, &cursor_index),
+                        var final_byte = reader.readByte() catch break :block;
 
-                        // Ctrl+C
-                        KEY_CTRL_C => {
-                            // This will trigger the defer and restore terminal settings
-                            pending_sigint = true;
-                            return .null;
-                        },
-
-                        // Escape sequence (e.g., arrow keys, alt+backspace)
-                        KEY_ESC => block: {
-                            const byte2 = reader.readByte() catch break :block;
-
-                            // Alt+Backspace -> treat as regular backspace
-                            if (byte2 == KEY_DEL or byte2 == KEY_BACKSPACE) {
-                                handleBackspace(&input, &cursor_index);
-                                break :block; // Exit escape sequence handler to allow redraw
-                            }
-
-                            // Standard escape sequence (e.g., arrow keys)
-                            if (byte2 != '[') {
-                                break :block;
-                            }
-
-                            var final_byte = reader.readByte() catch break :block;
-
-                            // Check for complex sequence (e.g., ESC [ 3 ~ or ESC [ 1 ; 5 D)
-                            if (final_byte >= '0' and final_byte <= '9') {
-                                // Consume parameters until the final command byte
-                                while (true) {
-                                    const peek = reader.readByte() catch break;
-                                    if ((peek >= 'A' and peek <= 'Z') or peek == '~') {
-                                        final_byte = peek;
-                                        break;
-                                    }
+                        // Check for complex sequence (e.g., ESC [ 3 ~ or ESC [ 1 ; 5 D)
+                        if (final_byte >= '0' and final_byte <= '9') {
+                            // Consume parameters until the final command byte
+                            while (true) {
+                                const peek = reader.readByte() catch break;
+                                if ((peek >= 'A' and peek <= 'Z') or peek == '~') {
+                                    final_byte = peek;
+                                    break;
                                 }
                             }
+                        }
 
-                            switch (final_byte) {
-                                'D' => { // Left arrow
-                                    if (cursor_index > 0) {
-                                        cursor_index = utf8Prev(input.items, cursor_index) orelse cursor_index - 1;
-                                    }
-                                },
-                                'C' => { // Right arrow
-                                    if (cursor_index < input.items.len) {
-                                        cursor_index = utf8Next(input.items, cursor_index) orelse cursor_index + 1;
-                                    }
-                                },
-                                'H' => { // Home
-                                    cursor_index = 0;
-                                },
-                                'F' => { // End
-                                    cursor_index = input.items.len;
-                                },
-                                '~' => { // Handles Delete (e.g. ESC [ 3 ~)
-                                    if (cursor_index < input.items.len) {
-                                        const next_codepoint_start = utf8Next(input.items, cursor_index);
+                        switch (final_byte) {
+                            'D' => { // Left arrow
+                                if (cursor_index > 0) {
+                                    cursor_index = utf8Prev(input.items, cursor_index) orelse cursor_index - 1;
+                                }
+                            },
+                            'C' => { // Right arrow
+                                if (cursor_index < input.items.len) {
+                                    cursor_index = utf8Next(input.items, cursor_index) orelse cursor_index + 1;
+                                }
+                            },
+                            'H' => { // Home
+                                cursor_index = 0;
+                            },
+                            'F' => { // End
+                                cursor_index = input.items.len;
+                            },
+                            '~' => { // Handles Delete (e.g. ESC [ 3 ~)
+                                if (cursor_index < input.items.len) {
+                                    const next_codepoint_start = utf8Next(input.items, cursor_index);
 
-                                        if (next_codepoint_start) |end| {
-                                            var i: usize = 0;
-                                            while (i < end - cursor_index) : (i += 1) {
-                                                _ = input.orderedRemove(cursor_index);
-                                            }
-                                        } else {
-                                            // Fallback: delete one byte if invalid UTF-8
+                                    if (next_codepoint_start) |end| {
+                                        var i: usize = 0;
+                                        while (i < end - cursor_index) : (i += 1) {
                                             _ = input.orderedRemove(cursor_index);
                                         }
+                                    } else {
+                                        // Fallback: delete one byte if invalid UTF-8
+                                        _ = input.orderedRemove(cursor_index);
                                     }
-                                },
-                                else => {},
-                            }
-                        },
+                                }
+                            },
+                            else => {},
+                        }
+                    },
 
-                        // Ctrl+D (EOT)
-                        KEY_CTRL_D => {
-                            return .null;
-                        },
+                    // Ctrl+D (EOT)
+                    std.ascii.control_code.eot => {
+                        return .null;
+                    },
 
-                        else => {
-                            try input.insert(cursor_index, byte);
-                            cursor_index += 1;
-                        },
-                    }
-                    try fullRedraw(stdout_writer, &input, cursor_index, prompt_width);
+                    else => {
+                        try input.insert(cursor_index, byte);
+                        cursor_index += 1;
+                    },
                 }
+                fullRedraw(stdout_writer, &input, cursor_index, prompt_width) catch {
+                    return .null;
+                };
             }
         }
 
@@ -633,15 +623,13 @@ pub const prompt = struct {
 
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.
-        var result = jsc.ZigString.init(input.items);
-        result.markUTF8();
 
         // 9. Invoke WebDriver BiDi user prompt closed with this, false if
         //    result is null or true otherwise, and result.
         // *  Too complex for server context.
 
         // 9. Return result.
-        return result.toJS(globalObject);
+        return bun.String.createUTF8ForJS(globalObject, input.items);
     }
 };
 

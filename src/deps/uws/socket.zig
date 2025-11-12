@@ -183,7 +183,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     const res = Fields.onData(
                         getValue(socket),
                         TLSSocket.from(socket),
-                        buf.?[0..@as(usize, @intCast(len))],
+                        if (buf) |data_ptr| data_ptr[0..@as(usize, @intCast(len))] else "",
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
                         error.JSTerminated => return null, // TODO: declare throw scope
@@ -731,7 +731,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     const res = Fields.onData(
                         getValue(socket),
                         SocketHandlerType.from(socket),
-                        buf.?[0..@as(usize, @intCast(len))],
+                        if (buf) |data_ptr| data_ptr[0..@as(usize, @intCast(len))] else "",
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
                         error.JSTerminated => return null, // TODO: declare throw scope

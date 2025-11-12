@@ -1371,7 +1371,7 @@ pub fn Bun__fetch_(
         body.detach();
     } else {
         // These are single-use, and have effectively been moved to the FetchTasklet.
-        body = FetchTasklet.HTTPRequestBody.Empty;
+        body = HTTPRequestBody.Empty;
     }
     proxy = null;
     url_proxy_buffer = "";

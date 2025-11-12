@@ -52,7 +52,7 @@ fn parent(this: *Response) *FetchTasklet {
 
 pub fn onReadableStreamAvailable(ctx: *anyopaque, globalThis: *jsc.JSGlobalObject, readable: jsc.WebCore.ReadableStream) void {
     const this = bun.cast(*FetchTasklet, ctx);
-    this.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis);
+    this.response.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis);
 }
 
 pub fn checkServerIdentity(this: *Response, certificate_info: http.CertificateInfo) bool {
@@ -278,7 +278,7 @@ pub fn onBodyReceived(this: *Response) bun.JSTerminated!void {
 
 pub fn onStartStreamingHTTPResponseBodyCallback(ctx: *anyopaque) jsc.WebCore.DrainResult {
     const this = bun.cast(*FetchTasklet, ctx);
-    if (this.signal_store.aborted.load(.monotonic)) {
+    if (this.shared.signal_store.aborted.load(.monotonic)) {
         return jsc.WebCore.DrainResult{
             .aborted = {},
         };
@@ -296,12 +296,12 @@ pub fn onStartStreamingHTTPResponseBodyCallback(ctx: *anyopaque) jsc.WebCore.Dra
 
     this.mutex.lock();
     defer this.mutex.unlock();
-    const size_hint = this.getSizeHint();
+    const size_hint = this.response.getSizeHint();
 
-    var scheduled_response_buffer = this.scheduled_response_buffer.list;
+    var scheduled_response_buffer = this.response.scheduled_response_buffer.list;
     // This means we have received part of the body but not the whole thing
     if (scheduled_response_buffer.items.len > 0) {
-        this.scheduled_response_buffer = .{
+        this.response.scheduled_response_buffer = .{
             .allocator = bun.default_allocator,
             .list = .{
                 .items = &.{},
@@ -322,7 +322,7 @@ pub fn onStartStreamingHTTPResponseBodyCallback(ctx: *anyopaque) jsc.WebCore.Dra
     };
 }
 
-fn getSizeHint(this: *Response) Blob.SizeType {
+pub fn getSizeHint(this: *Response) Blob.SizeType {
     return switch (this.body_size) {
         .content_length => @truncate(this.body_size.content_length),
         .total_received => @truncate(this.body_size.total_received),
@@ -331,7 +331,8 @@ fn getSizeHint(this: *Response) Blob.SizeType {
 }
 
 fn toBodyValue(this: *Response) Body.Value {
-    if (this.getAbortError()) |err| {
+    const tasklet = this.parent();
+    if (tasklet.getAbortError()) |err| {
         return .{ .Error = err };
     }
     if (this.flags.is_waiting_body) {
@@ -339,9 +340,9 @@ fn toBodyValue(this: *Response) Body.Value {
             .Locked = .{
                 .size_hint = this.getSizeHint(),
                 .task = this,
-                .global = this.global_this,
-                .onStartStreaming = FetchTasklet.onStartStreamingHTTPResponseBodyCallback,
-                .onReadableStreamAvailable = FetchTasklet.onReadableStreamAvailable,
+                .global = tasklet.global_this,
+                .onStartStreaming = onStartStreamingHTTPResponseBodyCallback,
+                .onReadableStreamAvailable = onReadableStreamAvailable,
             },
         };
         return response;
@@ -387,7 +388,7 @@ pub fn ignoreRemainingResponseBody(this: *Response) void {
     this.flags.ignore_data = true;
 }
 
-pub fn toResponse(this: *Response) Response {
+pub fn toResponse(this: *Response) jsc.WebCore.Response {
     log("toResponse", .{});
     const tasklet = this.parent();
     bun.assert(tasklet.shared.metadata != null);
@@ -395,7 +396,7 @@ pub fn toResponse(this: *Response) Response {
     const metadata = tasklet.shared.metadata.?;
     const http_response = metadata.response;
     this.flags.is_waiting_body = tasklet.shared.result.has_more;
-    return Response.init(
+    return jsc.WebCore.Response.init(
         .{
             .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
             .status_code = @as(u16, @truncate(http_response.status_code)),
@@ -405,7 +406,7 @@ pub fn toResponse(this: *Response) Response {
             .value = this.toBodyValue(),
         },
         bun.String.createAtomIfPossible(metadata.url),
-        this.result.redirected,
+        tasklet.shared.result.redirected,
     );
 }
 

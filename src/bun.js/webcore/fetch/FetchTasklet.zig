@@ -137,7 +137,7 @@ pub fn updateLifeCycle(this: *FetchTasklet) bun.JSTerminated!void {
             // in this case we wanna a jsc.Strong.Optional so we just convert it
             var value = this.onReject();
             const err = value.toJS(globalThis);
-            if (this.sink) |sink| {
+            if (this.request.sink) |sink| {
                 sink.cancel(err);
             }
             break :brk value.JSValue;
@@ -288,7 +288,7 @@ pub fn deinit(this: *FetchTasklet) error{}!void {
     allocator.destroy(this);
 }
 
-fn getAbortError(this: *FetchTasklet) ?Body.Value.ValueError {
+pub fn getAbortError(this: *FetchTasklet) ?Body.Value.ValueError {
     if (this.abort_reason.has()) {
         defer this.clearAbortSignal();
         const out = this.abort_reason;
@@ -463,11 +463,11 @@ comptime {
 
 pub fn onResolve(this: *FetchTasklet) JSValue {
     log("onResolve", .{});
-    const response = bun.new(Response, this.response.toResponse());
+    const response = bun.new(jsc.WebCore.Response, this.response.toResponse());
     const response_js = Response.makeMaybePooled(@as(*jsc.JSGlobalObject, this.global_this), response);
     response_js.ensureStillAlive();
-    this.response = jsc.Weak(FetchTasklet).create(response_js, this.global_this, .FetchResponse, this);
-    this.native_response = response.ref();
+    this.response.response = jsc.Weak(FetchTasklet).create(response_js, this.global_this, .FetchResponse, this);
+    this.response.native_response = response.ref();
     return response_js;
 }
 

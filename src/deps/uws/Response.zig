@@ -164,9 +164,10 @@ pub fn NewResponse(ssl_flag: i32) type {
                 pub fn handle(this: *c.uws_res, amount: u64, data: ?*anyopaque) callconv(.c) bool {
                     if (comptime UserDataType == void) {
                         return @call(bun.callmod_inline, handler, .{ {}, amount, castRes(this) });
-                    } else {
+                    } else if (data) |user_data_ptr| {
+                        // null should always be treated as a no-op, there's no case where it should have any effect.
                         return @call(bun.callmod_inline, handler, .{
-                            @as(UserDataType, @ptrCast(@alignCast(data.?))),
+                            @as(UserDataType, @ptrCast(@alignCast(user_data_ptr))),
                             amount,
                             castRes(this),
                         });

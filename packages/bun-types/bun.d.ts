@@ -6431,6 +6431,16 @@ declare module "bun" {
     catalogs?: Record<string, Record<string, string>>;
 
     /**
+     * `0` for projects created before v1.3.2, `1` for projects created after
+     * 
+     * ---
+     * Right now this only changes the default [install linker strategy](https://bun.com/docs/pm/cli/install#isolated-installs):
+     * - With `0`, the linker is hoisted.
+     * - With `1`, the linker is isolated for workspaces and hoisted for single-package projects.
+     */
+    configVersion: 0 | 1;
+
+    /**
      * ```
      * INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
      *

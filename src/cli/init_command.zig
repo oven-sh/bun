@@ -1277,7 +1277,13 @@ const Template = enum {
         _ = try install.spawnAndWait();
 
         var cwd_buf: bun.PathBuffer = undefined;
-        const cwd_path = try std.posix.getcwd(&cwd_buf);
+        const cwd_path = switch (bun.sys.getcwd(&cwd_buf)) {
+            .result => |p| p,
+            .err => |e| {
+                Output.err(e, "failed to get current working directory", .{});
+                Global.exit(1);
+            },
+        };
         const dir_name = std.fs.path.basename(cwd_path);
 
         Output.prettyln(

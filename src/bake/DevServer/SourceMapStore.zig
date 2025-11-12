@@ -278,7 +278,6 @@ pub const Entry = struct {
                 if (bun.Environment.enable_logs) {
                     mapLog("Skipping source map entry with missing line count at index {d}", .{i});
                 }
-                continue;
             },
         };
     }

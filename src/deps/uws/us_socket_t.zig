@@ -18,7 +18,7 @@ pub const us_socket_t = opaque {
 
         if (ip_addr) |ip| {
             bun.assert(ip.len < max_i32);
-            _ = c.us_socket_open(ssl, this, @intFromBool(is_client), ip.ptr, @intCast(ip.len));
+            _ = c.us_socket_open(ssl, this, @intFromBool(is_client), ip.ptr, @truncate(ip.len));
         } else {
             _ = c.us_socket_open(ssl, this, @intFromBool(is_client), null, 0);
         }
@@ -66,7 +66,7 @@ pub const us_socket_t = opaque {
 
     /// Returned slice is a view into `buf`.
     pub fn localAddress(this: *us_socket_t, ssl: bool, buf: []u8) ![]const u8 {
-        var length: i32 = @intCast(buf.len);
+        var length: i32 = @truncate(buf.len);
 
         c.us_socket_local_address(@intFromBool(ssl), this, buf.ptr, &length);
         if (length < 0) {
@@ -81,7 +81,7 @@ pub const us_socket_t = opaque {
 
     /// Returned slice is a view into `buf`. On error, `errno` should be set
     pub fn remoteAddress(this: *us_socket_t, ssl: bool, buf: []u8) ![]const u8 {
-        var length: i32 = @intCast(buf.len);
+        var length: i32 = @truncate(buf.len);
 
         c.us_socket_remote_address(@intFromBool(ssl), this, buf.ptr, &length);
         if (length < 0) {
@@ -95,11 +95,11 @@ pub const us_socket_t = opaque {
     }
 
     pub fn setTimeout(this: *us_socket_t, ssl: bool, seconds: u32) void {
-        c.us_socket_timeout(@intFromBool(ssl), this, @intCast(seconds));
+        c.us_socket_timeout(@intFromBool(ssl), this, @truncate(seconds));
     }
 
     pub fn setLongTimeout(this: *us_socket_t, ssl: bool, minutes: u32) void {
-        c.us_socket_long_timeout(@intFromBool(ssl), this, @intCast(minutes));
+        c.us_socket_long_timeout(@intFromBool(ssl), this, @truncate(minutes));
     }
 
     pub fn setNodelay(this: *us_socket_t, enabled: bool) void {
@@ -109,7 +109,7 @@ pub const us_socket_t = opaque {
     /// Returns error code. `0` on success. error codes depend on platform an
     /// configured event loop.
     pub fn setKeepalive(this: *us_socket_t, enabled: bool, delay: u32) i32 {
-        return c.us_socket_keepalive(this, @intFromBool(enabled), @intCast(delay));
+        return c.us_socket_keepalive(this, @intFromBool(enabled), @truncate(delay));
     }
 
     pub fn getNativeHandle(this: *us_socket_t, ssl: bool) ?*anyopaque {
@@ -127,14 +127,14 @@ pub const us_socket_t = opaque {
     }
 
     pub fn write(this: *us_socket_t, ssl: bool, data: []const u8) i32 {
-        const rc = c.us_socket_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len));
+        const rc = c.us_socket_write(@intFromBool(ssl), this, data.ptr, @truncate(data.len));
         debug("us_socket_write({p}, {d}) = {d}", .{ this, data.len, rc });
         return rc;
     }
 
     pub fn writeFd(this: *us_socket_t, data: []const u8, file_descriptor: bun.FD) i32 {
         if (bun.Environment.isWindows) @compileError("TODO: implement writeFd on Windows");
-        const rc = c.us_socket_ipc_write_fd(this, data.ptr, @intCast(data.len), file_descriptor.native());
+        const rc = c.us_socket_ipc_write_fd(this, data.ptr, @truncate(data.len), file_descriptor.native());
         debug("us_socket_ipc_write_fd({p}, {d}, {d}) = {d}", .{ this, data.len, file_descriptor.native(), rc });
         return rc;
     }
@@ -147,7 +147,7 @@ pub const us_socket_t = opaque {
 
     pub fn rawWrite(this: *us_socket_t, ssl: bool, data: []const u8) i32 {
         debug("us_socket_raw_write({p}, {d})", .{ this, data.len });
-        return c.us_socket_raw_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len));
+        return c.us_socket_raw_write(@intFromBool(ssl), this, data.ptr, @truncate(data.len));
     }
 
     pub fn flush(this: *us_socket_t, ssl: bool) void {

@@ -10,7 +10,7 @@ function Home() {
     <div className="min-h-screen flex items-center justify-center bg-background p-4 antialiased">
       <div className="w-full max-w-md">
         <div className="relative bg-card/80 backdrop-blur-xl text-card-foreground rounded-2xl border border-border/50 shadow-2xl overflow-hidden h-[550px] max-h-5/6 grid grid-rows-[auto_1fr_auto]">
-          <div className="relative w-full overflow-hidden h-[200px]">
+          <div className="relative w-full overflow-hidden h-[250px]">
             <img src={headerImage} alt="TanStack Logo" className="w-full h-full object-cover object-center" />
           </div>
 
@@ -31,7 +31,9 @@ function Home() {
                 <div className="pt-2 border-t border-border/30">
                   <p className="text-xs text-muted-foreground/80 font-regular leading-relaxed max-w-sm mx-auto mt-2 border-t border-border/3">
                     Edit{" "}
-                    <code className="text-[11px] bg-zinc-800 px-1 py-0.5 rounded-xs mx-0.5">src/routes/index.tsx</code>{" "}
+                    <code className="text-[11px] bg-zinc-200 dark:bg-zinc-800 px-1 py-0.5 rounded-xs mx-0.5">
+                      src/routes/index.tsx
+                    </code>{" "}
                     to see HMR in action.
                     <br />
                     Visit{" "}
@@ -69,7 +71,7 @@ function Home() {
           </div>
 
           <div className="px-8 pb-10">
-            <div className="pt-6 border-t border-border/30">
+            <div className="pt-6">
               <Link
                 to="/stats"
                 className="block w-full px-4 py-2 bg-foreground text-background rounded-lg font-medium hover:opacity-90 transition-opacity text-center text-sm"

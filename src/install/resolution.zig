@@ -370,9 +370,9 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                     lhs_string_buf,
                     rhs_string_buf,
                 ),
-                // if we are comparing two uninitialized resolutions, they are not equal because we dont know what they are yet
+                // if we are comparing two uninitialized resolutions, they are not equal because we don't know what they are yet
                 .uninitialized => false,
-                // If we dont know what the tag is, we cannot compare them
+                // If we don't know what the tag is, we cannot compare them
                 else => false,
             };
         }

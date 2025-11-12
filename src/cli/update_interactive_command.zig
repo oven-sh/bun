@@ -77,7 +77,6 @@ pub const UpdateInteractiveCommand = struct {
             package_json.*.source.contents[package_json.*.source.contents.len - 1] == '\n';
 
         var buffer_writer = JSPrinter.BufferWriter.init(manager.allocator);
-        defer buffer_writer.buffer.deinit();
         try buffer_writer.buffer.list.ensureTotalCapacity(manager.allocator, package_json.*.source.contents.len + 1);
         buffer_writer.append_newline = preserve_trailing_newline;
         var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);

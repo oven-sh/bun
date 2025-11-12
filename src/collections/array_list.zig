@@ -96,7 +96,6 @@ pub fn ArrayListAlignedIn(
         }
 
         pub fn deinitShallow(self: *Self) void {
-            defer self.* = undefined;
             self.#unmanaged.deinit(self.getStdAllocator());
             bun.memory.deinit(&self.#allocator);
         }

@@ -136,7 +136,9 @@ pub const Run = struct {
             null,
         );
         try bundle.runEnvLoader(false);
+        const first_time = !jsc.MiniEventLoop.globalInitialized;
         const mini = jsc.MiniEventLoop.initGlobal(bundle.env, null);
+        if (first_time) bun.default_allocator.free(mini.top_level_dir);
         mini.top_level_dir = ctx.args.absolute_working_dir orelse "";
         return bun.shell.Interpreter.initAndRunFromFile(ctx, mini, entry_path);
     }

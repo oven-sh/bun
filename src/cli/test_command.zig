@@ -1392,7 +1392,7 @@ pub const TestCommand = struct {
         if (!node_env_entry.found_existing) {
             node_env_entry.key_ptr.* = try env_loader.allocator.dupe(u8, node_env_entry.key_ptr.*);
             node_env_entry.value_ptr.* = .{
-                .value = try env_loader.allocator.dupe(u8, "test"),
+                .value = "test",
                 .conditional = false,
             };
         }
@@ -1774,6 +1774,8 @@ pub const TestCommand = struct {
             vm.exit_handler.exit_code = 1;
         }
         vm.is_shutting_down = true;
+        ctx.allocator.free(test_files);
+        scanner.deinit();
         vm.runWithAPILock(jsc.VirtualMachine, vm, jsc.VirtualMachine.globalExit);
     }
 
@@ -1820,6 +1822,7 @@ pub const TestCommand = struct {
         };
 
         var arena = bun.MimallocArena.init();
+        defer arena.deinit();
         vm_.eventLoop().ensureWaker();
         vm_.arena = &arena;
         vm_.allocator = arena.allocator();

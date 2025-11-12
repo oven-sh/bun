@@ -277,6 +277,10 @@ pub export fn CryptoObject__create(globalThis: *jsc.JSGlobalObject) jsc.JSValue 
     return ptr.toJS(globalThis);
 }
 
+pub fn finalize(this: *Crypto) void {
+    bun.default_allocator.destroy(this);
+}
+
 const std = @import("std");
 
 const UUID = @import("../uuid.zig");

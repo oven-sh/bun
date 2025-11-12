@@ -518,7 +518,6 @@ JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, W
         case WebCore::BufferEncodingType::base64:
         case WebCore::BufferEncodingType::base64url:
         case WebCore::BufferEncodingType::hex: {
-
             result = Bun__encoding__constructFromLatin1(lexicalGlobalObject, span.data(), span.size(), static_cast<uint8_t>(encoding));
             break;
         }

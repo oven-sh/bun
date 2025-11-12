@@ -34,7 +34,7 @@ fn dangerouslyRunWithoutJitProtections(R: type, func: anytype, args: anytype) R 
     const has_protection = (Environment.isAarch64 and Environment.isMac);
     if (comptime has_protection) pthread_jit_write_protect_np(@intFromBool(false));
     defer if (comptime has_protection) pthread_jit_write_protect_np(@intFromBool(true));
-    return @call(.always_inline, func, args);
+    return @call(bun.callmod_inline, func, args);
 }
 
 const Offsets = extern struct {
@@ -67,7 +67,10 @@ pub const FFI = struct {
     closed: bool = false,
     shared_state: ?*TCC.State = null,
 
-    pub fn finalize(_: *FFI) callconv(.c) void {}
+    pub fn finalize(this: *FFI) callconv(.c) void {
+        this.functions.clearAndFree(bun.default_allocator);
+        bun.destroy(this);
+    }
 
     const CompileC = struct {
         source: Source = .{ .file = "" },
@@ -95,7 +98,7 @@ pub const FFI = struct {
 
             pub fn deinit(this: *Source, allocator: Allocator) void {
                 switch (this.*) {
-                    .file => if (this.file.len > 0) allocator.free(this.file),
+                    .file => allocator.free(this.file),
                     .files => {
                         for (this.files.items) |file| {
                             allocator.free(file);
@@ -506,17 +509,19 @@ pub const FFI = struct {
 
             for (this.define.items) |define| {
                 bun.default_allocator.free(define[0]);
-                if (define[1].len > 0) bun.default_allocator.free(define[1]);
+                bun.default_allocator.free(define[1]);
             }
             this.define.clearAndFree(bun.default_allocator);
 
             this.source.deinit(bun.default_allocator);
-            if (this.flags.len > 0) bun.default_allocator.free(this.flags);
+            if (this.flags.len > 0) bun.default_allocator.free(this.flags); // len check necessary because nul-terminated
             this.flags = "";
         }
     };
+
     const SymbolsMap = struct {
         map: bun.StringArrayHashMapUnmanaged(Function) = .{},
+
         pub fn deinit(this: *SymbolsMap) void {
             for (this.map.keys()) |key| {
                 bun.default_allocator.free(@constCast(key));
@@ -591,19 +596,11 @@ pub const FFI = struct {
         const object = arguments[0];
 
         var compile_c = CompileC{};
-        defer {
-            if (globalThis.hasException()) {
-                compile_c.deinit();
-            }
-        }
+        errdefer compile_c.deinit();
 
         const symbols_object: JSValue = try object.getOwn(globalThis, "symbols") orelse .js_undefined;
-        if (!globalThis.hasException() and (symbols_object == .zero or !symbols_object.isObject())) {
+        if (symbols_object == .zero or !symbols_object.isObject()) {
             return globalThis.throwInvalidArgumentTypeValue("symbols", "object", symbols_object);
-        }
-
-        if (globalThis.hasException()) {
-            return error.JSError;
         }
 
         // SAFETY: already checked that symbols_object is an object
@@ -790,17 +787,16 @@ pub const FFI = struct {
             }
         }
 
-        // TODO: pub const new = bun.TrivialNew(FFI)
-        var lib = bun.handleOom(bun.default_allocator.create(FFI));
-        lib.* = .{
+        var lib = bun.new(FFI, .{
             .dylib = null,
             .shared_state = tcc_state,
             .functions = compile_c.symbols.map,
             .relocated_bytes_to_free = bytes_to_free_on_error,
-        };
+        });
         tcc_state = null;
         bytes_to_free_on_error = "";
         compile_c.symbols = .{};
+        compile_c.deinit();
 
         const js_object = lib.toJS(globalThis);
         jsc.Codegen.JSFFI.symbolsValueSetCached(js_object, globalThis, obj);
@@ -862,11 +858,7 @@ pub const FFI = struct {
         }
     }
 
-    pub fn close(
-        this: *FFI,
-        globalThis: *jsc.JSGlobalObject,
-        _: *jsc.CallFrame,
-    ) bun.JSError!JSValue {
+    pub fn close(this: *FFI, globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
         if (this.closed) {
             return .js_undefined;
@@ -876,18 +868,14 @@ pub const FFI = struct {
             dylib.close();
             this.dylib = null;
         }
-
         if (this.shared_state) |state| {
             this.shared_state = null;
             state.deinit();
         }
-
-        const allocator = VirtualMachine.get().allocator;
-
         for (this.functions.values()) |*val| {
             val.deinit(globalThis);
         }
-        this.functions.deinit(allocator);
+        this.functions.clearAndFree(bun.default_allocator);
 
         // NOTE: `relocated_bytes_to_free` points to a memory region that was
         // relocated by tinycc. Attempts to free it will cause a bus error,
@@ -1036,6 +1024,7 @@ pub const FFI = struct {
             return val;
         }
         if (symbols.count() == 0) {
+            symbols.clearAndFree(bun.default_allocator);
             return global.toInvalidArguments("Expected at least one symbol", .{});
         }
 
@@ -1148,7 +1137,6 @@ pub const FFI = struct {
             .dylib = dylib,
             .functions = symbols,
         });
-
         const js_object = lib.toJS(global);
         jsc.Codegen.JSFFI.symbolsValueSetCached(js_object, global, obj);
         return js_object;
@@ -1257,6 +1245,7 @@ pub const FFI = struct {
         jsc.Codegen.JSFFI.symbolsValueSetCached(js_object, global, obj);
         return js_object;
     }
+
     pub fn generateSymbolForFunction(global: *JSGlobalObject, allocator: std.mem.Allocator, value: jsc.JSValue, function: *Function) bun.JSError!?JSValue {
         jsc.markBinding(@src());
 
@@ -1379,7 +1368,6 @@ pub const FFI = struct {
 
         var symbols_iter = try jsc.JSPropertyIterator(.{
             .skip_empty_name = true,
-
             .include_value = true,
         }).init(global, object);
         defer symbols_iter.deinit();
@@ -1479,7 +1467,7 @@ pub const FFI = struct {
             },
         };
 
-        fn fail(this: *Function, comptime msg: []const u8) void {
+        fn fail(this: *Function, msg: []const u8) void {
             if (this.step != .failed) {
                 @branchHint(.likely);
                 this.step = .{ .failed = .{ .msg = msg, .allocated = false } };

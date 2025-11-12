@@ -555,6 +555,7 @@ pub const BuildCommand = struct {
                 try writer.writeAll("\n");
             }
 
+            ctx.allocator.free(all_paths);
             Output.prettyln("\n", .{});
         }
 

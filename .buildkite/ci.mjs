@@ -185,11 +185,9 @@ function getImageKey(platform) {
   if (features?.length) {
     key += `-with-${features.join("-")}`;
   }
-
   if (abi) {
     key += `-${abi}`;
   }
-
   return key;
 }
 
@@ -581,7 +579,8 @@ function getTestBunStep(platform, options, testOptions = {}) {
 
   const depends = [];
   if (!buildId) {
-    depends.push(`${getTargetKey(platform)}-build-bun`);
+    const build_platform = profile === "lsan" ? { ...platform, profile: "asan" } : platform;
+    depends.push(`${getTargetKey(build_platform)}-build-bun`);
   }
 
   return {
@@ -592,7 +591,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     parallelism: unifiedTests ? undefined : os === "darwin" ? 2 : 10,
-    timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : 30,
+    timeout_in_minutes: 120,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
     },
@@ -1164,6 +1163,18 @@ async function getPipeline(options = {}) {
           steps: [getTestBunStep(target, options, { unifiedTests, testFiles, buildId })],
         })),
       );
+    }
+  }
+  if (includeASAN) {
+    const { unifiedTests, testFiles } = options;
+    const asan_targets = testPlatforms.filter(v => v.profile === "asan");
+    const lsan_targets = asan_targets.map(v => ({ ...v, profile: "lsan" }));
+    for (let i = 0; i < lsan_targets.length; i++) {
+      steps.push({
+        key: getTargetKey(lsan_targets[i]),
+        group: getTargetLabel(asan_targets[i]),
+        steps: [getTestBunStep(lsan_targets[i], options, { unifiedTests, testFiles, buildId })],
+      })
     }
   }
 

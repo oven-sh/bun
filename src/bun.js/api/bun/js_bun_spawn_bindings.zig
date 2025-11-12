@@ -132,6 +132,7 @@ pub fn spawnMaybeSync(
     var maybe_ipc_mode: if (is_sync) void else ?IPC.Mode = if (is_sync) {} else null;
     var ipc_callback: JSValue = .zero;
     var extra_fds = std.array_list.Managed(bun.spawn.SpawnOptions.Stdio).init(bun.default_allocator);
+    defer extra_fds.deinit();
     var argv0: ?[*:0]const u8 = null;
     var ipc_channel: i32 = -1;
     var timeout: ?i32 = null;

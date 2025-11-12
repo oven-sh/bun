@@ -340,11 +340,12 @@ pub const PmPkgCommand = struct {
                 return try allocator.dupe(u8, "null");
             },
             else => {
-                const buffer_writer = JSPrinter.BufferWriter.init(allocator);
+                var buffer_writer = JSPrinter.BufferWriter.init(allocator);
+                defer buffer_writer.buffer.deinit();
                 var printer = JSPrinter.BufferPrinter.init(buffer_writer);
 
-                _ = JSPrinter.printJSON(
-                    @TypeOf(&printer),
+                _ = try JSPrinter.printJSON(
+                    *JSPrinter.BufferPrinter,
                     &printer,
                     expr,
                     &logger.Source.initEmptyFile("expression.json"),
@@ -358,9 +359,7 @@ pub const PmPkgCommand = struct {
                             .count = 0,
                         },
                     },
-                ) catch |err| {
-                    return err;
-                };
+                );
 
                 const written = printer.ctx.getWritten();
                 return try allocator.dupe(u8, written);
@@ -736,6 +735,7 @@ pub const PmPkgCommand = struct {
         const preserve_newline = pkg.contents.len > 0 and pkg.contents[pkg.contents.len - 1] == '\n';
 
         var buffer_writer = JSPrinter.BufferWriter.init(allocator);
+        defer buffer_writer.buffer.deinit();
         try buffer_writer.buffer.list.ensureTotalCapacity(allocator, pkg.contents.len + 1);
         buffer_writer.append_newline = preserve_newline;
 

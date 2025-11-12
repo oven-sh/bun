@@ -1538,8 +1538,8 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
     };
 }
 
-pub const BufferedWriter = if (bun.Environment.isPosix) PosixBufferedWriter else WindowsBufferedWriter;
-pub const StreamingWriter = if (bun.Environment.isPosix) PosixStreamingWriter else WindowsStreamingWriter;
+pub const BufferedWriter: fn (type, type) type = if (bun.Environment.isPosix) PosixBufferedWriter else WindowsBufferedWriter;
+pub const StreamingWriter: fn (type, type) type = if (bun.Environment.isPosix) PosixStreamingWriter else WindowsStreamingWriter;
 
 const std = @import("std");
 const Source = @import("./source.zig").Source;

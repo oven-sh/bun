@@ -1272,6 +1272,7 @@ extern "C" JSC::EncodedJSValue Bun__makeTypedArrayWithBytesNoCopy(JSC::JSGlobalO
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    ASSERT(mi_is_in_heap_region(ptr) == (ENABLE_MIMALLOC == 1));
     auto buffer_ = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, createSharedTask<void(void*)>([=](void* p) {
         if (deallocator) deallocator(p, deallocatorContext);
     }));
@@ -3411,9 +3412,7 @@ static JSC::JSPromise* handleResponseOnStreamingAction(JSGlobalObject* lexicalGl
     // getBodyStreamOrBytesForWasmStreaming throws the proper exception. Since this is being
     // executed in a .then(...) callback, throwing is perfectly fine.
 
-    auto readableStreamMaybe = JSC::JSValue::decode(Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
-        globalObject, JSC::JSValue::encode(source), compiler.ptr()));
-
+    auto readableStreamMaybe = JSC::JSValue::decode(Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(globalObject, JSC::JSValue::encode(source), compiler.ptr()));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // We were able to get the slice synchronously.
@@ -3565,7 +3564,7 @@ bool GlobalObject::untrackFFIFunction(JSC::JSFunction* function)
     });
 }
 
-extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(nothrow)]] void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     if (vm.entryScope) {

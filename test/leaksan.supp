@@ -96,7 +96,6 @@ leak:sql.postgres.protocol.FieldMessage.FieldMessage.init
 leak:JSC::intlCollatorAvailableLocales
 leak:Bun__canonicalizeIP
 leak:dlopen
-leak:Bun::evaluateCommonJSModuleOnce
 leak:fse_run_loop
 leak:Zig::NapiClass_ConstructorFunction
 leak:bun.js.webcore.fetch.FetchTasklet.toResponse
@@ -112,7 +111,9 @@ leak:TLSSocket__create
 leak:WebCore::JSReadableStreamDefaultReaderPrototype::finishCreation
 leak:WebCore::JSReadableStreamDefaultControllerPrototype::finishCreation
 
-# file comments below are where it was first seen, not an exhaustive list
+
+# file comments below are where it was first seen, not necessarily an exhaustive list
+
 # test/js/node/tls/node-tls-cert.test.ts
 leak:create_ssl_context_from_bun_options
 # test/js/node/test/parallel/test-inspector-enabled.js
@@ -121,3 +122,120 @@ leak:bun.js.Debugger.startJSDebuggerThread
 leak:WebCore::jsSQLStatementOpenStatementFunction
 # ci, test/js/node/test/parallel/test-dgram-unref-in-cluster.js
 leak:bun.js.api.bun.udp_socket.UDPSocket.udpSocket
+# test/cli/run/if-present.test.ts
+leak:options.Target.outExtensions
+leak:options.loadersFromTransformOptions
+leak:options.ESMConditions.init
+# test/js/bun/bun-object/write.spec.ts
+leak:bun.js.webcore.blob.read_file.ReadFile.runAsyncWithFD
+# test/cli/run/env.test.ts
+leak:env_loader.Map.createNullDelimitedEnvMap
+leak:cli.run_command.RunCommand.runPackageScriptForeground
+# test/js/bun/globals.test.js
+leak:cli.Arguments.loadConfigPath__anon
+# test/js/bun/globals.test.js
+leak:options.definesFromTransformOptions
+leak:transpiler.Transpiler.init
+# test/bake/deinitialization.test.ts
+leak:bundler.bundle_v2.BundleV2.enqueueOnLoadPluginIfNeededImpl
+leak:DebugHTTPServerClass__finalize
+# test/bake/framework-router.test.ts
+leak:bake.FrameworkRouter.JSFrameworkRouter.constructor
+# test/bundler/bundler_decorator_metadata.test.ts
+leak:bundler.bundle_v2.BundleV2.init
+# test/bundler/bun-build-compile-wasm.test.ts
+leak:StandaloneModuleGraph.StandaloneModuleGraph.inject
+leak:bundler.BundleThread.BundleThread(bundler.bundle_v2.BundleV2.JSBundleCompletionTask).generateInNewThread
+leak:StandaloneModuleGraph.StandaloneModuleGraph.toBytes
+# test/bundler/bundler_minify_symbol_for.test.ts
+leak:bundler.ThreadPool.ThreadPool.getWorker
+leak:ast.P.NewParser_(*).appendPart
+leak:ast.P.NewParser_(*).newSymbol
+leak:transpiler.Transpiler.transform
+# test/bundler/bundler_naming.test.ts
+leak:js_printer.BufferWriter.writeAll__anon
+# test/bundler/esbuild/tsconfig.test.ts
+leak:logger.Location.clone
+# test/bundler/bundler_browser.test.ts
+leak:bundler.bundle_v2.BundleV2.runResolutionForParseTask
+# test/js/bun/spawn/spawn-streaming-stdin.test.ts
+leak:bun.js.api.bun.js_bun_spawn_bindings.spawnMaybeSync__anon
+
+# fixed by VirtualMachine.globalExit tick
+leak:bun.js.test.bun_test.BunTest.runNextTick
+
+# leaks post experiment
+leak:bun.js.webcore.fetch.FetchTasklet.callback
+leak:bun.js.webcore.FileReader.onReadChunk
+leak:bun.js.ipc.SendQueue.startMessage
+leak:bun.js.api.bun.process.spawnProcessPosix
+leak:bun.js.api.bun.subprocess.spawnMaybeSync__anon
+leak:bun.js.node.node_cluster_binding.sendHelperChild
+leak:bun.js.event_loop.ManagedTask.New(bun.js.ipc.SendQueue,(*)).init
+leak:bun.js.VirtualMachine.ensureSourceCodePrinter
+leak:bun.js.node.types.VectorArrayBuffer.fromJS
+leak:bun.js.api.server.NewServer(*).init
+leak:NodeHTTPResponse__createForJS
+leak:bun.js.api.bun.dns.Resolver.onDNSSocketState
+leak:ArrayBufferSink__write
+leak:bun.js.webcore.fetch.Bun__fetch_
+leak:bun.js.api.server.NewServer(*).scheduleDeinit
+leak:bun.js.api.Timer.TimeoutObject.init
+leak:bun.js.node.node_net_binding.newDetachedSocket
+leak:deps.c_ares.Channel.init__anon
+leak:bun.js.api.bun.socket.NewSocket(*).getRemoteAddress
+leak:Bun::InternalModuleRegistry::createInternalModuleById
+leak:bun.js.api.bun.socket.jsUpgradeDuplexToTLS
+leak:bun.js.api.server.SSLConfig.fromJS
+leak:fmt.getSharedBuffer
+leak:ast.ASTMemoryAllocator.append__anon
+leak:ast.Parser.Parser._parse__anon
+leak:bun.js.api.JSTranspiler.transformSync
+leak:bun.js.api.JSTranspiler.scan
+leak:bun.js.api.JSTranspiler.TransformTask.run
+leak:ast.parseStmt.ParseStmt
+leak:bun.js.ModuleLoader.RuntimeTranspilerStore.TranspilerJob.run
+leak:bun.js.BuildMessage.BuildMessage.getNotes
+leak:sql.postgres.PostgresSQLQuery.doRun
+leak:bun.js.node.node_fs.Arguments.Realpath.fromJS
+leak:install.
+leak:interchange.json.parsePackageJSONUTF8
+leak:bundler.
+leak:http.cloneMetadata
+leak:bun.js.rare_data.AWSSignatureCache.set
+leak:shell.
+leak:bun.js.webcore.blob.Store.init
+leak:bun.js.webcore.ByteBlobLoader.drain
+leak:bun.js.node.path.dirnamePosixJS_T__anon
+leak:bun.js.test.bun_test.BunTest.ref
+leak:JSC::Wasm::StreamingParser::addBytes
+leak:bun.js.api.glob.makeGlobWalker__anon
+leak:bun.js.webcore.TextDecoder.decode
+leak:bun.js.api.bun.subprocess.onCloseIO
+leak:bun.js.node.node_fs.Arguments.Stat.fromJS
+leak:bun.js.api.YAMLObject.ParserCtx.toJS
+leak:bun.js.api.filesystem_router.FileSystemRouter.match
+leak:bun.js.ModuleLoader.transpileSourceCode__anon
+leak:bun.js.api.server.ServerConfig.fromJS
+leak:http.handleResponseMetadata
+leak:bun.js.api.ffi.FFI.generateSymbols
+leak:array_list.ArrayListAligned(u8,null).ensureTotalCapacity
+leak:cli.publish_command
+leak:WTF::StringImpl::tryCreateUninitialized
+leak:cli.pm_view_command
+leak:JSBundlerPlugin__addError
+leak:bun.js.webcore.FileSink.init__anon
+leak:bun.js.webcore.ReadableStream.fromPipe__anon
+leak:http.HTTPThread.drainEvents
+leak:bun.js.api.ffi.FFI.Function.compile
+leak:bun.js.VirtualMachine.initWorker
+leak:HTMLScanner.createImportRecord
+leak:bun.js.RuntimeTranspilerStore.RuntimeTranspilerStore.TranspilerJob.runFromJSThread
+leak:cli.pm_pkg_command.PmPkgCommand
+leak:cli.pack_command
+leak:cli.update_interactive_command
+leak:cli.audit_command
+leak:bun.js.api.bun.subprocess.SubprocessPipeReader.create
+leak:bun.js.api.ffi.FFI.generateSymbolForFunction
+leak:patch.
+leak:logger.Log.cloneToWithRecycled

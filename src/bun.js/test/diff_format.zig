@@ -7,9 +7,7 @@ pub const DiffFormatter = struct {
     not: bool = false,
 
     pub fn format(this: DiffFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        var scope = bun.AllocationScope.init(default_allocator);
-        // defer scope.deinit(); // TODO: fix leaks
-        const allocator = scope.allocator();
+        const allocator = default_allocator;
 
         const diff_config: DiffConfig = .default(Output.isAIAgent(), Output.enable_ansi_colors_stderr);
 
@@ -62,7 +60,9 @@ pub const DiffFormatter = struct {
         if (std.mem.endsWith(u8, received_slice, "\n")) received_slice = received_slice[0 .. received_slice.len - 1];
         if (std.mem.endsWith(u8, expected_slice, "\n")) expected_slice = expected_slice[0 .. expected_slice.len - 1];
 
-        try printDiffMain(allocator, this.not, received_slice, expected_slice, writer, diff_config);
+        var arena = std.heap.ArenaAllocator.init(default_allocator);
+        defer arena.deinit();
+        try printDiffMain(arena.allocator(), this.not, received_slice, expected_slice, writer, diff_config);
     }
 };
 

@@ -328,7 +328,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
             if (lhs.tag != rhs.tag) return false;
 
             return switch (lhs.tag) {
-                .root => true,
+                .uninitialized, .root => true,
                 .npm => lhs.value.npm.eql(rhs.value.npm),
                 .local_tarball => lhs.value.local_tarball.eql(
                     rhs.value.local_tarball,
@@ -370,10 +370,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
                     lhs_string_buf,
                     rhs_string_buf,
                 ),
-                // if we are comparing two uninitialized resolutions, they are not equal because we don't know what they are yet
-                .uninitialized => false,
-                // If we don't know what the tag is, we cannot compare them
-                else => false,
+                else => true,
             };
         }
 

@@ -20,7 +20,7 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
     }
 
     const auth_type = if (manager.options.publish_config.auth_type) |auth_type| @tagName(auth_type) else "web";
-    const ci_name = bun.detectCI();
+    const ci_name = bun.ci.detectCIName();
 
     var print_buf = std.array_list.Managed(u8).init(allocator);
     defer print_buf.deinit();
@@ -69,14 +69,7 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
         headers.append("npm-auth-type", auth_type);
         headers.append("npm-command", "whoami");
 
-        try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{
-            Global.user_agent,
-            Global.os_name,
-            Global.arch_name,
-            false,
-            if (ci_name != null) " ci/" else "",
-            ci_name orelse "",
-        });
+        try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{ Global.user_agent, Global.os_name, Global.arch_name, false, if (ci_name != null) " ci/" else "", ci_name orelse "" });
         headers.append("user-agent", print_buf.items);
         print_buf.clearRetainingCapacity();
 

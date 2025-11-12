@@ -359,6 +359,11 @@ pub const FD = packed struct(backing_int) {
         return JSValue.jsNumberFromInt32(uv_owned_fd.uv());
     }
 
+    /// Convert an FD to a JavaScript number without transferring ownership to libuv.
+    /// Unlike toJS(), this does not call makeLibUVOwned() on Windows, so the caller
+    /// retains ownership and must close the FD themselves.
+    /// Returns -1 for invalid file descriptors.
+    /// On Windows: returns Uint64 for system handles, Int32 for uv file descriptors.
     pub fn toJSWithoutMakingLibUVOwned(any_fd: FD) JSValue {
         if (!any_fd.isValid()) {
             return JSValue.jsNumberFromInt32(-1);

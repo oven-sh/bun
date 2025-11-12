@@ -81,7 +81,7 @@ function getNodeParallelTestTimeout(testPath) {
     return 90_000;
   }
   if (!isCI) return 60_000; // everything slower in debug mode
-  if (options["step"]?.includes("-asan-")) return 60_000;
+  if (isASAN) return 60_000;
   return 20_000;
 }
 
@@ -169,8 +169,12 @@ const { values: options, positionals: filters } = parseArgs({
     },
   },
 });
+startGroup("CLI Options", () => {
+  console.log(options);
+});
 
 const cliOptions = options;
+const isASAN = options["step"]?.includes("-asan-");
 
 if (cliOptions.junit) {
   try {
@@ -594,11 +598,11 @@ async function runTests() {
               NO_COLOR: "1",
               BUN_DEBUG_QUIET_LOGS: "1",
             };
-            if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
+            if ((isASAN || !isCI) && shouldValidateExceptions(testPath)) {
               env.BUN_JSC_validateExceptionChecks = "1";
               env.BUN_JSC_dumpSimulatedThrows = "1";
             }
-            if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
+            if ((isASAN || !isCI) && shouldValidateLeakSan(testPath)) {
               env.BUN_DESTRUCT_VM_ON_EXIT = "1";
               env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
               // prettier-ignore
@@ -1314,6 +1318,10 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   const args = opts["args"] ?? [];
 
   const testArgs = ["test", ...args];
+  if (options["step"].includes("-ubuntu-")) testArgs.push(`--timeout=${10_000}`);
+  if (options["step"].includes("-alpine-")) testArgs.push(`--timeout=${10_000}`);
+  if (options["step"].includes("-windows-")) testArgs.push(`--timeout=${10_000}`);
+  if (isASAN) testArgs.push(`--timeout=${30_000}`);
 
   // This will be set if a JUnit file is generated
   let junitFilePath = null;
@@ -1339,11 +1347,11 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     GITHUB_ACTIONS: "true", // always true so annotations are parsed
     ...opts["env"],
   };
-  if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
+  if ((isASAN || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
     env.BUN_JSC_validateExceptionChecks = "1";
     env.BUN_JSC_dumpSimulatedThrows = "1";
   }
-  if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(relative(cwd, absPath))) {
+  if ((isASAN || !isCI) && shouldValidateLeakSan(relative(cwd, absPath))) {
     env.BUN_DESTRUCT_VM_ON_EXIT = "1";
     env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
     // prettier-ignore

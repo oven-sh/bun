@@ -3430,29 +3430,23 @@ pub fn isExecutableFileOSPath(path: bun.OSPathSliceZ) bool {
 
     if (comptime Environment.isWindows) {
         // Rationale: `GetBinaryTypeW` does not work on .cmd files.
-        // Windows does not have executable permission like posix does, instead we
-        // can just look at the file extension to determine executable status.
-        @compileError("Do not use isExecutableFilePath on Windows");
+        // SaferiIsExecutableFileType works on .cmd files.
+        // The following file name extensions are examples of executable file types. This is not a complete list.
+        // .bat
+        // .cmd
+        // .com
+        // .exe
+        // .js
+        // .lnk
+        // .pif
+        // .pl
+        // .shs
+        // .url
+        // .vbs
+        // The security policy Microsoft Management Console (MMC) snap-in (Secpol.msc) controls which extensions are considered executable file types.
 
-        // var out: windows.DWORD = 0;
-        // const rc = kernel32.GetBinaryTypeW(path, &out);
-
-        // const result = if (rc == windows.FALSE)
-        //     false
-        // else switch (out) {
-        //     kernel32.SCS_32BIT_BINARY,
-        //     kernel32.SCS_64BIT_BINARY,
-        //     kernel32.SCS_DOS_BINARY,
-        //     kernel32.SCS_OS216_BINARY,
-        //     kernel32.SCS_PIF_BINARY,
-        //     kernel32.SCS_POSIX_BINARY,
-        //     => true,
-        //     else => false,
-        // };
-
-        // log("GetBinaryTypeW({f}) = {d}. isExecutable={}", .{ bun.fmt.utf16(path), out, result });
-
-        // return result;
+        // We pass false to include .exe files (see https://learn.microsoft.com/en-us/windows/win32/api/winsafer/nf-winsafer-saferiisexecutablefiletype)
+        return bun.windows.SaferiIsExecutableFileType(path, false);
     }
 
     @compileError("TODO: isExecutablePath");

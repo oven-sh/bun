@@ -183,7 +183,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     const res = Fields.onData(
                         getValue(socket),
                         TLSSocket.from(socket),
-                        buf.?[0..@as(usize, @intCast(len))],
+                        if (buf) |data_ptr| data_ptr[0..@as(usize, @intCast(len))] else "",
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
                         error.JSTerminated => return null, // TODO: declare throw scope
@@ -295,16 +295,29 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         }
 
         pub inline fn fd(this: ThisSocket) bun.FileDescriptor {
-            if (comptime is_ssl) {
-                @compileError("SSL sockets do not have a file descriptor accessible this way");
-            }
             const socket = this.socket.get() orelse return bun.invalid_fd;
-
-            // on windows uSockets exposes SOCKET
-            return if (comptime Environment.isWindows)
-                .fromNative(@ptrCast(socket.getNativeHandle(is_ssl).?))
-            else
-                .fromNative(@intCast(@intFromPtr(socket.getNativeHandle(is_ssl))));
+            if (comptime is_ssl) {
+                if (socket.getNativeHandle(is_ssl)) |handle| {
+                    const ssl_ptr: *BoringSSL.SSL = @as(*BoringSSL.SSL, @ptrCast(handle));
+                    const fd_value = BoringSSL.SSL_get_fd(ssl_ptr);
+                    if (fd_value == -1) {
+                        return bun.invalid_fd;
+                    }
+                    return if (Environment.isWindows)
+                        .fromNative(@ptrFromInt(@as(usize, @intCast(fd_value))))
+                    else
+                        .fromNative(fd_value);
+                }
+                return bun.invalid_fd;
+            }
+            if (socket.getNativeHandle(is_ssl)) |handle| {
+                // on windows uSockets exposes SOCKET
+                return if (comptime Environment.isWindows)
+                    .fromNative(@ptrCast(handle))
+                else
+                    .fromNative(@intCast(@intFromPtr(handle)));
+            }
+            return bun.invalid_fd;
         }
 
         pub fn markNeedsMoreForSendfile(this: ThisSocket) void {
@@ -731,7 +744,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     const res = Fields.onData(
                         getValue(socket),
                         SocketHandlerType.from(socket),
-                        buf.?[0..@as(usize, @intCast(len))],
+                        if (buf) |data_ptr| data_ptr[0..@as(usize, @intCast(len))] else "",
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
                         error.JSTerminated => return null, // TODO: declare throw scope
@@ -897,7 +910,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     const res = Fields.onData(
                         getValue(socket),
                         ThisSocket.from(socket),
-                        buf.?[0..@as(usize, @intCast(len))],
+                        if (buf) |data_ptr| data_ptr[0..@as(usize, @intCast(len))] else "",
                     );
                     if (@TypeOf(res) != void) res catch |err| switch (err) {
                         error.JSTerminated => return null, // TODO: declare throw scope

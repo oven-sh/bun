@@ -88,6 +88,13 @@ Lifecycle scripts will run in parallel during installation. To adjust the maximu
 bun install --concurrent-scripts 5
 ```
 
+Bun automatically optimizes postinstall scripts for popular packages (like `esbuild`, `sharp`, etc.) by determining which scripts need to run. To disable these optimizations:
+
+```bash terminal icon="terminal"
+BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER=1 bun install
+BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS=1 bun install
+```
+
 ---
 
 ## Workspaces
@@ -231,7 +238,7 @@ Bun supports installing dependencies from Git, GitHub, and local or remotely-hos
 
 Bun supports two package installation strategies that determine how dependencies are organized in `node_modules`:
 
-### Hoisted installs (default for single projects)
+### Hoisted installs
 
 The traditional npm/Yarn approach that flattens dependencies into a shared `node_modules` directory:
 
@@ -249,7 +256,15 @@ bun install --linker isolated
 
 Isolated installs create a central package store in `node_modules/.bun/` with symlinks in the top-level `node_modules`. This ensures packages can only access their declared dependencies.
 
-For complete documentation on isolated installs, refer to [Package manager > Isolated installs](/pm/isolated-installs).
+### Default strategy
+
+The default linker strategy depends on whether you're starting fresh or have an existing project:
+
+- **New workspaces/monorepos**: `isolated` (prevents phantom dependencies)
+- **New single-package projects**: `hoisted` (traditional npm behavior)
+- **Existing projects (made pre-v1.3.2)**: `hoisted` (preserves backward compatibility)
+
+The default is controlled by a `configVersion` field in your lockfile. For a detailed explanation, see [Package manager > Isolated installs](/pm/isolated-installs).
 
 ---
 
@@ -319,8 +334,9 @@ dryRun = false
 concurrentScripts = 16 # (cpu count or GOMAXPROCS) x2
 
 # installation strategy: "hoisted" or "isolated"
-# default: "hoisted" (for single-project projects)
-# default: "isolated" (for monorepo projects)
+# default depends on lockfile configVersion and workspaces:
+# - configVersion = 1: "isolated" if using workspaces, otherwise "hoisted"
+# - configVersion = 0: "hoisted"
 linker = "hoisted"
 
 

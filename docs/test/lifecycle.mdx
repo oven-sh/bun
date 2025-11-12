@@ -5,12 +5,13 @@ description: "Learn how to use beforeAll, beforeEach, afterEach, and afterAll li
 
 The test runner supports the following lifecycle hooks. This is useful for loading test fixtures, mocking data, and configuring the test environment.
 
-| Hook         | Description                 |
-| ------------ | --------------------------- |
-| `beforeAll`  | Runs once before all tests. |
-| `beforeEach` | Runs before each test.      |
-| `afterEach`  | Runs after each test.       |
-| `afterAll`   | Runs once after all tests.  |
+| Hook             | Description                                                |
+| ---------------- | ---------------------------------------------------------- |
+| `beforeAll`      | Runs once before all tests.                                |
+| `beforeEach`     | Runs before each test.                                     |
+| `afterEach`      | Runs after each test.                                      |
+| `afterAll`       | Runs once after all tests.                                 |
+| `onTestFinished` | Runs after a single test finishes (after all `afterEach`). |
 
 ## Per-Test Setup and Teardown
 
@@ -89,6 +90,23 @@ describe("test group", () => {
   });
 });
 ```
+
+### `onTestFinished`
+
+Use `onTestFinished` to run a callback after a single test completes. It runs after all `afterEach` hooks.
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, onTestFinished } from "bun:test";
+
+test("cleanup after test", () => {
+  onTestFinished(() => {
+    // runs after all afterEach hooks
+    console.log("test finished");
+  });
+});
+```
+
+Not supported in concurrent tests; use `test.serial` instead.
 
 ## Global Setup and Teardown
 

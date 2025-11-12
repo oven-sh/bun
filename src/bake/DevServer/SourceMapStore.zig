@@ -273,7 +273,11 @@ pub const Entry = struct {
             .none => {
                 // NOTE: It is too late to compute the line count since the bundled text may
                 // have been freed already. For example, a HMR chunk is never persisted.
-                @panic("Missing internal precomputed line count.");
+                // We could return an error here but what would be a better behavior for renderJSON and renderMappings?
+                // This is a dev server, crashing is not a good DX, we could fail the request but that's not a good DX either.
+                if (bun.Environment.enable_logs) {
+                    mapLog("Skipping source map entry with missing line count at index {d}", .{i});
+                }
             },
         };
     }

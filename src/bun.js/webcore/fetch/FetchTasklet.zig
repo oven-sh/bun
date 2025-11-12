@@ -48,7 +48,7 @@ pub fn updateLifeCycle(this: *FetchTasklet) bun.JSTerminated!void {
     log("onProgressUpdate", .{});
     this.mutex.lock();
     this.shared.has_schedule_callback.store(false, .monotonic);
-    const is_done = !this.result.has_more;
+    const is_done = !this.shared.result.has_more;
 
     const vm = this.javascript_vm;
     // vm is shutting down we cannot touch JS
@@ -71,21 +71,21 @@ pub fn updateLifeCycle(this: *FetchTasklet) bun.JSTerminated!void {
             this.deref();
         }
     }
-    if (this.is_waiting_request_stream_start and this.result.can_stream) {
+    if (this.request.is_waiting_request_stream_start and this.shared.result.can_stream) {
         // start streaming
-        this.startRequestStream();
+        this.request.startRequestStream();
     }
     // if we already respond the metadata and still need to process the body
-    if (this.is_waiting_body) {
-        try this.onBodyReceived();
+    if (this.response.flags.is_waiting_body) {
+        try this.response.onBodyReceived();
         return;
     }
-    if (this.metadata == null and this.result.isSuccess()) return;
+    if (this.shared.metadata == null and this.shared.result.isSuccess()) return;
 
     // if we abort because of cert error
     // we wait the Http Client because we already have the response
     // we just need to deinit
-    if (this.is_waiting_abort) {
+    if (this.response.flags.is_waiting_abort) {
         return;
     }
     const promise_value = this.promise.valueOrEmpty();
@@ -96,12 +96,12 @@ pub fn updateLifeCycle(this: *FetchTasklet) bun.JSTerminated!void {
         return;
     }
 
-    if (this.result.certificate_info) |certificate_info| {
-        this.result.certificate_info = null;
+    if (this.shared.result.certificate_info) |certificate_info| {
+        this.shared.result.certificate_info = null;
         defer certificate_info.deinit(bun.default_allocator);
 
         // we receive some error
-        if (this.reject_unauthorized and !this.checkServerIdentity(certificate_info)) {
+        if (this.response.flags.reject_unauthorized and !this.response.checkServerIdentity(certificate_info)) {
             log("onProgressUpdate: aborted due certError", .{});
             // we need to abort the request
             const promise = promise_value.asAnyPromise().?;
@@ -117,7 +117,7 @@ pub fn updateLifeCycle(this: *FetchTasklet) bun.JSTerminated!void {
             return;
         }
         // everything ok
-        if (this.metadata == null) {
+        if (this.shared.metadata == null) {
             log("onProgressUpdate: metadata is null", .{});
             return;
         }
@@ -130,7 +130,7 @@ pub fn updateLifeCycle(this: *FetchTasklet) bun.JSTerminated!void {
         tracker.didDispatch(globalThis);
         this.promise.deinit();
     }
-    const success = this.result.isSuccess();
+    const success = this.shared.result.isSuccess();
     const result = switch (success) {
         true => jsc.Strong.Optional.create(this.onResolve(), globalThis),
         false => brk: {
@@ -210,12 +210,12 @@ pub fn init(_: std.mem.Allocator) anyerror!FetchTasklet {
 }
 
 fn clearSink(this: *FetchTasklet) void {
-    if (this.sink) |sink| {
-        this.sink = null;
+    if (this.request.sink) |sink| {
+        this.request.sink = null;
         sink.deref();
     }
-    if (this.request_body_streaming_buffer) |buffer| {
-        this.request_body_streaming_buffer = null;
+    if (this.shared.request_body_streaming_buffer) |buffer| {
+        this.shared.request_body_streaming_buffer = null;
         buffer.clearDrainCallback();
         buffer.deref();
     }
@@ -242,9 +242,9 @@ fn clearData(this: *FetchTasklet) void {
         http_.clearData();
     }
 
-    if (this.request.metadata != null) {
-        this.request.metadata.?.deinit(allocator);
-        this.request.metadata = null;
+    if (this.shared.metadata != null) {
+        this.shared.metadata.?.deinit(allocator);
+        this.shared.metadata = null;
     }
 
     this.response.scheduled_response_buffer.deinit();
@@ -265,7 +265,7 @@ fn clearData(this: *FetchTasklet) void {
     }
 
     this.abort_reason.deinit();
-    this.check_server_identity.deinit();
+    this.response.check_server_identity.deinit();
     this.clearAbortSignal();
     // Clear the sink only after the requested ended otherwise we would potentialy lose the last chunk
     this.clearSink();
@@ -286,22 +286,6 @@ pub fn deinit(this: *FetchTasklet) error{}!void {
         allocator.destroy(http_);
     }
     allocator.destroy(this);
-}
-
-fn getCurrentResponse(this: *FetchTasklet) ?*Response {
-    // we need a body to resolve the promise when buffering
-    if (this.native_response) |response| {
-        return response;
-    }
-
-    // if we did not have a direct reference we check if the Weak ref is still alive
-    if (this.response.get()) |response_js| {
-        if (response_js.as(Response)) |response| {
-            return response;
-        }
-    }
-
-    return null;
 }
 
 fn getAbortError(this: *FetchTasklet) ?Body.Value.ValueError {
@@ -335,19 +319,19 @@ fn clearAbortSignal(this: *FetchTasklet) void {
 }
 
 pub fn onReject(this: *FetchTasklet) Body.Value.ValueError {
-    bun.assert(this.result.fail != null);
+    bun.assert(this.shared.result.fail != null);
     log("onReject", .{});
 
     if (this.getAbortError()) |err| {
         return err;
     }
 
-    if (this.result.abortReason()) |reason| {
+    if (this.shared.result.abortReason()) |reason| {
         return .{ .AbortReason = reason };
     }
 
     // some times we don't have metadata so we also check http.url
-    const path = if (this.metadata) |metadata|
+    const path = if (this.shared.metadata) |metadata|
         bun.String.cloneUTF8(metadata.url)
     else if (this.http) |http_|
         bun.String.cloneUTF8(http_.url.href)
@@ -355,11 +339,11 @@ pub fn onReject(this: *FetchTasklet) Body.Value.ValueError {
         bun.String.empty;
 
     const fetch_error = jsc.SystemError{
-        .code = bun.String.static(switch (this.result.fail.?) {
+        .code = bun.String.static(switch (this.shared.result.fail.?) {
             error.ConnectionClosed => "ECONNRESET",
             else => |e| @errorName(e),
         }),
-        .message = switch (this.result.fail.?) {
+        .message = switch (this.shared.result.fail.?) {
             error.ConnectionClosed => bun.String.static("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
             error.FailedToOpenSocket => bun.String.static("Was there a typo in the url or port?"),
             error.TooManyRedirects => bun.String.static("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
@@ -479,7 +463,7 @@ comptime {
 
 pub fn onResolve(this: *FetchTasklet) JSValue {
     log("onResolve", .{});
-    const response = bun.new(Response, this.toResponse());
+    const response = bun.new(Response, this.response.toResponse());
     const response_js = Response.makeMaybePooled(@as(*jsc.JSGlobalObject, this.global_this), response);
     response_js.ensureStillAlive();
     this.response = jsc.Weak(FetchTasklet).create(response_js, this.global_this, .FetchResponse, this);
@@ -563,7 +547,7 @@ pub fn get(
         .{
             .http_proxy = proxy,
             .hostname = fetch_options.hostname,
-            .signals = fetch_tasklet.signals,
+            .signals = fetch_tasklet.shared.signals,
             .unix_socket_path = fetch_options.unix_socket_path,
             .disable_timeout = fetch_options.disable_timeout,
             .disable_keepalive = fetch_options.disable_keepalive,
@@ -574,13 +558,13 @@ pub fn get(
         },
     );
     // enable streaming the write side
-    const isStream = fetch_tasklet.request_body == .ReadableStream;
+    const isStream = fetch_tasklet.request.request_body != null and fetch_tasklet.request.request_body.? == .ReadableStream;
     fetch_tasklet.http.?.client.flags.is_streaming_request_body = isStream;
-    fetch_tasklet.is_waiting_request_stream_start = isStream;
+    fetch_tasklet.request.is_waiting_request_stream_start = isStream;
     if (isStream) {
         const buffer = bun.http.ThreadSafeStreamBuffer.new(.{});
         buffer.setDrainCallback(FetchTaskletSharedData, FetchTaskletSharedData.resumeRequestDataStream, &fetch_tasklet.shared);
-        fetch_tasklet.request_body_streaming_buffer = buffer;
+        fetch_tasklet.shared.request_body_streaming_buffer = buffer;
         fetch_tasklet.http.?.request_body = .{
             .stream = .{
                 .buffer = buffer,
@@ -595,12 +579,12 @@ pub fn get(
     }
 
     // we want to return after headers are received
-    fetch_tasklet.signal_store.header_progress.store(true, .monotonic);
+    fetch_tasklet.shared.signal_store.header_progress.store(true, .monotonic);
 
-    if (fetch_tasklet.request_body == .Sendfile) {
+    if (fetch_tasklet.request.request_body != null and fetch_tasklet.request.request_body.? == .Sendfile) {
         bun.assert(fetch_options.url.isHTTP());
         bun.assert(fetch_options.proxy == null);
-        fetch_tasklet.http.?.request_body = .{ .sendfile = fetch_tasklet.request_body.Sendfile };
+        fetch_tasklet.http.?.request_body = .{ .sendfile = fetch_tasklet.request.request_body.?.Sendfile };
     }
 
     if (fetch_tasklet.signal) |signal| {
@@ -615,7 +599,7 @@ pub fn abortListener(this: *FetchTasklet, reason: JSValue) void {
     reason.ensureStillAlive();
     this.abort_reason.set(this.global_this, reason);
     this.abortTask();
-    if (this.sink) |sink| {
+    if (this.request.sink) |sink| {
         sink.cancel(reason);
         return;
     }
@@ -700,36 +684,36 @@ pub fn callback(task: *FetchTasklet, async_http: *bun.http.AsyncHTTP, result: bu
     task.http.?.* = async_http.*;
     task.http.?.response_buffer = async_http.response_buffer;
 
-    log("callback success={} ignore_data={} has_more={} bytes={}", .{ result.isSuccess(), task.ignore_data, result.has_more, result.body.?.list.items.len });
+    log("callback success={} ignore_data={} has_more={} bytes={}", .{ result.isSuccess(), task.response.flags.ignore_data, result.has_more, result.body.?.list.items.len });
 
-    const prev_metadata = task.result.metadata;
-    const prev_cert_info = task.result.certificate_info;
-    task.result = result;
+    const prev_metadata = task.shared.result.metadata;
+    const prev_cert_info = task.shared.result.certificate_info;
+    task.shared.result = result;
 
     // Preserve pending certificate info if it was preovided in the previous update.
-    if (task.result.certificate_info == null) {
+    if (task.shared.result.certificate_info == null) {
         if (prev_cert_info) |cert_info| {
-            task.result.certificate_info = cert_info;
+            task.shared.result.certificate_info = cert_info;
         }
     }
 
     // metadata should be provided only once
     if (result.metadata orelse prev_metadata) |metadata| {
         log("added callback metadata", .{});
-        if (task.metadata == null) {
-            task.metadata = metadata;
+        if (task.shared.metadata == null) {
+            task.shared.metadata = metadata;
         }
 
-        task.result.metadata = null;
+        task.shared.result.metadata = null;
     }
 
-    task.body_size = result.body_size;
+    task.response.body_size = result.body_size;
 
     const success = result.isSuccess();
-    task.response_buffer = result.body.?.*;
+    task.shared.response_buffer = result.body.?.*;
 
-    if (task.ignore_data) {
-        task.response_buffer.reset();
+    if (task.response.flags.ignore_data) {
+        task.shared.response_buffer.reset();
 
         if (task.response.scheduled_response_buffer.list.capacity > 0) {
             task.response.scheduled_response_buffer.deinit();
@@ -747,13 +731,13 @@ pub fn callback(task: *FetchTasklet, async_http: *bun.http.AsyncHTTP, result: bu
         }
     } else {
         if (success) {
-            _ = bun.handleOom(task.response.scheduled_response_buffer.write(task.response_buffer.list.items));
+            _ = bun.handleOom(task.response.scheduled_response_buffer.write(task.shared.response_buffer.list.items));
         }
         // reset for reuse
-        task.response_buffer.reset();
+        task.shared.response_buffer.reset();
     }
 
-    if (task.has_schedule_callback.cmpxchgStrong(false, true, .acquire, .monotonic)) |has_schedule_callback| {
+    if (task.shared.has_schedule_callback.cmpxchgStrong(false, true, .acquire, .monotonic)) |has_schedule_callback| {
         if (has_schedule_callback) {
             return;
         }

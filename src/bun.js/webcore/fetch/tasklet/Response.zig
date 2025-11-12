@@ -1,4 +1,5 @@
 const Response = @This();
+
 /// buffer used to stream response to JS
 scheduled_response_buffer: MutableString = .{
     .allocator = bun.default_allocator,
@@ -36,10 +37,13 @@ const ResponseState = enum {
 };
 
 pub const Flags = packed struct(u8) {
+    // most of these should be replaced with states instead
     ignore_data: bool = false,
     upgraded_connection: bool = false,
     reject_unauthorized: bool = true,
-    _padding: u5 = 0,
+    is_waiting_body: bool = false,
+    is_waiting_abort: bool = false,
+    _padding: u3 = 0,
 };
 
 fn parent(this: *Response) *FetchTasklet {
@@ -51,14 +55,15 @@ pub fn onReadableStreamAvailable(ctx: *anyopaque, globalThis: *jsc.JSGlobalObjec
     this.readable_stream_ref = jsc.WebCore.ReadableStream.Strong.init(readable, globalThis);
 }
 
-pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: http.CertificateInfo) bool {
+pub fn checkServerIdentity(this: *Response, certificate_info: http.CertificateInfo) bool {
+    const tasklet = this.parent();
     if (this.check_server_identity.get()) |check_server_identity| {
         check_server_identity.ensureStillAlive();
         if (certificate_info.cert.len > 0) {
             const cert = certificate_info.cert;
             var cert_ptr = cert.ptr;
             if (BoringSSL.d2i_X509(null, &cert_ptr, @intCast(cert.len))) |x509| {
-                const globalObject = this.global_this;
+                const globalObject = tasklet.global_this;
                 defer x509.free();
                 const js_cert = X509.toJS(x509, globalObject) catch |err| {
                     switch (err) {
@@ -68,13 +73,13 @@ pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: http.Certifica
                     }
                     const check_result = globalObject.tryTakeException().?;
                     // mark to wait until deinit
-                    this.is_waiting_abort = this.result.has_more;
-                    this.abort_reason.set(globalObject, check_result);
-                    this.signal_store.aborted.store(true, .monotonic);
-                    this.tracker.didCancel(this.global_this);
+                    this.flags.is_waiting_abort = tasklet.shared.result.has_more;
+                    tasklet.abort_reason.set(globalObject, check_result);
+                    tasklet.shared.signal_store.aborted.store(true, .monotonic);
+                    tasklet.tracker.didCancel(tasklet.global_this);
                     // we need to abort the request
-                    if (this.http) |http_| http.http_thread.scheduleShutdown(http_);
-                    this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+                    if (tasklet.http) |http_| http.http_thread.scheduleShutdown(http_);
+                    tasklet.shared.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
                     return false;
                 };
                 var hostname: bun.String = bun.String.cloneUTF8(certificate_info.hostname);
@@ -87,16 +92,16 @@ pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: http.Certifica
                 // > Returns <Error> object [...] on failure
                 if (check_result.isAnyError()) {
                     // mark to wait until deinit
-                    this.is_waiting_abort = this.result.has_more;
-                    this.abort_reason.set(globalObject, check_result);
-                    this.signal_store.aborted.store(true, .monotonic);
-                    this.tracker.didCancel(this.global_this);
+                    this.flags.is_waiting_abort = tasklet.shared.result.has_more;
+                    tasklet.abort_reason.set(globalObject, check_result);
+                    tasklet.shared.signal_store.aborted.store(true, .monotonic);
+                    tasklet.tracker.didCancel(tasklet.global_this);
 
                     // we need to abort the request
-                    if (this.http) |http_| {
+                    if (tasklet.http) |http_| {
                         http.http_thread.scheduleShutdown(http_);
                     }
-                    this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+                    tasklet.shared.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
                     return false;
                 }
 
@@ -106,16 +111,33 @@ pub fn checkServerIdentity(this: *FetchTasklet, certificate_info: http.Certifica
             }
         }
     }
-    this.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
+    tasklet.shared.result.fail = error.ERR_TLS_CERT_ALTNAME_INVALID;
     return false;
 }
 
+fn getCurrentResponse(this: *Response) ?*jsc.WebCore.Response {
+    // we need a body to resolve the promise when buffering
+    if (this.native_response) |response| {
+        return response;
+    }
+
+    // if we did not have a direct reference we check if the Weak ref is still alive
+    if (this.response.get()) |response_js| {
+        if (response_js.as(jsc.WebCore.Response)) |response| {
+            return response;
+        }
+    }
+
+    return null;
+}
+
 pub fn onBodyReceived(this: *Response) bun.JSTerminated!void {
-    const success = this.result.isSuccess();
-    const globalThis = this.global_this;
+    const tasklet = this.parent();
+    const success = tasklet.shared.result.isSuccess();
+    const globalThis = tasklet.global_this;
     // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
     var buffer_reset = true;
-    log("onBodyReceived success={} has_more={}", .{ success, this.result.has_more });
+    log("onBodyReceived success={} has_more={}", .{ success, tasklet.shared.result.has_more });
     defer {
         if (buffer_reset) {
             this.scheduled_response_buffer.reset();
@@ -123,7 +145,7 @@ pub fn onBodyReceived(this: *Response) bun.JSTerminated!void {
     }
 
     if (!success) {
-        var err = this.onReject();
+        var err = tasklet.onReject();
         var need_deinit = true;
         defer if (need_deinit) err.deinit();
         var js_err = JSValue.zero;
@@ -140,7 +162,7 @@ pub fn onBodyReceived(this: *Response) bun.JSTerminated!void {
                 );
             }
         }
-        if (this.sink) |sink| {
+        if (tasklet.request.sink) |sink| {
             if (js_err == .zero) {
                 js_err = err.toJS(globalThis);
                 js_err.ensureStillAlive();
@@ -166,7 +188,7 @@ pub fn onBodyReceived(this: *Response) bun.JSTerminated!void {
 
             const chunk = scheduled_response_buffer.items;
 
-            if (this.result.has_more) {
+            if (tasklet.shared.result.has_more) {
                 try readable.ptr.Bytes.onData(
                     .{
                         .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
@@ -201,7 +223,7 @@ pub fn onBodyReceived(this: *Response) bun.JSTerminated!void {
 
                 const chunk = scheduled_response_buffer.items;
 
-                if (this.result.has_more) {
+                if (tasklet.shared.result.has_more) {
                     try readable.ptr.Bytes.onData(
                         .{
                             .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk),
@@ -225,7 +247,7 @@ pub fn onBodyReceived(this: *Response) bun.JSTerminated!void {
 
         // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
         buffer_reset = false;
-        if (!this.result.has_more) {
+        if (!tasklet.shared.result.has_more) {
             var scheduled_response_buffer = this.scheduled_response_buffer.list;
             const body = response.getBodyValue();
             // done resolve body
@@ -248,7 +270,7 @@ pub fn onBodyReceived(this: *Response) bun.JSTerminated!void {
 
             if (old == .Locked) {
                 log("onBodyReceived old.resolve", .{});
-                try old.resolve(body, this.global_this, response.getFetchHeaders());
+                try old.resolve(body, tasklet.global_this, response.getFetchHeaders());
             }
         }
     }
@@ -312,7 +334,7 @@ fn toBodyValue(this: *Response) Body.Value {
     if (this.getAbortError()) |err| {
         return .{ .Error = err };
     }
-    if (this.is_waiting_body) {
+    if (this.flags.is_waiting_body) {
         const response = Body.Value{
             .Locked = .{
                 .size_hint = this.getSizeHint(),
@@ -365,13 +387,14 @@ pub fn ignoreRemainingResponseBody(this: *Response) void {
     this.flags.ignore_data = true;
 }
 
-fn toResponse(this: *Response) Response {
+pub fn toResponse(this: *Response) Response {
     log("toResponse", .{});
-    bun.assert(this.metadata != null);
+    const tasklet = this.parent();
+    bun.assert(tasklet.shared.metadata != null);
     // at this point we always should have metadata
-    const metadata = this.metadata.?;
+    const metadata = tasklet.shared.metadata.?;
     const http_response = metadata.response;
-    this.is_waiting_body = this.result.has_more;
+    this.flags.is_waiting_body = tasklet.shared.result.has_more;
     return Response.init(
         .{
             .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
@@ -396,6 +419,6 @@ const log = bun.Output.scoped(.FetchTaskletResponse, .visible);
 const BoringSSL = bun.BoringSSL.c;
 const FetchHeaders = bun.webcore.FetchHeaders;
 const Body = jsc.WebCore.Body;
-const X509 = @import("../../../api/bun/x509.zig").X509;
+const X509 = @import("../../../api/bun/x509.zig");
 const JSValue = jsc.JSValue;
 const Blob = jsc.WebCore.Blob;

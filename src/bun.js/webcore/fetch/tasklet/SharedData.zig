@@ -6,6 +6,7 @@ ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
 response_buffer: bun.MutableString = undefined,
 request_body_streaming_buffer: ?*bun.http.ThreadSafeStreamBuffer = null,
 result: bun.http.HTTPClientResult = .{},
+metadata: ?bun.http.HTTPResponseMetadata = null,
 
 signals: bun.http.Signals = .{},
 signal_store: bun.http.Signals.Store = .{},
@@ -20,11 +21,12 @@ pub fn resumeRequestDataStream(this: *SharedData) void {
     // ref until the main thread callback is called
     const tasklet = this.parent();
     tasklet.ref();
-    tasklet.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(&tasklet.request, tasklet.request.resumeRequestDataStream));
+    tasklet.javascript_vm.eventLoop().enqueueTaskConcurrent(jsc.ConcurrentTask.fromCallback(&tasklet.request, FetchTaskletRequest.resumeRequestDataStream));
 }
 
 const std = @import("std");
 const bun = @import("bun");
 const jsc = bun.jsc;
 const FetchTasklet = @import("../FetchTasklet.zig");
+const FetchTaskletRequest = @import("./Request.zig");
 const ResumableSinkBackpressure = jsc.WebCore.ResumableSinkBackpressure;

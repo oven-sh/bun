@@ -2,7 +2,6 @@ const FetchTaskletRequest = @This();
 request_body: ?HTTPRequestBody = null,
 request_headers: Headers = Headers{ .allocator = undefined },
 sink: ?*ResumableSink = null,
-metadata: ?http.HTTPResponseMetadata = null,
 
 // Custom Hostname
 hostname: ?[]u8 = null,
@@ -12,6 +11,7 @@ url_proxy_buffer: []const u8 = "",
 
 state: RequestState = .created,
 
+is_waiting_request_stream_start: bool = false,
 const RequestState = enum {
     created,
     enqueued,
@@ -29,10 +29,10 @@ fn parent(this: *FetchTaskletRequest) *FetchTasklet {
 
 pub fn startRequestStream(this: *FetchTaskletRequest) void {
     this.is_waiting_request_stream_start = false;
-    bun.assert(this.request_body == .ReadableStream);
+    bun.assert(this.request_body != null and this.request_body.? == .ReadableStream);
     const tasklet = this.parent();
-    if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
-        const globalThis = tasklet.global_this;
+    const globalThis = tasklet.global_this;
+    if (this.request_body.?.ReadableStream.get(globalThis)) |stream| {
         if (tasklet.isAborted()) {
             stream.abort(globalThis);
             return;

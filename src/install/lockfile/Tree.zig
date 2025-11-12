@@ -295,6 +295,103 @@ pub fn Builder(comptime method: BuilderMethod) type {
             dep_ids: std.ArrayListUnmanaged(DependencyID),
         };
 
+        pub fn tryNohoist(
+            self: *const @This(),
+            subpath: if (method == .filter) []const u8 else void,
+            dependency_id: DependencyID,
+        ) error{ DependencyLoop, OutOfMemory }!?struct {
+            result: HoistDependencyResult,
+            subpath: bun.collections.ArrayListDefault(u8),
+        } {
+            if (comptime method != .filter) {
+                return null;
+            }
+
+            const dependency = self.dependencies[dependency_id];
+            const pkg_id = self.resolutions[dependency_id];
+            const list_slice = self.list.slice();
+            const trees = list_slice.items(.tree);
+            const next: *const Tree = &trees[self.list.len - 1];
+
+            var dep_subpath: bun.collections.ArrayListDefault(u8) = .init();
+            errdefer dep_subpath.deinit();
+
+            if (self.manager.nohoist_patterns.len == 0) {
+                return null;
+            }
+
+            const string_buf = self.lockfile.buffers.string_bytes.items;
+
+            try dep_subpath.ensureTotalCapacity(subpath.len + @intFromBool(subpath.len != 0) + dependency.name.len());
+            dep_subpath.appendSliceAssumeCapacity(subpath);
+            if (subpath.len != 0) {
+                dep_subpath.appendAssumeCapacity('/');
+            }
+            dep_subpath.appendSliceAssumeCapacity(dependency.name.slice(string_buf));
+
+            if (dependency.version.tag == .workspace) {
+                return null;
+            }
+
+            if (try self.shouldNoHoist(dep_subpath.items(), pkg_id, trees, next)) {
+                return .{
+                    .result = .{ .placement = .{ .id = next.id } },
+                    .subpath = dep_subpath,
+                };
+            }
+
+            return null;
+        }
+
+        fn pkgHasCircularReference(
+            self: *const @This(),
+            pkg_id: PackageID,
+            forest: []const Tree,
+            tree: *const Tree,
+        ) bool {
+            var curr = forest[tree.id].parent;
+            while (curr != invalid_id) {
+                const curr_dep_id = forest[curr].dependency_id;
+                const curr_pkg_id = switch (curr_dep_id) {
+                    root_dep_id => 0,
+                    else => self.resolutions[curr_dep_id],
+                };
+                var curr_resolutions = self.resolution_lists[curr_pkg_id];
+                for (curr_resolutions.begin()..curr_resolutions.end()) |tree_dep_id| {
+                    const res_id = self.resolutions[tree_dep_id];
+                    if (res_id == pkg_id) {
+                        return true;
+                    }
+                }
+
+                curr = forest[curr].parent;
+            }
+
+            return false;
+        }
+
+        fn shouldNoHoist(
+            self: *const @This(),
+            dep_path: []const u8,
+            pkg_id: PackageID,
+            forest: []const Tree,
+            next_tree: *const Tree,
+        ) error{DependencyLoop}!bool {
+            for (self.manager.nohoist_patterns) |nohoist_pattern| {
+                if (!glob.match(nohoist_pattern, dep_path).matches()) {
+                    continue;
+                }
+
+                if (self.pkgHasCircularReference(pkg_id, forest, next_tree)) {
+                    return error.DependencyLoop;
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+
         /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
         pub fn clean(this: *@This()) OOM!CleanResult {
             var total: u32 = 0;
@@ -513,8 +610,6 @@ pub fn processSubtree(
         const dependency = builder.dependencies[dep_id];
         const pkg_id = builder.resolutions[dep_id];
 
-        var dep_subpath: bun.collections.ArrayListDefault(u8) = .init();
-
         // filter out disabled dependencies
         if (comptime method == .filter) {
             if (isFilteredDependencyOrWorkspace(
@@ -551,47 +646,11 @@ pub fn processSubtree(
             }
         }
 
+        var dep_subpath: bun.collections.ArrayListDefault(u8) = .init();
         const hoisted: HoistDependencyResult = hoisted: {
-            if (comptime method == .filter) {
-                // not filtered, but does it match a nohoist pattern?
-                if (builder.manager.nohoist_patterns.len != 0) try_nohoist: {
-                    const string_buf = builder.lockfile.buffers.string_bytes.items;
-
-                    try dep_subpath.ensureTotalCapacity(subpath.items().len + @intFromBool(subpath.items().len != 0) + dependency.name.len());
-                    dep_subpath.appendSliceAssumeCapacity(subpath.items());
-                    if (subpath.items().len != 0) {
-                        dep_subpath.appendAssumeCapacity('/');
-                    }
-                    dep_subpath.appendSliceAssumeCapacity(dependency.name.slice(string_buf));
-
-                    if (dependency.version.tag == .workspace) {
-                        break :try_nohoist;
-                    }
-
-                    for (builder.manager.nohoist_patterns) |nohoist_pattern| {
-                        if (glob.match(nohoist_pattern, dep_subpath.items()).matches()) {
-                            // make sure it's not circular
-                            var curr = trees[next.id].parent;
-                            while (curr != invalid_id) {
-                                const curr_dep_id = trees[curr].dependency_id;
-                                const curr_pkg_id = switch (curr_dep_id) {
-                                    root_dep_id => 0,
-                                    else => builder.resolutions[curr_dep_id],
-                                };
-                                var curr_resolutions = builder.resolution_lists[curr_pkg_id];
-                                for (curr_resolutions.begin()..curr_resolutions.end()) |tree_dep_id| {
-                                    const res_id = builder.resolutions[tree_dep_id];
-                                    if (res_id == pkg_id) {
-                                        break :try_nohoist;
-                                    }
-                                }
-
-                                curr = trees[curr].parent;
-                            }
-                            break :hoisted .{ .placement = .{ .id = next.id } };
-                        }
-                    }
-                }
+            if (try builder.tryNohoist(if (method == .filter) subpath.items() else {}, dep_id)) |r| {
+                dep_subpath = r.subpath;
+                break :hoisted r.result;
             }
 
             // don't hoist if it's a folder dependency or a bundled dependency.

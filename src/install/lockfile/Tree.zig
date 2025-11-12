@@ -582,7 +582,7 @@ pub fn processSubtree(
                                 for (curr_resolutions.begin()..curr_resolutions.end()) |tree_dep_id| {
                                     const res_id = builder.resolutions[tree_dep_id];
                                     if (res_id == pkg_id) {
-                                        break :hoisted .hoisted;
+                                        break :try_nohoist;
                                     }
                                 }
 

@@ -1,3 +1,5 @@
+- [ ] issue-207.test.ts: update webkit to allow overridenDateNow to be negative. we will have to pick some other value to be none, eg NaN.
+
 - [ ] process.hrtime (same as performance.now, resets to [0, 0] when fake timers are enabled)
 - [ ] decimal ticks should be supported: https://github.com/sinonjs/fake-timers/blob/main/test/issue-207-test.js
 - [ ] what happens when you add negative time?

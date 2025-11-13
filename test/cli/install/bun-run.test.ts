@@ -305,7 +305,7 @@ describe.concurrent("bun run", () => {
     });
   }
 
-  it.each(["--cwd", "--prefix"])("should show the correct working directory when run with %s", async (flag) => {
+  it.each(["--cwd", "--prefix"])("should show the correct working directory when run with %s", async flag => {
     using dir = tempDir(`bun-run-${flag.replace("--", "")}`, {
       "subdir/test.js": `console.log(process.cwd());`,
     });

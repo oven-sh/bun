@@ -44,6 +44,7 @@ pub const base_params_ = (if (Environment.show_crash_trace) debug_params else [_
     clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
     clap.parseParam("--no-env-file                     Disable automatic loading of .env files") catch unreachable,
     clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
+    clap.parseParam("--prefix <STR>                    Run the script from the specified directory (alias for --cwd, for bun run)") catch unreachable,
     clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
     clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
 } ++ (if (builtin.have_error_return_tracing) [_]ParamType{
@@ -148,7 +149,6 @@ pub const auto_params = auto_only_params ++ runtime_params_ ++ transpiler_params
 pub const run_only_params = [_]ParamType{
     clap.parseParam("--silent                          Don't print the script command") catch unreachable,
     clap.parseParam("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines.") catch unreachable,
-    clap.parseParam("--prefix <STR>                    Run the script from the specified directory (alias for --cwd)") catch unreachable,
 } ++ auto_or_run_params;
 pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 

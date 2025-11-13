@@ -31,7 +31,10 @@ export function NOOP() {
   return undefined;
 }
 
-export const assert = {
+export const assert = (value: boolean) => {
+  expect(value).toBeTrue();
+};
+Object.assign(assert, {
   equals(actual: unknown, expected: unknown) {
     expect(actual).toBe(expected);
   },
@@ -41,9 +44,32 @@ export const assert = {
   exception(fn: () => void, message?: string | RegExp) {
     expect(fn).toThrow(message);
   },
-};
+});
 export const refute = {};
-export const sinon = {};
+export const sinon = {
+  stub() {
+    let callCount = 0;
+    const result = () => {
+      callCount++;
+    };
+    Object.defineProperty(result, "notCalled", {
+      get() {
+        return callCount === 0;
+      },
+    });
+    Object.defineProperty(result, "calledOnce", {
+      get() {
+        return callCount === 1;
+      },
+    });
+    Object.defineProperty(result, "calledTwice", {
+      get() {
+        return callCount === 2;
+      },
+    });
+    return result;
+  },
+};
 
 export const nextTickPresent = true;
 export const queueMicrotaskPresent = true;

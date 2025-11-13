@@ -264,6 +264,12 @@ pub fn Builder(comptime method: BuilderMethod) type {
             /// beyond this tree if they're in a subtree
             hoist_root_id: Tree.Id,
 
+            /// Relative path of the current tree. Each component is a package
+            /// name or part of the package name (if the name is scoped) leading
+            /// to the tree. Example values:
+            /// ""                                  (the root subpath is empty)
+            /// "react/loose-envify"                (react -> loose-envify)
+            /// "@types/bun/bun-types/@types/node"  (@types/bun -> bun-types -> @types/node)
             subpath: Subpath(method),
         };
 

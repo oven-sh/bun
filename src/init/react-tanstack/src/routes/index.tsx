@@ -34,7 +34,14 @@ function Home() {
                 <span>Bun {bunInfo.version}</span>
               </div>
               {bunInfo.revision && (
-                <div className="text-[10px] font-mono mt-0.5 opacity-90 pl-[18px]">{bunInfo.revision.slice(0, 8)}</div>
+                <a
+                  href={`https://github.com/oven-sh/bun/releases/tag/bun-v${bunInfo.version}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] font-mono mt-0.5 opacity-90 pl-[18px] hover:opacity-100 transition-opacity"
+                >
+                  {bunInfo.revision.slice(0, 8)}
+                </a>
               )}
             </div>
           </div>

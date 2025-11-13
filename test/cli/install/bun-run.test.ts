@@ -260,7 +260,7 @@ logLevel = "debug"
   });
 }
 
-it.each(["--cwd", "--prefix"])("should show the correct working directory when run with %s", async (flag) => {
+it.each(["--cwd", "--prefix"])("should show the correct working directory when run with %s", async flag => {
   await mkdir(join(run_dir, "subdir"));
   await writeFile(
     join(run_dir, "subdir", "test.js"),

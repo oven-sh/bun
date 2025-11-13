@@ -9,3 +9,6 @@ test/snippets
 test/js/node/test
 test/napi/node-napi-tests
 bun.lock
+
+# the output codeblocks need to stay minified
+docs/bundler/minifier.mdx

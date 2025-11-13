@@ -177,7 +177,27 @@ fn useFakeTimers(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     const timers = &vm.timer;
     const this = &timers.fake_timers;
 
-    const js_now = bun.cpp.JSMock__getCurrentUnixTimeMs();
+    var js_now = bun.cpp.JSMock__getCurrentUnixTimeMs();
+
+    // Check if options object was provided
+    const args = callframe.argumentsAsArray(1);
+    if (args.len > 0 and !args[0].isUndefined()) {
+        const options_value = args[0];
+        var config = try bindgen_generated.FakeTimersConfig.fromJS(globalObject, options_value);
+        defer config.deinit();
+
+        // Check if 'now' field is provided
+        if (!config.now.isUndefined()) {
+            // Handle both number and Date
+            if (config.now.isNumber()) {
+                js_now = config.now.asNumber();
+            } else if (config.now.isDate()) {
+                js_now = config.now.getUnixTimestamp();
+            } else {
+                return globalObject.throwInvalidArguments("'now' must be a number or Date", .{});
+            }
+        }
+    }
 
     {
         timers.lock.lock();
@@ -317,3 +337,4 @@ const bun = @import("bun");
 const jsc = bun.jsc;
 const TimerHeap = bun.api.Timer.TimerHeap;
 const FakeTimers = bun.jsc.Jest.bun_test.FakeTimers;
+const bindgen_generated = @import("bindgen_generated");

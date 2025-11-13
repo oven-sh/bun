@@ -380,3 +380,84 @@ test("adding more than the maximum number of ns in a u64 doesn't crash", () => {
   vi.advanceTimersByTime(900000000);
   vi.advanceTimersByTime(900000000);
 });
+
+describe("useFakeTimers with options", () => {
+  test("useFakeTimers({ now: number }) sets Date.now() to the specified value", () => {
+    const targetTime = 1000000000000; // January 9, 2001
+    vi.useFakeTimers({ now: targetTime });
+
+    expect(Date.now()).toBe(targetTime);
+
+    // Advance time and verify it continues from that point
+    vi.advanceTimersByTime(1000);
+    expect(Date.now()).toBe(targetTime + 1000);
+  });
+
+  test("useFakeTimers({ now: Date }) sets Date.now() to the Date's timestamp", () => {
+    const targetDate = new Date("2001-01-09T00:00:00.000Z");
+    const targetTime = targetDate.getTime();
+    vi.useFakeTimers({ now: targetDate });
+
+    expect(Date.now()).toBe(targetTime);
+
+    // Advance time and verify it continues from that point
+    vi.advanceTimersByTime(5000);
+    expect(Date.now()).toBe(targetTime + 5000);
+  });
+
+  test("useFakeTimers({ now: 0 }) sets Date.now() to epoch", () => {
+    vi.useFakeTimers({ now: 0 });
+
+    expect(Date.now()).toBe(0);
+
+    vi.advanceTimersByTime(100);
+    expect(Date.now()).toBe(100);
+  });
+
+  test("useFakeTimers without options uses current time", () => {
+    const beforeFake = Date.now();
+    vi.useFakeTimers();
+    const afterFake = Date.now();
+
+    // Should start at approximately the current real time
+    const diff = Math.abs(afterFake - beforeFake);
+    expect(diff).toBeLessThan(100);
+  });
+
+  test("timers scheduled with custom now work correctly", () => {
+    const targetTime = 5000000000000;
+    vi.useFakeTimers({ now: targetTime });
+
+    const order: string[] = [];
+
+    setTimeout(() => {
+      order.push("first");
+      expect(Date.now()).toBe(targetTime + 100);
+    }, 100);
+
+    setTimeout(() => {
+      order.push("second");
+      expect(Date.now()).toBe(targetTime + 200);
+    }, 200);
+
+    expect(order).toEqual([]);
+
+    vi.advanceTimersByTime(100);
+    expect(order).toEqual(["first"]);
+
+    vi.advanceTimersByTime(100);
+    expect(order).toEqual(["first", "second"]);
+  });
+
+  test("performance.now() starts at 0 regardless of custom now", () => {
+    const targetTime = 1000000000000;
+    vi.useFakeTimers({ now: targetTime });
+
+    // performance.now() should still start at 0
+    expect(performance.now()).toBe(0);
+
+    vi.advanceTimersByTime(500);
+    expect(performance.now()).toBe(500);
+    expect(Date.now()).toBe(targetTime + 500);
+  });
+});

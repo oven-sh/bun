@@ -663,21 +663,33 @@ export function awaitableCounter(timeoutMs: number = 1000) {
   let activeResolvers: [number, NodeJS.Timeout, (value: number) => void][] = [];
   let currentCount = 0;
 
-  return {
-    increment: () => {
-      currentCount++;
+  const incrementBy = (count: number) => {
+    currentCount += count;
 
-      for (const [value, alarm, resolve] of activeResolvers) {
-        alarm.close();
+    for (const [value, alarm, resolve] of activeResolvers) {
+      alarm.close();
 
-        if (currentCount >= value) {
-          resolve(currentCount);
-        }
+      if (currentCount >= value) {
+        resolve(currentCount);
       }
+    }
 
-      // Remove resolved promises
-      activeResolvers = activeResolvers.filter(([value]) => currentCount < value);
-    },
+    // Remove resolved promises
+    const remaining: typeof activeResolvers = [];
+    for (const [value, alarm, resolve] of activeResolvers) {
+      if (currentCount >= value) {
+        alarm.close();
+        resolve(currentCount);
+      } else {
+        remaining.push([value, alarm, resolve]);
+      }
+    }
+    activeResolvers = remaining;
+  };
+
+  return {
+    incrementBy: incrementBy,
+    increment: incrementBy.bind(null, 1),
     count: () => currentCount,
 
     untilValue: (value: number) =>

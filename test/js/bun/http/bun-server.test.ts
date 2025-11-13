@@ -110,7 +110,7 @@ describe.concurrent("Server", () => {
           },
           port: 0,
         });
-      }).toThrow("tls option expects an object");
+      }).toThrow("TLSOptions must be an object");
     });
   });
 
@@ -125,7 +125,7 @@ describe.concurrent("Server", () => {
           },
           port: 0,
         });
-      }).not.toThrow("tls option expects an object");
+      }).not.toThrow("TLSOptions must be an object");
     });
   });
 

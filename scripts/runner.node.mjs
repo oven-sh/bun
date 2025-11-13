@@ -80,6 +80,8 @@ function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-dns")) {
     return 90_000;
   }
+  if (!isCI) return 60_000; // everything slower in debug mode
+  if (options["step"]?.includes("-asan-")) return 60_000;
   return 20_000;
 }
 
@@ -183,32 +185,33 @@ if (options["quiet"]) {
   isQuiet = true;
 }
 
+/** @type {string[]} */
+let allFiles = [];
+/** @type {string[]} */
 let newFiles = [];
 let prFileCount = 0;
 if (isBuildkite) {
   try {
     console.log("on buildkite: collecting new files from PR");
     const per_page = 50;
-    for (let i = 1; i <= 5; i++) {
+    const { BUILDKITE_PULL_REQUEST } = process.env;
+    for (let i = 1; i <= 10; i++) {
       const res = await fetch(
-        `https://api.github.com/repos/oven-sh/bun/pulls/${process.env.BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
-        {
-          headers: {
-            Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}`,
-          },
-        },
+        `https://api.github.com/repos/oven-sh/bun/pulls/${BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
+        { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
       );
       const doc = await res.json();
       console.log(`-> page ${i}, found ${doc.length} items`);
       if (doc.length === 0) break;
-      if (doc.length < per_page) break;
       for (const { filename, status } of doc) {
         prFileCount += 1;
+        allFiles.push(filename);
         if (status !== "added") continue;
         newFiles.push(filename);
       }
+      if (doc.length < per_page) break;
     }
-    console.log(`- PR ${process.env.BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
+    console.log(`- PR ${BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
   } catch (e) {
     console.error(e);
   }
@@ -449,7 +452,7 @@ async function runTests() {
 
       if (parallelism > 1) {
         console.log(grouptitle);
-        result = await fn();
+        result = await fn(index);
       } else {
         result = await startGroup(grouptitle, fn);
       }
@@ -469,6 +472,7 @@ async function runTests() {
       const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
       startGroup(label, () => {
         if (parallelism > 1) return;
+        if (!isCI) return;
         process.stderr.write(stdoutPreview);
       });
 
@@ -671,7 +675,9 @@ async function runTests() {
         const title = join(relative(cwd, vendorPath), testPath).replace(/\\/g, "/");
 
         if (testRunner === "bun") {
-          await runTest(title, () => spawnBunTest(execPath, testPath, { cwd: vendorPath }));
+          await runTest(title, index =>
+            spawnBunTest(execPath, testPath, { cwd: vendorPath, env: { TEST_SERIAL_ID: index } }),
+          );
         } else {
           const testRunnerPath = join(cwd, "test", "runners", `${testRunner}.ts`);
           if (!existsSync(testRunnerPath)) {
@@ -1298,6 +1304,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  * @param {object} [opts]
  * @param {string} [opts.cwd]
  * @param {string[]} [opts.args]
+ * @param {object} [opts.env]
  * @returns {Promise<TestResult>}
  */
 async function spawnBunTest(execPath, testPath, opts = { cwd }) {
@@ -1331,6 +1338,7 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
 
   const env = {
     GITHUB_ACTIONS: "true", // always true so annotations are parsed
+    ...opts["env"],
   };
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
     env.BUN_JSC_validateExceptionChecks = "1";
@@ -1573,8 +1581,7 @@ function isJavaScriptTest(path) {
  * @returns {boolean}
  */
 function isNodeTest(path) {
-  // Do not run node tests on macOS x64 in CI
-  // TODO: Unclear why we decided to do this?
+  // Do not run node tests on macOS x64 in CI, those machines are slow and expensive.
   if (isCI && isMacOS && isX64) {
     return false;
   }
@@ -1882,6 +1889,27 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
       );
   } else {
     filteredTests.push(...availableTests);
+  }
+
+  // Prioritize modified test files
+  if (allFiles.length > 0) {
+    const modifiedTests = new Set(
+      allFiles
+        .filter(filename => filename.startsWith("test/") && isTest(filename))
+        .map(filename => filename.slice("test/".length)),
+    );
+
+    if (modifiedTests.size > 0) {
+      return filteredTests
+        .map(testPath => testPath.replaceAll("\\", "/"))
+        .sort((a, b) => {
+          const aModified = modifiedTests.has(a);
+          const bModified = modifiedTests.has(b);
+          if (aModified && !bModified) return -1;
+          if (!aModified && bModified) return 1;
+          return 0;
+        });
+    }
   }
 
   return filteredTests;
@@ -2609,8 +2637,18 @@ export async function main() {
     ]);
   }
 
-  const results = await runTests();
-  const ok = results.every(({ ok }) => ok);
+  let doRunTests = true;
+  if (isCI) {
+    if (allFiles.every(filename => filename.startsWith("docs/"))) {
+      doRunTests = false;
+    }
+  }
+
+  let ok = true;
+  if (doRunTests) {
+    const results = await runTests();
+    ok = results.every(({ ok }) => ok);
+  }
 
   let waitForUser = false;
   while (isCI) {

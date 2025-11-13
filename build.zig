@@ -18,22 +18,6 @@ const OperatingSystem = @import("src/env.zig").OperatingSystem;
 
 const pathRel = fs.path.relative;
 
-/// When updating this, make sure to adjust SetupZig.cmake
-const recommended_zig_version = "0.14.0";
-
-// comptime {
-//     if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
-//         @compileError(
-//             "" ++
-//                 "Bun requires Zig version " ++ recommended_zig_version ++ ", but you have " ++
-//                 builtin.zig_version_string ++ ". This is automatically configured via Bun's " ++
-//                 "CMake setup. You likely meant to run `bun run build`. If you are trying to " ++
-//                 "upgrade the Zig compiler, edit ZIG_COMMIT in cmake/tools/SetupZig.cmake or " ++
-//                 "comment this error out.",
-//         );
-//     }
-// }
-
 const zero_sha = "0000000000000000000000000000000000000000";
 
 const BunBuildOptions = struct {
@@ -49,6 +33,7 @@ const BunBuildOptions = struct {
     enable_logs: bool = false,
     enable_asan: bool,
     enable_valgrind: bool,
+    use_mimalloc: bool,
     tracy_callstack_depth: u16,
     reported_nodejs_version: Version,
     /// To make iterating on some '@embedFile's faster, we load them at runtime
@@ -97,7 +82,8 @@ const BunBuildOptions = struct {
         opts.addOption(bool, "enable_logs", this.enable_logs);
         opts.addOption(bool, "enable_asan", this.enable_asan);
         opts.addOption(bool, "enable_valgrind", this.enable_valgrind);
-        opts.addOption([]const u8, "reported_nodejs_version", b.fmt("{}", .{this.reported_nodejs_version}));
+        opts.addOption(bool, "use_mimalloc", this.use_mimalloc);
+        opts.addOption([]const u8, "reported_nodejs_version", b.fmt("{f}", .{this.reported_nodejs_version}));
         opts.addOption(bool, "zig_self_hosted_backend", this.no_llvm);
         opts.addOption(bool, "override_no_export_cpp_apis", this.override_no_export_cpp_apis);
 
@@ -132,8 +118,8 @@ pub fn getOSVersionMin(os: OperatingSystem) ?Target.Query.OsVersion {
 
 pub fn getOSGlibCVersion(os: OperatingSystem) ?Version {
     return switch (os) {
-        // Compiling with a newer glibc than this will break certain cloud environments.
-        .linux => .{ .major = 2, .minor = 27, .patch = 0 },
+        // Compiling with a newer glibc than this will break certain cloud environments. See symbols.test.ts.
+        .linux => .{ .major = 2, .minor = 26, .patch = 0 },
 
         else => null,
     };
@@ -270,6 +256,7 @@ pub fn build(b: *Build) !void {
         .enable_logs = b.option(bool, "enable_logs", "Enable logs in release") orelse false,
         .enable_asan = b.option(bool, "enable_asan", "Enable asan") orelse false,
         .enable_valgrind = b.option(bool, "enable_valgrind", "Enable valgrind") orelse false,
+        .use_mimalloc = b.option(bool, "use_mimalloc", "Use mimalloc as default allocator") orelse false,
         .llvm_codegen_threads = b.option(u32, "llvm_codegen_threads", "Number of threads to use for LLVM codegen") orelse 1,
     };
 
@@ -287,14 +274,16 @@ pub fn build(b: *Build) !void {
         var o = build_options;
         var unit_tests = b.addTest(.{
             .name = "bun-test",
-            .optimize = build_options.optimize,
-            .root_source_file = b.path("src/unit_test.zig"),
             .test_runner = .{ .path = b.path("src/main_test.zig"), .mode = .simple },
-            .target = build_options.target,
+            .root_module = b.createModule(.{
+                .optimize = build_options.optimize,
+                .root_source_file = b.path("src/unit_test.zig"),
+                .target = build_options.target,
+                .omit_frame_pointer = false,
+                .strip = false,
+            }),
             .use_llvm = !build_options.no_llvm,
             .use_lld = if (build_options.os == .mac) false else !build_options.no_llvm,
-            .omit_frame_pointer = false,
-            .strip = false,
         });
         configureObj(b, &o, unit_tests);
         // Setting `linker_allow_shlib_undefined` causes the linker to ignore
@@ -328,6 +317,7 @@ pub fn build(b: *Build) !void {
         var step = b.step("check", "Check for semantic analysis errors");
         var bun_check_obj = addBunObject(b, &build_options);
         bun_check_obj.generated_bin = null;
+        // bun_check_obj.use_llvm = false;
         step.dependOn(&bun_check_obj.step);
 
         // The default install step will run zig build check. This is so ZLS
@@ -500,6 +490,7 @@ fn addMultiCheck(
                 .no_llvm = root_build_options.no_llvm,
                 .enable_asan = root_build_options.enable_asan,
                 .enable_valgrind = root_build_options.enable_valgrind,
+                .use_mimalloc = root_build_options.use_mimalloc,
                 .override_no_export_cpp_apis = root_build_options.override_no_export_cpp_apis,
             };
 
@@ -612,7 +603,7 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
             obj.llvm_codegen_threads = opts.llvm_codegen_threads orelse 0;
     }
 
-    obj.no_link_obj = true;
+    obj.no_link_obj = opts.os != .windows;
 
     if (opts.enable_asan and !enableFastBuild(b)) {
         if (@hasField(Build.Module, "sanitize_address")) {
@@ -720,6 +711,7 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
     // Generated code exposed as individual modules.
     inline for (.{
         .{ .file = "ZigGeneratedClasses.zig", .import = "ZigGeneratedClasses" },
+        .{ .file = "bindgen_generated.zig", .import = "bindgen_generated" },
         .{ .file = "ResolvedSourceTag.zig", .import = "ResolvedSourceTag" },
         .{ .file = "ErrorCode.zig", .import = "ErrorCode" },
         .{ .file = "runtime.out.js", .enable = opts.shouldEmbedCode() },
@@ -774,6 +766,13 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
         mod.addImport("cpp", cppImport);
         cppImport.addImport("bun", mod);
     }
+    {
+        const ciInfoImport = b.createModule(.{
+            .root_source_file = (std.Build.LazyPath{ .cwd_relative = opts.codegen_path }).path(b, "ci_info.zig"),
+        });
+        mod.addImport("ci_info", ciInfoImport);
+        ciInfoImport.addImport("bun", mod);
+    }
     inline for (.{
         .{ .import = "completions-bash", .file = b.path("completions/bun.bash") },
         .{ .import = "completions-zsh", .file = b.path("completions/bun.zsh") },
@@ -799,7 +798,7 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
 fn propagateImports(source_mod: *Module) !void {
     var seen = std.AutoHashMap(*Module, void).init(source_mod.owner.graph.arena);
     defer seen.deinit();
-    var queue = std.ArrayList(*Module).init(source_mod.owner.graph.arena);
+    var queue = std.array_list.Managed(*Module).init(source_mod.owner.graph.arena);
     defer queue.deinit();
     try queue.appendSlice(source_mod.import_table.values());
     while (queue.pop()) |mod| {

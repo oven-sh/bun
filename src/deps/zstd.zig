@@ -33,6 +33,47 @@ pub fn decompress(dest: []u8, src: []const u8) Result {
     return .{ .success = result };
 }
 
+/// Decompress data, automatically allocating the output buffer.
+/// Returns owned slice that must be freed by the caller.
+/// Handles both frames with known and unknown content sizes.
+/// For safety, if the reported decompressed size exceeds 16MB, streaming decompression is used instead.
+pub fn decompressAlloc(allocator: std.mem.Allocator, src: []const u8) ![]u8 {
+    const size = getDecompressedSize(src);
+
+    const ZSTD_CONTENTSIZE_UNKNOWN = std.math.maxInt(c_ulonglong); // 0ULL - 1
+    const ZSTD_CONTENTSIZE_ERROR = std.math.maxInt(c_ulonglong) - 1; // 0ULL - 2
+    const MAX_PREALLOCATE_SIZE = 16 * 1024 * 1024; // 16MB safety limit
+
+    if (size == ZSTD_CONTENTSIZE_ERROR) {
+        return error.InvalidZstdData;
+    }
+
+    // Use streaming decompression if:
+    // 1. Content size is unknown, OR
+    // 2. Reported size exceeds safety limit (to prevent malicious inputs claiming huge sizes)
+    if (size == ZSTD_CONTENTSIZE_UNKNOWN or size > MAX_PREALLOCATE_SIZE) {
+        var list = std.ArrayListUnmanaged(u8){};
+        const reader = try ZstdReaderArrayList.init(src, &list, allocator);
+        defer reader.deinit();
+
+        try reader.readAll(true);
+        return try list.toOwnedSlice(allocator);
+    }
+
+    // Fast path: size is known and within reasonable limits
+    const output = try allocator.alloc(u8, size);
+    errdefer allocator.free(output);
+
+    const result = decompress(output, src);
+    return switch (result) {
+        .success => |actual_size| output[0..actual_size],
+        .err => {
+            allocator.free(output);
+            return error.DecompressionFailed;
+        },
+    };
+}
+
 pub fn getDecompressedSize(src: []const u8) usize {
     return ZSTD_findDecompressedSize(src.ptr, src.len);
 }

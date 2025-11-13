@@ -34,7 +34,7 @@ beforeAll(async () => {
   TEMP_FIXTURE_DIR = join(TEMP_DIR, "fixture");
 
   try {
-    await $`mkdir -p ${TEMP_FIXTURE_DIR}`;
+    await $`mkdir -p ${TEMP_FIXTURE_DIR}`.quiet();
 
     await cp(FIXTURE_SOURCE_DIR, TEMP_FIXTURE_DIR, { recursive: true });
 
@@ -42,7 +42,7 @@ beforeAll(async () => {
       cd ${BUN_TYPES_PACKAGE_ROOT}
       bun install --no-cache
       cp package.json package.json.backup
-    `;
+    `.quiet();
 
     const pkg = await Bun.file(BUN_TYPES_PACKAGE_JSON_PATH).json();
 
@@ -58,10 +58,9 @@ beforeAll(async () => {
       cd ${TEMP_FIXTURE_DIR}
       bun add bun-types@${BUN_TYPES_TARBALL_NAME}
       rm ${BUN_TYPES_TARBALL_NAME}
-    `;
+    `.quiet();
 
     const atTypesBunDir = join(TEMP_FIXTURE_DIR, "node_modules", "@types", "bun");
-    console.log("Making tree", atTypesBunDir);
 
     await mkdir(atTypesBunDir, { recursive: true });
     await makeTree(atTypesBunDir, {
@@ -160,6 +159,22 @@ async function diagnose(
     return `${relative(fixtureDir, diagnostic.file.fileName)}:${lineAndCharacter.line + 1}:${lineAndCharacter.character + 1}`;
   }
 
+  function getMessageChain(chain: string | ts.DiagnosticMessageChain): string[] {
+    if (typeof chain === "string") {
+      return [chain];
+    }
+
+    const messages = getMessageChain(chain.messageText);
+
+    if (chain.next) {
+      for (const next of chain.next) {
+        messages.push(...getMessageChain(next));
+      }
+    }
+
+    return messages;
+  }
+
   const diagnostics = ts
     .getPreEmitDiagnostics(program)
     .concat(program.getOptionsDiagnostics())
@@ -169,7 +184,7 @@ async function diagnose(
     .concat(program.emit().diagnostics)
     .map(diagnostic => ({
       line: getLine(diagnostic),
-      message: typeof diagnostic.messageText === "string" ? diagnostic.messageText : diagnostic.messageText.messageText,
+      message: getMessageChain(diagnostic.messageText).join("\n"),
       code: diagnostic.code,
     }));
 
@@ -179,140 +194,7 @@ async function diagnose(
   };
 }
 
-const expectedEmptyInterfacesWhenNoDOM = new Set([
-  "ThisType",
-  "Document",
-  "DataTransfer",
-  "StyleMedia",
-  "Element",
-  "DocumentFragment",
-  "HTMLElement",
-  "HTMLAnchorElement",
-  "HTMLAreaElement",
-  "HTMLAudioElement",
-  "HTMLBaseElement",
-  "HTMLBodyElement",
-  "HTMLBRElement",
-  "HTMLButtonElement",
-  "HTMLCanvasElement",
-  "HTMLDataElement",
-  "HTMLDataListElement",
-  "HTMLDetailsElement",
-  "HTMLDialogElement",
-  "HTMLDivElement",
-  "HTMLDListElement",
-  "HTMLEmbedElement",
-  "HTMLFieldSetElement",
-  "HTMLFormElement",
-  "HTMLHeadingElement",
-  "HTMLHeadElement",
-  "HTMLHRElement",
-  "HTMLHtmlElement",
-  "HTMLIFrameElement",
-  "HTMLImageElement",
-  "HTMLInputElement",
-  "HTMLModElement",
-  "HTMLLabelElement",
-  "HTMLLegendElement",
-  "HTMLLIElement",
-  "HTMLLinkElement",
-  "HTMLMapElement",
-  "HTMLMetaElement",
-  "HTMLMeterElement",
-  "HTMLObjectElement",
-  "HTMLOListElement",
-  "HTMLOptGroupElement",
-  "HTMLOptionElement",
-  "HTMLOutputElement",
-  "HTMLParagraphElement",
-  "HTMLParamElement",
-  "HTMLPreElement",
-  "HTMLProgressElement",
-  "HTMLQuoteElement",
-  "HTMLSlotElement",
-  "HTMLScriptElement",
-  "HTMLSelectElement",
-  "HTMLSourceElement",
-  "HTMLSpanElement",
-  "HTMLStyleElement",
-  "HTMLTableElement",
-  "HTMLTableColElement",
-  "HTMLTableDataCellElement",
-  "HTMLTableHeaderCellElement",
-  "HTMLTableRowElement",
-  "HTMLTableSectionElement",
-  "HTMLTemplateElement",
-  "HTMLTextAreaElement",
-  "HTMLTimeElement",
-  "HTMLTitleElement",
-  "HTMLTrackElement",
-  "HTMLUListElement",
-  "HTMLVideoElement",
-  "HTMLWebViewElement",
-  "SVGElement",
-  "SVGSVGElement",
-  "SVGCircleElement",
-  "SVGClipPathElement",
-  "SVGDefsElement",
-  "SVGDescElement",
-  "SVGEllipseElement",
-  "SVGFEBlendElement",
-  "SVGFEColorMatrixElement",
-  "SVGFEComponentTransferElement",
-  "SVGFECompositeElement",
-  "SVGFEConvolveMatrixElement",
-  "SVGFEDiffuseLightingElement",
-  "SVGFEDisplacementMapElement",
-  "SVGFEDistantLightElement",
-  "SVGFEDropShadowElement",
-  "SVGFEFloodElement",
-  "SVGFEFuncAElement",
-  "SVGFEFuncBElement",
-  "SVGFEFuncGElement",
-  "SVGFEFuncRElement",
-  "SVGFEGaussianBlurElement",
-  "SVGFEImageElement",
-  "SVGFEMergeElement",
-  "SVGFEMergeNodeElement",
-  "SVGFEMorphologyElement",
-  "SVGFEOffsetElement",
-  "SVGFEPointLightElement",
-  "SVGFESpecularLightingElement",
-  "SVGFESpotLightElement",
-  "SVGFETileElement",
-  "SVGFETurbulenceElement",
-  "SVGFilterElement",
-  "SVGForeignObjectElement",
-  "SVGGElement",
-  "SVGImageElement",
-  "SVGLineElement",
-  "SVGLinearGradientElement",
-  "SVGMarkerElement",
-  "SVGMaskElement",
-  "SVGMetadataElement",
-  "SVGPathElement",
-  "SVGPatternElement",
-  "SVGPolygonElement",
-  "SVGPolylineElement",
-  "SVGRadialGradientElement",
-  "SVGRectElement",
-  "SVGSetElement",
-  "SVGStopElement",
-  "SVGSwitchElement",
-  "SVGSymbolElement",
-  "SVGTextElement",
-  "SVGTextPathElement",
-  "SVGTSpanElement",
-  "SVGUseElement",
-  "SVGViewElement",
-  "Text",
-  "TouchList",
-  "WebGLRenderingContext",
-  "WebGL2RenderingContext",
-  "TrustedHTML",
-  "MediaStream",
-  "MediaSource",
-]);
+const expectedEmptyInterfacesWhenNoDOM = new Set(["ThisType"]);
 
 function checkForEmptyInterfaces(program: ts.Program) {
   const empties = new Set<string>();
@@ -369,8 +251,6 @@ function checkForEmptyInterfaces(program: ts.Program) {
 
 afterAll(async () => {
   if (TEMP_DIR) {
-    console.log(TEMP_DIR);
-
     if (Bun.env.TYPES_INTEGRATION_TEST_KEEP_TEMP_DIR === "true") {
       console.log(`Keeping temp dir ${TEMP_DIR}/fixture for debugging`);
       await cp(TSCONFIG_SOURCE_PATH, join(TEMP_DIR, "fixture", "tsconfig.json"));
@@ -398,10 +278,8 @@ describe("@types/bun integration test", () => {
       const beforeEach_shouldBeAFunction: Function = beforeEach;
       const afterEach_shouldBeAFunction: Function = afterEach;
       const afterAll_shouldBeAFunction: Function = afterAll;
-      const setDefaultTimeout_shouldBeAFunction: Function = setDefaultTimeout;
-      const mock_shouldBeAFunction: Function = mock;
-      const spyOn_shouldBeAFunction: Function = spyOn;
       const jest_shouldBeDefined: object = jest;
+      const vi_shouldBeDefined: object = vi;
     `;
 
     test("checks without lib.dom.d.ts and test-globals references", async () => {
@@ -422,71 +300,60 @@ describe("@types/bun integration test", () => {
       });
 
       expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM); // should still have no empty interfaces
-      expect(diagnostics).toEqual([
-        {
-          "code": 2582,
-          "line": "my-test.test.ts:2:48",
-          "message":
-            "Cannot find name 'test'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
-        },
-        {
-          "code": 2582,
-          "line": "my-test.test.ts:3:46",
-          "message":
-            "Cannot find name 'it'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
-        },
-        {
-          "code": 2582,
-          "line": "my-test.test.ts:4:52",
-          "message":
-            "Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:5:50",
-          "message": "Cannot find name 'expect'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:6:53",
-          "message": "Cannot find name 'beforeAll'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:7:54",
-          "message": "Cannot find name 'beforeEach'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:8:53",
-          "message": "Cannot find name 'afterEach'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:9:52",
-          "message": "Cannot find name 'afterAll'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:10:61",
-          "message": "Cannot find name 'setDefaultTimeout'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:11:48",
-          "message": "Cannot find name 'mock'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:12:49",
-          "message": "Cannot find name 'spyOn'.",
-        },
-        {
-          "code": 2304,
-          "line": "my-test.test.ts:13:44",
-          "message": "Cannot find name 'jest'.",
-        },
-      ]);
+      expect(diagnostics).toMatchInlineSnapshot(`
+        [
+          {
+            "code": 2582,
+            "line": "my-test.test.ts:2:48",
+            "message": "Cannot find name 'test'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
+          },
+          {
+            "code": 2582,
+            "line": "my-test.test.ts:3:46",
+            "message": "Cannot find name 'it'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
+          },
+          {
+            "code": 2582,
+            "line": "my-test.test.ts:4:52",
+            "message": "Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
+          },
+          {
+            "code": 2304,
+            "line": "my-test.test.ts:5:50",
+            "message": "Cannot find name 'expect'.",
+          },
+          {
+            "code": 2304,
+            "line": "my-test.test.ts:6:53",
+            "message": "Cannot find name 'beforeAll'.",
+          },
+          {
+            "code": 2304,
+            "line": "my-test.test.ts:7:54",
+            "message": "Cannot find name 'beforeEach'.",
+          },
+          {
+            "code": 2304,
+            "line": "my-test.test.ts:8:53",
+            "message": "Cannot find name 'afterEach'.",
+          },
+          {
+            "code": 2304,
+            "line": "my-test.test.ts:9:52",
+            "message": "Cannot find name 'afterAll'.",
+          },
+          {
+            "code": 2304,
+            "line": "my-test.test.ts:10:44",
+            "message": "Cannot find name 'jest'.",
+          },
+          {
+            "code": 2304,
+            "line": "my-test.test.ts:11:42",
+            "message": "Cannot find name 'vi'.",
+          },
+        ]
+      `);
     });
   });
 
@@ -512,13 +379,13 @@ describe("@types/bun integration test", () => {
 
     expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
     expect(diagnostics).toEqual([
-      // This is expected because we, of course, can't check that our tsx file is passing
-      // when tsx is turned off...
-      {
-        "code": 17004,
-        "line": "[slug].tsx:17:10",
-        "message": "Cannot use JSX unless the '--jsx' flag is provided.",
-      },
+      // // This is expected because we, of course, can't check that our tsx file is passing
+      // // when tsx is turned off...
+      // {
+      //   "code": 17004,
+      //   "line": "[slug].tsx:17:10",
+      //   "message": "Cannot use JSX unless the '--jsx' flag is provided.",
+      // },
     ]);
   });
 
@@ -561,24 +428,32 @@ describe("@types/bun integration test", () => {
         "WebGLUniformLocation",
         "WebGLVertexArrayObject",
         "WebGLVertexArrayObjectOES",
-        "TrustedHTML",
       ]),
     );
     expect(diagnostics).toEqual([
       {
+        code: 2322,
+        line: "24154.ts:11:3",
+        message:
+          "Type 'Blob' is not assignable to type 'import(\"buffer\").Blob'.\nThe types returned by 'stream()' are incompatible between these types.\nType 'ReadableStream<Uint8Array<ArrayBuffer>>' is missing the following properties from type 'ReadableStream<any>': blob, text, bytes, json, and 2 more.",
+      },
+      {
         code: 2769,
         line: "fetch.ts:25:32",
-        message: "No overload matches this call.",
+        message:
+          "No overload matches this call.\nOverload 1 of 3, '(input: string | Request | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is not assignable to type 'BodyInit | null | undefined'.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.\nOverload 2 of 3, '(input: string | Request | URL, init?: BunFetchRequestInit | undefined): Promise<Response>', gave the following error.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is not assignable to type 'BodyInit | null | undefined'.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.\nOverload 3 of 3, '(input: RequestInfo | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is not assignable to type 'BodyInit | null | undefined'.\nType 'AsyncGenerator<\"chunk1\" | \"chunk2\", void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.",
       },
       {
         code: 2769,
         line: "fetch.ts:33:32",
-        message: "No overload matches this call.",
+        message:
+          "No overload matches this call.\nOverload 1 of 3, '(input: string | Request | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is not assignable to type 'BodyInit | null | undefined'.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.\nOverload 2 of 3, '(input: string | Request | URL, init?: BunFetchRequestInit | undefined): Promise<Response>', gave the following error.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is not assignable to type 'BodyInit | null | undefined'.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.\nOverload 3 of 3, '(input: RequestInfo | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is not assignable to type 'BodyInit | null | undefined'.\nType '{ [Symbol.asyncIterator](): AsyncGenerator<\"data1\" | \"data2\", void, unknown>; }' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.",
       },
       {
         code: 2769,
         line: "fetch.ts:168:34",
-        message: "No overload matches this call.",
+        message:
+          "No overload matches this call.\nOverload 1 of 3, '(input: string | Request | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType 'SharedArrayBuffer' is not assignable to type 'BodyInit | null | undefined'.\nType 'SharedArrayBuffer' is missing the following properties from type 'ArrayBuffer': resizable, resize, detached, transfer, transferToFixedLength\nOverload 2 of 3, '(input: string | Request | URL, init?: BunFetchRequestInit | undefined): Promise<Response>', gave the following error.\nType 'SharedArrayBuffer' is not assignable to type 'BodyInit | null | undefined'.\nType 'SharedArrayBuffer' is missing the following properties from type 'ArrayBuffer': resizable, resize, detached, transfer, transferToFixedLength\nOverload 3 of 3, '(input: RequestInfo | URL, init?: RequestInit | undefined): Promise<Response>', gave the following error.\nType 'SharedArrayBuffer' is not assignable to type 'BodyInit | null | undefined'.\nType 'SharedArrayBuffer' is missing the following properties from type 'ArrayBuffer': resizable, resize, detached, transfer, transferToFixedLength",
       },
       {
         code: 2353,
@@ -595,17 +470,17 @@ describe("@types/bun integration test", () => {
         code: 2345,
         line: "http.ts:55:24",
         message:
-          "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer> | \"it works!\", void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
+          "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer> | \"it works!\", void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.\nType 'AsyncGenerator<Uint8Array<ArrayBuffer> | \"it works!\", void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.",
       },
       {
         code: 2345,
         line: "index.ts:196:14",
         message:
-          "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.",
+          "Argument of type 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is not assignable to parameter of type 'BodyInit | null | undefined'.\nType 'AsyncGenerator<Uint8Array<ArrayBuffer>, void, unknown>' is missing the following properties from type 'ReadableStream<any>': locked, cancel, getReader, pipeThrough, and 3 more.",
       },
       {
         code: 2345,
-        line: "index.ts:326:29",
+        line: "index.ts:322:29",
         message:
           "Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
       },
@@ -622,7 +497,8 @@ describe("@types/bun integration test", () => {
       {
         "code": 2769,
         "line": "streams.ts:18:3",
-        "message": "No overload matches this call.",
+        "message":
+          "No overload matches this call.\nOverload 1 of 3, '(underlyingSource: UnderlyingByteSource, strategy?: { highWaterMark?: number | undefined; } | undefined): ReadableStream<Uint8Array<ArrayBuffer>>', gave the following error.\nType '\"direct\"' is not assignable to type '\"bytes\"'.",
       },
       {
         "code": 2339,

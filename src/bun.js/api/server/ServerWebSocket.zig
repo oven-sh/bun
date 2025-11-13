@@ -81,18 +81,11 @@ pub fn onOpen(this: *ServerWebSocket, ws: uws.AnyWebSocket) void {
     this.#flags.opened = false;
 
     if (onOpenHandler.isEmptyOrUndefinedOrNull()) {
-        if (bun.take(&this.#handler.onBeforeOpen)) |on_before_open| {
-            // Only create the "this" value if needed.
-            on_before_open.callback(on_before_open.ctx, this.#this_value.tryGet() orelse .js_undefined, ws.raw());
-        }
         return;
     }
 
     const this_value = this.#this_value.tryGet() orelse .js_undefined;
     var args = [_]JSValue{this_value};
-    if (bun.take(&this.#handler.onBeforeOpen)) |on_before_open| {
-        on_before_open.callback(on_before_open.ctx, this_value, ws.raw());
-    }
 
     const loop = vm.eventLoop();
     loop.enter();
@@ -1237,6 +1230,18 @@ pub fn isSubscribed(
     }
 
     return JSValue.jsBoolean(this.websocket().isSubscribed(topic.slice()));
+}
+
+pub fn getSubscriptions(
+    this: *ServerWebSocket,
+    globalThis: *jsc.JSGlobalObject,
+) bun.JSError!JSValue {
+    if (this.isClosed()) {
+        return try JSValue.createEmptyArray(globalThis, 0);
+    }
+
+    // Get the JSValue directly from C++
+    return this.websocket().getTopicsAsJSArray(globalThis);
 }
 
 pub fn getRemoteAddress(

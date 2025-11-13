@@ -266,3 +266,58 @@ test("multi-file", async () => {
     preload: after last file"
   `);
 });
+
+test("--only flag with multiple files", async () => {
+  const result = await Bun.spawn({
+    cmd: [
+      bunExe(),
+      "test",
+      import.meta.dir + "/only-flag-fixtures/file0.fixture.ts",
+      import.meta.dir + "/only-flag-fixtures/file1.fixture.ts",
+      import.meta.dir + "/only-flag-fixtures/file2.fixture.ts",
+      "--only",
+    ],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...bunEnv, CI: "false" },
+  });
+  const exitCode = await result.exited;
+  const stdout = await result.stdout.text();
+  const stderr = await result.stderr.text();
+
+  // Should only run test 1.0 which has `.only()`
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "bun test <version> (<revision>)
+    file1.0 (only)"
+  `);
+  expect(exitCode).toBe(0);
+});
+
+test("no --only flag with multiple files", async () => {
+  const result = await Bun.spawn({
+    cmd: [
+      bunExe(),
+      "test",
+      import.meta.dir + "/only-flag-fixtures/file0.fixture.ts",
+      import.meta.dir + "/only-flag-fixtures/file1.fixture.ts",
+      import.meta.dir + "/only-flag-fixtures/file2.fixture.ts",
+    ],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: { ...bunEnv, CI: "false" },
+  });
+  const exitCode = await result.exited;
+  const stdout = await result.stdout.text();
+  const stderr = await result.stderr.text();
+
+  // Should run tests from other files, but only test 1.0 for file1.test.ts
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "bun test <version> (<revision>)
+    file0.0
+    file0.1
+    file1.0 (only)
+    file2.0
+    file2.1"
+  `);
+  expect(exitCode).toBe(0);
+});

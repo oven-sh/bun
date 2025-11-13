@@ -1,7 +1,9 @@
+.claude/settings.local.json
 .DS_Store
 .env
 .envrc
 .eslintcache
+.gdb_history
 .idea
 .next
 .ninja_deps

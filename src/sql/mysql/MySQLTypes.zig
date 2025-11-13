@@ -305,16 +305,16 @@ pub const FieldType = enum(u8) {
 
             // Ban these types:
             if (tag == .NumberObject) {
-                return error.JSError;
+                return globalObject.throwInvalidArguments("Cannot bind NumberObject to query parameter. Use a primitive number instead.", .{});
             }
 
             if (tag == .BooleanObject) {
-                return error.JSError;
+                return globalObject.throwInvalidArguments("Cannot bind BooleanObject to query parameter. Use a primitive boolean instead.", .{});
             }
 
             // It's something internal
             if (!tag.isIndexable()) {
-                return error.JSError;
+                return globalObject.throwInvalidArguments("Cannot bind this type to query parameter", .{});
             }
 
             // We will JSON.stringify anything else.
@@ -782,7 +782,7 @@ pub const Value = union(enum) {
 
         pub fn toJS(this: Decimal, globalObject: *JSC.JSGlobalObject) JSValue {
             var stack = std.heap.stackFallback(64, bun.default_allocator);
-            var str = std.ArrayList(u8).init(stack.get());
+            var str = std.array_list.Managed(u8).init(stack.get());
             defer str.deinit();
 
             if (this.negative) {

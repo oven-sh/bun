@@ -18,17 +18,18 @@ pub fn toJSForSSR(this: *Response, globalObject: *JSGlobalObject, kind: SSRKind)
     return BakeResponse__createForSSR(globalObject, this, @intFromEnum(kind));
 }
 
-pub export fn BakeResponseClass__constructForSSR(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, bake_ssr_has_jsx: *c_int) callconv(jsc.conv) ?*anyopaque {
-    return @as(*Response, constructor(globalObject, callFrame, bake_ssr_has_jsx) catch |err| switch (err) {
+pub export fn BakeResponseClass__constructForSSR(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame, bake_ssr_has_jsx: *c_int, js_this: jsc.JSValue) callconv(jsc.conv) ?*anyopaque {
+    return @as(*Response, constructor(globalObject, callFrame, bake_ssr_has_jsx, js_this) catch |err| switch (err) {
         error.JSError => return null,
         error.OutOfMemory => {
             globalObject.throwOutOfMemory() catch {};
             return null;
         },
+        error.JSTerminated => return null,
     });
 }
 
-pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, bake_ssr_has_jsx: *c_int) bun.JSError!*Response {
+pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, bake_ssr_has_jsx: *c_int, js_this: jsc.JSValue) bun.JSError!*Response {
     var arguments = callframe.argumentsAsArray(2);
 
     // Allow `return new Response(<jsx> ... </jsx>, { ... }`
@@ -44,7 +45,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, b
         }
     }
 
-    return Response.constructor(globalThis, callframe);
+    return Response.constructor(globalThis, callframe, js_this);
 }
 
 pub export fn BakeResponseClass__constructRedirect(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
@@ -105,11 +106,8 @@ pub fn constructRender(
     defer path_utf8.deinit();
 
     // Create a Response with Render body
-    const response = bun.new(Response, Response{
-        .body = Body{
-            .value = .Empty,
-        },
-        .init = Response.Init{
+    const response = bun.new(Response, Response.init(
+        .{
             .status_code = 200,
             .headers = headers: {
                 var headers = bun.webcore.FetchHeaders.createEmpty();
@@ -117,7 +115,10 @@ pub fn constructRender(
                 break :headers headers;
             },
         },
-    });
+        .{ .value = .Empty },
+        bun.String.empty,
+        false,
+    ));
 
     const response_js = toJSForSSR(response, globalThis, .render);
     response_js.ensureStillAlive();
@@ -135,12 +136,11 @@ fn assertStreamingDisabled(globalThis: *jsc.JSGlobalObject, async_local_storage:
     if (streaming_val.asBoolean()) return globalThis.throwInvalidArguments("\"{s}\" is not available when `export const streaming = true`", .{display_function});
 }
 
-const bun = @import("bun");
 const std = @import("std");
+
+const bun = @import("bun");
+const Response = bun.webcore.Response;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;
-
-const Body = bun.webcore.Body;
-const Response = bun.webcore.Response;

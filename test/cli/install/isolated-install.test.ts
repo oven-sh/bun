@@ -17,7 +17,7 @@ afterAll(() => {
 
 describe("basic", () => {
   test("single dependency", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await write(
       packageJson,
@@ -48,7 +48,7 @@ describe("basic", () => {
   });
 
   test("scope package", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await write(
       packageJson,
@@ -88,7 +88,7 @@ describe("basic", () => {
   });
 
   test("transitive dependencies", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await write(
       packageJson,
@@ -175,7 +175,7 @@ describe("basic", () => {
 });
 
 test("handles cyclic dependencies", async () => {
-  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
     packageJson,
@@ -226,8 +226,43 @@ test("handles cyclic dependencies", async () => {
   });
 });
 
+test("package with dependency on previous self works", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-transitive-self-dep",
+      dependencies: {
+        "self-dep": "1.0.2",
+      },
+    }),
+  );
+
+  await runBunInstall(bunEnv, packageDir);
+
+  expect(
+    await Promise.all([
+      file(join(packageDir, "node_modules", "self-dep", "package.json")).json(),
+      file(join(packageDir, "node_modules", "self-dep", "node_modules", "self-dep", "package.json")).json(),
+    ]),
+  ).toEqual([
+    {
+      name: "self-dep",
+      version: "1.0.2",
+      dependencies: {
+        "self-dep": "1.0.1",
+      },
+    },
+    {
+      name: "self-dep",
+      version: "1.0.1",
+    },
+  ]);
+});
+
 test("can install folder dependencies", async () => {
-  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
     packageJson,
@@ -266,6 +301,46 @@ test("can install folder dependencies", async () => {
       join(packageDir, "node_modules", ".bun", "folder-dep@file+pkg-1", "node_modules", "folder-dep", "index.js"),
     ).text(),
   ).toBe("module.exports = 'hello from pkg-1';");
+});
+
+test("can install folder dependencies on root package", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "root-file-dep",
+        workspaces: ["packages/*"],
+        dependencies: {
+          self: "file:.",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        dependencies: {
+          root: "file:../..",
+        },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(bunEnv, packageDir);
+
+  expect(
+    await Promise.all([
+      readlink(join(packageDir, "node_modules", "self")),
+      readlink(join(packageDir, "packages", "pkg1", "node_modules", "root")),
+      file(join(packageDir, "node_modules", "self", "package.json")).json(),
+    ]),
+  ).toEqual([
+    join(".bun", "root-file-dep@root", "node_modules", "root-file-dep"),
+    join("..", "..", "..", "node_modules", ".bun", "root-file-dep@root", "node_modules", "root-file-dep"),
+    await file(packageJson).json(),
+  ]);
 });
 
 describe("isolated workspaces", () => {
@@ -308,7 +383,7 @@ describe("isolated workspaces", () => {
     ]);
   }
   test("basic", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await createWorkspace(packageJson, packageDir);
 
@@ -346,7 +421,7 @@ describe("isolated workspaces", () => {
   });
 
   test("--filter only includes matched workspaces and transitively workspaces", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir({ isolated: true });
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await createWorkspace(packageJson, packageDir);
 
@@ -424,11 +499,191 @@ describe("isolated workspaces", () => {
       ]),
     ).toEqual([[".bun"], ["a-dep-b@1.0.0", "b-dep-a@1.0.0", "node_modules"], false, ["b-dep-a"]]);
   });
+
+  test("workspace self dependencies create symlinks", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "monorepo-workspace-self-dep",
+          workspaces: ["packages/*"],
+        }),
+        "packages/pkg1/package.json": JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            pkg1: "workspace:*",
+          },
+        }),
+        "packages/pkg2/package.json": JSON.stringify({
+          name: "pkg2",
+          dependencies: {
+            "pkg1": "workspace:*",
+            "pkg2": "workspace:*",
+          },
+        }),
+        "packages/pkg3/package.json": JSON.stringify({
+          name: "pkg3",
+          dependencies: {
+            "different-name": "workspace:.",
+          },
+        }),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(
+      await Promise.all([
+        readdirSorted(join(packageDir, "node_modules")),
+        file(join(packageDir, "packages", "pkg1", "node_modules", "pkg1", "package.json")).json(),
+        file(join(packageDir, "packages", "pkg2", "node_modules", "pkg1", "package.json")).json(),
+        file(join(packageDir, "packages", "pkg2", "node_modules", "pkg2", "package.json")).json(),
+        file(join(packageDir, "packages", "pkg3", "node_modules", "different-name", "package.json")).json(),
+      ]),
+    ).toEqual([
+      [".bun"],
+      { name: "pkg1", dependencies: { pkg1: "workspace:*" } },
+      { name: "pkg1", dependencies: { pkg1: "workspace:*" } },
+      { name: "pkg2", dependencies: { pkg1: "workspace:*", pkg2: "workspace:*" } },
+      { name: "pkg3", dependencies: { "different-name": "workspace:." } },
+    ]);
+  });
+});
+
+describe("optional peers", () => {
+  const tests = [
+    // non-optional versions
+    {
+      name: "non-optional transitive only",
+      deps: [{ "one-optional-peer-dep": "1.0.1" }, { "one-optional-peer-dep": "1.0.1" }],
+      expected: ["no-deps@1.1.0", "node_modules", "one-optional-peer-dep@1.0.1+7ff199101204a65d"],
+    },
+    {
+      name: "non-optional direct pkg1",
+      deps: [{ "one-optional-peer-dep": "1.0.1", "no-deps": "1.0.1" }, { "one-optional-peer-dep": "1.0.1" }],
+      expected: ["no-deps@1.0.1", "node_modules", "one-optional-peer-dep@1.0.1+f8a822eca018d0a1"],
+    },
+    {
+      name: "non-optional direct pkg2",
+      deps: [{ "one-optional-peer-dep": "1.0.1" }, { "one-optional-peer-dep": "1.0.1", "no-deps": "1.0.1" }],
+      expected: ["no-deps@1.0.1", "node_modules", "one-optional-peer-dep@1.0.1+f8a822eca018d0a1"],
+    },
+    // optional versions
+    {
+      name: "optional transitive only",
+      deps: [{ "one-optional-peer-dep": "1.0.2" }, { "one-optional-peer-dep": "1.0.2" }],
+      expected: ["node_modules", "one-optional-peer-dep@1.0.2"],
+    },
+    {
+      name: "optional direct pkg1",
+      deps: [{ "one-optional-peer-dep": "1.0.2", "no-deps": "1.0.1" }, { "one-optional-peer-dep": "1.0.2" }],
+      expected: ["no-deps@1.0.1", "node_modules", "one-optional-peer-dep@1.0.2+f8a822eca018d0a1"],
+    },
+    {
+      name: "optional direct pkg2",
+      deps: [{ "one-optional-peer-dep": "1.0.2" }, { "one-optional-peer-dep": "1.0.2", "no-deps": "1.0.1" }],
+      expected: ["no-deps@1.0.1", "node_modules", "one-optional-peer-dep@1.0.2+f8a822eca018d0a1"],
+    },
+  ];
+
+  for (const { deps, expected, name } of tests) {
+    test(`will resolve if available through another importer (${name})`, async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "optional-peers",
+            workspaces: ["packages/*"],
+          }),
+          "packages/pkg1/package.json": JSON.stringify({
+            name: "pkg1",
+            dependencies: deps[0],
+          }),
+          "packages/pkg2/package.json": JSON.stringify({
+            name: "pkg2",
+            dependencies: deps[1],
+          }),
+        },
+      });
+
+      async function checkInstall() {
+        const { exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+
+        expect(await exited).toBe(0);
+        expect(await readdirSorted(join(packageDir, "node_modules/.bun"))).toEqual(expected);
+      }
+
+      // without lockfile
+      // without node_modules
+      await checkInstall();
+
+      // with lockfile
+      // without node_modules
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await checkInstall();
+
+      // without lockfile
+      // with node_modules
+      await rm(join(packageDir, "bun.lock"), { force: true });
+      await checkInstall();
+
+      // with lockfile
+      // with node_modules
+      await checkInstall();
+    });
+  }
+
+  test("successfully resolves optional peer with nested package", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "optional-peer-nested-resolve",
+          dependencies: {
+            "one-one-dep": "1.0.0",
+          },
+          peerDependencies: {
+            "one-dep": "1.0.0",
+          },
+          peerDependenciesMeta: {
+            "one-dep": {
+              optional: true,
+            },
+          },
+        }),
+      },
+    });
+
+    async function checkInstall() {
+      let { exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        env: bunEnv,
+      });
+      expect(await exited).toBe(0);
+
+      expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "one-dep", "one-one-dep"]);
+      expect(await readdirSorted(join(packageDir, "node_modules/.bun"))).toEqual([
+        "no-deps@1.0.1",
+        "node_modules",
+        "one-dep@1.0.0",
+        "one-one-dep@1.0.0",
+      ]);
+    }
+
+    await checkInstall();
+  });
 });
 
 for (const backend of ["clonefile", "hardlink", "copyfile"]) {
   test(`isolated install with backend: ${backend}`, async () => {
-    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await Promise.all([
       write(
@@ -538,9 +793,143 @@ for (const backend of ["clonefile", "hardlink", "copyfile"]) {
   });
 }
 
+describe("existing node_modules, missing node_modules/.bun", () => {
+  test("root and workspace node_modules are reset", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "delete-node-modules",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "1.0.0",
+            "a-dep": "1.0.1",
+          },
+        }),
+        "packages/pkg1/package.json": JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            "no-deps": "1.0.1",
+          },
+        }),
+        "packages/pkg2/package.json": JSON.stringify({
+          name: "pkg2",
+          dependencies: {
+            "no-deps": "2.0.0",
+          },
+        }),
+        "node_modules/oops": "delete me!",
+        "packages/pkg1/node_modules/oops1": "delete me!",
+        "packages/pkg2/node_modules/oops2": "delete me!",
+      },
+    });
+
+    let { exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+
+    expect(await exited).toBe(0);
+    expect(
+      await Promise.all([
+        readdirSorted(join(packageDir, "node_modules")),
+        readdirSorted(join(packageDir, "packages", "pkg1", "node_modules")),
+        readdirSorted(join(packageDir, "packages", "pkg2", "node_modules")),
+      ]),
+    ).toEqual([[".bun", expect.stringContaining(".old_modules-"), "a-dep", "no-deps"], ["no-deps"], ["no-deps"]]);
+  });
+  test("some workspaces don't have node_modules", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "missing-workspace-node_modules",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+        "node_modules/hi": "BUN",
+        "packages/pkg1/package.json": JSON.stringify({
+          name: "pkg-one",
+          dependencies: {
+            "no-deps": "2.0.0",
+          },
+        }),
+        "packages/pkg1/node_modules/foo": "HI",
+        "packages/pkg2/package.json": JSON.stringify({
+          name: "pkg-two",
+          dependencies: {
+            "a-dep": "1.0.1",
+          },
+        }),
+      },
+    });
+
+    let { exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+
+    expect(await exited).toBe(0);
+    expect(
+      await Promise.all([
+        readdirSorted(join(packageDir, "node_modules")),
+        readdirSorted(join(packageDir, "packages", "pkg1", "node_modules")),
+        readdirSorted(join(packageDir, "packages", "pkg2", "node_modules")),
+      ]),
+    ).toEqual([[".bun", expect.stringContaining(".old_modules-"), "no-deps"], ["no-deps"], ["a-dep"]]);
+
+    // another install will not reset the node_modules
+
+    const entries = await readdirSorted(join(packageDir, "node_modules"));
+
+    for (const entry of entries) {
+      if (entry.startsWith(".old_modules-")) {
+        await rm(join(packageDir, "node_modules", entry), { recursive: true, force: true });
+      }
+    }
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun", "no-deps"]);
+
+    // add things to workspace node_modules. these will go undetected
+    await Promise.all([
+      write(join(packageDir, "packages", "pkg1", "node_modules", "oops1"), "HI1"),
+      write(join(packageDir, "packages", "pkg2", "node_modules", "oops2"), "HI2"),
+    ]);
+
+    ({ exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    }));
+
+    expect(await exited).toBe(0);
+
+    expect(
+      await Promise.all([
+        readdirSorted(join(packageDir, "node_modules")),
+        readdirSorted(join(packageDir, "packages", "pkg1", "node_modules")),
+        readdirSorted(join(packageDir, "packages", "pkg2", "node_modules")),
+      ]),
+    ).toEqual([
+      [".bun", "no-deps"],
+      ["no-deps", "oops1"],
+      ["a-dep", "oops2"],
+    ]);
+  });
+});
+
 describe("--linker flag", () => {
   test("can override linker from bunfig", async () => {
-    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
     await write(
       packageJson,
@@ -662,7 +1051,7 @@ describe("--linker flag", () => {
   });
 });
 test("many transitive dependencies", async () => {
-  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
     packageJson,
@@ -736,7 +1125,7 @@ test("many transitive dependencies", async () => {
 });
 
 test("dependency names are preserved", async () => {
-  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
     packageJson,
@@ -793,7 +1182,7 @@ test("dependency names are preserved", async () => {
 });
 
 test("same resolution, different dependency name", async () => {
-  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
     packageJson,
@@ -827,7 +1216,7 @@ test("same resolution, different dependency name", async () => {
 });
 
 test("successfully removes and corrects symlinks", async () => {
-  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
   await Promise.all([
     write(join(packageDir, "old-package", "package.json"), JSON.stringify({ name: "old-package", version: "1.0.0" })),
     mkdir(join(packageDir, "node_modules")),
@@ -861,7 +1250,7 @@ test("runs lifecycle scripts correctly", async () => {
   // 2. only postinstall (or any other script that isn't preinstall)
   // 3. preinstall and any other script
 
-  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { isolated: true } });
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
   await write(
     packageJson,

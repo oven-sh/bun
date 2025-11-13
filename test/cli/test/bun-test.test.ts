@@ -951,8 +951,8 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain('"fs" module > has $method');
-        expect(stderr).toContain('"path" module > has $method');
+        expect(stderr).toContain("fs module > has $method");
+        expect(stderr).toContain("path module > has $method");
         expect(stderr).toContain("2 pass");
       });
 
@@ -976,8 +976,8 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain('(pass) user "john_doe" age 30 active true');
-        expect(stderr).toContain('(pass) user "jane_smith" age 25 active false');
+        expect(stderr).toContain("(pass) user john_doe age 30 active true");
+        expect(stderr).toContain("(pass) user jane_smith age 25 active false");
         expect(stderr).toContain("2 pass");
       });
 
@@ -1027,8 +1027,8 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain('(pass) "Alice" from "NYC"');
-        expect(stderr).toContain('(pass) "Bob" from "LA"');
+        expect(stderr).toContain("(pass) Alice from NYC");
+        expect(stderr).toContain("(pass) Bob from LA");
         expect(stderr).toContain("2 pass");
       });
 
@@ -1056,8 +1056,8 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain('(pass) first user is "Alice"');
-        expect(stderr).toContain('(pass) first user is "Carol"');
+        expect(stderr).toContain("(pass) first user is Alice");
+        expect(stderr).toContain("(pass) first user is Carol");
         expect(stderr).toContain("2 pass");
       });
 
@@ -1085,9 +1085,9 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain('"underscore"');
-        expect(stderr).toContain('"dollar"');
-        expect(stderr).toContain('"mix"');
+        expect(stderr).toContain("underscore");
+        expect(stderr).toContain("dollar");
+        expect(stderr).toContain("mix");
         expect(stderr).toContain("$123invalid");
         expect(stderr).toContain("$hasdash");
         expect(stderr).toContain("$hasspace");
@@ -1118,7 +1118,7 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain('First user: "Alice" with tag: "admin"');
+        expect(stderr).toContain("First user: Alice with tag: admin");
       });
 
       test("handles missing properties gracefully", () => {
@@ -1460,7 +1460,7 @@ function runTest({
     const { stderr, exitCode } = spawnSync({
       cwd,
       cmd: [bunExe(), "test", ...args],
-      env: { ...bunEnv, ...env },
+      env: { ...bunEnv, AGENT: "0", ...env },
       stderr: "pipe",
       stdout: "ignore",
     });

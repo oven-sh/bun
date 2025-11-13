@@ -152,20 +152,20 @@ pub const SlotCounts = struct {
 };
 
 pub const NameMinifier = struct {
-    head: std.ArrayList(u8),
-    tail: std.ArrayList(u8),
+    head: std.array_list.Managed(u8),
+    tail: std.array_list.Managed(u8),
 
     pub const default_head = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$";
     pub const default_tail = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$";
 
     pub fn init(allocator: std.mem.Allocator) NameMinifier {
         return .{
-            .head = std.ArrayList(u8).init(allocator),
-            .tail = std.ArrayList(u8).init(allocator),
+            .head = std.array_list.Managed(u8).init(allocator),
+            .tail = std.array_list.Managed(u8).init(allocator),
         };
     }
 
-    pub fn numberToMinifiedName(this: *NameMinifier, name: *std.ArrayList(u8), _i: isize) !void {
+    pub fn numberToMinifiedName(this: *NameMinifier, name: *std.array_list.Managed(u8), _i: isize) !void {
         name.clearRetainingCapacity();
         var i = _i;
         var j = @as(usize, @intCast(@mod(i, 54)));
@@ -183,7 +183,7 @@ pub const NameMinifier = struct {
     pub fn defaultNumberToMinifiedName(allocator: std.mem.Allocator, _i: isize) !string {
         var i = _i;
         var j = @as(usize, @intCast(@mod(i, 54)));
-        var name = std.ArrayList(u8).init(allocator);
+        var name = std.array_list.Managed(u8).init(allocator);
         try name.appendSlice(default_head[j .. j + 1]);
         i = @divFloor(i, 54);
 
@@ -345,6 +345,18 @@ pub const ExportsKind = enum {
     pub fn jsonStringify(self: @This(), writer: anytype) !void {
         return try writer.write(@tagName(self));
     }
+
+    pub fn toModuleType(self: @This()) bun.options.ModuleType {
+        return switch (self) {
+            .none => .unknown,
+            .cjs => .cjs,
+
+            .esm_with_dynamic_fallback,
+            .esm_with_dynamic_fallback_from_cjs,
+            .esm,
+            => .esm,
+        };
+    }
 };
 
 pub const DeclaredSymbol = struct {
@@ -449,9 +461,9 @@ pub const Dependency = struct {
     pub const List = BabyList(Dependency);
 };
 
-pub const ExprList = std.ArrayList(Expr);
-pub const StmtList = std.ArrayList(Stmt);
-pub const BindingList = std.ArrayList(Binding);
+pub const ExprList = std.array_list.Managed(Expr);
+pub const StmtList = std.array_list.Managed(Stmt);
+pub const BindingList = std.array_list.Managed(Binding);
 
 // Each file is made up of multiple parts, and each part consists of one or
 // more top-level statements. Parts are used for tree shaking and code
@@ -610,6 +622,7 @@ pub const ToJSError = error{
     MacroError,
     OutOfMemory,
     JSError,
+    JSTerminated,
 };
 
 /// Say you need to allocate a bunch of tiny arrays

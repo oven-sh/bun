@@ -480,9 +480,8 @@ pub fn convertStmtsForChunk(
                                     },
 
                                     else => bun.unreachablePanic(
-                                        "Unexpected type {any} in source file {s}",
+                                        "Unexpected type in source file {s}",
                                         .{
-                                            stmt2.data,
                                             c.parse_graph.input_files.get(c.graph.files.get(source_index).input_file.get()).source.path.text,
                                         },
                                     ),

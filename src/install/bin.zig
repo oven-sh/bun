@@ -214,26 +214,26 @@ pub const Bin = extern struct {
         indent: if (style == .multi_line) *u32 else void,
         buf: string,
         extern_strings: []const ExternalString,
-        writer: anytype,
-        writeIndent: *const fn (anytype, *u32) @TypeOf(writer).Error!void,
-    ) @TypeOf(writer).Error!void {
+        writer: *std.Io.Writer,
+        writeIndent: *const fn (*std.Io.Writer, *u32) std.Io.Writer.Error!void,
+    ) std.Io.Writer.Error!void {
         bun.debugAssert(this.tag != .none);
         if (comptime style == .single_line) {
             switch (this.tag) {
                 .none => {},
                 .file => {
-                    try writer.print("{}", .{this.value.file.fmtJson(buf, .{})});
+                    try writer.print("{f}", .{this.value.file.fmtJson(buf, .{})});
                 },
                 .named_file => {
                     try writer.writeByte('{');
-                    try writer.print(" {}: {} ", .{
+                    try writer.print(" {f}: {f} ", .{
                         this.value.named_file[0].fmtJson(buf, .{}),
                         this.value.named_file[1].fmtJson(buf, .{}),
                     });
                     try writer.writeByte('}');
                 },
                 .dir => {
-                    try writer.print("{}", .{this.value.dir.fmtJson(buf, .{})});
+                    try writer.print("{f}", .{this.value.dir.fmtJson(buf, .{})});
                 },
                 .map => {
                     try writer.writeByte('{');
@@ -245,7 +245,7 @@ pub const Bin = extern struct {
                             try writer.writeByte(',');
                         }
                         first = false;
-                        try writer.print(" {}: {}", .{
+                        try writer.print(" {f}: {f}", .{
                             list[i].value.fmtJson(buf, .{}),
                             list[i + 1].value.fmtJson(buf, .{}),
                         });
@@ -260,13 +260,13 @@ pub const Bin = extern struct {
         switch (this.tag) {
             .none => {},
             .file => {
-                try writer.print("{}", .{this.value.file.fmtJson(buf, .{})});
+                try writer.print("{f}", .{this.value.file.fmtJson(buf, .{})});
             },
             .named_file => {
                 try writer.writeAll("{\n");
                 indent.* += 1;
                 try writeIndent(writer, indent);
-                try writer.print("{}: {},\n", .{
+                try writer.print("{f}: {f},\n", .{
                     this.value.named_file[0].fmtJson(buf, .{}),
                     this.value.named_file[1].fmtJson(buf, .{}),
                 });
@@ -275,7 +275,7 @@ pub const Bin = extern struct {
                 try writer.writeByte('}');
             },
             .dir => {
-                try writer.print("{}", .{this.value.dir.fmtJson(buf, .{})});
+                try writer.print("{f}", .{this.value.dir.fmtJson(buf, .{})});
             },
             .map => {
                 try writer.writeByte('{');
@@ -290,7 +290,7 @@ pub const Bin = extern struct {
                         try writer.writeByte('\n');
                     }
                     try writeIndent(writer, indent);
-                    try writer.print("{}: {},\n", .{
+                    try writer.print("{f}: {f},\n", .{
                         list[i].value.fmtJson(buf, .{}),
                         list[i + 1].value.fmtJson(buf, .{}),
                     });
@@ -504,6 +504,14 @@ pub const Bin = extern struct {
     pub const Linker = struct {
         bin: Bin,
 
+        /// Usually will be the same as `node_modules_path`.
+        /// Used to support native bin linking.
+        target_node_modules_path: *bun.AbsPath(.{}),
+
+        /// Usually will be the same as `package_name`.
+        /// Used to support native bin linking.
+        target_package_name: strings.StringOrTinyString,
+
         // Hash map of seen destination paths for this `node_modules/.bin` folder. PackageInstaller will reset it before
         // linking each tree.
         seen: ?*bun.StringHashMap(void),
@@ -523,6 +531,7 @@ pub const Bin = extern struct {
         rel_buf: []u8,
 
         err: ?anyerror = null,
+        skipped_due_to_missing_bin: bool = false,
 
         pub var umask: bun.Mode = 0;
 
@@ -570,6 +579,7 @@ pub const Bin = extern struct {
             // Skip if the target does not exist. This is important because placing a dangling
             // shim in path might break a postinstall
             if (!bun.sys.exists(abs_target)) {
+                this.skipped_due_to_missing_bin = true;
                 return;
             }
 
@@ -596,24 +606,95 @@ pub const Bin = extern struct {
             }
 
             if (comptime !Environment.isWindows) {
-                // any error here is ignored
-                const bin = bun.sys.File.openat(.cwd(), abs_target, bun.O.RDWR, 0o664).unwrap() catch return;
-                defer bin.close();
+                tryNormalizeShebang(abs_target);
+            }
+        }
 
-                var shebang_buf: [1024]u8 = undefined;
-                const read = bin.read(&shebang_buf).unwrap() catch return;
-                const chunk = shebang_buf[0..read];
-                // 123 4 5
-                // #!a\r\n
-                if (chunk.len < 5 or chunk[0] != '#' or chunk[1] != '!') return;
+        fn tryNormalizeShebang(abs_target: [:0]const u8) void {
+            var shebang_buf: [2048]u8 = undefined;
 
-                if (strings.indexOfChar(chunk, '\n')) |newline| {
-                    if (newline > 0 and chunk[newline - 1] == '\r') {
-                        const pos = newline - 1;
-                        bin.handle.stdFile().seekTo(pos) catch return;
-                        bin.writeAll("\n").unwrap() catch return;
-                    }
+            // any error here is ignored
+            const chunk = brk: {
+                const bin_for_reading = bun.sys.File.openat(.cwd(), abs_target, bun.O.RDONLY, 0).unwrap() catch return;
+                defer bin_for_reading.close();
+
+                const read = bin_for_reading.readAll(&shebang_buf).unwrap() catch return;
+                break :brk shebang_buf[0..read];
+            };
+
+            // 123 4 5
+            // #!a\r\n
+            if (chunk.len < 5 or chunk[0] != '#' or chunk[1] != '!') return;
+
+            const newline = strings.indexOfChar(chunk, '\n') orelse return;
+            const chunk_without_newline = chunk[0..newline];
+            if (!(chunk_without_newline.len > 0 and chunk_without_newline[chunk_without_newline.len - 1] == '\r')) {
+                // Nothing to do!
+                return;
+            }
+            log("Normalizing shebang for {s}", .{abs_target});
+
+            // We have to do an atomic replace here, use a randomly generated
+            // filename in the same folder, read the entire original file
+            // contents using bun.sys.File.readFrom, then write the temporary file, then
+            // overwite the old one with the new one via bun.sys.renameat. And
+            // always unlink the old one. If it fails for any reason then exit
+            // early.
+            var tmpname_buf: [1024]u8 = undefined;
+            const tmpname = bun.fs.FileSystem.tmpname(std.fs.path.basename(abs_target), &tmpname_buf, bun.hash(chunk_without_newline)) catch return;
+
+            const dir_path = std.fs.path.dirname(abs_target) orelse return;
+
+            const content: []const u8, const content_to_free: []const u8 = brk: {
+                if (chunk.len >= shebang_buf.len) {
+                    // Partial read. Need to read the rest of the file.
+                    const original_contents = switch (bun.sys.File.readFrom(bun.FD.cwd(), abs_target, bun.default_allocator)) {
+                        .result => |contents| contents,
+                        .err => return,
+                    };
+                    break :brk .{ original_contents, original_contents };
                 }
+
+                break :brk .{ chunk, "" };
+            };
+            defer bun.default_allocator.free(content_to_free);
+
+            // Get original file permissions to preserve them (including setuid/setgid/sticky bits)
+            const original_stat = bun.sys.fstatat(.cwd(), abs_target).unwrap() catch return;
+            const original_mode = @as(bun.Mode, @intCast(original_stat.mode));
+
+            // Create temporary file path
+            var tmppath_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const tmppath = bun.path.joinAbsStringBufZ(dir_path, &tmppath_buf, &.{tmpname}, .auto);
+            var needs_unlink = true;
+            defer {
+                if (needs_unlink) _ = bun.sys.unlinkat(.cwd(), tmppath);
+            }
+
+            // Write to temporary file with corrected content
+            {
+                const tmpfile = bun.sys.File.openat(.cwd(), tmppath, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, original_mode).unwrap() catch return;
+                defer tmpfile.close();
+
+                // Write the corrected shebang (without \r)
+                tmpfile.writeAll(chunk_without_newline[0 .. chunk_without_newline.len - 1]).unwrap() catch return;
+                tmpfile.writeAll("\n").unwrap() catch return;
+
+                // Write the rest of the file (after the newline)
+                if (content.len > newline + 1) {
+                    tmpfile.writeAll(content[newline + 1 ..]).unwrap() catch return;
+                }
+
+                // Reapply original permissions (umask was applied during openat, so we need to restore)
+                _ = bun.sys.fchmodat(.cwd(), tmppath, @as(bun.Mode, @intCast(original_stat.mode & 0o777)), 0).unwrap() catch return;
+            }
+
+            // Atomic replace: rename temp file to original
+            switch (bun.sys.renameat(.cwd(), tmppath, .cwd(), abs_target)) {
+                .result => {
+                    needs_unlink = false;
+                },
+                .err => {},
             }
         }
 
@@ -655,8 +736,9 @@ pub const Bin = extern struct {
 
             const shebang = shebang: {
                 const first_content_chunk = contents: {
-                    const reader = target.stdFile().reader();
-                    const read = reader.read(&read_in_buf) catch break :contents null;
+                    var reader = target.stdFile().readerStreaming(&.{});
+                    var readvec_buf: []u8 = &read_in_buf;
+                    const read = reader.interface.readVec((&readvec_buf)[0..1]) catch break :contents null;
                     if (read == 0) break :contents null;
                     break :contents read_in_buf[0..read];
                 };
@@ -767,7 +849,7 @@ pub const Bin = extern struct {
 
         /// uses `this.abs_target_buf`
         pub fn buildTargetPackageDir(this: *const Linker) []const u8 {
-            const dest_dir_without_trailing_slash = strings.withoutTrailingSlash(this.node_modules_path.slice());
+            const dest_dir_without_trailing_slash = strings.withoutTrailingSlash(this.target_node_modules_path.slice());
 
             var remain = this.abs_target_buf;
 
@@ -776,7 +858,7 @@ pub const Bin = extern struct {
             remain[0] = std.fs.path.sep;
             remain = remain[1..];
 
-            const package_name = this.package_name.slice();
+            const package_name = this.target_package_name.slice();
             @memcpy(remain[0..package_name.len], package_name);
             remain = remain[package_name.len..];
             remain[0] = std.fs.path.sep;
@@ -1003,6 +1085,7 @@ pub const Bin = extern struct {
     };
 };
 
+const log = bun.Output.scoped(.BinLinker, .hidden);
 const string = []const u8;
 const stringZ = [:0]const u8;
 

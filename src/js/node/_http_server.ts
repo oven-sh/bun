@@ -3,6 +3,7 @@ const EventEmitter: typeof import("node:events").EventEmitter = require("node:ev
 const { Duplex, Stream } = require("node:stream");
 const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
 const { validateObject, validateLinkHeaderValue, validateBoolean, validateInteger } = require("internal/validators");
+const { ConnResetException } = require("internal/shared");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { throwOnInvalidTLSArray } = require("internal/tls");
@@ -27,7 +28,6 @@ const {
   setIsNextIncomingMessageHTTPS,
   callCloseCallback,
   emitCloseNT,
-  ConnResetException,
   NodeHTTPResponseAbortEvent,
   STATUS_CODES,
   isTlsSymbol,
@@ -303,7 +303,7 @@ Server.prototype.closeAllConnections = function () {
 
 Server.prototype.closeIdleConnections = function () {
   const server = this[serverSymbol];
-  server.closeIdleConnections();
+  server?.closeIdleConnections();
 };
 
 Server.prototype.close = function (optionalCallback?) {
@@ -1526,7 +1526,7 @@ ServerResponse.prototype._implicitHeader = function () {
 
 Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
   get() {
-    return !this.destroyed && !this.finished && (this[kHandle]?.bufferedAmount ?? 1) !== 0;
+    return !this.destroyed && !this.finished && (this[kHandle]?.bufferedAmount ?? 0) !== 0;
   },
 });
 

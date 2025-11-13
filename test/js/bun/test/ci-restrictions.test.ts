@@ -55,7 +55,7 @@ test.only("should fail in CI", () => {
 
       expect(exitCode).toBe(1);
       expect(stderr).toContain(
-        "error: test.only is not allowed in CI environments\nIf this is not a CI environment, set the environment variable CI=false to force allow.",
+        "error: .only is disabled in CI environments to prevent accidentally skipping tests. To override, set the environment variable CI=false.",
       );
     });
 
@@ -84,7 +84,7 @@ describe.only("CI test", () => {
 
       expect(exitCode).toBe(1);
       expect(stderr).toContain(
-        "error: describe.only is not allowed in CI environments\nIf this is not a CI environment, set the environment variable CI=false to force allow.",
+        "error: .only is disabled in CI environments to prevent accidentally skipping tests. To override, set the environment variable CI=false.",
       );
     });
   });
@@ -145,7 +145,9 @@ exports[\`existing snapshot 1\`] = \`"hello world"\`;
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(exitCode).toBe(1);
-      expect(stderr).toContain("Snapshot creation is not allowed in CI environments");
+      expect(stderr).toContain("Snapshot creation is disabled in CI environments");
+      expect(stderr).toContain('Snapshot name: "new snapshot 1"');
+      expect(stderr).toContain('Received: "this is new"');
     });
 
     test("toMatchSnapshot should fail for new snapshots when GITHUB_ACTIONS=1", async () => {
@@ -170,7 +172,9 @@ test("new snapshot", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(exitCode).toBe(1);
-      expect(stderr).toContain("Snapshot creation is not allowed in CI environments");
+      expect(stderr).toContain("Snapshot creation is disabled in CI environments");
+      expect(stderr).toContain('Snapshot name: "new snapshot 1"');
+      expect(stderr).toContain('Received: "this is new"');
     });
 
     test("toMatchSnapshot should work for new snapshots when CI=false", async () => {
@@ -246,7 +250,8 @@ test("new inline snapshot", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(exitCode).toBe(1);
-      expect(stderr).toContain("Inline snapshot updates are not allowed in CI environments");
+      expect(stderr).toContain("Inline snapshot creation is disabled in CI environments");
+      expect(stderr).toContain('Received: "this is new"');
     });
 
     test("toMatchInlineSnapshot should work for new inline snapshots when CI=false", async () => {

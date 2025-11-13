@@ -14,7 +14,10 @@ afterAll(() => {
 });
 
 test("basic", async () => {
-  const { packageDir } = await verdaccio.createTestDir({ files: join(import.meta.dir, "pnpm/basic") });
+  const { packageDir } = await verdaccio.createTestDir({
+    bunfigOpts: { linker: "hoisted" },
+    files: join(import.meta.dir, "pnpm/basic"),
+  });
 
   let proc = spawn({
     cmd: [bunExe(), "install"],
@@ -54,9 +57,30 @@ test("basic", async () => {
   expect(err).not.toContain("Saved lockfile");
 });
 
+test("version is number with dot", async () => {
+  const { packageDir } = await verdaccio.createTestDir({
+    bunfigOpts: { linker: "hoisted" },
+    files: join(import.meta.dir, "pnpm/version-number-dot"),
+  });
+
+  let proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  let [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(exitCode).toBe(0);
+  expect(err).toContain("pnpm-lock.yaml version is too old (< v7)");
+});
+
 describe.todo("bin", () => {
   test("manifests are fetched for bins", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/bin-manifest-fetching"),
     });
   });
@@ -65,11 +89,13 @@ describe.todo("bin", () => {
 describe.todo("peers", () => {
   test("peers basic", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/peers-basic"),
     });
   });
   test("workspaces with peers", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/peers-workspaces"),
     });
   });
@@ -78,6 +104,7 @@ describe.todo("peers", () => {
 describe.todo("patched packages", () => {
   test("patches are detected and migrated correctly", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/patched-packages"),
     });
   });
@@ -86,11 +113,13 @@ describe.todo("patched packages", () => {
 describe("folder dependencies", () => {
   test.todo("basic", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/folder-dependencies-basic"),
     });
   });
   test("links to the root package are resolved correctly", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/root-package-link-resolution"),
     });
 
@@ -136,11 +165,13 @@ describe("folder dependencies", () => {
 describe.todo("overrides", () => {
   test("basic", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/overrides-basic"),
     });
   });
   test("accross workspaces", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/overrides-workspaces"),
     });
   });
@@ -153,16 +184,19 @@ test.todo("from npm", async () => {
 describe.todo("workspaces", async () => {
   test("basic", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/workspaces-basic"),
     });
   });
   test("workspace dependencies", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/workspaces-dependencies"),
     });
   });
   test("catalogs, peers, and workspaces", async () => {
     const { packageDir, packageJson } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
       files: join(import.meta.dir, "pnpm/workspaces-catalogs-peers"),
     });
   });

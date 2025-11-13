@@ -285,16 +285,13 @@ fn Weak(comptime Pointer: type, comptime options: Options) type {
 
         const SharedNonOptional = WithOptions(NonOptionalPointer, options);
 
-        /// Upgrades this weak pointer into a normal shared pointer.
-        ///
-        /// This method invalidates `self`.
+        /// Clones this weak pointer and upgrades it to a shared pointer. You still need to `deinit` the weak pointer.
         pub fn upgrade(self: Self) ?SharedNonOptional {
             const data = if (comptime info.isOptional())
                 self.getData() orelse return null
             else
                 self.getData();
             if (!data.tryIncrementStrong()) return null;
-            data.decrementWeak();
             return .{ .#pointer = &data.value };
         }
 
@@ -455,6 +452,7 @@ fn FullData(comptime Child: type, comptime options: Options) type {
             // .acq_rel because we need to make sure other threads are done using the object before
             // we free it.
             if ((comptime !options.allow_weak) or self.weak_count.decrement() == 0) {
+                if (bun.Environment.ci_assert) bun.assert(self.strong_count.get(.monotonic) == 0);
                 self.destroy();
             }
         }

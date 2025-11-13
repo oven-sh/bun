@@ -140,7 +140,7 @@ function Stats() {
             </div>
           </div>
 
-          <div className="px-8 pb-10">
+          <div className="px-8 pb-6">
             <div className="pt-6">
               <Link
                 to="/"

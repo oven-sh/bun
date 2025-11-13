@@ -85,15 +85,6 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             .syscall = .access,
         } };
 
-        pub fn assert(this: @This()) ReturnType {
-            switch (this) {
-                .err => |err| {
-                    bun.Output.panic("Unexpected error\n{}", .{err});
-                },
-                .result => |result| return result,
-            }
-        }
-
         pub inline fn todo() @This() {
             if (Environment.allow_assert) {
                 if (comptime ReturnType == void) {
@@ -339,6 +330,13 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                         .dest = bun.asByteSlice(dest),
                     },
                 },
+            };
+        }
+
+        pub fn format(this: @This(), writer: *std.Io.Writer) !void {
+            return switch (this) {
+                .result => try writer.print("Result(...)", .{}),
+                .err => |e| try writer.print("Error(" ++ bun.deprecated.autoFormatLabelFallback(ErrorType, "{any}") ++ ")", .{e}),
             };
         }
     };

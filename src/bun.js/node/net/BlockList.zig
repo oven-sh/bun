@@ -8,7 +8,7 @@ pub const toJS = js.toJS;
 
 ref_count: RefCount = .init(),
 globalThis: *jsc.JSGlobalObject,
-da_rules: std.ArrayList(Rule),
+da_rules: std.array_list.Managed(Rule),
 mutex: bun.Mutex = .{},
 
 /// We cannot lock/unlock a mutex
@@ -199,7 +199,7 @@ const StructuredCloneWriter = struct {
     ctx: *anyopaque,
     impl: *const fn (*anyopaque, ptr: [*]const u8, len: u32) callconv(jsc.conv) void,
 
-    pub const Writer = std.io.Writer(@This(), Error, write);
+    pub const Writer = std.Io.GenericWriter(@This(), Error, write);
     pub const Error = error{};
 
     fn write(this: StructuredCloneWriter, bytes: []const u8) Error!usize {

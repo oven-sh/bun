@@ -20,8 +20,8 @@ public:
 
     static JSConnectionsList* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSC::JSSet* allConnectionsSet, JSC::JSSet* activeConnectionsSet)
     {
-        JSConnectionsList* instance = new (NotNull, JSC::allocateCell<JSConnectionsList>(vm)) JSConnectionsList(vm, structure);
-        instance->finishCreation(vm, globalObject, allConnectionsSet, activeConnectionsSet);
+        JSConnectionsList* instance = new (NotNull, JSC::allocateCell<JSConnectionsList>(vm)) JSConnectionsList(vm, structure, allConnectionsSet, activeConnectionsSet);
+        instance->finishCreation(vm, globalObject);
         return instance;
     }
 
@@ -41,10 +41,12 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject*, JSC::JSSet* allConnectionsSet, JSC::JSSet* activeConnectionsSet);
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 
-    JSConnectionsList(JSC::VM& vm, JSC::Structure* structure)
+    JSConnectionsList(JSC::VM& vm, JSC::Structure* structure, JSC::JSSet* allConnections, JSC::JSSet* activeConnections)
         : Base(vm, structure)
+        , m_allConnections(allConnections, JSC::WriteBarrierEarlyInit)
+        , m_activeConnections(activeConnections, JSC::WriteBarrierEarlyInit)
     {
     }
 

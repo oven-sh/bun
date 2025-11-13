@@ -34,7 +34,7 @@ beforeAll(() => {
 
 beforeEach(async () => {
   add_dir = tmpdirSync();
-  await dummyBeforeEach();
+  await dummyBeforeEach({ linker: "hoisted" });
 });
 afterEach(async () => {
   await dummyAfterEach();
@@ -1064,6 +1064,9 @@ it("should add dependency alongside workspaces", async () => {
       name: "foo",
       version: "0.0.1",
       workspaces: ["packages/*"],
+      "dependencies": {
+        "bar": "workspace:*",
+      },
     }),
   );
   await mkdir(join(package_dir, "packages", "bar"), { recursive: true });
@@ -1075,7 +1078,7 @@ it("should add dependency alongside workspaces", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "baz"],
+    cmd: [bunExe(), "add", "baz", "--linker=isolated"],
     cwd: package_dir,
     stdout: "pipe",
     stdin: "pipe",
@@ -1097,7 +1100,14 @@ it("should add dependency alongside workspaces", async () => {
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
   expect(requested).toBe(2);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar", "baz"]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bin",
+    ".bun",
+    ".cache",
+    expect.stringContaining(".old_modules-"),
+    "bar",
+    "baz",
+  ]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
   expect(join(package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
   expect(await readlink(join(package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "packages", "bar"));
@@ -1117,6 +1127,7 @@ it("should add dependency alongside workspaces", async () => {
         version: "0.0.1",
         workspaces: ["packages/*"],
         dependencies: {
+          bar: "workspace:*",
           baz: "^0.0.3",
         },
       },
@@ -2094,7 +2105,7 @@ it("should add dependencies to workspaces directly", async () => {
   const add_path = relative(join(package_dir, "moo"), add_dir);
   const dep = `file:${add_path}`.replace(/\\/g, "/");
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", dep],
+    cmd: [bunExe(), "add", dep, "--linker=isolated"],
     cwd: join(package_dir, "moo"),
     stdout: "pipe",
     stdin: "pipe",
@@ -2124,9 +2135,7 @@ it("should add dependencies to workspaces directly", async () => {
   expect(await readdirSorted(join(package_dir, "moo"))).toEqual(["bunfig.toml", "node_modules", "package.json"]);
   expect(await readdirSorted(join(package_dir, "moo", "node_modules", "foo"))).toEqual(["package.json"]);
   if (process.platform === "win32") {
-    expect(await file(await readlink(join(package_dir, "moo", "node_modules", "foo", "package.json"))).json()).toEqual(
-      fooPackage,
-    );
+    expect(await file(join(package_dir, "moo", "node_modules", "foo", "package.json")).json()).toEqual(fooPackage);
   } else {
     expect(await file(join(package_dir, "moo", "node_modules", "foo", "package.json")).json()).toEqual(fooPackage);
   }
@@ -2137,7 +2146,11 @@ it("should add dependencies to workspaces directly", async () => {
       foo: `file:${add_path.replace(/\\/g, "/")}`,
     },
   });
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "moo"]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bun",
+    ".cache",
+    expect.stringContaining(".old_modules-"),
+  ]);
 });
 
 it("should redirect 'install --save X' to 'add'", async () => {
@@ -2396,7 +2409,7 @@ it("should install tarball with tarball dependencies", async () => {
   setHandler(dummyRegistry(urls));
 
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", `${server_url}/parent.tgz`],
+    cmd: [bunExe(), "add", `${server_url}/parent.tgz`, "--linker=hoisted"],
     cwd: add_dir,
     stdout: "pipe",
     stdin: "pipe",

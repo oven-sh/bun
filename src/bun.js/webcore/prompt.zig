@@ -46,10 +46,12 @@ fn alert(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSErr
     bun.Output.flush();
 
     // 7. Optionally, pause while waiting for the user to acknowledge the message.
-    var stdin = std.io.getStdIn();
-    var reader = stdin.reader();
+    var stdin = std.fs.File.stdin();
+    var stdin_buf: [1]u8 = undefined;
+    var stdin_reader = stdin.readerStreaming(&stdin_buf);
+    const reader = &stdin_reader.interface;
     while (true) {
-        const byte = reader.readByte() catch break;
+        const byte = reader.takeByte() catch break;
         if (byte == '\n') break;
     }
 
@@ -94,12 +96,12 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
     bun.Output.flush();
 
     // 6. Pause until the user responds either positively or negatively.
-    var stdin = std.io.getStdIn();
-    const unbuffered_reader = stdin.reader();
-    var buffered = std.io.bufferedReader(unbuffered_reader);
-    var reader = buffered.reader();
+    var stdin = std.fs.File.stdin();
+    var stdin_buf: [1024]u8 = undefined;
+    var stdin_reader = stdin.readerStreaming(&stdin_buf);
+    const reader = &stdin_reader.interface;
 
-    const first_byte = reader.readByte() catch {
+    const first_byte = reader.takeByte() catch {
         return .false;
     };
 
@@ -110,7 +112,7 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
     switch (first_byte) {
         '\n' => return .false,
         '\r' => {
-            const next_byte = reader.readByte() catch {
+            const next_byte = reader.takeByte() catch {
                 // They may have said yes, but the stdin is invalid.
                 return .false;
             };
@@ -119,7 +121,7 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
             }
         },
         'y', 'Y' => {
-            const next_byte = reader.readByte() catch {
+            const next_byte = reader.takeByte() catch {
                 // They may have said yes, but the stdin is invalid.
 
                 return .false;
@@ -131,7 +133,7 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
                 return .true;
             } else if (next_byte == '\r') {
                 //Check Windows style
-                const second_byte = reader.readByte() catch {
+                const second_byte = reader.takeByte() catch {
                     return .false;
                 };
                 if (second_byte == '\n') {
@@ -142,7 +144,7 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
         else => {},
     }
 
-    while (reader.readByte()) |b| {
+    while (reader.takeByte()) |b| {
         if (b == '\n' or b == '\r') break;
     } else |_| {}
 
@@ -156,7 +158,7 @@ pub const prompt = struct {
     /// and assume capacity.
     pub fn readUntilDelimiterArrayListAppendAssumeCapacity(
         reader: anytype,
-        array_list: *std.ArrayList(u8),
+        array_list: *std.array_list.Managed(u8),
         delimiter: u8,
         max_size: usize,
     ) !void {
@@ -179,7 +181,7 @@ pub const prompt = struct {
     /// and not resize.
     fn readUntilDelimiterArrayListInfinity(
         reader: anytype,
-        array_list: *std.ArrayList(u8),
+        array_list: *std.array_list.Managed(u8),
         delimiter: u8,
     ) !void {
         while (true) {
@@ -278,7 +280,7 @@ pub const prompt = struct {
             if (second == '\n') return default;
         }
 
-        var input = std.ArrayList(u8).initCapacity(allocator, 2048) catch {
+        var input = std.array_list.Managed(u8).initCapacity(allocator, 2048) catch {
             // 8. Let result be null if the user aborts, or otherwise the string
             //    that the user responded with.
             return .null;

@@ -33,6 +33,7 @@ process.on("message", (msg: any) => {
 const CHANNEL = "error-callback-channel";
 
 // We will wait for the parent process to tell us to start.
+trySend({ event: "waiting-for-url" });
 const { url, tlsPaths } = await redisUrl;
 const subscriber = new RedisClient(url, {
   tls: tlsPaths
@@ -44,7 +45,6 @@ const subscriber = new RedisClient(url, {
     : undefined,
 });
 await subscriber.connect();
-trySend({ event: "ready" });
 
 let counter = 0;
 await subscriber.subscribe(CHANNEL, () => {
@@ -58,3 +58,5 @@ await subscriber.subscribe(CHANNEL, () => {
 process.on("uncaughtException", e => {
   trySend({ event: "exception", exMsg: e.message });
 });
+
+trySend({ event: "ready" });

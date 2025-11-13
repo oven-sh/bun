@@ -3,26 +3,43 @@ const Hardlinker = @This();
 src_dir: FD,
 src: bun.AbsPath(.{ .sep = .auto, .unit = .os }),
 dest: bun.RelPath(.{ .sep = .auto, .unit = .os }),
+walker: Walker,
 
-pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.Maybe(void) {
+pub fn init(
+    folder_dir: FD,
+    src: bun.AbsPath(.{ .sep = .auto, .unit = .os }),
+    dest: bun.RelPath(.{ .sep = .auto, .unit = .os }),
+    skip_dirnames: []const bun.OSPathSlice,
+) OOM!Hardlinker {
+    return .{
+        .src_dir = folder_dir,
+        .src = src,
+        .dest = dest,
+        .walker = try .walk(
+            folder_dir,
+            bun.default_allocator,
+            &.{},
+            skip_dirnames,
+        ),
+    };
+}
+
+pub fn deinit(this: *Hardlinker) void {
+    this.walker.deinit();
+}
+
+pub fn link(this: *Hardlinker) OOM!sys.Maybe(void) {
     if (bun.install.PackageManager.verbose_install) {
         bun.Output.prettyErrorln(
-            \\Hardlinking {} to {}
+            \\Hardlinking {f} to {f}
         ,
             .{
                 bun.fmt.fmtOSPath(this.src.slice(), .{ .path_sep = .auto }),
                 bun.fmt.fmtOSPath(this.dest.slice(), .{ .path_sep = .auto }),
             },
         );
+        bun.Output.flush();
     }
-
-    var walker: Walker = try .walk(
-        this.src_dir,
-        bun.default_allocator,
-        &.{},
-        skip_dirnames,
-    );
-    defer walker.deinit();
 
     if (comptime Environment.isWindows) {
         const cwd_buf = bun.w_path_buffer_pool.get();
@@ -31,7 +48,7 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
             return .initErr(bun.sys.Error.fromCode(bun.sys.E.ACCES, .link));
         };
 
-        while (switch (walker.next()) {
+        while (switch (this.walker.next()) {
             .result => |res| res,
             .err => |err| return .initErr(err),
         }) |entry| {
@@ -67,7 +84,7 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
                             => {
                                 if (bun.install.PackageManager.verbose_install) {
                                     bun.Output.prettyErrorln(
-                                        \\Hardlinking {} to a path that already exists: {}
+                                        \\Hardlinking {f} to a path that already exists: {f}
                                     ,
                                         .{
                                             bun.fmt.fmtOSPath(this.src.slice(), .{ .path_sep = .auto }),
@@ -95,7 +112,7 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
                             => {
                                 if (bun.install.PackageManager.verbose_install) {
                                     bun.Output.prettyErrorln(
-                                        \\Hardlinking {} to a path that doesn't exist: {}
+                                        \\Hardlinking {f} to a path that doesn't exist: {f}
                                     ,
                                         .{
                                             bun.fmt.fmtOSPath(this.src.slice(), .{ .path_sep = .auto }),
@@ -125,7 +142,7 @@ pub fn link(this: *Hardlinker, skip_dirnames: []const bun.OSPathSlice) OOM!sys.M
         return .success;
     }
 
-    while (switch (walker.next()) {
+    while (switch (this.walker.next()) {
         .result => |res| res,
         .err => |err| return .initErr(err),
     }) |entry| {

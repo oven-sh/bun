@@ -117,7 +117,6 @@ if (isDockerEnabled()) {
         socketProxy.stop();
       }
     });
-
     test("should handle numeric values with many digits", async () => {
       await using sql = postgres(options);
       // handle numbers big than 10,4 with zeros at the end and start, starting with 0. or not
@@ -140,7 +139,7 @@ if (isDockerEnabled()) {
     });
 
     describe("Array helpers", () => {
-      test("SQL heper should support sql.array", async () => {
+      test("SQL helper should support sql.array", async () => {
         await using sql = postgres(options);
         const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
         await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (
@@ -196,9 +195,7 @@ if (isDockerEnabled()) {
         const [{ id, json }] = await sql`select * from ${sql(random_name)}`;
 
         expect(id).toBe(1);
-        // TODO: we should properly parse the jsonb values here but we are returning the string as is
-        // internally we are probably trying to JSON.parse the string but it fails because of the array format is different
-        expect(json).toEqual('{"\\"a\\"","\\"b\\""}');
+        expect(json).toEqual(["a", "b"]);
       });
       test("should be able to insert array in fields", async () => {
         await using sql = postgres(options);
@@ -211,9 +208,7 @@ if (isDockerEnabled()) {
         await sql`insert into ${sql(random_name)} (json) values (${["a", "b"]})`;
         const [{ id, json }] = await sql`select * from ${sql(random_name)}`;
         expect(id).toBe(1);
-        // TODO: we should properly parse the jsonb values here
-        // internally we are probably trying to JSON.parse the string but it fails because of the array format is different
-        expect(json).toEqual('{"\\"a\\"","\\"b\\""}');
+        expect(json).toEqual(["a", "b"]);
       });
 
       test("sql.array should support TEXT arrays", async () => {
@@ -1027,10 +1022,10 @@ if (isDockerEnabled()) {
     //   expect(result[0].x[2].getTime()).toBe(now.getTime());
     // });
 
-    test.todo("Array of Box", async () => {
+    test("Array of Box", async () => {
       const result = await sql`select ${"{(1,2),(3,4);(4,5),(6,7)}"}::box[] as x`;
-      console.log(result);
-      expect(result[0].x.join(";")).toBe("(1,2);(3,4);(4,5);(6,7)");
+      // box type will reorder the values and this is correct
+      expect(result[0].x).toEqual(["(3,4),(1,2)", "(6,7),(4,5)"]);
     });
 
     // t('Nested array n2', async() =>
@@ -11553,6 +11548,38 @@ CREATE TABLE ${table_name} (
         expect(result[0].name).toBe("John");
         expect(result[0].age).toBe(30);
       });
+
+      test("insert into with select helper using where IN", async () => {
+        await using sql = postgres({ ...options, max: 1 });
+        const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+        {
+          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+          const result =
+            await sql`INSERT INTO ${sql(random_name)} ${sql({ id: 1, name: "John", age: 30 })} RETURNING *`;
+          expect(result[0].id).toBe(1);
+          expect(result[0].name).toBe("John");
+          expect(result[0].age).toBe(30);
+        }
+        {
+          const result =
+            await sql`INSERT INTO ${sql(random_name)} (id, name, age) SELECT id, name, age FROM ${sql(random_name)} WHERE id IN ${sql([1, 2])} RETURNING *`;
+          expect(result[0].id).toBe(1);
+          expect(result[0].name).toBe("John");
+          expect(result[0].age).toBe(30);
+        }
+      });
+
+      test("select helper with IN using fragment", async () => {
+        await using sql = postgres({ ...options, max: 1 });
+        const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+        await sql`INSERT INTO ${sql(random_name)} ${sql({ id: 1, name: "John", age: 30 })}`;
+        const fragment = sql`id IN ${sql([1, 2])}`;
+        const result = await sql`SELECT * FROM ${sql(random_name)} WHERE ${fragment}`;
+        expect(result[0].id).toBe(1);
+        expect(result[0].name).toBe("John");
+        expect(result[0].age).toBe(30);
+      });
       test("update helper", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
@@ -11577,6 +11604,143 @@ CREATE TABLE ${table_name} (
 
         const result =
           await sql`UPDATE ${sql(random_name)} SET ${sql({ name: "Mary", age: 18 })} WHERE id IN ${sql([1, 2])} RETURNING *`;
+        expect(result[0].id).toBe(1);
+        expect(result[0].name).toBe("Mary");
+        expect(result[0].age).toBe(18);
+        expect(result[1].id).toBe(2);
+        expect(result[1].name).toBe("Mary");
+        expect(result[1].age).toBe(18);
+      });
+
+      test("update helper with undefined values", async () => {
+        await using sql = postgres({ ...options, max: 1 });
+        const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+        const users = [
+          { id: 1, name: "John", age: 30 },
+          { id: 2, name: "Jane", age: 25 },
+        ];
+        await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+        const result =
+          await sql`UPDATE ${sql(random_name)} SET ${sql({ name: "Mary", age: undefined })} WHERE id IN ${sql([1, 2])} RETURNING *`;
+        expect(result[0].id).toBe(1);
+        expect(result[0].name).toBe("Mary");
+        expect(result[0].age).toBe(30);
+        expect(result[1].id).toBe(2);
+        expect(result[1].name).toBe("Mary");
+        expect(result[1].age).toBe(25);
+      });
+      test("update helper that starts with undefined values", async () => {
+        await using sql = postgres({ ...options, max: 1 });
+        const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+        const users = [
+          { id: 1, name: "John", age: 30 },
+          { id: 2, name: "Jane", age: 25 },
+        ];
+        await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+        const result =
+          await sql`UPDATE ${sql(random_name)} SET ${sql({ name: undefined, age: 19 })} WHERE id IN ${sql([1, 2])} RETURNING *`;
+        expect(result[0].id).toBe(1);
+        expect(result[0].name).toBe("John");
+        expect(result[0].age).toBe(19);
+        expect(result[1].id).toBe(2);
+        expect(result[1].name).toBe("Jane");
+        expect(result[1].age).toBe(19);
+      });
+
+      test("update helper with undefined values and no columns", async () => {
+        await using sql = postgres({ ...options, max: 1 });
+        const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+        const users = [
+          { id: 1, name: "John", age: 30 },
+          { id: 2, name: "Jane", age: 25 },
+        ];
+        await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+        try {
+          await sql`UPDATE ${sql(random_name)} SET ${sql({ name: undefined, age: undefined })} WHERE id IN ${sql([1, 2])} RETURNING *`;
+          expect.unreachable();
+        } catch (e) {
+          expect(e).toBeInstanceOf(SyntaxError);
+          expect(e.message).toBe("Update needs to have at least one column");
+        }
+      });
+
+      test("upsert helper", async () => {
+        await using sql = postgres({ ...options, max: 1 });
+        const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`
+        CREATE TABLE IF NOT EXISTS ${sql(random_name)} (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+            foo text NOT NULL DEFAULT '',
+            email text NOT NULL UNIQUE
+        )
+      `;
+        {
+          const { email, ...data } = { email: "bunny@bun.com", foo: "hello" };
+          await sql`
+        INSERT INTO ${sql(random_name)}
+        ${sql({ ...data, email })}
+        ON CONFLICT (email) DO UPDATE
+        SET ${sql(data)}
+      `;
+          const result = await sql`SELECT * FROM ${sql(random_name)}`;
+          expect(result[0].id).toBeDefined();
+          expect(result[0].foo).toBe("hello");
+          expect(result[0].email).toBe("bunny@bun.com");
+        }
+
+        {
+          const { email, ...data } = { email: "bunny@bun.com", foo: "hello2" };
+          await sql`
+        INSERT INTO ${sql(random_name)}
+        ${sql({ ...data, email })}
+        ON CONFLICT (email) DO UPDATE
+        SET ${sql(data)}
+      `;
+          const result = await sql`SELECT * FROM ${sql(random_name)}`;
+          expect(result[0].id).toBeDefined();
+          expect(result[0].foo).toBe("hello2");
+          expect(result[0].email).toBe("bunny@bun.com");
+        }
+      });
+
+      test("update helper with AND IN", async () => {
+        await using sql = postgres({ ...options, max: 1 });
+        const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+        const users = [
+          { id: 1, name: "John", age: 30 },
+          { id: 2, name: "Jane", age: 25 },
+        ];
+        await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+        const result =
+          await sql`UPDATE ${sql(random_name)} SET ${sql({ name: "Mary", age: 18 })} WHERE 1=1 AND id IN ${sql([1, 2])} RETURNING *`;
+        expect(result[0].id).toBe(1);
+        expect(result[0].name).toBe("Mary");
+        expect(result[0].age).toBe(18);
+        expect(result[1].id).toBe(2);
+        expect(result[1].name).toBe("Mary");
+        expect(result[1].age).toBe(18);
+      });
+
+      test("update helper with ANY", async () => {
+        await using sql = postgres({ ...options, max: 1 });
+        const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (id int, name text, age int)`;
+        const users = [
+          { id: 1, name: "John", age: 30 },
+          { id: 2, name: "Jane", age: 25 },
+        ];
+        await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
+
+        const result =
+          await sql`UPDATE ${sql(random_name)} SET ${sql({ name: "Mary", age: 18 })} WHERE id  = ANY (${sql.array([1, 2], "int")}) RETURNING *`;
         expect(result[0].id).toBe(1);
         expect(result[0].name).toBe("Mary");
         expect(result[0].age).toBe(18);

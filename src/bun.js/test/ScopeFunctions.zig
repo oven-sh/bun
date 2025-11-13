@@ -68,7 +68,7 @@ pub fn fnEach(this: *ScopeFunctions, globalThis: *JSGlobalObject, callFrame: *Ca
     if (array.isUndefinedOrNull() or !array.isArray()) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
         defer formatter.deinit();
-        return globalThis.throw("Expected array, got {}", .{array.toFmt(&formatter)});
+        return globalThis.throw("Expected array, got {f}", .{array.toFmt(&formatter)});
     }
 
     if (this.each != .zero) return globalThis.throw("Cannot {s} on {f}", .{ "each", this });
@@ -100,14 +100,14 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
         if (this.each.isUndefinedOrNull() or !this.each.isArray()) {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
             defer formatter.deinit();
-            return globalThis.throw("Expected array, got {}", .{this.each.toFmt(&formatter)});
+            return globalThis.throw("Expected array, got {f}", .{this.each.toFmt(&formatter)});
         }
         var iter = try this.each.arrayIterator(globalThis);
         var test_idx: usize = 0;
         while (try iter.next()) |item| : (test_idx += 1) {
             if (item == .zero) break;
 
-            var args_list: std.ArrayList(Strong) = .init(bunTest.gpa);
+            var args_list: std.array_list.Managed(Strong) = .init(bunTest.gpa);
             defer args_list.deinit();
             defer for (args_list.items) |*arg| arg.deinit();
 
@@ -124,7 +124,7 @@ pub fn callAsFunction(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JS
                 bun.handleOom(args_list.append(.init(bunTest.gpa, item)));
             }
 
-            var args_list_raw = bun.handleOom(std.ArrayList(jsc.JSValue).initCapacity(bunTest.gpa, args_list.items.len)); // safe because the items are held strongly in args_list
+            var args_list_raw = bun.handleOom(std.array_list.Managed(jsc.JSValue).initCapacity(bunTest.gpa, args_list.items.len)); // safe because the items are held strongly in args_list
             defer args_list_raw.deinit();
             for (args_list.items) |arg| bun.handleOom(args_list_raw.append(arg.get()));
 
@@ -176,8 +176,8 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
     // only allow in collection phase
     switch (bunTest.phase) {
         .collection => {}, // ok
-        .execution => return globalThis.throw("Cannot call {}() inside a test. Call it inside describe() instead.", .{this}),
-        .done => return globalThis.throw("Cannot call {}() after the test run has completed", .{this}),
+        .execution => return globalThis.throw("Cannot call {f}() inside a test. Call it inside describe() instead.", .{this}),
+        .done => return globalThis.throw("Cannot call {f}() after the test run has completed", .{this}),
     }
 
     // handle test reporter agent for debugger
@@ -235,7 +235,7 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
                 bun.debugAssert(rem.buf.len == 0);
 
                 const str = bun.String.fromBytes(bunTest.collection.filter_buffer.items);
-                groupLog.log("matches_filter \"{}\"", .{std.zig.fmtEscapes(bunTest.collection.filter_buffer.items)});
+                groupLog.log("matches_filter \"{f}\"", .{std.zig.fmtString(bunTest.collection.filter_buffer.items)});
                 matches_filter = filter_regex.matches(str);
             };
 
@@ -249,7 +249,7 @@ fn enqueueDescribeOrTestCallback(this: *ScopeFunctions, bunTest: *bun_test.BunTe
             _ = try bunTest.collection.active_scope.appendTest(bunTest.gpa, description, if (matches_filter) callback else null, .{
                 .has_done_parameter = has_done_parameter,
                 .timeout = timeout,
-            }, base);
+            }, base, .collection);
         },
     }
 }
@@ -278,9 +278,8 @@ fn genericExtend(this: *ScopeFunctions, globalThis: *JSGlobalObject, cfg: bun_te
 }
 
 fn errorInCI(globalThis: *jsc.JSGlobalObject, signature: []const u8) bun.JSError!void {
-    if (!bun.FeatureFlags.breaking_changes_1_3) return; // this is a breaking change for version 1.3
-    if (bun.detectCI()) |_| {
-        return globalThis.throwPretty("{s} is not allowed in CI environments.\nIf this is not a CI environment, set the environment variable CI=false to force allow.", .{signature});
+    if (bun.ci.isCI()) {
+        return globalThis.throwPretty("{s} is disabled in CI environments to prevent accidentally skipping tests. To override, set the environment variable CI=false.", .{signature});
     }
 }
 
@@ -297,40 +296,41 @@ const ParseArgumentsResult = struct {
     }
 };
 pub const CallbackMode = enum { require, allow };
+pub const FunctionKind = enum { test_or_describe, hook };
 
 fn getDescription(gpa: std.mem.Allocator, globalThis: *jsc.JSGlobalObject, description: jsc.JSValue, signature: Signature) bun.JSError![]const u8 {
-    const is_valid_description =
-        description.isClass(globalThis) or
-        (description.isFunction() and !description.getName(globalThis).isEmpty()) or
-        description.isNumber() or
-        description.isString();
-
-    if (!is_valid_description) {
-        return globalThis.throwPretty("{s}() expects first argument to be a named class, named function, number, or string", .{signature});
-    }
-
     if (description == .zero) {
         return "";
     }
 
     if (description.isClass(globalThis)) {
-        const name_str = if ((try description.className(globalThis)).toSlice(gpa).length() == 0)
-            description.getName(globalThis).toSlice(gpa).slice()
-        else
-            (try description.className(globalThis)).toSlice(gpa).slice();
-        return try gpa.dupe(u8, name_str);
+        var description_class_name = try description.className(globalThis);
+
+        if (description_class_name.len > 0) {
+            return description_class_name.toOwnedSlice(gpa);
+        }
+
+        var description_name = try description.getName(globalThis);
+        defer description_name.deref();
+        return description_name.toOwnedSlice(gpa);
     }
+
     if (description.isFunction()) {
-        var slice = description.getName(globalThis).toSlice(gpa);
-        defer slice.deinit();
-        return try gpa.dupe(u8, slice.slice());
+        const func_name = try description.getName(globalThis);
+        if (func_name.length() > 0) {
+            return func_name.toOwnedSlice(gpa);
+        }
     }
-    var slice = try description.toSlice(globalThis, gpa);
-    defer slice.deinit();
-    return try gpa.dupe(u8, slice.slice());
+
+    if (description.isNumber() or description.isString()) {
+        var slice = try description.toSlice(globalThis, gpa);
+        return slice.intoOwnedSlice(gpa);
+    }
+
+    return globalThis.throwPretty("{f}() expects first argument to be a named class, named function, number, or string", .{signature});
 }
 
-pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, gpa: std.mem.Allocator, cfg: struct { callback: CallbackMode }) bun.JSError!ParseArgumentsResult {
+pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, signature: Signature, gpa: std.mem.Allocator, cfg: struct { callback: CallbackMode, kind: FunctionKind = .test_or_describe }) bun.JSError!ParseArgumentsResult {
     var a1, var a2, var a3 = callframe.argumentsAsArray(3);
 
     const len: enum { three, two, one, zero } = if (!a3.isUndefinedOrNull()) .three else if (!a2.isUndefinedOrNull()) .two else if (!a1.isUndefinedOrNull()) .one else .zero;
@@ -339,8 +339,9 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
         // description, callback(fn), options(!fn)
         // description, options(!fn), callback(fn)
         .three => if (a2.isFunction()) .{ .description = a1, .callback = a2, .options = a3 } else .{ .description = a1, .callback = a3, .options = a2 },
+        // callback(fn), options(!fn)
         // description, callback(fn)
-        .two => .{ .description = a1, .callback = a2 },
+        .two => if (a1.isFunction() and !a2.isFunction()) .{ .callback = a1, .options = a2 } else .{ .description = a1, .callback = a2 },
         // description
         // callback(fn)
         .one => if (a1.isFunction()) .{ .callback = a1 } else .{ .description = a1 },
@@ -353,7 +354,8 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
     } else if (callback.isFunction()) blk: {
         break :blk callback.withAsyncContextIfNeeded(globalThis);
     } else {
-        return globalThis.throw("{s} expects a function as the second argument", .{signature});
+        const ordinal = if (cfg.kind == .hook) "first" else "second";
+        return globalThis.throw("{f} expects a function as the {s} argument", .{ signature, ordinal });
     };
 
     var result: ParseArgumentsResult = .{
@@ -368,30 +370,30 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
     if (options.isNumber()) {
         timeout_option = options.asNumber();
     } else if (options.isFunction()) {
-        return globalThis.throw("{}() expects options to be a number or object, not a function", .{signature});
+        return globalThis.throw("{f}() expects options to be a number or object, not a function", .{signature});
     } else if (options.isObject()) {
         if (try options.get(globalThis, "timeout")) |timeout| {
             if (!timeout.isNumber()) {
-                return globalThis.throwPretty("{}() expects timeout to be a number", .{signature});
+                return globalThis.throwPretty("{f}() expects timeout to be a number", .{signature});
             }
             timeout_option = timeout.asNumber();
         }
         if (try options.get(globalThis, "retry")) |retries| {
             if (!retries.isNumber()) {
-                return globalThis.throwPretty("{}() expects retry to be a number", .{signature});
+                return globalThis.throwPretty("{f}() expects retry to be a number", .{signature});
             }
             result.options.retry = retries.asNumber();
         }
         if (try options.get(globalThis, "repeats")) |repeats| {
             if (!repeats.isNumber()) {
-                return globalThis.throwPretty("{}() expects repeats to be a number", .{signature});
+                return globalThis.throwPretty("{f}() expects repeats to be a number", .{signature});
             }
             result.options.repeats = repeats.asNumber();
         }
     } else if (options.isUndefinedOrNull()) {
         // no options
     } else {
-        return globalThis.throw("{}() expects a number, object, or undefined as the third argument", .{signature});
+        return globalThis.throw("{f}() expects a number, object, or undefined as the third argument", .{signature});
     }
 
     result.description = if (description.isUndefinedOrNull()) null else try getDescription(gpa, globalThis, description, signature);
@@ -409,7 +411,7 @@ pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 
-pub fn format(this: ScopeFunctions, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: ScopeFunctions, writer: *std.Io.Writer) !void {
     try writer.print("{s}", .{@tagName(this.mode)});
     switch (this.cfg.self_concurrent) {
         .yes => try writer.print(".concurrent", .{}),
@@ -423,7 +425,7 @@ pub fn format(this: ScopeFunctions, comptime _: []const u8, _: std.fmt.FormatOpt
 
 pub fn finalize(
     this: *ScopeFunctions,
-) callconv(.C) void {
+) callconv(.c) void {
     groupLog.begin(@src());
     defer groupLog.end();
 

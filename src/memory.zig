@@ -82,7 +82,8 @@ fn deinitIsVoid(comptime T: type) bool {
 ///
 /// This method does not free `ptr_or_slice` itself.
 pub fn deinit(ptr_or_slice: anytype) void {
-    const ptr_info = @typeInfo(@TypeOf(ptr_or_slice));
+    const PtrType = @TypeOf(ptr_or_slice);
+    const ptr_info = @typeInfo(PtrType);
     switch (comptime ptr_info.pointer.size) {
         .slice => {
             for (ptr_or_slice) |*elem| {
@@ -91,7 +92,7 @@ pub fn deinit(ptr_or_slice: anytype) void {
             return;
         },
         .one => {},
-        else => @compileError("unsupported pointer type"),
+        else => @compileError("unsupported pointer type: " ++ @typeName(PtrType)),
     }
 
     const Child = ptr_info.pointer.child;
@@ -102,23 +103,39 @@ pub fn deinit(ptr_or_slice: anytype) void {
         }
     }
 
-    const needs_deinit = comptime switch (@typeInfo(Child)) {
-        .@"struct" => true,
-        .@"union" => |u| u.tag_type != null,
+    switch (comptime @typeInfo(Child)) {
+        .void, .bool, .int, .float, .pointer, .comptime_float, .comptime_int => return,
+        .undefined, .null, .error_set, .@"enum", .vector => return,
+        .array => {
+            for (ptr_or_slice) |*elem| {
+                deinit(elem);
+            }
+            return;
+        },
+        .@"struct" => {},
         .optional => {
             if (ptr_or_slice.*) |*payload| {
                 deinit(payload);
             }
             return;
         },
-        else => false,
-    };
+        .error_union => {
+            if (ptr_or_slice.*) |*payload| {
+                deinit(payload);
+            } else |_| {}
+            return;
+        },
+        .@"union" => |u| {
+            if (comptime u.tag_type == null) {
+                @compileError("cannot deinit an untagged union: " ++ @typeName(Child));
+            }
+        },
+        .type, .noreturn, .@"fn", .@"opaque", .frame, .@"anyframe", .enum_literal => {
+            @compileError("unsupported type for deinit: " ++ @typeName(Child));
+        },
+    }
 
-    const should_call_deinit = comptime needs_deinit and
-        !exemptedFromDeinit(Child) and
-        !deinitIsVoid(Child);
-
-    if (comptime should_call_deinit) {
+    if (comptime !exemptedFromDeinit(Child) and !deinitIsVoid(Child)) {
         ptr_or_slice.deinit();
     }
 }
@@ -151,6 +168,38 @@ pub fn deinit(ptr_or_slice: anytype) void {
 pub fn rebaseSlice(slice: []const u8, old_base: [*]const u8, new_base: [*]const u8) []const u8 {
     const offset = @intFromPtr(slice.ptr) - @intFromPtr(old_base);
     return new_base[offset..][0..slice.len];
+}
+
+/// Removes the sentinel from a sentinel-terminated slice or many-item pointer. The resulting
+/// non-sentinel-terminated slice can be freed with `allocator.free`.
+///
+/// `ptr` must be `[:x]T` or `[*:x]T`, or their const equivalents, and it must have been allocated
+/// by `allocator`.
+///
+/// Most allocators will perform this operation without allocating any memory, but unlike a simple
+/// cast, this function will not cause issues with allocators that need to know the exact size of
+/// the allocation to free it.
+pub fn dropSentinel(ptr: anytype, allocator: std.mem.Allocator) blk: {
+    var info = @typeInfo(@TypeOf(ptr));
+    info.pointer.size = .slice;
+    info.pointer.sentinel_ptr = null;
+    break :blk bun.OOM!@Type(info);
+} {
+    const info = @typeInfo(@TypeOf(ptr)).pointer;
+    const Child = info.child;
+    if (comptime info.sentinel_ptr == null) {
+        @compileError("pointer must have sentinel");
+    }
+
+    const slice = switch (comptime info.size) {
+        .many => std.mem.span(ptr),
+        .slice => ptr,
+        else => @compileError("only slices and many-item pointers are supported"),
+    };
+
+    if (allocator.remap(@constCast(slice), slice.len)) |new| return new;
+    defer allocator.free(slice);
+    return allocator.dupe(Child, slice);
 }
 
 const std = @import("std");

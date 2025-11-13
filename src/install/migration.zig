@@ -26,19 +26,11 @@ pub fn detectAndLoadOtherLockfile(
                 , .{});
                 Global.exit(1);
             }
-            if (Environment.isDebug) {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-
-                Output.prettyErrorln("Error: {s}", .{@errorName(err)});
-                log.print(Output.errorWriter()) catch {};
-                Output.prettyErrorln("Invalid NPM package-lock.json\nIn a release build, this would ignore and do a fresh install.\nAborting", .{});
-                Global.exit(1);
-            }
             return LoadResult{ .err = .{
                 .step = .migrating,
                 .value = err,
                 .lockfile_path = "package-lock.json",
-                .format = .binary,
+                .format = .text,
             } };
         };
 
@@ -58,19 +50,11 @@ pub fn detectAndLoadOtherLockfile(
         defer lockfile.close();
         const data = lockfile.readToEnd(allocator).unwrap() catch break :yarn;
         const migrate_result = @import("./yarn.zig").migrateYarnLockfile(this, manager, allocator, log, data, dir) catch |err| {
-            if (Environment.isDebug) {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-
-                Output.prettyErrorln("Error: {s}", .{@errorName(err)});
-                log.print(Output.errorWriter()) catch {};
-                Output.prettyErrorln("Invalid yarn.lock\nIn a release build, this would ignore and do a fresh install.\nAborting", .{});
-                Global.exit(1);
-            }
             return LoadResult{ .err = .{
                 .step = .migrating,
                 .value = err,
                 .lockfile_path = "yarn.lock",
-                .format = .binary,
+                .format = .text,
             } };
         };
 
@@ -137,19 +121,12 @@ pub fn detectAndLoadOtherLockfile(
                 },
                 else => {},
             }
-            if (Environment.isDebug) {
-                bun.handleErrorReturnTrace(err, @errorReturnTrace());
-
-                Output.prettyErrorln("Error: {s}", .{@errorName(err)});
-                log.print(Output.errorWriter()) catch {};
-                Output.prettyErrorln("Invalid pnpm-lock.yaml\nIn a release build, this would ignore and do a fresh install.\nAborting", .{});
-                Global.exit(1);
-            }
+            log.reset();
             return LoadResult{ .err = .{
                 .step = .migrating,
                 .value = err,
                 .lockfile_path = "pnpm-lock.yaml",
-                .format = .binary,
+                .format = .text,
             } };
         };
 
@@ -979,7 +956,7 @@ pub fn migrateNPMLockfile(
                                         },
                                     };
                                 };
-                                debug("-> {}", .{res.fmtForDebug(string_buf.bytes.items)});
+                                debug("-> {f}", .{res.fmtForDebug(string_buf.bytes.items)});
 
                                 resolutions[id] = res;
                                 metas[id].origin = switch (res.tag) {
@@ -1109,7 +1086,7 @@ pub fn migrateNPMLockfile(
     return LoadResult{
         .ok = .{
             .lockfile = this,
-            .was_migrated = true,
+            .migrated = .npm,
             .loaded_from_binary_lockfile = false,
             .serializer_result = .{},
             .format = .binary,

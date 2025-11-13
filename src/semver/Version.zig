@@ -62,9 +62,9 @@ pub fn VersionType(comptime IntType: type) type {
             version: This,
             input: string,
 
-            pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(formatter: Formatter, writer: *std.Io.Writer) !void {
                 const self = formatter.version;
-                try std.fmt.format(writer, "{?d}.{?d}.{?d}", .{ self.major, self.minor, self.patch });
+                try writer.print("{d}.{d}.{d}", .{ self.major, self.minor, self.patch });
 
                 if (self.tag.hasPre()) {
                     const pre = self.tag.pre.slice(formatter.input);
@@ -90,11 +90,11 @@ pub fn VersionType(comptime IntType: type) type {
             other: This,
             other_buf: string,
 
-            pub fn format(this: DiffFormatter, comptime fmt_: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-                if (!Output.enable_ansi_colors) {
+            pub fn format(this: DiffFormatter, writer: *std.Io.Writer) !void {
+                if (!Output.enable_ansi_colors_stdout) {
                     // print normally if no colors
                     const formatter: Formatter = .{ .version = this.version, .input = this.buf };
-                    return Formatter.format(formatter, fmt_, options, writer);
+                    return Formatter.format(formatter, writer);
                 }
 
                 const diff = this.version.whichVersionIsDifferent(this.other, this.buf, this.other_buf) orelse .none;
@@ -152,7 +152,7 @@ pub fn VersionType(comptime IntType: type) type {
                             try writer.writeByte(c);
                         }
                     } else {
-                        try writer.print(Output.prettyFmt("<r><b><red>-{}", true), .{this.version.tag.pre.fmt(this.buf)});
+                        try writer.print(Output.prettyFmt("<r><b><red>-{f}", true), .{this.version.tag.pre.fmt(this.buf)});
                         set_color = true;
                     }
                 }
@@ -176,9 +176,9 @@ pub fn VersionType(comptime IntType: type) type {
                         }
                     } else {
                         if (!set_color) {
-                            try writer.print(Output.prettyFmt("<r><b><red>+{}", true), .{this.version.tag.build.fmt(this.buf)});
+                            try writer.print(Output.prettyFmt("<r><b><red>+{f}", true), .{this.version.tag.build.fmt(this.buf)});
                         } else {
-                            try writer.print("+{}", .{this.version.tag.build.fmt(this.other_buf)});
+                            try writer.print("+{f}", .{this.version.tag.build.fmt(this.other_buf)});
                         }
                     }
                 }

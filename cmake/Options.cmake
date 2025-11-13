@@ -140,11 +140,6 @@ if(ENABLE_ASAN AND ENABLE_LTO)
   setx(ENABLE_LTO OFF)
 endif()
 
-if(USE_VALGRIND AND NOT USE_BASELINE)
-  message(WARNING "If valgrind is enabled, baseline must also be enabled")
-  setx(USE_BASELINE ON)
-endif()
-
 if(BUILDKITE_COMMIT)
   set(DEFAULT_REVISION ${BUILDKITE_COMMIT})
 else()
@@ -201,5 +196,10 @@ endif()
 optionx(USE_WEBKIT_ICU BOOL "Use the ICU libraries from WebKit" DEFAULT ${DEFAULT_WEBKIT_ICU})
 
 optionx(ERROR_LIMIT STRING "Maximum number of errors to show when compiling C++ code" DEFAULT "100")
+
+# This is not an `option` because setting this variable to OFF is experimental
+# and unsupported. This replaces the `use_mimalloc` variable previously in
+# bun.zig, and enables C++ code to also be aware of the option.
+set(USE_MIMALLOC_AS_DEFAULT_ALLOCATOR ON)
 
 list(APPEND CMAKE_ARGS -DCMAKE_EXPORT_COMPILE_COMMANDS=ON)

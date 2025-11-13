@@ -269,4 +269,38 @@ test.failing("microtasks and rejections are drained after the test callback is e
   Promise.reject(new Error("uh oh!"));
 });
 
+describe("after inside test", () => {
+  afterAll(() => {
+    console.log("after-inside-test: afterAll3");
+  });
+  afterEach(() => {
+    console.log("after-inside-test: afterEach3");
+  });
+
+  test("the test 1", () => {
+    afterEach(() => {
+      console.log("after-inside-test: afterEach1");
+    });
+    afterAll(() => {
+      console.log("after-inside-test: afterAll1");
+    });
+    console.log("after-inside-test: the test 1");
+  });
+  test("the test 2", () => {
+    afterEach(() => {
+      console.log("after-inside-test: afterEach2");
+    });
+    afterAll(() => {
+      console.log("after-inside-test: afterAll2");
+    });
+    console.log("after-inside-test: the test 2");
+  });
+});
+
+test("beforeEach inside test fails", () => {
+  expect(() => beforeEach(() => {})).toThrowErrorMatchingInlineSnapshot(
+    `"Cannot call beforeEach() inside a test. Call it inside describe() instead."`,
+  );
+});
+
 console.log("exit");

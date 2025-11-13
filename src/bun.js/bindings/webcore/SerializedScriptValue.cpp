@@ -3392,7 +3392,7 @@ private:
         if (is8Bit) {
             if ((end - ptr) < static_cast<int>(length))
                 return false;
-            str = Identifier::fromString(vm, { reinterpret_cast<const LChar*>(ptr), length });
+            str = Identifier::fromString(vm, { reinterpret_cast<const Latin1Character*>(ptr), length });
             ptr += length;
             return true;
         }

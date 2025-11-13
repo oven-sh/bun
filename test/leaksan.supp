@@ -1,7 +1,10 @@
+leak:bun.js.api.server.ServerAllConnectionsClosedTask.schedule
 leak:bunfig.Bunfig.parse__anon
+leak:resolver.resolver.Resolver.parsePackageJSON
 leak:resolver.package_json.PackageJSON.parse__anon
 leak:resolver.resolver.Resolver.parseTSConfig
 leak:JSC::Identifier::fromString
+leak:bun.js.bindings.JSGlobalObject.JSGlobalObject.create
 leak:Zig__GlobalObject__create
 leak:_objc_msgSend_uncached
 leak:WTF::fastMalloc

@@ -28,8 +28,7 @@ observable_getters: std.enums.EnumSet(enum {
     stdio,
 }) = .{},
 closed: std.enums.EnumSet(StdioKind) = .{},
-has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
-this_jsvalue: jsc.JSValue = .zero,
+this_value: jsc.JSRef = jsc.JSRef.empty(),
 
 /// `null` indicates all of the IPC data is uninitialized.
 ipc_data: ?IPC.SendQueue,
@@ -86,28 +85,6 @@ pub inline fn assertStdioResult(result: StdioResult) void {
 
 pub const ResourceUsage = @import("./subprocess/ResourceUsage.zig");
 
-pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, envp: *std.ArrayList(?[*:0]const u8), PATH: *[]const u8) bun.JSError!void {
-    var object_iter = try jsc.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(globalThis, object);
-    defer object_iter.deinit();
-
-    try envp.ensureTotalCapacityPrecise(object_iter.len +
-        // +1 incase there's IPC
-        // +1 for null terminator
-        2);
-    while (try object_iter.next()) |key| {
-        var value = object_iter.value;
-        if (value.isUndefined()) continue;
-
-        const line = try std.fmt.allocPrintZ(envp.allocator, "{}={}", .{ key, try value.getZigString(globalThis) });
-
-        if (key.eqlComptime("PATH")) {
-            PATH.* = bun.asByteSlice(line["PATH=".len..]);
-        }
-
-        try envp.append(line);
-    }
-}
-
 const log = Output.scoped(.Subprocess, .visible);
 pub const StdioKind = enum {
     stdin,
@@ -131,7 +108,7 @@ pub const StdioKind = enum {
     }
 };
 
-pub fn onAbortSignal(subprocess_ctx: ?*anyopaque, _: jsc.JSValue) callconv(.C) void {
+pub fn onAbortSignal(subprocess_ctx: ?*anyopaque, _: jsc.JSValue) callconv(.c) void {
     var this: *Subprocess = @ptrCast(@alignCast(subprocess_ctx.?));
     this.clearAbortSignal();
     _ = this.tryKill(this.killSignal);
@@ -169,7 +146,7 @@ pub fn hasExited(this: *const Subprocess) bool {
     return this.process.hasExited();
 }
 
-pub fn hasPendingActivityNonThreadsafe(this: *const Subprocess) bool {
+pub fn computeHasPendingActivity(this: *const Subprocess) bool {
     if (this.ipc_data != null) {
         return true;
     }
@@ -186,16 +163,19 @@ pub fn hasPendingActivityNonThreadsafe(this: *const Subprocess) bool {
 }
 
 pub fn updateHasPendingActivity(this: *Subprocess) void {
+    if (this.flags.is_sync) return;
+
+    const has_pending = this.computeHasPendingActivity();
     if (comptime Environment.isDebug) {
-        log("updateHasPendingActivity() {any} -> {any}", .{
-            this.has_pending_activity.raw,
-            this.hasPendingActivityNonThreadsafe(),
-        });
+        log("updateHasPendingActivity() -> {}", .{has_pending});
     }
-    this.has_pending_activity.store(
-        this.hasPendingActivityNonThreadsafe(),
-        .monotonic,
-    );
+
+    // Upgrade or downgrade the reference based on pending activity
+    if (has_pending) {
+        this.this_value.upgrade(this.globalThis);
+    } else {
+        this.this_value.downgrade();
+    }
 }
 
 pub fn hasPendingActivityStdio(this: *const Subprocess) bool {
@@ -245,10 +225,6 @@ pub fn onCloseIO(this: *Subprocess, kind: StdioKind) void {
             }
         },
     }
-}
-
-pub fn hasPendingActivity(this: *Subprocess) callconv(.C) bool {
-    return this.has_pending_activity.load(.acquire);
 }
 
 pub fn jsRef(this: *Subprocess) void {
@@ -340,7 +316,7 @@ pub fn asyncDispose(this: *Subprocess, global: *JSGlobalObject, callframe: *jsc.
     return this.getExited(this_jsvalue, global);
 }
 
-fn setEventLoopTimerRefd(this: *Subprocess, refd: bool) void {
+pub fn setEventLoopTimerRefd(this: *Subprocess, refd: bool) void {
     if (this.event_loop_timer_refd == refd) return;
     this.event_loop_timer_refd = refd;
     if (refd) {
@@ -350,16 +326,15 @@ fn setEventLoopTimerRefd(this: *Subprocess, refd: bool) void {
     }
 }
 
-pub fn timeoutCallback(this: *Subprocess) bun.api.Timer.EventLoopTimer.Arm {
+pub fn timeoutCallback(this: *Subprocess) void {
     this.setEventLoopTimerRefd(false);
-    if (this.event_loop_timer.state == .CANCELLED) return .disarm;
+    if (this.event_loop_timer.state == .CANCELLED) return;
     if (this.hasExited()) {
         this.event_loop_timer.state = .CANCELLED;
-        return .disarm;
+        return;
     }
     this.event_loop_timer.state = .FIRED;
     _ = this.tryKill(this.killSignal);
-    return .disarm;
 }
 
 pub fn onMaxBuffer(this: *Subprocess, kind: MaxBuf.Kind) void {
@@ -367,52 +342,19 @@ pub fn onMaxBuffer(this: *Subprocess, kind: MaxBuf.Kind) void {
     _ = this.tryKill(this.killSignal);
 }
 
-fn parseSignal(arg: jsc.JSValue, globalThis: *jsc.JSGlobalObject) !SignalCode {
-    if (arg.getNumber()) |sig64| {
-        // Node does this:
-        if (std.math.isNan(sig64)) {
-            return SignalCode.default;
-        }
-
-        // This matches node behavior, minus some details with the error messages: https://gist.github.com/Jarred-Sumner/23ba38682bf9d84dff2f67eb35c42ab6
-        if (std.math.isInf(sig64) or @trunc(sig64) != sig64) {
-            return globalThis.throwInvalidArguments("Unknown signal", .{});
-        }
-
-        if (sig64 < 0) {
-            return globalThis.throwInvalidArguments("Invalid signal: must be >= 0", .{});
-        }
-
-        if (sig64 > 31) {
-            return globalThis.throwInvalidArguments("Invalid signal: must be < 32", .{});
-        }
-
-        const code: SignalCode = @enumFromInt(@as(u8, @intFromFloat(sig64)));
-        return code;
-    } else if (arg.isString()) {
-        if (arg.asString().length() == 0) {
-            return SignalCode.default;
-        }
-        const signal_code = try arg.toEnum(globalThis, "signal", SignalCode);
-        return signal_code;
-    } else if (!arg.isEmptyOrUndefinedOrNull()) {
-        return globalThis.throwInvalidArguments("Invalid signal: must be a string or an integer", .{});
-    }
-
-    return SignalCode.default;
-}
-
 pub fn kill(
     this: *Subprocess,
     globalThis: *JSGlobalObject,
     callframe: *jsc.CallFrame,
 ) bun.JSError!JSValue {
-    this.this_jsvalue = callframe.this();
+    // Safe: this method can only be called while the object is alive (reachable from JS)
+    // The finalizer only runs when the object becomes unreachable
+    this.this_value.update(globalThis, callframe.this());
 
     const arguments = callframe.arguments_old(1);
     // If signal is 0, then no actual signal is sent, but error checking
     // is still performed.
-    const sig: SignalCode = try parseSignal(arguments.ptr[0], globalThis);
+    const sig: SignalCode = try bun.SignalCode.fromJS(arguments.ptr[0], globalThis);
 
     if (globalThis.hasException()) return .zero;
 
@@ -607,7 +549,7 @@ fn consumeOnDisconnectCallback(this_jsvalue: JSValue, globalThis: *jsc.JSGlobalO
 
 pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Status, rusage: *const Rusage) void {
     log("onProcessExit()", .{});
-    const this_jsvalue = this.this_jsvalue;
+    const this_jsvalue = this.this_value.tryGet() orelse .zero;
     const globalThis = this.globalThis;
     const jsc_vm = globalThis.bunVM();
     this_jsvalue.ensureStillAlive();
@@ -632,7 +574,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
             if (existing_stdin_value.isCell()) {
                 if (stdin == null) {
                     // TODO: review this cast
-                    stdin = @alignCast(@ptrCast(jsc.WebCore.FileSink.JSSink.fromJS(existing_value)));
+                    stdin = @ptrCast(@alignCast(jsc.WebCore.FileSink.JSSink.fromJS(existing_value)));
                 }
 
                 if (!this.flags.is_stdin_a_readable_stream) {
@@ -697,9 +639,9 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
                 }
 
                 switch (status) {
-                    .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)),
-                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis)),
-                    .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))),
+                    .exited => |exited| promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(exited.code)) catch {}, // TODO: properly propagate exception upwards
+                    .err => |err| promise.asAnyPromise().?.reject(globalThis, err.toJS(globalThis)) catch {}, // TODO: properly propagate exception upwards
+                    .signaled => promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(128 +% @intFromEnum(status.signaled))) catch {}, // TODO: properly propagate exception upwards
                     else => {
                         // crash in debug mode
                         if (comptime Environment.allow_assert)
@@ -759,7 +701,7 @@ fn closeIO(this: *Subprocess, comptime io: @Type(.enum_literal)) void {
     }
 }
 
-fn onPipeClose(this: *uv.Pipe) callconv(.C) void {
+fn onPipeClose(this: *uv.Pipe) callconv(.c) void {
     // safely free the pipes
     bun.default_allocator.destroy(this);
 }
@@ -805,16 +747,16 @@ fn clearAbortSignal(this: *Subprocess) void {
     }
 }
 
-pub fn finalize(this: *Subprocess) callconv(.C) void {
+pub fn finalize(this: *Subprocess) callconv(.c) void {
     log("finalize", .{});
     // Ensure any code which references the "this" value doesn't attempt to
     // access it after it's been freed We cannot call any methods which
     // access GC'd values during the finalizer
-    this.this_jsvalue = .zero;
+    this.this_value.finalize();
 
     this.clearAbortSignal();
 
-    bun.assert(!this.hasPendingActivity() or jsc.VirtualMachine.get().isShuttingDown());
+    bun.assert(!this.computeHasPendingActivity() or jsc.VirtualMachine.get().isShuttingDown());
     this.finalizeStreams();
 
     this.process.detach();
@@ -1772,7 +1714,7 @@ pub fn handleIPCMessage(
         },
         .data => |data| {
             IPC.log("Received IPC message from child", .{});
-            const this_jsvalue = this.this_jsvalue;
+            const this_jsvalue = this.this_value.tryGet() orelse .zero;
             defer this_jsvalue.ensureStillAlive();
             if (this_jsvalue != .zero) {
                 if (jsc.Codegen.JSSubprocess.ipcCallbackGetCached(this_jsvalue)) |cb| {
@@ -1795,7 +1737,7 @@ pub fn handleIPCMessage(
 
 pub fn handleIPCClose(this: *Subprocess) void {
     IPClog("Subprocess#handleIPCClose", .{});
-    const this_jsvalue = this.this_jsvalue;
+    const this_jsvalue = this.this_value.tryGet() orelse .zero;
     defer this_jsvalue.ensureStillAlive();
     const globalThis = this.globalThis;
     this.updateHasPendingActivity();
@@ -1824,21 +1766,19 @@ pub const StdioResult = if (Environment.isWindows) bun.spawn.WindowsSpawnResult.
 pub const Writable = @import("./subprocess/Writable.zig").Writable;
 
 pub const MaxBuf = bun.io.MaxBuf;
-
-const string = []const u8;
+pub const spawnSync = js_bun_spawn_bindings.spawnSync;
+pub const spawn = js_bun_spawn_bindings.spawn;
 
 const IPC = @import("../../ipc.zig");
+const js_bun_spawn_bindings = @import("./js_bun_spawn_bindings.zig");
 const node_cluster_binding = @import("../../node/node_cluster_binding.zig");
 const std = @import("std");
-const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
 const Async = bun.Async;
 const Environment = bun.Environment;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
-const strings = bun.strings;
-const uws = bun.uws;
 const webcore = bun.webcore;
 const which = bun.which;
 const CowString = bun.ptr.CowString;
@@ -1850,7 +1790,6 @@ const JSValue = jsc.JSValue;
 const PosixSpawn = bun.spawn;
 const Process = bun.spawn.Process;
 const Rusage = bun.spawn.Rusage;
-const Stdio = bun.spawn.Stdio;
 
 const windows = bun.windows;
 const uv = windows.libuv;

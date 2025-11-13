@@ -114,7 +114,7 @@ for (let i = 0; i < nativeStartIndex; i++) {
             `Cannot use ESM import statement within builtin modules. Use require("${imp.path}") instead. See src/js/README.md (from ${moduleList[i]})`,
           );
           err.name = "BunError";
-          err.fileName = moduleList[i];
+          err["fileName"] = moduleList[i];
           throw err;
         }
       }
@@ -125,7 +125,7 @@ for (let i = 0; i < nativeStartIndex; i++) {
         `Using \`export default\` AND named exports together in builtin modules is unsupported. See src/js/README.md (from ${moduleList[i]})`,
       );
       err.name = "BunError";
-      err.fileName = moduleList[i];
+      err["fileName"] = moduleList[i];
       throw err;
     }
     let importStatements: string[] = [];
@@ -204,7 +204,7 @@ const config_cli = [
   process.execPath,
   "build",
   ...bundledEntryPoints,
-  ...(debug ? [] : ["--minify-syntax"]),
+  ...(debug ? [] : ["--minify-syntax", "--keep-names"]),
   "--root",
   TMP_DIR,
   "--target",

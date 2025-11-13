@@ -19,6 +19,7 @@ pub const AutoFlusher = @import("./webcore/AutoFlusher.zig");
 pub const EncodingLabel = @import("./webcore/EncodingLabel.zig").EncodingLabel;
 pub const Fetch = @import("./webcore/fetch.zig");
 pub const Response = @import("./webcore/Response.zig");
+pub const BakeResponse = @import("./webcore/BakeResponse.zig");
 pub const TextDecoder = @import("./webcore/TextDecoder.zig");
 pub const TextEncoder = @import("./webcore/TextEncoder.zig");
 pub const TextEncoderStreamEncoder = @import("./webcore/TextEncoderStreamEncoder.zig");
@@ -100,7 +101,7 @@ pub const Pipe = struct {
 
 pub const DrainResult = union(enum) {
     owned: struct {
-        list: std.ArrayList(u8),
+        list: std.array_list.Managed(u8),
         size_hint: usize,
     },
     estimated_size: usize,

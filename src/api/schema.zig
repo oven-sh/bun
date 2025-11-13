@@ -321,8 +321,9 @@ pub const ByteWriter = Writer(*std.io.FixedBufferStream([]u8));
 pub const FileWriter = Writer(std.fs.File);
 
 pub const api = struct {
+    // these are in sync with BunLoaderType in headers-handwritten.h
     pub const Loader = enum(u8) {
-        _none = 255,
+        _none = 254,
         jsx = 1,
         js = 2,
         ts = 3,
@@ -2334,9 +2335,6 @@ pub const api = struct {
         /// line_text
         line_text: []const u8,
 
-        /// suggestion
-        suggestion: []const u8,
-
         /// offset
         offset: u32 = 0,
 
@@ -2348,7 +2346,6 @@ pub const api = struct {
             this.line = try reader.readValue(i32);
             this.column = try reader.readValue(i32);
             this.line_text = try reader.readValue([]const u8);
-            this.suggestion = try reader.readValue([]const u8);
             this.offset = try reader.readValue(u32);
             return this;
         }
@@ -2359,7 +2356,6 @@ pub const api = struct {
             try writer.writeInt(this.line);
             try writer.writeInt(this.column);
             try writer.writeValue(@TypeOf(this.line_text), this.line_text);
-            try writer.writeValue(@TypeOf(this.suggestion), this.suggestion);
             try writer.writeInt(this.offset);
         }
     };
@@ -2824,14 +2820,18 @@ pub const api = struct {
         /// token
         token: []const u8,
 
+        /// email
+        email: []const u8,
+
         pub fn dupe(this: NpmRegistry, allocator: std.mem.Allocator) NpmRegistry {
-            const buf = bun.handleOom(allocator.alloc(u8, this.url.len + this.username.len + this.password.len + this.token.len));
+            const buf = bun.handleOom(allocator.alloc(u8, this.url.len + this.username.len + this.password.len + this.token.len + this.email.len));
 
             var out: NpmRegistry = .{
                 .url = "",
                 .username = "",
                 .password = "",
                 .token = "",
+                .email = "",
             };
 
             var i: usize = 0;
@@ -2852,6 +2852,7 @@ pub const api = struct {
             this.username = try reader.readValue([]const u8);
             this.password = try reader.readValue([]const u8);
             this.token = try reader.readValue([]const u8);
+            this.email = try reader.readValue([]const u8);
             return this;
         }
 
@@ -2860,6 +2861,7 @@ pub const api = struct {
             try writer.writeValue(@TypeOf(this.username), this.username);
             try writer.writeValue(@TypeOf(this.password), this.password);
             try writer.writeValue(@TypeOf(this.token), this.token);
+            try writer.writeValue(@TypeOf(this.email), this.email);
         }
 
         pub const Parser = struct {
@@ -2895,12 +2897,12 @@ pub const api = struct {
                 // Token
                 if (url.username.len == 0 and url.password.len > 0) {
                     registry.token = url.password;
-                    registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+                    registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{f}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
                 } else if (url.username.len > 0 and url.password.len > 0) {
                     registry.username = url.username;
                     registry.password = url.password;
 
-                    registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+                    registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{f}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
                 } else {
                     // Do not include a trailing slash. There might be parameters at the end.
                     registry.url = url.href;
@@ -3052,173 +3054,11 @@ pub const api = struct {
 
         security_scanner: ?[]const u8 = null,
 
-        pub fn decode(reader: anytype) anyerror!BunInstall {
-            var this = std.mem.zeroes(BunInstall);
+        minimum_release_age_ms: ?f64 = null,
+        minimum_release_age_excludes: ?[]const []const u8 = null,
 
-            while (true) {
-                switch (try reader.readByte()) {
-                    0 => {
-                        return this;
-                    },
-
-                    1 => {
-                        this.default_registry = try reader.readValue(NpmRegistry);
-                    },
-                    2 => {
-                        this.scoped = try reader.readValue(NpmRegistryMap);
-                    },
-                    3 => {
-                        this.lockfile_path = try reader.readValue([]const u8);
-                    },
-                    4 => {
-                        this.save_lockfile_path = try reader.readValue([]const u8);
-                    },
-                    5 => {
-                        this.cache_directory = try reader.readValue([]const u8);
-                    },
-                    6 => {
-                        this.dry_run = try reader.readValue(bool);
-                    },
-                    7 => {
-                        this.force = try reader.readValue(bool);
-                    },
-                    8 => {
-                        this.save_dev = try reader.readValue(bool);
-                    },
-                    9 => {
-                        this.save_optional = try reader.readValue(bool);
-                    },
-                    10 => {
-                        this.save_peer = try reader.readValue(bool);
-                    },
-                    11 => {
-                        this.save_lockfile = try reader.readValue(bool);
-                    },
-                    12 => {
-                        this.production = try reader.readValue(bool);
-                    },
-                    13 => {
-                        this.save_yarn_lockfile = try reader.readValue(bool);
-                    },
-                    14 => {
-                        this.native_bin_links = try reader.readArray([]const u8);
-                    },
-                    15 => {
-                        this.disable_cache = try reader.readValue(bool);
-                    },
-                    16 => {
-                        this.disable_manifest_cache = try reader.readValue(bool);
-                    },
-                    17 => {
-                        this.global_dir = try reader.readValue([]const u8);
-                    },
-                    18 => {
-                        this.global_bin_dir = try reader.readValue([]const u8);
-                    },
-                    19 => {
-                        this.frozen_lockfile = try reader.readValue(bool);
-                    },
-                    20 => {
-                        this.exact = try reader.readValue(bool);
-                    },
-                    21 => {
-                        this.concurrent_scripts = try reader.readValue(u32);
-                    },
-                    else => {
-                        return error.InvalidMessage;
-                    },
-                }
-            }
-            unreachable;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            if (this.default_registry) |default_registry| {
-                try writer.writeFieldID(1);
-                try writer.writeValue(@TypeOf(default_registry), default_registry);
-            }
-            if (this.scoped) |scoped| {
-                try writer.writeFieldID(2);
-                try writer.writeValue(@TypeOf(scoped), scoped);
-            }
-            if (this.lockfile_path) |lockfile_path| {
-                try writer.writeFieldID(3);
-                try writer.writeValue(@TypeOf(lockfile_path), lockfile_path);
-            }
-            if (this.save_lockfile_path) |save_lockfile_path| {
-                try writer.writeFieldID(4);
-                try writer.writeValue(@TypeOf(save_lockfile_path), save_lockfile_path);
-            }
-            if (this.cache_directory) |cache_directory| {
-                try writer.writeFieldID(5);
-                try writer.writeValue(@TypeOf(cache_directory), cache_directory);
-            }
-            if (this.dry_run) |dry_run| {
-                try writer.writeFieldID(6);
-                try writer.writeInt(@as(u8, @intFromBool(dry_run)));
-            }
-            if (this.force) |force| {
-                try writer.writeFieldID(7);
-                try writer.writeInt(@as(u8, @intFromBool(force)));
-            }
-            if (this.save_dev) |save_dev| {
-                try writer.writeFieldID(8);
-                try writer.writeInt(@as(u8, @intFromBool(save_dev)));
-            }
-            if (this.save_optional) |save_optional| {
-                try writer.writeFieldID(9);
-                try writer.writeInt(@as(u8, @intFromBool(save_optional)));
-            }
-            if (this.save_peer) |save_peer| {
-                try writer.writeFieldID(10);
-                try writer.writeInt(@as(u8, @intFromBool(save_peer)));
-            }
-            if (this.save_lockfile) |save_lockfile| {
-                try writer.writeFieldID(11);
-                try writer.writeInt(@as(u8, @intFromBool(save_lockfile)));
-            }
-            if (this.production) |production| {
-                try writer.writeFieldID(12);
-                try writer.writeInt(@as(u8, @intFromBool(production)));
-            }
-            if (this.save_yarn_lockfile) |save_yarn_lockfile| {
-                try writer.writeFieldID(13);
-                try writer.writeInt(@as(u8, @intFromBool(save_yarn_lockfile)));
-            }
-            if (this.native_bin_links) |native_bin_links| {
-                try writer.writeFieldID(14);
-                try writer.writeArray([]const u8, native_bin_links);
-            }
-            if (this.disable_cache) |disable_cache| {
-                try writer.writeFieldID(15);
-                try writer.writeInt(@as(u8, @intFromBool(disable_cache)));
-            }
-            if (this.disable_manifest_cache) |disable_manifest_cache| {
-                try writer.writeFieldID(16);
-                try writer.writeInt(@as(u8, @intFromBool(disable_manifest_cache)));
-            }
-            if (this.global_dir) |global_dir| {
-                try writer.writeFieldID(17);
-                try writer.writeValue(@TypeOf(global_dir), global_dir);
-            }
-            if (this.global_bin_dir) |global_bin_dir| {
-                try writer.writeFieldID(18);
-                try writer.writeValue(@TypeOf(global_bin_dir), global_bin_dir);
-            }
-            if (this.frozen_lockfile) |frozen_lockfile| {
-                try writer.writeFieldID(19);
-                try writer.writeInt(@as(u8, @intFromBool(frozen_lockfile)));
-            }
-            if (this.exact) |exact| {
-                try writer.writeFieldID(20);
-                try writer.writeInt(@as(u8, @intFromBool(exact)));
-            }
-            if (this.concurrent_scripts) |concurrent_scripts| {
-                try writer.writeFieldID(21);
-                try writer.writeInt(concurrent_scripts);
-            }
-            try writer.endMessage();
-        }
+        public_hoist_pattern: ?install.PnpmMatcher = null,
+        hoist_pattern: ?install.PnpmMatcher = null,
     };
 
     pub const ClientServerModule = struct {
@@ -3381,4 +3221,5 @@ const std = @import("std");
 
 const bun = @import("bun");
 const OOM = bun.OOM;
+const install = bun.install;
 const js_ast = bun.ast;

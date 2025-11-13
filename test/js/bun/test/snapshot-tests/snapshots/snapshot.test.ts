@@ -631,7 +631,9 @@ Date)
   });
   it("should error trying to update the same line twice", () => {
     tester.testError(
-      { msg: "error: Failed to update inline snapshot: Multiple inline snapshots for the same call are not supported" },
+      {
+        msg: "error: Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value",
+      },
       /*js*/ `
         function oops(a) {expect(a).toMatchInlineSnapshot()}
         test("whoops", () => {

@@ -31,14 +31,18 @@ pub fn installWithManager(
 
     try manager.updateLockfileIfNeeded(load_result);
 
+    const config_version, const changed_config_version = load_result.chooseConfigVersion();
+    manager.options.config_version = config_version;
+
     var root = Lockfile.Package{};
     var needs_new_lockfile = load_result != .ok or
         (load_result.ok.lockfile.buffers.dependencies.items.len == 0 and manager.update_requests.len > 0);
 
     manager.options.enable.force_save_lockfile = manager.options.enable.force_save_lockfile or
+        changed_config_version or
         (load_result == .ok and
             // if migrated always save a new lockfile
-            (load_result.ok.was_migrated or
+            (load_result.ok.migrated != .none or
 
                 // if loaded from binary and save-text-lockfile is passed
                 (load_result.ok.format == .binary and
@@ -574,7 +578,14 @@ pub fn installWithManager(
             try waitForEverythingExceptPeers(manager);
         }
 
-        try waitForPeers(manager);
+        if (manager.peer_dependencies.readableLength() > 0) {
+            try manager.processPeerDependencyList();
+            manager.drainDependencyList();
+        }
+
+        if (manager.pendingTaskCount() > 0) {
+            try waitForPeers(manager);
+        }
 
         if (log_level.showProgress()) {
             manager.endProgressBar();
@@ -775,10 +786,20 @@ pub fn installWithManager(
             break :install_summary .{};
         }
 
-        switch (manager.options.node_linker) {
+        linker: switch (manager.options.node_linker) {
+            .auto => {
+                switch (config_version) {
+                    .v0 => continue :linker .hoisted,
+                    .v1 => {
+                        if (!load_result.migratedFromNpm() and manager.lockfile.workspace_paths.count() > 0) {
+                            continue :linker .isolated;
+                        }
+                        continue :linker .hoisted;
+                    },
+                }
+            },
+
             .hoisted,
-            // TODO
-            .auto,
             => break :install_summary try installHoistedPackages(
                 manager,
                 ctx,
@@ -788,15 +809,14 @@ pub fn installWithManager(
                 null,
             ),
 
-            .isolated => break :install_summary installIsolatedPackages(
+            .isolated,
+            => break :install_summary bun.handleOom(installIsolatedPackages(
                 manager,
                 ctx,
                 install_root_dependencies,
                 workspace_filters,
                 null,
-            ) catch |err| switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
-            },
+            )),
         }
     };
 
@@ -921,7 +941,7 @@ fn printInstallSummary(
             // We deliberately do not disable it after this.
             Output.enableBuffering();
             const writer = Output.writerBuffered();
-            switch (Output.enable_ansi_colors) {
+            switch (Output.enable_ansi_colors_stdout) {
                 inline else => |enable_ansi_colors| {
                     try Lockfile.Printer.Tree.print(&printer, this, @TypeOf(writer), writer, enable_ansi_colors, log_level);
                 },
@@ -1064,7 +1084,7 @@ pub fn getWorkspaceFilters(manager: *PackageManager, original_cwd: []const u8) !
                 },
             };
 
-            switch (bun.glob.walk.matchImpl(manager.allocator, pattern, path_or_name)) {
+            switch (bun.glob.match(pattern, path_or_name)) {
                 .match, .negate_match => install_root_dependencies = true,
 
                 .negate_no_match => {

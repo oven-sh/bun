@@ -56,12 +56,12 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
     var num_cpus: u32 = 0;
 
     var stack_fallback = std.heap.stackFallback(1024 * 8, bun.default_allocator);
-    var file_buf = std.ArrayList(u8).init(stack_fallback.get());
+    var file_buf = std.array_list.Managed(u8).init(stack_fallback.get());
     defer file_buf.deinit();
 
     // Read /proc/stat to get number of CPUs and times
     {
-        const file = try std.fs.openFileAbsolute("/proc/stat", .{});
+        const file = try std.fs.cwd().openFile("/proc/stat", .{});
         defer file.close();
 
         const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf, .probably_small).unwrap();
@@ -101,7 +101,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
     }
 
     // Read /proc/cpuinfo to get model information (optional)
-    if (std.fs.openFileAbsolute("/proc/cpuinfo", .{})) |file| {
+    if (std.fs.cwd().openFile("/proc/cpuinfo", .{})) |file| {
         defer file.close();
 
         const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf, .probably_small).unwrap();
@@ -152,7 +152,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
 
         var path_buf: [128]u8 = undefined;
         const path = try std.fmt.bufPrint(&path_buf, "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", .{cpu_index});
-        if (std.fs.openFileAbsolute(path, .{})) |file| {
+        if (std.fs.cwd().openFile(path, .{})) |file| {
             defer file.close();
 
             const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf, .probably_small).unwrap();
@@ -278,7 +278,7 @@ pub fn cpusImplWindows(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
 
 pub fn freemem() u64 {
     // OsBinding.cpp
-    return @extern(*const fn () callconv(.C) u64, .{
+    return @extern(*const fn () callconv(.c) u64, .{
         .name = "Bun__Os__getFreeMemory",
     })();
 }
@@ -314,7 +314,7 @@ pub fn homedir(global: *jsc.JSGlobalObject) !bun.String {
 
         // The posix implementation of uv_os_homedir first checks the HOME
         // environment variable, then falls back to reading the passwd entry.
-        if (bun.getenvZ("HOME")) |home| {
+        if (bun.env_var.HOME.get()) |home| {
             if (home.len > 0)
                 return bun.String.init(home);
         }
@@ -938,15 +938,15 @@ pub fn userInfo(globalThis: *jsc.JSGlobalObject, options: gen.UserInfoOptions) b
     result.put(globalThis, jsc.ZigString.static("homedir"), home.toJS(globalThis));
 
     if (comptime Environment.isWindows) {
-        result.put(globalThis, jsc.ZigString.static("username"), jsc.ZigString.init(bun.getenvZ("USERNAME") orelse "unknown").withEncoding().toJS(globalThis));
+        result.put(globalThis, jsc.ZigString.static("username"), jsc.ZigString.init(bun.env_var.USER.get() orelse "unknown").withEncoding().toJS(globalThis));
         result.put(globalThis, jsc.ZigString.static("uid"), jsc.JSValue.jsNumber(-1));
         result.put(globalThis, jsc.ZigString.static("gid"), jsc.JSValue.jsNumber(-1));
         result.put(globalThis, jsc.ZigString.static("shell"), jsc.JSValue.jsNull());
     } else {
-        const username = bun.getenvZ("USER") orelse "unknown";
+        const username = bun.env_var.USER.get() orelse "unknown";
 
         result.put(globalThis, jsc.ZigString.static("username"), jsc.ZigString.init(username).withEncoding().toJS(globalThis));
-        result.put(globalThis, jsc.ZigString.static("shell"), jsc.ZigString.init(bun.getenvZ("SHELL") orelse "unknown").withEncoding().toJS(globalThis));
+        result.put(globalThis, jsc.ZigString.static("shell"), jsc.ZigString.init(bun.env_var.SHELL.get() orelse "unknown").withEncoding().toJS(globalThis));
         result.put(globalThis, jsc.ZigString.static("uid"), jsc.JSValue.jsNumber(c.getuid()));
         result.put(globalThis, jsc.ZigString.static("gid"), jsc.JSValue.jsNumber(c.getgid()));
     }

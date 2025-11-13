@@ -1418,7 +1418,7 @@ using namespace JSC;
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsUseRealTimers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    globalObject->overridenDateNow = -1;
+    globalObject->overridenDateNow = std::numeric_limits<double>::quiet_NaN();
     return JSValue::encode(callframe->thisValue());
 }
 
@@ -1448,8 +1448,8 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
         }
         return JSValue::encode(callframe->thisValue());
     }
-    // number > 0 is a valid date otherwise it's invalid and we should reset the time (set to -1)
-    globalObject->overridenDateNow = (argument0.isNumber() && argument0.asNumber() >= 0) ? argument0.asNumber() : -1;
+    // number > 0 is a valid date otherwise it's invalid and we should reset the time (set to NaN)
+    globalObject->overridenDateNow = (argument0.isNumber() && argument0.asNumber() >= 0) ? argument0.asNumber() : std::numeric_limits<double>::quiet_NaN();
 
     return JSValue::encode(callframe->thisValue());
 }

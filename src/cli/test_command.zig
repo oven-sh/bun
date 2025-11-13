@@ -921,7 +921,7 @@ pub const CommandLineReporter = struct {
             .pass => this.summary().pass += 1,
             .skip => this.summary().skip += 1,
             .todo => this.summary().todo += 1,
-            .pass_because_failing_test_failed => this.summary().pass += 1,
+            .pass_because_failing_test_failed => this.summary().failing += 1,
             .skipped_because_label => this.summary().skipped_because_label += 1,
 
             .fail,
@@ -949,7 +949,7 @@ pub const CommandLineReporter = struct {
 
     pub fn printSummary(this: *CommandLineReporter) void {
         const summary_ = this.summary();
-        const tests = summary_.fail + summary_.pass + summary_.skip + summary_.todo;
+        const tests = summary_.fail + summary_.pass + summary_.skip + summary_.todo + summary_.failing;
         const files = summary_.files;
 
         Output.prettyError("Ran {d} test{s} across {d} file{s}. ", .{
@@ -1696,6 +1696,10 @@ pub const TestCommand = struct {
 
                 if (summary.todo > 0) {
                     Output.prettyError("{}<r><magenta>{d:5>} todo<r>\n", .{ indenter, summary.todo });
+                }
+
+                if (summary.failing > 0) {
+                    Output.prettyError("{}<r><magenta>{d:5>} failing<r>\n", .{ indenter, summary.failing });
                 }
 
                 if (summary.fail > 0) {

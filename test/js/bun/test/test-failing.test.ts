@@ -20,7 +20,7 @@ describe("test.failing", () => {
   it("passes if an error is thrown or a promise rejects ", async () => {
     const result = await $.cwd(fixtureDir)`${bunExe()} test ./failing-test-fails.fixture.ts`.quiet();
     const stderr = result.stderr.toString();
-    expect(stderr).toContain(" 2 pass\n");
+    expect(stderr).toContain(" 2 failing\n");
   });
 
   it("shows purple edit icon for passing failing tests, not green checkmark", async () => {

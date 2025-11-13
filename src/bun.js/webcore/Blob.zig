@@ -4768,7 +4768,6 @@ export fn Blob__deref(self: *Blob) void {
 }
 
 const WriteFilePromise = write_file.WriteFilePromise;
-const WriteFileWaitFromLockedValueTask = write_file.WriteFileWaitFromLockedValueTask;
 const NewReadFileHandler = read_file.NewReadFileHandler;
 
 const string = []const u8;

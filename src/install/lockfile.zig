@@ -965,7 +965,7 @@ pub fn hoist(
             item.dependency_id,
             item.hoist_root_id,
             method,
-            if (comptime method == .filter) subpath else {},
+            subpath,
             &builder,
         );
     }

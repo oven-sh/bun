@@ -90,7 +90,7 @@ pub fn PosixPipeWriter(
             if (buffer.len == 0 and !received_hup) {
                 log("PosixPipeWriter(0x{x}) handle={s}", .{ @intFromPtr(parent), @tagName(parent.handle) });
                 if (parent.handle == .poll) {
-                    log("PosixPipeWriter(0x{x}) got 0, registered state = {any}", .{ @intFromPtr(parent), parent.handle.poll.isRegistered() });
+                    log("PosixPipeWriter(0x{x}) got 0, registered state = {}", .{ @intFromPtr(parent), parent.handle.poll.isRegistered() });
                 }
                 return;
             }
@@ -258,7 +258,9 @@ pub fn PosixBufferedWriter(Parent: type, function_table: anytype) type {
 
         pub fn registerPoll(this: *PosixWriter) void {
             var poll = this.getPoll() orelse return;
-            switch (poll.registerWithFd(bun.uws.Loop.get(), .writable, .dispatch, poll.fd)) {
+            // Use the event loop from the parent, not the global one
+            const loop = this.parent.eventLoop().loop();
+            switch (poll.registerWithFd(loop, .writable, .dispatch, poll.fd)) {
                 .err => |err| {
                     onError(this.parent, err);
                 },
@@ -442,7 +444,7 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
             this.is_done = true;
             this.outgoing.reset();
 
-            onError(@alignCast(@ptrCast(this.parent)), err);
+            onError(@ptrCast(@alignCast(this.parent)), err);
             this.close();
         }
 
@@ -773,7 +775,7 @@ pub fn PosixStreamingWriter(comptime Parent: type, comptime function_table: anyt
 ///   parent: *Parent = undefined,
 ///   is_done: bool = false,
 ///   pub fn startWithCurrentPipe(this: *WindowsPipeWriter) bun.sys.Maybe(void),
-///   fn onClosePipe(pipe: *uv.Pipe) callconv(.C) void,
+///   fn onClosePipe(pipe: *uv.Pipe) callconv(.c) void,
 /// };
 fn BaseWindowsPipeWriter(
     comptime WindowsPipeWriter: type,
@@ -801,12 +803,12 @@ fn BaseWindowsPipeWriter(
             this.updateRef(event_loop, false);
         }
 
-        fn onPipeClose(handle: *uv.Pipe) callconv(.C) void {
+        fn onPipeClose(handle: *uv.Pipe) callconv(.c) void {
             const this = bun.cast(*uv.Pipe, handle.data);
             bun.default_allocator.destroy(this);
         }
 
-        fn onTTYClose(handle: *uv.uv_tty_t) callconv(.C) void {
+        fn onTTYClose(handle: *uv.uv_tty_t) callconv(.c) void {
             const this = bun.cast(*uv.uv_tty_t, handle.data);
             bun.default_allocator.destroy(this);
         }
@@ -897,7 +899,10 @@ fn BaseWindowsPipeWriter(
                 else => @compileError("Expected `bun.FileDescriptor` or `*bun.MovableIfWindowsFd` but got: " ++ @typeName(rawfd)),
             };
             bun.assert(this.source == null);
-            const source = switch (Source.open(uv.Loop.get(), fd)) {
+            // Use the event loop from the parent, not the global one
+            // This is critical for spawnSync to use its isolated loop
+            const loop = this.parent.loop();
+            const source = switch (Source.open(loop, fd)) {
                 .result => |source| source,
                 .err => |err| return .{ .err = err },
             };
@@ -1007,7 +1012,7 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
             }
         }
 
-        fn onFsWriteComplete(fs: *uv.fs_t) callconv(.C) void {
+        fn onFsWriteComplete(fs: *uv.fs_t) callconv(.c) void {
             const file = Source.File.fromFS(fs);
             const result = fs.result;
             const was_canceled = result.int() == uv.UV_ECANCELED;
@@ -1059,7 +1064,7 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
                     file.prepare();
                     this.write_buffer = uv.uv_buf_t.init(buffer);
 
-                    if (uv.uv_fs_write(uv.Loop.get(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
+                    if (uv.uv_fs_write(this.parent.loop(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
                         file.complete(false);
                         this.close();
                         onError(this.parent, err);
@@ -1095,9 +1100,9 @@ pub fn WindowsBufferedWriter(Parent: type, function_table: anytype) type {
     };
 }
 
-/// Basic std.ArrayList(u8) + usize cursor wrapper
+/// Basic std.array_list.Managed(u8) + usize cursor wrapper
 pub const StreamBuffer = struct {
-    list: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    list: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
     cursor: usize = 0,
 
     pub fn reset(this: *StreamBuffer) void {
@@ -1333,7 +1338,7 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
             }
         }
 
-        fn onFsWriteComplete(fs: *uv.fs_t) callconv(.C) void {
+        fn onFsWriteComplete(fs: *uv.fs_t) callconv(.c) void {
             const file = Source.File.fromFS(fs);
             const result = fs.result;
             const was_canceled = result.int() == uv.UV_ECANCELED;
@@ -1404,7 +1409,7 @@ pub fn WindowsStreamingWriter(comptime Parent: type, function_table: anytype) ty
                     file.prepare();
                     this.write_buffer = uv.uv_buf_t.init(bytes);
 
-                    if (uv.uv_fs_write(uv.Loop.get(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
+                    if (uv.uv_fs_write(this.parent.loop(), &file.fs, file.file, @ptrCast(&this.write_buffer), 1, -1, onFsWriteComplete).toError(.write)) |err| {
                         file.complete(false);
                         this.last_write_result = .{ .err = err };
                         onError(this.parent, err);

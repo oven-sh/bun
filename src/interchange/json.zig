@@ -4,7 +4,7 @@ const LEXER_DEBUGGER_WORKAROUND = false;
 
 const HashMapPool = struct {
     const HashMap = std.HashMap(u64, void, IdentityContext, 80);
-    const LinkedList = std.SinglyLinkedList(HashMap);
+    const LinkedList = bun.deprecated.SinglyLinkedList(HashMap);
     threadlocal var list: LinkedList = undefined;
     threadlocal var loaded: bool = false;
 
@@ -169,7 +169,7 @@ fn JSONLikeParser_(
                 .t_open_bracket => {
                     try p.lexer.next();
                     var is_single_line = !p.lexer.has_newline_before;
-                    var exprs = std.ArrayList(Expr).init(p.list_allocator);
+                    var exprs = std.array_list.Managed(Expr).init(p.list_allocator);
                     errdefer exprs.deinit();
 
                     while (p.lexer.token != .t_close_bracket) {
@@ -203,7 +203,7 @@ fn JSONLikeParser_(
                 .t_open_brace => {
                     try p.lexer.next();
                     var is_single_line = !p.lexer.has_newline_before;
-                    var properties = std.ArrayList(G.Property).init(p.list_allocator);
+                    var properties = std.array_list.Managed(G.Property).init(p.list_allocator);
                     errdefer properties.deinit();
 
                     const DuplicateNodeType = comptime if (opts.json_warn_duplicate_keys) *HashMapPool.LinkedList.Node else void;

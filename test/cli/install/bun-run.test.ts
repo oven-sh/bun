@@ -26,8 +26,8 @@ for (let withRun of [false, true]) {
           `{
             // single-line comment
             "name": "test",
-            /** even multi-line comment!! 
-             * such feature much compatible very ecosystem 
+            /** even multi-line comment!!
+             * such feature much compatible very ecosystem
              */
             "version": "0.0.0",
             "main": "test.js",
@@ -270,6 +270,31 @@ it("should show the correct working directory when run with --cwd", async () => 
   );
   const res = Bun.spawn({
     cmd: [bunExe(), "run", "--cwd", "subdir", "test.js"],
+    cwd: run_dir,
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...bunEnv,
+      BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
+    },
+  });
+
+  // The exit code will not be 1 if it panics.
+  expect(await res.exited).toBe(0);
+  expect(await res.stdout.text()).toMatch(/subdir/);
+});
+
+it("should show the correct working directory when run with --prefix", async () => {
+  await mkdir(join(run_dir, "subdir"));
+  await writeFile(
+    join(run_dir, "subdir", "test.js"),
+    `
+    console.log(process.cwd());
+  `,
+  );
+  const res = Bun.spawn({
+    cmd: [bunExe(), "run", "--prefix", "subdir", "test.js"],
     cwd: run_dir,
     stdin: "ignore",
     stdout: "pipe",

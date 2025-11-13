@@ -3248,13 +3248,13 @@ pub const timespec = extern struct {
 
         // Split interval into whole seconds and fractional milliseconds
         const sec_f = std.math.trunc(interval_ms / ms_per_s_f);
-        const sec_inc = @as(i64, @intFromFloat(sec_f));
+        const sec_inc: i64 = @intFromFloat(sec_f);
 
         const frac_ms = interval_ms - sec_f * ms_per_s_f;
         const nsec_inc_f = frac_ms * ns_per_ms_f;
 
-        // Truncate toward zero to match divTrunc/rem behavior conceptually
-        const nsec_inc = @as(i64, @intFromFloat(nsec_inc_f));
+        // Round to nearest integer to avoid floating-point precision errors
+        const nsec_inc: i64 = @intFromFloat(@round(nsec_inc_f));
 
         new_timespec.sec +%= sec_inc;
         new_timespec.nsec +%= nsec_inc;

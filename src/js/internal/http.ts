@@ -355,7 +355,6 @@ const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTT
 const kOutHeaders = Symbol("kOutHeaders");
 const kEmptyBuffer = Buffer.alloc(0);
 
-
 function ipToInt(ip) {
   const octets = ip.split(".");
   let result = 0;

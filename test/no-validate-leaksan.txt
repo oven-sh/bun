@@ -356,6 +356,7 @@ vendor/elysia/test/validator/response.test.ts
 vendor/elysia/test/validator/validator.test.ts
 vendor/elysia/test/ws/destructuring.test.ts
 vendor/elysia/test/ws/message.test.ts
+vendor/elysia/test/adapter/web-standard/map-response.test.ts
 
 # JSC::HandleSet::~HandleSet
 # bun.js.rare_data.deinit

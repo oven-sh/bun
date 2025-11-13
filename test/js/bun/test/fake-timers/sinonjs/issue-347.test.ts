@@ -1,3 +1,5 @@
+// https://github.com/sinonjs/fake-timers/blob/main/test/issue-347-test.js
+
 import { afterEach, beforeEach, describe, expect, test, vi } from "bun:test";
 import { promisify } from "node:util";
 

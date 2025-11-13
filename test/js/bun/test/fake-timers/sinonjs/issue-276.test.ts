@@ -1,3 +1,5 @@
+// https://github.com/sinonjs/fake-timers/blob/main/test/issue-276-test.js
+
 import { describe, test } from "bun:test";
 
 describe("#276 - remove config.target", () => {

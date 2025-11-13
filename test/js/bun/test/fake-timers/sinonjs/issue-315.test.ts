@@ -1,3 +1,5 @@
+// https://github.com/sinonjs/fake-timers/blob/main/test/issue-315-test.js
+
 import { afterEach, describe, expect, test, vi } from "bun:test";
 
 afterEach(() => vi.useRealTimers());

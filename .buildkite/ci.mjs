@@ -368,6 +368,13 @@ function getTestAgent(platform, options) {
   const { os, arch, profile } = platform;
 
   if (os === "darwin") {
+    if (arch === "aarch64") {
+      return {
+        queue: `test-scratch`,
+        os,
+        arch,
+      };
+    }
     return {
       queue: `test-${os}`,
       os,

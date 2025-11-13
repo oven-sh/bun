@@ -6,7 +6,7 @@ const hrtimePresent = typeof process !== "undefined" && typeof process.hrtime ==
 
 describe("issue #207 - nanosecond round-off errors on high-res timer", () => {
   if (hrtimePresent) {
-    test.todo("should not round off nanosecond arithmetic on hrtime - case 1", () => {
+    test("should not round off nanosecond arithmetic on hrtime - case 1", () => {
       // TODO: Need to implement hrtime mocking in Bun's fake timers
       vi.useFakeTimers();
       vi.advanceTimersByTime(1022.7791);

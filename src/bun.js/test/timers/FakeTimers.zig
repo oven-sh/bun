@@ -23,15 +23,14 @@ pub var current_time: struct {
     pub fn getTimespecNow(this: *@This()) ?bun.timespec {
         const value = this.#offset.load(.seq_cst);
         if (value == Offset.none) return null;
-        const result: bun.timespec = .{ .sec = 0, .nsec = 0 };
-        return result.addMs(value);
+        return value.toTimespec();
     }
     pub fn set(this: *@This(), globalObject: *jsc.JSGlobalObject, v: struct {
-        offset: bun.timespec,
+        offset: *const bun.timespec,
         js: ?f64 = null,
     }) void {
         const vm = globalObject.bunVM();
-        this.#offset.store(.fromTimespec(&v.offset), .seq_cst);
+        this.#offset.store(.fromTimespec(v.offset), .seq_cst);
         const timespec_ms: f64 = @floatFromInt(v.offset.msUnsigned());
         if (v.js) |js| {
             this.date_now_offset = js - timespec_ms;
@@ -42,7 +41,7 @@ pub var current_time: struct {
     }
     pub fn clear(this: *@This(), globalObject: *jsc.JSGlobalObject) void {
         const vm = globalObject.bunVM();
-        this.#offset.store(std.math.minInt(i64), .seq_cst);
+        this.#offset.store(.none, .seq_cst);
         bun.cpp.JSMock__setOverridenDateNow(globalObject, -1.0);
         vm.overridden_performance_now = null;
     }
@@ -68,7 +67,7 @@ fn activate(this: *FakeTimers, js_now: f64, globalObject: *jsc.JSGlobalObject) v
     defer this.assertValid(.locked);
 
     this.#active = true;
-    current_time.set(globalObject, .{ .offset = 0, .js = js_now });
+    current_time.set(globalObject, .{ .offset = &.epoch, .js = js_now });
 }
 fn deactivate(this: *FakeTimers, globalObject: *jsc.JSGlobalObject) void {
     this.assertValid(.locked);
@@ -113,7 +112,7 @@ fn fire(this: *FakeTimers, globalObject: *jsc.JSGlobalObject, next: *bun.api.Tim
         bun.assert(next.next.eql(&prev.?) or next.next.greater(&prev.?));
     }
     const now = next.next;
-    current_time.set(globalObject, .{ .offset = now.ms() });
+    current_time.set(globalObject, .{ .offset = &now });
     next.fire(&now, vm);
 }
 fn executeUntil(this: *FakeTimers, globalObject: *jsc.JSGlobalObject, until: bun.timespec) void {
@@ -221,12 +220,11 @@ fn advanceTimersByTime(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFr
     if (!arg.isNumber()) {
         return globalObject.throwInvalidArguments("advanceTimersToNextTimer() expects a number of milliseconds", .{});
     }
-    const timeoutAdd = try globalObject.validateIntegerRange(arg, u32, 0, .{ .min = 0, .field_name = "ms" });
-    const current = current_time.getTimespecNow() orelse return globalObject.throwInvalidArguments("Fake timers not initialized", .{});
-    const target = current.addMs(timeoutAdd);
+    const current = current_time.getTimespecNow() orelse return globalObject.throwInvalidArguments("Fake timers not initialized. Initialize with useFakeTimers() first.", .{});
+    const target = current.addMsFloat(arg.asNumber());
 
     this.executeUntil(globalObject, target);
-    current_time.set(globalObject, .{ .offset = target.ms() });
+    current_time.set(globalObject, .{ .offset = &target });
 
     return callframe.this();
 }

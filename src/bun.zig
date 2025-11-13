@@ -3239,6 +3239,37 @@ pub const timespec = extern struct {
 
         return new_timespec;
     }
+    pub fn addMsFloat(this: *const timespec, interval_ms: f64) timespec {
+        const ms_per_s_f = @as(f64, @floatFromInt(std.time.ms_per_s)); // 1000
+        const ns_per_ms_f = @as(f64, @floatFromInt(std.time.ns_per_ms)); // 1_000_000
+
+        // Start from the current time
+        var new_timespec = this.*;
+
+        // Split interval into whole seconds and fractional milliseconds
+        const sec_f = std.math.trunc(interval_ms / ms_per_s_f);
+        const sec_inc = @as(i64, @intFromFloat(sec_f));
+
+        const frac_ms = interval_ms - sec_f * ms_per_s_f;
+        const nsec_inc_f = frac_ms * ns_per_ms_f;
+
+        // Truncate toward zero to match divTrunc/rem behavior conceptually
+        const nsec_inc = @as(i64, @intFromFloat(nsec_inc_f));
+
+        new_timespec.sec +%= sec_inc;
+        new_timespec.nsec +%= nsec_inc;
+
+        // Normalize nsec into [0, ns_per_s)
+        if (new_timespec.nsec >= std.time.ns_per_s) {
+            new_timespec.sec +%= 1;
+            new_timespec.nsec -%= std.time.ns_per_s;
+        } else if (new_timespec.nsec < 0) {
+            new_timespec.sec -%= 1;
+            new_timespec.nsec +%= std.time.ns_per_s;
+        }
+
+        return new_timespec;
+    }
 
     pub fn msFromNow(comptime mock_mode: MockMode, interval: i64) timespec {
         return now(mock_mode).addMs(interval);

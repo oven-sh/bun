@@ -15,26 +15,25 @@ Build a minimal HTTP server with `Bun.serve`, run it locally, then evolve it by 
 	<Step title="Step 1">
 		Initialize a new project with `bun init`.
 
-    	```bash terminal icon="terminal"
-    	bun init my-app
-    	```
+		```bash terminal icon="terminal"
+		bun init my-app
+		```
 
-    	It'll prompt you to pick a template, either `Blank`, `React`, or `Library`. For this guide, we'll pick `Blank`.
+		It'll prompt you to pick a template, either `Blank`, `React`, or `Library`. For this guide, we'll pick `Blank`.
 
-    	```bash terminal icon="terminal"
-    	bun init my-app
-    	```
-    	```txt
-    	✓ Select a project template: Blank
+		```bash terminal icon="terminal"
+		bun init my-app
+		```
+		```txt
+		✓ Select a project template: Blank
 
-    	- .gitignore
-    	- CLAUDE.md
-    	- .cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc -> CLAUDE.md
-    	- index.ts
-    	- tsconfig.json (for editor autocomplete)
-    	- README.md
-
-````
+		- .gitignore
+		- CLAUDE.md
+		- .cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc -> CLAUDE.md
+		- index.ts
+		- tsconfig.json (for editor autocomplete)
+		- README.md
+		```
 
   	This automatically creates a `my-app` directory with a basic Bun app.
   </Step>
@@ -47,7 +46,7 @@ Build a minimal HTTP server with `Bun.serve`, run it locally, then evolve it by 
   	bun run index.ts
   	```
   	```txt
-  Hello via Bun!
+    Hello via Bun!
   	```
 
   	You should see a console output saying `"Hello via Bun!"`.
@@ -214,17 +213,17 @@ Bun can also execute `"scripts"` from your `package.json`. Add the following scr
 
 ```json package.json icon="file-code"
 {
-"name": "quickstart",
-"module": "index.ts",
-"type": "module",
-"scripts": {
-"start": "bun run index.ts"
-},
-"devDependencies": {
-"@types/bun": "latest"
+	"name": "quickstart",
+	"module": "index.ts",
+	"type": "module",
+	"scripts": {
+		"start": "bun run index.ts"
+	},
+	"devDependencies": {
+		"@types/bun": "latest"
+	}
 }
-}
-````
+```
 
 Then run it with `bun run start`.
 
@@ -233,7 +232,7 @@ bun run start
 ```
 
 ```txt
- Listening on http://localhost:3000
+Listening on http://localhost:3000
 ```
 
 <Note>⚡️ **Performance** — `bun run` is roughly 28x faster than `npm run` (6ms vs 170ms of overhead).</Note>

@@ -580,8 +580,8 @@ function getTestBunStep(platform, options, testOptions = {}) {
     },
     command:
       os === "windows"
-        ? `whoami && echo $PATH && node .\\scripts\\runner.node.mjs ${args.join(" ")}`
-        : `./scripts/runner.node.mjs ${args.join(" ")}`,
+        ? `node .\\scripts\\runner.node.mjs ${args.join(" ")}`
+        : `whoami && echo $PATH && ./scripts/runner.node.mjs ${args.join(" ")}`,
   };
 }
 

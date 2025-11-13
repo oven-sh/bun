@@ -1589,7 +1589,7 @@ pub fn Package(comptime SemverIntType: type) type {
 
                         var nohoist_patterns: bun.collections.ArrayListDefault([]const u8) = try .initCapacity(nohoist_arr.items.len);
 
-                        for (nohoist_arr.items.slice()) |nohoist_item| {
+                        for (nohoist_arr.items.slice()) |*nohoist_item| {
                             if (!nohoist_item.isString()) {
                                 try log.addError(source, nohoist_item.loc, "Expected a string pattern");
                                 return error.InvalidPackageJSON;

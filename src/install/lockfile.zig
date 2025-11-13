@@ -959,11 +959,7 @@ pub fn hoist(
     while (builder.queue.readItem()) |item| {
         var subpath = item.subpath;
 
-        defer {
-            if (comptime method == .filter) {
-                subpath.deinit();
-            }
-        }
+        defer bun.memory.deinit(&subpath);
 
         try builder.list.items(.tree)[item.tree_id].processSubtree(
             item.dependency_id,

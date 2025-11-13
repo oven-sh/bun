@@ -22,7 +22,16 @@
 #ifndef WIN32
 #include <sys/ioctl.h>
 #endif
+
+#if __has_include("wtf/Platform.h")
 #include "wtf/Platform.h"
+#elif !defined(ASSERT_ENABLED)
+#if defined(BUN_DEBUG) || defined(__has_feature) && __has_feature(address_sanitizer) || defined(__SANITIZE_ADDRESS__)
+#define ASSERT_ENABLED 1
+#else 
+#define ASSERT_ENABLED 0
+#endif
+#endif
 
 #if ASSERT_ENABLED
 extern const size_t Bun__lock__size;

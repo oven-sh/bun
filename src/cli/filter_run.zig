@@ -27,7 +27,7 @@ pub const ProcessHandle = struct {
 
     stdout: bun.io.BufferedReader = bun.io.BufferedReader.init(This),
     stderr: bun.io.BufferedReader = bun.io.BufferedReader.init(This),
-    buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    buffer: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
 
     process: ?struct {
         ptr: *bun.spawn.Process,
@@ -39,7 +39,7 @@ pub const ProcessHandle = struct {
     end_time: ?std.time.Instant = null,
 
     remaining_dependencies: usize = 0,
-    dependents: std.ArrayList(*This) = std.ArrayList(*This).init(bun.default_allocator),
+    dependents: std.array_list.Managed(*This) = std.array_list.Managed(*This).init(bun.default_allocator),
     visited: bool = false,
     visiting: bool = false,
 
@@ -127,8 +127,12 @@ pub const ProcessHandle = struct {
         return this.state.event_loop;
     }
 
-    pub fn loop(this: *This) *bun.uws.Loop {
-        return this.state.event_loop.loop;
+    pub fn loop(this: *This) *bun.Async.Loop {
+        if (comptime bun.Environment.isWindows) {
+            return this.state.event_loop.loop.uv_loop;
+        } else {
+            return this.state.event_loop.loop;
+        }
     }
 };
 
@@ -143,7 +147,7 @@ const State = struct {
     event_loop: *bun.jsc.MiniEventLoop,
     remaining_scripts: usize = 0,
     // buffer for batched output
-    draw_buf: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    draw_buf: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
     last_lines_written: usize = 0,
     pretty_output: bool,
     shell_bin: [:0]const u8,
@@ -335,7 +339,7 @@ const State = struct {
     }
 
     fn flushDrawBuf(this: *This) void {
-        std.io.getStdOut().writeAll(this.draw_buf.items) catch {};
+        std.fs.File.stdout().writeAll(this.draw_buf.items) catch {};
     }
 
     pub fn abort(this: *This) void {
@@ -371,13 +375,13 @@ const AbortHandler = struct {
 
     var should_abort = false;
 
-    fn posixSignalHandler(sig: i32, info: *const std.posix.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
+    fn posixSignalHandler(sig: i32, info: *const std.posix.siginfo_t, _: ?*const anyopaque) callconv(.c) void {
         _ = sig;
         _ = info;
         should_abort = true;
     }
 
-    fn windowsCtrlHandler(dwCtrlType: std.os.windows.DWORD) callconv(std.os.windows.WINAPI) std.os.windows.BOOL {
+    fn windowsCtrlHandler(dwCtrlType: std.os.windows.DWORD) callconv(.winapi) std.os.windows.BOOL {
         if (dwCtrlType == std.os.windows.CTRL_C_EVENT) {
             should_abort = true;
             return std.os.windows.TRUE;
@@ -389,7 +393,7 @@ const AbortHandler = struct {
         if (Environment.isPosix) {
             const action = std.posix.Sigaction{
                 .handler = .{ .sigaction = AbortHandler.posixSignalHandler },
-                .mask = std.posix.empty_sigset,
+                .mask = std.posix.sigemptyset(),
                 .flags = std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND,
             };
             std.posix.sigaction(std.posix.SIG.INT, &action, null);
@@ -433,8 +437,16 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     const fsinstance = try bun.fs.FileSystem.init(null);
 
     // these things are leaked because we are going to exit
-    var filter_instance = try FilterArg.FilterSet.init(ctx.allocator, ctx.filters, fsinstance.top_level_dir);
-    var patterns = std.ArrayList([]u8).init(ctx.allocator);
+    // When --workspaces is set, we want to match all workspace packages
+    // Otherwise use the provided filters
+    var filters_to_use = ctx.filters;
+    if (ctx.workspaces) {
+        // Use "*" as filter to match all packages in the workspace
+        filters_to_use = &.{"*"};
+    }
+
+    var filter_instance = try FilterArg.FilterSet.init(ctx.allocator, filters_to_use, fsinstance.top_level_dir);
+    var patterns = std.array_list.Managed([]u8).init(ctx.allocator);
 
     // Find package.json at workspace root
     var root_buf: bun.PathBuffer = undefined;
@@ -447,11 +459,16 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     defer package_json_iter.deinit();
 
     // Get list of packages that match the configuration
-    var scripts = std.ArrayList(ScriptConfig).init(ctx.allocator);
+    var scripts = std.array_list.Managed(ScriptConfig).init(ctx.allocator);
     // var scripts = std.ArrayHashMap([]const u8, ScriptConfig).init(ctx.allocator);
     while (try package_json_iter.next()) |package_json_path| {
         const dirpath = std.fs.path.dirname(package_json_path) orelse Global.crash();
         const path = bun.strings.withoutTrailingSlash(dirpath);
+
+        // When using --workspaces, skip the root package to prevent recursion
+        if (ctx.workspaces and strings.eql(path, resolve_root)) {
+            continue;
+        }
 
         const pkgjson = bun.PackageJSON.parse(&this_transpiler.resolver, dirpath, .invalid, null, .include_scripts, .main) orelse {
             Output.warn("Failed to read package.json\n", .{});
@@ -465,13 +482,20 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
 
         const PATH = try RunCommand.configurePathForRunWithPackageJsonDir(ctx, dirpath, &this_transpiler, null, dirpath, ctx.debug.run_in_bun);
 
-        for (&[3][]const u8{ pre_script_name, script_name, post_script_name }) |name| {
-            const original_content = pkgscripts.get(name) orelse continue;
+        for (&[3][]const u8{ pre_script_name, script_name, post_script_name }, 0..) |name, i| {
+            const original_content = pkgscripts.get(name) orelse {
+                if (i == 1 and ctx.workspaces and !ctx.if_present) {
+                    Output.errGeneric("Missing '{s}' script at '{s}'", .{ script_name, path });
+                    Global.exit(1);
+                }
+
+                continue;
+            };
 
             var copy_script_capacity: usize = original_content.len;
             for (ctx.passthrough) |part| copy_script_capacity += 1 + part.len;
             // we leak this
-            var copy_script = try std.ArrayList(u8).initCapacity(ctx.allocator, copy_script_capacity);
+            var copy_script = try std.array_list.Managed(u8).initCapacity(ctx.allocator, copy_script_capacity);
 
             try RunCommand.replacePackageManagerRun(&copy_script, original_content);
             const len_command_only = copy_script.items.len;
@@ -500,11 +524,19 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     }
 
     if (scripts.items.len == 0) {
-        Output.prettyErrorln("<r><red>error<r>: No packages matched the filter", .{});
+        if (ctx.if_present) {
+            // Exit silently with success when --if-present is set
+            Global.exit(0);
+        }
+        if (ctx.workspaces) {
+            Output.errGeneric("No workspace packages have script \"{s}\"", .{script_name});
+        } else {
+            Output.errGeneric("No packages matched the filter", .{});
+        }
         Global.exit(1);
     }
 
-    const event_loop = bun.jsc.MiniEventLoop.initGlobal(this_transpiler.env);
+    const event_loop = bun.jsc.MiniEventLoop.initGlobal(this_transpiler.env, null);
     const shell_bin: [:0]const u8 = if (Environment.isPosix)
         RunCommand.findShell(this_transpiler.env.get("PATH") orelse "", fsinstance.top_level_dir) orelse return error.MissingShell
     else
@@ -525,7 +557,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     }
 
     // initialize the handles
-    var map = bun.StringHashMap(std.ArrayList(*ProcessHandle)).init(ctx.allocator);
+    var map = bun.StringHashMap(std.array_list.Managed(*ProcessHandle)).init(ctx.allocator);
     for (scripts.items, 0..) |*script, i| {
         state.handles[i] = ProcessHandle{
             .state = &state,
@@ -545,7 +577,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             // Output.prettyErrorln("<r><red>error<r>: Duplicate package name: {s}", .{script.package_name});
             // Global.exit(1);
         } else {
-            res.value_ptr.* = std.ArrayList(*ProcessHandle).init(ctx.allocator);
+            res.value_ptr.* = std.array_list.Managed(*ProcessHandle).init(ctx.allocator);
             try res.value_ptr.append(&state.handles[i]);
             // &state.handles[i];
         }
@@ -648,6 +680,7 @@ const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
 const Output = bun.Output;
+const strings = bun.strings;
 const transpiler = bun.transpiler;
 
 const CLI = bun.cli;

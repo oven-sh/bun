@@ -44,12 +44,12 @@ pub fn stringify(global: *JSGlobalObject, callFrame: *jsc.CallFrame) JSError!JSV
     defer stringifier.deinit();
 
     stringifier.findAnchorsAndAliases(global, value, .root) catch |err| return switch (err) {
-        error.OutOfMemory, error.JSError => |js_err| js_err,
+        error.OutOfMemory, error.JSError, error.JSTerminated => |js_err| js_err,
         error.StackOverflow => global.throwStackOverflow(),
     };
 
     stringifier.stringify(global, value) catch |err| return switch (err) {
-        error.OutOfMemory, error.JSError => |js_err| js_err,
+        error.OutOfMemory, error.JSError, error.JSTerminated => |js_err| js_err,
         error.StackOverflow => global.throwStackOverflow(),
     };
 
@@ -610,7 +610,7 @@ const Stringifier = struct {
         }
 
         switch (str.charAt(0)) {
-            // starting with indicators or whitespace requires quotes
+            // starting with an indicator character requires quotes
             '&',
             '*',
             '?',
@@ -621,11 +621,21 @@ const Stringifier = struct {
             '!',
             '%',
             '@',
+            ':',
+            ',',
+            '[',
+            ']',
+            '{',
+            '}',
+            '#',
+            '\'',
+            '"',
+            '`',
+            // starting with whitespace requires quotes
             ' ',
             '\t',
             '\n',
             '\r',
-            '#',
             => return true,
 
             else => {},
@@ -912,7 +922,8 @@ pub fn parse(
     const input_value = callFrame.argumentsAsArray(1)[0];
 
     const input: jsc.Node.BlobOrStringOrBuffer = try jsc.Node.BlobOrStringOrBuffer.fromJS(global, arena.allocator(), input_value) orelse input: {
-        const str = try input_value.toBunString(global);
+        var str = try input_value.toBunString(global);
+        defer str.deref();
         break :input .{ .string_or_buffer = .{ .string = str.toSlice(arena.allocator()) } };
     };
     defer input.deinit();
@@ -925,7 +936,14 @@ pub fn parse(
     const root = bun.interchange.yaml.YAML.parse(source, &log, arena.allocator()) catch |err| return switch (err) {
         error.OutOfMemory => |oom| oom,
         error.StackOverflow => global.throwStackOverflow(),
-        else => global.throwValue(try log.toJS(global, bun.default_allocator, "Failed to parse YAML")),
+        else => {
+            if (log.msgs.items.len > 0) {
+                const first_msg = log.msgs.items[0];
+                const error_text = first_msg.data.text;
+                return global.throwValue(global.createSyntaxErrorInstance("YAML Parse error: {s}", .{error_text}));
+            }
+            return global.throwValue(global.createSyntaxErrorInstance("YAML Parse error: Unable to parse YAML string", .{}));
+        },
     };
 
     var ctx: ParserCtx = .{
@@ -961,7 +979,7 @@ const ParserCtx = struct {
                 ctx.result = ctx.global.throwOutOfMemoryValue();
                 return;
             },
-            error.JSError => {
+            error.JSError, error.JSTerminated => {
                 ctx.result = .zero;
                 return;
             },
@@ -1023,7 +1041,7 @@ const ParserCtx = struct {
                     const key_str = try key.toBunString(ctx.global);
                     defer key_str.deref();
 
-                    obj.putMayBeIndex(ctx.global, &key_str, value);
+                    try obj.putMayBeIndex(ctx.global, &key_str, value);
                 }
 
                 return obj;

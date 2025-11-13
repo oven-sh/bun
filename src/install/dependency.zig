@@ -173,45 +173,6 @@ pub inline fn isSCPLikePath(dependency: string) bool {
     return false;
 }
 
-/// `isGitHubShorthand` from npm
-/// https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/hosted-git-info/lib/from-url.js#L6
-pub inline fn isGitHubRepoPath(dependency: string) bool {
-    // Shortest valid expression: u/r
-    if (dependency.len < 3) return false;
-
-    var hash_index: usize = 0;
-
-    // the branch could have slashes
-    // - oven-sh/bun#brach/name
-    var first_slash_index: usize = 0;
-
-    for (dependency, 0..) |c, i| {
-        switch (c) {
-            '/' => {
-                if (i == 0) return false;
-                if (first_slash_index == 0) {
-                    first_slash_index = i;
-                }
-            },
-            '#' => {
-                if (i == 0) return false;
-                if (hash_index > 0) return false;
-                if (first_slash_index == 0) return false;
-                hash_index = i;
-            },
-            // Not allowed in username
-            '.', '_' => {
-                if (first_slash_index == 0) return false;
-            },
-            // Must be alphanumeric
-            '-', 'a'...'z', 'A'...'Z', '0'...'9' => {},
-            else => return false,
-        }
-    }
-
-    return hash_index != dependency.len - 1 and first_slash_index > 0 and first_slash_index != dependency.len - 1;
-}
-
 /// Github allows for the following format of URL:
 /// https://github.com/<org>/<repo>/tarball/<ref>
 /// This is a legacy (but still supported) method of retrieving a tarball of an
@@ -245,6 +206,20 @@ pub inline fn isTarball(dependency: string) bool {
 /// the input is assumed to be either a remote or local tarball
 pub inline fn isRemoteTarball(dependency: string) bool {
     return strings.hasPrefixComptime(dependency, "https://") or strings.hasPrefixComptime(dependency, "http://");
+}
+
+pub fn splitVersionAndMaybeName(str: []const u8) struct { []const u8, ?[]const u8 } {
+    if (strings.indexOfChar(str, '@')) |at_index| {
+        if (at_index != 0) {
+            return .{ str[at_index + 1 ..], str[0..at_index] };
+        }
+
+        const second_at_index = (strings.indexOfChar(str[1..], '@') orelse return .{ str, null }) + 1;
+
+        return .{ str[second_at_index + 1 ..], str[0..second_at_index] };
+    }
+
+    return .{ str, null };
 }
 
 /// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.
@@ -333,7 +308,7 @@ pub const Version = struct {
             },
             .npm => {
                 object.put(globalThis, "name", try dep.value.npm.name.toJS(buf, globalThis));
-                var version_str = try bun.String.createFormat("{}", .{dep.value.npm.version.fmt(buf)});
+                var version_str = try bun.String.createFormat("{f}", .{dep.value.npm.version.fmt(buf)});
                 object.put(globalThis, "version", version_str.transferToJS(globalThis));
                 object.put(globalThis, "alias", jsc.JSValue.jsBoolean(dep.value.npm.is_alias));
             },
@@ -519,6 +494,10 @@ pub const Version = struct {
                 return .folder;
             }
 
+            // Allocator necessary for slow paths.
+            var stackFallback = std.heap.stackFallback(1024, bun.default_allocator);
+            const allocator = stackFallback.get();
+
             switch (dependency[0]) {
                 // =1
                 // >1.2
@@ -585,11 +564,20 @@ pub const Version = struct {
                         if (url.len > 2) {
                             switch (url[0]) {
                                 ':' => {
+                                    // TODO(markovejnovic): This check for testing whether the URL
+                                    // is a Git URL shall be moved to npm_package_arg.zig when that
+                                    // is implemented.
                                     if (strings.hasPrefixComptime(url, "://")) {
                                         url = url["://".len..];
                                         if (strings.hasPrefixComptime(url, "github.com/")) {
-                                            if (isGitHubRepoPath(url["github.com/".len..])) return .github;
+                                            if (hosted_git_info.isGitHubShorthand(url["github.com/".len..])) return .github;
                                         }
+
+                                        if (hosted_git_info.HostedGitInfo.fromUrl(allocator, dependency) catch null) |info| {
+                                            defer info.deinit();
+                                            return hgiToTag(info);
+                                        }
+
                                         return .git;
                                     }
                                 },
@@ -619,15 +607,21 @@ pub const Version = struct {
                                             else => false,
                                         }) {
                                             if (strings.hasPrefixComptime(url, "github.com/")) {
-                                                if (isGitHubRepoPath(url["github.com/".len..])) return .github;
+                                                if (hosted_git_info.isGitHubShorthand(url["github.com/".len..])) return .github;
                                             }
+
+                                            if (hosted_git_info.HostedGitInfo.fromUrl(allocator, dependency) catch null) |info| {
+                                                defer info.deinit();
+                                                return hgiToTag(info);
+                                            }
+
                                             return .git;
                                         }
                                     }
                                 },
                                 'h' => {
                                     if (strings.hasPrefixComptime(url, "hub:")) {
-                                        if (isGitHubRepoPath(url["hub:".len..])) return .github;
+                                        if (hosted_git_info.isGitHubShorthand(url["hub:".len..])) return .github;
                                     }
                                 },
                                 else => {},
@@ -659,11 +653,12 @@ pub const Version = struct {
                             if (strings.hasPrefixComptime(url, "github.com/")) {
                                 const path = url["github.com/".len..];
                                 if (isGitHubTarballPath(path)) return .tarball;
-                                if (isGitHubRepoPath(path)) return .github;
+                                if (hosted_git_info.isGitHubShorthand(path)) return .github;
                             }
 
-                            if (strings.indexOfChar(url, '.')) |dot| {
-                                if (Repository.Hosts.has(url[0..dot])) return .git;
+                            if (hosted_git_info.HostedGitInfo.fromUrl(allocator, dependency) catch null) |info| {
+                                defer info.deinit();
+                                return hgiToTag(info);
                             }
 
                             return .tarball;
@@ -684,9 +679,11 @@ pub const Version = struct {
                                 url = url["git@".len..];
                             }
 
-                            if (strings.indexOfChar(url, '.')) |dot| {
-                                if (Repository.Hosts.has(url[0..dot])) return .git;
+                            if (hosted_git_info.HostedGitInfo.fromUrl(allocator, dependency) catch null) |info| {
+                                defer info.deinit();
+                                return hgiToTag(info);
                             }
+                            return .git;
                         }
                     }
                 },
@@ -718,7 +715,7 @@ pub const Version = struct {
                 // virt@example.com:repo.git
                 'v' => {
                     if (isTarball(dependency)) return .tarball;
-                    if (isGitHubRepoPath(dependency)) return .github;
+                    if (hosted_git_info.isGitHubShorthand(dependency)) return .github;
                     if (isSCPLikePath(dependency)) return .git;
                     if (dependency.len == 1) return .dist_tag;
                     return switch (dependency[1]) {
@@ -751,11 +748,20 @@ pub const Version = struct {
             // foo.tgz
             // bar.tar.gz
             if (isTarball(dependency)) return .tarball;
+
             // user/repo
             // user/repo#main
-            if (isGitHubRepoPath(dependency)) return .github;
+            if (hosted_git_info.isGitHubShorthand(dependency)) return .github;
+
             // git@example.com:path/to/repo.git
-            if (isSCPLikePath(dependency)) return .git;
+            if (isSCPLikePath(dependency)) {
+                if (hosted_git_info.HostedGitInfo.fromUrl(allocator, dependency) catch null) |info| {
+                    defer info.deinit();
+                    return hgiToTag(info);
+                }
+                return .git;
+            }
+
             // beta
 
             if (!strings.containsChar(dependency, '|')) {
@@ -771,7 +777,14 @@ pub const Version = struct {
                 return .js_undefined;
             }
 
-            const tag = try Tag.fromJS(globalObject, arguments[0]) orelse return .js_undefined;
+            // Convert JSValue to string slice
+            const dependency_str = try arguments[0].toBunString(globalObject);
+            defer dependency_str.deref();
+            var as_utf8 = dependency_str.toUTF8(bun.default_allocator);
+            defer as_utf8.deinit();
+
+            // Infer the tag from the dependency string
+            const tag = Tag.infer(as_utf8.slice());
             var str = bun.String.init(@tagName(tag));
             return str.transferToJS(globalObject);
         }
@@ -1027,70 +1040,51 @@ pub fn parseWithTag(
             };
         },
         .github => {
-            var from_url = false;
-            var input = dependency;
-            if (strings.hasPrefixComptime(input, "github:")) {
-                input = input["github:".len..];
-            } else if (strings.hasPrefixComptime(input, "git://github.com/")) {
-                input = input["git://github.com/".len..];
-                from_url = true;
-            } else {
-                if (strings.hasPrefixComptime(input, "git+")) {
-                    input = input["git+".len..];
-                }
-                if (strings.hasPrefixComptime(input, "http")) {
-                    var url = input["http".len..];
-                    if (url.len > 2) {
-                        switch (url[0]) {
-                            ':' => {
-                                if (strings.hasPrefixComptime(url, "://")) {
-                                    url = url["://".len..];
-                                }
-                            },
-                            's' => {
-                                if (strings.hasPrefixComptime(url, "s://")) {
-                                    url = url["s://".len..];
-                                }
-                            },
-                            else => {},
-                        }
-                        if (strings.hasPrefixComptime(url, "github.com/")) {
-                            input = url["github.com/".len..];
-                            from_url = true;
-                        }
-                    }
-                }
-            }
+            const info = bun.handleOom(
+                hosted_git_info.HostedGitInfo.fromUrl(allocator, dependency),
+            ) catch {
+                return null;
+            } orelse {
+                return null;
+            };
+            defer info.deinit();
 
-            if (comptime Environment.allow_assert) bun.assert(isGitHubRepoPath(input));
+            // Now we have parsed info, we need to find these substrings in the original dependency
+            // to create String objects that point to the original buffer
+            const owner_str = info.user orelse "";
+            const repo_str = info.project;
+            const committish_str = info.committish orelse "";
 
-            var hash_index: usize = 0;
-            var slash_index: usize = 0;
-            for (input, 0..) |c, i| {
-                switch (c) {
-                    '/' => {
-                        slash_index = i;
-                    },
-                    '#' => {
-                        hash_index = i;
-                        break;
-                    },
-                    else => {},
-                }
-            }
+            // Find owner in dependency string
+            const owner_idx = strings.indexOf(dependency, owner_str);
+            const owner = if (owner_idx) |idx|
+                sliced.sub(dependency[idx .. idx + owner_str.len]).value()
+            else
+                String.from("");
 
-            var repo = if (hash_index == 0) input[slash_index + 1 ..] else input[slash_index + 1 .. hash_index];
-            if (from_url and strings.endsWithComptime(repo, ".git")) {
-                repo = repo[0 .. repo.len - ".git".len];
-            }
+            // Find repo in dependency string
+            const repo_idx = strings.indexOf(dependency, repo_str);
+            const repo = if (repo_idx) |idx|
+                sliced.sub(dependency[idx .. idx + repo_str.len]).value()
+            else
+                String.from("");
+
+            // Find committish in dependency string
+            const committish = if (committish_str.len > 0) blk: {
+                const committish_idx = strings.indexOf(dependency, committish_str);
+                break :blk if (committish_idx) |idx|
+                    sliced.sub(dependency[idx .. idx + committish_str.len]).value()
+                else
+                    String.from("");
+            } else String.from("");
 
             return .{
                 .literal = sliced.value(),
                 .value = .{
                     .github = .{
-                        .owner = sliced.sub(input[0..slash_index]).value(),
-                        .repo = sliced.sub(repo).value(),
-                        .committish = if (hash_index == 0) String.from("") else sliced.sub(input[hash_index + 1 ..]).value(),
+                        .owner = owner,
+                        .repo = repo,
+                        .committish = committish,
                     },
                 },
                 .tag = .github,
@@ -1440,9 +1434,17 @@ pub const Behavior = packed struct(u8) {
     }
 };
 
+fn hgiToTag(info: hosted_git_info.HostedGitInfo) Version.Tag {
+    return switch (info.host_provider) {
+        .github => if (info.default_representation == .shortcut) .github else .git,
+        .bitbucket, .gitlab, .gist, .sourcehut => .git,
+    };
+}
+
 const string = []const u8;
 
 const Environment = @import("../env.zig");
+const hosted_git_info = @import("./hosted_git_info.zig");
 const std = @import("std");
 const Repository = @import("./repository.zig").Repository;
 

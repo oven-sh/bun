@@ -566,7 +566,7 @@ pub fn setVerifyMode(this: *This, globalObject: *jsc.JSGlobalObject, callframe: 
     return .js_undefined;
 }
 
-fn alwaysAllowSSLVerifyCallback(_: c_int, _: ?*BoringSSL.X509_STORE_CTX) callconv(.C) c_int {
+fn alwaysAllowSSLVerifyCallback(_: c_int, _: ?*BoringSSL.X509_STORE_CTX) callconv(.c) c_int {
     return 1;
 }
 
@@ -623,7 +623,7 @@ noinline fn getSSLException(globalThis: *jsc.JSGlobalObject, defaultMessage: []c
         const message = output_buf[0..written];
         zig_str = ZigString.init(bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "OpenSSL {s}", .{message})));
         var encoded_str = zig_str.withEncoding();
-        encoded_str.mark();
+        encoded_str.markGlobal();
 
         // We shouldn't *need* to do this but it's not entirely clear.
         BoringSSL.ERR_clear_error();

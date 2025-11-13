@@ -9,7 +9,7 @@ pub fn toHaveProperty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Ca
         return globalThis.throwInvalidArguments("toHaveProperty() requires at least 1 argument", .{});
     }
 
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const expected_property_path = arguments[0];
     expected_property_path.ensureStillAlive();
@@ -48,7 +48,7 @@ pub fn toHaveProperty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Ca
         if (expected_property != null) {
             const signature = comptime getSignature("toHaveProperty", "<green>path<r><d>, <r><green>value<r>", true);
             if (received_property != .zero) {
-                return this.throw(globalThis, signature, "\n\nExpected path: <green>{any}<r>\n\nExpected value: not <green>{any}<r>\n", .{
+                return this.throw(globalThis, signature, "\n\nExpected path: <green>{f}<r>\n\nExpected value: not <green>{f}<r>\n", .{
                     expected_property_path.toFmt(&formatter),
                     expected_property.?.toFmt(&formatter),
                 });
@@ -56,7 +56,7 @@ pub fn toHaveProperty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Ca
         }
 
         const signature = comptime getSignature("toHaveProperty", "<green>path<r>", true);
-        return this.throw(globalThis, signature, "\n\nExpected path: not <green>{any}<r>\n\nReceived value: <red>{any}<r>\n", .{
+        return this.throw(globalThis, signature, "\n\nExpected path: not <green>{f}<r>\n\nReceived value: <red>{f}<r>\n", .{
             expected_property_path.toFmt(&formatter),
             received_property.toFmt(&formatter),
         });
@@ -72,10 +72,10 @@ pub fn toHaveProperty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Ca
                 .globalThis = globalThis,
             };
 
-            return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_format});
+            return this.throw(globalThis, signature, "\n\n{f}\n", .{diff_format});
         }
 
-        const fmt = "\n\nExpected path: <green>{any}<r>\n\nExpected value: <green>{any}<r>\n\n" ++
+        const fmt = "\n\nExpected path: <green>{f}<r>\n\nExpected value: <green>{f}<r>\n\n" ++
             "Unable to find property\n";
         return this.throw(globalThis, signature, fmt, .{
             expected_property_path.toFmt(&formatter),
@@ -84,7 +84,7 @@ pub fn toHaveProperty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Ca
     }
 
     const signature = comptime getSignature("toHaveProperty", "<green>path<r>", false);
-    return this.throw(globalThis, signature, "\n\nExpected path: <green>{any}<r>\n\nUnable to find property\n", .{expected_property_path.toFmt(&formatter)});
+    return this.throw(globalThis, signature, "\n\nExpected path: <green>{f}<r>\n\nUnable to find property\n", .{expected_property_path.toFmt(&formatter)});
 }
 
 const DiffFormatter = @import("../diff_format.zig").DiffFormatter;
@@ -96,7 +96,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 
 const Expect = bun.jsc.Expect.Expect;
 const getSignature = Expect.getSignature;

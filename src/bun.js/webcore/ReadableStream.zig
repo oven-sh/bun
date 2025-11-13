@@ -577,6 +577,19 @@ pub fn NewSource(
             @compileError("setRawMode is not implemented on " ++ @typeName(Context));
         }
 
+        pub fn setFlowingFromJS(this: *ReadableStreamSourceType, _: *jsc.JSGlobalObject, call_frame: *jsc.CallFrame) bun.JSError!JSValue {
+            if (@hasDecl(Context, "setFlowing")) {
+                const flag = call_frame.argument(0);
+                if (Environment.allow_assert) {
+                    bun.assert(flag.isBoolean());
+                }
+                this.context.setFlowing(flag == .true);
+                return .js_undefined;
+            }
+
+            return .js_undefined;
+        }
+
         const supports_ref = setRefUnrefFn != null;
 
         pub const js = @field(jsc.Codegen, "JS" ++ name_ ++ "InternalReadableStreamSource");

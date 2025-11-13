@@ -222,6 +222,7 @@ const regular = {
     "fixtures/**/{nested,file.md}/*",
 
     "./fixtures/*",
+    "../.",
   ],
   cwd: [
     { pattern: "*", cwd: "fixtures" },

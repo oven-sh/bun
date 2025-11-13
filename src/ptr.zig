@@ -13,6 +13,7 @@ pub const DynamicOwned = owned.Dynamic; // owned pointer allocated with any `std
 pub const shared = @import("./ptr/shared.zig");
 pub const Shared = shared.Shared;
 pub const AtomicShared = shared.AtomicShared;
+pub const ExternalShared = @import("./ptr/external_shared.zig").ExternalShared;
 
 pub const ref_count = @import("./ptr/ref_count.zig");
 /// Deprecated; use `Shared(*T)`.
@@ -21,6 +22,9 @@ pub const RefCount = ref_count.RefCount;
 pub const ThreadSafeRefCount = ref_count.ThreadSafeRefCount;
 /// Deprecated; use `Shared(*T)`.
 pub const RefPtr = ref_count.RefPtr;
+
+pub const raw_ref_count = @import("./ptr/raw_ref_count.zig");
+pub const RawRefCount = raw_ref_count.RawRefCount;
 
 pub const TaggedPointer = @import("./ptr/tagged_pointer.zig").TaggedPointer;
 pub const TaggedPointerUnion = @import("./ptr/tagged_pointer.zig").TaggedPointerUnion;

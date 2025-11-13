@@ -134,7 +134,7 @@ it("should be the default save format", async () => {
 });
 
 it("should save the lockfile if --save-text-lockfile and --frozen-lockfile are used", async () => {
-  const { packageDir, packageJson } = await registry.createTestDir({ saveTextLockfile: false });
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
   await Promise.all([
     write(packageJson, JSON.stringify({ name: "test-pkg", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } })),
   ]);
@@ -169,7 +169,7 @@ it("should save the lockfile if --save-text-lockfile and --frozen-lockfile are u
 });
 
 it("should convert a binary lockfile with invalid optional peers", async () => {
-  const { packageDir, packageJson } = await registry.createTestDir({ npm: true });
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { npm: true } });
   await Promise.all([
     write(
       packageJson,

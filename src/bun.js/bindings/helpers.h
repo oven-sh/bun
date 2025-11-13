@@ -91,8 +91,7 @@ static const WTF::String toString(ZigString str)
 
         return !isTaggedUTF16Ptr(str.ptr)
             ? WTF::String(WTF::ExternalStringImpl::create({ untag(str.ptr), str.len }, untagVoid(str.ptr), free_global_string))
-            : WTF::String(WTF::ExternalStringImpl::create(
-                  { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
+            : WTF::String(WTF::ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
@@ -174,11 +173,11 @@ static const WTF::String toStringCopy(ZigString str)
         memcpy(out.data(), untag(str.ptr), str.len * sizeof(char16_t));
         return WTF::String(WTFMove(impl));
     } else {
-        std::span<LChar> out;
+        std::span<Latin1Character> out;
         auto impl = WTF::StringImpl::tryCreateUninitialized(str.len, out);
         if (!impl) [[unlikely]]
             return WTF::String();
-        memcpy(out.data(), untag(str.ptr), str.len * sizeof(LChar));
+        memcpy(out.data(), untag(str.ptr), str.len * sizeof(Latin1Character));
         return WTF::String(WTFMove(impl));
     }
 }

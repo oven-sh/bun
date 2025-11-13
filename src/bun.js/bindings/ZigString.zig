@@ -38,12 +38,12 @@ pub const ZigString = extern struct {
     pub fn dupeForJS(utf8: []const u8, allocator: std.mem.Allocator) !ZigString {
         if (try strings.toUTF16Alloc(allocator, utf8, false, false)) |utf16| {
             var out = ZigString.initUTF16(utf16);
-            out.mark();
+            out.markGlobal();
             out.markUTF16();
             return out;
         } else {
             var out = ZigString.init(try allocator.dupe(u8, utf8));
-            out.mark();
+            out.markGlobal();
             return out;
         }
     }
@@ -132,20 +132,20 @@ pub const ZigString = extern struct {
 
     pub fn isAllASCII(this: ZigString) bool {
         if (this.is16Bit()) {
-            return strings.firstNonASCII16([]const u16, this.utf16SliceAligned()) == null;
+            return strings.firstNonASCII16(this.utf16SliceAligned()) == null;
         }
 
         return strings.isAllASCII(this.slice());
     }
 
-    extern fn ZigString__toJSONObject(this: *const ZigString, *jsc.JSGlobalObject) callconv(.C) jsc.JSValue;
+    extern fn ZigString__toJSONObject(this: *const ZigString, *jsc.JSGlobalObject) callconv(.c) jsc.JSValue;
 
     pub fn toJSONObject(this: ZigString, globalThis: *jsc.JSGlobalObject) JSValue {
         jsc.markBinding(@src());
         return ZigString__toJSONObject(&this, globalThis);
     }
 
-    extern fn BunString__toURL(this: *const ZigString, *jsc.JSGlobalObject) callconv(.C) jsc.JSValue;
+    extern fn BunString__toURL(this: *const ZigString, *jsc.JSGlobalObject) callconv(.c) jsc.JSValue;
 
     pub fn toURL(this: ZigString, globalThis: *jsc.JSGlobalObject) JSValue {
         jsc.markBinding(@src());
@@ -174,7 +174,7 @@ pub const ZigString = extern struct {
         }
 
         if (this.isGloballyAllocated()) {
-            out.mark();
+            out.markGlobal();
         }
 
         return out;
@@ -224,7 +224,7 @@ pub const ZigString = extern struct {
         }
 
         if (this.is16Bit()) {
-            return strings.elementLengthUTF16IntoUTF8([]const u16, this.utf16SliceAligned());
+            return strings.elementLengthUTF16IntoUTF8(this.utf16SliceAligned());
         }
 
         return bun.webcore.encoding.byteLengthU8(this.slice().ptr, this.slice().len, .utf8);
@@ -234,11 +234,11 @@ pub const ZigString = extern struct {
         if (this.isUTF8())
             return try allocator.dupeZ(u8, this.slice());
 
-        var list = std.ArrayList(u8).init(allocator);
+        var list = std.array_list.Managed(u8).init(allocator);
         list = if (this.is16Bit())
-            try strings.toUTF8ListWithType(list, []const u16, this.utf16SliceAligned())
+            try strings.toUTF8ListWithType(list, this.utf16SliceAligned())
         else
-            try strings.allocateLatin1IntoUTF8WithList(list, 0, []const u8, this.slice());
+            try strings.allocateLatin1IntoUTF8WithList(list, 0, this.slice());
 
         if (list.capacity > list.items.len) {
             list.items.ptr[list.items.len] = 0;
@@ -256,11 +256,11 @@ pub const ZigString = extern struct {
         if (this.isUTF8())
             return allocator.dupeZ(u8, this.slice());
 
-        var list = std.ArrayList(u8).init(allocator);
+        var list = std.array_list.Managed(u8).init(allocator);
         list = if (this.is16Bit())
-            try strings.toUTF8ListWithType(list, []const u16, this.utf16SliceAligned())
+            try strings.toUTF8ListWithType(list, this.utf16SliceAligned())
         else
-            try strings.allocateLatin1IntoUTF8WithList(list, 0, []const u8, this.slice());
+            try strings.allocateLatin1IntoUTF8WithList(list, 0, this.slice());
 
         return list.toOwnedSliceSentinel(0);
     }
@@ -306,7 +306,7 @@ pub const ZigString = extern struct {
 
     pub const Slice = struct {
         allocator: NullableAllocator = .{},
-        ptr: [*]const u8 = undefined,
+        ptr: [*]const u8 = &.{},
         len: u32 = 0,
 
         pub fn reportExtraMemory(this: *const Slice, vm: *jsc.VM) void {
@@ -328,6 +328,10 @@ pub const ZigString = extern struct {
                 .len = @as(u32, @truncate(input.len)),
                 .allocator = NullableAllocator.init(allocator),
             };
+        }
+
+        pub fn initDupe(allocator: std.mem.Allocator, input: []const u8) OOM!Slice {
+            return .init(allocator, try allocator.dupe(u8, input));
         }
 
         pub fn byteLength(this: *const Slice) usize {
@@ -365,7 +369,36 @@ pub const ZigString = extern struct {
             return .{ .allocator = .init(allocator), .ptr = duped.ptr, .len = this.len };
         }
 
-        pub fn cloneIfNeeded(this: Slice, allocator: std.mem.Allocator) !Slice {
+        /// Converts this `ZigString.Slice` into a `[]const u8`, guaranteed to be allocated by
+        /// `allocator`.
+        ///
+        /// This method sets `this` to an empty string. If you don't need the original string,
+        /// this method may be more efficient than `toOwned`, which always allocates memory.
+        pub fn intoOwnedSlice(this: *Slice, allocator: std.mem.Allocator) OOM![]const u8 {
+            defer this.* = .{};
+            if (this.allocator.get()) |this_allocator| blk: {
+                if (allocator.vtable != this_allocator.vtable) break :blk;
+                // Can add support for more allocators here
+                if (allocator.vtable == bun.default_allocator.vtable) {
+                    return this.slice();
+                }
+            }
+            defer this.deinit();
+            return (try this.toOwned(allocator)).slice();
+        }
+
+        /// Same as `intoOwnedSlice`, but creates `[:0]const u8`
+        pub fn intoOwnedSliceZ(this: *Slice, allocator: std.mem.Allocator) OOM![:0]const u8 {
+            defer {
+                this.deinit();
+                this.* = .{};
+            }
+            // always clones
+            return allocator.dupeZ(u8, this.slice());
+        }
+
+        /// Note that the returned slice is not guaranteed to be allocated by `allocator`.
+        pub fn cloneIfBorrowed(this: Slice, allocator: std.mem.Allocator) bun.OOM!Slice {
             if (this.isAllocated()) {
                 return this;
             }
@@ -379,21 +412,13 @@ pub const ZigString = extern struct {
             return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = buf.ptr, .len = @as(u32, @truncate(buf.len)) };
         }
 
-        pub fn cloneZ(this: Slice, allocator: std.mem.Allocator) !Slice {
-            if (this.isAllocated() or this.len == 0) {
-                return this;
-            }
-
-            const duped = try allocator.dupeZ(u8, this.ptr[0..this.len]);
-            return Slice{ .allocator = NullableAllocator.init(allocator), .ptr = duped.ptr, .len = this.len };
-        }
-
         pub fn slice(this: *const Slice) []const u8 {
             return this.ptr[0..this.len];
         }
 
         pub fn mut(this: Slice) []u8 {
-            return @as([*]u8, @ptrFromInt(@intFromPtr(this.ptr)))[0..this.len];
+            bun.assertf(!this.allocator.isNull(), "cannot mutate a borrowed ZigString.Slice", .{});
+            return @constCast(this.ptr)[0..this.len];
         }
 
         /// Does nothing if the slice is not allocated
@@ -483,7 +508,7 @@ pub const ZigString = extern struct {
     pub const GithubActionFormatter = struct {
         text: ZigString,
 
-        pub fn format(this: GithubActionFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: GithubActionFormatter, writer: *std.Io.Writer) !void {
             var bytes = this.text.toSlice(bun.default_allocator);
             defer bytes.deinit();
             try bun.fmt.githubActionWriter(writer, bytes.slice());
@@ -510,10 +535,10 @@ pub const ZigString = extern struct {
     }
 
     fn from16SliceMaybeGlobal(slice_: []const u16, global: bool) ZigString {
-        var str = init(@as([*]const u8, @alignCast(@ptrCast(slice_.ptr)))[0..slice_.len]);
+        var str = init(@as([*]const u8, @ptrCast(@alignCast(slice_.ptr)))[0..slice_.len]);
         str.markUTF16();
         if (global) {
-            str.mark();
+            str.markGlobal();
         }
         return str;
     }
@@ -522,7 +547,7 @@ pub const ZigString = extern struct {
     pub fn from16(slice_: [*]const u16, len: usize) ZigString {
         var str = init(@as([*]const u8, @ptrCast(slice_))[0..len]);
         str.markUTF16();
-        str.mark();
+        str.markGlobal();
         str.assertGlobal();
         return str;
     }
@@ -577,20 +602,18 @@ pub const ZigString = extern struct {
         bun.default_allocator.free(this.slice());
     }
 
-    pub const mark = markGlobal;
-
     pub inline fn markGlobal(this: *ZigString) void {
         this._unsafe_ptr_do_not_use = @as([*]const u8, @ptrFromInt(@intFromPtr(this._unsafe_ptr_do_not_use) | (1 << 62)));
     }
 
-    pub fn format(self: ZigString, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: ZigString, writer: *std.Io.Writer) !void {
         if (self.isUTF8()) {
             try writer.writeAll(self.slice());
             return;
         }
 
         if (self.is16Bit()) {
-            try bun.fmt.formatUTF16Type(@TypeOf(self.utf16Slice()), self.utf16Slice(), writer);
+            try bun.fmt.formatUTF16Type(self.utf16SliceAligned(), writer);
             return;
         }
 
@@ -619,15 +642,11 @@ pub const ZigString = extern struct {
         return untagged(this._unsafe_ptr_do_not_use)[0..@min(this.len, std.math.maxInt(u32))];
     }
 
-    pub fn dupe(this: ZigString, allocator: std.mem.Allocator) ![]const u8 {
-        return try allocator.dupe(u8, this.slice());
-    }
-
     pub fn toSliceFast(this: ZigString, allocator: std.mem.Allocator) Slice {
         if (this.len == 0)
             return Slice.empty;
         if (is16Bit(&this)) {
-            const buffer = this.toOwnedSlice(allocator) catch unreachable;
+            const buffer = bun.handleOom(this.toOwnedSlice(allocator));
             return Slice{
                 .allocator = NullableAllocator.init(allocator),
                 .ptr = buffer.ptr,
@@ -647,7 +666,7 @@ pub const ZigString = extern struct {
         if (this.len == 0)
             return Slice.empty;
         if (is16Bit(&this)) {
-            const buffer = this.toOwnedSlice(allocator) catch unreachable;
+            const buffer = bun.handleOom(this.toOwnedSlice(allocator));
             return Slice{
                 .allocator = NullableAllocator.init(allocator),
                 .ptr = buffer.ptr,
@@ -656,7 +675,7 @@ pub const ZigString = extern struct {
         }
 
         if (!this.isUTF8() and !strings.isAllASCII(untagged(this._unsafe_ptr_do_not_use)[0..this.len])) {
-            const buffer = this.toOwnedSlice(allocator) catch unreachable;
+            const buffer = bun.handleOom(this.toOwnedSlice(allocator));
             return Slice{
                 .allocator = NullableAllocator.init(allocator),
                 .ptr = buffer.ptr,
@@ -670,6 +689,7 @@ pub const ZigString = extern struct {
         };
     }
 
+    /// The returned slice is always allocated by `allocator`.
     pub fn toSliceClone(this: ZigString, allocator: std.mem.Allocator) OOM!Slice {
         if (this.len == 0)
             return Slice.empty;
@@ -681,27 +701,8 @@ pub const ZigString = extern struct {
         };
     }
 
-    pub fn toSliceZ(this: ZigString, allocator: std.mem.Allocator) Slice {
-        if (this.len == 0)
-            return Slice.empty;
-
-        if (is16Bit(&this)) {
-            const buffer = this.toOwnedSliceZ(allocator) catch unreachable;
-            return Slice{
-                .ptr = buffer.ptr,
-                .len = @as(u32, @truncate(buffer.len)),
-                .allocator = NullableAllocator.init(allocator),
-            };
-        }
-
-        return Slice{
-            .ptr = untagged(this._unsafe_ptr_do_not_use),
-            .len = @as(u32, @truncate(this.len)),
-        };
-    }
-
     pub fn sliceZBuf(this: ZigString, buf: *bun.PathBuffer) ![:0]const u8 {
-        return try std.fmt.bufPrintZ(buf, "{}", .{this});
+        return try std.fmt.bufPrintZ(buf, "{f}", .{this});
     }
 
     pub inline fn full(this: *const ZigString) []const u8 {
@@ -728,7 +729,6 @@ pub const ZigString = extern struct {
         }
     }
 
-    extern fn ZigString__toExternalValue(this: *const ZigString, global: *JSGlobalObject) JSValue;
     pub fn toExternalValue(this: *const ZigString, global: *JSGlobalObject) JSValue {
         this.assertGlobal();
         if (this.len > String.max_length()) {
@@ -736,18 +736,18 @@ pub const ZigString = extern struct {
             global.ERR(.STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }
-        return ZigString__toExternalValue(this, global);
+        return bun.cpp.ZigString__toExternalValue(this, global);
     }
 
     extern fn ZigString__toExternalValueWithCallback(
         this: *const ZigString,
         global: *JSGlobalObject,
-        callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void,
+        callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.c) void,
     ) JSValue;
     pub fn toExternalValueWithCallback(
         this: *const ZigString,
         global: *JSGlobalObject,
-        callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void,
+        callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.c) void,
     ) JSValue {
         return ZigString__toExternalValueWithCallback(this, global, callback);
     }
@@ -756,16 +756,16 @@ pub const ZigString = extern struct {
         this: *const ZigString,
         global: *JSGlobalObject,
         ctx: ?*anyopaque,
-        callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void,
+        callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.c) void,
     ) JSValue;
     pub fn external(
         this: *const ZigString,
         global: *JSGlobalObject,
         ctx: ?*anyopaque,
-        callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void,
+        callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.c) void,
     ) JSValue {
         if (this.len > String.max_length()) {
-            callback(ctx, @constCast(@ptrCast(this.byteSlice().ptr)), this.len);
+            callback(ctx, @ptrCast(@constCast(this.byteSlice().ptr)), this.len);
             global.ERR(.STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
             return .zero;
         }

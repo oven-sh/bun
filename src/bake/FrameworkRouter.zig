@@ -423,8 +423,7 @@ pub const Part = union(enum(u3)) {
         };
     }
 
-    pub fn format(part: Part, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        comptime bun.assert(fmt.len == 0);
+    pub fn format(part: Part, writer: *std.Io.Writer) !void {
         try writer.writeAll("Part \"");
         try part.toStringForInternalUse(writer);
         try writer.writeAll("\"");
@@ -822,6 +821,28 @@ pub const MatchedParams = struct {
         key: []const u8,
         value: []const u8,
     };
+
+    /// Convert the matched params to a JavaScript object
+    /// Returns null if there are no params
+    pub fn toJS(self: *const MatchedParams, global: *jsc.JSGlobalObject) JSValue {
+        const params_array = self.params.slice();
+
+        if (params_array.len == 0) {
+            return JSValue.null;
+        }
+
+        // Create a JavaScript object with params
+        const obj = JSValue.createEmptyObject(global, params_array.len);
+        for (params_array) |param| {
+            const key_str = bun.String.cloneUTF8(param.key);
+            defer key_str.deref();
+            const value_str = bun.String.cloneUTF8(param.value);
+            defer value_str.deref();
+
+            _ = obj.putBunStringOneOrArray(global, &key_str, value_str.toJS(global)) catch unreachable;
+        }
+        return obj;
+    }
 };
 
 /// Fast enough for development to be seamless, but avoids building a
@@ -903,22 +924,22 @@ pub const TinyLog = struct {
             after[@min(log.cursor_len, after.len)..],
         });
         const w = bun.Output.errorWriterBuffered();
-        w.writeByteNTimes(' ', "error: \"".len + log.cursor_at) catch return;
+        w.splatByteAll(' ', "error: \"".len + log.cursor_at) catch return;
         if (bun.Output.enable_ansi_colors_stderr) {
             const symbols = bun.fmt.TableSymbols.unicode;
             bun.Output.prettyError("<blue>" ++ symbols.topColumnSep(), .{});
             if (log.cursor_len > 1) {
-                w.writeBytesNTimes(symbols.horizontalEdge(), log.cursor_len - 1) catch return;
+                w.splatBytesAll(symbols.horizontalEdge(), log.cursor_len - 1) catch return;
             }
         } else {
             if (log.cursor_len <= 1) {
                 w.writeAll("|") catch return;
             } else {
-                w.writeByteNTimes('-', log.cursor_len - 1) catch return;
+                w.splatByteAll('-', log.cursor_len - 1) catch return;
             }
         }
         w.writeByte('\n') catch return;
-        w.writeByteNTimes(' ', "error: \"".len + log.cursor_at) catch return;
+        w.splatByteAll(' ', "error: \"".len + log.cursor_at) catch return;
         w.writeAll(log.msg.slice()) catch return;
         bun.Output.prettyError("<r>\n", .{});
         bun.Output.flush();
@@ -937,16 +958,16 @@ pub const InsertionContext = struct {
     pub fn wrap(comptime T: type, ctx: *T) InsertionContext {
         const wrapper = struct {
             fn getFileIdForRouter(opaque_ctx: *anyopaque, abs_path: []const u8, associated_route: Route.Index, kind: Route.FileKind) bun.OOM!OpaqueFileId {
-                const cast_ctx: *T = @alignCast(@ptrCast(opaque_ctx));
+                const cast_ctx: *T = @ptrCast(@alignCast(opaque_ctx));
                 return try cast_ctx.getFileIdForRouter(abs_path, associated_route, kind);
             }
             fn onRouterSyntaxError(opaque_ctx: *anyopaque, rel_path: []const u8, log: TinyLog) bun.OOM!void {
-                const cast_ctx: *T = @alignCast(@ptrCast(opaque_ctx));
+                const cast_ctx: *T = @ptrCast(@alignCast(opaque_ctx));
                 if (!@hasDecl(T, "onRouterSyntaxError")) @panic("TODO: onRouterSyntaxError for " ++ @typeName(T));
                 return try cast_ctx.onRouterSyntaxError(rel_path, log);
             }
             fn onRouterCollisionError(opaque_ctx: *anyopaque, rel_path: []const u8, other_id: OpaqueFileId, file_kind: Route.FileKind) bun.OOM!void {
-                const cast_ctx: *T = @alignCast(@ptrCast(opaque_ctx));
+                const cast_ctx: *T = @ptrCast(@alignCast(opaque_ctx));
                 if (!@hasDecl(T, "onRouterCollisionError")) @panic("TODO: onRouterCollisionError for " ++ @typeName(T));
                 return try cast_ctx.onRouterCollisionError(rel_path, other_id, file_kind);
             }
@@ -1198,7 +1219,7 @@ pub const JSFrameworkRouter = struct {
                 try arr.putIndex(
                     global,
                     @intCast(i),
-                    global.createErrorInstance("Invalid route {}: {s}", .{
+                    global.createErrorInstance("Invalid route {f}: {s}", .{
                         bun.fmt.quote(item.rel_path),
                         item.log.msg.slice(),
                     }),
@@ -1211,14 +1232,12 @@ pub const JSFrameworkRouter = struct {
     }
 
     pub fn match(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, callframe: *jsc.CallFrame) !JSValue {
-        const path_js = callframe.argumentsAsArray(1)[0];
-        const path_str = try path_js.toBunString(global);
-        defer path_str.deref();
-        const path_slice = path_str.toSlice(bun.default_allocator);
-        defer path_slice.deinit();
+        const path_value = callframe.argumentsAsArray(1)[0];
+        const path = try path_value.toSlice(global, bun.default_allocator);
+        defer path.deinit();
 
         var params_out: MatchedParams = undefined;
-        if (jsfr.router.matchSlow(path_slice.slice(), &params_out)) |index| {
+        if (jsfr.router.matchSlow(path.slice(), &params_out)) |index| {
             var sfb = std.heap.stackFallback(4096, bun.default_allocator);
             const alloc = sfb.get();
 
@@ -1317,7 +1336,7 @@ pub const JSFrameworkRouter = struct {
         } orelse
             return .null;
 
-        var rendered = try std.ArrayList(u8).initCapacity(alloc, filepath.slice().len);
+        var rendered = try std.array_list.Managed(u8).initCapacity(alloc, filepath.slice().len);
         for (parsed.parts) |part| try part.toStringForInternalUse(rendered.writer());
 
         var out = bun.String.init(rendered.items);
@@ -1328,7 +1347,7 @@ pub const JSFrameworkRouter = struct {
     }
 
     fn encodedPatternToJS(global: *JSGlobalObject, pattern: EncodedPattern, temp_allocator: Allocator) !JSValue {
-        var rendered = try std.ArrayList(u8).initCapacity(temp_allocator, pattern.data.len);
+        var rendered = try std.array_list.Managed(u8).initCapacity(temp_allocator, pattern.data.len);
         defer rendered.deinit();
         var it = pattern.iterate();
         while (it.next()) |part| try part.toStringForInternalUse(rendered.writer());
@@ -1337,7 +1356,7 @@ pub const JSFrameworkRouter = struct {
     }
 
     fn partToJS(global: *JSGlobalObject, part: Part, temp_allocator: Allocator) !JSValue {
-        var rendered = std.ArrayList(u8).init(temp_allocator);
+        var rendered = std.array_list.Managed(u8).init(temp_allocator);
         defer rendered.deinit();
         try part.toStringForInternalUse(rendered.writer());
         var str = bun.String.cloneUTF8(rendered.items);

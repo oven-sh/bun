@@ -255,7 +255,6 @@ describe("createHash", () => {
   };
 
   const unsupported = [
-    "blake2s256",
     "id-rsassa-pkcs1-v1_5-with-sha3-224",
     "id-rsassa-pkcs1-v1_5-with-sha3-256",
     "id-rsassa-pkcs1-v1_5-with-sha3-384",

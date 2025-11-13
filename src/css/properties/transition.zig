@@ -84,21 +84,21 @@ pub const Transition = struct {
         } };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        try this.property.toCss(W, dest);
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
+        try this.property.toCss(dest);
         if (!this.duration.isZero() or !this.delay.isZero()) {
             try dest.writeChar(' ');
-            try this.duration.toCss(W, dest);
+            try this.duration.toCss(dest);
         }
 
         if (!this.timing_function.isEase()) {
             try dest.writeChar(' ');
-            try this.timing_function.toCss(W, dest);
+            try this.timing_function.toCss(dest);
         }
 
         if (!this.delay.isZero()) {
             try dest.writeChar(' ');
-            try this.delay.toCss(W, dest);
+            try this.delay.toCss(dest);
         }
     }
 };

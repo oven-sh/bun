@@ -126,7 +126,7 @@ export function getPort() {
 let packageDirGetter: () => string = () => {
   return tmpdirSync();
 };
-export async function dummyBeforeEach() {
+export async function dummyBeforeEach(opts?: { linker: "hoisted" | "isolated" }) {
   resetHandler();
   requested = 0;
   package_dir = packageDirGetter();
@@ -137,6 +137,7 @@ export async function dummyBeforeEach() {
 cache = false
 registry = "http://localhost:${server.port}/"
 saveTextLockfile = false
+${opts ? `linker = "${opts.linker}"` : ""}
 `,
   );
 }
@@ -165,6 +166,5 @@ if (Bun.main === import.meta.path) {
   setHandler(dummyRegistry([]));
   console.log("Running dummy registry!\n\n URL: ", root_url!, "\n", "DIR: ", package_dir!);
 } else {
-  // @ts-expect-error
   ({ expect } = Bun.jest(import.meta.path));
 }

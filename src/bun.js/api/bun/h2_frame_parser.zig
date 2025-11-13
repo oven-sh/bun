@@ -4270,8 +4270,8 @@ pub const H2FrameParser = struct {
     }
 
     pub fn detachNativeSocket(this: *H2FrameParser) void {
-        this.native_socket = .{ .none = {} };
         const native_socket = this.native_socket;
+        this.native_socket = .{ .none = {} };
 
         switch (native_socket) {
             inline .tcp, .tls => |socket| {
@@ -4465,13 +4465,9 @@ pub const H2FrameParser = struct {
         this.detachNativeSocket();
 
         this.readBuffer.deinit();
-
-        {
-            var writeBuffer = this.writeBuffer;
-            this.writeBuffer = .{};
-            writeBuffer.deinitWithAllocator(this.allocator);
-        }
+        this.writeBuffer.clearAndFree(this.allocator);
         this.writeBufferOffset = 0;
+
         if (this.hpack) |hpack| {
             hpack.deinit();
             this.hpack = null;

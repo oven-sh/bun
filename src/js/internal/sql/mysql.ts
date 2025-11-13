@@ -1,6 +1,6 @@
 import type { MySQLErrorOptions } from "internal/sql/errors";
 import type { Query } from "./query";
-import type { DatabaseAdapter, SQLHelper, SQLResultArray, SSLMode } from "./shared";
+import type { ArrayType, DatabaseAdapter, SQLArrayParameter, SQLHelper, SQLResultArray, SSLMode } from "./shared";
 const { SQLHelper, SSLMode, SQLResultArray } = require("internal/sql/shared");
 const {
   Query,
@@ -109,7 +109,7 @@ export interface MySQLDotZig {
     password: string,
     databae: string,
     sslmode: SSLMode,
-    tls: Bun.TLSOptions | boolean | null, // boolean true => empty TLSOptions object `{}`, boolean false or null => nothing
+    tls: Bun.TLSOptions | boolean | null | Bun.BunFile, // boolean true => empty TLSOptions object `{}`, boolean false or null => nothing
     query: string,
     path: string,
     onConnected: (err: Error | null, connection: $ZigGeneratedClasses.MySQLConnection) => void,
@@ -126,7 +126,7 @@ export interface MySQLDotZig {
     columns: string[] | undefined,
     bigint: boolean,
     simple: boolean,
-  ) => $ZigGeneratedClasses.MySQLSQLQuery;
+  ) => $ZigGeneratedClasses.MySQLQuery;
 }
 
 const enum SQLCommand {
@@ -134,7 +134,7 @@ const enum SQLCommand {
   update = 1,
   updateSet = 2,
   where = 3,
-  whereIn = 4,
+  in = 4,
   none = -1,
 }
 export type { SQLCommand };
@@ -146,7 +146,7 @@ function commandToString(command: SQLCommand): string {
     case SQLCommand.updateSet:
     case SQLCommand.update:
       return "UPDATE";
-    case SQLCommand.whereIn:
+    case SQLCommand.in:
     case SQLCommand.where:
       return "WHERE";
     default:
@@ -161,7 +161,8 @@ function detectCommand(query: string): SQLCommand {
   let token = "";
   let command = SQLCommand.none;
   let quoted = false;
-  for (let i = 0; i < text_len; i++) {
+  // we need to reverse search so we find the closest command to the parameter
+  for (let i = text_len - 1; i >= 0; i--) {
     const char = text[i];
     switch (char) {
       case " ": // Space
@@ -172,37 +173,19 @@ function detectCommand(query: string): SQLCommand {
       case "\v": {
         switch (token) {
           case "insert": {
-            if (command === SQLCommand.none) {
-              return SQLCommand.insert;
-            }
-            return command;
+            return SQLCommand.insert;
           }
           case "update": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.update;
-              token = "";
-              continue; // try to find SET
-            }
-            return command;
+            return SQLCommand.update;
           }
           case "where": {
-            command = SQLCommand.where;
-            token = "";
-            continue; // try to find IN
+            return SQLCommand.where;
           }
           case "set": {
-            if (command === SQLCommand.update) {
-              command = SQLCommand.updateSet;
-              token = "";
-              continue; // try to find WHERE
-            }
-            return command;
+            return SQLCommand.updateSet;
           }
           case "in": {
-            if (command === SQLCommand.where) {
-              return SQLCommand.whereIn;
-            }
-            return command;
+            return SQLCommand.in;
           }
           default: {
             token = "";
@@ -217,43 +200,31 @@ function detectCommand(query: string): SQLCommand {
           continue;
         }
         if (!quoted) {
-          token += char;
+          token = char + token;
         }
       }
     }
   }
   if (token) {
-    switch (command) {
-      case SQLCommand.none: {
-        switch (token) {
-          case "insert":
-            return SQLCommand.insert;
-          case "update":
-            return SQLCommand.update;
-          case "where":
-            return SQLCommand.where;
-          default:
-            return SQLCommand.none;
-        }
-      }
-      case SQLCommand.update: {
-        if (token === "set") {
-          return SQLCommand.updateSet;
-        }
+    switch (token) {
+      case "insert":
+        return SQLCommand.insert;
+      case "update":
         return SQLCommand.update;
-      }
-      case SQLCommand.where: {
-        if (token === "in") {
-          return SQLCommand.whereIn;
-        }
+      case "where":
         return SQLCommand.where;
-      }
+      case "set":
+        return SQLCommand.updateSet;
+      case "in":
+      case "any":
+      case "all":
+        return SQLCommand.in;
+      default:
+        return SQLCommand.none;
     }
   }
-
   return command;
 }
-
 const enum PooledConnectionState {
   pending = 0,
   connected = 1,
@@ -274,12 +245,15 @@ function onQueryFinish(this: PooledMySQLConnection, onClose: (err: Error) => voi
   this.adapter.release(this);
 }
 
+function closeNT(onClose: (err: Error) => void, err: Error | null) {
+  onClose(err as Error);
+}
 class PooledMySQLConnection {
   private static async createConnection(
-    options: Bun.SQL.__internal.DefinedMySQLOptions,
-    onConnected: (err: Error | null, connection: $ZigGeneratedClasses.MySQLSQLConnection) => void,
+    options: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions,
+    onConnected: (err: Error | null, connection: $ZigGeneratedClasses.MySQLConnection) => void,
     onClose: (err: Error | null) => void,
-  ): Promise<$ZigGeneratedClasses.MySQLSQLConnection | null> {
+  ): Promise<$ZigGeneratedClasses.MySQLConnection | null> {
     const {
       hostname,
       port,
@@ -292,8 +266,6 @@ class PooledMySQLConnection {
       connectionTimeout = 30 * 1000,
       maxLifetime = 0,
       prepare = true,
-
-      // @ts-expect-error path is currently removed from the types
       path,
     } = options;
 
@@ -302,10 +274,10 @@ class PooledMySQLConnection {
     try {
       if (typeof password === "function") {
         password = password();
+      }
 
-        if (password && $isPromise(password)) {
-          password = await password;
-        }
+      if (password && $isPromise(password)) {
+        password = await password;
       }
 
       return createMySQLConnection(
@@ -330,26 +302,29 @@ class PooledMySQLConnection {
         !prepare,
       );
     } catch (e) {
-      onClose(e as Error);
+      process.nextTick(closeNT, onClose, e);
       return null;
     }
   }
 
   adapter: MySQLAdapter;
-  connection: $ZigGeneratedClasses.MySQLSQLConnection | null = null;
+  connection: $ZigGeneratedClasses.MySQLConnection | null = null;
   state: PooledConnectionState = PooledConnectionState.pending;
   storedError: Error | null = null;
   queries: Set<(err: Error) => void> = new Set();
   onFinish: ((err: Error | null) => void) | null = null;
-  connectionInfo: Bun.SQL.__internal.DefinedMySQLOptions;
+  connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
   flags: number = 0;
   /// queryCount is used to indicate the number of queries using the connection, if a connection is reserved or if its a transaction queryCount will be 1 independently of the number of queries
   queryCount: number = 0;
 
-  #onConnected(err, _) {
+  #onConnected(err, connection) {
     if (err) {
       err = wrapError(err);
+    } else {
+      this.connection = connection;
     }
+
     const connectionInfo = this.connectionInfo;
     if (connectionInfo?.onconnect) {
       connectionInfo.onconnect(err);
@@ -392,7 +367,7 @@ class PooledMySQLConnection {
     // remove from ready connections if its there
     this.adapter.readyConnections.delete(this);
     const queries = new Set(this.queries);
-    this.queries.clear();
+    this.queries?.clear?.();
     this.queryCount = 0;
     this.flags &= ~PooledConnectionFlags.reserved;
 
@@ -415,12 +390,8 @@ class PooledMySQLConnection {
     this.#startConnection();
   }
 
-  async #startConnection() {
-    this.connection = await PooledMySQLConnection.createConnection(
-      this.connectionInfo,
-      this.#onConnected.bind(this),
-      this.#onClose.bind(this),
-    );
+  #startConnection() {
+    PooledMySQLConnection.createConnection(this.connectionInfo, this.#onConnected.bind(this), this.#onClose.bind(this));
   }
 
   onClose(onClose: (err: Error) => void) {
@@ -484,14 +455,14 @@ class PooledMySQLConnection {
   }
 }
 
-export class MySQLAdapter
+class MySQLAdapter
   implements
     DatabaseAdapter<PooledMySQLConnection, $ZigGeneratedClasses.MySQLConnection, $ZigGeneratedClasses.MySQLQuery>
 {
-  public readonly connectionInfo: Bun.SQL.__internal.DefinedMySQLOptions;
+  public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
 
   public readonly connections: PooledMySQLConnection[];
-  public readonly readyConnections: Set<PooledMySQLConnection>;
+  public readonly readyConnections: Set<PooledMySQLConnection> = new Set();
 
   public waitingQueue: Array<(err: Error | null, result: any) => void> = [];
   public reservedQueue: Array<(err: Error | null, result: any) => void> = [];
@@ -501,10 +472,9 @@ export class MySQLAdapter
   public totalQueries: number = 0;
   public onAllQueriesFinished: (() => void) | null = null;
 
-  constructor(connectionInfo: Bun.SQL.__internal.DefinedMySQLOptions) {
+  constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;
     this.connections = new Array(connectionInfo.max);
-    this.readyConnections = new Set();
   }
 
   escapeIdentifier(str: string) {
@@ -550,7 +520,9 @@ export class MySQLAdapter
       connection.queries.delete(handler);
     }
   }
-
+  array(_values: any[], _typeNameOrID?: number | ArrayType): SQLArrayParameter {
+    throw new Error("MySQL doesn't support arrays");
+  }
   getTransactionCommands(options?: string): import("./shared").TransactionCommands {
     let BEGIN = "START TRANSACTION";
     if (options) {
@@ -845,7 +817,7 @@ export class MySQLAdapter
         return;
       }
 
-      const { promise, resolve } = Promise.withResolvers();
+      const { promise, resolve } = Promise.withResolvers<void>();
       const timer = setTimeout(() => {
         // timeout is reached, lets close and probably fail some queries
         this.#close().finally(resolve);
@@ -868,7 +840,7 @@ export class MySQLAdapter
       }
 
       // gracefully close the pool
-      const { promise, resolve } = Promise.withResolvers();
+      const { promise, resolve } = Promise.withResolvers<void>();
 
       this.onAllQueriesFinished = () => {
         // everything is closed, lets close the pool
@@ -1033,11 +1005,11 @@ export class MySQLAdapter
             const command = detectCommand(query);
             // only selectIn, insert, update, updateSet are allowed
             if (command === SQLCommand.none || command === SQLCommand.where) {
-              throw new SyntaxError("Helpers are only allowed for INSERT, UPDATE and WHERE IN commands");
+              throw new SyntaxError("Helpers are only allowed for INSERT, UPDATE and IN commands");
             }
             const { columns, value: items } = value as SQLHelper;
             const columnCount = columns.length;
-            if (columnCount === 0 && command !== SQLCommand.whereIn) {
+            if (columnCount === 0 && command !== SQLCommand.in) {
               throw new SyntaxError(`Cannot ${commandToString(command)} with no columns`);
             }
             const lastColumnIndex = columns.length - 1;
@@ -1092,7 +1064,7 @@ export class MySQLAdapter
                 }
                 query += ") "; // the user can add RETURNING * or RETURNING id
               }
-            } else if (command === SQLCommand.whereIn) {
+            } else if (command === SQLCommand.in) {
               // SELECT * FROM users WHERE id IN (${sql([1, 2, 3])})
               if (!$isArray(items)) {
                 throw new SyntaxError("An array of values is required for WHERE IN helper");
@@ -1142,19 +1114,29 @@ export class MySQLAdapter
               } else {
                 item = items;
               }
-              // no need to include if is updateSet
-              if (command === SQLCommand.update) {
+              // no need to include if is updateSet or upsert
+              const isUpsert = query.trimEnd().endsWith("ON DUPLICATE KEY UPDATE");
+              if (command === SQLCommand.update && !isUpsert) {
                 query += " SET ";
               }
+              let hasValues = false;
               for (let i = 0; i < columnCount; i++) {
                 const column = columns[i];
                 const columnValue = item[column];
-                query += `${this.escapeIdentifier(column)} = ?${i < lastColumnIndex ? ", " : ""}`;
                 if (typeof columnValue === "undefined") {
-                  binding_values.push(null);
-                } else {
-                  binding_values.push(columnValue);
+                  // skip undefined values, this is the expected behavior in JS
+                  continue;
                 }
+                hasValues = true;
+                query += `${this.escapeIdentifier(column)} = ?${i < lastColumnIndex ? ", " : ""}`;
+                binding_values.push(columnValue);
+              }
+              if (query.endsWith(", ")) {
+                // we got an undefined value at the end, lets remove the last comma
+                query = query.substring(0, query.length - 2);
+              }
+              if (!hasValues) {
+                throw new SyntaxError("Update needs to have at least one column");
               }
               query += " "; // the user can add where clause after this
             }
@@ -1179,7 +1161,7 @@ export class MySQLAdapter
 
 export default {
   MySQLAdapter,
-  SQLCommand,
   commandToString,
   detectCommand,
+  SQLCommand,
 };

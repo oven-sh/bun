@@ -209,7 +209,7 @@ pub fn shellEscape(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     if (globalThis.hasException()) return .zero;
     defer bunstr.deref();
 
-    var outbuf = std.ArrayList(u8).init(bun.default_allocator);
+    var outbuf = std.array_list.Managed(u8).init(bun.default_allocator);
     defer outbuf.deinit();
 
     if (bun.shell.needsEscapeBunstr(bunstr)) {
@@ -246,7 +246,7 @@ pub fn braces(global: *jsc.JSGlobalObject, brace_str: bun.String, opts: gen.Brac
     const expansion_count = Braces.calculateExpandedAmount(lexer_output.tokens.items[0..]);
 
     if (opts.tokenize) {
-        const str = try std.json.stringifyAlloc(global.bunVM().allocator, lexer_output.tokens.items[0..], .{});
+        const str = bun.handleOom(std.fmt.allocPrint(global.bunVM().allocator, "{f}", .{std.json.fmt(lexer_output.tokens.items[0..], .{})}));
         defer global.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
         return bun_str.toJS(global);
@@ -256,7 +256,7 @@ pub fn braces(global: *jsc.JSGlobalObject, brace_str: bun.String, opts: gen.Brac
         const ast_node = parser.parse() catch |err| {
             return global.throwError(err, "failed to parse braces");
         };
-        const str = try std.json.stringifyAlloc(global.bunVM().allocator, ast_node, .{});
+        const str = bun.handleOom(std.fmt.allocPrint(global.bunVM().allocator, "{f}", .{std.json.fmt(ast_node, .{})}));
         defer global.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
         return bun_str.toJS(global);
@@ -266,10 +266,10 @@ pub fn braces(global: *jsc.JSGlobalObject, brace_str: bun.String, opts: gen.Brac
         return bun.String.toJSArray(global, &.{brace_str});
     }
 
-    var expanded_strings = try arena.allocator().alloc(std.ArrayList(u8), expansion_count);
+    var expanded_strings = try arena.allocator().alloc(std.array_list.Managed(u8), expansion_count);
 
     for (0..expansion_count) |i| {
-        expanded_strings[i] = std.ArrayList(u8).init(arena.allocator());
+        expanded_strings[i] = std.array_list.Managed(u8).init(arena.allocator());
     }
 
     Braces.expand(
@@ -394,12 +394,10 @@ pub fn inspectTable(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
     }
 
     // very stable memory address
-    var array = bun.handleOom(MutableString.init(bun.default_allocator, 0));
+    var array = std.Io.Writer.Allocating.init(bun.default_allocator);
     defer array.deinit();
-    var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
-    var buffered_writer = &buffered_writer_;
+    const writer = &array.writer;
 
-    const writer = buffered_writer.writer();
     const Writer = @TypeOf(writer);
     const properties: JSValue = if (arguments[1].jsType().isArray()) arguments[1] else .js_undefined;
     var table_printer = try ConsoleObject.TablePrinter.init(
@@ -420,9 +418,11 @@ pub fn inspectTable(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) 
         },
     }
 
-    try buffered_writer.flush();
+    writer.flush() catch |e| switch (e) {
+        error.WriteFailed => return error.OutOfMemory,
+    };
 
-    return bun.String.createUTF8ForJS(globalThis, array.slice());
+    return bun.String.createUTF8ForJS(globalThis, array.written());
 }
 
 pub fn inspect(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
@@ -452,13 +452,9 @@ pub fn inspect(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
     }
 
     // very stable memory address
-    var array = MutableString.init(bun.default_allocator, 0) catch unreachable;
+    var array = std.Io.Writer.Allocating.init(bun.default_allocator);
     defer array.deinit();
-    var buffered_writer_ = MutableString.BufferedWriter{ .context = &array };
-    var buffered_writer = &buffered_writer_;
-
-    const writer = buffered_writer.writer();
-    const Writer = MutableString.BufferedWriter.Writer;
+    const writer = &array.writer;
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
     try ConsoleObject.format2(
@@ -466,17 +462,15 @@ pub fn inspect(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
         globalThis,
         arguments.ptr,
         1,
-        Writer,
-        Writer,
         writer,
         formatOptions,
     );
     if (globalThis.hasException()) return error.JSError;
-    buffered_writer.flush() catch return globalThis.throwOutOfMemory();
+    writer.flush() catch return globalThis.throwOutOfMemory();
 
     // we are going to always clone to keep things simple for now
     // the common case here will be stack-allocated, so it should be fine
-    var out = ZigString.init(array.slice()).withEncoding();
+    var out = ZigString.init(array.written()).withEncoding();
     const ret = out.toJS(globalThis);
 
     return ret;
@@ -484,25 +478,22 @@ pub fn inspect(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
 
 export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) bun.String {
     // very stable memory address
-    var array = MutableString.init(bun.default_allocator, 0) catch unreachable;
+    var array = std.Io.Writer.Allocating.init(bun.default_allocator);
     defer array.deinit();
-    var buffered_writer = MutableString.BufferedWriter{ .context = &array };
-    const writer = buffered_writer.writer();
+    const writer = &array.writer;
 
     var formatter = ConsoleObject.Formatter{ .globalThis = globalThis };
     defer formatter.deinit();
-    writer.print("{}", .{value.toFmt(&formatter)}) catch return .empty;
-    buffered_writer.flush() catch return .empty;
-    return bun.String.cloneUTF8(array.slice());
+    writer.print("{f}", .{value.toFmt(&formatter)}) catch return .empty;
+    writer.flush() catch return .empty;
+    return bun.String.cloneUTF8(array.written());
 }
 
 export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String {
-    var array = MutableString.init(bun.default_allocator, 0) catch unreachable;
+    var array = std.Io.Writer.Allocating.init(bun.default_allocator);
     defer array.deinit();
-    var buffered_writer = MutableString.BufferedWriter{ .context = &array };
-    const writer = buffered_writer.writer();
-    const Writer = MutableString.BufferedWriter.Writer;
-    ConsoleObject.format2(.Debug, globalThis, (&value)[0..1].ptr, 1, Writer, Writer, writer, .{
+    const writer = &array.writer;
+    ConsoleObject.format2(.Debug, globalThis, (&value)[0..1].ptr, 1, writer, .{
         .enable_colors = false,
         .add_newline = false,
         .flush = false,
@@ -512,8 +503,8 @@ export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) b
         .single_line = true,
     }) catch return .empty;
     if (globalThis.hasException()) return .empty;
-    buffered_writer.flush() catch return .empty;
-    return bun.String.cloneUTF8(array.slice());
+    writer.flush() catch return .empty;
+    return bun.String.cloneUTF8(array.written());
 }
 
 pub fn getInspect(globalObject: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
@@ -561,7 +552,7 @@ pub fn getOrigin(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue 
 
 pub fn enableANSIColors(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     _ = globalThis;
-    return JSValue.jsBoolean(Output.enable_ansi_colors);
+    return JSValue.jsBoolean(Output.enable_ansi_colors_stdout or Output.enable_ansi_colors_stderr);
 }
 
 fn getMain(globalThis: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {
@@ -760,14 +751,14 @@ pub fn sleepSync(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         return globalObject.throwInvalidArguments("argument to sleepSync must not be negative, got {d}", .{milliseconds});
     }
 
-    std.time.sleep(@as(u64, @intCast(milliseconds)) * std.time.ns_per_ms);
+    std.Thread.sleep(@as(u64, @intCast(milliseconds)) * std.time.ns_per_ms);
     return .js_undefined;
 }
 
 pub fn gc(vm: *jsc.VirtualMachine, sync: bool) usize {
     return vm.garbageCollect(sync);
 }
-export fn Bun__gc(vm: *jsc.VirtualMachine, sync: bool) callconv(.C) usize {
+export fn Bun__gc(vm: *jsc.VirtualMachine, sync: bool) callconv(.c) usize {
     return @call(.always_inline, gc, .{ vm, sync });
 }
 
@@ -846,9 +837,9 @@ fn doResolveWithArgs(ctx: *jsc.JSGlobalObject, specifier: bun.String, from: bun.
     if (query_string.len > 0) {
         var stack = std.heap.stackFallback(1024, ctx.allocator());
         const allocator = stack.get();
-        var arraylist = std.ArrayList(u8).initCapacity(allocator, 1024) catch unreachable;
+        var arraylist = std.array_list.Managed(u8).initCapacity(allocator, 1024) catch unreachable;
         defer arraylist.deinit();
-        try arraylist.writer().print("{any}{any}", .{
+        try arraylist.writer().print("{f}{f}", .{
             errorable.result.value,
             query_string,
         });
@@ -931,7 +922,7 @@ export fn Bun__resolveSyncWithPaths(
 }
 
 export fn Bun__resolveSyncWithStrings(global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, is_esm: bool) jsc.JSValue {
-    Output.scoped(.importMetaResolve, .visible)("source: {s}, specifier: {s}", .{ source.*, specifier.* });
+    Output.scoped(.importMetaResolve, .visible)("source: {f}, specifier: {f}", .{ source.*, specifier.* });
     return jsc.toJSHostCall(global, @src(), doResolveWithArgs, .{ global, specifier.*, source.*, is_esm, true, false });
 }
 
@@ -1009,7 +1000,7 @@ pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.J
             &config,
             &args,
             .{
-                .allow_bake_config = bun.FeatureFlags.bake() and callframe.isFromBunMain(globalObject.vm()),
+                .allow_bake_config = bun.FeatureFlags.bake(),
                 .is_fetch_required = true,
                 .has_user_routes = false,
             },
@@ -1246,7 +1237,7 @@ pub fn mmapFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
     };
 
     const S = struct {
-        pub fn x(ptr: ?*anyopaque, size: ?*anyopaque) callconv(.C) void {
+        pub fn x(ptr: ?*anyopaque, size: ?*anyopaque) callconv(.c) void {
             _ = bun.sys.munmap(@as([*]align(std.heap.page_size_min) const u8, @ptrCast(@alignCast(ptr)))[0..@intFromPtr(size)]);
         }
     };
@@ -1276,6 +1267,7 @@ pub fn getYAMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVa
 pub fn getGlobConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.API.Glob.js.getConstructor(globalThis);
 }
+
 pub fn getS3ClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.WebCore.S3Client.js.getConstructor(globalThis);
 }
@@ -1294,7 +1286,9 @@ pub fn setTLSDefaultCiphers(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject, c
 }
 
 pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
-    const valkey = jsc.API.Valkey.create(globalThis, &.{.js_undefined}) catch |err| {
+    const SubscriptionCtx = @import("../../valkey/js_valkey.zig").SubscriptionCtx;
+
+    var valkey = jsc.API.Valkey.createNoJsNoPubsub(globalThis, &.{.js_undefined}) catch |err| {
         if (err != error.JSError) {
             _ = globalThis.throwError(err, "Failed to create Redis client") catch {};
             return .zero;
@@ -1302,7 +1296,18 @@ pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject)
         return .zero;
     };
 
-    return valkey.toJS(globalThis);
+    const as_js = valkey.toJS(globalThis);
+
+    valkey.this_value = jsc.JSRef.initWeak(as_js);
+    valkey._subscription_ctx = SubscriptionCtx.init(valkey) catch |err| {
+        if (err != error.JSError) {
+            _ = globalThis.throwError(err, "Failed to create Redis client") catch {};
+            return .zero;
+        }
+        return .zero;
+    };
+
+    return as_js;
 }
 
 pub fn getValkeyClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
@@ -1314,7 +1319,7 @@ pub fn getEmbeddedFiles(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) bun.J
     const graph = vm.standalone_module_graph orelse return try jsc.JSValue.createEmptyArray(globalThis, 0);
 
     const unsorted_files = graph.files.values();
-    var sort_indices = bun.handleOom(std.ArrayList(u32).initCapacity(bun.default_allocator, unsorted_files.len));
+    var sort_indices = bun.handleOom(std.array_list.Managed(u32).initCapacity(bun.default_allocator, unsorted_files.len));
     defer sort_indices.deinit();
     for (0..unsorted_files.len) |index| {
         // Some % of people using `bun build --compile` want to obscure the source code
@@ -1333,7 +1338,6 @@ pub fn getEmbeddedFiles(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) bun.J
         // We call .dupe() on this to ensure that we don't return a blob that might get freed later.
         const input_blob = file.blob(globalThis);
         const blob = jsc.WebCore.Blob.new(input_blob.dupeWithContentType(true));
-        blob.allocator = bun.default_allocator;
         blob.name = input_blob.name.dupeRef();
         try array.putIndex(globalThis, i, blob.toJS(globalThis));
         i += 1;
@@ -1814,7 +1818,7 @@ pub const JSZstd = struct {
             output = try allocator.realloc(output, compressed_size);
         }
 
-        return jsc.JSValue.createBuffer(globalThis, output, bun.default_allocator);
+        return jsc.JSValue.createBuffer(globalThis, output);
     }
 
     pub fn decompressSync(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -1824,32 +1828,11 @@ pub const JSZstd = struct {
         const input = buffer.slice();
         const allocator = bun.default_allocator;
 
-        // Try to get the decompressed size
-        const decompressed_size = bun.zstd.getDecompressedSize(input);
-
-        if (decompressed_size == std.math.maxInt(c_ulonglong) - 1 or decompressed_size == std.math.maxInt(c_ulonglong) - 2) {
-            // If size is unknown, we'll need to decompress in chunks
-            return globalThis.ERR(.ZSTD, "Decompressed size is unknown. Either the input is not a valid zstd compressed buffer or the decompressed size is too large. If you run into this error with a valid input, please file an issue at https://github.com/oven-sh/bun/issues", .{}).throw();
-        }
-
-        // Allocate output buffer based on decompressed size
-        var output = try allocator.alloc(u8, decompressed_size);
-
-        // Perform decompression
-        const actual_size = switch (bun.zstd.decompress(output, input)) {
-            .success => |actual_size| actual_size,
-            .err => |err| {
-                allocator.free(output);
-                return globalThis.ERR(.ZSTD, "{s}", .{err}).throw();
-            },
+        const output = bun.zstd.decompressAlloc(allocator, input) catch |err| {
+            return globalThis.ERR(.ZSTD, "Decompression failed: {s}", .{@errorName(err)}).throw();
         };
 
-        bun.debugAssert(actual_size <= output.len);
-
-        // mimalloc doesn't care about the self-reported size of the slice.
-        output.len = actual_size;
-
-        return jsc.JSValue.createBuffer(globalThis, output, bun.default_allocator);
+        return jsc.JSValue.createBuffer(globalThis, output);
     }
 
     // --- Async versions ---
@@ -1905,39 +1888,16 @@ pub const JSZstd = struct {
                 };
             } else {
                 // Decompression path
-                // Try to get the decompressed size
-                const decompressed_size = bun.zstd.getDecompressedSize(input);
-
-                if (decompressed_size == std.math.maxInt(c_ulonglong) - 1 or decompressed_size == std.math.maxInt(c_ulonglong) - 2) {
-                    job.error_message = "Decompressed size is unknown. Either the input is not a valid zstd compressed buffer or the decompressed size is too large";
-                    return;
-                }
-
-                // Allocate output buffer based on decompressed size
-                job.output = allocator.alloc(u8, decompressed_size) catch {
-                    job.error_message = "Out of memory";
+                job.output = bun.zstd.decompressAlloc(allocator, input) catch {
+                    job.error_message = "Decompression failed";
                     return;
                 };
-
-                // Perform decompression
-                switch (bun.zstd.decompress(job.output, input)) {
-                    .success => |actual_size| {
-                        if (actual_size < job.output.len) {
-                            job.output.len = actual_size;
-                        }
-                    },
-                    .err => |err| {
-                        allocator.free(job.output);
-                        job.output = &[_]u8{};
-                        job.error_message = err;
-                        return;
-                    },
-                }
             }
         }
 
-        pub fn runFromJS(this: *ZstdJob) void {
+        pub fn runFromJS(this: *ZstdJob) bun.JSTerminated!void {
             defer this.deinit();
+
             if (this.vm.isShuttingDown()) {
                 return;
             }
@@ -1946,14 +1906,14 @@ pub const JSZstd = struct {
             const promise = this.promise.swap();
 
             if (this.error_message) |err_msg| {
-                promise.reject(globalThis, globalThis.ERR(.ZSTD, "{s}", .{err_msg}).toJS());
+                try promise.reject(globalThis, globalThis.ERR(.ZSTD, "{s}", .{err_msg}).toJS());
                 return;
             }
 
             const output_slice = this.output;
-            const buffer_value = jsc.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
+            const buffer_value = jsc.JSValue.createBuffer(globalThis, output_slice);
             this.output = &[_]u8{};
-            promise.resolve(globalThis, buffer_value);
+            try promise.resolve(globalThis, buffer_value);
         }
 
         pub fn deinit(this: *ZstdJob) void {
@@ -2015,7 +1975,7 @@ pub const JSZstd = struct {
 //             .enable_colors = true,
 //             .check_for_unhighlighted_write = false,
 //         });
-//         std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
+//         writer.writer().print("{f}", .{formatter}) catch |err| {
 //             return globalThis.throwError(err, "Error formatting code");
 //         };
 
@@ -2036,36 +1996,33 @@ comptime {
 const string = []const u8;
 
 // LazyProperty initializers for stdin/stderr/stdout
-pub fn createBunStdin(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+pub fn createBunStdin(globalThis: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
     var rare_data = globalThis.bunVM().rareData();
     var store = rare_data.stdin();
     store.ref();
     var blob = jsc.WebCore.Blob.new(
         jsc.WebCore.Blob.initWithStore(store, globalThis),
     );
-    blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
 
-pub fn createBunStderr(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+pub fn createBunStderr(globalThis: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
     var rare_data = globalThis.bunVM().rareData();
     var store = rare_data.stderr();
     store.ref();
     var blob = jsc.WebCore.Blob.new(
         jsc.WebCore.Blob.initWithStore(store, globalThis),
     );
-    blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
 
-pub fn createBunStdout(globalThis: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+pub fn createBunStdout(globalThis: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
     var rare_data = globalThis.bunVM().rareData();
     var store = rare_data.stdout();
     store.ref();
     var blob = jsc.WebCore.Blob.new(
         jsc.WebCore.Blob.initWithStore(store, globalThis),
     );
-    blob.allocator = bun.default_allocator;
     return blob.toJS(globalThis);
 }
 

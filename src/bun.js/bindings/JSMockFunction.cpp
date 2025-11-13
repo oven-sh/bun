@@ -154,8 +154,8 @@ public:
     static JSMockImplementation* create(JSC::JSGlobalObject* globalObject, JSC::Structure* structure, Kind kind, JSC::JSValue heldValue, bool isOnce)
     {
         auto& vm = JSC::getVM(globalObject);
-        JSMockImplementation* impl = new (NotNull, allocateCell<JSMockImplementation>(vm)) JSMockImplementation(vm, structure, kind);
-        impl->finishCreation(vm, heldValue, isOnce ? jsNumber(1) : jsUndefined());
+        JSMockImplementation* impl = new (NotNull, allocateCell<JSMockImplementation>(vm)) JSMockImplementation(vm, structure, kind, heldValue, isOnce ? jsNumber(1) : jsUndefined());
+        impl->finishCreation(vm);
         return impl;
     }
 
@@ -195,17 +195,17 @@ public:
         return !nextValueOrSentinel.get().isUndefined();
     }
 
-    JSMockImplementation(JSC::VM& vm, JSC::Structure* structure, Kind kind)
+    JSMockImplementation(JSC::VM& vm, JSC::Structure* structure, Kind kind, JSC::JSValue first, JSC::JSValue second)
         : Base(vm, structure)
+        , underlyingValue(first, JSC::WriteBarrierEarlyInit)
+        , nextValueOrSentinel(second, JSC::WriteBarrierEarlyInit)
         , kind(kind)
     {
     }
 
-    void finishCreation(JSC::VM& vm, JSC::JSValue first, JSC::JSValue second)
+    void finishCreation(JSC::VM& vm)
     {
         Base::finishCreation(vm);
-        this->underlyingValue.set(vm, this, first);
-        this->nextValueOrSentinel.set(vm, this, second);
     }
 };
 
@@ -1329,7 +1329,7 @@ DEFINE_VISIT_CHILDREN(MockWithImplementationCleanupData);
 
 MockWithImplementationCleanupData* MockWithImplementationCleanupData::create(JSC::JSGlobalObject* globalObject, JSMockFunction* fn, JSValue impl, JSValue tail, JSValue fallback)
 {
-    auto* obj = create(globalObject->vm(), reinterpret_cast<Zig::GlobalObject*>(globalObject)->mockModule.mockWithImplementationCleanupDataStructure.getInitializedOnMainThread(globalObject));
+    auto* obj = create(globalObject->vm(), static_cast<Zig::GlobalObject*>(globalObject)->mockModule.mockWithImplementationCleanupDataStructure.getInitializedOnMainThread(globalObject));
     obj->finishCreation(globalObject->vm(), fn, impl, tail, fallback);
     return obj;
 }

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 18
+# Version: 20
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -26,8 +26,11 @@ error() {
 }
 
 execute() {
-	print "$ $@" >&2
-	if ! "$@"; then
+	local opts=$-
+	set -x
+	"$@"
+	{ local status=$?; set +x "$opts"; } 2> /dev/null
+	if [ "$status" -ne 0 ]; then
 		error "Command failed: $@"
 	fi
 }
@@ -685,6 +688,8 @@ install_common_software() {
 				apt-transport-https \
 				software-properties-common
 		fi
+		install_packages \
+			libc6-dbg
 		;;
 	dnf)
 		install_packages \
@@ -905,7 +910,7 @@ setup_node_gyp_cache() {
 }
 
 bun_version_exact() {
-	print "1.2.17"
+	print "1.3.1"
 }
 
 install_bun() {
@@ -984,6 +989,7 @@ install_build_essentials() {
 			xz-utils \
 			pkg-config \
 			golang
+		install_packages apache2-utils
 		;;
 	dnf | yum)
 		install_packages \
@@ -1011,6 +1017,7 @@ install_build_essentials() {
 			ninja \
 			go \
 			xz
+		install_packages apache2-utils
 		;;
 	esac
 
@@ -1031,7 +1038,7 @@ install_build_essentials() {
 	install_llvm
 	install_osxcross
 	install_gcc
-	install_ccache
+	install_sccache
 	install_rust
 	install_docker
 }
@@ -1058,12 +1065,11 @@ install_llvm() {
 		install_packages "llvm@$(llvm_version)"
 		;;
 	apk)
-		# alpine doesn't have a lld19 package on 3.21 atm so use bare one for now
 		install_packages \
 			"llvm$(llvm_version)" \
 			"clang$(llvm_version)" \
 			"scudo-malloc" \
-			"lld" \
+			"lld$(llvm_version)" \
 			"llvm$(llvm_version)-dev" # Ensures llvm-symbolizer is installed
 		;;
 	esac
@@ -1143,12 +1149,31 @@ install_gcc() {
 	execute_sudo ln -sf $(which llvm-symbolizer-$llvm_v) /usr/bin/llvm-symbolizer
 }
 
-install_ccache() {
-	case "$pm" in
-	apt | apk | brew)
-		install_packages ccache
-		;;
-	esac
+install_sccache() {
+	# Alright, look, this function is cobbled together but it's only as cobbled
+	# together as this whole script is.
+	#
+	# For some reason, move_to_bin doesn't work here due to permissions so I'm
+	# avoiding that function. It's also wrong with permissions and so on.
+	#
+	# Unfortunately, we cannot use install_packages since many package managers
+	# don't compile `sccache` with S3 support.
+	local opts=$-
+	set -ef
+
+	local sccache_http
+	sccache_http="https://github.com/mozilla/sccache/releases/download/v0.12.0/sccache-v0.12.0-$(uname -m)-unknown-linux-musl.tar.gz"
+
+	local file
+	file=$(download_file "$sccache_http")
+
+	local tmpdir
+	tmpdir=$(mktemp -d)
+
+	execute tar -xzf "$file" -C "$tmpdir"
+	execute_sudo install -m755 "$tmpdir/sccache-v0.12.0-$(uname -m)-unknown-linux-musl/sccache" "/usr/local/bin"
+
+	set +ef -"$opts"
 }
 
 install_rust() {
@@ -1193,7 +1218,7 @@ install_docker() {
 			execute_sudo amazon-linux-extras install docker
 			;;
 		amzn-* | alpine-*)
-			install_packages docker
+			install_packages docker docker-cli-compose
 			;;
 		*)
 			sh="$(require sh)"
@@ -1208,10 +1233,17 @@ install_docker() {
 	if [ -f "$systemctl" ]; then
 		execute_sudo "$systemctl" enable docker
 	fi
+	if [ "$os" = "linux" ] && [ "$distro" = "alpine" ]; then
+		execute doas rc-update add docker default
+		execute doas rc-service docker start
+	fi
 
 	getent="$(which getent)"
 	if [ -n "$("$getent" group docker)" ]; then
 		usermod="$(which usermod)"
+		if [ -z "$usermod" ]; then
+			usermod="$(sudo which usermod)"
+		fi
 		if [ -f "$usermod" ]; then
 			execute_sudo "$usermod" -aG docker "$user"
 		fi
@@ -1359,6 +1391,29 @@ create_buildkite_user() {
 	for file in $buildkite_files; do
 		create_file "$file"
 	done
+
+	# The following is necessary to configure buildkite to use a stable
+	# checkout directory. sccache hashes absolute paths into its cache keys,
+	# so if buildkite uses a different checkout path each time (which it does
+	# by default), sccache will be useless.
+	local opts=$-
+	set -ef
+
+	# I do not want to use create_file because it creates directories with 777
+	# permissions and files with 664 permissions. This is dumb, for obvious
+	# reasons.
+	local hook_dir=${home}/hooks
+	mkdir -p -m 755 "${hook_dir}"
+	cat << EOF > "${hook_dir}/environment"
+#!/bin/sh
+set -efu
+
+export BUILDKITE_BUILD_CHECKOUT_PATH=${home}/build
+EOF
+	execute_sudo chmod +x "${hook_dir}/environment"
+	execute_sudo chown -R "$user:$group" "$hook_dir"
+
+	set +ef -"$opts"
 }
 
 install_buildkite() {
@@ -1392,10 +1447,10 @@ install_chromium() {
 	apk)
 		install_packages \
 			chromium \
-      nss \
-      freetype \
-      harfbuzz \
-      ttf-freefont
+			nss \
+			freetype \
+			harfbuzz \
+			ttf-freefont
 		;;
 	apt)
 		install_packages \

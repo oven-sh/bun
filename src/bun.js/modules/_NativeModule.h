@@ -27,6 +27,7 @@
 #define BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro) \
     macro("bun:test"_s, BunTest) \
     macro("bun:jsc"_s, BunJSC) \
+    macro("bun:app"_s, BunApp) \
     macro("node:buffer"_s, NodeBuffer) \
     macro("node:constants"_s, NodeConstants) \
     macro("node:string_decoder"_s, NodeStringDecoder) \
@@ -79,7 +80,7 @@
 
 #define INIT_NATIVE_MODULE(numberOfExportNames)                                \
   Zig::GlobalObject *globalObject =                                            \
-      reinterpret_cast<Zig::GlobalObject *>(lexicalGlobalObject);              \
+      static_cast<Zig::GlobalObject *>(lexicalGlobalObject);                   \
   JSC::VM &vm = globalObject->vm();                                            \
   JSC::JSObject *defaultObject = JSC::constructEmptyObject(                    \
       globalObject, globalObject->objectPrototype(), numberOfExportNames);     \

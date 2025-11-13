@@ -243,7 +243,7 @@ public:
     /* Manually upgrade to WebSocket. Typically called in upgrade handler. Immediately calls open handler.
      * NOTE: Will invalidate 'this' as socket might change location in memory. Throw away after use. */
     template <typename UserData>
-    us_socket_t *upgrade(UserData &&userData, std::string_view secWebSocketKey, std::string_view secWebSocketProtocol,
+    us_socket_t *upgrade(UserData&& userData, std::string_view secWebSocketKey, std::string_view secWebSocketProtocol,
             std::string_view secWebSocketExtensions,
             struct us_socket_context_t *webSocketContext) {
 
@@ -316,13 +316,19 @@ public:
         HttpContext<SSL> *httpContext = (HttpContext<SSL> *) us_socket_context(SSL, (struct us_socket_t *) this);
 
         /* Move any backpressure out of HttpResponse */
-        BackPressure backpressure(std::move(((AsyncSocketData<SSL> *) getHttpResponseData())->buffer));
-
+        auto* responseData = getHttpResponseData();
+        BackPressure backpressure(std::move(((AsyncSocketData<SSL> *) responseData)->buffer));
+        
+        auto* socketData = responseData->socketData;
+        HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
+        
         /* Destroy HttpResponseData */
-        getHttpResponseData()->~HttpResponseData();
+        responseData->~HttpResponseData();
 
         /* Before we adopt and potentially change socket, check if we are corked */
         bool wasCorked = Super::isCorked();
+
+        
 
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         us_socket_t *usSocket = us_socket_context_adopt_socket(SSL, (us_socket_context_t *) webSocketContext, (us_socket_t *) this, sizeof(WebSocketData) + sizeof(UserData));
@@ -334,10 +340,12 @@ public:
         }
 
         /* Initialize websocket with any moved backpressure intact */
-        webSocket->init(perMessageDeflate, compressOptions, std::move(backpressure));
+        webSocket->init(perMessageDeflate, compressOptions, std::move(backpressure), socketData, httpContextData->onSocketClosed);
+        if (httpContextData->onSocketUpgraded) {
+            httpContextData->onSocketUpgraded(socketData, SSL, usSocket);
+        }
 
         /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */
-        HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
         if (httpContextData->flags.isParsingHttp) {
             /* We need to tell the Http parser that we changed socket */
             httpContextData->upgradedWebSocket = webSocket;
@@ -350,7 +358,7 @@ public:
         us_socket_timeout(SSL, (us_socket_t *) webSocket, webSocketContextData->idleTimeoutComponents.first);
 
         /* Move construct the UserData right before calling open handler */
-        new (webSocket->getUserData()) UserData(std::move(userData));
+        new (webSocket->getUserData()) UserData(std::forward<UserData>(userData));
 
         /* Emit open event and start the timeout */
         if (webSocketContextData->openHandler) {
@@ -470,7 +478,7 @@ public:
         return internalEnd({nullptr, 0}, 0, false, false, closeConnection);
     }
 
-    void flushHeaders() {
+    void flushHeaders(bool flushImmediately = false) {
 
         writeStatus(HTTP_200_OK);
 
@@ -490,6 +498,10 @@ public:
             writeMark();
             Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
+        }
+        if (flushImmediately) {
+            /* Uncork the socket to send data to the client immediately */
+            this->uncork();
         }
     }
     /* Write parts of the response in chunking fashion. Starts timeout if failed. */
@@ -740,6 +752,10 @@ public:
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         return httpResponseData->socketData;
+    }
+    bool isConnectRequest() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        return httpResponseData->isConnectRequest;
     }
 
     void setWriteOffset(uint64_t offset) {

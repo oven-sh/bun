@@ -143,6 +143,7 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
                 try str.intoOwned(allocator);
             }
             defer str.* = Self.empty;
+            defer if (cow_str_assertions and str.isOwned()) if (str.debug) |d| bun.destroy(d);
             return str.ptr[0..str.flags.len];
         }
 
@@ -217,7 +218,7 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
             }
         }
 
-        pub fn format(str: Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(str: Self, writer: *std.Io.Writer) !void {
             return try writer.writeAll(str.slice());
         }
 

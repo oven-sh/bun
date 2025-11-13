@@ -33,6 +33,47 @@ pub fn decompress(dest: []u8, src: []const u8) Result {
     return .{ .success = result };
 }
 
+/// Decompress data, automatically allocating the output buffer.
+/// Returns owned slice that must be freed by the caller.
+/// Handles both frames with known and unknown content sizes.
+/// For safety, if the reported decompressed size exceeds 16MB, streaming decompression is used instead.
+pub fn decompressAlloc(allocator: std.mem.Allocator, src: []const u8) ![]u8 {
+    const size = getDecompressedSize(src);
+
+    const ZSTD_CONTENTSIZE_UNKNOWN = std.math.maxInt(c_ulonglong); // 0ULL - 1
+    const ZSTD_CONTENTSIZE_ERROR = std.math.maxInt(c_ulonglong) - 1; // 0ULL - 2
+    const MAX_PREALLOCATE_SIZE = 16 * 1024 * 1024; // 16MB safety limit
+
+    if (size == ZSTD_CONTENTSIZE_ERROR) {
+        return error.InvalidZstdData;
+    }
+
+    // Use streaming decompression if:
+    // 1. Content size is unknown, OR
+    // 2. Reported size exceeds safety limit (to prevent malicious inputs claiming huge sizes)
+    if (size == ZSTD_CONTENTSIZE_UNKNOWN or size > MAX_PREALLOCATE_SIZE) {
+        var list = std.ArrayListUnmanaged(u8){};
+        const reader = try ZstdReaderArrayList.init(src, &list, allocator);
+        defer reader.deinit();
+
+        try reader.readAll(true);
+        return try list.toOwnedSlice(allocator);
+    }
+
+    // Fast path: size is known and within reasonable limits
+    const output = try allocator.alloc(u8, size);
+    errdefer allocator.free(output);
+
+    const result = decompress(output, src);
+    return switch (result) {
+        .success => |actual_size| output[0..actual_size],
+        .err => {
+            allocator.free(output);
+            return error.DecompressionFailed;
+        },
+    };
+}
+
 pub fn getDecompressedSize(src: []const u8) usize {
     return ZSTD_findDecompressedSize(src.ptr, src.len);
 }
@@ -136,13 +177,27 @@ pub const ZstdReaderArrayList = struct {
         if (this.state == .End or this.state == .Error) return;
 
         while (this.state == .Uninitialized or this.state == .Inflating) {
+            const next_in = this.input[this.total_in..];
+
+            // If we have no input to process
+            if (next_in.len == 0) {
+                if (is_done) {
+                    // If we're in the middle of inflating and stream is done, it's truncated
+                    if (this.state == .Inflating) {
+                        this.state = .Error;
+                        return error.ZstdDecompressionError;
+                    }
+                    // No more input and stream is done, we can end
+                    this.end();
+                }
+                return;
+            }
+
             var unused = this.list.unusedCapacitySlice();
             if (unused.len < 4096) {
                 try this.list.ensureUnusedCapacity(this.list_allocator, 4096);
                 unused = this.list.unusedCapacitySlice();
             }
-
-            const next_in = this.input[this.total_in..];
             var in_buf: c.ZSTD_inBuffer = .{
                 .src = if (next_in.len > 0) next_in.ptr else null,
                 .size = next_in.len,
@@ -167,12 +222,40 @@ pub const ZstdReaderArrayList = struct {
             this.total_out += bytes_written;
 
             if (rc == 0) {
-                this.end();
-                return;
+                // Frame is complete
+                this.state = .Uninitialized; // Reset state since frame is complete
+
+                // Check if there's more input (multiple frames)
+                if (this.total_in >= this.input.len) {
+                    // We've consumed all available input
+                    if (is_done) {
+                        // No more data coming, we can end the stream
+                        this.end();
+                        return;
+                    }
+                    // Frame is complete and no more input available right now.
+                    // Just return normally - the caller can provide more data later if they have it.
+                    return;
+                }
+                // More input available, reset for the next frame
+                // ZSTD_initDStream() safely resets the stream state without needing cleanup
+                // It's designed to be called multiple times on the same DStream object
+                _ = c.ZSTD_initDStream(this.zstd);
+                continue;
+            }
+
+            // If rc > 0, decompressor needs more data
+            if (rc > 0) {
+                this.state = .Inflating;
             }
 
             if (bytes_read == next_in.len) {
-                this.state = .Inflating;
+                // We've consumed all available input
+                if (bytes_written > 0) {
+                    // We wrote some output, continue to see if we need more output space
+                    continue;
+                }
+
                 if (is_done) {
                     // Stream is truncated - we're at EOF but need more data
                     this.state = .Error;

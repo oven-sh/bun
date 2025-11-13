@@ -62,12 +62,12 @@ pub const TrackList = struct {
         } };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *css.Printer) css.PrintErr!void {
         var items_index = 0;
         var first = true;
 
         for (this.line_names.sliceConst()) |*names| {
-            if (!names.isEmpty()) try serializeLineNames(names, W, dest);
+            if (!names.isEmpty()) try serializeLineNames(names, dest);
 
             if (items_index < this.items.len) {
                 const item = this.items.at(items_index);
@@ -81,8 +81,8 @@ pub const TrackList = struct {
                 }
 
                 switch (item.*) {
-                    .track_repeat => |*repeat| try repeat.toCss(W, dest),
-                    .track_size => |*size| try size.toCss(W, dest),
+                    .track_repeat => |*repeat| try repeat.toCss(dest),
+                    .track_size => |*size| try size.toCss(dest),
                 }
             }
 
@@ -158,19 +158,19 @@ pub const TrackSize = union(enum) {
         return .{ .result = .{ .fit_content = len } };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *css.Printer) css.PrintErr!void {
         switch (this.*) {
-            .track_breadth => |breadth| try breadth.toCss(W, dest),
+            .track_breadth => |breadth| try breadth.toCss(dest),
             .min_max => |mm| {
                 try dest.writeStr("minmax(");
-                try mm.min.toCss(W, dest);
+                try mm.min.toCss(dest);
                 try dest.delim(',', false);
-                try mm.max.toCss(W, dest);
+                try mm.max.toCss(dest);
                 try dest.writeChar(')');
             },
             .fit_content => |len| {
                 try dest.writeStr("fit-content(");
-                try len.toCss(W, dest);
+                try len.toCss(dest);
                 try dest.writeChar(')');
             },
         }
@@ -193,7 +193,7 @@ pub const TrackSizeList = struct {
         return .{ .result = .{ .v = res } };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *css.Printer) css.PrintErr!void {
         if (this.v.len() == 0) {
             try dest.writeStr("auto");
             return;
@@ -206,7 +206,7 @@ pub const TrackSizeList = struct {
             } else {
                 try dest.writeChar(' ');
             }
-            try item.toCss(W, dest);
+            try item.toCss(dest);
         }
     }
 };
@@ -274,14 +274,14 @@ pub const TrackBreadth = union(enum) {
         return .{ .err = location.newUnexpectedTokenError(token) };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *css.Printer) css.PrintErr!void {
         switch (this.*) {
             .auto => try dest.writeStr("auto"),
             .min_content => try dest.writeStr("min-content"),
             .max_content => try dest.writeStr("max-content"),
-            .length => |len| try len.toCss(W, dest),
-            // .flex => |flex| try css.CSSNumberFns.serializeDimension(&flex, "fr", W, dest),
-            .flex => |flex| css.serializer.serializeDimension(flex, "fr", W, dest),
+            .length => |len| try len.toCss(dest),
+            // .flex => |flex| try css.CSSNumberFns.serializeDimension(&flex, "fr", dest),
+            .flex => |flex| css.serializer.serializeDimension(flex, "fr", dest),
         }
     }
 };
@@ -309,6 +309,7 @@ pub const TrackRepeat = struct {
 
                 if (i.expectComma().asErr()) |e| return .{ .err = e };
 
+                // TODO: this code will not compile if used
                 var line_names = bun.BabyList(CustomIdentList).init(i.allocator);
                 var track_sizes = bun.BabyList(TrackSize).init(i.allocator);
 
@@ -333,16 +334,16 @@ pub const TrackRepeat = struct {
         }.parse);
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
         try dest.writeStr("repeat(");
-        try this.count.toCss(W, dest);
+        try this.count.toCss(dest);
         try dest.delim(',', false);
 
         var track_sizes_index = 0;
         var first = true;
         for (this.line_names.sliceConst()) |*names| {
             if (!names.isEmpty()) {
-                try serializeLineNames(names, W, dest);
+                try serializeLineNames(names, dest);
             }
 
             if (track_sizes_index < this.track_sizes.len) {
@@ -354,7 +355,7 @@ pub const TrackRepeat = struct {
                 } else if (!first) {
                     try dest.writeChar(' ');
                 }
-                try size.toCss(W, dest);
+                try size.toCss(dest);
             }
 
             first = false;
@@ -364,7 +365,7 @@ pub const TrackRepeat = struct {
     }
 };
 
-fn serializeLineNames(names: []const CustomIdent, comptime W: type, dest: *Printer(W)) PrintErr!void {
+fn serializeLineNames(names: []const CustomIdent, dest: *Printer) PrintErr!void {
     try dest.writeChar('[');
     var first = true;
     for (names) |*name| {
@@ -373,12 +374,12 @@ fn serializeLineNames(names: []const CustomIdent, comptime W: type, dest: *Print
         } else {
             try dest.writeChar(' ');
         }
-        try writeIdent(&name.value, W, dest);
+        try writeIdent(&name.value, dest);
     }
     try dest.writeChar(']');
 }
 
-fn writeIdent(name: []const u8, comptime W: type, dest: *Printer(W)) PrintErr!void {
+fn writeIdent(name: []const u8, dest: *Printer) PrintErr!void {
     const css_module_grid_enabled = if (dest.css_module) |*css_module| css_module.config.grid else false;
     if (css_module_grid_enabled) {
         if (dest.css_module) |*css_module| {

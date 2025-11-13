@@ -15,6 +15,8 @@ You can explicitly specify which loader to use using the `'type'` import attribu
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
 import my_toml from "./my_file" with { type: "toml" };
+// or with dynamic imports
+const { default: my_toml } = await import("./my_file", { with: { type: "toml" } });
 ```
 
 ## Built-in loaders

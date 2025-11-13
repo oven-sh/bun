@@ -842,9 +842,9 @@ const Path = bun.path;
 const assert = bun.assert;
 const glob = bun.glob;
 const logger = bun.logger;
+const ArrayListDefault = bun.collections.ArrayListDefault;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const String = bun.Semver.String;
-const ArrayListDefault = bun.collections.ArrayListDefault;
 
 const install = bun.install;
 const Dependency = install.Dependency;

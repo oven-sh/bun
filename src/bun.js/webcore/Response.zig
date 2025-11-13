@@ -16,7 +16,7 @@ pub const fromJSDirect = js.fromJSDirect;
 #redirected: bool = false,
 /// We increment this count in fetch so if JS Response is discarted we can resolve the Body
 /// In the server we use a flag response_protected to protect/unprotect the response
-ref_count: u32 = 1,
+ref_count: RefCount = .init(),
 #js_ref: jsc.JSRef = .empty(),
 
 // We must report a consistent value for this
@@ -451,24 +451,15 @@ fn destroy(this: *Response) void {
     bun.destroy(this);
 }
 
-pub fn ref(this: *Response) *Response {
-    this.ref_count += 1;
-    return this;
-}
-
-pub fn unref(this: *Response) void {
-    bun.assert(this.ref_count > 0);
-    this.ref_count -= 1;
-    if (this.ref_count == 0) {
-        this.destroy();
-    }
-}
+const RefCount = bun.ptr.RefCount(@This(), "ref_count", destroy, .{});
+pub const ref = RefCount.ref;
+pub const deref = RefCount.deref;
 
 pub fn finalize(
     this: *Response,
 ) callconv(.c) void {
     this.#js_ref.finalize();
-    this.unref();
+    this.deref();
 }
 
 pub fn getContentType(

@@ -1,7 +1,7 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isWindows, tmpdirSync } from "harness";
 import { randomUUID } from "node:crypto";
 import { connect, createConnection, createServer, isIP, isIPv4, isIPv6, Server, Socket, Stream } from "node:net";
 import { join } from "node:path";
@@ -505,9 +505,8 @@ it("socket should keep process alive if unref is not called", async () => {
 });
 
 it("should not hang after FIN", async () => {
-  const net = require("node:net");
   const { promise: listening, resolve: resolveListening, reject } = Promise.withResolvers();
-  const server = net.createServer(c => {
+  const server = createServer(c => {
     c.write("Hello client");
     c.end();
   });
@@ -529,7 +528,7 @@ it("should not hang after FIN", async () => {
     const timeout = setTimeout(() => {
       process.kill();
       reject(new Error("Timeout"));
-    }, 2000);
+    }, isASAN ? 20000 : 2000);
     expect(await process.exited).toBe(0);
     clearTimeout(timeout);
   } finally {
@@ -538,9 +537,8 @@ it("should not hang after FIN", async () => {
 });
 
 it("should not hang after destroy", async () => {
-  const net = require("node:net");
   const { promise: listening, resolve: resolveListening, reject } = Promise.withResolvers();
-  const server = net.createServer(c => {
+  const server = createServer(c => {
     c.write("Hello client");
   });
   try {
@@ -561,7 +559,7 @@ it("should not hang after destroy", async () => {
     const timeout = setTimeout(() => {
       process.kill();
       reject(new Error("Timeout"));
-    }, 2000);
+    }, isASAN ? 20000 : 2000);
     expect(await process.exited).toBe(0);
     clearTimeout(timeout);
   } finally {

@@ -81,7 +81,8 @@ function getNodeParallelTestTimeout(testPath) {
     return 90_000;
   }
   if (!isCI) return 60_000; // everything slower in debug mode
-  if (isLSAN) return 60_000;
+  if (isLSAN) return 120_000;
+  if (isASAN) return 60_000;
   return 20_000;
 }
 

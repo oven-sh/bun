@@ -227,8 +227,7 @@ pub const FetchTasklet = struct {
         this.response.deinit();
         if (this.native_response) |response| {
             this.native_response = null;
-
-            response.unref();
+            response.deref();
         }
 
         this.readable_stream_ref.deinit();
@@ -258,6 +257,10 @@ pub const FetchTasklet = struct {
         if (this.http) |http_| {
             this.http = null;
             allocator.destroy(http_);
+        }
+        if (this.native_response) |resp| {
+            this.native_response = null;
+            resp.deref();
         }
         allocator.destroy(this);
     }
@@ -919,8 +922,8 @@ pub const FetchTasklet = struct {
         this.response.deinit();
 
         if (this.native_response) |response| {
-            response.unref();
             this.native_response = null;
+            response.deref();
         }
 
         this.ignore_data = true;
@@ -965,7 +968,8 @@ pub const FetchTasklet = struct {
         const response_js = Response.makeMaybePooled(@as(*jsc.JSGlobalObject, this.global_this), response);
         response_js.ensureStillAlive();
         this.response = jsc.Weak(FetchTasklet).create(response_js, this.global_this, .FetchResponse, this);
-        this.native_response = response.ref();
+        response.ref();
+        this.native_response = response;
         return response_js;
     }
 

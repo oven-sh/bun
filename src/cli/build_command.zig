@@ -441,11 +441,13 @@ pub const BuildCommand = struct {
                     ctx.bundler_options.compile_exec_argv orelse "",
                     null,
                 ) catch |err| {
+                    ctx.allocator.free(all_paths);
                     Output.printErrorln("failed to create executable: {s}", .{@errorName(err)});
                     Global.exit(1);
                 };
 
                 if (result != .success) {
+                    ctx.allocator.free(all_paths);
                     Output.printErrorln("{s}", .{result.err.slice()});
                     Global.exit(1);
                 }

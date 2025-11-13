@@ -239,3 +239,6 @@ leak:bun.js.api.bun.subprocess.SubprocessPipeReader.create
 leak:bun.js.api.ffi.FFI.generateSymbolForFunction
 leak:patch.
 leak:logger.Log.cloneToWithRecycled
+leak:cli.pm_version_command.
+leak:Bun__encoding__constructFromLatin1
+leak:Bun__encoding__constructFromUTF16

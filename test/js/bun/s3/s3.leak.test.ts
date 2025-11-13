@@ -68,6 +68,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
             stdin: "ignore",
           },
         );
+        if (exitCode !== 0) console.error(stderr.toString());
         expect(exitCode).toBe(0);
         expect(stderr.toString()).toBe("");
       },
@@ -99,6 +100,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
             stdin: "ignore",
           },
         );
+        if (exitCode !== 0) console.error(stderr.toString());
         expect(exitCode).toBe(0);
         expect(stderr.toString()).toBe("");
       },
@@ -130,6 +132,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
             stdin: "ignore",
           },
         );
+        if (exitCode !== 0) console.error(stderr.toString());
         expect(exitCode).toBe(0);
         expect(stderr.toString()).toBe("");
       },
@@ -162,6 +165,7 @@ describe.skipIf(!s3Options.accessKeyId)("s3", () => {
             stdin: "ignore",
           },
         );
+        if (exitCode !== 0) console.error(stderr.toString());
         expect(exitCode).toBe(0);
         expect(stderr.toString()).toBe("");
       },

@@ -1181,7 +1181,7 @@ pub const String = struct {
 
         if (s.isUTF8()) {
             if (try strings.toUTF16Alloc(allocator, s.slice8(), false, false)) |utf16| {
-                defer bun.default_allocator.free(utf16);
+                defer allocator.free(utf16);
                 var out, const chars = bun.String.createUninitialized(.utf16, utf16.len);
                 @memcpy(chars, utf16);
                 return out.transferToJS(globalObject);

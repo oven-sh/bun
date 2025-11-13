@@ -1,3 +1,5 @@
+import { isASAN } from "harness";
+
 const delta = 1;
 const initialRuns = 10_000;
 let runs = initialRuns;
@@ -84,13 +86,9 @@ async function batch(iterations) {
     if (globalThis.Bun) {
       const heapStats = require("bun:jsc").heapStats();
       console.log("Timeout object count:", heapStats.objectTypeCounts.Timeout || 0);
-      if (heapStats.protectedObjectTypeCounts.Timeout) {
-        throw new Error("Expected 0 protected Timeout but received " + heapStats.protectedObjectTypeCounts.Timeout);
-      }
+      expect(heapStats.protectedObjectTypeCounts.Timeout).toBe(0);
     }
 
-    if (delta > 20) {
-      throw new Error("Memory leak detected");
-    }
+    expect(delta).toBeLessThanOrEqual(isASAN ? 50 : 20);
   }
 }

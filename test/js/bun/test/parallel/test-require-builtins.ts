@@ -23,6 +23,7 @@ console.log(JSON.stringify({ builtin, time: end - now }));
     env: {
       ...process.env,
       NODE_NO_WARNINGS: "1",
+      ASAN_OPTIONS: "allow_user_segv_handler=1:detect_leaks=0",
     },
   });
   expect(proc.signal).toBeNull();

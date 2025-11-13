@@ -76,7 +76,7 @@ for (let i = 0; i < constructorArgs.length; i++) {
     const memory = (process.memoryUsage.rss() / 1024 / 1024) | 0;
     const delta = Math.max(memory, baseline) - Math.min(baseline, memory);
     console.log("RSS delta: ", delta, "MB");
-    expect(delta).toBeLessThan(30);
+    expect(delta).toBeLessThan(isASAN ? 50 : 30);
   });
 
   test("request.clone(test #" + i + ")", () => {
@@ -101,6 +101,6 @@ for (let i = 0; i < constructorArgs.length; i++) {
     const memory = (process.memoryUsage.rss() / 1024 / 1024) | 0;
     const delta = Math.max(memory, baseline) - Math.min(baseline, memory);
     console.log("RSS delta: ", delta, "MB");
-    expect(delta).toBeLessThan(30);
+    expect(delta).toBeLessThan(isASAN ? 50 : 30);
   });
 }

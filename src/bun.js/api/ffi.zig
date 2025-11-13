@@ -943,6 +943,7 @@ pub const FFI = struct {
         }
         for (symbols.values()) |*function| {
             var arraylist = std.array_list.Managed(u8).init(allocator);
+            defer arraylist.deinit();
             var writer = arraylist.writer();
             function.printSourceCode(&writer) catch {
                 // an error while generating source code

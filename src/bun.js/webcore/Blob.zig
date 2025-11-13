@@ -568,6 +568,7 @@ pub fn fromURLSearchParams(
 
     var blob = Blob.initWithStore(store, globalThis);
     blob.content_type = store.mime_type.value;
+    blob.content_type_allocated = false;
     blob.content_type_was_set = true;
     return blob;
 }
@@ -1144,6 +1145,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                         fn deinit(this: *@This()) void {
                             this.promise.deinit();
                             this.store.deref();
+                            bun.destroy(this);
                         }
                     };
                     source_store.ref();
@@ -1785,6 +1787,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
 
                         if (globalThis.bunVM().mimeType(slice)) |mime| {
                             blob.content_type = mime.value;
+                            blob.content_type_allocated = false;
                             break :inner;
                         }
                         const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
@@ -1809,6 +1812,7 @@ pub fn JSDOMFile__construct_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Ca
 
     if (blob.content_type.len == 0) {
         blob.content_type = "";
+        blob.content_type_allocated = false;
         blob.content_type_was_set = false;
     }
 
@@ -1885,6 +1889,7 @@ pub fn constructBunFile(
                         blob.content_type_was_set = true;
                         if (vm.mimeType(str.slice())) |entry| {
                             blob.content_type = entry.value;
+                            blob.content_type_allocated = false;
                             break :inner;
                         }
                         const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
@@ -2282,6 +2287,7 @@ pub fn doWrite(this: *Blob, globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
 
                     if (globalThis.bunVM().mimeType(slice)) |mime| {
                         this.content_type = mime.value;
+                        this.content_type_allocated = false;
                     } else {
                         const content_type_buf = bun.handleOom(bun.default_allocator.alloc(u8, slice.len));
                         this.content_type = strings.copyLowercase(slice, content_type_buf);
@@ -2622,6 +2628,7 @@ pub fn getWriter(
 
                         if (globalThis.bunVM().mimeType(slice)) |mime| {
                             this.content_type = mime.value;
+                            this.content_type_allocated = false;
                         } else {
                             const content_type_buf = bun.handleOom(bun.default_allocator.alloc(u8, slice.len));
                             this.content_type = strings.copyLowercase(slice, content_type_buf);
@@ -3199,6 +3206,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 
                                 if (globalThis.bunVM().mimeType(slice)) |mime| {
                                     blob.content_type = mime.value;
+                                    blob.content_type_allocated = false;
                                     break :inner;
                                 }
                                 const content_type_buf = bun.handleOom(allocator.alloc(u8, slice.len));
@@ -3212,6 +3220,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 
             if (blob.content_type.len == 0) {
                 blob.content_type = "";
+                blob.content_type_allocated = false;
                 blob.content_type_was_set = false;
             }
         },
@@ -3242,6 +3251,8 @@ pub fn initWithAllASCII(bytes: []u8, allocator: std.mem.Allocator, globalThis: *
         .size = @as(SizeType, @truncate(bytes.len)),
         .store = store,
         .content_type = "",
+        .content_type_allocated = false,
+        .content_type_was_set = false,
         .globalThis = globalThis,
         .charset = .fromBool(is_all_ascii),
     };
@@ -3256,6 +3267,8 @@ pub fn init(bytes: []u8, allocator: std.mem.Allocator, globalThis: *JSGlobalObje
         else
             null,
         .content_type = "",
+        .content_type_allocated = false,
+        .content_type_was_set = false,
         .globalThis = globalThis,
     };
 }
@@ -3270,6 +3283,8 @@ pub fn createWithBytesAndAllocator(
         .size = @as(SizeType, @truncate(bytes.len)),
         .store = if (bytes.len > 0) Blob.Store.init(bytes, allocator) else null,
         .content_type = if (was_string) MimeType.text.value else "",
+        .content_type_allocated = false,
+        .content_type_was_set = if (was_string) true else false,
         .globalThis = globalThis,
     };
 }
@@ -3297,6 +3312,8 @@ pub fn tryCreate(
                     var blob = initWithStore(store, globalThis);
                     if (was_string and blob.content_type.len == 0) {
                         blob.content_type = MimeType.text.value;
+                        blob.content_type_allocated = false;
+                        blob.content_type_was_set = true;
                     }
 
                     return blob;
@@ -3325,6 +3342,8 @@ pub fn initWithStore(store: *Blob.Store, globalThis: *JSGlobalObject) Blob {
             store.data.file.mime_type.value
         else
             "",
+        .content_type_allocated = false,
+        .content_type_was_set = store.data == .file,
         .globalThis = globalThis,
     };
 }
@@ -3334,6 +3353,8 @@ pub fn initEmpty(globalThis: *JSGlobalObject) Blob {
         .size = 0,
         .store = null,
         .content_type = "",
+        .content_type_allocated = false,
+        .content_type_was_set = false,
         .globalThis = globalThis,
     };
 }
@@ -3360,26 +3381,27 @@ pub fn dupeWithContentType(this: *const Blob, include_content_type: bool) Blob {
     if (this.store != null) this.store.?.ref();
     var duped = this.*;
     duped.setNotHeapAllocated();
-    if (duped.content_type_allocated and duped.isHeapAllocated() and !include_content_type) {
+    if (duped.content_type_allocated and this.isHeapAllocated() and !include_content_type) {
 
         // for now, we just want to avoid a use-after-free here
         if (jsc.VirtualMachine.get().mimeType(duped.content_type)) |mime| {
             duped.content_type = mime.value;
+            duped.content_type_allocated = false;
+            duped.content_type_was_set = true;
         } else {
             // TODO: fix this
             // this is a bug.
             // it means whenever
             duped.content_type = "";
+            duped.content_type_allocated = false;
+            duped.content_type_was_set = false;
         }
-
-        duped.content_type_allocated = false;
-        duped.content_type_was_set = false;
-        if (this.content_type_was_set) {
-            duped.content_type_was_set = duped.content_type.len > 0;
-        }
-    } else if (duped.content_type_allocated and duped.isHeapAllocated() and include_content_type) {
+    } else if (duped.content_type_allocated and this.isHeapAllocated() and include_content_type) {
         duped.content_type = bun.handleOom(bun.default_allocator.dupe(u8, this.content_type));
+        duped.content_type_allocated = true;
+        duped.content_type_was_set = true;
     }
+    duped.content_type_allocated = false;
     duped.name = duped.name.dupeRef();
     return duped;
 }

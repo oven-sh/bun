@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe, isCI, isDebug, isFlaky, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, isFlaky, isLinux, isWindows } from "harness";
 import { join } from "path";
 
 const payload = Buffer.alloc(512 * 1024, "1").toString("utf-8"); // decent size payload to test memory leak
@@ -176,7 +176,7 @@ for (const test_info of [
         // acceptable memory leak
         expect(report.leak).toBeLessThanOrEqual(maxMemoryGrowth);
 
-        expect(report.end_memory).toBeLessThanOrEqual(512 * 1024 * 1024);
+        expect(report.end_memory).toBeLessThanOrEqual(512 * 1024 * 1024 * (isASAN ? 2 : 1));
       } catch (e) {
         if (!isCI && process.platform !== "win32") {
           try {

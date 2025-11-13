@@ -17,7 +17,7 @@ describe("jsx:preserve", () => {
     const input = path.join(String(dir), "input.tsx");
     const outfile = path.join(String(dir), "out.js");
 
-    const { stderr, exitCode } = spawnSync({
+    const { stdout, stderr, exitCode } = spawnSync({
       cmd: [bunExe(), "build", "--jsx-runtime=preserve", input, "--outfile", outfile],
       cwd: String(dir),
       env: bunEnv,
@@ -26,9 +26,11 @@ describe("jsx:preserve", () => {
     const out = readFileSync(outfile, "utf8");
     expect(out).toContain("<span>");
     expect(out).not.toContain("React.createElement");
+    const stdoutStr = String(stdout ?? "");
+    expect(stdoutStr).toBe("");
+    expect(exitCode).toBe(0);
     const stderrStr = String(stderr ?? "");
     expect(stderrStr).toBe("");
-    expect(exitCode).toBe(0);
   });
 
   test("string attribute equal to a single quote", () => {

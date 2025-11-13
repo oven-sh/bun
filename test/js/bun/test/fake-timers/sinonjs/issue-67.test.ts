@@ -1,6 +1,6 @@
 "use strict";
 
-import { sinon, FakeTimers, assert } from "./helpers/setup-tests";
+import { FakeTimers, assert, sinon } from "./helpers/setup-tests";
 
 describe("issue #67", function () {
   // see https://nodejs.org/api/timers.html

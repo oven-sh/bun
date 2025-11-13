@@ -1,6 +1,6 @@
 "use strict";
 
-import { sinon, FakeTimers, assert, addTimerReturnsObject } from "./helpers/setup-tests";
+import { FakeTimers, assert, sinon } from "./helpers/setup-tests";
 
 describe("#368 - timeout.refresh setTimeout arguments", function () {
   it("should forward arguments passed to setTimeout", function () {

@@ -1,6 +1,6 @@
 "use strict";
 
-import { FakeTimers, assert, utilPromisifyAvailable, utilPromisify, setImmediatePresent } from "./helpers/setup-tests";
+import { FakeTimers, assert, setImmediatePresent, utilPromisify } from "./helpers/setup-tests";
 
 describe("#347 - Support util.promisify once installed", function () {
   let clock;

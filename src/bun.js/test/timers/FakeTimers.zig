@@ -331,10 +331,10 @@ pub fn putTimersFns(globalObject: *jsc.JSGlobalObject, jest: jsc.JSValue, vi: js
     }
 }
 
+const bindgen_generated = @import("bindgen_generated");
 const std = @import("std");
 
 const bun = @import("bun");
 const jsc = bun.jsc;
 const TimerHeap = bun.api.Timer.TimerHeap;
 const FakeTimers = bun.jsc.Jest.bun_test.FakeTimers;
-const bindgen_generated = @import("bindgen_generated");

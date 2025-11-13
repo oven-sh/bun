@@ -79,8 +79,8 @@ pub fn installIsolatedPackages(
                 }
 
                 // 3
-                for (lockfile.workspace_paths.values()) |workspace_path| {
-                    var workspace_node_modules: bun.AutoRelPath = .from(workspace_path.slice(lockfile.buffers.string_bytes.items));
+                for (manager.lockfile.workspace_paths.values()) |workspace_path| {
+                    var workspace_node_modules: bun.AutoRelPath = .from(workspace_path.slice(manager.lockfile.buffers.string_bytes.items));
                     defer workspace_node_modules.deinit();
 
                     const basename = workspace_node_modules.basename();
@@ -145,8 +145,8 @@ pub fn installIsolatedPackages(
                 rename_path.undo(1);
 
                 // 5
-                for (lockfile.workspace_paths.values()) |workspace_path| {
-                    var workspace_node_modules: bun.AutoRelPath = .from(workspace_path.slice(lockfile.buffers.string_bytes.items));
+                for (manager.lockfile.workspace_paths.values()) |workspace_path| {
+                    var workspace_node_modules: bun.AutoRelPath = .from(workspace_path.slice(manager.lockfile.buffers.string_bytes.items));
                     defer workspace_node_modules.deinit();
 
                     const basename = workspace_node_modules.basename();
@@ -276,7 +276,7 @@ pub fn installIsolatedPackages(
                     continue;
                 },
                 .root => {
-                    if (dep_id == invalid_dependency_id) {
+                    if (dep_id == install.invalid_dependency_id) {
                         // .monotonic is okay in this block because the task isn't running on another
                         // thread.
                         entry_steps[entry_id.get()].store(.symlink_dependencies, .monotonic);

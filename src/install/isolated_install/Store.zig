@@ -63,9 +63,11 @@ pub const Store = struct {
             parent_id: Node.Id,
             dep_id: DependencyID,
             pkg_id: PackageID,
+
+            pub const deinit = {};
         };
 
-        var next_node_stack: std.ArrayList(NextNode) = .init(manager.allocator);
+        var next_node_stack: bun.collections.ArrayListDefault(NextNode) = .init();
         defer next_node_stack.deinit();
 
         try next_node_stack.append(.{
@@ -165,7 +167,9 @@ pub const Store = struct {
                     const dedupe_dep_id = this.node_dep_ids[dedupe_node_id.get()];
                     const dedupe_dep = this.dependencies[dedupe_dep_id];
 
-                    if (dedupe_dep.name_hash != node_dep.name_hash) {
+                    if (dedupe_dep.name_hash != node_dep.name_hash or
+                        dedupe_dep.behavior.workspace != node_dep.behavior.workspace)
+                    {
                         // create a new node if it's an alias so we don't lose the alias name
                         break :create_new_node;
                     }
@@ -231,8 +235,10 @@ pub const Store = struct {
                 }
 
                 const dedupe = try this.node_dedupe.getOrPut(pkg_id);
-                if (comptime Environment.ci_assert) {
-                    bun.assertWithLocation(!dedupe.found_existing, @src());
+
+                if (dedupe.found_existing) {
+                    bun.debugAssert(dep.version.tag == .workspace);
+                    return;
                 }
 
                 dedupe.value_ptr.* = node_id;
@@ -254,37 +260,52 @@ pub const Store = struct {
         var ctx: BuilderCtx = try .init(manager.allocator, manager.lockfile);
         defer ctx.deinit();
 
-        var dep_ids_sort_buf: std.ArrayList(DependencyID) = .init(ctx.allocator);
+        var dep_ids_sort_buf: bun.collections.ArrayListDefault(DependencyID) = .init();
         defer dep_ids_sort_buf.deinit();
 
-        var peer_dep_ids_buf: std.ArrayList(DependencyID) = .init(ctx.allocator);
+        var peer_dep_ids_buf: bun.collections.ArrayListDefault(DependencyID) = .init();
         defer peer_dep_ids_buf.deinit();
 
-        var visited_node_ids_buf: std.ArrayList(Node.Id) = .init(ctx.allocator);
+        var visited_node_ids_buf: std.array_list.Managed(Node.Id) = .init(ctx.allocator);
         defer visited_node_ids_buf.deinit();
 
         // First pass: create full dependency tree with resolved peers
         next_node: while (next_node_stack.pop()) |next_node| {
-            {
+            check_cycle: {
                 // check for cycles
                 var parent_iter = ctx.iterateNodeParents(next_node.parent_id);
                 while (parent_iter.next()) |parent_id| {
-                    if (ctx.node_pkg_ids[parent_id.get()] == next_node.pkg_id) {
-                        // skip the new node, and add the previously added node to parent so it appears in
-                        // 'node_modules/.bun/parent@version/node_modules'.
+                    if (ctx.node_pkg_ids[parent_id.get()] != next_node.pkg_id) {
+                        continue;
+                    }
 
-                        const dep_id = ctx.node_dep_ids[parent_id.get()];
-                        if (dep_id == invalid_dependency_id or next_node.dep_id == invalid_dependency_id) {
-                            try ctx.addNodeToParentNodes(next_node.parent_id, parent_id);
-                            continue :next_node;
-                        }
+                    // pkg_id is the same. skip the new node, and add the previously added node
+                    // to parent so it appears in 'node_modules/.bun/parent@version/node_modules'.
 
-                        // ensure the dependency name is the same before skipping the cycle. if they aren't
-                        // we lose dependency name information for the symlinks
-                        if (ctx.dependencies[dep_id].name_hash == ctx.dependencies[next_node.dep_id].name_hash) {
-                            try ctx.addNodeToParentNodes(next_node.parent_id, parent_id);
-                            continue :next_node;
-                        }
+                    const dep_id = ctx.node_dep_ids[parent_id.get()];
+                    if (dep_id == invalid_dependency_id and next_node.dep_id == invalid_dependency_id) {
+                        try ctx.addNodeToParentNodes(next_node.parent_id, parent_id);
+                        continue :next_node;
+                    }
+
+                    if (dep_id == invalid_dependency_id or next_node.dep_id == invalid_dependency_id) {
+                        // one is the root package, one is a dependency on the root package (it has a valid dep_id)
+                        // create a new node for it.
+                        break :check_cycle;
+                    }
+
+                    const parent_dep = ctx.dependencies[dep_id];
+                    const node_dep = ctx.dependencies[next_node.dep_id];
+
+                    // ensure the dependency name is the same before skipping the cycle. if they aren't
+                    // we lose dependency name information for the symlinks
+                    if (parent_dep.name_hash == node_dep.name_hash and
+                        // also ensure workspace self deps are not skipped.
+                        // implicit workspace dep != explicit workspace dep
+                        parent_dep.behavior.workspace == node_dep.behavior.workspace)
+                    {
+                        try ctx.addNodeToParentNodes(next_node.parent_id, parent_id);
+                        continue :next_node;
                     }
                 }
             }
@@ -306,7 +327,7 @@ pub const Store = struct {
             // and devDependency handling to match `hoistDependency`
             std.sort.pdq(
                 DependencyID,
-                dep_ids_sort_buf.items,
+                dep_ids_sort_buf.items(),
                 Lockfile.DepSorter{ .lockfile = manager.lockfile },
                 Lockfile.DepSorter.isLessThan,
             );
@@ -315,7 +336,7 @@ pub const Store = struct {
             queue_deps: {
                 if (packages_to_install) |packages| {
                     if (node_id == .root) { // TODO: print an error when scanner is actually a dependency of a workspace (we should not support this)
-                        for (dep_ids_sort_buf.items) |dep_id| {
+                        for (dep_ids_sort_buf.items()) |dep_id| {
                             const pkg_id = ctx.resolutions[dep_id];
                             if (pkg_id == invalid_package_id) {
                                 continue;
@@ -337,7 +358,7 @@ pub const Store = struct {
                     }
                 }
 
-                for (dep_ids_sort_buf.items) |dep_id| {
+                for (dep_ids_sort_buf.items()) |dep_id| {
                     if (Tree.isFilteredDependencyOrWorkspace(
                         dep_id,
                         next_node.pkg_id,
@@ -372,8 +393,8 @@ pub const Store = struct {
                 }
             }
 
-            for (peer_dep_ids_buf.items) |peer_dep_id| {
-                const resolved_pkg_id = resolved_pkg_id: {
+            for (peer_dep_ids_buf.items()) |peer_dep_id| {
+                const resolved_pkg_id, const auto_installed = resolved_pkg_id: {
 
                     // Go through the peers parents looking for a package with the same name.
                     // If none is found, use current best version. Parents visited must have
@@ -382,14 +403,12 @@ pub const Store = struct {
                     // ids are equal.
                     const peer_dep = ctx.dependencies[peer_dep_id];
 
-                    // Start with the parent of the new node. A package
-                    // cannot resolve it's own peer.
-                    // var curr_id = ctx.node_parent_ids[node_id.get()];
-                    var parent_iter = ctx.iterateNodeParents(ctx.node_parent_ids[node_id.get()]);
+                    // TODO: double check this
+                    // Start with the current package. A package
+                    // can satisfy it's own peers.
+                    var parent_iter = ctx.iterateNodeParents(node_id);
 
                     visited_node_ids_buf.clearRetainingCapacity();
-                    try visited_node_ids_buf.append(node_id);
-
                     while (parent_iter.next()) |parent_id| {
                         for (ctx.node_dependencies[parent_id.get()].items) |ids| {
                             const dep = ctx.dependencies[ids.dep_id];
@@ -403,7 +422,7 @@ pub const Store = struct {
                             if (peer_dep.version.tag != .npm or res.tag != .npm) {
                                 // TODO: print warning for this? we don't have a version
                                 // to compare to say if this satisfies or not.
-                                break :resolved_pkg_id ids.pkg_id;
+                                break :resolved_pkg_id .{ ids.pkg_id, false };
                             }
 
                             const peer_dep_version = peer_dep.version.value.npm.version;
@@ -413,7 +432,7 @@ pub const Store = struct {
                                 // TODO: add warning!
                             }
 
-                            break :resolved_pkg_id ids.pkg_id;
+                            break :resolved_pkg_id .{ ids.pkg_id, false };
                         }
 
                         const curr_peers = ctx.node_peers[parent_id.get()];
@@ -427,7 +446,36 @@ pub const Store = struct {
                             // A transitive peer with the same name has already passed
                             // through this node
 
-                            break :resolved_pkg_id ids.pkg_id;
+                            if (!ids.auto_installed) {
+                                // The resolution was found here or above. Choose the same
+                                // peer resolution. No need to mark this node or above.
+
+                                // TODO: add warning if not satisfies()!
+                                break :resolved_pkg_id .{ ids.pkg_id, false };
+                            }
+
+                            // It didn't find a matching name and auto installed
+                            // from somewhere this peer can't reach. Choose best
+                            // version. Only mark all parents if resolution is
+                            // different from this transitive peer.
+
+                            const best_version = ctx.resolutions[peer_dep_id];
+
+                            if (best_version == invalid_package_id) {
+                                break :resolved_pkg_id .{ invalid_package_id, true };
+                            }
+
+                            if (best_version == ids.pkg_id) {
+                                break :resolved_pkg_id .{ ids.pkg_id, true };
+                            }
+
+                            // add the remaining parent ids
+                            try visited_node_ids_buf.append(parent_id);
+                            while (parent_iter.next()) |remaining_parent_id| {
+                                try visited_node_ids_buf.append(remaining_parent_id);
+                            }
+
+                            break :resolved_pkg_id .{ best_version, true };
                         }
 
                         // TODO: prevent marking workspace and symlink deps with transitive peers
@@ -437,20 +485,14 @@ pub const Store = struct {
                         try visited_node_ids_buf.append(parent_id);
                     }
 
-                    if (peer_dep.behavior.isOptionalPeer()) {
-                        // exclude it
-                        continue;
-                    }
-
-                    // set the length to 1 so we only add this peer to the current node
-                    visited_node_ids_buf.items.len = 1;
-
                     // choose the current best version
-                    break :resolved_pkg_id ctx.resolutions[peer_dep_id];
+                    break :resolved_pkg_id .{ ctx.resolutions[peer_dep_id], true };
                 };
 
-                if (comptime Environment.ci_assert) {
-                    bun.assertWithLocation(resolved_pkg_id != invalid_package_id, @src());
+                if (resolved_pkg_id == invalid_package_id) {
+                    // these are optional peers that failed to find any dependency with a matching
+                    // name. they are completely excluded.
+                    continue;
                 }
 
                 for (visited_node_ids_buf.items) |visited_id| {
@@ -461,16 +503,21 @@ pub const Store = struct {
                     const peer: Node.TransitivePeer = .{
                         .dep_id = peer_dep_id,
                         .pkg_id = resolved_pkg_id,
+                        .auto_installed = auto_installed,
                     };
                     try ctx.node_peers[visited_id.get()].insert(ctx.allocator, peer, &insert_ctx);
                 }
 
-                ctx.node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = peer_dep_id, .pkg_id = resolved_pkg_id });
-                try next_node_stack.append(.{
-                    .parent_id = node_id,
-                    .dep_id = peer_dep_id,
-                    .pkg_id = resolved_pkg_id,
-                });
+                if (visited_node_ids_buf.items.len != 0) {
+                    // visited parents length == 0 means the node satisfied it's own
+                    // peer. don't queue
+                    ctx.node_dependencies[node_id.get()].appendAssumeCapacity(.{ .dep_id = peer_dep_id, .pkg_id = resolved_pkg_id });
+                    try next_node_stack.append(.{
+                        .parent_id = node_id,
+                        .dep_id = peer_dep_id,
+                        .pkg_id = resolved_pkg_id,
+                    });
+                }
             }
 
             const node_dependencies_count = ctx.node_dependencies[node_id.get()].items.len;
@@ -490,7 +537,7 @@ pub const Store = struct {
         if (manager.options.log_level.isVerbose()) {
             const full_tree_end = timer.read();
             timer.reset();
-            Output.prettyErrorln("Resolved peers: {d} nodes [{}]", .{
+            Output.prettyErrorln("Resolved peers: {d} nodes [{f}]", .{
                 ctx.store.nodes.len,
                 bun.fmt.fmtDurationOneDecimal(full_tree_end),
             });
@@ -502,10 +549,10 @@ pub const Store = struct {
             peers: OrderedArraySet(Node.TransitivePeer, Node.TransitivePeer.OrderedArraySetCtx),
         };
 
-        var entry_dedupe: std.AutoArrayHashMap(PackageID, std.ArrayList(EntryDedupe)) = .init(ctx.allocator);
+        var entry_dedupe: std.AutoArrayHashMap(PackageID, bun.collections.ArrayListDefault(EntryDedupe)) = .init(ctx.allocator);
         defer entry_dedupe.deinit();
 
-        var res_fmt_buf: std.ArrayList(u8) = .init(ctx.allocator);
+        var res_fmt_buf: bun.collections.ArrayListDefault(u8) = .init();
         defer res_fmt_buf.deinit();
 
         const NextEntry = struct {
@@ -513,13 +560,19 @@ pub const Store = struct {
             parent_id: Entry.Id,
         };
 
-        var next_entry_queue: std.fifo.LinearFifo(NextEntry, .Dynamic) = .init(ctx.allocator);
+        var next_entry_queue: bun.LinearFifo(NextEntry, .Dynamic) = .init(ctx.allocator);
         defer next_entry_queue.deinit();
 
         try next_entry_queue.writeItem(.{
             .node_id = .from(0),
             .parent_id = .invalid,
         });
+
+        var public_hoisted: bun.StringArrayHashMap(void) = .init(ctx.allocator);
+        defer public_hoisted.deinit();
+
+        var hidden_hoisted: bun.StringArrayHashMap(void) = .init(ctx.allocator);
+        defer hidden_hoisted.deinit();
 
         // Second pass: Deduplicate nodes when the pkg_id and peer set match an existing entry.
         next_entry: while (next_entry_queue.readItem()) |next_entry| {
@@ -528,21 +581,26 @@ pub const Store = struct {
 
             const dedupe = try entry_dedupe.getOrPut(pkg_id);
             if (!dedupe.found_existing) {
-                dedupe.value_ptr.* = .init(ctx.allocator);
+                dedupe.value_ptr.* = .init();
             } else {
                 const peers = ctx.node_peers[next_entry.node_id.get()];
 
-                for (dedupe.value_ptr.items) |info| {
-                    // if (info.dep_id != invalid_dependency_id and dep_id != invalid_dependency_id) {
-                    //     const curr_dep = dependencies[dep_id];
-                    //     const existing_dep = dependencies[info.dep_id];
+                for (dedupe.value_ptr.items()) |info| {
+                    if (info.dep_id == invalid_dependency_id or dep_id == invalid_dependency_id) {
+                        if (info.dep_id != dep_id) {
+                            continue;
+                        }
+                    }
+                    if (info.dep_id != invalid_dependency_id and dep_id != invalid_dependency_id) {
+                        const curr_dep = ctx.dependencies[dep_id];
+                        const existing_dep = ctx.dependencies[info.dep_id];
 
-                    //     if (existing_dep.version.tag == .workspace and curr_dep.version.tag == .workspace) {
-                    //         if (existing_dep.behavior.isWorkspace() != curr_dep.behavior.isWorkspace()) {
-                    //             continue;
-                    //         }
-                    //     }
-                    // }
+                        if (existing_dep.version.tag == .workspace and curr_dep.version.tag == .workspace) {
+                            if (existing_dep.behavior.isWorkspace() != curr_dep.behavior.isWorkspace()) {
+                                continue;
+                            }
+                        }
+                    }
 
                     const eql_ctx: Node.TransitivePeer.OrderedArraySetCtx = .{
                         .string_buf = ctx.string_buf,
@@ -554,10 +612,10 @@ pub const Store = struct {
 
                         var parents = &ctx.entry_parents[info.entry_id.get()];
 
-                        // if (dep_id != invalid_dependency_id and dependencies[dep_id].behavior.isWorkspace()) {
-                        //     try parents.append(lockfile.allocator, next_entry.parent_id);
-                        //     continue :next_entry;
-                        // }
+                        if (dep_id != invalid_dependency_id and ctx.dependencies[dep_id].behavior.isWorkspace()) {
+                            try parents.append(ctx.allocator, next_entry.parent_id);
+                            continue :next_entry;
+                        }
                         const insert_ctx: Entry.DependenciesOrderedArraySetCtx = .{
                             .string_buf = ctx.string_buf,
                             .dependencies = ctx.dependencies,
@@ -600,10 +658,29 @@ pub const Store = struct {
                         hasher.update(pkg_name.slice(ctx.string_buf));
                         const pkg_res = ctx.pkg_resolutions[peer_ids.pkg_id];
                         res_fmt_buf.clearRetainingCapacity();
-                        try res_fmt_buf.writer().print("{}", .{pkg_res.fmt(ctx.string_buf, .posix)});
-                        hasher.update(res_fmt_buf.items);
+                        try res_fmt_buf.writer().print("{f}", .{pkg_res.fmt(ctx.string_buf, .posix)});
+                        hasher.update(res_fmt_buf.items());
                     }
                     break :peer_hash .from(hasher.final());
+                },
+                .hoisted = hoisted: {
+                    if (dep_id == invalid_dependency_id) {
+                        break :hoisted false;
+                    }
+
+                    const dep_name = ctx.dependencies[dep_id].name.slice(ctx.string_buf);
+
+                    const hoist_pattern = manager.options.hoist_pattern orelse {
+                        const hoist_entry = try hidden_hoisted.getOrPut(dep_name);
+                        break :hoisted !hoist_entry.found_existing;
+                    };
+
+                    if (hoist_pattern.isMatch(dep_name)) {
+                        const hoist_entry = try hidden_hoisted.getOrPut(dep_name);
+                        break :hoisted !hoist_entry.found_existing;
+                    }
+
+                    break :hoisted false;
                 },
             });
 
@@ -622,6 +699,36 @@ pub const Store = struct {
                     .{ .entry_id = entry_id, .dep_id = dep_id },
                     &insert_ctx,
                 );
+
+                if (dep_id == invalid_dependency_id) {
+                    break :skip_adding_dependency;
+                }
+
+                const dep_name = ctx.dependencies[dep_id].name.slice(ctx.string_buf);
+                if (next_entry.parent_id == .root) {
+                    // make sure direct dependencies are not replaced
+                    try public_hoisted.put(dep_name, {});
+                } else {
+                    // transitive dependencies (including direct dependencies of workspaces!)
+                    const public_hoist_pattern = manager.options.public_hoist_pattern orelse {
+                        break :skip_adding_dependency;
+                    };
+
+                    if (!public_hoist_pattern.isMatch(dep_name)) {
+                        break :skip_adding_dependency;
+                    }
+
+                    const hoist_entry = try public_hoisted.getOrPut(dep_name);
+                    if (hoist_entry.found_existing) {
+                        break :skip_adding_dependency;
+                    }
+
+                    try ctx.entry_dependencies[0].insert(
+                        ctx.allocator,
+                        .{ .entry_id = entry_id, .dep_id = dep_id },
+                        &insert_ctx,
+                    );
+                }
             }
 
             try dedupe.value_ptr.append(.{
@@ -640,7 +747,7 @@ pub const Store = struct {
 
         if (manager.options.log_level.isVerbose()) {
             const dedupe_end = timer.read();
-            Output.prettyErrorln("Created store: {d} entries [{}]", .{
+            Output.prettyErrorln("Created store: {d} entries [{f}]", .{
                 ctx.store.entries.len,
                 bun.fmt.fmtDurationOneDecimal(dedupe_end),
             });
@@ -1009,6 +1116,7 @@ pub const Store = struct {
         pub const TransitivePeer = struct {
             dep_id: DependencyID,
             pkg_id: PackageID,
+            auto_installed: bool,
 
             pub const OrderedArraySetCtx = struct {
                 string_buf: string,

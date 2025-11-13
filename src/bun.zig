@@ -3248,7 +3248,7 @@ pub const timespec = extern struct {
         // Split into whole ms and sub-ms remainder (matches sinon/fake-timers logic)
         // Use modulo to extract fractional milliseconds as nanoseconds
         const ms_whole_f = @floor(interval_ms);
-        const ms_inc: i64 = @intFromFloat(ms_whole_f);
+        const ms_inc: i64 = std.math.lossyCast(i64, ms_whole_f);
 
         // nanoRemainder: floor((msFloat * 1e6) % 1e6)
         const ns_total_f = interval_ms * ns_per_ms_f;

@@ -33,7 +33,7 @@ pub var current_time: struct {
         this.#offset.store(.fromTimespec(v.offset), .seq_cst);
         const timespec_ms: f64 = @floatFromInt(v.offset.msUnsigned());
         if (v.js) |js| {
-            this.date_now_offset = js - timespec_ms;
+            this.date_now_offset = @floor(js) - timespec_ms;
         }
         bun.cpp.JSMock__setOverridenDateNow(globalObject, this.date_now_offset + timespec_ms);
 

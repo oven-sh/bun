@@ -1,10 +1,14 @@
-// https://github.com/sinonjs/fake-timers/blob/main/test/issue-1852-test.js
+"use strict";
 
-import { describe, test } from "bun:test";
+import { FakeTimers, assert } from "./helpers/setup-tests";
 
-describe("issue sinon#1852", () => {
-  test.skip("throws when creating a clock and global has no Date", () => {
-    // This test is specific to FakeTimers.withGlobal API
-    // which is different from vi.useFakeTimers()
+describe("issue sinon#1852", function () {
+  it("throws when creating a clock and global has no Date", function () {
+    assert.exception(function () {
+      FakeTimers.withGlobal({
+        setTimeout: function () {},
+        clearTimeout: function () {},
+      });
+    });
   });
 });

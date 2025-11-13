@@ -1,6 +1,6 @@
 "use strict";
 
-const { FakeTimers, assert, hrtimePresent } = require("./helpers/setup-tests");
+import { FakeTimers, assert, hrtimePresent } from "./helpers/setup-tests";
 
 describe("issue #207 - nanosecond round-off errors on high-res timer", function () {
   let clock;
@@ -61,7 +61,7 @@ describe("issue #207 - nanosecond round-off errors on high-res timer", function 
     assert.equals(clock.now, -2);
   });
 
-  it.failing("should floor start times", function () {
+  it("should floor start times", function () {
     clock = FakeTimers.install({ now: 1.2 });
     assert.equals(clock.now, 1);
   });

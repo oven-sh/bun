@@ -1,52 +1,58 @@
-// https://github.com/sinonjs/fake-timers/blob/main/test/issue-67-test.js
+"use strict";
 
-import { afterEach, describe, expect, test, vi } from "bun:test";
+import { sinon, FakeTimers, assert } from "./helpers/setup-tests";
 
-afterEach(() => vi.useRealTimers());
-
-describe("issue #67", () => {
+describe("issue #67", function () {
   // see https://nodejs.org/api/timers.html
-  test("should overflow to 1 on very big timeouts", () => {
-    vi.useFakeTimers();
-    const stub1 = vi.fn();
-    const stub2 = vi.fn();
+  it.failing("should overflow to 1 on very big timeouts", function () {
+    const clock = FakeTimers.install();
+    const stub1 = sinon.stub();
+    const stub2 = sinon.stub();
 
-    setTimeout(stub1, 100);
-    setTimeout(stub2, 214748334700); // should be called after 1 tick
+    clock.setTimeout(stub1, 100);
+    clock.setTimeout(stub2, 214748334700); //should be called after 1 tick
 
-    vi.advanceTimersByTime(1);
-    expect(stub2).toHaveBeenCalled();
-    expect(stub1).not.toHaveBeenCalled();
+    clock.tick(1);
+    assert(stub2.called);
+    assert.isFalse(stub1.called);
 
-    vi.advanceTimersByTime(99);
-    expect(stub1).toHaveBeenCalled();
-    expect(stub2).toHaveBeenCalled();
+    clock.tick(99);
+    assert(stub1.called);
+    assert(stub2.called);
+
+    clock.uninstall();
   });
 
-  test("should overflow to interval 1 on very big timeouts", () => {
-    vi.useFakeTimers();
-    const stub = vi.fn();
+  it.failing("should overflow to interval 1 on very big timeouts", function () {
+    const clock = FakeTimers.install();
+    const stub = sinon.stub();
 
-    setInterval(stub, 214748334700);
-    vi.advanceTimersByTime(3);
-    expect(stub).toHaveBeenCalledTimes(3);
+    clock.setInterval(stub, 214748334700);
+    clock.tick(3);
+    assert(stub.calledThrice);
+
+    clock.uninstall();
   });
 
-  test("should execute setTimeout smaller than 1", () => {
-    vi.useFakeTimers();
-    const stub1 = vi.fn();
+  it.failing("should execute setTimeout smaller than 1", function () {
+    const clock = FakeTimers.install();
+    const stub1 = sinon.stub();
 
-    setTimeout(stub1, 0.5);
-    vi.advanceTimersByTime(1);
-    expect(stub1).toHaveBeenCalledTimes(1);
+    clock.setTimeout(stub1, 0.5);
+    clock.tick(1);
+    assert(stub1.calledOnce);
+
+    clock.uninstall();
   });
 
-  test("executes setTimeout with negative duration as if it has zero delay", () => {
-    vi.useFakeTimers();
-    const stub1 = vi.fn();
+  it.failing("executes setTimeout with negative duration as if it has zero delay", function () {
+    const clock = FakeTimers.install();
+    const stub1 = sinon.stub();
 
-    setTimeout(stub1, -10);
-    vi.advanceTimersByTime(1);
-    expect(stub1).toHaveBeenCalledTimes(1);
+    clock.setTimeout(stub1, -10);
+    clock.tick(1);
+    assert(stub1.calledOnce);
+
+    clock.uninstall();
   });
 });

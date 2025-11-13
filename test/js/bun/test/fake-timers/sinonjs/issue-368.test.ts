@@ -1,24 +1,18 @@
-// https://github.com/sinonjs/fake-timers/blob/main/test/issue-368-test.js
+"use strict";
 
-import { afterEach, describe, expect, test, vi } from "bun:test";
+import { sinon, FakeTimers, assert, addTimerReturnsObject } from "./helpers/setup-tests";
 
-const NOOP = () => {};
-const addTimerReturnsObject = typeof setTimeout(NOOP, 0) === "object";
+describe("#368 - timeout.refresh setTimeout arguments", function () {
+  it.failing("should forward arguments passed to setTimeout", function () {
+    const clock = FakeTimers.install();
+    const stub = sinon.stub();
 
-afterEach(() => vi.useRealTimers());
-
-describe("#368 - timeout.refresh setTimeout arguments", () => {
-  if (addTimerReturnsObject) {
-    test("should forward arguments passed to setTimeout", () => {
-      vi.useFakeTimers();
-      const stub = vi.fn();
-
-      const t = setTimeout(stub, 1000, "test");
-      vi.advanceTimersByTime(1000);
-      t.refresh();
-      vi.advanceTimersByTime(1000);
-      expect(stub).toHaveBeenCalledTimes(2);
-      expect(stub).toHaveBeenCalledWith("test");
-    });
-  }
+    const t = setTimeout(stub, 1000, "test");
+    clock.tick(1000);
+    t.refresh();
+    clock.tick(1000);
+    assert.calledTwice(stub);
+    assert.alwaysCalledWith(stub, "test");
+    clock.uninstall();
+  });
 });

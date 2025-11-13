@@ -1,18 +1,18 @@
-// https://github.com/sinonjs/fake-timers/blob/main/test/issue-504-test.js
+"use strict";
 
-import { afterEach, describe, expect, test, vi } from "bun:test";
+import { FakeTimers, assert } from "./helpers/setup-tests";
 
-afterEach(() => vi.useRealTimers());
-
-describe("issue #504", () => {
-  test("should not mutate Date class", () => {
+describe("issue #504", function () {
+  it("should not mutate Date class", function () {
     const priorDate = new Date();
-    expect(priorDate instanceof Date).toBe(true);
+    assert.equals(priorDate instanceof Date, true);
 
-    vi.useFakeTimers();
+    const clock = FakeTimers.install();
 
     const afterDate = new Date();
-    expect(priorDate instanceof Date).toBe(true);
-    expect(afterDate instanceof Date).toBe(true);
+    assert.equals(priorDate instanceof Date, true);
+    assert.equals(afterDate instanceof Date, true);
+
+    clock.uninstall();
   });
 });

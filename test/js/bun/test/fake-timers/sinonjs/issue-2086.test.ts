@@ -1,14 +1,19 @@
-// https://github.com/sinonjs/fake-timers/blob/main/test/issue-2086-test.js
+"use strict";
 
-import { afterEach, describe, expect, test, vi } from "bun:test";
+import { FakeTimers, assert } from "./helpers/setup-tests";
 
-afterEach(() => vi.useRealTimers());
+describe("issue #sinonjs/2086 - don't install setImmediate in unsupported environment", function () {
+  let clock;
 
-describe("issue #sinonjs/2086 - don't install setImmediate in unsupported environment", () => {
   if (typeof setImmediate === "undefined") {
-    test("should not install setImmediate", () => {
-      vi.useFakeTimers();
-      expect(global.setImmediate).toBeUndefined();
+    afterEach(function () {
+      clock.uninstall();
+    });
+
+    it("should not install setImmediate", function () {
+      clock = FakeTimers.install();
+
+      assert.isUndefined(global.setImmediate);
     });
   }
 });

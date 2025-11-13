@@ -1,16 +1,16 @@
-// https://github.com/sinonjs/fake-timers/blob/main/test/issue-315-test.js
+"use strict";
 
-import { afterEach, describe, expect, test, vi } from "bun:test";
+import { sinon, FakeTimers, assert } from "./helpers/setup-tests";
 
-afterEach(() => vi.useRealTimers());
+describe("issue #315 - praseInt if delay is not a number", function () {
+  it.failing("should successfully execute the timer", function () {
+    const clock = FakeTimers.install();
+    const stub1 = sinon.stub();
 
-describe("issue #315 - parseInt if delay is not a number", () => {
-  test("should successfully execute the timer", () => {
-    vi.useFakeTimers();
-    const stub1 = vi.fn();
+    clock.setTimeout(stub1, "1");
+    clock.tick(1);
+    assert(stub1.calledOnce);
 
-    setTimeout(stub1, "1" as any);
-    vi.advanceTimersByTime(1);
-    expect(stub1).toHaveBeenCalledTimes(1);
+    clock.uninstall();
   });
 });

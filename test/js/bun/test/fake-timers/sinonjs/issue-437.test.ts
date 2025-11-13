@@ -1,15 +1,17 @@
-// https://github.com/sinonjs/fake-timers/blob/main/test/issue-437-test.js
+"use strict";
 
-import { afterEach, describe, expect, test, vi } from "bun:test";
+import { FakeTimers, assert } from "./helpers/setup-tests";
 
-afterEach(() => vi.useRealTimers());
-
-describe("issue #437", () => {
-  test("should save methods of subclass instance", () => {
-    vi.useFakeTimers();
+describe("issue #437", function () {
+  it("should save methods of subclass instance", function () {
+    const clock = FakeTimers.install();
 
     class DateTime extends Date {
-      bar = "bar";
+      constructor() {
+        super();
+
+        this.bar = "bar";
+      }
 
       foo() {
         return "Lorem ipsum";
@@ -19,7 +21,9 @@ describe("issue #437", () => {
     const dateTime = new DateTime();
 
     // this would throw an error before issue #437 was fixed
-    expect(dateTime.foo()).toBe("Lorem ipsum");
-    expect(dateTime.bar).toBe("bar");
+    assert.equals(dateTime.foo(), "Lorem ipsum");
+    assert.equals(dateTime.bar, "bar");
+
+    clock.uninstall();
   });
 });

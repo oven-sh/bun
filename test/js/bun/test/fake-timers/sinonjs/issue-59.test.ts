@@ -1,18 +1,22 @@
-// https://github.com/sinonjs/fake-timers/blob/main/test/issue-59-test.js
+"use strict";
 
-import { afterEach, describe, test, vi } from "bun:test";
+import { sinon, FakeTimers, assert, NOOP } from "./helpers/setup-tests";
 
-afterEach(() => vi.useRealTimers());
-
-describe("issue #59", () => {
-  test("should install and uninstall the clock on a custom target", () => {
-    // Note: Bun's fake timers currently operate on global scope
-    // This test validates the install/uninstall cycle doesn't throw
-    vi.useFakeTimers();
-
-    setTimeout(() => {}, 0);
-
+describe("issue #59", function () {
+  it.failing("should install and uninstall the clock on a custom target", function () {
+    const setTimeoutFake = sinon.fake();
+    const context = {
+      Date: Date,
+      setTimeout: setTimeoutFake,
+      clearTimeout: sinon.fake(),
+    };
+    const clock = FakeTimers.withGlobal(context).install({
+      ignoreMissingTimers: true,
+    });
+    assert.equals(setTimeoutFake.callCount, 1);
+    clock.setTimeout(NOOP, 0);
+    assert.equals(setTimeoutFake.callCount, 1);
     // this would throw an error before issue #59 was fixed
-    vi.useRealTimers();
+    clock.uninstall();
   });
 });

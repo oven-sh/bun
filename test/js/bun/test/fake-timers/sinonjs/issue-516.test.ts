@@ -1,11 +1,18 @@
-// https://github.com/sinonjs/fake-timers/blob/main/test/issue-516-test.js
+"use strict";
 
-import { describe, test } from "bun:test";
+import { FakeTimers } from "./helpers/setup-tests";
 
-describe("issue #516 - not resilient to changes on Intl", () => {
-  test.skip("should successfully install the timer", () => {
-    // This test uses FakeTimers.createClock() which is a different API
-    // from vi.useFakeTimers(). Skipping for now as it's specific to
-    // the FakeTimers implementation details
+describe("issue #516 - not resilient to changes on Intl", function () {
+  it.failing("should successfully install the timer", function () {
+    const originalIntlProperties = Object.getOwnPropertyDescriptors(global.Intl);
+    for (const key of Object.keys(originalIntlProperties)) {
+      delete global.Intl[key];
+    }
+    try {
+      const clock = FakeTimers.createClock();
+      clock.tick(16);
+    } finally {
+      Object.defineProperties(global.Intl, originalIntlProperties);
+    }
   });
 });

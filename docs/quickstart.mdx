@@ -15,191 +15,192 @@ Build a minimal HTTP server with `Bun.serve`, run it locally, then evolve it by 
 	<Step title="Step 1">
 		Initialize a new project with `bun init`.
 
-		```bash terminal icon="terminal"
-		bun init my-app
-		```
+    	```bash terminal icon="terminal"
+    	bun init my-app
+    	```
 
-		It'll prompt you to pick a template, either `Blank`, `React`, or `Library`. For this guide, we'll pick `Blank`.
+    	It'll prompt you to pick a template, either `Blank`, `React`, or `Library`. For this guide, we'll pick `Blank`.
 
-		```bash terminal icon="terminal"
-		bun init my-app
-		```
-		```txt
-		✓ Select a project template: Blank
+    	```bash terminal icon="terminal"
+    	bun init my-app
+    	```
+    	```txt
+    	✓ Select a project template: Blank
 
-		- .gitignore
-		- CLAUDE.md
-		- .cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc -> CLAUDE.md
-		- index.ts
-		- tsconfig.json (for editor autocomplete)
-		- README.md
-		```
+    	- .gitignore
+    	- CLAUDE.md
+    	- .cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc -> CLAUDE.md
+    	- index.ts
+    	- tsconfig.json (for editor autocomplete)
+    	- README.md
+    	```
 
-  	This automatically creates a `my-app` directory with a basic Bun app.
+This automatically creates a `my-app` directory with a basic Bun app.
+
   </Step>
   <Step title="Step 2">
 
-  	Run the `index.ts` file using `bun run index.ts`.
+Run the `index.ts` file using `bun run index.ts`.
 
-  	```bash terminal icon="terminal"
-  	cd my-app
-  	bun run index.ts
-  	```
-  	```txt
-    Hello via Bun!
-  	```
+````bash terminal icon="terminal"
+	cd my-app
+	bun run index.ts
+	```
+	```txt
+ Hello via Bun!
+	```
 
-  	You should see a console output saying `"Hello via Bun!"`.
-  </Step>
-  <Step title="Step 3">
-  	Replace the contents of `index.ts` with the following code:
+	You should see a console output saying `"Hello via Bun!"`.
+</Step>
+<Step title="Step 3">
+	Replace the contents of `index.ts` with the following code:
 
-  	```ts index.ts icon="/icons/typescript.svg"
-  	const server = Bun.serve({
-  		port: 3000,
-  		routes: {
-  			"/": () => new Response('Bun!'),
-  		}
-  	});
+	```ts index.ts icon="/icons/typescript.svg"
+	const server = Bun.serve({
+		port: 3000,
+		routes: {
+			"/": () => new Response('Bun!'),
+		}
+	});
 
-  	console.log(`Listening on ${server.url}`);
-  	```
+	console.log(`Listening on ${server.url}`);
+	```
 
-  	Run the `index.ts` file again using `bun run index.ts`.
+	Run the `index.ts` file again using `bun run index.ts`.
 
-  	```bash terminal icon="terminal"
-  	bun run index.ts
-  	```
-  	```txt
-  	Listening on http://localhost:3000
-  	```
+	```bash terminal icon="terminal"
+	bun run index.ts
+	```
+	```txt
+	Listening on http://localhost:3000
+	```
 
-  	Visit [`http://localhost:3000`](http://localhost:3000) to test the server. You should see a simple page that says `"Bun!"`.
+	Visit [`http://localhost:3000`](http://localhost:3000) to test the server. You should see a simple page that says `"Bun!"`.
 
 
-  	<Accordion title="Seeing TypeScript errors on Bun?">
-  		If you used `bun init`, Bun will have automatically installed Bun's TypeScript declarations and configured your `tsconfig.json`. If you're trying out Bun in an existing project, you may see a type error on the `Bun` global.
+	<Accordion title="Seeing TypeScript errors on Bun?">
+		If you used `bun init`, Bun will have automatically installed Bun's TypeScript declarations and configured your `tsconfig.json`. If you're trying out Bun in an existing project, you may see a type error on the `Bun` global.
 
-  		To fix this, first install `@types/bun` as a dev dependency.
+		To fix this, first install `@types/bun` as a dev dependency.
 
-  		```bash terminal icon="terminal"
-  		bun add -d @types/bun
-  		```
+		```bash terminal icon="terminal"
+		bun add -d @types/bun
+		```
 
-  		Then add the following to your `compilerOptions` in `tsconfig.json`:
+		Then add the following to your `compilerOptions` in `tsconfig.json`:
 
-  		```json tsconfig.json icon="file-code"
-  		{
-  			"compilerOptions": {
-  				"lib": ["ESNext"],
-  				"target": "ESNext",
-  				"module": "Preserve",
-  				"moduleDetection": "force",
-  				"moduleResolution": "bundler",
-  				"allowImportingTsExtensions": true,
-  				"verbatimModuleSyntax": true,
-  				"noEmit": true
-  			}
-  		}
-  		```
+		```json tsconfig.json icon="file-code"
+		{
+			"compilerOptions": {
+				"lib": ["ESNext"],
+				"target": "ESNext",
+				"module": "Preserve",
+				"moduleDetection": "force",
+				"moduleResolution": "bundler",
+				"allowImportingTsExtensions": true,
+				"verbatimModuleSyntax": true,
+				"noEmit": true
+			}
+		}
+		```
 
-  	</Accordion>
+	</Accordion>
 
-  </Step>
-  <Step title="Step 4">
-  	Install the `figlet` package and its type declarations. Figlet is a utility for converting strings into ASCII art.
+</Step>
+<Step title="Step 4">
+	Install the `figlet` package and its type declarations. Figlet is a utility for converting strings into ASCII art.
 
-  	```bash terminal icon="terminal"
-  	bun add figlet
-  	bun add -d @types/figlet # TypeScript users only
-  	```
+	```bash terminal icon="terminal"
+	bun add figlet
+	bun add -d @types/figlet # TypeScript users only
+	```
 
-  	Update `index.ts` to use `figlet` in `routes`.
+	Update `index.ts` to use `figlet` in `routes`.
 
-  	```ts index.ts icon="/icons/typescript.svg"
-  	import figlet from 'figlet'; // [!code ++]
+	```ts index.ts icon="/icons/typescript.svg"
+	import figlet from 'figlet'; // [!code ++]
 
-  	const server = Bun.serve({
-  		port: 3000,
-  		routes: {
-  			"/": () => new Response('Bun!'),
-  			"/figlet": () => { // [!code ++]
-  				const body = figlet.textSync('Bun!'); // [!code ++]
-  				return new Response(body); // [!code ++]
-  			} // [!code ++]
-  		}
-  	});
+	const server = Bun.serve({
+		port: 3000,
+		routes: {
+			"/": () => new Response('Bun!'),
+			"/figlet": () => { // [!code ++]
+				const body = figlet.textSync('Bun!'); // [!code ++]
+				return new Response(body); // [!code ++]
+			} // [!code ++]
+		}
+	});
 
-  	console.log(`Listening on ${server.url}`);
-  	```
+	console.log(`Listening on ${server.url}`);
+	```
 
-  	Run the `index.ts` file again using `bun run index.ts`.
+	Run the `index.ts` file again using `bun run index.ts`.
 
-  	```bash terminal icon="terminal"
-  	bun run index.ts
-  	```
-  	```txt
-  	Listening on http://localhost:3000
-  	```
+	```bash terminal icon="terminal"
+	bun run index.ts
+	```
+	```txt
+	Listening on http://localhost:3000
+	```
 
-  	Visit [`http://localhost:3000/figlet`](http://localhost:3000/figlet) to test the server. You should see a simple page that says `"Bun!"` in ASCII art.
+	Visit [`http://localhost:3000/figlet`](http://localhost:3000/figlet) to test the server. You should see a simple page that says `"Bun!"` in ASCII art.
 
-  	```txt
-  	 ____              _
-  	| __ ) _   _ _ __ | |
-  	|  _ \| | | | '_ \| |
-  	| |_) | |_| | | | |_|
-  	|____/ \__,_|_| |_(_)
-  	```
-  </Step>
-  <Step title="Step 5">
-  	Let's add some HTML. Create a new file called `index.html` and add the following code:
+	```txt
+	 ____              _
+	| __ ) _   _ _ __ | |
+	|  _ \| | | | '_ \| |
+	| |_) | |_| | | | |_|
+	|____/ \__,_|_| |_(_)
+	```
+</Step>
+<Step title="Step 5">
+	Let's add some HTML. Create a new file called `index.html` and add the following code:
 
-  	```html index.html icon="file-code"
-  	<!DOCTYPE html>
-  	<html lang="en">
-  		<head>
-  			<meta charset="UTF-8">
-  			<meta name="viewport" content="width=device-width, initial-scale=1.0">
-  			<title>Bun</title>
-  		</head>
-  		<body>
-  			<h1>Bun!</h1>
-  		</body>
-  	</html>
-  	```
+	```html index.html icon="file-code"
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="UTF-8">
+			<meta name="viewport" content="width=device-width, initial-scale=1.0">
+			<title>Bun</title>
+		</head>
+		<body>
+			<h1>Bun!</h1>
+		</body>
+	</html>
+	```
 
-  	Then, import this file in `index.ts` and serve it from the root `/` route.
+	Then, import this file in `index.ts` and serve it from the root `/` route.
 
-  	```ts index.ts icon="/icons/typescript.svg"
-  	import figlet from 'figlet';
-  	import index from './index.html'; // [!code ++]
+	```ts index.ts icon="/icons/typescript.svg"
+	import figlet from 'figlet';
+	import index from './index.html'; // [!code ++]
 
-  	const server = Bun.serve({
-  		port: 3000,
-  		routes: {
-  			"/": index, // [!code ++]
-  			"/figlet": () => {
-  				const body = figlet.textSync('Bun!');
-  				return new Response(body);
-  			}
-  		}
-  	});
+	const server = Bun.serve({
+		port: 3000,
+		routes: {
+			"/": index, // [!code ++]
+			"/figlet": () => {
+				const body = figlet.textSync('Bun!');
+				return new Response(body);
+			}
+		}
+	});
 
-  	console.log(`Listening on ${server.url}`);
-  	```
+	console.log(`Listening on ${server.url}`);
+	```
 
-  	Run the `index.ts` file again using `bun run index.ts`.
+	Run the `index.ts` file again using `bun run index.ts`.
 
-  	```bash terminal icon="terminal"
-  	bun run index.ts
-  	```
-  	```txt
-  	Listening on http://localhost:3000
-  	```
+	```bash terminal icon="terminal"
+	bun run index.ts
+	```
+	```txt
+	Listening on http://localhost:3000
+	```
 
-  	Visit [`http://localhost:3000`](http://localhost:3000) to test the server. You should see the static HTML page.
-  </Step>
+	Visit [`http://localhost:3000`](http://localhost:3000) to test the server. You should see the static HTML page.
+</Step>
 
 </Steps>
 
@@ -223,7 +224,7 @@ Bun can also execute `"scripts"` from your `package.json`. Add the following scr
 		"@types/bun": "latest"
 	}
 }
-```
+````
 
 Then run it with `bun run start`.
 

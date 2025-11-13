@@ -3,7 +3,7 @@
 import { sinon, FakeTimers, assert, addTimerReturnsObject } from "./helpers/setup-tests";
 
 describe("#368 - timeout.refresh setTimeout arguments", function () {
-  it.failing("should forward arguments passed to setTimeout", function () {
+  it("should forward arguments passed to setTimeout", function () {
     const clock = FakeTimers.install();
     const stub = sinon.stub();
 

@@ -22,6 +22,9 @@ export class FakeTimers {
   hrtime(...args: Parameters<typeof process.hrtime>) {
     return process.hrtime(...args);
   }
+  get setTimeout() {
+    return setTimeout;
+  }
   get now() {
     return Date.now();
   }
@@ -44,27 +47,34 @@ Object.assign(assert, {
   exception(fn: () => void, message?: string | RegExp) {
     expect(fn).toThrow(message);
   },
+  calledTwice(a) {
+    expect(a.calls.length).toBe(2);
+  },
+  alwaysCalledWith(a, arg) {
+    expect(a.calls.every(c => c.includes(arg))).toBeTrue(2);
+  },
 });
 export const refute = {};
 export const sinon = {
   stub() {
-    let callCount = 0;
-    const result = () => {
-      callCount++;
+    let calls = [];
+    const result = (...args) => {
+      calls.push(args);
     };
+    result.calls = calls;
     Object.defineProperty(result, "notCalled", {
       get() {
-        return callCount === 0;
+        return calls.length === 0;
       },
     });
     Object.defineProperty(result, "calledOnce", {
       get() {
-        return callCount === 1;
+        return calls.length === 1;
       },
     });
     Object.defineProperty(result, "calledTwice", {
       get() {
-        return callCount === 2;
+        return calls.length === 2;
       },
     });
     return result;

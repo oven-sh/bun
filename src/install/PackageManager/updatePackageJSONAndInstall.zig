@@ -537,7 +537,7 @@ fn updatePackageJSONAndInstallAndCLI(
     defer ctx.allocator.free(original_cwd);
 
     if (manager.options.shouldPrintCommandName()) {
-        Output.prettyln("<r><b>bun {s} <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{@tagName(subcommand)});
+        Output.prettyln("<d>ion {s} v" ++ Global.package_json_version_with_sha ++ " © 2025 Altare Technologies Limited<r>\n", .{@tagName(subcommand)});
         Output.flush();
     }
 

@@ -514,7 +514,12 @@ pub const RuntimeTranspilerStore = struct {
                     continue;
                 }
 
-                if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
+                // Support both ion: and bun: prefixes for compatibility
+                if (strings.hasPrefixComptime(import_record.path.text, "ion:")) {
+                    import_record.path = Fs.Path.init(import_record.path.text["ion:".len..]);
+                    import_record.path.namespace = "bun";
+                    import_record.is_external_without_side_effects = true;
+                } else if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
                     import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                     import_record.path.namespace = "bun";
                     import_record.is_external_without_side_effects = true;

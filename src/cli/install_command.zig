@@ -66,14 +66,14 @@ fn installWithCLI(ctx: Command.Context, cli: CommandLineArguments) !void {
     if (subcommand == .add) {
         manager.subcommand = .add;
         if (manager.options.shouldPrintCommandName()) {
-            Output.prettyln("<r><b>bun add <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
+            Output.prettyln("<d>ion add v" ++ Global.package_json_version_with_sha ++ " © 2025 Altare Technologies Limited<r>\n", .{});
             Output.flush();
         }
         return manager.updatePackageJSONAndInstallWithManager(ctx, original_cwd);
     }
 
     if (manager.options.shouldPrintCommandName()) {
-        Output.prettyln("<r><b>bun install <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
+        Output.prettyln("<d>ion install v" ++ Global.package_json_version_with_sha ++ " © 2025 Altare Technologies Limited<r>\n", .{});
         Output.flush();
     }
 

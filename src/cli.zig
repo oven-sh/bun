@@ -195,8 +195,7 @@ pub const HelpCommand = struct {
     ;
     const cli_helptext_footer =
         \\
-        \\Ion is a fork of Bun for Altare Technologies.
-        \\Learn more about Bun:            <magenta>https://bun.com/docs<r>
+        \\Learn more:                      <magenta>https://bun.com/docs<r>
         \\
     ;
 
@@ -237,7 +236,7 @@ pub const HelpCommand = struct {
                 }
 
                 Output.pretty(
-                    "<r><b><magenta>Ion<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++
+                    "<r><b><magenta>ion<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++
                         Global.package_json_version_with_revision ++
                         ")<r>\n" ++
                         "<d>© 2025 Altare Technologies Limited<r>\n\n" ++

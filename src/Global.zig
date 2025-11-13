@@ -194,7 +194,7 @@ pub const BunInfo = struct {
     const JSAst = bun.ast;
     pub fn generate(comptime Bundler: type, _: Bundler, allocator: std.mem.Allocator) !JSAst.Expr {
         const info = BunInfo{
-            .bun_version = "Ion (fork of Bun) " ++ Global.package_json_version,
+            .bun_version = Global.package_json_version,
             .platform = analytics.GenerateHeader.GeneratePlatform.forOS(),
         };
 

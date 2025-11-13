@@ -1217,7 +1217,7 @@ pub const RunCommand = struct {
                     // Output.prettyln("<r><blue><b>{s}<r> scripts:<r>\n", .{display_name});
                     while (iterator.next()) |entry| {
                         Output.prettyln("\n", .{});
-                        Output.prettyln("  <d>$</r> bun run<r> <blue>{s}<r>\n", .{entry.key_ptr.*});
+                        Output.prettyln("  <d>$</r> ion run<r> <blue>{s}<r>\n", .{entry.key_ptr.*});
                         Output.prettyln("  <d>  {s}<r>\n", .{entry.value_ptr.*});
                     }
 

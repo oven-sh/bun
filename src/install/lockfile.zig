@@ -958,7 +958,6 @@ pub fn hoist(
     // This goes breadth-first
     while (builder.queue.readItem()) |item| {
         var subpath = item.subpath;
-
         defer bun.memory.deinit(&subpath);
 
         try builder.list.items(.tree)[item.tree_id].processSubtree(

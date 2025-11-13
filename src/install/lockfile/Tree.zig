@@ -249,7 +249,7 @@ pub fn Builder(comptime method: BuilderMethod) type {
         lockfile: *const Lockfile,
         // unresolved optional peers that might resolve later. if they do we will want to assign
         // builder.resolutions[peer.dep_id] to the resolved pkg_id.
-        pending_optional_peers: std.AutoHashMap(PackageNameHash, bun.collections.ArrayListDefault(DependencyID)),
+        pending_optional_peers: std.AutoHashMap(PackageNameHash, ArrayListDefault(DependencyID)),
         manager: if (method == .filter) *const PackageManager else void,
         sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
         workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{},
@@ -264,7 +264,7 @@ pub fn Builder(comptime method: BuilderMethod) type {
             /// beyond this tree if they're in a subtree
             hoist_root_id: Tree.Id,
 
-            subpath: if (method == .filter) bun.collections.ArrayListDefault(u8) else void,
+            subpath: Subpath(method),
         };
 
         pub const TreeFiller = bun.LinearFifo(FillItem, .Dynamic);
@@ -460,12 +460,19 @@ pub fn isFilteredDependencyOrWorkspace(
     return !workspace_matched;
 }
 
+fn Subpath(comptime method: BuilderMethod) type {
+    return switch (method) {
+        .filter => ArrayListDefault(u8),
+        .resolvable => void,
+    };
+}
+
 pub fn processSubtree(
     this: *const Tree,
     dependency_id: DependencyID,
     hoist_root_id: Tree.Id,
     comptime method: BuilderMethod,
-    subpath: if (method == .filter) bun.collections.ArrayListDefault(u8) else void,
+    subpath: Subpath(method),
     builder: *Builder(method),
 ) SubtreeError!void {
     const parent_pkg_id = switch (dependency_id) {
@@ -513,7 +520,7 @@ pub fn processSubtree(
         const dependency = builder.dependencies[dep_id];
         const pkg_id = builder.resolutions[dep_id];
 
-        var dep_subpath: bun.collections.ArrayListDefault(u8) = .init();
+        var dep_subpath: ArrayListDefault(u8) = .init();
 
         // filter out disabled dependencies
         if (comptime method == .filter) {
@@ -554,12 +561,12 @@ pub fn processSubtree(
         const hoisted: HoistDependencyResult = hoisted: {
             if (comptime method == .filter) {
                 // not filtered, but does it match a nohoist pattern?
-                if (builder.manager.nohoist_patterns.items().len != 0) try_nohoist: {
+                if (!builder.manager.nohoist_patterns.isEmpty()) try_nohoist: {
                     const string_buf = builder.lockfile.buffers.string_bytes.items;
 
-                    try dep_subpath.ensureTotalCapacity(subpath.items().len + @intFromBool(subpath.items().len != 0) + dependency.name.len());
+                    try dep_subpath.ensureTotalCapacity(subpath.items().len + @intFromBool(!subpath.isEmpty()) + dependency.name.len());
                     dep_subpath.appendSliceAssumeCapacity(subpath.items());
-                    if (subpath.items().len != 0) {
+                    if (!subpath.isEmpty()) {
                         dep_subpath.appendAssumeCapacity('/');
                     }
                     dep_subpath.appendSliceAssumeCapacity(dependency.name.slice(string_buf));
@@ -837,6 +844,7 @@ const glob = bun.glob;
 const logger = bun.logger;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const String = bun.Semver.String;
+const ArrayListDefault = bun.collections.ArrayListDefault;
 
 const install = bun.install;
 const Dependency = install.Dependency;

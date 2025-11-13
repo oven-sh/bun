@@ -39,10 +39,10 @@ else
 
 pub const os_name = Environment.os.nameString();
 
-// Bun v1.0.0 (Linux x64 baseline)
-// Bun v1.0.0-debug (Linux x64)
-// Bun v1.0.0-canary.0+44e09bb7f (Linux x64)
-pub const unhandled_error_bun_version_string = "Bun v" ++
+// Ion v1.0.0 (Linux x64 baseline)
+// Ion v1.0.0-debug (Linux x64)
+// Ion v1.0.0-canary.0+44e09bb7f (Linux x64)
+pub const unhandled_error_bun_version_string = "Ion v" ++
     (if (Environment.is_canary) package_json_version_with_revision else package_json_version) ++
     " (" ++ Environment.os.displayString() ++ " " ++ arch_name ++
     (if (Environment.baseline) " baseline)" else ")");
@@ -194,7 +194,7 @@ pub const BunInfo = struct {
     const JSAst = bun.ast;
     pub fn generate(comptime Bundler: type, _: Bundler, allocator: std.mem.Allocator) !JSAst.Expr {
         const info = BunInfo{
-            .bun_version = Global.package_json_version,
+            .bun_version = "Ion (fork of Bun) " ++ Global.package_json_version,
             .platform = analytics.GenerateHeader.GeneratePlatform.forOS(),
         };
 

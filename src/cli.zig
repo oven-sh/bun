@@ -159,19 +159,19 @@ pub const HelpCommand = struct {
 
     // the spacing between commands here is intentional
     pub const cli_helptext_fmt =
-        \\<b>Usage:<r> <b>bun \<command\> <cyan>[...flags]<r> <b>[...args]<r>
+        \\<b>Usage:<r> <b>ion \<command\> <cyan>[...flags]<r> <b>[...args]<r>
         \\
         \\<b>Commands:<r>
-        \\  <b><magenta>run<r>       <d>./my-script.ts<r>       Execute a file with Bun
+        \\  <b><magenta>run<r>       <d>./my-script.ts<r>       Execute a file with Ion
         \\            <d>lint<r>                 Run a package.json script
-        \\  <b><magenta>test<r>                           Run unit tests with Bun
-        \\  <b><magenta>x<r>         <d>{s:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
-        \\  <b><magenta>repl<r>                           Start a REPL session with Bun
-        \\  <b><magenta>exec<r>                           Run a shell script directly with Bun
+        \\  <b><magenta>test<r>                           Run unit tests with Ion
+        \\  <b><magenta>x<r>         <d>{s:<16}<r>     Execute a package binary (CLI), installing if needed <d>(ionx)<r>
+        \\  <b><magenta>repl<r>                           Start a REPL session with Ion
+        \\  <b><magenta>exec<r>                           Run a shell script directly with Ion
         \\
-        \\  <b><blue>install<r>                        Install dependencies for a package.json <d>(bun i)<r>
-        \\  <b><blue>add<r>       <d>{s:<16}<r>     Add a dependency to package.json <d>(bun a)<r>
-        \\  <b><blue>remove<r>    <d>{s:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
+        \\  <b><blue>install<r>                        Install dependencies for a package.json <d>(ion i)<r>
+        \\  <b><blue>add<r>       <d>{s:<16}<r>     Add a dependency to package.json <d>(ion a)<r>
+        \\  <b><blue>remove<r>    <d>{s:<16}<r>     Remove a dependency from package.json <d>(ion rm)<r>
         \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
         \\  <b><blue>audit<r>                          Check installed packages for vulnerabilities
         \\  <b><blue>outdated<r>                       Display latest versions of outdated dependencies
@@ -185,18 +185,18 @@ pub const HelpCommand = struct {
         \\
         \\  <b><yellow>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
         \\
-        \\  <b><cyan>init<r>                           Start an empty Bun project from a built-in template
-        \\  <b><cyan>create<r>    <d>{s:<16}<r>     Create a new project from a template <d>(bun c)<r>
-        \\  <b><cyan>upgrade<r>                        Upgrade to latest version of Bun.
-        \\  <b><cyan>feedback<r>  <d>./file1 ./file2<r>      Provide feedback to the Bun team.
+        \\  <b><cyan>init<r>                           Start an empty Ion project from a built-in template
+        \\  <b><cyan>create<r>    <d>{s:<16}<r>     Create a new project from a template <d>(ion c)<r>
+        \\  <b><cyan>upgrade<r>                        Upgrade to latest version of Ion.
+        \\  <b><cyan>feedback<r>  <d>./file1 ./file2<r>      Provide feedback to the Ion team.
         \\
         \\  <d>\<command\><r> <b><cyan>--help<r>               Print help text for command.
         \\
     ;
     const cli_helptext_footer =
         \\
+        \\Ion is a fork of Bun for Altare Technologies.
         \\Learn more about Bun:            <magenta>https://bun.com/docs<r>
-        \\Join our Discord community:      <blue>https://bun.com/discord<r>
         \\
     ;
 
@@ -237,9 +237,10 @@ pub const HelpCommand = struct {
                 }
 
                 Output.pretty(
-                    "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++
+                    "<r><b><magenta>Ion<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++
                         Global.package_json_version_with_revision ++
-                        ")<r>\n\n" ++
+                        ")<r>\n" ++
+                        "<d>© 2025 Altare Technologies Limited<r>\n\n" ++
                         cli_helptext_fmt,
                     args,
                 );
@@ -248,7 +249,7 @@ pub const HelpCommand = struct {
 
                     const flags = Arguments.runtime_params_ ++ Arguments.auto_only_params ++ Arguments.base_params_;
                     clap.simpleHelpBunTopLevel(comptime &flags);
-                    Output.pretty("\n\n(more flags in <b>bun install --help<r>, <b>bun test --help<r>, and <b>bun build --help<r>)\n", .{});
+                    Output.pretty("\n\n(more flags in <b>ion install --help<r>, <b>ion test --help<r>, and <b>ion build --help<r>)\n", .{});
                 }
                 Output.pretty(cli_helptext_footer, .{});
             },
@@ -280,9 +281,9 @@ pub const ReservedCommand = struct {
             break arg;
         } else bun.argv[1];
         Output.prettyError(
-            \\<r><red>Uh-oh<r>. <b><yellow>bun {s}<r> is a subcommand reserved for future use by Bun.
+            \\<r><red>Uh-oh<r>. <b><yellow>ion {s}<r> is a subcommand reserved for future use by Ion.
             \\
-            \\If you were trying to run a package.json script called {s}, use <b><magenta>bun run {s}<r>.
+            \\If you were trying to run a package.json script called {s}, use <b><magenta>ion run {s}<r>.
             \\
         , .{ command_name, command_name, command_name });
         Output.flush();
@@ -1701,13 +1702,13 @@ pub const Command = struct {
 
 pub fn printVersionAndExit() noreturn {
     @branchHint(.cold);
-    Output.writer().writeAll(Global.package_json_version ++ "\n") catch {};
+    Output.writer().writeAll(Global.package_json_version ++ "\n© 2025 Altare Technologies Limited\n") catch {};
     Global.exit(0);
 }
 
 pub fn printRevisionAndExit() noreturn {
     @branchHint(.cold);
-    Output.writer().writeAll(Global.package_json_version_with_revision ++ "\n") catch {};
+    Output.writer().writeAll(Global.package_json_version_with_revision ++ "\n© 2025 Altare Technologies Limited\n") catch {};
     Global.exit(0);
 }
 

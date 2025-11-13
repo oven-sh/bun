@@ -1294,7 +1294,7 @@ pub const TestCommand = struct {
         Output.is_github_action = Output.isGithubAction();
 
         // print the version so you know its doing stuff if it takes a sec
-        Output.prettyln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+        Output.prettyln("<r><b>ion test <r><d>v" ++ Global.package_json_version_with_sha ++ " <d>© 2025 Altare Technologies Limited<r>", .{});
         Output.flush();
 
         var env_loader = brk: {

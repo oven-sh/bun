@@ -1,6 +1,6 @@
 {
   "private": true,
-  "name": "bun",
+  "name": "ion",
   "version": "1.3.3",
   "workspaces": [
     "./packages/bun-types",

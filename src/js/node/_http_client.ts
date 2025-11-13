@@ -43,7 +43,6 @@ const {
   reqSymbol,
   callCloseCallback,
   emitCloseNTAndComplete,
-  ConnResetException,
   kEmptyBuffer,
 } = require("internal/http");
 

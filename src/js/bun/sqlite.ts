@@ -605,15 +605,15 @@ class Database implements SqliteTypes.Database {
     defineProperties(properties.immediate.value, properties);
     defineProperties(properties.exclusive.value, properties);
 
-    // Return the default version of the transaction function
+    
     return properties.default.value;
   }
 }
 
-// @ts-expect-error
+ 
 Database.prototype.exec = Database.prototype.run;
 
-// Return the database's cached transaction controller, or create a new one
+
 const getController = (db, _self) => {
   let controller = (controllers ||= new WeakMap()).get(db);
   if (!controller) {
@@ -638,7 +638,7 @@ const getController = (db, _self) => {
   return controller;
 };
 
-// Return a new transaction function by wrapping the given function
+
 const wrapTransaction = (fn, db, { begin, commit, rollback, savepoint, release, rollbackTo }) =>
   function transaction(this, ...args) {
     let before, after, undo;
@@ -654,8 +654,26 @@ const wrapTransaction = (fn, db, { begin, commit, rollback, savepoint, release, 
     try {
       before.run();
       const result = fn.$apply(this, args);
-      after.run();
-      return result;
+      
+      
+      if (result && typeof result.then === "function") {
+        return result.then(
+          (value) => {
+            after.run();
+            return value;
+          },
+          (error) => {
+            if (db.inTransaction) {
+              undo.run();
+              if (undo !== rollback) after.run();
+            }
+            throw error;
+          }
+        );
+      } else {
+        after.run();
+        return result;
+      }
     } catch (ex) {
       if (db.inTransaction) {
         undo.run();
@@ -665,8 +683,6 @@ const wrapTransaction = (fn, db, { begin, commit, rollback, savepoint, release, 
     }
   };
 
-// This class is never actually thrown
-// so we implement instanceof so that it could theoretically be caught
 class SQLiteError extends Error {
   static [Symbol.hasInstance](instance) {
     return instance?.name === "SQLiteError";

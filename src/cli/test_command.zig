@@ -50,7 +50,7 @@ fn fmtStatusTextLine(status: bun_test.Execution.Result, emoji_or_color: bool) []
             .fail => Output.prettyFmt("<r><red>✗<r>", emoji_or_color),
             .skip => Output.prettyFmt("<r><yellow>»<d>", emoji_or_color),
             .todo => Output.prettyFmt("<r><magenta>✎<r>", emoji_or_color),
-            .failing => Output.prettyFmt("<r><magenta>✎<r>", emoji_or_color),
+            .expected_failure => Output.prettyFmt("<r><magenta>✎<r>", emoji_or_color),
         },
         else => switch (status.basicResult()) {
             .pending => Output.prettyFmt("<r><d>(pending)<r>", emoji_or_color),
@@ -58,7 +58,7 @@ fn fmtStatusTextLine(status: bun_test.Execution.Result, emoji_or_color: bool) []
             .fail => Output.prettyFmt("<r><red>(fail)<r>", emoji_or_color),
             .skip => Output.prettyFmt("<r><yellow>(skip)<d>", emoji_or_color),
             .todo => Output.prettyFmt("<r><magenta>(todo)<r>", emoji_or_color),
-            .failing => Output.prettyFmt("<r><magenta>(failing)<r>", emoji_or_color),
+            .expected_failure => Output.prettyFmt("<r><magenta>(expected fail)<r>", emoji_or_color),
         },
     };
 }
@@ -867,7 +867,7 @@ pub const CommandLineReporter = struct {
             inline else => |result| {
                 if (result != .skipped_because_label) {
                     if (buntest.reporter != null and buntest.reporter.?.reporters.dots and (comptime switch (result.basicResult()) {
-                        .pass, .skip, .todo, .failing, .pending => true,
+                        .pass, .skip, .todo, .expected_failure, .pending => true,
                         .fail => false,
                     })) {
                         switch (Output.enable_ansi_colors_stderr) {
@@ -875,7 +875,7 @@ pub const CommandLineReporter = struct {
                                 .pass => writer.print(comptime Output.prettyFmt("<r><green>.<r>", enable_ansi_colors_stderr), .{}) catch {},
                                 .skip => writer.print(comptime Output.prettyFmt("<r><yellow>.<d>", enable_ansi_colors_stderr), .{}) catch {},
                                 .todo => writer.print(comptime Output.prettyFmt("<r><magenta>.<r>", enable_ansi_colors_stderr), .{}) catch {},
-                                .failing => writer.print(comptime Output.prettyFmt("<r><magenta>.<r>", enable_ansi_colors_stderr), .{}) catch {},
+                                .expected_failure => writer.print(comptime Output.prettyFmt("<r><magenta>.<r>", enable_ansi_colors_stderr), .{}) catch {},
                                 .pending => writer.print(comptime Output.prettyFmt("<r><d>.<r>", enable_ansi_colors_stderr), .{}) catch {},
                                 .fail => writer.print(comptime Output.prettyFmt("<r><red>.<r>", enable_ansi_colors_stderr), .{}) catch {},
                             },
@@ -889,7 +889,7 @@ pub const CommandLineReporter = struct {
                         writeTestStatusLine(result, &writer);
                         const dim = switch (comptime result.basicResult()) {
                             .todo => if (bun.jsc.Jest.Jest.runner) |runner| !runner.run_todo else true,
-                            .failing => false,
+                            .expected_failure => false,
                             .skip, .pending => true,
                             .pass, .fail => false,
                         };
@@ -911,7 +911,7 @@ pub const CommandLineReporter = struct {
         if (!this.reporters.dots and !this.reporters.only_failures) switch (sequence.result.basicResult()) {
             .skip => bun.handleOom(this.skips_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
             .todo => bun.handleOom(this.todos_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
-            .failing => bun.handleOom(this.todos_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
+            .expected_failure => bun.handleOom(this.todos_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
             .fail => bun.handleOom(this.failures_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
             .pass, .pending => {},
         };
@@ -1699,7 +1699,7 @@ pub const TestCommand = struct {
                 }
 
                 if (summary.failing > 0) {
-                    Output.prettyError("{}<r><magenta>{d:5>} failing<r>\n", .{ indenter, summary.failing });
+                    Output.prettyError("{}<r><magenta>{d:5>} expected to fail<r>\n", .{ indenter, summary.failing });
                 }
 
                 if (summary.fail > 0) {

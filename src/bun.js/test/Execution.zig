@@ -126,7 +126,7 @@ pub const Result = enum {
         fail,
         skip,
         todo,
-        failing,
+        expected_failure,
     };
     pub fn basicResult(this: Result) Basic {
         return switch (this) {
@@ -135,13 +135,13 @@ pub const Result = enum {
             .fail, .fail_because_timeout, .fail_because_timeout_with_done_callback, .fail_because_hook_timeout, .fail_because_hook_timeout_with_done_callback, .fail_because_failing_test_passed, .fail_because_todo_passed, .fail_because_expected_has_assertions, .fail_because_expected_assertion_count => .fail,
             .skip, .skipped_because_label => .skip,
             .todo => .todo,
-            .pass_because_failing_test_failed => .failing,
+            .pass_because_failing_test_failed => .expected_failure,
         };
     }
 
     pub fn isPass(this: Result, pending_is: enum { pending_is_pass, pending_is_fail }) bool {
         return switch (this.basicResult()) {
-            .pass, .skip, .todo, .failing => true,
+            .pass, .skip, .todo, .expected_failure => true,
             .fail => false,
             .pending => pending_is == .pending_is_pass,
         };

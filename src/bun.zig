@@ -3240,24 +3240,27 @@ pub const timespec = extern struct {
         return new_timespec;
     }
     pub fn addMsFloat(this: *const timespec, interval_ms: f64) timespec {
-        const ms_per_s_f = @as(f64, @floatFromInt(std.time.ms_per_s)); // 1000
         const ns_per_ms_f = @as(f64, @floatFromInt(std.time.ns_per_ms)); // 1_000_000
 
         // Start from the current time
         var new_timespec = this.*;
 
-        // Split interval into whole seconds and fractional milliseconds
-        const sec_f = std.math.trunc(interval_ms / ms_per_s_f);
-        const sec_inc: i64 = @intFromFloat(sec_f);
+        // Split into whole ms and sub-ms remainder (matches sinon/fake-timers logic)
+        // Use modulo to extract fractional milliseconds as nanoseconds
+        const ms_whole_f = @floor(interval_ms);
+        const ms_inc: i64 = @intFromFloat(ms_whole_f);
 
-        const frac_ms = interval_ms - sec_f * ms_per_s_f;
-        const nsec_inc_f = frac_ms * ns_per_ms_f;
+        // nanoRemainder: floor((msFloat * 1e6) % 1e6)
+        const ns_total_f = interval_ms * ns_per_ms_f;
+        const ns_remainder_f = @mod(ns_total_f, ns_per_ms_f);
+        const nsec_inc: i64 = @intFromFloat(@floor(ns_remainder_f));
 
-        // Round to nearest integer to avoid floating-point precision errors
-        const nsec_inc: i64 = @intFromFloat(@round(nsec_inc_f));
+        // Convert milliseconds to seconds
+        const sec_inc = @divTrunc(ms_inc, std.time.ms_per_s);
+        const ms_remainder = @mod(ms_inc, std.time.ms_per_s);
 
         new_timespec.sec +%= sec_inc;
-        new_timespec.nsec +%= nsec_inc;
+        new_timespec.nsec +%= ms_remainder * std.time.ns_per_ms + nsec_inc;
 
         // Normalize nsec into [0, ns_per_s)
         if (new_timespec.nsec >= std.time.ns_per_s) {

@@ -31,7 +31,7 @@ pub var current_time: struct {
     }) void {
         const vm = globalObject.bunVM();
         this.#offset.store(.fromTimespec(v.offset), .seq_cst);
-        const timespec_ms: f64 = @floatFromInt(v.offset.msUnsigned());
+        const timespec_ms: f64 = @floatFromInt(v.offset.ms());
         if (v.js) |js| {
             this.date_now_offset = @floor(js) - timespec_ms;
         }

@@ -329,6 +329,30 @@ describe.concurrent("bun run", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("should show the correct working directory when run with --prefix", async () => {
+    using dir = tempDir("bun-run-prefix", {
+      "subdir/test.js": `console.log(process.cwd());`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--prefix", "subdir", "test.js"],
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+      },
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toMatch(/subdir/);
+    // The exit code will not be 1 if it panics.
+    expect(exitCode).toBe(0);
+  });
+
   it("DCE annotations are respected", async () => {
     using dir = tempDir("test", {
       "index.ts": `

@@ -148,6 +148,7 @@ pub const auto_params = auto_only_params ++ runtime_params_ ++ transpiler_params
 pub const run_only_params = [_]ParamType{
     clap.parseParam("--silent                          Don't print the script command") catch unreachable,
     clap.parseParam("--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines.") catch unreachable,
+    clap.parseParam("--prefix <STR>                    Run the script from the specified directory (alias for --cwd)") catch unreachable,
 } ++ auto_or_run_params;
 pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -440,12 +441,13 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     }
 
     var cwd: [:0]u8 = undefined;
-    if (args.option("--cwd")) |cwd_arg| {
+    const cwd_arg = args.option("--cwd") orelse args.option("--prefix");
+    if (cwd_arg) |cwd_value| {
         cwd = brk: {
             var outbuf: bun.PathBuffer = undefined;
-            const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_arg);
+            const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_value);
             bun.sys.chdir("", out).unwrap() catch |err| {
-                Output.err(err, "Could not change directory to \"{s}\"\n", .{cwd_arg});
+                Output.err(err, "Could not change directory to \"{s}\"\n", .{cwd_value});
                 Global.exit(1);
             };
             break :brk try allocator.dupeZ(u8, out);

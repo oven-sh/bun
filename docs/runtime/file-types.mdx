@@ -356,22 +356,13 @@ The `html` loader behaves differently depending on how it's used:
 
 **CSS loader**. Default for `.css`.
 
-CSS files can be directly imported.
+CSS files can be directly imported. This is primarily useful for [full-stack applications](/bundler/html-static) where CSS is bundled alongside HTML.
 
 ```ts
-import styles from "./styles.css";
+import "./styles.css";
 ```
 
-_In the runtime_, CSS files are treated like the [`file`](#file) loader - the import resolves to an absolute path to the CSS file on disk.
-
-```bash
-bun run app.ts
-```
-```txt
-/path/to/project/styles.css
-```
-
-_In the bundler_, CSS files are parsed and bundled together, handling `@import` statements and `url()` references. All imported CSS files are bundled together into a single `.css` file in the output directory.
+There isn't any value returned from the import, it's only used for side effects.
 
 ### `sh` loader
 

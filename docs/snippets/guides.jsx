@@ -123,7 +123,7 @@ export const GuidesList = () => {
         title: "Ecosystem",
         icon: "puzzle",
         items: [
-          { title: "Use EdgeDB with Bun", href: "/guides/ecosystem/edgedb" },
+          { title: "Use Gel with Bun", href: "/guides/ecosystem/gel" },
           { title: "Use Prisma ORM with Bun", href: "/guides/ecosystem/prisma" },
           { title: "Use Prisma Postgres with Bun", href: "/guides/ecosystem/prisma-postgres" },
           { title: "Create a Discord bot", href: "/guides/ecosystem/discordjs" },

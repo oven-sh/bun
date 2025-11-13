@@ -260,7 +260,7 @@ logLevel = "debug"
   });
 }
 
-it("should show the correct working directory when run with --cwd", async () => {
+it.each(["--cwd", "--prefix"])("should show the correct working directory when run with %s", async (flag) => {
   await mkdir(join(run_dir, "subdir"));
   await writeFile(
     join(run_dir, "subdir", "test.js"),
@@ -269,32 +269,7 @@ it("should show the correct working directory when run with --cwd", async () => 
   `,
   );
   const res = Bun.spawn({
-    cmd: [bunExe(), "run", "--cwd", "subdir", "test.js"],
-    cwd: run_dir,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-    env: {
-      ...bunEnv,
-      BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
-    },
-  });
-
-  // The exit code will not be 1 if it panics.
-  expect(await res.exited).toBe(0);
-  expect(await res.stdout.text()).toMatch(/subdir/);
-});
-
-it("should show the correct working directory when run with --prefix", async () => {
-  await mkdir(join(run_dir, "subdir"));
-  await writeFile(
-    join(run_dir, "subdir", "test.js"),
-    `
-    console.log(process.cwd());
-  `,
-  );
-  const res = Bun.spawn({
-    cmd: [bunExe(), "run", "--prefix", "subdir", "test.js"],
+    cmd: [bunExe(), "run", flag, "subdir", "test.js"],
     cwd: run_dir,
     stdin: "ignore",
     stdout: "pipe",

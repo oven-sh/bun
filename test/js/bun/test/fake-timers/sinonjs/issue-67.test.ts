@@ -34,7 +34,7 @@ describe("issue #67", function () {
     clock.uninstall();
   });
 
-  it.failing("should execute setTimeout smaller than 1", function () {
+  it("should execute setTimeout smaller than 1", function () {
     const clock = FakeTimers.install();
     const stub1 = sinon.stub();
 
@@ -45,7 +45,7 @@ describe("issue #67", function () {
     clock.uninstall();
   });
 
-  it.failing("executes setTimeout with negative duration as if it has zero delay", function () {
+  it("executes setTimeout with negative duration as if it has zero delay", function () {
     const clock = FakeTimers.install();
     const stub1 = sinon.stub();
 

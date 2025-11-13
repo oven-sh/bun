@@ -50,6 +50,7 @@ fn fmtStatusTextLine(status: bun_test.Execution.Result, emoji_or_color: bool) []
             .fail => Output.prettyFmt("<r><red>✗<r>", emoji_or_color),
             .skip => Output.prettyFmt("<r><yellow>»<d>", emoji_or_color),
             .todo => Output.prettyFmt("<r><magenta>✎<r>", emoji_or_color),
+            .failing => Output.prettyFmt("<r><magenta>✎<r>", emoji_or_color),
         },
         else => switch (status.basicResult()) {
             .pending => Output.prettyFmt("<r><d>(pending)<r>", emoji_or_color),
@@ -57,6 +58,7 @@ fn fmtStatusTextLine(status: bun_test.Execution.Result, emoji_or_color: bool) []
             .fail => Output.prettyFmt("<r><red>(fail)<r>", emoji_or_color),
             .skip => Output.prettyFmt("<r><yellow>(skip)<d>", emoji_or_color),
             .todo => Output.prettyFmt("<r><magenta>(todo)<r>", emoji_or_color),
+            .failing => Output.prettyFmt("<r><magenta>(failing)<r>", emoji_or_color),
         },
     };
 }
@@ -503,6 +505,9 @@ pub const JunitReporter = struct {
                 try this.contents.appendSlice(bun.default_allocator, indent);
                 try this.contents.appendSlice(bun.default_allocator, "</testcase>\n");
             },
+            .pass_because_failing_test_failed => {
+                try this.contents.appendSlice(bun.default_allocator, " />\n");
+            },
             .fail_because_timeout, .fail_because_timeout_with_done_callback, .fail_because_hook_timeout, .fail_because_hook_timeout_with_done_callback => {
                 if (this.suite_stack.items.len > 0) {
                     this.suite_stack.items[this.suite_stack.items.len - 1].metrics.failures += 1;
@@ -690,7 +695,7 @@ pub const CommandLineReporter = struct {
 
             switch (Output.enable_ansi_colors_stderr) {
                 inline else => |colors| switch (status) {
-                    .pending, .pass, .skip, .skipped_because_label, .todo, .fail => {},
+                    .pending, .pass, .skip, .skipped_because_label, .todo, .fail, .pass_because_failing_test_failed => {},
 
                     .fail_because_failing_test_passed => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n", colors)) catch {},
                     .fail_because_todo_passed => writer.writeAll(comptime Output.prettyFmt("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` if tested behavior now works<r>\n", colors)) catch {},
@@ -862,7 +867,7 @@ pub const CommandLineReporter = struct {
             inline else => |result| {
                 if (result != .skipped_because_label) {
                     if (buntest.reporter != null and buntest.reporter.?.reporters.dots and (comptime switch (result.basicResult()) {
-                        .pass, .skip, .todo, .pending => true,
+                        .pass, .skip, .todo, .failing, .pending => true,
                         .fail => false,
                     })) {
                         switch (Output.enable_ansi_colors_stderr) {
@@ -870,6 +875,7 @@ pub const CommandLineReporter = struct {
                                 .pass => writer.print(comptime Output.prettyFmt("<r><green>.<r>", enable_ansi_colors_stderr), .{}) catch {},
                                 .skip => writer.print(comptime Output.prettyFmt("<r><yellow>.<d>", enable_ansi_colors_stderr), .{}) catch {},
                                 .todo => writer.print(comptime Output.prettyFmt("<r><magenta>.<r>", enable_ansi_colors_stderr), .{}) catch {},
+                                .failing => writer.print(comptime Output.prettyFmt("<r><magenta>.<r>", enable_ansi_colors_stderr), .{}) catch {},
                                 .pending => writer.print(comptime Output.prettyFmt("<r><d>.<r>", enable_ansi_colors_stderr), .{}) catch {},
                                 .fail => writer.print(comptime Output.prettyFmt("<r><red>.<r>", enable_ansi_colors_stderr), .{}) catch {},
                             },
@@ -883,6 +889,7 @@ pub const CommandLineReporter = struct {
                         writeTestStatusLine(result, &writer);
                         const dim = switch (comptime result.basicResult()) {
                             .todo => if (bun.jsc.Jest.Jest.runner) |runner| !runner.run_todo else true,
+                            .failing => false,
                             .skip, .pending => true,
                             .pass, .fail => false,
                         };
@@ -904,6 +911,7 @@ pub const CommandLineReporter = struct {
         if (!this.reporters.dots and !this.reporters.only_failures) switch (sequence.result.basicResult()) {
             .skip => bun.handleOom(this.skips_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
             .todo => bun.handleOom(this.todos_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
+            .failing => bun.handleOom(this.todos_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
             .fail => bun.handleOom(this.failures_to_repeat_buf.appendSlice(bun.default_allocator, output_buf.items[initial_length..])),
             .pass, .pending => {},
         };
@@ -913,6 +921,7 @@ pub const CommandLineReporter = struct {
             .pass => this.summary().pass += 1,
             .skip => this.summary().skip += 1,
             .todo => this.summary().todo += 1,
+            .pass_because_failing_test_failed => this.summary().pass += 1,
             .skipped_because_label => this.summary().skipped_because_label += 1,
 
             .fail,

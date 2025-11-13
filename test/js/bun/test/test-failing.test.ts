@@ -23,6 +23,15 @@ describe("test.failing", () => {
     expect(stderr).toContain(" 2 pass\n");
   });
 
+  it("shows purple edit icon for passing failing tests, not green checkmark", async () => {
+    const result = await $.cwd(fixtureDir)`FORCE_COLOR=1 ${bunExe()} test ./failing-test-fails.fixture.ts`.quiet();
+    const stderr = result.stderr.toString();
+    // Should show magenta edit icon (✎) not green checkmark (✓)
+    expect(stderr).toContain("✎");
+    expect(stderr).not.toContain("✓");
+    expect(result.exitCode).toBe(0);
+  });
+
   it("fails if no error is thrown or promise resolves", async () => {
     const result = await $.cwd(
       fixtureDir,

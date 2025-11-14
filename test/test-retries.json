@@ -1,8 +1,4 @@
 {
-  "test/bake/dev/stress.test.ts": {
-    "*": 8,
-    "note": ""
-  },
   "test/cli/install/bun-install.test.ts": {
     "*": 8,
     "note": ""

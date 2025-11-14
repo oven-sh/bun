@@ -575,6 +575,8 @@ pub fn installIsolatedPackages(
                 Output.err(err, "failed to install packages", .{});
                 Global.exit(1);
             }
+
+            manager.thread_pool.waitForAll();
         }
 
         if (manager.options.log_level.showProgress()) {

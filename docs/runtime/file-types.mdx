@@ -5,14 +5,16 @@ description: "File types and loaders supported by Bun's bundler and runtime"
 
 The Bun bundler implements a set of default loaders out of the box. As a rule of thumb, the bundler and the runtime both support the same set of file types out of the box.
 
-`.js` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx` `.jsx` `.toml` `.json` `.txt` `.wasm` `.node` `.html`
+`.js` `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx` `.jsx` `.css` `.json` `.jsonc` `.toml` `.yaml` `.yml` `.txt` `.wasm` `.node` `.html` `.sh`
 
 Bun uses the file extension to determine which built-in _loader_ should be used to parse the file. Every loader has a name, such as `js`, `tsx`, or `json`. These names are used when building [plugins](/bundler/plugins) that extend Bun with custom loaders.
 
-You can explicitly specify which loader to use using the 'loader' import attribute.
+You can explicitly specify which loader to use using the `'type'` import attribute.
 
 ```ts
-import my_toml from "./my_file" with { loader: "toml" };
+import my_toml from "./my_file" with { type: "toml" };
+// or with dynamic imports
+const { default: my_toml } = await import("./my_file", { with: { type: "toml" } });
 ```
 
 ---
@@ -84,6 +86,29 @@ export default {
 
 </CodeGroup>
 
+### `jsonc`
+
+**JSON with Comments loader**. Default for `.jsonc`.
+
+JSONC (JSON with Comments) files can be directly imported. Bun will parse them, stripping out comments and trailing commas.
+
+```ts
+import config from "./config.jsonc";
+console.log(config);
+```
+
+During bundling, the parsed JSONC is inlined into the bundle as a JavaScript object, identical to the `json` loader.
+
+```ts
+var config = {
+  option: "value",
+};
+```
+
+<Note>
+  Bun automatically uses the `jsonc` loader for `tsconfig.json`, `jsconfig.json`, `package.json`, and `bun.lock` files.
+</Note>
+
 ### `toml`
 
 **TOML loader**. Default for `.toml`.
@@ -116,6 +141,50 @@ If a `.toml` file is passed as an entrypoint, it will be converted to a `.js` mo
 name = "John Doe"
 age = 35
 email = "johndoe@example.com"
+```
+
+```ts Output
+export default {
+  name: "John Doe",
+  age: 35,
+  email: "johndoe@example.com",
+};
+```
+
+</CodeGroup>
+
+### `yaml`
+
+**YAML loader**. Default for `.yaml` and `.yml`.
+
+YAML files can be directly imported. Bun will parse them with its fast native YAML parser.
+
+```ts
+import config from "./config.yaml";
+console.log(config);
+
+// via import attribute:
+import data from "./data.txt" with { type: "yaml" };
+```
+
+During bundling, the parsed YAML is inlined into the bundle as a JavaScript object.
+
+```ts
+var config = {
+  name: "my-app",
+  version: "1.0.0",
+  // ...other fields
+};
+```
+
+If a `.yaml` or `.yml` file is passed as an entrypoint, it will be converted to a `.js` module that `export default`s the parsed object.
+
+<CodeGroup>
+
+```yaml Input
+name: John Doe
+age: 35
+email: johndoe@example.com
 ```
 
 ```ts Output
@@ -282,6 +351,18 @@ The `html` loader behaves differently depending on how it's used:
 3. **Full-stack Build:** When you run `bun build --target=bun server.ts` (where `server.ts` imports an HTML file), the import resolves to a manifest object that `Bun.serve` uses to efficiently serve pre-bundled assets in production.
 
 </Note>
+
+### `css`
+
+**CSS loader**. Default for `.css`.
+
+CSS files can be directly imported. This is primarily useful for [full-stack applications](/bundler/html-static) where CSS is bundled alongside HTML.
+
+```ts
+import "./styles.css";
+```
+
+There isn't any value returned from the import, it's only used for side effects.
 
 ### `sh` loader
 

@@ -1392,6 +1392,10 @@ create_buildkite_user() {
 		create_file "$file"
 	done
 
+	# The following is necessary to configure buildkite to use a stable
+	# checkout directory. sccache hashes absolute paths into its cache keys,
+	# so if buildkite uses a different checkout path each time (which it does
+	# by default), sccache will be useless.
 	local opts=$-
 	set -ef
 

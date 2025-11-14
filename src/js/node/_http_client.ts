@@ -286,7 +286,12 @@ function ClientRequest(input, options, cb) {
         return [path, `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`];
       } else {
         let proxy: string | undefined;
-        const url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${path}`;
+        // For CONNECT method, the path is in authority format (host:port), not a URL path
+        // We need to use a dummy URL for the fetch call since CONNECT establishes a tunnel
+        const url =
+          method === "CONNECT"
+            ? `${protocol}//${path}` // path is already "host:port" for CONNECT
+            : `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${path}`;
         // support agent proxy url/string for http/https
         try {
           // getters can throw

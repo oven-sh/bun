@@ -984,17 +984,17 @@ pub fn Parser(comptime enc: Encoding) type {
         }
 
         const MappingProps = struct {
-            list: bun.collections.ArrayList(G.Property),
+            list: std.array_list.Managed(G.Property),
 
             pub fn init(allocator: std.mem.Allocator) MappingProps {
-                return .{ .list = .initIn(allocator) };
+                return .{ .list = .init(allocator) };
             }
 
             pub fn merge(self: *MappingProps, merge_props: []const G.Property) OOM!void {
                 try self.list.ensureUnusedCapacity(merge_props.len);
                 next_merge_prop: for (merge_props) |merge_prop| {
                     const merge_key = merge_prop.key.?;
-                    for (self.list.items()) |existing_prop| {
+                    for (self.list.items) |existing_prop| {
                         const existing_key = existing_prop.key.?;
                         if (yamlMergeKeyExprEql(existing_key, merge_key)) {
                             continue :next_merge_prop;

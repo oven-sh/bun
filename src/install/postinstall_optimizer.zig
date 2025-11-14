@@ -185,6 +185,7 @@ pub const PostinstallOptimizer = enum {
 const std = @import("std");
 
 const bun = @import("bun");
+const Semver = bun.Semver;
 const ast = bun.ast;
 
 const install = bun.install;
@@ -194,4 +195,3 @@ const Npm = install.Npm;
 const PackageID = install.PackageID;
 const PackageNameHash = install.PackageNameHash;
 const Meta = Lockfile.Package.Meta;
-const Semver = bun.Semver;

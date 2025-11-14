@@ -3401,4 +3401,29 @@ describe("bundler", () => {
   //     "/project/node_modules/pkg/styles.css": `button { color: red }`,
   //   },
   // });
+
+  itBundled("dce/ProcessIsBunTargetBun", {
+    files: {
+      "/entry.js": /* js */ `
+        if (process.isBun) {
+          console.log("KEEP_BUN_CODE");
+          function bunOnlyFunction() {
+            return "KEEP_THIS";
+          }
+          console.log(bunOnlyFunction());
+        } else {
+          console.log("REMOVE_NODE_CODE");
+          function nodeOnlyFunction() {
+            return "DROP_THIS";
+          }
+          console.log(nodeOnlyFunction());
+        }
+      `,
+    },
+    target: "bun",
+    dce: true,
+    run: {
+      stdout: "KEEP_BUN_CODE\nKEEP_THIS",
+    },
+  });
 });

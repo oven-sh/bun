@@ -65,7 +65,7 @@ pub const Store = struct {
             pkg_id: PackageID,
 
             // no deinit because each field does not need to
-            // be deinitialized
+            // be deinitialized. see `bun.memory.deinit`
             pub const deinit = void;
         };
 

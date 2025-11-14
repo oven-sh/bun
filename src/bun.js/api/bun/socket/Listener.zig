@@ -523,6 +523,19 @@ pub fn getPort(this: *Listener, _: *jsc.JSGlobalObject) JSValue {
     return JSValue.jsNumber(this.connection.host.port);
 }
 
+pub fn getFD(this: *Listener, _: *jsc.JSGlobalObject) JSValue {
+    switch (this.listener) {
+        .uws => |uws_listener| {
+            switch (this.ssl) {
+                inline else => |ssl| {
+                    return uws_listener.socket(ssl).fd().toJSWithoutMakingLibUVOwned();
+                },
+            }
+        },
+        else => return JSValue.jsNumber(-1),
+    }
+}
+
 pub fn ref(this: *Listener, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
     const this_value = callframe.this();
     if (this.listener == .none) return .js_undefined;

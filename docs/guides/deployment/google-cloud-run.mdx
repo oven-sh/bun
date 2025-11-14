@@ -132,9 +132,7 @@ CMD ["bun", "index.ts"]
 <Note>
   Make sure that the start command corresponds to your application's entry point. This can also be `CMD ["bun", "run", "start"]` if you have a start script in your `package.json`.
 
-    This image installs dependencies and runs your app with Bun inside a container. If your app doesn't have dependencies, you can omit the `RUN bun install --production --frozen-lockfile` line.
-
-    This image installs dependencies and runs your app with Bun inside a container. If your app doesn't have dependencies, you can omit the `RUN bun install --production --frozen-lockfile` line.
+This image installs dependencies and runs your app with Bun inside a container. If your app doesn't have dependencies, you can omit the `RUN bun install --production --frozen-lockfile` line.
 
 </Note>
 
@@ -159,8 +157,7 @@ Make sure you're in the directory containing your `Dockerfile`, then deploy dire
 
 <Note>
   Update the `--region` flag to your preferred region. You can also omit this flag to get an interactive prompt to
-  select a region. Update the `--region` flag to your preferred region. You can also omit this flag to get an
-  interactive prompt to select a region.
+  select a region.
 </Note>
 
 ```bash terminal icon="terminal"

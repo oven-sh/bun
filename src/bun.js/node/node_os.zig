@@ -92,7 +92,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
             times.irq = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
 
             // Actually create the JS object representing the CPU
-            const cpu = jsc.JSValue.createEmptyObject(globalThis, 3);
+            const cpu = jsc.JSValue.createEmptyObject(globalThis, 1);
             cpu.put(globalThis, jsc.ZigString.static("times"), times.toValue(globalThis));
             try values.putIndex(globalThis, num_cpus, cpu);
 
@@ -511,7 +511,7 @@ fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSVal
         num_inet_interfaces += 1;
     }
 
-    var ret = jsc.JSValue.createEmptyObject(globalThis, 8);
+    var ret = jsc.JSValue.createEmptyObject(globalThis, 0);
 
     // Second pass through, populate each interface object
     it = interface_start;
@@ -522,7 +522,7 @@ fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSVal
         const addr = std.net.Address.initPosix(@alignCast(@as(*std.posix.sockaddr, @ptrCast(iface.ifa_addr))));
         const netmask = std.net.Address.initPosix(@alignCast(@as(*std.posix.sockaddr, @ptrCast(iface.ifa_netmask))));
 
-        var interface = jsc.JSValue.createEmptyObject(globalThis, 7);
+        var interface = jsc.JSValue.createEmptyObject(globalThis, 0);
 
         // address <string> The assigned IPv4 or IPv6 address
         // cidr <string> The assigned IPv4 or IPv6 address with the routing prefix in CIDR notation. If the netmask is invalid, this property is set to null.

@@ -51,6 +51,197 @@ pub const Store = struct {
 
     pub const Installer = @import("./Installer.zig").Installer;
 
+    const NextNode = struct {
+        parent_id: Node.Id,
+        dep_id: DependencyID,
+        pkg_id: PackageID,
+
+        // no deinit because each field does not need to
+        // be deinitialized. see `bun.memory.deinit`
+        pub const deinit = void;
+    };
+
+    // struct holding up-to-date pointers to multi array list fields
+    // and some code moved into functions for reuse
+    const CreateCtx = struct {
+        store: Store,
+        allocator: std.mem.Allocator,
+
+        // lockfile buffers
+        string_buf: []const u8,
+        dependencies: []const Dependency,
+        resolutions: []const PackageID,
+        pkg_names: []const String,
+        pkg_resolutions: []const Resolution,
+        pkg_name_hashes: []const PackageNameHash,
+        pkg_dependency_slices: []const DependencySlice,
+
+        node_dep_ids: []DependencyID,
+        node_pkg_ids: []PackageID,
+        node_parent_ids: []Node.Id,
+        node_dependencies: []std.ArrayListUnmanaged(Ids),
+        node_peers: []Node.Peers,
+        node_nodes: []std.ArrayListUnmanaged(Node.Id),
+
+        node_dedupe: std.AutoArrayHashMap(PackageID, Node.Id),
+
+        entry_dependencies: []Entry.Dependencies,
+        entry_parents: []std.ArrayListUnmanaged(Entry.Id),
+
+        pub fn init(allocator: std.mem.Allocator, lockfile: *const Lockfile) OOM!@This() {
+            const pkgs = lockfile.packages.slice();
+            var ctx: @This() = .{
+                .store = .{},
+                .allocator = allocator,
+                .string_buf = lockfile.buffers.string_bytes.items,
+                .dependencies = lockfile.buffers.dependencies.items,
+                .resolutions = lockfile.buffers.resolutions.items,
+                .pkg_names = pkgs.items(.name),
+                .pkg_resolutions = pkgs.items(.resolution),
+                .pkg_name_hashes = pkgs.items(.name_hash),
+                .pkg_dependency_slices = pkgs.items(.dependencies),
+                .node_dep_ids = &.{},
+                .node_pkg_ids = &.{},
+                .node_parent_ids = &.{},
+                .node_dependencies = &.{},
+                .node_peers = &.{},
+                .node_nodes = &.{},
+                .node_dedupe = .init(allocator),
+                .entry_dependencies = &.{},
+                .entry_parents = &.{},
+            };
+
+            // Both of these will be similar in size to packages.len. Peer dependencies will make them slightly larger.
+            try ctx.store.nodes.ensureUnusedCapacity(ctx.allocator, ctx.pkg_names.len);
+            try ctx.store.entries.ensureUnusedCapacity(ctx.allocator, ctx.pkg_names.len);
+
+            return ctx;
+        }
+
+        pub fn deinit(this: *@This()) void {
+            this.node_dedupe.deinit();
+        }
+
+        const NodeParentIterator = struct {
+            next_id: Node.Id,
+            node_parent_ids: []const Node.Id,
+
+            pub fn next(this: *@This()) ?Node.Id {
+                if (this.next_id == .invalid) {
+                    return null;
+                }
+                const curr_id = this.next_id;
+                this.next_id = this.node_parent_ids[curr_id.get()];
+                return curr_id;
+            }
+        };
+
+        pub fn iterateNodeParents(this: *const @This(), first_parent_id: Node.Id) NodeParentIterator {
+            return .{ .next_id = first_parent_id, .node_parent_ids = this.node_parent_ids };
+        }
+
+        const AppendNodeResult = union(enum) {
+            new_node: Node.Id,
+            deduplicated,
+        };
+
+        pub fn appendNode(this: *@This(), next_node: NextNode) OOM!AppendNodeResult {
+            if (this.node_dedupe.get(next_node.pkg_id)) |dedupe_node_id| create_new_node: {
+                const node_dep = this.dependencies[next_node.dep_id];
+
+                const dedupe_dep_id = this.node_dep_ids[dedupe_node_id.get()];
+                const dedupe_dep = this.dependencies[dedupe_dep_id];
+
+                if (dedupe_dep.name_hash != node_dep.name_hash or
+                    dedupe_dep.behavior.workspace != node_dep.behavior.workspace)
+                {
+                    // create a new node if it's an alias so we don't lose the alias name
+                    break :create_new_node;
+                }
+
+                try this.addNodeToParentNodes(next_node.parent_id, dedupe_node_id);
+                return .deduplicated;
+            }
+
+            const pkg_deps = this.pkg_dependency_slices[next_node.pkg_id];
+
+            const node_id: Node.Id = .from(@intCast(this.store.nodes.len));
+            try this.store.nodes.append(this.allocator, .{
+                .pkg_id = next_node.pkg_id,
+                .dep_id = next_node.dep_id,
+                .parent_id = next_node.parent_id,
+                // capacity is set to the expected size after we
+                // find the exact dependency count
+                .nodes = .empty,
+                .dependencies = try .initCapacity(this.allocator, pkg_deps.len),
+            });
+
+            // update pointers
+            const nodes = this.store.nodes.slice();
+            this.node_dep_ids = nodes.items(.dep_id);
+            this.node_pkg_ids = nodes.items(.pkg_id);
+            this.node_parent_ids = nodes.items(.parent_id);
+            this.node_dependencies = nodes.items(.dependencies);
+            this.node_peers = nodes.items(.peers);
+            this.node_nodes = nodes.items(.nodes);
+
+            return .{ .new_node = node_id };
+        }
+
+        pub fn addNodeToParentNodes(this: *@This(), parent_id: Node.Id, node_id: Node.Id) OOM!void {
+            this.node_nodes[parent_id.get()].appendAssumeCapacity(node_id);
+
+            if (this.node_nodes[parent_id.get()].items.len == this.node_dependencies[parent_id.get()].items.len) {
+                // we've visited all the children nodes of the parent, see if we can add to the dedupe map.
+                try this.maybeAddNodeToDedupeMap(parent_id);
+            }
+        }
+
+        pub fn maybeAddNodeToDedupeMap(this: *@This(), node_id: Node.Id) OOM!void {
+            if (this.node_peers[node_id.get()].list.items.len != 0) {
+                // only nodes without peers (transitive or direct) are added to the map.
+                return;
+            }
+
+            const dep_id = this.node_dep_ids[node_id.get()];
+            if (dep_id == invalid_dependency_id) {
+                // no need to add the root package
+                return;
+            }
+
+            const dep = this.dependencies[dep_id];
+            const pkg_id = this.node_pkg_ids[node_id.get()];
+
+            if (dep.name_hash != this.pkg_name_hashes[pkg_id]) {
+                // don't add to the dedupe map if the dependency name does not match
+                // the package name. this means it's an alias, and won't be as common
+                // as a normal dependency on this package.
+                return;
+            }
+
+            const dedupe = try this.node_dedupe.getOrPut(pkg_id);
+
+            if (dedupe.found_existing) {
+                bun.debugAssert(dep.version.tag == .workspace);
+                return;
+            }
+
+            dedupe.value_ptr.* = node_id;
+        }
+
+        pub fn appendEntry(this: *@This(), entry: Entry) OOM!Entry.Id {
+            const entry_id: Entry.Id = .from(@intCast(this.store.entries.len));
+            try this.store.entries.append(this.allocator, entry);
+
+            // update pointers
+            const entries = this.store.entries.slice();
+            this.entry_dependencies = entries.items(.dependencies);
+            this.entry_parents = entries.items(.parents);
+
+            return entry_id;
+        }
+    };
+
     pub fn create(
         manager: *PackageManager,
         install_root_dependencies: bool,
@@ -58,16 +249,6 @@ pub const Store = struct {
         packages_to_install: ?[]const PackageID,
     ) OOM!Store {
         var timer = std.time.Timer.start() catch unreachable;
-
-        const NextNode = struct {
-            parent_id: Node.Id,
-            dep_id: DependencyID,
-            pkg_id: PackageID,
-
-            // no deinit because each field does not need to
-            // be deinitialized. see `bun.memory.deinit`
-            pub const deinit = void;
-        };
 
         var next_node_stack: bun.collections.ArrayListDefault(NextNode) = .init();
         defer next_node_stack.deinit();
@@ -78,188 +259,7 @@ pub const Store = struct {
             .pkg_id = 0,
         });
 
-        // struct holding up-to-date pointers to multi array list fields
-        // and some code moved into functions for reuse
-        const BuilderCtx = struct {
-            store: Store,
-            allocator: std.mem.Allocator,
-
-            // lockfile buffers
-            string_buf: []const u8,
-            dependencies: []const Dependency,
-            resolutions: []const PackageID,
-            pkg_names: []const String,
-            pkg_resolutions: []const Resolution,
-            pkg_name_hashes: []const PackageNameHash,
-            pkg_dependency_slices: []const DependencySlice,
-
-            node_dep_ids: []DependencyID,
-            node_pkg_ids: []PackageID,
-            node_parent_ids: []Node.Id,
-            node_dependencies: []std.ArrayListUnmanaged(Ids),
-            node_peers: []Node.Peers,
-            node_nodes: []std.ArrayListUnmanaged(Node.Id),
-
-            node_dedupe: std.AutoArrayHashMap(PackageID, Node.Id),
-
-            entry_dependencies: []Entry.Dependencies,
-            entry_parents: []std.ArrayListUnmanaged(Entry.Id),
-
-            pub fn init(allocator: std.mem.Allocator, lockfile: *const Lockfile) OOM!@This() {
-                const pkgs = lockfile.packages.slice();
-                var ctx: @This() = .{
-                    .store = .{},
-                    .allocator = allocator,
-                    .string_buf = lockfile.buffers.string_bytes.items,
-                    .dependencies = lockfile.buffers.dependencies.items,
-                    .resolutions = lockfile.buffers.resolutions.items,
-                    .pkg_names = pkgs.items(.name),
-                    .pkg_resolutions = pkgs.items(.resolution),
-                    .pkg_name_hashes = pkgs.items(.name_hash),
-                    .pkg_dependency_slices = pkgs.items(.dependencies),
-                    .node_dep_ids = &.{},
-                    .node_pkg_ids = &.{},
-                    .node_parent_ids = &.{},
-                    .node_dependencies = &.{},
-                    .node_peers = &.{},
-                    .node_nodes = &.{},
-                    .node_dedupe = .init(allocator),
-                    .entry_dependencies = &.{},
-                    .entry_parents = &.{},
-                };
-
-                // Both of these will be similar in size to packages.len. Peer dependencies will make them slightly larger.
-                try ctx.store.nodes.ensureUnusedCapacity(ctx.allocator, ctx.pkg_names.len);
-                try ctx.store.entries.ensureUnusedCapacity(ctx.allocator, ctx.pkg_names.len);
-
-                return ctx;
-            }
-
-            pub fn deinit(this: *@This()) void {
-                this.node_dedupe.deinit();
-            }
-
-            const NodeParentIterator = struct {
-                next_id: Node.Id,
-                node_parent_ids: []const Node.Id,
-
-                pub fn next(this: *@This()) ?Node.Id {
-                    if (this.next_id == .invalid) {
-                        return null;
-                    }
-                    const curr_id = this.next_id;
-                    this.next_id = this.node_parent_ids[curr_id.get()];
-                    return curr_id;
-                }
-            };
-
-            pub fn iterateNodeParents(this: *const @This(), first_parent_id: Node.Id) NodeParentIterator {
-                return .{ .next_id = first_parent_id, .node_parent_ids = this.node_parent_ids };
-            }
-
-            const AppendNodeResult = union(enum) {
-                new_node: Node.Id,
-                deduplicated,
-            };
-
-            pub fn appendNode(this: *@This(), next_node: NextNode) OOM!AppendNodeResult {
-                if (this.node_dedupe.get(next_node.pkg_id)) |dedupe_node_id| create_new_node: {
-                    const node_dep = this.dependencies[next_node.dep_id];
-
-                    const dedupe_dep_id = this.node_dep_ids[dedupe_node_id.get()];
-                    const dedupe_dep = this.dependencies[dedupe_dep_id];
-
-                    if (dedupe_dep.name_hash != node_dep.name_hash or
-                        dedupe_dep.behavior.workspace != node_dep.behavior.workspace)
-                    {
-                        // create a new node if it's an alias so we don't lose the alias name
-                        break :create_new_node;
-                    }
-
-                    try this.addNodeToParentNodes(next_node.parent_id, dedupe_node_id);
-                    return .deduplicated;
-                }
-
-                const pkg_deps = this.pkg_dependency_slices[next_node.pkg_id];
-
-                const node_id: Node.Id = .from(@intCast(this.store.nodes.len));
-                try this.store.nodes.append(this.allocator, .{
-                    .pkg_id = next_node.pkg_id,
-                    .dep_id = next_node.dep_id,
-                    .parent_id = next_node.parent_id,
-                    // capacity is set to the expected size after we
-                    // find the exact dependency count
-                    .nodes = .empty,
-                    .dependencies = try .initCapacity(this.allocator, pkg_deps.len),
-                });
-
-                // update pointers
-                const nodes = this.store.nodes.slice();
-                this.node_dep_ids = nodes.items(.dep_id);
-                this.node_pkg_ids = nodes.items(.pkg_id);
-                this.node_parent_ids = nodes.items(.parent_id);
-                this.node_dependencies = nodes.items(.dependencies);
-                this.node_peers = nodes.items(.peers);
-                this.node_nodes = nodes.items(.nodes);
-
-                return .{ .new_node = node_id };
-            }
-
-            pub fn addNodeToParentNodes(this: *@This(), parent_id: Node.Id, node_id: Node.Id) OOM!void {
-                this.node_nodes[parent_id.get()].appendAssumeCapacity(node_id);
-
-                if (this.node_nodes[parent_id.get()].items.len == this.node_dependencies[parent_id.get()].items.len) {
-                    // we've visited all the children nodes of the parent, see if we can add to the dedupe map.
-                    try this.maybeAddNodeToDedupeMap(parent_id);
-                }
-            }
-
-            pub fn maybeAddNodeToDedupeMap(this: *@This(), node_id: Node.Id) OOM!void {
-                if (this.node_peers[node_id.get()].list.items.len != 0) {
-                    // only nodes without peers (transitive or direct) are added to the map.
-                    return;
-                }
-
-                const dep_id = this.node_dep_ids[node_id.get()];
-                if (dep_id == invalid_dependency_id) {
-                    // no need to add the root package
-                    return;
-                }
-
-                const dep = this.dependencies[dep_id];
-                const pkg_id = this.node_pkg_ids[node_id.get()];
-
-                if (dep.name_hash != this.pkg_name_hashes[pkg_id]) {
-                    // don't add to the dedupe map if the dependency name does not match
-                    // the package name. this means it's an alias, and won't be as common
-                    // as a normal dependency on this package.
-                    return;
-                }
-
-                const dedupe = try this.node_dedupe.getOrPut(pkg_id);
-
-                if (dedupe.found_existing) {
-                    bun.debugAssert(dep.version.tag == .workspace);
-                    return;
-                }
-
-                dedupe.value_ptr.* = node_id;
-            }
-
-            pub fn appendEntry(this: *@This(), entry: Entry) OOM!Entry.Id {
-                const entry_id: Entry.Id = .from(@intCast(this.store.entries.len));
-                try this.store.entries.append(this.allocator, entry);
-
-                // update pointers
-                const entries = this.store.entries.slice();
-                this.entry_dependencies = entries.items(.dependencies);
-                this.entry_parents = entries.items(.parents);
-
-                return entry_id;
-            }
-        };
-
-        var ctx: BuilderCtx = try .init(manager.allocator, manager.lockfile);
+        var ctx: CreateCtx = try .init(manager.allocator, manager.lockfile);
         defer ctx.deinit();
 
         var dep_ids_sort_buf: bun.collections.ArrayListDefault(DependencyID) = .init();

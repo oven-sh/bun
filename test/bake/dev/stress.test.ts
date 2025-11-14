@@ -5,7 +5,7 @@
 // - "DEV_SERVER_STRESS=ALL" will run all for 10 min each.
 //
 // Without this flag, each test is a "smoke test", running the iteration once.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { devTest } from "../bake-harness";
 
 // https://github.com/oven-sh/bun/issues/18910

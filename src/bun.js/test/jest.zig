@@ -97,6 +97,22 @@ pub const TestRunner = struct {
 
     bun_test_root: bun_test.BunTestRoot,
 
+    pub fn getActiveTimeout(this: *const TestRunner) bun.timespec {
+        const active_file = this.bun_test_root.active_file.get() orelse return .epoch;
+        if (active_file.timer.state != .ACTIVE or active_file.timer.next.eql(&.epoch)) {
+            return .epoch;
+        }
+        return active_file.timer.next;
+    }
+
+    pub fn removeActiveTimeout(this: *TestRunner, vm: *jsc.VirtualMachine) void {
+        const active_file = this.bun_test_root.active_file.get() orelse return;
+        if (active_file.timer.state != .ACTIVE or active_file.timer.next.eql(&.epoch)) {
+            return;
+        }
+        vm.timer.remove(&active_file.timer);
+    }
+
     pub const Summary = struct {
         pass: u32 = 0,
         expectations: u32 = 0,
@@ -158,7 +174,7 @@ pub const TestRunner = struct {
 pub const Jest = struct {
     pub var runner: ?*TestRunner = null;
 
-    pub fn Bun__Jest__createTestModuleObject(globalObject: *JSGlobalObject) callconv(.C) JSValue {
+    pub fn Bun__Jest__createTestModuleObject(globalObject: *JSGlobalObject) callconv(.c) JSValue {
         return createTestModule(globalObject) catch return .zero;
     }
 
@@ -347,7 +363,7 @@ fn consumeArg(
     should_write: bool,
     str_idx: *usize,
     args_idx: *usize,
-    array_list: *std.ArrayList(u8),
+    array_list: *std.array_list.Managed(u8),
     arg: *const JSValue,
     fallback: []const u8,
 ) !void {
@@ -366,7 +382,7 @@ fn consumeArg(
 pub fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []const jsc.JSValue, test_idx: usize, allocator: std.mem.Allocator) !string {
     var idx: usize = 0;
     var args_idx: usize = 0;
-    var list = bun.handleOom(std.ArrayList(u8).initCapacity(allocator, label.len));
+    var list = bun.handleOom(std.array_list.Managed(u8).initCapacity(allocator, label.len));
     defer list.deinit();
 
     while (idx < label.len) {
@@ -406,7 +422,7 @@ pub fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []
                     } else {
                         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                         defer formatter.deinit();
-                        bun.handleOom(list.writer().print("{}", .{value.toFmt(&formatter)}));
+                        bun.handleOom(list.writer().print("{f}", .{value.toFmt(&formatter)}));
                     }
                     idx = var_end;
                     continue;
@@ -450,7 +466,7 @@ pub fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []
                     var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                     defer formatter.deinit();
                     const value_fmt = current_arg.toFmt(&formatter);
-                    bun.handleOom(list.writer().print("{}", .{value_fmt}));
+                    bun.handleOom(list.writer().print("{f}", .{value_fmt}));
                     idx += 1;
                     args_idx += 1;
                 },
@@ -485,7 +501,7 @@ pub fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObj
 }
 
 pub fn errorInCI(globalObject: *jsc.JSGlobalObject, message: []const u8) bun.JSError!void {
-    if (bun.detectCI()) |_| {
+    if (bun.ci.isCI()) {
         return globalObject.throwPretty("{s}\nTo override, set the environment variable CI=false.", .{message});
     }
 }

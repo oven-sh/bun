@@ -104,7 +104,7 @@ pub const AnyRoute = union(enum) {
             }
         }
         const is_index_route = bun.strings.eql(path.path.slice(), index_path);
-        var builder = std.ArrayList(u8).init(bun.default_allocator);
+        var builder = std.array_list.Managed(u8).init(bun.default_allocator);
         defer builder.deinit();
         if (!strings.hasPrefixComptime(relative_path, "/")) {
             try builder.append('/');
@@ -171,11 +171,11 @@ pub const AnyRoute = union(enum) {
                     switch (bun.sys.existsAtType(bun.FD.cwd(), store_path)) {
                         .result => |file_type| {
                             if (file_type == .directory) {
-                                return global.throwInvalidArguments("Bundled file {} cannot be a directory. You may want to configure --asset-naming or `naming` when bundling.", .{bun.fmt.quote(store_path)});
+                                return global.throwInvalidArguments("Bundled file {f} cannot be a directory. You may want to configure --asset-naming or `naming` when bundling.", .{bun.fmt.quote(store_path)});
                             }
                         },
                         .err => {
-                            return global.throwInvalidArguments("Bundled file {} not found. You may want to configure --asset-naming or `naming` when bundling.", .{bun.fmt.quote(store_path)});
+                            return global.throwInvalidArguments("Bundled file {f} not found. You may want to configure --asset-naming or `naming` when bundling.", .{bun.fmt.quote(store_path)});
                         },
                     }
                 }
@@ -210,8 +210,8 @@ pub const AnyRoute = union(enum) {
         dedupe_html_bundle_map: std.AutoHashMap(*HTMLBundle, bun.ptr.RefPtr(HTMLBundle.Route)),
         js_string_allocations: bun.bake.StringRefList,
         global: *jsc.JSGlobalObject,
-        framework_router_list: std.ArrayList(bun.bake.Framework.FileSystemRouterType),
-        user_routes: *std.ArrayList(ServerConfig.StaticRouteEntry),
+        framework_router_list: std.array_list.Managed(bun.bake.Framework.FileSystemRouterType),
+        user_routes: *std.array_list.Managed(ServerConfig.StaticRouteEntry),
     };
 
     pub fn fromJS(
@@ -1377,7 +1377,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 },
             };
 
-            const buf = try std.fmt.allocPrint(default_allocator, "{any}", .{fmt});
+            const buf = try std.fmt.allocPrint(default_allocator, "{f}", .{fmt});
             defer default_allocator.free(buf);
 
             return bun.String.cloneUTF8(buf);
@@ -1768,7 +1768,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                         switch (bun.sys.getErrno(@as(i32, -1))) {
                             .SUCCESS => {
                                 error_instance = (jsc.SystemError{
-                                    .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to listen on unix socket {}", .{bun.fmt.QuotedFormatter{ .text = unix }}) catch "Failed to start server"),
+                                    .message = bun.String.init(std.fmt.bufPrint(&output_buf, "Failed to listen on unix socket {f}", .{bun.fmt.QuotedFormatter{ .text = unix }}) catch "Failed to start server"),
                                     .code = bun.String.static("EADDRINUSE"),
                                     .syscall = bun.String.static("listen"),
                                 }).toErrorInstance(globalThis);
@@ -2456,7 +2456,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             //     uuid: string,
             //   }
             // }
-            const json_string = std.fmt.allocPrint(bun.default_allocator, "{{ \"workspace\": {{ \"root\": {}, \"uuid\": \"{}\" }} }}", .{
+            const json_string = std.fmt.allocPrint(bun.default_allocator, "{{ \"workspace\": {{ \"root\": {f}, \"uuid\": \"{f}\" }} }}", .{
                 bun.fmt.formatJSONStringUTF8(this.dev_server.?.root, .{}),
                 uuid,
             }) catch |err| bun.handleOom(err);

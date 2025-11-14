@@ -383,9 +383,9 @@ pub fn getEphemeralKeyInfo(this: *This, globalObject: *jsc.JSGlobalObject, _: *j
     if (this.isServer()) {
         return JSValue.jsNull();
     }
-    var result = JSValue.createEmptyObject(globalObject, 3);
 
     const ssl_ptr = this.socket.ssl() orelse return JSValue.jsNull();
+    var result = JSValue.createEmptyObject(globalObject, 0);
 
     // TODO: investigate better option or compatible way to get the key
     // this implementation follows nodejs but for BoringSSL SSL_get_server_tmp_key will always return 0
@@ -566,7 +566,7 @@ pub fn setVerifyMode(this: *This, globalObject: *jsc.JSGlobalObject, callframe: 
     return .js_undefined;
 }
 
-fn alwaysAllowSSLVerifyCallback(_: c_int, _: ?*BoringSSL.X509_STORE_CTX) callconv(.C) c_int {
+fn alwaysAllowSSLVerifyCallback(_: c_int, _: ?*BoringSSL.X509_STORE_CTX) callconv(.c) c_int {
     return 1;
 }
 

@@ -442,12 +442,12 @@ pub const WriteFileWindows = struct {
         }
     }
 
-    pub fn onOpen(req: *uv.fs_t) callconv(.C) void {
+    pub fn onOpen(req: *uv.fs_t) callconv(.c) void {
         var this: *WriteFileWindows = @fieldParentPtr("io_request", req);
-        bun.assert(this == @as(*WriteFileWindows, @alignCast(@ptrCast(req.data.?))));
+        bun.assert(this == @as(*WriteFileWindows, @ptrCast(@alignCast(req.data.?))));
         const rc = this.io_request.result;
         if (comptime Environment.allow_assert)
-            log("onOpen({s}) = {}", .{ this.file_blob.store.?.data.file.pathlike.path.slice(), rc });
+            log("onOpen({s}) = {f}", .{ this.file_blob.store.?.data.file.pathlike.path.slice(), rc });
 
         if (rc.errEnum()) |err| {
             if (err == .NOENT and this.mkdirp_if_not_exists) {
@@ -518,9 +518,9 @@ pub const WriteFileWindows = struct {
         this.event_loop.enqueueTaskConcurrent(jsc.ConcurrentTask.create(jsc.ManagedTask.New(WriteFileWindows, onMkdirpComplete).init(this)));
     }
 
-    fn onWriteComplete(req: *uv.fs_t) callconv(.C) void {
+    fn onWriteComplete(req: *uv.fs_t) callconv(.c) void {
         var this: *WriteFileWindows = @fieldParentPtr("io_request", req);
-        bun.assert(this == @as(*WriteFileWindows, @alignCast(@ptrCast(req.data.?))));
+        bun.assert(this == @as(*WriteFileWindows, @ptrCast(@alignCast(req.data.?))));
         const rc = this.io_request.result;
         if (rc.errno()) |err| {
             switch (this.throw(.{

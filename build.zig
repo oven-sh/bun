@@ -18,22 +18,6 @@ const OperatingSystem = @import("src/env.zig").OperatingSystem;
 
 const pathRel = fs.path.relative;
 
-/// When updating this, make sure to adjust SetupZig.cmake
-const recommended_zig_version = "0.14.0";
-
-// comptime {
-//     if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
-//         @compileError(
-//             "" ++
-//                 "Bun requires Zig version " ++ recommended_zig_version ++ ", but you have " ++
-//                 builtin.zig_version_string ++ ". This is automatically configured via Bun's " ++
-//                 "CMake setup. You likely meant to run `bun run build`. If you are trying to " ++
-//                 "upgrade the Zig compiler, edit ZIG_COMMIT in cmake/tools/SetupZig.cmake or " ++
-//                 "comment this error out.",
-//         );
-//     }
-// }
-
 const zero_sha = "0000000000000000000000000000000000000000";
 
 const BunBuildOptions = struct {
@@ -781,6 +765,13 @@ fn addInternalImports(b: *Build, mod: *Module, opts: *BunBuildOptions) void {
         });
         mod.addImport("cpp", cppImport);
         cppImport.addImport("bun", mod);
+    }
+    {
+        const ciInfoImport = b.createModule(.{
+            .root_source_file = (std.Build.LazyPath{ .cwd_relative = opts.codegen_path }).path(b, "ci_info.zig"),
+        });
+        mod.addImport("ci_info", ciInfoImport);
+        ciInfoImport.addImport("bun", mod);
     }
     inline for (.{
         .{ .import = "completions-bash", .file = b.path("completions/bun.bash") },

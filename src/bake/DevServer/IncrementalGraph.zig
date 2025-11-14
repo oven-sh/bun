@@ -1805,7 +1805,8 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
             for (g.current_chunk_parts.items) |entry| {
                 list.appendSliceAssumeCapacity(switch (side) {
                     // entry is an index into files
-                    .client => files[entry.get()].unpack().jsCode().?,
+                    // will return null if the chunk is a non-js (like css)
+                    .client => files[entry.get()].unpack().jsCode() orelse continue,
                     // entry is the '[]const u8' itself
                     .server => entry.get(),
                 });

@@ -501,7 +501,7 @@ pub fn captureTestLineNumber(callframe: *jsc.CallFrame, globalThis: *JSGlobalObj
 }
 
 pub fn errorInCI(globalObject: *jsc.JSGlobalObject, message: []const u8) bun.JSError!void {
-    if (bun.detectCI()) |_| {
+    if (bun.ci.isCI()) {
         return globalObject.throwPretty("{s}\nTo override, set the environment variable CI=false.", .{message});
     }
 }

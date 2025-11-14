@@ -103,13 +103,13 @@ Renames local variables and function names to shorter identifiers using frequenc
 Converts boolean literals to shorter expressions.
 
 ```ts Input
-true;
-false;
+true
+false
 ```
 
-```ts Output
-!0;
-!1;
+```js Output
+!0
+!1
 ```
 
 ### Boolean algebra optimizations
@@ -119,21 +119,21 @@ false;
 Simplifies boolean expressions using logical rules.
 
 ```ts Input
-!!x;
-x === true;
-x && true;
-x || false;
-!true;
-!false;
+!!x
+x === true
+x && true
+x || false
+!true
+!false
 ```
 
-```ts Output
-x;
-x;
-x;
-x;
-!1;
-!0;
+```js Output
+x
+x
+x
+x
+!1
+!0
 ```
 
 ### Undefined shortening
@@ -143,13 +143,13 @@ x;
 Replaces `undefined` with shorter equivalent.
 
 ```ts Input
-undefined;
+undefined
 let x = undefined;
 ```
 
-```ts Output
-void 0;
-let x = void 0;
+```js Output
+void 0
+let x=void 0;
 ```
 
 ### Undefined equality optimization
@@ -159,13 +159,13 @@ let x = void 0;
 Optimizes loose equality checks with undefined.
 
 ```ts Input
-x == undefined;
-x != undefined;
+x == undefined
+x != undefined
 ```
 
-```ts Output
-x == null;
-x != null;
+```js Output
+x == null
+x != null
 ```
 
 ### Infinity shortening
@@ -175,11 +175,13 @@ x != null;
 Converts Infinity to mathematical expressions.
 
 ```ts Input
-Infinity - Infinity;
+Infinity
+-Infinity
 ```
 
-```ts Output
-1 / 0 - 1 / 0;
+```js Output
+1/0
+-1/0
 ```
 
 ### Typeof optimizations
@@ -189,25 +191,25 @@ Infinity - Infinity;
 Optimizes typeof comparisons and evaluates constant typeof expressions.
 
 ```ts Input
-typeof x === "undefined";
-typeof x !== "undefined";
-typeof require;
-typeof null;
-typeof true;
-typeof 123;
-typeof "str";
-typeof 123n;
+typeof x === 'undefined'
+typeof x !== 'undefined'
+typeof require
+typeof null
+typeof true
+typeof 123
+typeof "str"
+typeof 123n
 ```
 
-```ts Output
-typeof x > "u";
-typeof x < "u";
-("function");
-("object");
-("boolean");
-("number");
-("string");
-("bigint");
+```js Output
+typeof x>'u'
+typeof x<'u'
+"function"
+"object"
+"boolean"
+"number"
+"string"
+"bigint"
 ```
 
 ### Number formatting
@@ -217,17 +219,19 @@ typeof x < "u";
 Formats numbers in the most compact representation.
 
 ```ts Input
-10000;
-100000;
-1000000;
-1.0 - 42.0;
+10000
+100000
+1000000
+1.0
+-42.0
 ```
 
-```ts Output
-1e4;
-1e5;
-1e6;
-1 - 42;
+```js Output
+1e4
+1e5
+1e6
+1
+-42
 ```
 
 ### Arithmetic constant folding
@@ -237,21 +241,21 @@ Formats numbers in the most compact representation.
 Evaluates arithmetic operations at compile time.
 
 ```ts Input
-1 + 2;
-10 - 5;
-3 * 4;
-10 / 2;
-10 % 3;
-2 ** 3;
+1 + 2
+10 - 5
+3 * 4
+10 / 2
+10 % 3
+2 ** 3
 ```
 
-```ts Output
-3;
-5;
-12;
-5;
-1;
-8;
+```js Output
+3
+5
+12
+5
+1
+8
 ```
 
 ### Bitwise constant folding
@@ -261,20 +265,21 @@ Evaluates arithmetic operations at compile time.
 Evaluates bitwise operations at compile time.
 
 ```ts Input
-5 & 3;
-5 | 3;
-5 ^ 3;
-8 << 2;
-32 >> 2;
-~5;
+5 & 3
+5 | 3
+5 ^ 3
+8 << 2
+32 >> 2
+~5
 ```
 
-```ts Output
-1;
-7;
-6;
-32;
-8 - 6;
+```js Output
+1
+7
+6
+32
+8
+-6
 ```
 
 ### String concatenation
@@ -284,15 +289,15 @@ Evaluates bitwise operations at compile time.
 Combines string literals at compile time.
 
 ```ts Input
-"a" + "b";
-"x" + 123;
-"foo" + "bar" + "baz";
+"a" + "b"
+"x" + 123
+"foo" + "bar" + "baz"
 ```
 
-```ts Output
-"ab";
-"x123";
-"foobarbaz";
+```js Output
+"ab"
+"x123"
+"foobarbaz"
 ```
 
 ### String indexing
@@ -302,13 +307,13 @@ Combines string literals at compile time.
 Evaluates string character access at compile time.
 
 ```ts Input
-"foo"[2];
-"hello"[0];
+"foo"[2]
+"hello"[0]
 ```
 
-```ts Output
-"o";
-"h";
+```js Output
+"o"
+"h"
 ```
 
 ### Template literal folding
@@ -318,12 +323,13 @@ Evaluates string character access at compile time.
 Evaluates template literals with constant expressions.
 
 ```ts Input
-`a${123}b``result: ${5 + 10}`;
+`a${123}b`
+`result: ${5 + 10}`
 ```
 
-```ts Output
-"a123b";
-"result: 15";
+```js Output
+"a123b"
+"result: 15"
 ```
 
 ### Template literal to string conversion
@@ -333,13 +339,14 @@ Evaluates template literals with constant expressions.
 Converts simple template literals to regular strings.
 
 ```ts Input
-`Hello World``Line 1
-Line 2`;
+`Hello World`
+`Line 1
+Line 2`
 ```
 
-```ts Output
-"Hello World";
-"Line 1\nLine 2";
+```js Output
+"Hello World"
+"Line 1\nLine 2"
 ```
 
 ### String quote optimization
@@ -349,14 +356,15 @@ Line 2`;
 Chooses the optimal quote character to minimize escapes.
 
 ```ts Input
-"It's a string";
-'He said "hello"'`Simple string`;
+"It's a string"
+'He said "hello"'
+`Simple string`
 ```
 
-```ts Output
-"It's a string";
-'He said "hello"';
-"Simple string";
+```js Output
+"It's a string"
+'He said "hello"'
+"Simple string"
 ```
 
 ### Array spread inlining
@@ -370,8 +378,9 @@ Inlines array spread operations with constant arrays.
 [...[a, b]]
 ```
 
-```ts Output
-[1, 2, 3, 4][(a, b)];
+```js Output
+[1,2,3,4]
+[a,b]
 ```
 
 ### Array indexing
@@ -386,10 +395,10 @@ Evaluates constant array access at compile time.
 ['a', , 'c'][1]
 ```
 
-```ts Output
-x;
-("b");
-void 0;
+```js Output
+x
+'b'
+void 0
 ```
 
 ### Property access optimization
@@ -399,17 +408,17 @@ void 0;
 Converts bracket notation to dot notation when possible.
 
 ```ts Input
-obj["property"];
-obj["validName"];
-obj["123"];
-obj["invalid-name"];
+obj["property"]
+obj["validName"]
+obj["123"]
+obj["invalid-name"]
 ```
 
-```ts Output
-obj.property;
-obj.validName;
-obj["123"];
-obj["invalid-name"];
+```js Output
+obj.property
+obj.validName
+obj["123"]
+obj["invalid-name"]
 ```
 
 ### Comparison folding
@@ -419,19 +428,19 @@ obj["invalid-name"];
 Evaluates constant comparisons at compile time.
 
 ```ts Input
-3 < 5;
-5 > 3;
-3 <= 3;
-5 >= 6;
-"a" < "b";
+3 < 5
+5 > 3
+3 <= 3
+5 >= 6
+"a" < "b"
 ```
 
-```ts Output
-!0;
-!0;
-!0;
-!1;
-!0;
+```js Output
+!0
+!0
+!0
+!1
+!0
 ```
 
 ### Logical operation folding
@@ -441,17 +450,17 @@ Evaluates constant comparisons at compile time.
 Simplifies logical operations with constant values.
 
 ```ts Input
-true && x;
-false && x;
-true || x;
-false || x;
+true && x
+false && x
+true || x
+false || x
 ```
 
-```ts Output
-x;
-!1;
-!0;
-x;
+```js Output
+x
+!1
+!0
+x
 ```
 
 ### Nullish coalescing folding
@@ -461,15 +470,15 @@ x;
 Evaluates nullish coalescing with known values.
 
 ```ts Input
-null ?? x;
-undefined ?? x;
-42 ?? x;
+null ?? x
+undefined ?? x
+42 ?? x
 ```
 
-```ts Output
-x;
-x;
-42;
+```js Output
+x
+x
+42
 ```
 
 ### Comma expression simplification
@@ -479,12 +488,13 @@ x;
 Removes side-effect-free expressions from comma sequences.
 
 ```ts Input
-(0, x)(123, "str", x);
+(0, x)
+(123, "str", x)
 ```
 
-```ts Output
-x;
-x;
+```js Output
+x
+x
 ```
 
 ### Ternary conditional folding
@@ -494,17 +504,17 @@ x;
 Evaluates conditional expressions with constant conditions.
 
 ```ts Input
-true ? a : b;
-false ? a : b;
-x ? true : false;
-x ? false : true;
+true ? a : b
+false ? a : b
+x ? true : false
+x ? false : true
 ```
 
-```ts Output
-a;
-b;
-x;
-!x;
+```js Output
+a
+b
+x ? !0 : !1
+x ? !1 : !0
 ```
 
 ### Unary expression folding
@@ -514,17 +524,22 @@ x;
 Simplifies unary operations.
 
 ```ts Input
-+123 + "123" - -x;
-~~x;
-!!x;
++123
++"123"
+-(-x)
+~~x
+!!x
 ```
 
-```ts Output
-123;
-123;
-x;
-x;
-x;
+```js Output
+123
+123
+123
+123
+x
+~~x
+!!x
+x
 ```
 
 ### Double negation removal
@@ -534,13 +549,13 @@ x;
 Removes unnecessary double negations.
 
 ```ts Input
-!!x;
-!!!x;
+!!x
+!!!x
 ```
 
-```ts Output
-x;
-!x;
+```js Output
+x
+!x
 ```
 
 ### If statement optimization
@@ -552,18 +567,15 @@ Optimizes if statements with constant conditions.
 ```ts Input
 if (true) x;
 if (false) x;
-if (x) {
-  a;
-}
-if (x) {
-} else y;
+if (x) { a; }
+if (x) {} else y;
 ```
 
-```ts Output
+```js Output
 x;
 // removed
-if (x) a;
-if (!x) y;
+if(x)a;
+if(!x)y;
 ```
 
 ### Dead code elimination
@@ -582,10 +594,8 @@ function foo() {
 }
 ```
 
-```ts Output
-function foo() {
-  return x;
-}
+```js Output
+function foo(){return x}
 ```
 
 ### Unreachable branch removal
@@ -600,7 +610,7 @@ while (false) {
 }
 ```
 
-```ts Output
+```js Output
 // removed entirely
 ```
 
@@ -611,13 +621,12 @@ while (false) {
 Removes empty blocks and unnecessary braces.
 
 ```ts Input
-{
-}
-if (x) {
-}
+{ }
+if (x) { }
 ```
 
-```ts Output
+```js Output
+;
 // removed
 ```
 
@@ -633,8 +642,8 @@ if (condition) {
 }
 ```
 
-```ts Output
-if (condition) doSomething();
+```js Output
+if(condition)doSomething();
 ```
 
 ### TypeScript enum inlining
@@ -644,16 +653,12 @@ if (condition) doSomething();
 Inlines TypeScript enum values at compile time.
 
 ```ts Input
-enum Color {
-  Red,
-  Green,
-  Blue,
-}
+enum Color { Red, Green, Blue }
 const x = Color.Red;
 ```
 
-```ts Output
-const x = 0;
+```js Output
+const x=0;
 ```
 
 ### Pure annotation support
@@ -667,7 +672,7 @@ const x = /*@__PURE__*/ expensive();
 // If x is unused...
 ```
 
-```ts Output
+```js Output
 // removed entirely
 ```
 
@@ -684,11 +689,8 @@ function calculateSum(firstNumber, secondNumber) {
 }
 ```
 
-```ts Output
-function a(b, c) {
-  const d = b + c;
-  return d;
-}
+```js Output
+function a(b,c){const d=b+c;return d}
 ```
 
 **Naming strategy:**
@@ -713,16 +715,13 @@ Removes all unnecessary whitespace.
 
 ```ts Input
 function add(a, b) {
-  return a + b;
+    return a + b;
 }
 let x = 10;
 ```
 
-```ts Output
-function add(a, b) {
-  return a + b;
-}
-let x = 10;
+```js Output
+function add(a,b){return a+b;}let x=10;
 ```
 
 ### Semicolon optimization
@@ -737,10 +736,8 @@ let b = 2;
 return a + b;
 ```
 
-```ts Output
-let a = 1;
-let b = 2;
-return a + b;
+```js Output
+let a=1;let b=2;return a+b
 ```
 
 ### Operator spacing removal
@@ -750,15 +747,15 @@ return a + b;
 Removes spaces around operators.
 
 ```ts Input
-a + b;
-x = y * z;
-(foo && bar) || baz;
+a + b
+x = y * z
+foo && bar || baz
 ```
 
-```ts Output
-a + b;
-x = y * z;
-(foo && bar) || baz;
+```js Output
+a+b
+x=y*z
+foo&&bar||baz
 ```
 
 ### Comment removal
@@ -771,14 +768,12 @@ Removes comments except important license comments.
 // This comment is removed
 /* So is this */
 /*! But this license comment is kept */
-function test() {
-  /* inline comment */
-}
+function test() { /* inline comment */ }
 ```
 
-```ts Output
+```js Output
 /*! But this license comment is kept */
-function test() {}
+function test(){}
 ```
 
 ### Object and array formatting
@@ -789,15 +784,14 @@ Removes whitespace in object and array literals.
 
 ```ts Input
 const obj = {
-  name: "John",
-  age: 30,
+    name: "John",
+    age: 30
 };
 const arr = [1, 2, 3];
 ```
 
-```ts Output
-const obj = { name: "John", age: 30 };
-const arr = [1, 2, 3];
+```js Output
+const obj={name:"John",age:30};const arr=[1,2,3];
 ```
 
 ### Control flow formatting
@@ -808,16 +802,15 @@ Removes whitespace in control structures.
 
 ```ts Input
 if (condition) {
-  doSomething();
+    doSomething();
 }
 for (let i = 0; i < 10; i++) {
-  console.log(i);
+    console.log(i);
 }
 ```
 
-```ts Output
-if (condition) doSomething();
-for (let i = 0; i < 10; i++) console.log(i);
+```js Output
+if(condition)doSomething();for(let i=0;i<10;i++)console.log(i);
 ```
 
 ### Function formatting
@@ -828,16 +821,13 @@ Removes whitespace in function declarations.
 
 ```ts Input
 function myFunction(param1, param2) {
-  return param1 + param2;
+    return param1 + param2;
 }
 const arrow = (a, b) => a + b;
 ```
 
-```ts Output
-function myFunction(a, b) {
-  return a + b;
-}
-const arrow = (a, b) => a + b;
+```js Output
+function myFunction(a,b){return a+b}const arrow=(a,b)=>a+b;
 ```
 
 ### Parentheses minimization
@@ -847,14 +837,15 @@ const arrow = (a, b) => a + b;
 Only adds parentheses when necessary for operator precedence.
 
 ```ts Input
-(a + b) * c;
-a + (b * c)(x);
+(a + b) * c
+a + (b * c)
+((x))
 ```
 
-```ts Output
-(a + b) * c;
-a + b * c;
-x;
+```js Output
+(a+b)*c
+a+b*c
+x
 ```
 
 ### Property mangling
@@ -863,12 +854,12 @@ x;
 
 Renames object properties to shorter names when configured.
 
-```ts#input.ts (with property mangling enabled)
+```ts Input
 obj.longPropertyName
 ```
 
-```ts Output
-obj.a;
+```js Output (with property mangling enabled)
+obj.a
 ```
 
 ### Template literal value folding
@@ -878,15 +869,19 @@ obj.a;
 Converts non-string interpolated values to strings and folds them into the template.
 
 ```ts Input
-`hello ${123}``value: ${true}``result: ${null}``status: ${undefined}``big: ${10n}`;
+`hello ${123}`
+`value: ${true}`
+`result: ${null}`
+`status: ${undefined}`
+`big: ${10n}`
 ```
 
-```ts Output
-"hello 123";
-"value: true";
-"result: null";
-"status: undefined";
-"big: 10";
+```js Output
+"hello 123"
+"value: true"
+"result: null"
+"status: undefined"
+"big: 10"
 ```
 
 ### String length constant folding
@@ -896,13 +891,13 @@ Converts non-string interpolated values to strings and folds them into the templ
 Evaluates `.length` property on string literals at compile time.
 
 ```ts Input
-"hello world".length;
-"test".length;
+"hello world".length
+"test".length
 ```
 
-```ts Output
-11;
-4;
+```js Output
+11
+4
 ```
 
 ### Constructor call simplification
@@ -912,22 +907,19 @@ Evaluates `.length` property on string literals at compile time.
 Simplifies constructor calls for built-in types.
 
 ```ts Input
-new Object();
-new Object(null);
-new Object({ a: 1 });
-new Array();
-new Array(x, y);
+new Object()
+new Object(null)
+new Object({a: 1})
+new Array()
+new Array(x, y)
 ```
 
-```ts Output
-{
-}
-{
-}
-{
-  a: 1;
-}
-[][(x, y)];
+```js Output
+{}
+{}
+{a:1}
+[]
+[x,y]
 ```
 
 ### Single property object inlining
@@ -937,11 +929,11 @@ new Array(x, y);
 Inlines property access for objects with a single property.
 
 ```ts Input
-({ fn: () => console.log("hi") }).fn();
+({fn: () => console.log('hi')}).fn()
 ```
 
-```ts Output
-(() => console.log("hi"))();
+```js Output
+(() => console.log('hi'))()
 ```
 
 ### String charCodeAt constant folding
@@ -951,13 +943,13 @@ Inlines property access for objects with a single property.
 Evaluates `charCodeAt()` on string literals for ASCII characters.
 
 ```ts Input
-"hello".charCodeAt(1);
-"A".charCodeAt(0);
+"hello".charCodeAt(1)
+"A".charCodeAt(0)
 ```
 
-```ts Output
-101;
-65;
+```js Output
+101
+65
 ```
 
 ### Void 0 equality to null equality
@@ -967,13 +959,13 @@ Evaluates `charCodeAt()` on string literals for ASCII characters.
 Converts loose equality checks with `void 0` to `null` since they're equivalent.
 
 ```ts Input
-x == void 0;
-x != void 0;
+x == void 0
+x != void 0
 ```
 
-```ts Output
-x == null;
-x != null;
+```js Output
+x == null
+x != null
 ```
 
 ### Negation operator optimization
@@ -983,12 +975,13 @@ x != null;
 Moves negation operator through comma expressions.
 
 ```ts Input
--(a, b) - (x, y, z);
+-(a, b)
+-(x, y, z)
 ```
 
-```ts Output
-(a, -b);
-(x, y, -z);
+```js Output
+a,-b
+x,y,-z
 ```
 
 ### Import.meta property inlining
@@ -998,17 +991,17 @@ Moves negation operator through comma expressions.
 Inlines `import.meta` properties at build time when values are known.
 
 ```ts Input
-import.meta.dir;
-import.meta.file;
-import.meta.path;
-import.meta.url;
+import.meta.dir
+import.meta.file
+import.meta.path
+import.meta.url
 ```
 
-```ts Output
-"/path/to/directory";
-"filename.js";
-"/full/path/to/file.js";
-"file:///full/path/to/file.js";
+```js Output
+"/path/to/directory"
+"filename.js"
+"/full/path/to/file.js"
+"file:///full/path/to/file.js"
 ```
 
 ### Variable declaration merging
@@ -1024,11 +1017,9 @@ const c = 3;
 const d = 4;
 ```
 
-```ts Output
-let a = 1,
-  b = 2;
-const c = 3,
-  d = 4;
+```js Output
+let a=1,b=2;
+const c=3,d=4;
 ```
 
 ### Expression statement merging
@@ -1043,8 +1034,8 @@ console.log(2);
 console.log(3);
 ```
 
-```ts Output
-(console.log(1), console.log(2), console.log(3));
+```js Output
+console.log(1),console.log(2),console.log(3);
 ```
 
 ### Return statement merging
@@ -1058,8 +1049,8 @@ console.log(x);
 return y;
 ```
 
-```ts Output
-return (console.log(x), y);
+```js Output
+return console.log(x),y;
 ```
 
 ### Throw statement merging
@@ -1073,8 +1064,8 @@ console.log(x);
 throw new Error();
 ```
 
-```ts Output
-throw (console.log(x), new Error());
+```js Output
+throw(console.log(x),new Error());
 ```
 
 ### TypeScript enum cross-module inlining
@@ -1083,7 +1074,8 @@ throw (console.log(x), new Error());
 
 Inlines enum values across module boundaries.
 
-```ts#input.ts (lib.ts)
+```ts Input 
+// lib.ts
 export enum Color { Red, Green, Blue }
 
 // Input (main.ts)
@@ -1091,8 +1083,8 @@ import { Color } from './lib';
 const x = Color.Red;
 ```
 
-```ts Output
-const x = 0;
+```js Output
+const x=0;
 ```
 
 ### Computed property enum inlining
@@ -1102,14 +1094,12 @@ const x = 0;
 Inlines enum values used as computed object properties.
 
 ```ts Input
-enum Keys {
-  FOO = "foo",
-}
-const obj = { [Keys.FOO]: value };
+enum Keys { FOO = 'foo' }
+const obj = { [Keys.FOO]: value }
 ```
 
-```ts Output
-const obj = { foo: value };
+```js Output
+const obj={foo:value}
 ```
 
 ### String number to numeric index
@@ -1119,13 +1109,13 @@ const obj = { foo: value };
 Converts string numeric property access to numeric index.
 
 ```ts Input
-obj["0"];
-arr["5"];
+obj["0"]
+arr["5"]
 ```
 
-```ts Output
-obj[0];
-arr[5];
+```js Output
+obj[0]
+arr[5]
 ```
 
 ### Arrow function body shortening
@@ -1135,17 +1125,13 @@ arr[5];
 Uses expression body syntax when an arrow function only returns a value.
 
 ```ts Input
-() => {
-  return x;
-};
-a => {
-  return a + 1;
-};
+() => { return x; }
+(a) => { return a + 1; }
 ```
 
-```ts Output
-() => x;
-a => a + 1;
+```js Output
+() => x
+a => a + 1
 ```
 
 ### Object property shorthand
@@ -1159,13 +1145,9 @@ Uses shorthand syntax when property name and value identifier match.
 { name: name, age: age }
 ```
 
-```ts Output
-{
-  (x, y);
-}
-{
-  (name, age);
-}
+```js Output
+{ x, y }
+{ name, age }
 ```
 
 ### Method shorthand
@@ -1181,7 +1163,7 @@ Uses method shorthand syntax in object literals.
 }
 ```
 
-```ts Output
+```js Output
 {
   foo() {},
   async bar() {}
@@ -1201,10 +1183,8 @@ function test() {
 }
 ```
 
-```ts Output
-function test() {
-  return x;
-}
+```js Output
+function test(){return x}
 ```
 
 ### Drop console calls
@@ -1219,10 +1199,10 @@ console.warn("warning");
 x = console.error("error");
 ```
 
-```ts Output
+```js Output
 void 0;
 void 0;
-x = void 0;
+x=void 0;
 ```
 
 ### Drop custom function calls
@@ -1231,12 +1211,12 @@ x = void 0;
 
 Removes calls to specified global functions or methods.
 
-```ts#input.ts with --drop=assert
+```ts Input
 assert(condition);
 obj.assert(test);
 ```
 
-```ts Output
+```js Output with --drop=assert
 void 0;
 void 0;
 ```
@@ -1268,7 +1248,7 @@ This preserves the `.name` property on functions and classes while still minifyi
 
 Using all three minification modes together:
 
-```ts#input.ts (158 bytes)
+```ts input.ts (158 bytes)
 const myVariable = 42;
 
 const myFunction = () => {
@@ -1280,7 +1260,7 @@ const myFunction = () => {
 const output = myFunction();
 ```
 
-```ts#output.ts
+```js output.js
 // Output with --minify (49 bytes, 69% reduction)
 const a=42,b=()=>{const c=!0,d=void 0;return c?a:d},e=b();
 ```

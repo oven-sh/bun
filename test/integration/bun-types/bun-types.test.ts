@@ -34,7 +34,7 @@ beforeAll(async () => {
   TEMP_FIXTURE_DIR = join(TEMP_DIR, "fixture");
 
   try {
-    await $`mkdir -p ${TEMP_FIXTURE_DIR}`;
+    await $`mkdir -p ${TEMP_FIXTURE_DIR}`.quiet();
 
     await cp(FIXTURE_SOURCE_DIR, TEMP_FIXTURE_DIR, { recursive: true });
 
@@ -42,7 +42,7 @@ beforeAll(async () => {
       cd ${BUN_TYPES_PACKAGE_ROOT}
       bun install --no-cache
       cp package.json package.json.backup
-    `;
+    `.quiet();
 
     const pkg = await Bun.file(BUN_TYPES_PACKAGE_JSON_PATH).json();
 
@@ -58,10 +58,9 @@ beforeAll(async () => {
       cd ${TEMP_FIXTURE_DIR}
       bun add bun-types@${BUN_TYPES_TARBALL_NAME}
       rm ${BUN_TYPES_TARBALL_NAME}
-    `;
+    `.quiet();
 
     const atTypesBunDir = join(TEMP_FIXTURE_DIR, "node_modules", "@types", "bun");
-    console.log("Making tree", atTypesBunDir);
 
     await mkdir(atTypesBunDir, { recursive: true });
     await makeTree(atTypesBunDir, {
@@ -195,140 +194,7 @@ async function diagnose(
   };
 }
 
-const expectedEmptyInterfacesWhenNoDOM = new Set([
-  "ThisType",
-  "Document",
-  "DataTransfer",
-  "StyleMedia",
-  "Element",
-  "DocumentFragment",
-  "HTMLElement",
-  "HTMLAnchorElement",
-  "HTMLAreaElement",
-  "HTMLAudioElement",
-  "HTMLBaseElement",
-  "HTMLBodyElement",
-  "HTMLBRElement",
-  "HTMLButtonElement",
-  "HTMLCanvasElement",
-  "HTMLDataElement",
-  "HTMLDataListElement",
-  "HTMLDetailsElement",
-  "HTMLDialogElement",
-  "HTMLDivElement",
-  "HTMLDListElement",
-  "HTMLEmbedElement",
-  "HTMLFieldSetElement",
-  "HTMLFormElement",
-  "HTMLHeadingElement",
-  "HTMLHeadElement",
-  "HTMLHRElement",
-  "HTMLHtmlElement",
-  "HTMLIFrameElement",
-  "HTMLImageElement",
-  "HTMLInputElement",
-  "HTMLModElement",
-  "HTMLLabelElement",
-  "HTMLLegendElement",
-  "HTMLLIElement",
-  "HTMLLinkElement",
-  "HTMLMapElement",
-  "HTMLMetaElement",
-  "HTMLMeterElement",
-  "HTMLObjectElement",
-  "HTMLOListElement",
-  "HTMLOptGroupElement",
-  "HTMLOptionElement",
-  "HTMLOutputElement",
-  "HTMLParagraphElement",
-  "HTMLParamElement",
-  "HTMLPreElement",
-  "HTMLProgressElement",
-  "HTMLQuoteElement",
-  "HTMLSlotElement",
-  "HTMLScriptElement",
-  "HTMLSelectElement",
-  "HTMLSourceElement",
-  "HTMLSpanElement",
-  "HTMLStyleElement",
-  "HTMLTableElement",
-  "HTMLTableColElement",
-  "HTMLTableDataCellElement",
-  "HTMLTableHeaderCellElement",
-  "HTMLTableRowElement",
-  "HTMLTableSectionElement",
-  "HTMLTemplateElement",
-  "HTMLTextAreaElement",
-  "HTMLTimeElement",
-  "HTMLTitleElement",
-  "HTMLTrackElement",
-  "HTMLUListElement",
-  "HTMLVideoElement",
-  "HTMLWebViewElement",
-  "SVGElement",
-  "SVGSVGElement",
-  "SVGCircleElement",
-  "SVGClipPathElement",
-  "SVGDefsElement",
-  "SVGDescElement",
-  "SVGEllipseElement",
-  "SVGFEBlendElement",
-  "SVGFEColorMatrixElement",
-  "SVGFEComponentTransferElement",
-  "SVGFECompositeElement",
-  "SVGFEConvolveMatrixElement",
-  "SVGFEDiffuseLightingElement",
-  "SVGFEDisplacementMapElement",
-  "SVGFEDistantLightElement",
-  "SVGFEDropShadowElement",
-  "SVGFEFloodElement",
-  "SVGFEFuncAElement",
-  "SVGFEFuncBElement",
-  "SVGFEFuncGElement",
-  "SVGFEFuncRElement",
-  "SVGFEGaussianBlurElement",
-  "SVGFEImageElement",
-  "SVGFEMergeElement",
-  "SVGFEMergeNodeElement",
-  "SVGFEMorphologyElement",
-  "SVGFEOffsetElement",
-  "SVGFEPointLightElement",
-  "SVGFESpecularLightingElement",
-  "SVGFESpotLightElement",
-  "SVGFETileElement",
-  "SVGFETurbulenceElement",
-  "SVGFilterElement",
-  "SVGForeignObjectElement",
-  "SVGGElement",
-  "SVGImageElement",
-  "SVGLineElement",
-  "SVGLinearGradientElement",
-  "SVGMarkerElement",
-  "SVGMaskElement",
-  "SVGMetadataElement",
-  "SVGPathElement",
-  "SVGPatternElement",
-  "SVGPolygonElement",
-  "SVGPolylineElement",
-  "SVGRadialGradientElement",
-  "SVGRectElement",
-  "SVGSetElement",
-  "SVGStopElement",
-  "SVGSwitchElement",
-  "SVGSymbolElement",
-  "SVGTextElement",
-  "SVGTextPathElement",
-  "SVGTSpanElement",
-  "SVGUseElement",
-  "SVGViewElement",
-  "Text",
-  "TouchList",
-  "WebGLRenderingContext",
-  "WebGL2RenderingContext",
-  "TrustedHTML",
-  "MediaStream",
-  "MediaSource",
-]);
+const expectedEmptyInterfacesWhenNoDOM = new Set(["ThisType"]);
 
 function checkForEmptyInterfaces(program: ts.Program) {
   const empties = new Set<string>();
@@ -385,8 +251,6 @@ function checkForEmptyInterfaces(program: ts.Program) {
 
 afterAll(async () => {
   if (TEMP_DIR) {
-    console.log(TEMP_DIR);
-
     if (Bun.env.TYPES_INTEGRATION_TEST_KEEP_TEMP_DIR === "true") {
       console.log(`Keeping temp dir ${TEMP_DIR}/fixture for debugging`);
       await cp(TSCONFIG_SOURCE_PATH, join(TEMP_DIR, "fixture", "tsconfig.json"));
@@ -515,13 +379,13 @@ describe("@types/bun integration test", () => {
 
     expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
     expect(diagnostics).toEqual([
-      // This is expected because we, of course, can't check that our tsx file is passing
-      // when tsx is turned off...
-      {
-        "code": 17004,
-        "line": "[slug].tsx:17:10",
-        "message": "Cannot use JSX unless the '--jsx' flag is provided.",
-      },
+      // // This is expected because we, of course, can't check that our tsx file is passing
+      // // when tsx is turned off...
+      // {
+      //   "code": 17004,
+      //   "line": "[slug].tsx:17:10",
+      //   "message": "Cannot use JSX unless the '--jsx' flag is provided.",
+      // },
     ]);
   });
 
@@ -564,7 +428,6 @@ describe("@types/bun integration test", () => {
         "WebGLUniformLocation",
         "WebGLVertexArrayObject",
         "WebGLVertexArrayObjectOES",
-        "TrustedHTML",
       ]),
     );
     expect(diagnostics).toEqual([

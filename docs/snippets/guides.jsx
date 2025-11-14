@@ -7,6 +7,12 @@ export const GuidesList = () => {
     featured: [
       {
         category: "Ecosystem",
+        title: "Use Tanstack Start with Bun",
+        href: "/guides/ecosystem/tanstack-start",
+        cta: "View guide",
+      },
+      {
+        category: "Ecosystem",
         title: "Build a frontend using Vite and Bun",
         href: "/guides/ecosystem/vite",
         cta: "View guide",
@@ -33,12 +39,6 @@ export const GuidesList = () => {
         category: "WebSocket",
         title: "Build a simple WebSocket server",
         href: "/guides/websocket/simple",
-        cta: "View guide",
-      },
-      {
-        category: "Reading files",
-        title: "Read a file as a string",
-        href: "/guides/read-file/string",
         cta: "View guide",
       },
     ],
@@ -123,7 +123,7 @@ export const GuidesList = () => {
         title: "Ecosystem",
         icon: "puzzle",
         items: [
-          { title: "Use EdgeDB with Bun", href: "/guides/ecosystem/edgedb" },
+          { title: "Use Gel with Bun", href: "/guides/ecosystem/gel" },
           { title: "Use Prisma ORM with Bun", href: "/guides/ecosystem/prisma" },
           { title: "Use Prisma Postgres with Bun", href: "/guides/ecosystem/prisma-postgres" },
           { title: "Create a Discord bot", href: "/guides/ecosystem/discordjs" },
@@ -135,6 +135,7 @@ export const GuidesList = () => {
           { title: "Build an app with Qwik and Bun", href: "/guides/ecosystem/qwik" },
           { title: "Build an app with Astro and Bun", href: "/guides/ecosystem/astro" },
           { title: "Build an app with Remix and Bun", href: "/guides/ecosystem/remix" },
+          { title: "Use TanStack Start with Bun", href: "/guides/ecosystem/tanstack-start" },
           { title: "Run Bun as a daemon with systemd", href: "/guides/ecosystem/systemd" },
           { title: "Build an app with Next.js and Bun", href: "/guides/ecosystem/nextjs" },
           { title: "Build an app with SvelteKit and Bun", href: "/guides/ecosystem/sveltekit" },
@@ -501,34 +502,6 @@ export const GuidesList = () => {
           ))}
         </Columns>
       </div>
-      return (
-      <div id="guides-list">
-        {/* Featured cards */}
-        <div className="mb-12">
-          <h2 className="text-2xl font-bold mb-6">Featured</h2>
-          <Columns cols={3}>
-            {guidesData.featured.map(g => (
-              <Card key={g.href} title={g.title} href={g.href} cta={g.cta} />
-            ))}
-          </Columns>
-        </div>
-
-        {/* All guides organized by category */}
-        <div className="mb-8">
-          <h2 className="text-2xl font-bold mb-6">All Guides</h2>
-          {guidesData.categories.map(category => (
-            <div key={category.key} className="mb-8">
-              <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">{category.title}</h3>
-              <Columns cols={3}>
-                {category.items.map(guide => (
-                  <Card key={guide.href} title={guide.title} description=" " href={guide.href} cta="" />
-                ))}
-              </Columns>
-            </div>
-          ))}
-        </div>
-      </div>
-      );
       {/* All guides organized by category */}
       <div className="mb-8">
         <h2 className="text-2xl font-bold mb-6">All Guides</h2>

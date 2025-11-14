@@ -455,8 +455,8 @@ pub fn BabyList(comptime Type: type) type {
             };
         }
 
-        pub fn toCss(this: *const Self, comptime W: type, dest: *bun.css.Printer(W)) bun.css.PrintErr!void {
-            return bun.css.to_css.fromBabyList(Type, this, W, dest);
+        pub fn toCss(this: *const Self, dest: *bun.css.Printer) bun.css.PrintErr!void {
+            return bun.css.to_css.fromBabyList(Type, this, dest);
         }
 
         pub fn eql(lhs: *const Self, rhs: *const Self) bool {

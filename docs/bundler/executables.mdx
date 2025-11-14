@@ -154,8 +154,8 @@ Using bytecode compilation, `tsc` starts 2x faster:
 Bytecode compilation moves parsing overhead for large input files from runtime to bundle time. Your app starts faster, in exchange for making the `bun build` command a little slower. It doesn't obscure source code.
 
 <Warning>
-  **Experimental:** Bytecode compilation is an experimental feature introduced in Bun v1.1.30. Only `cjs` format is
-  supported (which means no top-level-await). Let us know if you run into any issues!
+  **Experimental:** Bytecode compilation is an experimental feature. Only `cjs` format is supported (which means no
+  top-level-await). Let us know if you run into any issues!
 </Warning>
 
 ### What do these flags do?
@@ -216,7 +216,7 @@ However, with the `BUN_BE_BUN=1` environment variable, it acts just like the `bu
 
 ```bash icon="terminal" terminal
 # With the env var, the executable acts like the `bun` CLI
-bun_BE_BUN=1 ./such-bun install
+BUN_BE_BUN=1 ./such-bun install
 ```
 
 ```txt
@@ -320,7 +320,7 @@ new Worker(new URL("./my-worker.ts", import.meta.url));
 new Worker(new URL("./my-worker.ts", import.meta.url).href);
 ```
 
-As of Bun v1.1.25, when you add multiple entrypoints to a standalone executable, they will be bundled separately into the executable.
+When you add multiple entrypoints to a standalone executable, they will be bundled separately into the executable.
 
 In the future, we may automatically detect usages of statically-known paths in `new Worker(path)` and then bundle those into the executable, but for now, you'll need to add it to the shell command manually like the above example.
 
@@ -395,7 +395,7 @@ This database is read-write, but all changes are lost when the executable exits 
 
 ### Embed N-API Addons
 
-As of Bun v1.0.23, you can embed `.node` files into executables.
+You can embed `.node` files into executables.
 
 ```ts index.ts icon="/icons/typescript.svg"
 const addon = require("./addon.node");

@@ -75,12 +75,12 @@ class WrappedSocket extends Duplex {
   #queue: { value: Buffer | null; cb: () => void }[] = [];
   #ended: boolean = false;
   #res: IncomingMessage;
-  emitClose: () => void;
+  #emitClose: () => void;
   constructor(fetchBody: ReadableStream<Uint8Array> | null, res: IncomingMessage, emitClose: () => void) {
     super();
     this.#fetchBody = fetchBody;
     this.#res = res;
-    this.emitClose = emitClose;
+    this.#emitClose = emitClose;
   }
 
   #write(value, cb) {
@@ -96,6 +96,7 @@ class WrappedSocket extends Duplex {
       this.#queue.push({ value, cb });
     }
   }
+
   setNoDelay() {
     return this;
   }
@@ -113,7 +114,7 @@ class WrappedSocket extends Duplex {
     this.#ended = true;
     this.#res.complete = true;
     this.#res._dump();
-    this.emitClose();
+    this.#emitClose();
   }
 
   async *[kWrappedSocketWritable]() {
@@ -144,6 +145,7 @@ class WrappedSocket extends Duplex {
       }
     }
   }
+
   async #consumeBody() {
     try {
       if (this.#fetchBody) {
@@ -168,11 +170,9 @@ class WrappedSocket extends Duplex {
 
   // Writable side proxies to inner writable
   _write(chunk, enc, cb) {
-    let buffer;
-    if (Buffer.isBuffer(chunk)) {
-      buffer = chunk;
-    } else {
-      buffer = Buffer.from(chunk, enc);
+    let buffer = chunk;
+    if (!Buffer.isBuffer(buffer)) {
+      buffer = Buffer.from(buffer, enc);
     }
     this.#write(buffer, cb);
   }
@@ -441,7 +441,7 @@ function ClientRequest(input, options, cb) {
         keepalive,
       };
       const upgradeHeader = fetchOptions?.headers?.upgrade;
-      const isUpgrade = typeof upgradeHeader === "string" && upgradeHeader != "h2" && upgradeHeader != "h2c";
+      const isUpgrade = typeof upgradeHeader === "string" && upgradeHeader !== "h2" && upgradeHeader !== "h2c";
       let keepOpen = false;
       // no body and not finished
       const isDuplex = isUpgrade || (customBody === undefined && !this.finished);

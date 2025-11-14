@@ -224,11 +224,15 @@ Bun can also execute `"scripts"` from your `package.json`. Add the following scr
   "name": "quickstart",
   "module": "index.ts",
   "type": "module",
-  "scripts": {
-    "start": "bun run index.ts"
-  },
+  "private": true,
+  "scripts": { // [!code ++]
+    "start": "bun run index.ts"  // [!code ++]
+  },  // [!code ++]
   "devDependencies": {
     "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
   }
 }
 ```

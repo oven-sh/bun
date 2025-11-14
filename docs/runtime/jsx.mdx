@@ -70,6 +70,22 @@ The module from which the component factory function (`createElement`, `jsx`, `j
 | `jsonc<br/>{<br/>  "jsx": "react-jsx",<br/>  "jsxImportSource": "preact",<br/>}<br/>`                              | `tsx<br/>import { jsx } from "preact/jsx-runtime";<br/>jsx("Box", { width: 5, children: "Hello" });<br/>`                                                                                                                                       |
 | `jsonc<br/>{<br/>  "jsx": "react-jsxdev",<br/>  "jsxImportSource": "preact",<br/>}<br/>`                           | `tsx<br/>// /jsx-runtime is automatically appended<br/>import { jsxDEV } from "preact/jsx-dev-runtime";<br/>jsxDEV(<br/>  "Box",<br/>  { width: 5, children: "Hello" },<br/>  undefined,<br/>  false,<br/>  undefined,<br/>  this,<br/>);<br/>` |
 
+### [`jsxSideEffects`](https://www.typescriptlang.org/tsconfig#jsxSideEffects)
+
+By default, Bun marks JSX expressions as `/* @__PURE__ */` so they can be removed during bundling if they are unused (known as "dead code elimination" or "tree shaking"). Set `jsxSideEffects` to `true` to prevent this behavior.
+
+| Compiler options                                                                           | Transpiled output                                                                                                   |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `jsonc<br/>{<br/>  "jsx": "react",<br/>  // jsxSideEffects is false by default<br/>}<br/>` | `tsx<br/>// JSX expressions are marked as pure<br/>/* @__PURE__ */ React.createElement("div", null, "Hello");<br/>` |
+| `jsonc<br/>{<br/>  "jsx": "react",<br/>  "jsxSideEffects": true,<br/>}<br/>`               | `tsx<br/>// JSX expressions are not marked as pure<br/>React.createElement("div", null, "Hello");<br/>`             |
+| `jsonc<br/>{<br/>  "jsx": "react-jsx",<br/>  "jsxSideEffects": true,<br/>}<br/>`           | `tsx<br/>// Automatic runtime also respects jsxSideEffects<br/>jsx("div", { children: "Hello" });<br/>`             |
+
+This option is also available as a CLI flag when using `bun build`:
+
+```bash terminal icon="terminal"
+bun build --jsx-side-effects
+```
+
 ### JSX pragma
 
 All of these values can be set on a per-file basis using _pragmas_. A pragma is a special comment that sets a compiler option in a particular file.

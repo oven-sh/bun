@@ -64,7 +64,9 @@ pub const Store = struct {
             dep_id: DependencyID,
             pkg_id: PackageID,
 
-            pub const deinit = {};
+            // no deinit because each field does not need to
+            // be deinitialized
+            pub const deinit = void;
         };
 
         var next_node_stack: bun.collections.ArrayListDefault(NextNode) = .init();

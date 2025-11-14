@@ -155,3 +155,7 @@ describe("retry with inner afterAll", () => {
     expect(log).toEqual(["test-1", "inner afterAll", "test-2", "inner afterAll", "test-3", "inner afterAll"]);
   });
 });
+
+expect(() => {
+  test("can't pass both", () => {}, { retry: 5, repeats: 6 });
+}).toThrow(/Cannot set both retry and repeats/);

@@ -391,6 +391,9 @@ pub fn parseArguments(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame
             if (!repeats.isNumber()) {
                 return globalThis.throwPretty("{f}() expects repeats to be a number", .{signature});
             }
+            if (result.options.retry != 0) {
+                return globalThis.throwPretty("{f}() Cannot set both retry and repeats", .{signature});
+            }
             result.options.repeats = std.math.lossyCast(u32, repeats.asNumber());
         }
     } else if (options.isUndefinedOrNull()) {

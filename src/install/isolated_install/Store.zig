@@ -8,6 +8,21 @@ pub const Store = struct {
     entries: Entry.List = .empty,
     nodes: Node.List = .empty,
 
+    // allocator used for `entries` and `nodes`
+    allocator: std.mem.Allocator,
+
+    pub fn appendNode(this: *Store, node: Node) OOM!Node.Id {
+        const node_id: Node.Id = .from(@intCast(this.nodes.len));
+        try this.nodes.append(this.allocator, node);
+        return node_id;
+    }
+
+    pub fn appendEntry(this: *Store, entry: Entry) OOM!Entry.Id {
+        const entry_id: Entry.Id = .from(@intCast(this.entries.len));
+        try this.entries.append(this.allocator, entry);
+        return entry_id;
+    }
+
     const log = Output.scoped(.Store, .visible);
 
     pub const modules_dir_name = ".bun";
@@ -91,7 +106,7 @@ pub const Store = struct {
         pub fn init(allocator: std.mem.Allocator, lockfile: *const Lockfile) OOM!@This() {
             const pkgs = lockfile.packages.slice();
             var ctx: @This() = .{
-                .store = .{},
+                .store = .{ .allocator = allocator },
                 .allocator = allocator,
                 .string_buf = lockfile.buffers.string_bytes.items,
                 .dependencies = lockfile.buffers.dependencies.items,
@@ -112,8 +127,8 @@ pub const Store = struct {
             };
 
             // Both of these will be similar in size to packages.len. Peer dependencies will make them slightly larger.
-            try ctx.store.nodes.ensureUnusedCapacity(ctx.allocator, ctx.pkg_names.len);
-            try ctx.store.entries.ensureUnusedCapacity(ctx.allocator, ctx.pkg_names.len);
+            try ctx.store.nodes.ensureUnusedCapacity(ctx.store.allocator, ctx.pkg_names.len);
+            try ctx.store.entries.ensureUnusedCapacity(ctx.store.allocator, ctx.pkg_names.len);
 
             return ctx;
         }
@@ -165,8 +180,7 @@ pub const Store = struct {
 
             const pkg_deps = this.pkg_dependency_slices[next_node.pkg_id];
 
-            const node_id: Node.Id = .from(@intCast(this.store.nodes.len));
-            try this.store.nodes.append(this.allocator, .{
+            const node_id = try this.store.appendNode(.{
                 .pkg_id = next_node.pkg_id,
                 .dep_id = next_node.dep_id,
                 .parent_id = next_node.parent_id,
@@ -230,8 +244,7 @@ pub const Store = struct {
         }
 
         pub fn appendEntry(this: *@This(), entry: Entry) OOM!Entry.Id {
-            const entry_id: Entry.Id = .from(@intCast(this.store.entries.len));
-            try this.store.entries.append(this.allocator, entry);
+            const entry_id = try this.store.appendEntry(entry);
 
             // update pointers
             const entries = this.store.entries.slice();
@@ -242,7 +255,7 @@ pub const Store = struct {
         }
     };
 
-    pub fn create(
+    pub fn init(
         manager: *PackageManager,
         install_root_dependencies: bool,
         workspace_filters: []const WorkspaceFilter,
@@ -756,6 +769,13 @@ pub const Store = struct {
         }
 
         return ctx.store;
+    }
+
+    pub fn deinit(this: *const Store) void {
+        var nodes = this.nodes;
+        nodes.deinit(this.allocator);
+        var entries = this.entries;
+        entries.deinit(this.allocator);
     }
 
     /// Called from multiple threads. `parent_dedupe` should not be shared between threads.

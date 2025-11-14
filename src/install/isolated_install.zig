@@ -10,12 +10,13 @@ pub fn installIsolatedPackages(
 ) OOM!PackageInstall.Summary {
     bun.analytics.Features.isolated_bun_install += 1;
 
-    const store: Store = try .create(
+    const store: Store = try .init(
         manager,
         install_root_dependencies,
         workspace_filters,
         packages_to_install,
     );
+    defer store.deinit();
 
     // setup node_modules/.bun
     const is_new_bun_modules = is_new_bun_modules: {

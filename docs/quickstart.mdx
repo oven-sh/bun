@@ -219,14 +219,14 @@ Build a minimal HTTP server with `Bun.serve`, run it locally, then evolve it by 
 
 Bun can also execute `"scripts"` from your `package.json`. Add the following script:
 
+{/* prettier-ignore */}
 ```json package.json icon="file-code"
 {
   "name": "quickstart",
   "module": "index.ts",
   "type": "module",
   "private": true,
-  "scripts": {
-    // [!code ++]
+  "scripts": { // [!code ++]
     "start": "bun run index.ts" // [!code ++]
   }, // [!code ++]
   "devDependencies": {

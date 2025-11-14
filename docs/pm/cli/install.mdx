@@ -134,14 +134,14 @@ For more information on filtering with `bun install`, refer to [Package Manager 
 
 Bun supports npm's `"overrides"` and Yarn's `"resolutions"` in `package.json`. These are mechanisms for specifying a version range for _metadependencies_—the dependencies of your dependencies. Refer to [Package manager > Overrides and resolutions](/pm/overrides) for complete documentation.
 
+{/* prettier-ignore */}
 ```json package.json file="file-json"
 {
   "name": "my-app",
   "dependencies": {
     "foo": "^2.0.0"
   },
-  "overrides": {
-    // [!code ++]
+  "overrides": { // [!code ++]
     "bar": "~4.4.0" // [!code ++]
   } // [!code ++]
 }

@@ -107,13 +107,13 @@ Bun.serve({
 
 Once the upgrade succeeds, Bun will send a `101 Switching Protocols` response per the [spec](https://developer.mozilla.org/en-US/docs/Web/HTTP/Protocol_upgrade_mechanism). Additional `headers` can be attached to this `Response` in the call to `server.upgrade()`.
 
+{/* prettier-ignore */}
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.serve({
   fetch(req, server) {
     const sessionId = await generateSessionId();
     server.upgrade(req, {
-      headers: {
-        // [!code ++]
+      headers: { // [!code ++]
         "Set-Cookie": `SessionId=${sessionId}`, // [!code ++]
       }, // [!code ++]
     });

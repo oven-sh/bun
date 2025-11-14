@@ -780,7 +780,7 @@ pub fn Parser(comptime enc: Encoding) type {
             const mapping_line = self.token.line;
             _ = mapping_line;
 
-            var props: std.array_list.Managed(G.Property) = .init(self.allocator);
+            var props: MappingProps = .init(self.allocator);
 
             {
                 try self.context.set(.flow_in);
@@ -833,39 +833,7 @@ pub fn Parser(comptime enc: Encoding) type {
                         });
                     } else {
                         const value = try self.parseNode(.{});
-
-                        append: {
-                            switch (key.data) {
-                                .e_string => |key_string| {
-                                    if (key_string.eqlComptime("<<")) {
-                                        switch (value.data) {
-                                            .e_object => |value_obj| {
-                                                try props.appendSlice(value_obj.properties.slice());
-                                                break :append;
-                                            },
-                                            .e_array => |value_arr| {
-                                                for (value_arr.slice()) |item| {
-                                                    switch (item.data) {
-                                                        .e_object => |item_obj| {
-                                                            try props.appendSlice(item_obj.properties.slice());
-                                                        },
-                                                        else => {},
-                                                    }
-                                                }
-                                                break :append;
-                                            },
-                                            else => {},
-                                        }
-                                    }
-                                },
-                                else => {},
-                            }
-
-                            try props.append(.{
-                                .key = key,
-                                .value = value,
-                            });
-                        }
+                        try props.appendMaybeMerge(key, value);
                     }
 
                     if (self.token.data == .collect_entry) {
@@ -880,7 +848,7 @@ pub fn Parser(comptime enc: Encoding) type {
 
             try self.scan(.{});
 
-            return .init(E.Object, .{ .properties = .moveFromList(&props) }, mapping_start.loc());
+            return .init(E.Object, .{ .properties = .moveFromList(&props.list) }, mapping_start.loc());
         }
 
         fn parseBlockSequence(self: *@This()) ParseError!Expr {
@@ -994,6 +962,79 @@ pub fn Parser(comptime enc: Encoding) type {
             return .init(E.Array, .{ .items = .moveFromList(&seq) }, sequence_start.loc());
         }
 
+        /// Should only be used with expressions created with the YAML parser. It assumes
+        /// only null, boolean, number, string, array, object are possible. It also only
+        /// does pointer comparison with arrays and objects
+        fn yamlMergeKeyExprEql(l: Expr, r: Expr) bool {
+            if (std.meta.activeTag(l.data) != std.meta.activeTag(r.data)) {
+                return false;
+            }
+
+            return switch (l.data) {
+                .e_null => true,
+                .e_boolean => |l_boolean| l_boolean.value == r.data.e_boolean.value,
+                .e_number => |l_number| l_number.value == r.data.e_number.value,
+                .e_string => |l_string| l_string.eql(E.String, r.data.e_string),
+
+                .e_array => |l_array| l_array == r.data.e_array,
+                .e_object => |l_object| l_object == r.data.e_object,
+
+                else => unreachable,
+            };
+        }
+
+        const MappingProps = struct {
+            list: bun.collections.ArrayList(G.Property),
+
+            pub fn init(allocator: std.mem.Allocator) MappingProps {
+                return .{ .list = .initIn(allocator) };
+            }
+
+            pub fn merge(self: *MappingProps, merge_props: []const G.Property) OOM!void {
+                try self.list.ensureUnusedCapacity(merge_props.len);
+                next_merge_prop: for (merge_props) |merge_prop| {
+                    const merge_key = merge_prop.key.?;
+                    for (self.list.items()) |existing_prop| {
+                        const existing_key = existing_prop.key.?;
+                        if (yamlMergeKeyExprEql(existing_key, merge_key)) {
+                            continue :next_merge_prop;
+                        }
+                    }
+                    self.list.appendAssumeCapacity(merge_prop);
+                }
+            }
+
+            pub fn append(self: *MappingProps, prop: G.Property) OOM!void {
+                try self.list.append(prop);
+            }
+
+            pub fn appendMaybeMerge(self: *MappingProps, key: Expr, value: Expr) OOM!void {
+                if (key.data != .e_string) {
+                    return self.list.append(.{ .key = key, .value = value });
+                }
+
+                const key_string = key.data.e_string;
+                if (!key_string.eqlComptime("<<")) {
+                    return self.list.append(.{ .key = key, .value = value });
+                }
+
+                return switch (value.data) {
+                    .e_object => self.merge(value.data.e_object.properties.slice()),
+                    .e_array => |value_arr| {
+                        for (value_arr.items.slice()) |item| {
+                            if (item.data != .e_object) {
+                                continue;
+                            }
+
+                            try self.merge(item.data.e_object.properties.slice());
+                        }
+                    },
+
+                    else => self.list.append(.{ .key = key, .value = value }),
+                };
+            }
+        };
+
         fn parseBlockMapping(
             self: *@This(),
             first_key: Expr,
@@ -1011,7 +1052,7 @@ pub fn Parser(comptime enc: Encoding) type {
             try self.block_indents.push(mapping_indent);
             defer self.block_indents.pop();
 
-            var props: std.array_list.Managed(G.Property) = .init(self.allocator);
+            var props: MappingProps = .init(self.allocator);
 
             {
                 // try self.context.set(.block_in);
@@ -1056,42 +1097,11 @@ pub fn Parser(comptime enc: Encoding) type {
                     },
                 };
 
-                append: {
-                    switch (first_key.data) {
-                        .e_string => |key_string| {
-                            if (key_string.eqlComptime("<<")) {
-                                switch (value.data) {
-                                    .e_object => |value_obj| {
-                                        try props.appendSlice(value_obj.properties.slice());
-                                        break :append;
-                                    },
-                                    .e_array => |value_arr| {
-                                        for (value_arr.slice()) |item| {
-                                            switch (item.data) {
-                                                .e_object => |item_obj| {
-                                                    try props.appendSlice(item_obj.properties.slice());
-                                                },
-                                                else => {},
-                                            }
-                                        }
-                                        break :append;
-                                    },
-                                    else => {},
-                                }
-                            }
-                        },
-                        else => {},
-                    }
-
-                    try props.append(.{
-                        .key = first_key,
-                        .value = value,
-                    });
-                }
+                try props.appendMaybeMerge(first_key, value);
             }
 
             if (self.context.get() == .flow_in) {
-                return .init(E.Object, .{ .properties = .moveFromList(&props) }, mapping_start.loc());
+                return .init(E.Object, .{ .properties = .moveFromList(&props.list) }, mapping_start.loc());
             }
 
             try self.context.set(.block_in);
@@ -1173,41 +1183,10 @@ pub fn Parser(comptime enc: Encoding) type {
                     },
                 };
 
-                append: {
-                    switch (key.data) {
-                        .e_string => |key_string| {
-                            if (key_string.eqlComptime("<<")) {
-                                switch (value.data) {
-                                    .e_object => |value_obj| {
-                                        try props.appendSlice(value_obj.properties.slice());
-                                        break :append;
-                                    },
-                                    .e_array => |value_arr| {
-                                        for (value_arr.slice()) |item| {
-                                            switch (item.data) {
-                                                .e_object => |item_obj| {
-                                                    try props.appendSlice(item_obj.properties.slice());
-                                                },
-                                                else => {},
-                                            }
-                                        }
-                                        break :append;
-                                    },
-                                    else => {},
-                                }
-                            }
-                        },
-                        else => {},
-                    }
-
-                    try props.append(.{
-                        .key = key,
-                        .value = value,
-                    });
-                }
+                try props.appendMaybeMerge(key, value);
             }
 
-            return .init(E.Object, .{ .properties = .moveFromList(&props) }, mapping_start.loc());
+            return .init(E.Object, .{ .properties = .moveFromList(&props.list) }, mapping_start.loc());
         }
 
         const NodeProperties = struct {

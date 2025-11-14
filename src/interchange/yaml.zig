@@ -964,7 +964,7 @@ pub fn Parser(comptime enc: Encoding) type {
 
         /// Should only be used with expressions created with the YAML parser. It assumes
         /// only null, boolean, number, string, array, object are possible. It also only
-        /// does pointer comparison with arrays and objects
+        /// does pointer comparison with arrays and objects (so exponential merges are avoided)
         fn yamlMergeKeyExprEql(l: Expr, r: Expr) bool {
             if (std.meta.activeTag(l.data) != std.meta.activeTag(r.data)) {
                 return false;

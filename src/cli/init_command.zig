@@ -22,7 +22,7 @@ pub const InitCommand = struct {
             }
         };
 
-        var input: std.ArrayList(u8) = .init(alloc);
+        var input: std.array_list.Managed(u8) = .init(alloc);
         try bun.Output.buffered_stdin.reader().readUntilDelimiterArrayList(&input, '\n', 1024);
 
         if (strings.endsWithChar(input.items, '\r')) {
@@ -117,7 +117,10 @@ pub const InitCommand = struct {
             Output.flush();
 
             // Read a single character
-            const byte = std.io.getStdIn().reader().readByte() catch return selected;
+            var stdin_b: [1]u8 = undefined;
+            var stdin_r = std.fs.File.stdin().readerStreaming(&stdin_b);
+            var stdin_i = &stdin_r.interface;
+            const byte = stdin_i.takeByte() catch return selected;
 
             switch (byte) {
                 '\n', '\r' => {
@@ -146,11 +149,11 @@ pub const InitCommand = struct {
                 },
                 27 => { // ESC sequence
                     // Return immediately on plain ESC
-                    const next = std.io.getStdIn().reader().readByte() catch return error.EndOfStream;
+                    const next = stdin_i.takeByte() catch return error.EndOfStream;
                     if (next != '[') return error.EndOfStream;
 
                     // Read arrow key
-                    const arrow = std.io.getStdIn().reader().readByte() catch return error.EndOfStream;
+                    const arrow = stdin_i.takeByte() catch return error.EndOfStream;
                     switch (arrow) {
                         'A' => { // Up arrow
                             if (@intFromEnum(selected) == 0) {
@@ -262,14 +265,16 @@ pub const InitCommand = struct {
         ) !void {
             var file = try std.fs.cwd().createFile(filename, .{ .truncate = true });
             defer file.close();
+            var file_w = file.writerStreaming(&.{});
+            const file_i = &file_w.interface;
 
             // Write contents of known assets to the new file. Template assets get formatted.
             if (comptime @hasDecl(Assets, asset_name)) {
                 const asset = @field(Assets, asset_name);
                 if (comptime is_template) {
-                    try file.writer().print(asset, args);
+                    try file_i.print(asset, args);
                 } else {
-                    try file.writeAll(asset);
+                    try file_i.writeAll(asset);
                 }
                 Output.prettyln(" + <r><d>{s}{s}<r>", .{ filename, message_suffix });
                 Output.flush();
@@ -291,11 +296,13 @@ pub const InitCommand = struct {
         ) !void {
             var file = try std.fs.cwd().createFile(filename, .{ .truncate = true });
             defer file.close();
+            var file_w = file.writerStreaming(&.{});
+            var file_i = &file_w.interface;
 
             if (comptime is_template) {
-                try file.writer().print(contents, args);
+                try file_i.print(contents, args);
             } else {
-                try file.writeAll(contents);
+                try file_i.writeAll(contents);
             }
 
             Output.prettyln(" + <r><d>{s}{s}<r>", .{ filename, message_suffix });
@@ -830,7 +837,7 @@ pub const InitCommand = struct {
                     Output.pretty("\nTo get started, run:\n\n    ", .{});
 
                     if (strings.containsAny(" \"'", fields.entry_point)) {
-                        Output.pretty("<cyan>bun run {any}<r>\n\n", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
+                        Output.pretty("<cyan>bun run {f}<r>\n\n", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
                     } else {
                         Output.pretty("<cyan>bun run {s}<r>\n\n", .{fields.entry_point});
                     }

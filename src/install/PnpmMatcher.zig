@@ -24,7 +24,7 @@ const FromExprError = OOM || error{
 };
 
 pub fn fromExpr(allocator: std.mem.Allocator, expr: ast.Expr, log: *logger.Log, source: *const logger.Source) FromExprError!PnpmMatcher {
-    var buf: collections.ArrayListDefault(u8) = .init();
+    var buf = std.Io.Writer.Allocating.init(allocator);
     defer buf.deinit();
 
     bun.jsc.initialize(false);
@@ -104,9 +104,9 @@ pub fn fromExpr(allocator: std.mem.Allocator, expr: ast.Expr, log: *logger.Log, 
 
 const CreateMatcherError = OOM || error{InvalidRegExp};
 
-fn createMatcher(raw: []const u8, buf: *collections.ArrayListDefault(u8)) CreateMatcherError!Matcher {
+fn createMatcher(raw: []const u8, buf: *std.Io.Writer.Allocating) CreateMatcherError!Matcher {
     buf.clearRetainingCapacity();
-    var writer = buf.writer();
+    const writer = &buf.writer;
 
     var trimmed = strings.trim(raw, &strings.whitespace_chars);
 
@@ -120,11 +120,17 @@ fn createMatcher(raw: []const u8, buf: *collections.ArrayListDefault(u8)) Create
         return .{ .pattern = .match_all, .is_exclude = is_exclude };
     }
 
-    try writer.writeByte('^');
-    try strings.escapeRegExpForPackageNameMatching(trimmed, writer);
-    try writer.writeByte('$');
+    writer.writeByte('^') catch |e| switch (e) {
+        error.WriteFailed => return error.OutOfMemory, // Writer.Allocating can only fail with OutOfMemory
+    };
+    strings.escapeRegExpForPackageNameMatching(trimmed, writer) catch |e| switch (e) {
+        error.WriteFailed => return error.OutOfMemory, // Writer.Allocating can only fail with OutOfMemory
+    };
+    writer.writeByte('$') catch |e| switch (e) {
+        error.WriteFailed => return error.OutOfMemory, // Writer.Allocating can only fail with OutOfMemory
+    };
 
-    const regex = try jsc.RegularExpression.init(.cloneUTF8(buf.items()), .none);
+    const regex = try jsc.RegularExpression.init(.cloneUTF8(buf.written()), .none);
 
     return .{ .pattern = .{ .regex = regex }, .is_exclude = is_exclude };
 }

@@ -956,7 +956,7 @@ pub fn migrateNPMLockfile(
                                         },
                                     };
                                 };
-                                debug("-> {}", .{res.fmtForDebug(string_buf.bytes.items)});
+                                debug("-> {f}", .{res.fmtForDebug(string_buf.bytes.items)});
 
                                 resolutions[id] = res;
                                 metas[id].origin = switch (res.tag) {

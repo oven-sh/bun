@@ -63,7 +63,7 @@ pub const BorderRadius = struct {
         };
     }
 
-    pub fn toCss(this: *const BorderRadius, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const BorderRadius, dest: *Printer) PrintErr!void {
         const widths = Rect(*const LengthPercentage){
             .top = &this.top_left.a,
             .right = &this.top_right.a,
@@ -78,11 +78,11 @@ pub const BorderRadius = struct {
             .left = &this.bottom_left.b,
         };
 
-        try widths.toCss(W, dest);
+        try widths.toCss(dest);
 
         if (!widths.eql(&heights)) {
             try dest.delim('/', true);
-            try heights.toCss(W, dest);
+            try heights.toCss(dest);
         }
     }
 

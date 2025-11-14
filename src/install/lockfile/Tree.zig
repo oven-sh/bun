@@ -295,19 +295,27 @@ pub fn Builder(comptime method: BuilderMethod) type {
                 total += tree.dependencies.len;
             }
 
-            var dependency_ids = try DependencyIDList.initCapacity(z_allocator, total);
-            var next = PackageIDSlice{};
+            var dep_ids = try DependencyIDList.initCapacity(this.allocator, total);
 
             for (trees, dependencies) |*tree, *child| {
-                if (tree.dependencies.len > 0) {
-                    const len = @as(PackageID, @truncate(child.items.len));
-                    next.off += next.len;
-                    next.len = len;
-                    tree.dependencies = next;
-                    dependency_ids.appendSliceAssumeCapacity(child.items);
-                    child.deinit(this.allocator);
+                defer child.deinit(this.allocator);
+
+                const off: u32 = @intCast(dep_ids.items.len);
+                for (child.items) |dep_id| {
+                    const pkg_id = this.lockfile.buffers.resolutions.items[dep_id];
+                    if (pkg_id == invalid_package_id) {
+                        // optional peers that never resolved
+                        continue;
+                    }
+
+                    dep_ids.appendAssumeCapacity(dep_id);
                 }
+                const len: u32 = @intCast(dep_ids.items.len - off);
+
+                tree.dependencies.off = off;
+                tree.dependencies.len = len;
             }
+
             this.queue.deinit();
             this.sort_buf.deinit(this.allocator);
             this.pending_optional_peers.deinit();
@@ -321,7 +329,7 @@ pub fn Builder(comptime method: BuilderMethod) type {
 
             return .{
                 .trees = std.ArrayListUnmanaged(Tree).fromOwnedSlice(trees),
-                .dep_ids = dependency_ids,
+                .dep_ids = dep_ids,
             };
         }
     };
@@ -722,7 +730,7 @@ fn hoistDependency(
         }
 
         if (as_defined and !dep.behavior.isPeer()) {
-            builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
+            builder.maybeReportError("Package \"{f}@{f}\" has a dependency loop\n  Resolution: \"{f}@{f}\"\n  Dependency: \"{f}@{f}\"", .{
                 builder.packageName(package_id),
                 builder.packageVersion(package_id),
                 builder.packageName(res_id),
@@ -764,7 +772,7 @@ pub const FillItem = struct {
     hoist_root_id: Tree.Id,
 };
 
-pub const TreeFiller = std.fifo.LinearFifo(FillItem, .Dynamic);
+pub const TreeFiller = bun.LinearFifo(FillItem, .Dynamic);
 
 const string = []const u8;
 const stringZ = [:0]const u8;
@@ -779,7 +787,6 @@ const Output = bun.Output;
 const Path = bun.path;
 const assert = bun.assert;
 const logger = bun.logger;
-const z_allocator = bun.z_allocator;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const String = bun.Semver.String;
 
@@ -795,7 +802,6 @@ const invalid_package_id = install.invalid_package_id;
 const Lockfile = install.Lockfile;
 const DependencyIDList = Lockfile.DependencyIDList;
 const ExternalSlice = Lockfile.ExternalSlice;
-const PackageIDSlice = Lockfile.PackageIDSlice;
 
 const PackageManager = bun.install.PackageManager;
 const WorkspaceFilter = install.PackageManager.WorkspaceFilter;

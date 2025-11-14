@@ -272,7 +272,7 @@ pub const Installer = struct {
 
             const dep = this.lockfile.buffers.dependencies.items[dep_id];
 
-            if (dep.behavior.isWorkspace()) {
+            if (dep.behavior.isWorkspace() or dep.version.tag == .workspace) {
                 break :state .{ node_id, .skipped };
             }
 

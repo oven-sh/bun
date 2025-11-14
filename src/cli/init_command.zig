@@ -1222,6 +1222,7 @@ const Template = enum {
             .{ .path = "app/globals.css", .contents = @embedFile("../init/react-nextjs/app/globals.css") },
             .{ .path = "app/stats/page.tsx", .contents = @embedFile("../init/react-nextjs/app/stats/page.tsx") },
             .{ .path = "public/header.webp", .contents = @embedFile("../init/react-nextjs/public/header.webp") },
+            .{ .path = "public/favicon.ico", .contents = @embedFile("../init/react-nextjs/public/favicon.ico") },
         };
     };
 

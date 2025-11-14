@@ -98,6 +98,7 @@ The `cmake` scripts should automatically detect your AWS credentials from the en
     3. Click your name in the top right > Security credentials.
     4. Scroll to "Access keys" and create a new access key.
     5. Run `aws configure` in your terminal and provide the access key ID and secret access key when prompted.
+
 </details>
 
 <details>
@@ -106,6 +107,7 @@ The `cmake` scripts should automatically detect your AWS credentials from the en
     - To confirm that the cache is being used, you can use the `sccache --show-stats` command right after a build. This will expose very useful statistics, including cache hits/misses.
     - If you have multiple AWS profiles configured, ensure that the correct profile is set in the `AWS_PROFILE` environment variable.
     - `sccache` follows a server-client model. If you run into weird issues where `sccache` refuses to use S3, even though you have AWS credentials configured, try killing any running `sccache` servers with `sccache --stop-server` and then re-running the build.
+
 </details>
 
 ## Install LLVM

@@ -51,11 +51,7 @@ In the root `package.json`, the `"workspaces"` key is used to indicate which sub
 {
   "name": "my-project",
   "version": "1.0.0",
-  "workspaces": [
-    "packages/**",
-    "!packages/**/test/**",
-    "!packages/**/template/**"
-  ]
+  "workspaces": ["packages/**", "!packages/**/test/**", "!packages/**/template/**"]
 }
 ```
 

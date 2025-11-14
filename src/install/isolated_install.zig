@@ -233,11 +233,6 @@ pub fn installIsolatedPackages(
             .trusted_dependencies_mutex = .{},
             .trusted_dependencies_from_update_requests = manager.findTrustedDependenciesFromUpdateRequests(),
             .supported_backend = .init(PackageInstall.supported_method),
-            .debug_active_tasks = if (comptime Environment.ci_assert) debug_active_tasks: {
-                const debug_active_tasks = try manager.allocator.alloc(std.atomic.Value(bool), store.entries.len);
-                @memset(debug_active_tasks, .init(false));
-                break :debug_active_tasks debug_active_tasks;
-            },
             .is_new_bun_modules = is_new_bun_modules,
         };
 

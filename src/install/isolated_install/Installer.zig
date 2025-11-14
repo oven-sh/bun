@@ -21,8 +21,6 @@ pub const Installer = struct {
 
     trusted_dependencies_from_update_requests: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void),
 
-    debug_active_tasks: if (Environment.ci_assert) []std.atomic.Value(bool) else void,
-
     pub fn deinit(this: *const Installer) void {
         this.trusted_dependencies_from_update_requests.deinit(this.lockfile.allocator);
     }
@@ -340,6 +338,8 @@ pub const Installer = struct {
         next: ?*Task,
 
         result: Result,
+
+        critical_section: bun.safety.CriticalSection = .{},
 
         const Result = union(enum) {
             none,
@@ -1121,21 +1121,8 @@ pub const Installer = struct {
         pub fn callback(task: *ThreadPool.Task) void {
             const this: *Task = @fieldParentPtr("task", task);
 
-            if (comptime Environment.ci_assert) {
-                // monotonic is okay because only this thread and the main thread (before starting
-                // the task) should set this value.
-                const is_active = this.installer.debug_active_tasks[this.entry_id.get()].swap(true, .monotonic);
-                bun.debugAssert(!is_active);
-            }
-
-            defer {
-                if (comptime Environment.ci_assert) {
-                    // monotonic is okay because only this thread and the main thread (before starting
-                    // the task) should set this value.
-                    const is_active = this.installer.debug_active_tasks[this.entry_id.get()].swap(false, .monotonic);
-                    bun.debugAssert(is_active);
-                }
-            }
+            this.critical_section.begin();
+            defer this.critical_section.end();
 
             const res = this.run() catch |err| switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),

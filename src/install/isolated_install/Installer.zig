@@ -21,7 +21,7 @@ pub const Installer = struct {
 
     trusted_dependencies_from_update_requests: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void),
 
-    active_tasks: if (Environment.ci_assert) []std.atomic.Value(bool) else void,
+    debug_active_tasks: if (Environment.ci_assert) []std.atomic.Value(bool) else void,
 
     pub fn deinit(this: *const Installer) void {
         this.trusted_dependencies_from_update_requests.deinit(this.lockfile.allocator);
@@ -1122,18 +1122,18 @@ pub const Installer = struct {
             const this: *Task = @fieldParentPtr("task", task);
 
             if (comptime Environment.ci_assert) {
-                // acq_rel because this is a read/write and we don't have dependencies on other memory.
-                // we want this assertion to work if multiple threads are running the same task.
-                const is_active = this.installer.active_tasks[this.entry_id.get()].swap(true, .acq_rel);
-                bun.assertWithLocation(!is_active, @src());
+                // monotonic is okay because only this thread and the main thread (before starting
+                // the task) should set this value.
+                const is_active = this.installer.debug_active_tasks[this.entry_id.get()].swap(true, .monotonic);
+                bun.debugAssert(!is_active);
             }
 
             defer {
                 if (comptime Environment.ci_assert) {
-                    // acq_rel because this is a read/write and we don't have dependencies on other memory.
-                    // we want this assertion to work if multiple threads are running the same task.
-                    const is_active = this.installer.active_tasks[this.entry_id.get()].swap(false, .acq_rel);
-                    bun.assertWithLocation(is_active, @src());
+                    // monotonic is okay because only this thread and the main thread (before starting
+                    // the task) should set this value.
+                    const is_active = this.installer.debug_active_tasks[this.entry_id.get()].swap(false, .monotonic);
+                    bun.debugAssert(is_active);
                 }
             }
 

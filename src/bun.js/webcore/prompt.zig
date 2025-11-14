@@ -311,6 +311,8 @@ pub const prompt = struct {
         }
     }
 
+    extern fn Bun__ttySetMode(fd: i32, mode: i32) i32;
+
     /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-prompt
     /// This implementation has two modes:
     /// 1. If stdin is an interactive TTY, it switches the terminal to raw mode to
@@ -384,37 +386,17 @@ pub const prompt = struct {
 
         // 7. Pause while waiting for the user's response.
         if ((comptime !Environment.isWindows) and bun.c.isatty(bun.FD.stdin().native()) == 1) {
-            const c_termios = @cImport({
-                @cInclude("termios.h");
-                @cInclude("unistd.h");
-                @cInclude("signal.h");
-            });
-
-            var original_termios: c_termios.termios = undefined;
-            var pending_sigint: bool = false;
-            if (c_termios.tcgetattr(bun.FD.stdin().native(), &original_termios) != 0) {
-                return .null;
-            }
+            const original_ttymode = Bun__ttySetMode(bun.FD.stdin().native(), 1);
+            var pending_sigint = false;
 
             defer {
-                _ = c_termios.tcsetattr(bun.FD.stdin().native(), c_termios.TCSADRAIN, &original_termios);
+                _ = Bun__ttySetMode(bun.FD.stdin().native(), original_ttymode);
                 // Move cursor to next line after input is done
                 _ = bun.Output.writer().writeAll("\n") catch {};
                 bun.Output.flush();
                 if (pending_sigint) {
-                    _ = c_termios.raise(c_termios.SIGINT);
+                    _ = std.c.kill(std.c.getpid(), std.posix.SIG.INT);
                 }
-            }
-
-            var raw_termios = original_termios;
-            // Unset canonical mode, echo, signal generation, and extended input processing
-            raw_termios.c_lflag &= ~@as(c_termios.tcflag_t, c_termios.ICANON | c_termios.ECHO | c_termios.ISIG | c_termios.IEXTEN);
-            // Set VMIN=1 and VTIME=0 for non-canonical read (read returns after 1 byte)
-            raw_termios.c_cc[c_termios.VMIN] = 1;
-            raw_termios.c_cc[c_termios.VTIME] = 0;
-
-            if (c_termios.tcsetattr(bun.FD.stdin().native(), c_termios.TCSADRAIN, &raw_termios) != 0) {
-                return .null;
             }
 
             var input = std.ArrayList(u8).init(allocator);

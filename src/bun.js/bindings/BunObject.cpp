@@ -753,6 +753,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     indexOfLine                                    BunObject_callback_indexOfLine                                      DontDelete|Function 1
     inflateSync                                    BunObject_callback_inflateSync                                      DontDelete|Function 1
     inspect                                        BunObject_lazyPropCb_wrap_inspect                                   DontDelete|PropertyCallback
+    isBodyStreaming                                BunObject_callback_isBodyStreaming                                  DontDelete|Function 1
     isMainThread                                   constructIsMainThread                                               ReadOnly|DontDelete|PropertyCallback
     jest                                           BunObject_callback_jest                                             DontEnum|DontDelete|Function 1
     listen                                         BunObject_callback_listen                                           DontDelete|Function 1

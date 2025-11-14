@@ -3,11 +3,19 @@ pub const PostinstallOptimizer = enum {
     ignore,
 
     const default_native_binlinks_name_hashes = &[_]PackageNameHash{
-        bun.Semver.String.Builder.stringHash("esbuild"),
+        Semver.String.Builder.stringHash("esbuild"),
     };
 
-    const default_ignore_name_hashes = &[_]PackageNameHash{
-        bun.Semver.String.Builder.stringHash("sharp"),
+    const DefaultIgnore = struct {
+        name_hash: PackageNameHash,
+        minimum_version: Semver.Version,
+    };
+
+    const default_ignore = [1]DefaultIgnore{
+        .{
+            .name_hash = Semver.String.Builder.stringHash("sharp"),
+            .minimum_version = Semver.Version.parseUTF8("0.33.0").version.min(),
+        },
     };
 
     fn fromStringArrayGroup(list: *List, expr: *const ast.Expr, allocator: std.mem.Allocator, value: PostinstallOptimizer) !bool {
@@ -20,7 +28,7 @@ pub const PostinstallOptimizer = enum {
             if (entry.isString()) {
                 const str = entry.asString(allocator) orelse continue;
                 if (str.len == 0) continue;
-                const hash = bun.Semver.String.Builder.stringHash(str);
+                const hash = Semver.String.Builder.stringHash(str);
                 try list.dynamic.put(allocator, hash, value);
             }
         }
@@ -83,9 +91,15 @@ pub const PostinstallOptimizer = enum {
             return true;
         }
 
+        const PkgInfo = struct {
+            name_hash: PackageNameHash,
+            version: ?Semver.Version = null,
+            version_buf: []const u8 = "",
+        };
+
         pub fn shouldIgnoreLifecycleScripts(
             this: *const @This(),
-            name_hash: PackageNameHash,
+            pkg_info: PkgInfo,
             resolutions: []const PackageID,
             metas: []const Meta,
             target_cpu: Npm.Architecture,
@@ -96,7 +110,7 @@ pub const PostinstallOptimizer = enum {
                 return false;
             }
 
-            const mode = this.get(name_hash) orelse return false;
+            const mode = this.get(pkg_info) orelse return false;
 
             return switch (mode) {
                 .native_binlink =>
@@ -115,26 +129,38 @@ pub const PostinstallOptimizer = enum {
             };
         }
 
-        fn fromDefault(name_hash: PackageNameHash) ?PostinstallOptimizer {
+        fn fromDefault(pkg_info: PkgInfo) ?PostinstallOptimizer {
             for (default_native_binlinks_name_hashes) |hash| {
-                if (hash == name_hash) {
+                if (hash == pkg_info.name_hash) {
                     return .native_binlink;
                 }
             }
-            for (default_ignore_name_hashes) |hash| {
-                if (hash == name_hash) {
+            for (default_ignore) |default| {
+                if (default.name_hash == pkg_info.name_hash) {
+                    if (pkg_info.version) |version| {
+                        if (version.order(
+                            default.minimum_version,
+                            pkg_info.version_buf,
+
+                            // minimum version doesn't need a string_buf because
+                            // it doesn't use pre/build tags
+                            "",
+                        ) == .lt) {
+                            return null;
+                        }
+                    }
                     return .ignore;
                 }
             }
             return null;
         }
 
-        pub fn get(this: *const @This(), name_hash: PackageNameHash) ?PostinstallOptimizer {
-            if (this.dynamic.get(name_hash)) |optimize| {
+        pub fn get(this: *const @This(), pkg_info: PkgInfo) ?PostinstallOptimizer {
+            if (this.dynamic.get(pkg_info.name_hash)) |optimize| {
                 return optimize;
             }
 
-            const default = fromDefault(name_hash) orelse {
+            const default = fromDefault(pkg_info) orelse {
                 return null;
             };
 
@@ -168,3 +194,4 @@ const Npm = install.Npm;
 const PackageID = install.PackageID;
 const PackageNameHash = install.PackageNameHash;
 const Meta = Lockfile.Package.Meta;
+const Semver = bun.Semver;

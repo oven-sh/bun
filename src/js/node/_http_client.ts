@@ -195,15 +195,6 @@ class WrappedSocket extends Duplex {
   }
 }
 
-async function* getHTTPSocketBody() {
-  const socket = (await this) as Promise<WrappedSocket | null>;
-  if (socket) {
-    const iter = socket[kWrappedSocketWritable]();
-    for await (const value of iter) {
-      yield value;
-    }
-  }
-}
 function ClientRequest(input, options, cb) {
   if (!(this instanceof ClientRequest)) {
     return new (ClientRequest as any)(input, options, cb);
@@ -465,7 +456,15 @@ function ClientRequest(input, options, cb) {
       if (isUpgrade) {
         const { promise: upgradedPromise, resolve } = Promise.withResolvers<WrappedSocket | null>();
         upgradedResponse = resolve;
-        fetchOptions.body = getHTTPSocketBody.bind(upgradedPromise);
+        fetchOptions.body = async function* () {
+          const socket = await upgradedPromise;
+          if (socket) {
+            const iter = socket[kWrappedSocketWritable]();
+            for await (const value of iter) {
+              yield value;
+            }
+          }
+        };
       } else if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
         const self = this;
         if (customBody !== undefined) {

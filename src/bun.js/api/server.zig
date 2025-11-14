@@ -1647,6 +1647,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                     .bundler_options = bake_options.bundler_options,
                     .vm = global.bunVM(),
                     .broadcast_console_log_from_browser_to_server = config.broadcast_console_log_from_browser_to_server_for_bake,
+                    .client_overlay = config.client_overlay_in_dev_for_bake,
                 })
             else
                 null;

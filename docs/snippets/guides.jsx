@@ -7,6 +7,12 @@ export const GuidesList = () => {
     featured: [
       {
         category: "Ecosystem",
+        title: "Use Tanstack Start with Bun",
+        href: "/guides/ecosystem/tanstack-start",
+        cta: "View guide",
+      },
+      {
+        category: "Ecosystem",
         title: "Build a frontend using Vite and Bun",
         href: "/guides/ecosystem/vite",
         cta: "View guide",
@@ -33,12 +39,6 @@ export const GuidesList = () => {
         category: "WebSocket",
         title: "Build a simple WebSocket server",
         href: "/guides/websocket/simple",
-        cta: "View guide",
-      },
-      {
-        category: "Reading files",
-        title: "Read a file as a string",
-        href: "/guides/read-file/string",
         cta: "View guide",
       },
     ],
@@ -135,6 +135,7 @@ export const GuidesList = () => {
           { title: "Build an app with Qwik and Bun", href: "/guides/ecosystem/qwik" },
           { title: "Build an app with Astro and Bun", href: "/guides/ecosystem/astro" },
           { title: "Build an app with Remix and Bun", href: "/guides/ecosystem/remix" },
+          { title: "Use TanStack Start with Bun", href: "/guides/ecosystem/tanstack-start" },
           { title: "Run Bun as a daemon with systemd", href: "/guides/ecosystem/systemd" },
           { title: "Build an app with Next.js and Bun", href: "/guides/ecosystem/nextjs" },
           { title: "Build an app with SvelteKit and Bun", href: "/guides/ecosystem/sveltekit" },

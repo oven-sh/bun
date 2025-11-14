@@ -1638,7 +1638,7 @@ pub const PackCommand = struct {
                 progress = .{};
                 progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
                 node = progress.start("", pack_queue.count() + bundled_pack_queue.count() + 1);
-                node.unit = " files";
+                node.unit = .files;
             }
             defer if (log_level.showProgress()) node.end();
 

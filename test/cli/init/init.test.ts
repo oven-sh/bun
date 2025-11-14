@@ -320,5 +320,6 @@ import path from "path";
     expect(fs.existsSync(path.join(temp, "src/router.tsx"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/routes"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "vite.config.ts"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "public"))).toBe(true);
   }, 30_000);
 });

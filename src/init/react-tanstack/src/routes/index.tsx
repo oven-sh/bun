@@ -1,6 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
-import headerImage from "../../assets/header.webp";
 
 const getBunInfo = createServerFn({
   method: "GET",
@@ -27,7 +26,7 @@ function Home() {
       <div className="w-full max-w-md">
         <div className="relative bg-card/80 backdrop-blur-xl text-card-foreground rounded-2xl border border-border/50 shadow-2xl overflow-hidden h-[550px] max-h-5/6 grid grid-rows-[auto_1fr_auto]">
           <div className="relative w-full overflow-hidden h-[250px]">
-            <img src={headerImage} alt="TanStack Logo" className="w-full h-full object-cover object-center" />
+            <img src="/header.webp" alt="TanStack Logo" className="w-full h-full object-cover object-center" />
             <div className="absolute top-3 right-3 bg-zinc-800/75 text-white text-xs font-medium px-2.5 py-1.5 rounded-md shadow-2xl backdrop-blur-sm">
               <div className="flex items-center gap-1.5">
                 <div className="w-2 h-2 bg-[#39FF14] rounded-full animate-pulse shadow-[0_0_8px_rgba(74,222,128,0.8)]"></div>

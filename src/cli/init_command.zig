@@ -1220,8 +1220,8 @@ const Template = enum {
             .{ .path = "src/routes/index.tsx", .contents = @embedFile("../init/react-tanstack/src/routes/index.tsx") },
             .{ .path = "src/routes/stats.tsx", .contents = @embedFile("../init/react-tanstack/src/routes/stats.tsx") },
             .{ .path = "src/routeTree.gen.ts", .contents = @embedFile("../init/react-tanstack/src/routeTree.gen.ts") },
-            .{ .path = "assets/header.webp", .contents = @embedFile("../init/react-tanstack/assets/header.webp") },
-            .{ .path = "assets/favicon.ico", .contents = @embedFile("../init/react-tanstack/assets/favicon.ico") },
+            .{ .path = "public/header.webp", .contents = @embedFile("../init/react-tanstack/public/header.webp") },
+            .{ .path = "public/favicon.ico", .contents = @embedFile("../init/react-tanstack/public/favicon.ico") },
         };
     };
 

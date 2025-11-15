@@ -10,6 +10,7 @@ const ReadyState_CLOSED = 3;
 
 const EventEmitter = require("node:events");
 const http = require("node:http");
+const { Duplex } = require("node:stream");
 const onceObject = { once: true };
 const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
@@ -1460,9 +1461,98 @@ class Receiver {
   }
 }
 
-var createWebSocketStream = _ws => {
-  throw new Error("Not supported yet in Bun");
-};
+function createWebSocketStream(ws, options = {}) {
+  const { decodeStrings = true } = options;
+
+  const queue = [];
+  let paused = false;
+  let ended = false;
+
+  const duplex = new Duplex({
+    write(chunk, _encoding, callback) {
+      if (ws.readyState !== ws.OPEN) {
+        callback(new Error("WebSocket is not open"));
+        return;
+      }
+      try {
+        ws.send(chunk);
+        callback();
+      } catch (err) {
+        callback(err);
+      }
+    },
+    final(callback) {
+      try {
+        if (ws.readyState === ws.OPEN) ws.close();
+        callback();
+      } catch (err) {
+        callback(err);
+      }
+    },
+    read() {
+      if (!paused) return;
+      paused = false;
+      while (queue.length && !paused) {
+        const msg = queue.shift();
+        if (!duplex.push(msg)) paused = true;
+      }
+
+      if (!queue.length && ended) duplex.push(null);
+    },
+  });
+
+  function pushData(data) {
+    if (!paused) {
+      const ok = duplex.push(data);
+      if (!ok) paused = true;
+      return;
+    }
+    queue.push(data);
+  }
+
+  function drainQueue() {
+    while (queue.length && !paused) {
+      const data = queue.shift();
+      const ok = duplex.push(data);
+      if (!ok) {
+        paused = true;
+        break;
+      }
+    }
+  }
+
+  duplex.on("drain", () => {
+    paused = false;
+    drainQueue();
+  });
+
+  const onMessage = event => {
+    let data = event.data ?? event;
+    if (decodeStrings && typeof data === "string") data = Buffer.from(data, "utf8");
+    pushData(data);
+  };
+
+  const onClose = () => {
+    ended = true;
+    if (queue.length === 0) duplex.push(null);
+  };
+
+  const onError = err => {
+    duplex.destroy(err?.error || err);
+  };
+
+  if (typeof ws.on === "function") {
+    ws.on("message", onMessage);
+    ws.on("close", onClose);
+    ws.on("error", onError);
+    return duplex;
+  }
+
+  ws.addEventListener("message", onMessage);
+  ws.addEventListener("close", onClose);
+  ws.addEventListener("error", onError);
+  return duplex;
+}
 
 export default Object.assign(BunWebSocket, {
   createWebSocketStream,

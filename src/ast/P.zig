@@ -2034,7 +2034,6 @@ pub fn NewParser_(
                         p.options.jsx.development = dev;
                     }
                 } else {
-                    // make this a warning instead of an error because we don't support "preserve" right now
                     try p.log.addRangeWarningFmt(p.source, runtime.range, p.allocator, "Unsupported JSX runtime: \"{s}\"", .{runtime.text});
                 }
             }

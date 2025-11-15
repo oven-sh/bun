@@ -95,8 +95,15 @@ declare module "bun:test" {
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     function setSystemTime(now?: number | Date): void;
     function setTimeout(milliseconds: number): void;
-    function useFakeTimers(): void;
-    function useRealTimers(): void;
+    function useFakeTimers(options?: { now?: number | Date }): jest;
+    function useRealTimers(): jest;
+    function advanceTimersByTime(milliseconds: number): jest;
+    function advanceTimersToNextTimer(): jest;
+    function runAllTimers(): jest;
+    function runOnlyPendingTimers(): jest;
+    function getTimerCount(): number;
+    function clearAllTimers(): void;
+    function isFakeTimers(): boolean;
     function spyOn<T extends object, K extends keyof T>(
       obj: T,
       methodOrPropertyValue: K,

@@ -571,7 +571,7 @@ pub const ZigString = extern struct {
     pub fn toExternalU16(ptr: [*]const u16, len: usize, global: *JSGlobalObject) JSValue {
         if (len > String.max_length()) {
             bun.default_allocator.free(ptr[0..len]);
-            global.ERR(.STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
+            global.ERR(.STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: properly propagate exception upwards
             return .zero;
         }
         return ZigString__toExternalU16(ptr, len, global);
@@ -722,7 +722,7 @@ pub const ZigString = extern struct {
     }
 
     inline fn assertGlobal(this: *const ZigString) void {
-        if (comptime bun.Environment.allow_assert) {
+        if (comptime bun.Environment.allow_assert and bun.use_mimalloc) {
             bun.assert(this.len == 0 or
                 bun.mimalloc.mi_is_in_heap_region(untagged(this._unsafe_ptr_do_not_use)) or
                 bun.mimalloc.mi_check_owned(untagged(this._unsafe_ptr_do_not_use)));
@@ -733,7 +733,7 @@ pub const ZigString = extern struct {
         this.assertGlobal();
         if (this.len > String.max_length()) {
             bun.default_allocator.free(@constCast(this.byteSlice()));
-            global.ERR(.STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
+            global.ERR(.STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: properly propagate exception upwards
             return .zero;
         }
         return bun.cpp.ZigString__toExternalValue(this, global);
@@ -766,7 +766,7 @@ pub const ZigString = extern struct {
     ) JSValue {
         if (this.len > String.max_length()) {
             callback(ctx, @ptrCast(@constCast(this.byteSlice().ptr)), this.len);
-            global.ERR(.STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: propagate?
+            global.ERR(.STRING_TOO_LONG, "Cannot create a string longer than 2^32-1 characters", .{}).throw() catch {}; // TODO: properly propagate exception upwards
             return .zero;
         }
 
@@ -830,21 +830,20 @@ pub const StringPointer = struct {
 export fn ZigString__free(raw: [*]const u8, len: usize, allocator_: ?*anyopaque) void {
     var allocator: std.mem.Allocator = @as(*std.mem.Allocator, @ptrCast(@alignCast(allocator_ orelse return))).*;
     var ptr = ZigString.init(raw[0..len]).slice().ptr;
-    if (comptime Environment.allow_assert) {
+    if (comptime Environment.allow_assert and bun.use_mimalloc) {
         bun.assert(Mimalloc.mi_is_in_heap_region(ptr));
     }
     const str = ptr[0..len];
-
     allocator.free(str);
 }
 
 export fn ZigString__freeGlobal(ptr: [*]const u8, len: usize) void {
     const untagged = @as(*anyopaque, @ptrFromInt(@intFromPtr(ZigString.init(ptr[0..len]).slice().ptr)));
-    if (comptime Environment.allow_assert) {
+    if (comptime Environment.allow_assert and bun.use_mimalloc) {
         bun.assert(Mimalloc.mi_is_in_heap_region(ptr));
     }
     // we must untag the string pointer
-    Mimalloc.mi_free(untagged);
+    bun.default_free(untagged);
 }
 
 const string = []const u8;

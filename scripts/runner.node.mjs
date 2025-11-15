@@ -1,4 +1,4 @@
-#! /usr/bin/env node
+#!/usr/bin/env node
 
 // This is a script that runs `bun test` to test Bun itself.
 // It is not intended to be used as a test runner for other projects.
@@ -2081,6 +2081,7 @@ function formatTestToMarkdown(result, concise, retries) {
 
     const testTitle = testPath.replace(/\\/g, "/");
     const testUrl = getFileUrl(testPath, errorLine);
+    const stripped = stripAnsi(stdout);
 
     if (concise) {
       markdown += "<li>";
@@ -2105,6 +2106,9 @@ function formatTestToMarkdown(result, concise, retries) {
     if (newFiles.includes(testTitle)) {
       markdown += ` (new)`;
     }
+    if (stripped.length > 1024 * 32) {
+      markdown += ` (truncated)`;
+    }
 
     if (concise) {
       markdown += "</li>\n";
@@ -2114,7 +2118,14 @@ function formatTestToMarkdown(result, concise, retries) {
         const preview = escapeCodeBlock(stdout);
         markdown += `\`\`\`terminal\n${preview}\n\`\`\`\n`;
       } else {
-        const preview = escapeHtml(stripAnsi(stdout));
+        let inner = stripped;
+        // https://buildkite.com/docs/agent/v3/cli-annotate
+        // > The annotation body can be supplied as a command line argument, or by piping content into the command. The maximum size of each annotation body is 1MiB.
+        if (inner.length > 1024 * 32) {
+          inner = inner.slice(inner.length - 1024 * 32); // trim to the last 32kb of the message
+          inner = inner.slice(inner.indexOf("\n")); // don't cutoff in the middle of a line
+        }
+        const preview = escapeHtml(inner);
         markdown += `<pre><code>${preview}</code></pre>\n`;
       }
       markdown += "\n\n</details>\n\n";

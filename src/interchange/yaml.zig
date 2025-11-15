@@ -1009,19 +1009,23 @@ pub fn Parser(comptime enc: Encoding) type {
             }
 
             pub fn appendMaybeMerge(self: *MappingProps, key: Expr, value: Expr) OOM!void {
-                if (key.data != .e_string or !key.data.e_string.eqlComptime("<<")) {
+                if (switch (key.data) {
+                    .e_string => |key_str| !key_str.eqlComptime("<<"),
+                    else => true,
+                }) {
                     return self.list.append(.{ .key = key, .value = value });
                 }
 
                 return switch (value.data) {
-                    .e_object => self.merge(value.data.e_object.properties.slice()),
+                    .e_object => |value_obj| self.merge(value_obj.properties.slice()),
                     .e_array => |value_arr| {
                         for (value_arr.items.slice()) |item| {
-                            if (item.data != .e_object) {
-                                continue;
-                            }
+                            const item_obj = switch (item.data) {
+                                .e_object => |obj| obj,
+                                else => continue,
+                            };
 
-                            try self.merge(item.data.e_object.properties.slice());
+                            try self.merge(item_obj.properties.slice());
                         }
                     },
 

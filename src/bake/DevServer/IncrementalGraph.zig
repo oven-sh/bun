@@ -1688,6 +1688,7 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                 initial_response_entry_point: []const u8 = "",
                 react_refresh_entry_point: []const u8 = "",
                 console_log: bool,
+                overlay: bool,
             },
             .server => struct {
                 kind: ChunkKind,
@@ -1773,6 +1774,12 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                                 w,
                                 .utf8,
                             );
+                        }
+                        // Include overlay preference in the config passed to the HMR runtime
+                        if (options.overlay) {
+                            try w.writeAll(",\n  overlay: true");
+                        } else {
+                            try w.writeAll(",\n  overlay: false");
                         }
                         try w.writeAll("\n})");
                     },

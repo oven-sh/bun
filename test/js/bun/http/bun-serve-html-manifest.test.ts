@@ -8,16 +8,16 @@ describe("Bun.serve HTML manifest", () => {
     const dir = tempDirWithFiles("serve-html", {
       "server.ts": `
         import index from "./index.html";
-        
+
         const server = Bun.serve({
           port: 0,
           routes: {
             "/": index,
           },
         });
-        
+
         console.log("PORT=" + server.port);
-        
+
         // Test the manifest structure
         console.log("Manifest type:", typeof index);
         console.log("Has index:", "index" in index);
@@ -104,18 +104,18 @@ describe("Bun.serve HTML manifest", () => {
           target: "bun",
           outdir: "./dist",
         });
-        
+
         if (!result.success) {
           console.error("Build failed");
           process.exit(1);
         }
-        
+
         console.log("Build complete");
       `,
       "server.ts": `
         import index from "./index.html";
         import about from "./about.html";
-        
+
         const server = Bun.serve({
           port: 0,
           routes: {
@@ -123,7 +123,7 @@ describe("Bun.serve HTML manifest", () => {
             "/about": about,
           },
         });
-        
+
         console.log("PORT=" + server.port);
       `,
       "index.html": `<!DOCTYPE html>
@@ -159,12 +159,13 @@ describe("Bun.serve HTML manifest", () => {
       cmd: [bunExe(), "run", join(dir, "build.ts")],
       cwd: dir,
       env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: "inherit",
+      stderr: "inherit",
       stdin: "ignore",
     });
 
     await buildProc.exited;
+    expect(buildProc.signalCode).toBeNull();
     expect(buildProc.exitCode).toBe(0);
 
     // Run the built server
@@ -276,16 +277,16 @@ describe("Bun.serve HTML manifest", () => {
     const dir = tempDirWithFiles("serve-html-headers", {
       "server.ts": `
         import index from "./index.html";
-        
+
         using server = Bun.serve({
           port: 0,
           routes: {
             "/": index,
           },
         });
-        
+
         console.log("PORT=" + server.port);
-        
+
         // Check manifest structure
         if (index.files) {
           for (const file of index.files) {
@@ -317,12 +318,13 @@ describe("Bun.serve HTML manifest", () => {
       cmd: [bunExe(), "build", join(dir, "server.ts"), "--outdir", join(dir, "dist"), "--target", "bun"],
       cwd: dir,
       env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: "inherit",
+      stderr: "inherit",
       stdin: "ignore",
     });
 
     await buildProc.exited;
+    expect(buildProc.signalCode).toBeNull();
     expect(buildProc.exitCode).toBe(0);
 
     // Run the built server

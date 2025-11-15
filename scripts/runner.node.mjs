@@ -1,4 +1,4 @@
-#! /usr/bin/env node
+#!/usr/bin/env node
 
 // This is a script that runs `bun test` to test Bun itself.
 // It is not intended to be used as a test runner for other projects.
@@ -81,7 +81,7 @@ function getNodeParallelTestTimeout(testPath) {
     return 90_000;
   }
   if (!isCI) return 60_000; // everything slower in debug mode
-  if (options["step"]?.includes("-asan-")) return 60_000;
+  if (isASAN) return 60_000;
   return 20_000;
 }
 
@@ -169,8 +169,13 @@ const { values: options, positionals: filters } = parseArgs({
     },
   },
 });
+startGroup("CLI Options", () => {
+  console.log(options);
+});
 
 const cliOptions = options;
+const isLSAN = options["step"]?.includes("-lsan-");
+const isASAN = options["step"]?.includes("-asan-") || isLSAN;
 
 if (cliOptions.junit) {
   try {
@@ -329,7 +334,7 @@ const skipsForLeaksan = (() => {
  * @returns {boolean}
  */
 const shouldValidateExceptions = test => {
-  return !(skipsForExceptionValidation.includes(test) || skipsForExceptionValidation.includes("test/" + test));
+  return !skipsForExceptionValidation.includes(test);
 };
 
 /**
@@ -338,7 +343,7 @@ const shouldValidateExceptions = test => {
  * @returns {boolean}
  */
 const shouldValidateLeakSan = test => {
-  return !(skipsForLeaksan.includes(test) || skipsForLeaksan.includes("test/" + test));
+  return !skipsForLeaksan.includes(test);
 };
 
 /**
@@ -494,7 +499,7 @@ async function runTests() {
     if (isBuildkite) {
       // Group flaky tests together, regardless of the title
       const context = flaky ? "flaky" : title;
-      const style = flaky || title.startsWith("vendor") ? "warning" : "error";
+      const style = flaky ? "warning" : "error";
       if (!flaky) attempt = 1; // no need to show the retries count on failures, we know it maxed out
 
       if (title.startsWith("vendor")) {
@@ -594,15 +599,14 @@ async function runTests() {
               NO_COLOR: "1",
               BUN_DEBUG_QUIET_LOGS: "1",
             };
-            if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
+            if ((isASAN || !isCI) && shouldValidateExceptions(title)) {
               env.BUN_JSC_validateExceptionChecks = "1";
               env.BUN_JSC_dumpSimulatedThrows = "1";
             }
-            if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
+            if ((isLSAN || !isCI) && shouldValidateLeakSan(title)) {
               env.BUN_DESTRUCT_VM_ON_EXIT = "1";
               env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
-              // prettier-ignore
-              env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+              env.LSAN_OPTIONS = `malloc_context_size=200:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
             }
             return runTest(title, async () => {
               const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -1340,15 +1344,14 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     GITHUB_ACTIONS: "true", // always true so annotations are parsed
     ...opts["env"],
   };
-  if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
+  if ((isASAN || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
     env.BUN_JSC_validateExceptionChecks = "1";
     env.BUN_JSC_dumpSimulatedThrows = "1";
   }
-  if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(relative(cwd, absPath))) {
+  if ((isLSAN || !isCI) && shouldValidateLeakSan(relative(cwd, absPath))) {
     env.BUN_DESTRUCT_VM_ON_EXIT = "1";
     env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
-    // prettier-ignore
-    env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+    env.LSAN_OPTIONS = `malloc_context_size=200:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
   }
 
   const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -1963,8 +1966,9 @@ async function getExecPathFromBuildKite(target, buildId) {
   mkdirSync(releasePath, { recursive: true });
 
   let zipPath;
+  const build_target = target.includes("-lsan-") ? target.replace("-lsan-", "-asan-") : target;
   downloadLoop: for (let i = 0; i < 10; i++) {
-    const args = ["artifact", "download", "**", releasePath, "--step", target];
+    const args = ["artifact", "download", "**", releasePath, "--step", build_target];
     if (buildId) {
       args.push("--build", buildId);
     }
@@ -1985,12 +1989,12 @@ async function getExecPathFromBuildKite(target, buildId) {
       break downloadLoop;
     }
 
-    console.warn(`Waiting for ${target}.zip to be available...`);
-    await new Promise(resolve => setTimeout(resolve, i * 1000));
+    console.warn(`Waiting for ${build_target}.zip to be available...`);
+    await new Promise(resolve => setTimeout(resolve, (i + 1) * 1000));
   }
 
   if (!zipPath) {
-    throw new Error(`Could not find ${target}.zip from Buildkite: ${releasePath}`);
+    throw new Error(`Could not find ${build_target}.zip from Buildkite: ${releasePath}`);
   }
 
   await unzip(zipPath, releasePath);
@@ -2081,6 +2085,7 @@ function formatTestToMarkdown(result, concise, retries) {
 
     const testTitle = testPath.replace(/\\/g, "/");
     const testUrl = getFileUrl(testPath, errorLine);
+    const stripped = stripAnsi(stdout);
 
     if (concise) {
       markdown += "<li>";
@@ -2105,16 +2110,26 @@ function formatTestToMarkdown(result, concise, retries) {
     if (newFiles.includes(testTitle)) {
       markdown += ` (new)`;
     }
+    if (stripped.length > 1024 * 32) {
+      markdown += ` (truncated)`;
+    }
 
     if (concise) {
       markdown += "</li>\n";
     } else {
       markdown += "</summary>\n\n";
+      let inner = stripped;
+      // https://buildkite.com/docs/agent/v3/cli-annotate
+      // > The annotation body can be supplied as a command line argument, or by piping content into the command. The maximum size of each annotation body is 1MiB.
+      if (inner.length > 1024 * 32) {
+        inner = inner.slice(inner.length - 1024 * 32); // trim to the last 32kb of the message
+        inner = inner.slice(inner.indexOf("\n")); // don't cutoff in the middle of a line
+      }
       if (isBuildkite) {
-        const preview = escapeCodeBlock(stdout);
+        const preview = escapeCodeBlock(inner);
         markdown += `\`\`\`terminal\n${preview}\n\`\`\`\n`;
       } else {
-        const preview = escapeHtml(stripAnsi(stdout));
+        const preview = escapeHtml(stripAnsi(inner));
         markdown += `<pre><code>${preview}</code></pre>\n`;
       }
       markdown += "\n\n</details>\n\n";

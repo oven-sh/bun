@@ -11,6 +11,7 @@ describe("bun", () => {
         const { stdout } = spawnSync({
           cmd: [bunExe()],
           env: {
+            ...bunEnv,
             NO_COLOR: value,
           },
         });
@@ -25,8 +26,12 @@ describe("bun", () => {
           cmd: [bunExe()],
           env:
             value === undefined
-              ? {}
+              ? {
+                  ...bunEnv,
+                  NO_COLOR: undefined,
+                }
               : {
+                  ...bunEnv,
                   NO_COLOR: value,
                 },
         });
@@ -76,7 +81,7 @@ describe("bun", () => {
 
       const p = Bun.spawnSync({
         cmd: [bunExe(), "--config=" + path],
-        env: {},
+        env: bunEnv,
         stderr: "inherit",
       });
       try {

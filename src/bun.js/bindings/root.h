@@ -102,4 +102,10 @@
 #define ZIG_EXPORT(...)
 #define ZIG_NONNULL
 
+#if USE(MIMALLOC)
+#define bun_free(ptr) mi_free(ptr)
+#else
+#define bun_free(ptr) free(ptr)
+#endif
+
 #endif

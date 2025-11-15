@@ -249,12 +249,31 @@ pub fn Builder(comptime method: BuilderMethod) type {
         lockfile: *const Lockfile,
         // unresolved optional peers that might resolve later. if they do we will want to assign
         // builder.resolutions[peer.dep_id] to the resolved pkg_id.
-        pending_optional_peers: std.AutoHashMap(PackageNameHash, bun.collections.ArrayListDefault(DependencyID)),
+        pending_optional_peers: std.AutoHashMap(PackageNameHash, ArrayListDefault(DependencyID)),
         manager: if (method == .filter) *const PackageManager else void,
         sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
         workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{},
         install_root_dependencies: if (method == .filter) bool else void,
         packages_to_install: if (method == .filter) ?[]const PackageID else void,
+
+        pub const FillItem = struct {
+            tree_id: Tree.Id,
+            dependency_id: DependencyID,
+
+            /// If valid, dependencies will not hoist
+            /// beyond this tree if they're in a subtree
+            hoist_root_id: Tree.Id,
+
+            /// Relative path of the current tree. Each component is a package
+            /// name or part of the package name (if the name is scoped) leading
+            /// to the tree. Example values:
+            /// ""                                  (the root subpath is empty)
+            /// "react/loose-envify"                (react -> loose-envify)
+            /// "@types/bun/bun-types/@types/node"  (@types/bun -> bun-types -> @types/node)
+            subpath: Subpath(method),
+        };
+
+        pub const TreeFiller = bun.LinearFifo(FillItem, .Dynamic);
 
         pub fn maybeReportError(this: *@This(), comptime fmt: string, args: anytype) void {
             this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
@@ -429,7 +448,7 @@ pub fn isFilteredDependencyOrWorkspace(
             },
         };
 
-        switch (bun.glob.match(pattern, name_or_path)) {
+        switch (glob.match(pattern, name_or_path)) {
             .match, .negate_match => workspace_matched = true,
 
             .negate_no_match => {
@@ -447,11 +466,19 @@ pub fn isFilteredDependencyOrWorkspace(
     return !workspace_matched;
 }
 
+fn Subpath(comptime method: BuilderMethod) type {
+    return switch (method) {
+        .filter => ArrayListDefault(u8),
+        .resolvable => void,
+    };
+}
+
 pub fn processSubtree(
     this: *const Tree,
     dependency_id: DependencyID,
     hoist_root_id: Tree.Id,
     comptime method: BuilderMethod,
+    subpath: Subpath(method),
     builder: *Builder(method),
 ) SubtreeError!void {
     const parent_pkg_id = switch (dependency_id) {
@@ -496,7 +523,10 @@ pub fn processSubtree(
     );
 
     for (builder.sort_buf.items) |dep_id| {
+        const dependency = builder.dependencies[dep_id];
         const pkg_id = builder.resolutions[dep_id];
+
+        var dep_subpath: ArrayListDefault(u8) = .init();
 
         // filter out disabled dependencies
         if (comptime method == .filter) {
@@ -534,9 +564,48 @@ pub fn processSubtree(
             }
         }
 
-        const dependency = builder.dependencies[dep_id];
-
         const hoisted: HoistDependencyResult = hoisted: {
+            if (comptime method == .filter) {
+                // not filtered, but does it match a nohoist pattern?
+                if (!builder.manager.nohoist_patterns.isEmpty()) try_nohoist: {
+                    const string_buf = builder.lockfile.buffers.string_bytes.items;
+
+                    try dep_subpath.ensureTotalCapacity(subpath.items().len + @intFromBool(!subpath.isEmpty()) + dependency.name.len());
+                    dep_subpath.appendSliceAssumeCapacity(subpath.items());
+                    if (!subpath.isEmpty()) {
+                        dep_subpath.appendAssumeCapacity('/');
+                    }
+                    dep_subpath.appendSliceAssumeCapacity(dependency.name.slice(string_buf));
+
+                    if (dependency.version.tag == .workspace) {
+                        break :try_nohoist;
+                    }
+
+                    for (builder.manager.nohoist_patterns.items()) |nohoist_pattern| {
+                        if (glob.match(nohoist_pattern, dep_subpath.items()).matches()) {
+                            // make sure it's not circular
+                            var curr = trees[next.id].parent;
+                            while (curr != invalid_id) {
+                                const curr_dep_id = trees[curr].dependency_id;
+                                const curr_pkg_id = switch (curr_dep_id) {
+                                    root_dep_id => 0,
+                                    else => builder.resolutions[curr_dep_id],
+                                };
+                                var curr_resolutions = builder.resolution_lists[curr_pkg_id];
+                                for (curr_resolutions.begin()..curr_resolutions.end()) |tree_dep_id| {
+                                    const res_id = builder.resolutions[tree_dep_id];
+                                    if (res_id == pkg_id) {
+                                        break :try_nohoist;
+                                    }
+                                }
+
+                                curr = trees[curr].parent;
+                            }
+                            break :hoisted .{ .placement = .{ .id = next.id } };
+                        }
+                    }
+                }
+            }
 
             // don't hoist if it's a folder dependency or a bundled dependency.
             if (dependency.behavior.isBundled()) {
@@ -617,6 +686,7 @@ pub fn processSubtree(
                         .tree_id = replace.id,
                         .dependency_id = dep_id,
                         .hoist_root_id = hoist_root_id,
+                        .subpath = if (comptime method == .filter) dep_subpath else {},
                     });
                 }
             },
@@ -640,6 +710,7 @@ pub fn processSubtree(
 
                         // if it's bundled, start a new hoist root
                         .hoist_root_id = if (dest.bundled) dest.id else hoist_root_id,
+                        .subpath = if (comptime method == .filter) dep_subpath else {},
                     });
                 }
             },
@@ -763,17 +834,6 @@ fn hoistDependency(
     return .{ .placement = .{ .id = this.id } }; // 2
 }
 
-pub const FillItem = struct {
-    tree_id: Tree.Id,
-    dependency_id: DependencyID,
-
-    /// If valid, dependencies will not hoist
-    /// beyond this tree if they're in a subtree
-    hoist_root_id: Tree.Id,
-};
-
-pub const TreeFiller = bun.LinearFifo(FillItem, .Dynamic);
-
 const string = []const u8;
 const stringZ = [:0]const u8;
 
@@ -786,7 +846,9 @@ const OOM = bun.OOM;
 const Output = bun.Output;
 const Path = bun.path;
 const assert = bun.assert;
+const glob = bun.glob;
 const logger = bun.logger;
+const ArrayListDefault = bun.collections.ArrayListDefault;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const String = bun.Semver.String;
 

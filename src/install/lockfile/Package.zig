@@ -1578,6 +1578,28 @@ pub fn Package(comptime SemverIntType: type) type {
 
                 if (json.get("workspaces")) |workspaces_expr| {
                     lockfile.catalogs.parseCount(lockfile, workspaces_expr, &string_builder);
+
+                    if (workspaces_expr.get("nohoist")) |nohoist_expr| {
+                        if (!nohoist_expr.isArray()) {
+                            try log.addError(source, nohoist_expr.loc, "Expected an array of strings");
+                            return error.InvalidPackageJSON;
+                        }
+
+                        const nohoist_arr = nohoist_expr.data.e_array;
+
+                        var nohoist_patterns: bun.collections.ArrayListDefault([]const u8) = try .initCapacity(nohoist_arr.items.len);
+
+                        for (nohoist_arr.items.slice()) |*nohoist_item| {
+                            if (!nohoist_item.isString()) {
+                                try log.addError(source, nohoist_item.loc, "Expected a string pattern");
+                                return error.InvalidPackageJSON;
+                            }
+
+                            nohoist_patterns.appendAssumeCapacity(try nohoist_item.data.e_string.stringCloned(bun.default_allocator));
+                        }
+
+                        pm.nohoist_patterns = nohoist_patterns;
+                    }
                 }
 
                 // Count catalog strings in top-level package.json as well, since parseAppend

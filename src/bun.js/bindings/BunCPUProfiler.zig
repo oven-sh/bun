@@ -78,7 +78,7 @@ fn buildOutputPath(path: *bun.AutoAbsPath, config: CPUProfilerConfig) !void {
 fn generateDefaultFilename(buf: *bun.PathBuffer) ![]const u8 {
     // Generate filename like: CPU.{timestamp}.{pid}.cpuprofile
     // Use microsecond timestamp for uniqueness
-    const timespec = bun.timespec.now();
+    const timespec = bun.timespec.now(.force_real_time);
     const pid = if (bun.Environment.isWindows)
         std.os.windows.GetCurrentProcessId()
     else

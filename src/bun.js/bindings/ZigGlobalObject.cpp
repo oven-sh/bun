@@ -3329,13 +3329,24 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
 
     RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
     ASSERT(result);
+    JSC::JSInternalPromise* promiseToReturn = nullptr;
     if (auto* internalPromise = JSC::jsDynamicCast<JSC::JSInternalPromise*>(result)) {
-        return internalPromise;
+        promiseToReturn = internalPromise;
     } else if (auto* promise = JSC::jsDynamicCast<JSC::JSPromise*>(result)) {
-        return jsCast<JSC::JSInternalPromise*>(promise);
+        promiseToReturn = jsCast<JSC::JSInternalPromise*>(promise);
     } else {
-        return rejectedInternalPromise(globalObject, result);
+        promiseToReturn = rejectedInternalPromise(globalObject, result);
     }
+
+    // If the promise is rejected (e.g. parse error), remove from registry
+    // to allow retry on subsequent imports (issue #23139)
+    if (promiseToReturn && promiseToReturn->status(vm) == JSC::JSPromise::Status::Rejected) {
+        auto* zigGlobalObject = static_cast<Zig::GlobalObject*>(globalObject);
+        auto* map = zigGlobalObject->esmRegistryMap();
+        map->remove(globalObject, key);
+    }
+
+    return promiseToReturn;
 }
 
 JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObject* globalObject,

@@ -31,9 +31,11 @@ describe.skipIf(!isLinux)("running files on a FUSE mount", () => {
         cmd: [bunExe(), join(mountpoint, pathOnMount)],
         cwd: __dirname,
         stdout: "pipe",
+        stderr: "inherit",
         env: bunEnv,
       });
       await Promise.race([bun.exited, Bun.sleep(1000)]);
+      expect(bun.signalCode).toBeNull();
       expect(bun.exitCode).toBe(0);
       expect(await new Response(bun.stdout).text()).toBe("hello world\n");
     } finally {

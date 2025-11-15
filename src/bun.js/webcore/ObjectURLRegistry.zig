@@ -14,7 +14,7 @@ pub const Entry = struct {
     }
 
     pub fn deinit(this: *Entry) void {
-        // bun.default_allocator.free(this.blob.content_type);
+        bun.default_allocator.free(this.blob.content_type);
         this.blob.deinit();
         bun.destroy(this);
     }

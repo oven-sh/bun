@@ -3401,7 +3401,6 @@ pub fn dupeWithContentType(this: *const Blob, include_content_type: bool) Blob {
         duped.content_type_allocated = true;
         duped.content_type_was_set = true;
     }
-    duped.content_type_allocated = false;
     duped.name = duped.name.dupeRef();
     return duped;
 }
@@ -3423,7 +3422,12 @@ pub fn deinit(this: *Blob) void {
     this.detach();
     this.name.deref();
     this.name = .dead;
-    if (this.content_type_allocated) bun.default_allocator.free(this.content_type);
+    if (this.isHeapAllocated() and this.content_type_allocated) {
+        bun.default_allocator.free(this.content_type);
+        this.content_type = "";
+        this.content_type_allocated = false;
+        this.content_type_was_set = false;
+    }
     if (this.store) |store| store.deref();
 
     if (this.isHeapAllocated()) {

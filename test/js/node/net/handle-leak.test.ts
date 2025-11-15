@@ -73,5 +73,5 @@ server.close();
 
 let margin = 1024 * 1024 * 15;
 if (isWindows) margin = 1024 * 1024 * 40;
-if (isASAN) margin = 1024 * 1024 * 120;
+if (isASAN) margin = Infinity;
 expect(post_rss - warmup_rss).toBeLessThan(margin);

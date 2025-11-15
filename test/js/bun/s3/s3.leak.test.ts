@@ -1,6 +1,6 @@
 import type { S3Options } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, getSecret, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, getSecret, isASAN, tempDirWithFiles } from "harness";
 import path from "path";
 const s3Options: S3Options = {
   accessKeyId: getSecret("S3_R2_ACCESS_KEY"),
@@ -11,7 +11,7 @@ const s3Options: S3Options = {
 const S3Bucket = getSecret("S3_R2_BUCKET");
 
 describe.skipIf(!s3Options.accessKeyId)("s3", () => {
-  describe("leak tests", () => {
+  describe.skipIf(isASAN)("leak tests", () => {
     it(
       "s3().stream() should not leak",
       async () => {

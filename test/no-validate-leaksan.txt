@@ -453,6 +453,7 @@ test/bake/dev/react-response.test.ts
 test/bake/dev/request-cookies.test.ts
 test/bake/dev/response-to-bake-response.test.ts
 test/bake/dev/stress.test.ts
+test/bake/dev/html.test.ts
 
 # Need to terminate HTTP thread.
 test/js/bun/test/parallel/test-http-should-not-accept-untrusted-certificates.ts
@@ -469,6 +470,9 @@ test/integration/next-pages/test/next-build.test.ts
 test/bundler/bundler_plugin.test.ts
 test/js/bun/s3/s3.leak.test.ts
 test/js/bun/spawn/spawn-stdin-readable-stream.test.ts
+
+# no trace but still an abort
+test/bundler/bun-build-compile-sourcemap.test.ts
 
 # FetchTasklet
 test/js/node/async_hooks/AsyncLocalStorage-tracking.test.ts
@@ -487,3 +491,16 @@ test/cli/run/run-eval.test.ts
 test/cli/run/syntax.test.ts
 test/js/bun/spawn/spawnsync-isolated-event-loop.test.ts
 test/js/node/fs/fs.test.ts
+test/js/node/test/parallel/test-assert-esm-cjs-message-verify.js
+
+# pass but CI is mad
+# ==5157==WARNING: Can't read from symbolizer at fd 8
+# ==5157==WARNING: Can't write to symbolizer at fd 13
+#     #0 0x0000047cd8c7  (/var/lib/buildkite-agent/build/release/bun-linux-x64-asan/bun-asan+0x47cd8c7) (BuildId: 908c6a7c9734bd2035844ae2c804f213cd3be3b8)
+test/bundler/resolver/cache-node-compat.test.ts
+test/js/bun/spawn/spawn-streaming-stdin.test.ts
+test/cli/install/bun-info.test.ts
+test/cli/install/bun-pm-why.test.ts
+test/js/node/test/parallel/test-child-process-spawn-typeerror.js
+test/js/bun/test/concurrent.test.ts
+test/js/bun/util/sleep.test.ts

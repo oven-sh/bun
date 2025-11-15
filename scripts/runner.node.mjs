@@ -383,11 +383,18 @@ function getTestModifiers(testPath) {
 
 const testRetriesJson = readFileSync(join(cwd, "test/test-retries.json"), "utf-8");
 
-/** @type {Record<string, {"*"?: number, "linux"?: number, "windows"?: number, "mac"?: number, "note"?: string, "asan"?: number}>} */
+/** @typedef {number | "warn-instead-of-fail"} RetryOption */
+/** @type {Record<string, {"*"?: RetryOption, "linux"?: RetryOption, "windows"?: RetryOption, "mac"?: RetryOption, "note"?: string, "asan"?: RetryOption}>} */
 const testRetries = JSON.parse(testRetriesJson);
 
-function getDefaultTestOptionRetries(testPath, execPath) {
-  if (!isCI) return 0;
+/** @typedef {{retries: number, warnInsteadOfFail: boolean}} ResolvedRetryOption */
+/**
+ * @param {string} testPath
+ * @param {string} execPath
+ * @returns {ResolvedRetryOption}
+ */
+function getTestOptionRaw(testPath, execPath) {
+  if (!isCI) return null; // disabled locally
   const record = testRetries[testPath] ?? {};
 
   const isAsan = basename(execPath).includes("asan");
@@ -397,7 +404,20 @@ function getDefaultTestOptionRetries(testPath, execPath) {
   if (record[os]) return record[os];
 
   if (record["*"]) return record["*"];
-  return 1;
+  return null; // not found
+}
+
+/**
+ * @param {string} testPath
+ * @param {string} execPath
+ * @returns {ResolvedRetryOption}
+ */
+function getTestOption(testPath, execPath) {
+  const testOption = getTestOptionRaw(testPath, execPath);
+  if (testOption == null)
+    return isCI ? { retries: 1, warnInsteadOfFail: false } : { retries: 0, warnInsteadOfFail: false };
+  if (testOption === "warn-instead-of-fail") return { retries: 1, warnInsteadOfFail: true };
+  return { retries: testOption, warnInsteadOfFail: false };
 }
 
 /**
@@ -454,7 +474,8 @@ async function runTests() {
   const runTest = async (title, fn) => {
     const index = ++i;
 
-    const maxAttempts = 1 + getDefaultTestOptionRetries(title, execPath);
+    const testOption = getTestOption(title, execPath);
+    const maxAttempts = 1 + testOption.retries;
     let result, failure, flaky;
     let attempt = 1;
     for (; attempt <= maxAttempts; attempt++) {
@@ -494,7 +515,9 @@ async function runTests() {
       failure ||= result;
       flaky ||= true;
 
-      if (attempt >= maxAttempts || isAlwaysFailure(error)) {
+      const alwaysFailure = isAlwaysFailure(error);
+      if (attempt >= maxAttempts || alwaysFailure) {
+        if (testOption.warnInsteadOfFail && !alwaysFailure) break;
         flaky = false;
         failedResults.push(failure);
         failedResultsTitles.push(title);

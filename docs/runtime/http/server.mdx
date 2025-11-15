@@ -415,7 +415,7 @@ import type { Post } from "./types.ts";
 import { Database } from "bun:sqlite";
 
 const db = new Database("posts.db");
-db.exec(`
+db.run(`
   CREATE TABLE IF NOT EXISTS posts (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,

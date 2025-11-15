@@ -1332,6 +1332,8 @@ my_config:
 
         // Zero prefix
         expect(YAML.stringify({ a: "011", b: "110" })).toBe('{a: "011",b: "110"}');
+        expect(YAML.stringify(YAML.parse('"0123"'))).toBe('"0123"');
+        expect(YAML.stringify("0000123")).toBe('"0000123"');
       });
 
       test("quotes strings with colons followed by spaces", () => {

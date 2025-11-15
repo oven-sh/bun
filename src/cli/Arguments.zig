@@ -1228,6 +1228,14 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     entry_points = entry_points[1..];
                 }
             },
+            .StatsCommand => {
+                if (entry_points.len > 0 and strings.eqlComptime(
+                    entry_points[0],
+                    "stats",
+                )) {
+                    entry_points = entry_points[1..];
+                }
+            },
             else => {},
         }
 

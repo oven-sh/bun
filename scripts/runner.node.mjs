@@ -334,7 +334,7 @@ const skipsForLeaksan = (() => {
  * @returns {boolean}
  */
 const shouldValidateExceptions = test => {
-  return !(skipsForExceptionValidation.includes(test) || skipsForExceptionValidation.includes("test/" + test));
+  return !skipsForExceptionValidation.includes(test);
 };
 
 /**
@@ -343,7 +343,7 @@ const shouldValidateExceptions = test => {
  * @returns {boolean}
  */
 const shouldValidateLeakSan = test => {
-  return !(skipsForLeaksan.includes(test) || skipsForLeaksan.includes("test/" + test));
+  return !skipsForLeaksan.includes(test);
 };
 
 /**
@@ -599,11 +599,11 @@ async function runTests() {
               NO_COLOR: "1",
               BUN_DEBUG_QUIET_LOGS: "1",
             };
-            if ((isASAN || !isCI) && shouldValidateExceptions(testPath)) {
+            if ((isASAN || !isCI) && shouldValidateExceptions(title)) {
               env.BUN_JSC_validateExceptionChecks = "1";
               env.BUN_JSC_dumpSimulatedThrows = "1";
             }
-            if ((isLSAN || !isCI) && shouldValidateLeakSan(testPath)) {
+            if ((isLSAN || !isCI) && shouldValidateLeakSan(title)) {
               env.BUN_DESTRUCT_VM_ON_EXIT = "1";
               env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
               env.LSAN_OPTIONS = `malloc_context_size=200:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
@@ -2085,6 +2085,7 @@ function formatTestToMarkdown(result, concise, retries) {
 
     const testTitle = testPath.replace(/\\/g, "/");
     const testUrl = getFileUrl(testPath, errorLine);
+    const stripped = stripAnsi(stdout);
 
     if (concise) {
       markdown += "<li>";

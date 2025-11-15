@@ -91,6 +91,7 @@ pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
 pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
+pub const FuzzilliCommand = @import("./cli/fuzzilli_command.zig").FuzzilliCommand;
 
 pub const Arguments = @import("./cli/Arguments.zig");
 
@@ -624,6 +625,7 @@ pub const Command = struct {
             RootCommandMatcher.case("prune") => .ReservedCommand,
             RootCommandMatcher.case("list") => .PackageManagerCommand,
             RootCommandMatcher.case("why") => .WhyCommand,
+            RootCommandMatcher.case("fuzzilli") => .FuzzilliCommand,
 
             RootCommandMatcher.case("-e") => .AutoCommand,
 
@@ -933,6 +935,11 @@ pub const Command = struct {
                     try ExecCommand.exec(ctx);
                 } else Tag.printHelp(.ExecCommand, true);
             },
+            .FuzzilliCommand => {
+                const ctx = try Command.init(allocator, log, .FuzzilliCommand);
+                try FuzzilliCommand.exec(ctx);
+                return;
+            },
         }
     }
 
@@ -968,6 +975,7 @@ pub const Command = struct {
         PublishCommand,
         AuditCommand,
         WhyCommand,
+        FuzzilliCommand,
 
         /// Used by crash reports.
         ///
@@ -1005,6 +1013,7 @@ pub const Command = struct {
                 .PublishCommand => 'k',
                 .AuditCommand => 'A',
                 .WhyCommand => 'W',
+                .FuzzilliCommand => 'F',
             };
         }
 
@@ -1318,7 +1327,7 @@ pub const Command = struct {
                     Output.flush();
                 },
                 else => {
-                    HelpCommand.printWithReason(.explicit);
+                    HelpCommand.printWithReason(.explicit, false);
                 },
             }
         }

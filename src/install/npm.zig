@@ -1471,12 +1471,73 @@ pub const PackageManifest = struct {
         if (exclusions) |excl| {
             const pkg_name = this.name();
             for (excl) |excluded| {
-                if (strings.eql(pkg_name, excluded)) {
+                if (matchesPackagePattern(pkg_name, excluded)) {
                     return true;
                 }
             }
         }
         return false;
+    }
+
+    /// Matches a package name against a pattern with wildcard support.
+    ///
+    /// Treats '*' as a wildcard matching any substring. The implementation splits
+    /// the pattern on '*' and searches for each literal segment in order within
+    /// the package name, advancing the search index greedily after each match.
+    ///
+    /// Parameters:
+    ///   - package_name: The package name to match (e.g., "@scope/my-package")
+    ///   - pattern: The pattern to match against (e.g., "@scope/*", "*-package", "@*/*")
+    ///
+    /// Returns true if the pattern matches the package name, false otherwise.
+    ///
+    /// Note: The greedy matching behavior means patterns like "a*a" won't match "aaa"
+    /// as some might expect (it finds the first 'a', then looks for another 'a' after it).
+    /// This is intentional to keep the implementation simple and suitable for package names.
+    fn matchesPackagePattern(package_name: []const u8, pattern: []const u8) bool {
+        // Handle exact match (no wildcard)
+        if (strings.indexOfChar(pattern, '*') == null) {
+            return strings.eql(package_name, pattern);
+        }
+
+        // Simple wildcard matching: split pattern on '*' and check parts match in order
+        var pattern_idx: usize = 0;
+        var name_idx: usize = 0;
+
+        while (pattern_idx < pattern.len) {
+            if (pattern[pattern_idx] == '*') {
+                pattern_idx += 1;
+
+                // If '*' is at end of pattern, match anything remaining
+                if (pattern_idx >= pattern.len) {
+                    return true;
+                }
+
+                // Find next literal part after '*'
+                const next_part_start = pattern_idx;
+                while (pattern_idx < pattern.len and pattern[pattern_idx] != '*') {
+                    pattern_idx += 1;
+                }
+                const next_part = pattern[next_part_start..pattern_idx];
+
+                // Find this part in the remaining package name
+                if (strings.indexOf(package_name[name_idx..], next_part)) |found_idx| {
+                    name_idx += found_idx + next_part.len;
+                } else {
+                    return false;
+                }
+            } else {
+                // Match literal character
+                if (name_idx >= package_name.len or package_name[name_idx] != pattern[pattern_idx]) {
+                    return false;
+                }
+                pattern_idx += 1;
+                name_idx += 1;
+            }
+        }
+
+        // Pattern consumed - check if we matched entire package name
+        return name_idx == package_name.len;
     }
 
     pub inline fn isPackageVersionTooRecent(

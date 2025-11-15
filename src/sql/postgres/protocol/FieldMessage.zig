@@ -28,9 +28,7 @@ pub const FieldMessage = union(FieldType) {
 
     pub fn deinit(this: *FieldMessage) void {
         switch (this.*) {
-            inline else => |*message| {
-                message.deref();
-            },
+            inline else => |*message| message.deref(),
         }
     }
 

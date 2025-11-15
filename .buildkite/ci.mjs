@@ -1217,7 +1217,14 @@ async function main() {
     } catch (e) {
       console.error(e);
     }
-    if (allFiles.every(filename => filename.startsWith("docs/"))) {
+    if (
+      allFiles.every(filename => {
+        if (filename.startsWith("docs/")) return true;
+        if (filename.endsWith(".md")) return true;
+        if (filename.endsWith(".mdx")) return true;
+        return false;
+      })
+    ) {
       console.log(`- PR is only docs, skipping tests!`);
       return;
     }

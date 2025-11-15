@@ -375,6 +375,9 @@ pub fn httpProxy(this: *PackageManager, url: URL) ?URL {
 }
 
 pub fn tlsRejectUnauthorized(this: *PackageManager) bool {
+    if (this.options.insecure) {
+        return false;
+    }
     return this.env.getTLSRejectUnauthorized();
 }
 
@@ -917,26 +920,33 @@ pub fn init(
     );
 
     var ca: []stringZ = &.{};
-    if (manager.options.ca.len > 0) {
-        ca = try manager.allocator.alloc(stringZ, manager.options.ca.len);
-        for (ca, manager.options.ca) |*z, s| {
-            z.* = try manager.allocator.dupeZ(u8, s);
-        }
-    }
-
     var abs_ca_file_name: stringZ = &.{};
-    if (manager.options.ca_file_name.len > 0) {
-        // resolve with original cwd
-        if (std.fs.path.isAbsolute(manager.options.ca_file_name)) {
-            abs_ca_file_name = try manager.allocator.dupeZ(u8, manager.options.ca_file_name);
-        } else {
-            var path_buf: bun.PathBuffer = undefined;
-            abs_ca_file_name = try manager.allocator.dupeZ(u8, bun.path.joinAbsStringBuf(
-                original_cwd_clone,
-                &path_buf,
-                &.{manager.options.ca_file_name},
-                .auto,
-            ));
+    
+    // Skip CA file loading if insecure mode is enabled (via --insecure flag or bunfig)
+    if (manager.options.insecure) {
+        Output.warn("Insecure mode enabled (--insecure or bunfig): TLS/SSL certificate verification is disabled. This is dangerous and should only be used for debugging.", .{});
+        Output.flush();
+    } else {
+        if (manager.options.ca.len > 0) {
+            ca = try manager.allocator.alloc(stringZ, manager.options.ca.len);
+            for (ca, manager.options.ca) |*z, s| {
+                z.* = try manager.allocator.dupeZ(u8, s);
+            }
+        }
+
+        if (manager.options.ca_file_name.len > 0) {
+            // resolve with original cwd
+            if (std.fs.path.isAbsolute(manager.options.ca_file_name)) {
+                abs_ca_file_name = try manager.allocator.dupeZ(u8, manager.options.ca_file_name);
+            } else {
+                var path_buf: bun.PathBuffer = undefined;
+                abs_ca_file_name = try manager.allocator.dupeZ(u8, bun.path.joinAbsStringBuf(
+                    original_cwd_clone,
+                    &path_buf,
+                    &.{manager.options.ca_file_name},
+                    .auto,
+                ));
+            }
         }
     }
 
@@ -956,6 +966,7 @@ pub fn init(
     HTTP.HTTPThread.init(&.{
         .ca = ca,
         .abs_ca_file_name = abs_ca_file_name,
+        .insecure = manager.options.insecure,
         .onInitError = &httpThreadOnInitError,
     });
 

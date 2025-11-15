@@ -92,26 +92,6 @@ register_command(
   ALWAYS_RUN
 )
 
-if(GIT_CHANGED_SOURCES)
-  set(PRETTIER_CHANGED_SOURCES)
-  foreach(source ${PRETTIER_SOURCES})
-    list(FIND GIT_CHANGED_SOURCES ${source} index)
-    if(NOT ${index} EQUAL -1)
-      list(APPEND PRETTIER_CHANGED_SOURCES ${source})
-    endif()
-  endforeach()
-endif()
-
-if(PRETTIER_CHANGED_SOURCES)
-  set(PRETTIER_DIFF_COMMAND ${PRETTIER_COMMAND}
-    --write
-    --plugin=prettier-plugin-organize-imports
-    ${PRETTIER_CHANGED_SOURCES}
-  )
-else()
-  set(PRETTIER_DIFF_COMMAND ${CMAKE_COMMAND} -E echo "No changed files for prettier")
-endif()
-
 register_command(
   TARGET
     prettier-diff

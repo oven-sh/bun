@@ -6,31 +6,28 @@
 timers: TimerHeap = .{ .context = {} },
 
 pub var current_time: struct {
-    const Offset = packed struct(u128) {
-        sec: i64,
-        nsec: i64,
-        const none = Offset{ .sec = std.math.minInt(i64), .nsec = std.math.minInt(i64) };
-        fn fromTimespec(timespec: *const bun.timespec) Offset {
-            return Offset{ .sec = timespec.sec, .nsec = timespec.nsec };
-        }
-        fn toTimespec(this: Offset) bun.timespec {
-            return bun.timespec{ .sec = this.sec, .nsec = this.nsec };
-        }
-    };
+    const min_timespec = bun.timespec{ .sec = std.math.minInt(i64), .nsec = std.math.minInt(i64) };
     /// starts at 0. offset in milliseconds.
-    #offset: std.atomic.Value(Offset) = .init(Offset.none),
+    offset_raw: bun.timespec = min_timespec,
+    offset_lock: std.Thread.RwLock = .{},
     date_now_offset: f64 = 0,
     pub fn getTimespecNow(this: *@This()) ?bun.timespec {
-        const value = this.#offset.load(.seq_cst);
-        if (value == Offset.none) return null;
-        return value.toTimespec();
+        this.offset_lock.lockShared();
+        defer this.offset_lock.unlockShared();
+        const value = this.offset_raw;
+        if (value.eql(&min_timespec)) return null;
+        return value;
     }
     pub fn set(this: *@This(), globalObject: *jsc.JSGlobalObject, v: struct {
         offset: *const bun.timespec,
         js: ?f64 = null,
     }) void {
         const vm = globalObject.bunVM();
-        this.#offset.store(.fromTimespec(v.offset), .seq_cst);
+        {
+            this.offset_lock.lock();
+            defer this.offset_lock.unlock();
+            this.offset_raw = v.offset.*;
+        }
         const timespec_ms: f64 = @floatFromInt(v.offset.ms());
         if (v.js) |js| {
             this.date_now_offset = @floor(js) - timespec_ms;
@@ -41,7 +38,11 @@ pub var current_time: struct {
     }
     pub fn clear(this: *@This(), globalObject: *jsc.JSGlobalObject) void {
         const vm = globalObject.bunVM();
-        this.#offset.store(.none, .seq_cst);
+        {
+            this.offset_lock.lock();
+            defer this.offset_lock.unlock();
+            this.offset_raw = min_timespec;
+        }
         bun.cpp.JSMock__setOverridenDateNow(globalObject, -1);
         vm.overridden_performance_now = null;
     }

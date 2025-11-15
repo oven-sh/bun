@@ -1270,6 +1270,7 @@ pub const JSBundler = struct {
             jsc.markBinding(@src());
             const tracer = bun.perf.trace("JSBundler.matchOnResolve");
             defer tracer.end();
+            debug("JSBundler.matchOnResolve(0x{x}, {s}, {s})", .{ @intFromPtr(this), namespace, path });
             const namespace_string = if (strings.eqlComptime(namespace, "file"))
                 bun.String.empty
             else

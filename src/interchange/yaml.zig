@@ -979,7 +979,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 .e_array => |l_array| l_array == r.data.e_array,
                 .e_object => |l_object| l_object == r.data.e_object,
 
-                else => unreachable,
+                else => false,
             };
         }
 

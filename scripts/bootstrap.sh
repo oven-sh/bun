@@ -450,8 +450,9 @@ check_package_manager() {
 		package_manager update
 		;;
 	pkg)
-		mkdir -p /usr/local/etc/pkg/repos
-		echo 'FreeBSD: { url: "pkg+http://pkg.FreeBSD.org/${ABI}/quarterly" }' > /usr/local/etc/pkg/repos/FreeBSD.conf
+		# may need to switch betwen 'latest' and 'quarterly' depending on which repo www/chromium is in. check https://www.freshports.org/www/chromium/.
+		# mkdir -p /usr/local/etc/pkg/repos
+		# echo 'FreeBSD: { url: "pkg+http://pkg.FreeBSD.org/${ABI}/quarterly" }' > /usr/local/etc/pkg/repos/FreeBSD.conf
 		export ASSUME_ALWAYS_YES=yes
 		package_manager update -f
 		;;

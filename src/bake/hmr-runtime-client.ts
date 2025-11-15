@@ -24,6 +24,8 @@ import {
 } from "./hmr-module";
 import { td } from "./shared";
 
+window.originalConsole.log("%%initializing hmr runtime client%%");
+
 const consoleErrorWithoutInspector = console.error;
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
@@ -66,6 +68,7 @@ async function performRouteReload() {
 // A previous version of this runtime used `eval`, but browser support around
 // mapping stack traces of eval'd frames is poor (the case the error overlay).
 const scriptTags = new Map<string, [script: HTMLScriptElement, size: number]>();
+window.originalConsole.log("%% assigning hmr symbol");
 globalThis[Symbol.for("bun:hmr")] = (modules: any, id: string) => {
   const entry = scriptTags.get(id);
   if (!entry) throw new Error("Unknown HMR script: " + id);

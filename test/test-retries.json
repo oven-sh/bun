@@ -3,6 +3,10 @@
     "*": "warn-instead-of-fail",
     "note": "flaky since <1.2.14. possibly a real bug. Sometimes Symbol.for('bun:hmr') is not set on the window object, and sometimes there is a js assertion failure."
   },
+  "test/js/bun/ffi/cc.test.ts": {
+    "darwin": "warn-instead-of-fail",
+    "note": "flaky since new mac ci runners"
+  },
   "test/cli/install/bun-install.test.ts": {
     "*": 8,
     "note": ""

@@ -27,9 +27,9 @@ if (process.env.NODE_ENV === "production") {
 
 Before the code reaches the JavaScript engine, Bun replaces `process.env.NODE_ENV` with `"production"`.
 
+{/* prettier-ignore */}
 ```ts
-if ("production" === "production") {
-  // [!code ++]
+if ("production" === "production") { // [!code ++]
   console.log("Production mode");
 } else {
   console.log("Development mode");
@@ -42,9 +42,9 @@ It doesn't stop there. Bun's optimizing transpiler is smart enough to do some ba
 
 Since `"production" === "production"` is always `true`, Bun replaces the entire expression with the `true` value.
 
+{/* prettier-ignore */}
 ```ts
-if (true) {
-  // [!code ++]
+if (true) { // [!code ++]
   console.log("Production mode");
 } else {
   console.log("Development mode");

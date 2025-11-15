@@ -46,29 +46,22 @@ console.log(result);
 
 This replaces all images with a thumbnail of Rick Astley and wraps each `<img>` in a link, producing a diff like this:
 
+{/* prettier-ignore */}
 ```html
 <html>
   <body>
-    <img src="/cat.jpg" /> // [!code --] <img src="dog.png" /> // [!code --]
-    <img src="https://example.com/bird.webp" /> // [!code --]
-    <a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" target="_blank">
-      // [!code ++]
-      <img src="https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg" alt="Definitely not a rickroll" />
-      // [!code ++]
-    </a>
-    // [!code ++]
-    <a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" target="_blank">
-      // [!code ++]
-      <img src="https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg" alt="Definitely not a rickroll" />
-      // [!code ++]
-    </a>
-    // [!code ++]
-    <a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" target="_blank">
-      // [!code ++]
-      <img src="https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg" alt="Definitely not a rickroll" />
-      // [!code ++]
-    </a>
-    // [!code ++]
+    <img src="/cat.jpg" /> <!-- [!code --] -->
+    <img src="dog.png" /> <!-- [!code --] -->
+    <img src="https://example.com/bird.webp" /> <!-- [!code --] -->
+    <a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" target="_blank"> <!-- [!code ++] -->
+      <img src="https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg" alt="Definitely not a rickroll" /> <!-- [!code ++] -->
+    </a> <!-- [!code ++] -->
+    <a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" target="_blank"> <!-- [!code ++] -->
+      <img src="https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg" alt="Definitely not a rickroll" /> <!-- [!code ++] -->
+    </a> <!-- [!code ++] -->
+    <a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" target="_blank"> <!-- [!code ++] -->
+      <img src="https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg" alt="Definitely not a rickroll" /> <!-- [!code ++] -->
+    </a> <!-- [!code ++] -->
   </body>
 </html>
 ```

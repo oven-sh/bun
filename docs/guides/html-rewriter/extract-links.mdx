@@ -37,6 +37,7 @@ await extractLinks("https://bun.com");
 
 When scraping websites, you often want to convert relative URLs (like `/docs`) to absolute URLs. Here's how to handle URL resolution:
 
+{/* prettier-ignore */}
 ```ts extract-links.ts icon="/icons/typescript.svg"
 async function extractLinksFromURL(url: string) {
   const response = await fetch(url);
@@ -47,13 +48,11 @@ async function extractLinksFromURL(url: string) {
       const href = el.getAttribute("href");
       if (href) {
         // Convert relative URLs to absolute // [!code ++]
-        try {
-          // [!code ++]
+        try { // [!code ++]
           const absoluteURL = new URL(href, url).href; // [!code ++]
-          links.add(absoluteURL); // [!code ++]
-        } catch {
-          // [!code ++]
-          links.add(href);
+          links.add(absoluteURL);
+        } catch { // [!code ++]
+          links.add(href); // [!code ++]
         } // [!code ++]
       }
     },

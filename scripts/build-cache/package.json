@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.928.0",
+    "@aws-sdk/property-provider": "^3.374.0"
+  }
+}

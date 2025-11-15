@@ -68,7 +68,7 @@ pub fn watchPath(this: *INotifyWatcher, pathname: [:0]const u8) bun.sys.Maybe(Ev
     defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
     const watch_file_mask = IN.EXCL_UNLINK | IN.MOVE_SELF | IN.DELETE_SELF | IN.MOVED_TO | IN.MODIFY;
     const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_file_mask);
-    log("inotify_add_watch({}) = {}", .{ this.fd, rc });
+    log("inotify_add_watch({f}) = {}", .{ this.fd, rc });
     return bun.sys.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
         .{ .result = rc };
 }
@@ -79,7 +79,7 @@ pub fn watchDir(this: *INotifyWatcher, pathname: [:0]const u8) bun.sys.Maybe(Eve
     defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
     const watch_dir_mask = IN.EXCL_UNLINK | IN.DELETE | IN.DELETE_SELF | IN.CREATE | IN.MOVE_SELF | IN.ONLYDIR | IN.MOVED_TO;
     const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_dir_mask);
-    log("inotify_add_watch({}) = {}", .{ this.fd, rc });
+    log("inotify_add_watch({f}) = {}", .{ this.fd, rc });
     return bun.sys.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
         .{ .result = rc };
 }
@@ -98,8 +98,8 @@ pub fn init(this: *INotifyWatcher, _: []const u8) !void {
 
     // TODO: convert to bun.sys.Error
     this.fd = .fromNative(try std.posix.inotify_init1(IN.CLOEXEC));
-    this.eventlist_bytes = &(try bun.default_allocator.alignedAlloc(EventListBytes, @alignOf(Event), 1))[0];
-    log("{} init", .{this.fd});
+    this.eventlist_bytes = &(try bun.default_allocator.alignedAlloc(EventListBytes, .of(Event), 1))[0];
+    log("{f} init", .{this.fd});
 }
 
 pub fn read(this: *INotifyWatcher) bun.sys.Maybe([]const *align(1) Event) {
@@ -130,7 +130,7 @@ pub fn read(this: *INotifyWatcher) bun.sys.Maybe([]const *align(1) Event) {
         switch (errno) {
             .SUCCESS => {
                 var read_eventlist_bytes = this.eventlist_bytes[0..@intCast(rc)];
-                log("{} read {} bytes", .{ this.fd, read_eventlist_bytes.len });
+                log("{f} read {} bytes", .{ this.fd, read_eventlist_bytes.len });
                 if (read_eventlist_bytes.len == 0) return .{ .result = &.{} };
 
                 // IN_MODIFY is very noisy
@@ -170,7 +170,7 @@ pub fn read(this: *INotifyWatcher) bun.sys.Maybe([]const *align(1) Event) {
             .AGAIN, .INTR => continue :outer,
             .INVAL => {
                 if (Environment.isDebug) {
-                    bun.Output.err("EINVAL", "inotify read({}, {d})", .{ this.fd, this.eventlist_bytes.len });
+                    bun.Output.err("EINVAL", "inotify read({f}, {d})", .{ this.fd, this.eventlist_bytes.len });
                 }
                 return .{ .err = .{
                     .errno = @truncate(@intFromEnum(errno)),
@@ -192,7 +192,7 @@ pub fn read(this: *INotifyWatcher) bun.sys.Maybe([]const *align(1) Event) {
         i += event.size();
         count += 1;
         if (Environment.enable_logs)
-            log("{} read event {} {} {} {}", .{
+            log("{f} read event {} {} {} {f}", .{
                 this.fd,
                 event.watch_descriptor,
                 event.cookie,
@@ -207,7 +207,7 @@ pub fn read(this: *INotifyWatcher) bun.sys.Maybe([]const *align(1) Event) {
                 .i = i,
                 .len = @intCast(read_eventlist_bytes.len),
             };
-            log("{} read buffer filled up", .{this.fd});
+            log("{f} read buffer filled up", .{this.fd});
             return .{ .result = &this.eventlist_ptrs };
         }
     }
@@ -216,7 +216,7 @@ pub fn read(this: *INotifyWatcher) bun.sys.Maybe([]const *align(1) Event) {
 }
 
 pub fn stop(this: *INotifyWatcher) void {
-    log("{} stop", .{this.fd});
+    log("{f} stop", .{this.fd});
     if (this.fd != bun.invalid_fd) {
         this.fd.close();
         this.fd = bun.invalid_fd;

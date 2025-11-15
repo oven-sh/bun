@@ -559,6 +559,7 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         /// These associate a route to the index in RouteList.cpp.
         /// User routes may get applied multiple times due to SNI.
         /// So we have to store it.
+        /// Note: We don't free these during reload() because uWS handlers have direct pointers to them.
         user_routes: std.ArrayListUnmanaged(UserRoute) = .{},
 
         on_clienterror: jsc.Strong.Optional = .empty,
@@ -1026,7 +1027,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         pub fn onReloadFromZig(this: *ThisServer, new_config: *ServerConfig, globalThis: *jsc.JSGlobalObject) void {
             httplog("onReload", .{});
 
-            this.app.?.clearRoutes();
+            const app = this.app.?;
+
+            // Clear routes for all SNI domains first to avoid dangling pointers
+            this.clearSNIRoutesHelper(app, false); // false = don't remove server names on reload
 
             // only reload those two, but ignore if they're not specified.
             if (this.config.onRequest != new_config.onRequest and (new_config.onRequest != .zero and !new_config.onRequest.isUndefined())) {
@@ -1081,13 +1085,20 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 }
                 this.config.user_routes_to_build.clearAndFree();
                 this.config.user_routes_to_build = new_config.user_routes_to_build;
-                for (this.user_routes.items) |*route| {
-                    route.deinit();
-                }
-                this.user_routes.clearAndFree(bun.default_allocator);
+
+                // Don't deinit or clear old UserRoutes during reload!
+                // uWS route handlers have pointers directly to UserRoute structures in the ArrayList.
+                // Even after clearRoutes(), in-flight handlers may still be executing.
+                // We'll clean them all up during server deinit() when it's safe.
             }
 
-            const route_list_value = this.setRoutes();
+            // When had_routes_object is false (fetch handler), pass true to free old routes
+            // When had_routes_object is true (routes object reload), pass false to prevent freeing old routes during reload
+            const route_list_value = this.setRoutesInternal(new_config.had_routes_object == false);
+
+            // Re-apply routes to all SNI domains after clearing
+            this.reapplySNIRoutesHelper(app);
+
             if (new_config.had_routes_object) {
                 if (this.js_value.tryGet()) |server_js_value| {
                     if (server_js_value != .zero) {
@@ -1542,6 +1553,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
 
             this.notifyInspectorServerStopped();
 
+            // Clear SNI routes BEFORE closing listener to prevent route reuse
+            if (this.app) |app| {
+                this.clearSNIRoutesHelper(app, false); // Don't remove server names here - they get removed in deinit
+            }
+
             if (!abrupt) {
                 listener.close();
             } else if (!this.flags.terminated) {
@@ -1603,6 +1619,79 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
             }
         }
 
+        /// Helper to clear routes for all SNI domains
+        /// This prevents dangling pointers when stopping/reloading servers with SNI
+        fn clearSNIRoutesHelper(this: *ThisServer, app: *App, should_remove_server_names: bool) void {
+            if (comptime !ssl_enabled) return;
+
+            // Preallocate capacity: 1 for main config + count of SNI entries
+            const sni_count = if (this.config.sni) |sni| sni.len else 0;
+            var server_names = std.ArrayList([*:0]const u8).initCapacity(bun.default_allocator, 1 + sni_count) catch std.ArrayList([*:0]const u8).init(bun.default_allocator);
+            defer server_names.deinit();
+
+            // Add main ssl_config server name if present
+            if (this.config.ssl_config) |*ssl_config| {
+                if (ssl_config.server_name) |server_name_ptr| {
+                    const server_name: [:0]const u8 = std.mem.span(server_name_ptr);
+                    if (server_name.len > 0) {
+                        server_names.append(server_name_ptr) catch |err| {
+                            httplog("Failed to add server name to SNI route clearing list: {s}", .{@errorName(err)});
+                        };
+                    }
+                }
+            }
+
+            // Add all SNI server names
+            if (this.config.sni) |*sni| {
+                for (sni.slice()) |*sni_ssl_config| {
+                    if (sni_ssl_config.server_name) |server_name_ptr| {
+                        const server_name: [:0]const u8 = std.mem.span(server_name_ptr);
+                        if (server_name.len > 0) {
+                            server_names.append(server_name_ptr) catch |err| {
+                                httplog("Failed to add SNI server name to route clearing list: {s}", .{@errorName(err)});
+                            };
+                        }
+                    }
+                }
+            }
+
+            // Always call clearSNIRoutes to clear default domain routes, even if no SNI names
+            app.clearSNIRoutes(server_names.items, should_remove_server_names);
+        }
+
+        /// Helper to re-apply routes to all SNI domains after clearing
+        /// This is necessary during reload to ensure each domain has the updated handlers
+        fn reapplySNIRoutesHelper(this: *ThisServer, app: *App) void {
+            if (comptime !ssl_enabled) return;
+
+            // Re-apply routes for main server name if present
+            if (this.config.ssl_config) |*ssl_config| {
+                if (ssl_config.server_name) |server_name_ptr| {
+                    const server_name: [:0]const u8 = std.mem.span(server_name_ptr);
+                    if (server_name.len > 0) {
+                        app.domain(server_name);
+                        _ = this.setRoutes();
+                    }
+                }
+            }
+
+            // Re-apply routes for each SNI domain
+            if (this.config.sni) |*sni| {
+                for (sni.slice()) |*sni_ssl_config| {
+                    if (sni_ssl_config.server_name) |server_name_ptr| {
+                        const server_name: [:0]const u8 = std.mem.span(server_name_ptr);
+                        if (server_name.len > 0) {
+                            app.domain(server_name);
+                            _ = this.setRoutes();
+                        }
+                    }
+                }
+            }
+
+            // Reset to default domain after re-applying all SNI routes
+            app.domain("");
+        }
+
         pub fn deinit(this: *ThisServer) void {
             httplog("deinit", .{});
 
@@ -1615,6 +1704,11 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 user_route.deinit();
             }
             this.user_routes.deinit(bun.default_allocator);
+
+            // Clear routes BEFORE deinit-ing config, since we need to access ssl_config and sni
+            if (this.app) |app| {
+                this.clearSNIRoutesHelper(app, true); // true = remove server names
+            }
 
             this.config.deinit();
 
@@ -2468,6 +2562,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
         }
 
         fn setRoutes(this: *ThisServer) jsc.JSValue {
+            return this.setRoutesInternal(true);
+        }
+
+        fn setRoutesInternal(this: *ThisServer, should_free_old_routes: bool) jsc.JSValue {
             var route_list_value = jsc.JSValue.zero;
             const app = this.app.?;
             const any_server = AnyServer.from(this);
@@ -2485,8 +2583,10 @@ pub fn NewServer(protocol_enum: enum { http, https }, development_kind: enum { d
                 var user_routes_to_build_list = this.config.user_routes_to_build.moveToUnmanaged();
                 var old_user_routes = this.user_routes;
                 defer {
-                    for (old_user_routes.items) |*r| r.route.deinit();
-                    old_user_routes.deinit(bun.default_allocator);
+                    if (should_free_old_routes) {
+                        for (old_user_routes.items) |*r| r.route.deinit();
+                        old_user_routes.deinit(bun.default_allocator);
+                    }
                 }
                 this.user_routes = std.ArrayListUnmanaged(UserRoute).initCapacity(bun.default_allocator, user_routes_to_build_list.items.len) catch @panic("OOM");
                 const paths_zig = bun.default_allocator.alloc(ZigString, user_routes_to_build_list.items.len) catch @panic("OOM");

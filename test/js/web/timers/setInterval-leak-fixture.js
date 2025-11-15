@@ -87,7 +87,7 @@ async function batch(iterations) {
     if (globalThis.Bun) {
       const heapStats = require("bun:jsc").heapStats();
       console.log("Timeout object count:", heapStats.objectTypeCounts.Timeout || 0);
-      expect(heapStats.protectedObjectTypeCounts.Timeout).toBe(0);
+      expect(heapStats.protectedObjectTypeCounts.Timeout).toBeUndefined();
     }
 
     expect(delta).toBeLessThanOrEqual(isASAN ? 50 : 20);

@@ -57,6 +57,8 @@ pub fn BabyList(comptime Type: type) type {
                 list_ptr.items
             else if (comptime std.meta.hasFn(ListType, "slice"))
                 list_ptr.slice()
+            else if (comptime std.meta.hasFn(ListType, "items"))
+                list_ptr.items()
             else
                 @compileError(unsupported_arg_msg);
 
@@ -88,7 +90,11 @@ pub fn BabyList(comptime Type: type) type {
                 list_ptr.* = .empty;
             } else {
                 this.#allocator.set(bun.allocators.asStd(allocator));
-                list_ptr.* = .init(allocator);
+                if (comptime std.meta.hasFn(ListType, "initIn")) {
+                    list_ptr.* = .initIn(allocator);
+                } else {
+                    list_ptr.* = .init(allocator);
+                }
             }
             return this;
         }

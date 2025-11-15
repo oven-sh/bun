@@ -54,7 +54,7 @@ pub fn New(comptime Type: type, comptime ContextType: type, comptime Callback: a
 
         pub fn wrap(this: ?*anyopaque, extra: ?*anyopaque) void {
             @call(
-                .always_inline,
+                bun.callmod_inline,
                 Callback,
                 .{
                     @as(*Type, @ptrCast(@alignCast(this.?))),

@@ -34,7 +34,7 @@ fn dangerouslyRunWithoutJitProtections(R: type, func: anytype, args: anytype) R 
     const has_protection = (Environment.isAarch64 and Environment.isMac);
     if (comptime has_protection) pthread_jit_write_protect_np(@intFromBool(false));
     defer if (comptime has_protection) pthread_jit_write_protect_np(@intFromBool(true));
-    return @call(.always_inline, func, args);
+    return @call(bun.callmod_inline, func, args);
 }
 
 const Offsets = extern struct {

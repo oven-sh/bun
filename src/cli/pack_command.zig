@@ -1187,8 +1187,14 @@ pub const PackCommand = struct {
             .entry => |entry| entry,
         };
 
-        if (comptime for_publish) {
-            if (json.root.get("publishConfig")) |config| {
+        var publish_config_directory: ?string = null;
+        if (json.root.get("publishConfig")) |config| {
+            // Read directory for both pack and publish
+            if (try config.getString(ctx.allocator, "directory")) |directory| {
+                publish_config_directory = directory[0];
+            }
+
+            if (comptime for_publish) {
                 if (manager.options.publish_config.tag.len == 0) {
                     if (try config.getStringCloned(ctx.allocator, "tag")) |tag| {
                         manager.options.publish_config.tag = tag;
@@ -1207,7 +1213,70 @@ pub const PackCommand = struct {
             // maybe otp
         }
 
-        const package_name_expr: Expr = json.root.get("name") orelse return error.MissingPackageName;
+        // If publishConfig.directory is set, re-read package.json from that directory
+        const actual_package_json_path: stringZ = if (publish_config_directory) |directory| path_with_dir: {
+            // Reject absolute paths before normalization
+            if (std.fs.path.isAbsolute(directory)) {
+                Output.errGeneric("publishConfig.directory cannot be an absolute path: {s}", .{directory});
+                Output.flush();
+                Global.crash();
+            }
+
+            // Reject parent directory traversal before normalization (check raw input)
+            // We check before normalization because normalizeBuf may resolve ".." away
+            if (strings.contains(directory, "..")) {
+                Output.errGeneric("publishConfig.directory cannot contain '..': {s}", .{directory});
+                Output.flush();
+                Global.crash();
+            }
+
+            // Normalize after validation
+            var norm_buf: PathBuffer = undefined;
+            const normalized0 = bun.path.normalizeBuf(directory, &norm_buf, .posix);
+            const normalized_dir = strings.withoutTrailingSlash(strings.withoutPrefixComptime(normalized0, "./"));
+
+            const abs_workspace_path: string = strings.withoutTrailingSlash(strings.withoutSuffixComptime(abs_package_json_path, "package.json"));
+
+            // Use a separate buffer for joins to avoid aliasing with normalized buffer
+            var join_buf1: PathBuffer = undefined;
+            const abs_dir = bun.path.joinAbsStringBuf(
+                abs_workspace_path,
+                &join_buf1,
+                &[_]string{normalized_dir},
+                .auto,
+            );
+
+            var join_buf2: PathBuffer = undefined;
+            break :path_with_dir bun.path.joinAbsStringBufZ(
+                abs_dir,
+                &join_buf2,
+                &[_]string{"package.json"},
+                .auto,
+            );
+        } else abs_package_json_path;
+
+        // Directory we actually pack from (directory containing actual package.json)
+        const pack_dir_path: string = strings.withoutTrailingSlash(
+            strings.withoutSuffixComptime(actual_package_json_path, "package.json"),
+        );
+
+        // Re-read package.json from the actual directory
+        const actual_json = if (publish_config_directory != null) switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, actual_package_json_path, .{
+            .guess_indentation = true,
+        })) {
+            .read_err => |err| {
+                Output.err(err, "failed to read package.json from publishConfig.directory: {s}", .{actual_package_json_path});
+                Global.crash();
+            },
+            .parse_err => |err| {
+                Output.err(err, "failed to parse package.json from publishConfig.directory: {s}", .{actual_package_json_path});
+                manager.log.print(Output.errorWriter()) catch {};
+                Global.crash();
+            },
+            .entry => |entry| entry,
+        } else json;
+
+        const package_name_expr: Expr = actual_json.root.get("name") orelse return error.MissingPackageName;
         const package_name = try package_name_expr.asStringCloned(ctx.allocator) orelse return error.InvalidPackageName;
         if (comptime for_publish) {
             const is_scoped = try Dependency.isScopedPackageName(package_name);
@@ -1220,13 +1289,13 @@ pub const PackCommand = struct {
         defer if (comptime !for_publish) ctx.allocator.free(package_name);
         if (package_name.len == 0) return error.InvalidPackageName;
 
-        const package_version_expr: Expr = json.root.get("version") orelse return error.MissingPackageVersion;
+        const package_version_expr: Expr = actual_json.root.get("version") orelse return error.MissingPackageVersion;
         const package_version = try package_version_expr.asStringCloned(ctx.allocator) orelse return error.InvalidPackageVersion;
         defer if (comptime !for_publish) ctx.allocator.free(package_version);
         if (package_version.len == 0) return error.InvalidPackageVersion;
 
         if (comptime for_publish) {
-            if (json.root.get("private")) |private| {
+            if (actual_json.root.get("private")) |private| {
                 if (private.asBool()) |is_private| {
                     if (is_private) {
                         return error.PrivatePackage;
@@ -1235,7 +1304,8 @@ pub const PackCommand = struct {
             }
         }
 
-        const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, json);
+        const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, actual_json);
+        defer ctx.allocator.free(edited_package_json);
 
         var this_transpiler: bun.transpiler.Transpiler = undefined;
 
@@ -1360,27 +1430,27 @@ pub const PackCommand = struct {
             break :post_scripts .{ postpack_script, null, null };
         };
 
+        // Open the directory where files will be packed from (and where package.json is)
         var root_dir = root_dir: {
             var path_buf: PathBuffer = undefined;
-            @memcpy(path_buf[0..abs_workspace_path.len], abs_workspace_path);
-            path_buf[abs_workspace_path.len] = 0;
-            break :root_dir std.fs.openDirAbsoluteZ(path_buf[0..abs_workspace_path.len :0], .{
+            @memcpy(path_buf[0..pack_dir_path.len], pack_dir_path);
+            path_buf[pack_dir_path.len] = 0;
+            break :root_dir std.fs.openDirAbsoluteZ(path_buf[0..pack_dir_path.len :0], .{
                 .iterate = true,
             }) catch |err| {
-                Output.err(err, "failed to open root directory: {s}\n", .{abs_workspace_path});
+                Output.err(err, "failed to open pack directory: {s}\n", .{pack_dir_path});
                 Global.crash();
             };
         };
         defer root_dir.close();
 
-        ctx.bundled_deps = try getBundledDeps(ctx.allocator, json.root, "bundledDependencies") orelse
-            try getBundledDeps(ctx.allocator, json.root, "bundleDependencies") orelse
+        ctx.bundled_deps = try getBundledDeps(ctx.allocator, actual_json.root, "bundledDependencies") orelse
+            try getBundledDeps(ctx.allocator, actual_json.root, "bundleDependencies") orelse
             .{};
-
         var pack_queue: PackQueue = .init(ctx.allocator, {});
         defer pack_queue.deinit();
 
-        const bins = try getPackageBins(ctx.allocator, json.root);
+        const bins = try getPackageBins(ctx.allocator, actual_json.root);
         defer for (bins) |bin| ctx.allocator.free(bin.path);
 
         for (bins) |bin| {
@@ -1400,7 +1470,7 @@ pub const PackCommand = struct {
         }
 
         iterate_project_tree: {
-            if (json.root.get("files")) |files| {
+            if (actual_json.root.get("files")) |files| {
                 files_error: {
                     if (files.asArray()) |_files_array| {
                         var includes: std.ArrayListUnmanaged(Pattern) = .{};
@@ -1465,7 +1535,7 @@ pub const PackCommand = struct {
         if (manager.options.dry_run) {
             // don't create the tarball, but run scripts if they exists
 
-            printArchivedFilesAndPackages(ctx, root_dir, true, &pack_queue, 0);
+            printArchivedFilesAndPackages(ctx, root_dir, true, &pack_queue, edited_package_json.len);
 
             if (comptime !for_publish) {
                 if (manager.options.pack_destination.len == 0 and manager.options.pack_filename.len == 0) {
@@ -2471,15 +2541,18 @@ pub const PackCommand = struct {
         const packed_fmt = "<r><b><cyan>packed<r> {f} {s}";
 
         if (comptime is_dry_run) {
-            const package_json_stat = root_dir.statat("package.json").unwrap() catch |err| {
-                Output.err(err, "failed to stat package.json", .{});
-                Global.crash();
+            const package_json_size: usize = if (package_json_len != 0) package_json_len else blk: {
+                const stat = root_dir.statat("package.json").unwrap() catch |err| {
+                    Output.err(err, "failed to stat package.json", .{});
+                    Global.crash();
+                };
+                break :blk @intCast(stat.size);
             };
 
-            ctx.stats.unpacked_size += @intCast(package_json_stat.size);
+            ctx.stats.unpacked_size += package_json_size;
 
             Output.prettyln("\n" ++ packed_fmt, .{
-                bun.fmt.size(package_json_stat.size, .{ .space_between_number_and_unit = false }),
+                bun.fmt.size(package_json_size, .{ .space_between_number_and_unit = false }),
                 "package.json",
             });
 

@@ -1135,8 +1135,9 @@ async function getPipeline(options = {}) {
     );
   }
 
+  const { skipTests, forceTests, testFiles } = options;
+
   if (!isMainBranch()) {
-    const { skipTests, forceTests, testFiles } = options;
     if (!skipTests || forceTests) {
       steps.push(
         ...testPlatforms.map(target => ({
@@ -1147,15 +1148,14 @@ async function getPipeline(options = {}) {
       );
     }
   }
-  if (includeASAN) {
-    const { unifiedTests, testFiles } = options;
+  if (includeASAN && (!skipTests || forceTests)) {
     const asan_targets = testPlatforms.filter(v => v.profile === "asan");
     const lsan_targets = asan_targets.map(v => ({ ...v, profile: "lsan" }));
     for (let i = 0; i < lsan_targets.length; i++) {
       steps.push({
         key: getTargetKey(lsan_targets[i]),
         group: getTargetLabel(asan_targets[i]),
-        steps: [getTestBunStep(lsan_targets[i], options, { unifiedTests, testFiles, buildId })],
+        steps: [getTestBunStep(lsan_targets[i], options, { testFiles, buildId })],
       });
     }
   }

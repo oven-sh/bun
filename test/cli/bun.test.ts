@@ -26,7 +26,10 @@ describe("bun", () => {
           cmd: [bunExe()],
           env:
             value === undefined
-              ? bunEnv
+              ? {
+                  ...bunEnv,
+                  NO_COLOR: undefined,
+                }
               : {
                   ...bunEnv,
                   NO_COLOR: value,

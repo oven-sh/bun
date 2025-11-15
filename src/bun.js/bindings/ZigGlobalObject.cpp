@@ -72,6 +72,7 @@
 #include "ConsoleObject.h"
 #include "DOMWrapperWorld-class.h"
 #include "ErrorStackTrace.h"
+#include "Fuzzilli.h"
 #include "IDLTypes.h"
 #include "ImportMetaObject.h"
 #include "JS2Native.h"
@@ -324,6 +325,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             }
             JSC::Options::assertOptionsAreCoherent();
         }
+
+        Fuzzilli::tryInitialize();
     }); // end std::call_once lambda
 
     // NOLINTEND

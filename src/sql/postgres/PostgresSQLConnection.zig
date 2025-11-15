@@ -89,7 +89,7 @@ copy_state: enum {
 } = .none,
 copy_format: u8 = 0, // 0=text, 1=binary
 copy_column_formats: []u16 = &.{},
-copy_data_buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+copy_data_buffer: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
 max_copy_buffer_size: usize = MAX_COPY_BUFFER_SIZE,
 
 /// COPY progress tracking
@@ -1483,6 +1483,19 @@ fn onCopyResult(this: *PostgresSQLConnection, request: *PostgresSQLQuery, comman
             request.onJSError(this.globalObject.takeException(err), this.globalObject);
             return;
         };
+    } else {
+        // No pending array yet: create a new SQLResultArray, push the result, and cache it
+        const new_array = jsc.JSValue.createEmptyArray(this.globalObject, 0) catch |err| {
+            this.cleanupCopyState();
+            request.onJSError(this.globalObject.takeException(err), this.globalObject);
+            return;
+        };
+        new_array.push(this.globalObject, result_value) catch |err| {
+            this.cleanupCopyState();
+            request.onJSError(this.globalObject.takeException(err), this.globalObject);
+            return;
+        };
+        PostgresSQLQuery.js.pendingValueSetCached(thisValue, this.globalObject, new_array);
     }
 
     // Clear COPY state before completing the request
@@ -1975,8 +1988,9 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                 if (this.copy_timeout_ms > 0 and this.copy_start_timestamp_ms > 0) {
                     const now = std.time.milliTimestamp();
                     const elapsed = @as(u64, @intCast(now)) -| this.copy_start_timestamp_ms;
-                    if (elapsed > this.copy_timeout_ms) {
-                        debug("CopyData: timeout after {}ms (limit: {}ms)", .{ elapsed, this.copy_timeout_ms });
+                    const timeout_u64: u64 = @intCast(this.copy_timeout_ms);
+                    if (elapsed > timeout_u64) {
+                        debug("CopyData: timeout after {}ms (limit: {}ms)", .{ elapsed, timeout_u64 });
                         this.cleanupCopyState();
                         this.fail("COPY operation timeout", error.CopyTimeout);
                         return error.CopyTimeout;
@@ -2104,6 +2118,22 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                     this.copy_bytes_transferred = this.copy_bytes_transferred +| @as(u64, @intCast(data_slice.len));
                     this.copy_chunks_processed = this.copy_chunks_processed +| 1;
                     return;
+                }
+
+                // In streaming mode, enforce a per-chunk limit to avoid allocating huge ArrayBuffers
+                if (this.copy_streaming_mode) {
+                    const per_chunk_limit: usize = @min(this.max_copy_buffer_size, 64 * 1024 * 1024);
+                    if (data_slice.len > per_chunk_limit) {
+                        const err_msg = std.fmt.allocPrint(
+                            bun.default_allocator,
+                            "COPY chunk too large for streaming: {d} bytes exceeds per-chunk limit of {d} bytes",
+                            .{ data_slice.len, per_chunk_limit },
+                        ) catch "COPY chunk too large";
+                        defer if (err_msg.ptr != "COPY chunk too large".ptr) bun.default_allocator.free(err_msg);
+                        this.cleanupCopyState();
+                        this.fail(err_msg, error.CopyChunkTooLarge);
+                        return error.CopyChunkTooLarge;
+                    }
                 }
 
                 if (!this.copy_streaming_mode) {

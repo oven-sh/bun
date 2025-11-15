@@ -1,10 +1,16 @@
 {
+  "$schema": "./test-retries.schema.json",
+  "test/js/node/worker_threads/worker_threads.test.ts": {
+    "linux": { "retries": 8, "knownCrash": true },
+    "darwin": 8,
+    "note": "flaky since <1.2.14. flaky crashes on linux. disabled in asan."
+  },
   "test/bake/dev/stress.test.ts": {
-    "*": "warn-instead-of-fail",
+    "*": { "retries": 1, "warnInsteadOfFail": true },
     "note": "flaky since <1.2.14. possibly a real bug. Sometimes Symbol.for('bun:hmr') is not set on the window object, and sometimes there is a js assertion failure."
   },
   "test/js/bun/ffi/cc.test.ts": {
-    "darwin": "warn-instead-of-fail",
+    "darwin": { "retries": 1, "warnInsteadOfFail": true },
     "note": "flaky since new mac ci runners"
   },
   "test/cli/install/bun-install.test.ts": {
@@ -73,11 +79,6 @@
   "test/js/bun/spawn/spawn-stdin-readable-stream.test.ts": {
     "windows": 8,
     "note": "became more flaky between 1.2.22 and 1.2.23. "
-  },
-  "test/js/node/worker_threads/worker_threads.test.ts": {
-    "linux": 8,
-    "darwin": 8,
-    "note": "flaky since <1.2.14"
   },
   "test/js/bun/s3/s3.test.ts": {
     "*": 8,

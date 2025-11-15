@@ -383,15 +383,15 @@ function getTestModifiers(testPath) {
 
 const testRetriesJson = readFileSync(join(cwd, "test/test-retries.json"), "utf-8");
 
-/** @typedef {number | "warn-instead-of-fail"} RetryOption */
-/** @type {Record<string, {"*"?: RetryOption, "linux"?: RetryOption, "windows"?: RetryOption, "mac"?: RetryOption, "note"?: string, "asan"?: RetryOption}>} */
+/** @typedef {number | Partial<ResolvedRetryOption>} RetryOption */
+/** @type {Record<string, {"*"?: RetryOption, "linux"?: RetryOption, "windows"?: RetryOption, "darwin"?: RetryOption, "note"?: string, "asan"?: RetryOption}>} */
 const testRetries = JSON.parse(testRetriesJson);
 
-/** @typedef {{retries: number, warnInsteadOfFail: boolean}} ResolvedRetryOption */
+/** @typedef {{retries: number, warnInsteadOfFail: boolean, knownCrash: boolean}} ResolvedRetryOption */
 /**
  * @param {string} testPath
  * @param {string} execPath
- * @returns {ResolvedRetryOption}
+ * @returns {RetryOption}
  */
 function getTestOptionRaw(testPath, execPath) {
   if (!isCI) return null; // disabled locally
@@ -414,10 +414,14 @@ function getTestOptionRaw(testPath, execPath) {
  */
 function getTestOption(testPath, execPath) {
   const testOption = getTestOptionRaw(testPath, execPath);
-  if (testOption == null)
-    return isCI ? { retries: 1, warnInsteadOfFail: false } : { retries: 0, warnInsteadOfFail: false };
-  if (testOption === "warn-instead-of-fail") return { retries: 1, warnInsteadOfFail: true };
-  return { retries: testOption, warnInsteadOfFail: false };
+  const result = {
+    retries: isCI ? 1 : 0,
+    warnInsteadOfFail: false,
+    knownCrash: false,
+  };
+  if (testOption == null) return result;
+  if (typeof testOption === "number") return { ...result, retries: testOption };
+  return { ...result, ...testOption };
 }
 
 /**
@@ -515,7 +519,7 @@ async function runTests() {
       failure ||= result;
       flaky ||= true;
 
-      const alwaysFailure = isAlwaysFailure(error);
+      const alwaysFailure = isAlwaysFailure(error) && !testOption.knownCrash;
       if (attempt >= maxAttempts || alwaysFailure) {
         if (testOption.warnInsteadOfFail && !alwaysFailure) break;
         flaky = false;

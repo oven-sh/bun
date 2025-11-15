@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TestRetries",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema URI for this config file"
+    }
+  },
+  "required": ["$schema"],
+  "additionalProperties": {
+    "type": "object",
+    "properties": {
+      "*": { "$ref": "#/definitions/retryOption" },
+      "linux": { "$ref": "#/definitions/retryOption" },
+      "windows": { "$ref": "#/definitions/retryOption" },
+      "darwin": { "$ref": "#/definitions/retryOption" },
+      "asan": { "$ref": "#/definitions/retryOption" },
+      "note": { "type": "string" }
+    },
+    "additionalProperties": false
+  },
+  "definitions": {
+    "retryOption": {
+      "description": "number | Partial<ResolvedRetryOption>",
+      "oneOf": [
+        { "type": "number" },
+        {
+          "type": "object",
+          "properties": {
+            "retries": { "type": "number" },
+            "warnInsteadOfFail": { "type": "boolean" },
+            "knownCrash": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

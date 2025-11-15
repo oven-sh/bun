@@ -1696,6 +1696,9 @@ install_age() {
 			;;
 		esac
 		;;
+	*)
+		error "Unsupported platform: $os-$arch"
+		;;
 	esac
 
 	age_tarball="$(download_and_verify_file https://github.com/FiloSottile/age/releases/download/v$age_version/age-v$age_version-$os-$age_arch.tar.gz "$age_hash")"

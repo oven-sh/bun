@@ -848,7 +848,7 @@ pub fn Parser(comptime enc: Encoding) type {
 
             try self.scan(.{});
 
-            return .init(E.Object, .{ .properties = .moveFromList(&props.list) }, mapping_start.loc());
+            return .init(E.Object, .{ .properties = props.moveList() }, mapping_start.loc());
         }
 
         fn parseBlockSequence(self: *@This()) ParseError!Expr {
@@ -984,28 +984,28 @@ pub fn Parser(comptime enc: Encoding) type {
         }
 
         const MappingProps = struct {
-            list: std.array_list.Managed(G.Property),
+            #list: bun.collections.ArrayList(G.Property),
 
             pub fn init(allocator: std.mem.Allocator) MappingProps {
-                return .{ .list = .init(allocator) };
+                return .{ .#list = .initIn(allocator) };
             }
 
             pub fn merge(self: *MappingProps, merge_props: []const G.Property) OOM!void {
-                try self.list.ensureUnusedCapacity(merge_props.len);
+                try self.#list.ensureUnusedCapacity(merge_props.len);
                 next_merge_prop: for (merge_props) |merge_prop| {
                     const merge_key = merge_prop.key.?;
-                    for (self.list.items) |existing_prop| {
+                    for (self.#list.items()) |existing_prop| {
                         const existing_key = existing_prop.key.?;
                         if (yamlMergeKeyExprEql(existing_key, merge_key)) {
                             continue :next_merge_prop;
                         }
                     }
-                    self.list.appendAssumeCapacity(merge_prop);
+                    self.#list.appendAssumeCapacity(merge_prop);
                 }
             }
 
             pub fn append(self: *MappingProps, prop: G.Property) OOM!void {
-                try self.list.append(prop);
+                try self.#list.append(prop);
             }
 
             pub fn appendMaybeMerge(self: *MappingProps, key: Expr, value: Expr) OOM!void {
@@ -1013,7 +1013,7 @@ pub fn Parser(comptime enc: Encoding) type {
                     .e_string => |key_str| !key_str.eqlComptime("<<"),
                     else => true,
                 }) {
-                    return self.list.append(.{ .key = key, .value = value });
+                    return self.#list.append(.{ .key = key, .value = value });
                 }
 
                 return switch (value.data) {
@@ -1029,8 +1029,14 @@ pub fn Parser(comptime enc: Encoding) type {
                         }
                     },
 
-                    else => self.list.append(.{ .key = key, .value = value }),
+                    else => self.#list.append(.{ .key = key, .value = value }),
                 };
+            }
+
+            pub fn moveList(self: *MappingProps) G.Property.List {
+                const list: G.Property.List = .moveFromList(&self.#list);
+                self.* = undefined;
+                return list;
             }
         };
 
@@ -1100,7 +1106,7 @@ pub fn Parser(comptime enc: Encoding) type {
             }
 
             if (self.context.get() == .flow_in) {
-                return .init(E.Object, .{ .properties = .moveFromList(&props.list) }, mapping_start.loc());
+                return .init(E.Object, .{ .properties = props.moveList() }, mapping_start.loc());
             }
 
             try self.context.set(.block_in);
@@ -1185,7 +1191,7 @@ pub fn Parser(comptime enc: Encoding) type {
                 try props.appendMaybeMerge(key, value);
             }
 
-            return .init(E.Object, .{ .properties = .moveFromList(&props.list) }, mapping_start.loc());
+            return .init(E.Object, .{ .properties = props.moveList() }, mapping_start.loc());
         }
 
         const NodeProperties = struct {

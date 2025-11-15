@@ -146,7 +146,7 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["retries"]: {
       type: "string",
-      default: "0", // N retries = N+1 attempts
+      default: isCI ? "1" : "0", // N retries = N+1 attempts
     },
     ["junit"]: {
       type: "boolean",

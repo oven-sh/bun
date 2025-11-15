@@ -833,7 +833,7 @@ pub fn appendSourceMapChunk(
     var start_state = start_state_;
     // Handle line breaks in between this mapping and the previous one
     if (start_state.generated_line != 0) {
-        j.push(try strings.repeatingAlloc(allocator, @intCast(start_state.generated_line), ';'), bun.default_allocator);
+        j.push(try strings.repeatingAlloc(allocator, @intCast(start_state.generated_line), ';'), allocator);
         prev_end_state.generated_column = 0;
     }
 

@@ -1,3 +1,4 @@
+import { expect } from "bun:test";
 import { isASAN } from "harness";
 
 const delta = 1;

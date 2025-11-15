@@ -1268,6 +1268,7 @@ export async function runBunInstall(
     expect(err).toContain("Saved lockfile");
   }
   let out: string = await stdout.text();
+  if (await exited !== 0) console.log(err);
   expect(await exited).toBe(options?.expectedExitCode ?? 0);
   return { out, err, exited };
 }

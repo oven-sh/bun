@@ -860,9 +860,9 @@ extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
 
 pub fn globalExit(this: *VirtualMachine) noreturn {
     bun.assert(this.isShuttingDown());
-    // FIXME: we should be doing this, but we're not, but unfortunately doing it
-    //        causes like 50+ tests to break
-    // this.eventLoop().tick();
+    // FIXME: we should be doing this unconditionally, but we're not, but unfortunately doing it causes multiple tests to break.
+    // cc: https://github.com/oven-sh/bun/pull/23118
+    if (bun.env_var.BUN_TICK_ONE_LAST_TIME.get()) this.eventLoop().tick();
 
     if (this.shouldDestructMainThreadOnExit()) {
         if (this.eventLoop().forever_timer) |t| t.deinit(true);

@@ -509,6 +509,7 @@ pub const PathWatcherManager = struct {
         }
 
         fn deinit(this: *DirectoryRegisterTask) void {
+            this.watcher_list.deinit(bun.default_allocator);
             bun.default_allocator.destroy(this);
         }
     };

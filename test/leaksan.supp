@@ -242,3 +242,5 @@ leak:logger.Log.cloneToWithRecycled
 leak:cli.pm_version_command.
 leak:Bun__encoding__constructFromLatin1
 leak:Bun__encoding__constructFromUTF16
+leak:sql.postgres.protocol.FieldMessage.FieldMessage.decodeList__anon
+leak:sql.postgres.protocol.RowDescription.decodeInternal__anon

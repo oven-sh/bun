@@ -159,11 +159,6 @@ test/js/node/test/parallel/test-dgram-send-address-types.js
 test/js/node/test/parallel/test-fs-watch.js
 test/js/node/test/parallel/test-dgram-unref.js
 test/js/node/test/parallel/test-fs-promises-watch.js
-test/bake/dev/ecosystem.test.ts
-test/bake/dev/html.test.ts
-test/bake/dev/plugins.test.ts
-test/bake/dev/stress.test.ts
-test/bake/dev/vfile.test.ts
 test/js/bun/http/serve.test.ts
 test/js/bun/resolve/import-meta.test.js
 test/js/third_party/@duckdb/node-api/duckdb.test.ts
@@ -447,7 +442,17 @@ test/bake/dev/hot.test.ts
 test/bake/dev/react-spa.test.ts
 test/bake/dev/sourcemap.test.ts
 test/bake/dev/ssg-pages-router.test.ts
-test/bake/dev/deinitialization.test.ts
+
+test/bake/dev/ecosystem.test.ts
+test/bake/dev/plugins.test.ts
+test/bake/dev/vfile.test.ts
+test/bake/dev/import-meta-inline.test.ts
+test/bake/dev/production.test.ts
+test/bake/dev/ssg-pages-router.test.ts
+test/bake/dev/react-response.test.ts
+test/bake/dev/request-cookies.test.ts
+test/bake/dev/response-to-bake-response.test.ts
+test/bake/dev/stress.test.ts
 
 # Need to terminate HTTP thread.
 test/js/bun/test/parallel/test-http-should-not-accept-untrusted-certificates.ts
@@ -469,18 +474,16 @@ test/js/bun/spawn/spawn-stdin-readable-stream.test.ts
 test/js/node/async_hooks/AsyncLocalStorage-tracking.test.ts
 test/js/bun/test/parallel/test-http-7480-should-not-emit-continue-event.ts
 
-# bake
-test/bake/dev/esm.test.ts
-test/bake/dev/ecosystem.test.ts
-test/bake/dev/sourcemap.test.ts
-test/bake/dev/plugins.test.ts
-test/bake/dev/vfile.test.ts
-test/bake/dev/import-meta-inline.test.ts
-test/bake/dev/server-sourcemap.test.ts
-test/bake/dev/bundle.test.ts
-test/bake/dev/production.test.ts
-test/bake/dev/ssg-pages-router.test.ts
-test/bake/dev/react-response.test.ts
-test/bake/dev/request-cookies.test.ts
-test/bake/dev/response-to-bake-response.test.ts
-test/bake/dev/stress.test.ts
+# too slow
+# lots of child processes or too many suppressions to check that it trips the timeout
+test/bundler/esbuild/ts.test.ts
+test/bundler/esbuild/importstar.test.ts
+test/cli/install/bun-pm-pkg.test.ts
+test/bundler/esbuild/packagejson.test.ts
+test/cli/run/filter-workspace.test.ts
+test/cli/install/bun-pack.test.ts
+test/cli/install/bun-pm-version.test.ts
+test/cli/run/run-eval.test.ts
+test/cli/run/syntax.test.ts
+test/js/bun/spawn/spawnsync-isolated-event-loop.test.ts
+test/js/node/fs/fs.test.ts

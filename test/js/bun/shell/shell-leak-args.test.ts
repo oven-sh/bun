@@ -1,5 +1,6 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
+import { isASAN } from "harness";
 
 test("shell parsing error does not leak emmory", async () => {
   const buffer = Buffer.alloc(1024 * 1024, "A").toString();
@@ -22,7 +23,7 @@ test("shell parsing error does not leak emmory", async () => {
   // In Bun v1.3.1 on macOS arm64:
   //   Expected: < 100
   //   Received: 0.25
-  expect(after - before).toBeLessThan(100);
+  expect(after - before).toBeLessThan(isASAN ? 130 : 100);
 });
 
 test("shell execution doesn't leak argv", async () => {

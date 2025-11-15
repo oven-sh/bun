@@ -42,7 +42,7 @@ pub var current_time: struct {
     pub fn clear(this: *@This(), globalObject: *jsc.JSGlobalObject) void {
         const vm = globalObject.bunVM();
         this.#offset.store(.none, .seq_cst);
-        bun.cpp.JSMock__setOverridenDateNow(globalObject, std.math.nan(f64));
+        bun.cpp.JSMock__setOverridenDateNow(globalObject, -1);
         vm.overridden_performance_now = null;
     }
 } = .{};

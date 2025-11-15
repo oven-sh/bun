@@ -1295,7 +1295,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
 
     JSC::EncodedJSValue result = ${symbolName(typeName, fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame${proto[name].passThis ? ", JSValue::encode(thisObject)" : ""});
 
-    ASSERT_WITH_MESSAGE(!JSValue::decode(result).isEmpty() or DECLARE_CATCH_SCOPE(vm).exception() != 0, \"${typeName}.${proto[name].fn} returned an empty value without an exception\");
+    ASSERT_WITH_MESSAGE(!JSValue::decode(result).isEmpty() or scope.exception() != 0, \"${typeName}.${proto[name].fn} returned an empty value without an exception\");
 
     ${
       !proto[name].DOMJIT
@@ -1323,10 +1323,10 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
     }
 #endif
 
-    return result;
+    RELEASE_AND_RETURN(scope, result);
 #endif
 
-  return ${symbolName(typeName, proto[name].fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame${proto[name].passThis ? ", JSValue::encode(thisObject)" : ""});
+  RELEASE_AND_RETURN(scope, ${symbolName(typeName, proto[name].fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame${proto[name].passThis ? ", JSValue::encode(thisObject)" : ""}));
 }
 
     `);

@@ -3093,7 +3093,7 @@ pub fn getRoughTickCount(comptime mock_mode: timespec.MockMode) timespec {
     }
 
     if (comptime Environment.isWindows) {
-        const ms = getRoughTickCountMs();
+        const ms = getRoughTickCountMs(mock_mode);
         return timespec{
             .sec = @intCast(ms / 1000),
             .nsec = @intCast((ms % 1000) * 1_000_000),

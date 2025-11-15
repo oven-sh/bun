@@ -13,11 +13,12 @@ if (process.argv.length > 2) {
   url = process.argv[2];
 }
 
+// const browserPath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const browserPath = which("chromium-browser") || which("chromium") || which("chrome") || undefined;
 if (!browserPath) {
   console.warn("Since a Chromium browser was not found, it will be downloaded by Puppeteer.");
 }
-
+console.warn("Launching browser");
 const b = await launch({
   // On macOS, there are issues using the new headless mode.
   // "TargetCloseError: Protocol error (Target.setAutoAttach): Target closed"
@@ -25,7 +26,7 @@ const b = await launch({
   // Inherit the stdout and stderr of the browser process.
   dumpio: true,
   // Prefer to use a pipe to connect to the browser, instead of a WebSocket.
-  pipe: true,
+  pipe: false,
   // Disable timeouts.
   timeout: 0,
   protocolTimeout: 0,
@@ -47,6 +48,7 @@ const b = await launch({
     "--disable-features=site-per-process",
   ],
 });
+console.log("Browser launched");
 
 process.on("beforeExit", async reason => {
   await b?.close?.();
@@ -151,5 +153,7 @@ async function main() {
 try {
   await main();
 } finally {
+  console.warn("Closing browser");
   await b?.close?.();
+  console.warn("Browser closed");
 }

@@ -1701,6 +1701,7 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
   {
     us_socket_r s = (us_socket_t *)res;
     s->context->loop->data.last_write_failed = 1;
+    s->flags.is_writable = false;
     us_poll_change(&s->p, s->context->loop,
                    LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
@@ -1865,6 +1866,7 @@ __attribute__((callback (corker, ctx)))
 
   void us_socket_sendfile_needs_more(us_socket_r s) {
     s->context->loop->data.last_write_failed = 1;
+    s->flags.is_writable = false;
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
 

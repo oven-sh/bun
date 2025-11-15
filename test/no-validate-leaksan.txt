@@ -1698,8 +1698,9 @@ test/snippets/segfault-todo.test.js
 
 test/js/bun/bun-object/write.spec.ts
 test/js/bun/http/http-spec.ts
-
 test/js/bun/stream/direct-readable-stream.test.tsx
+test/js/node/cluster/test-worker-no-exit-http.ts
+test/js/node/util/parse_args/default-args.test.mjs
 
 test/js/node/test/parallel/test-abortsignal-any.mjs
 test/js/node/test/parallel/test-arm-math-illegal-instruction.js

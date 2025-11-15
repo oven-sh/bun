@@ -263,9 +263,7 @@ pub const DirEntryAccessor = struct {
         // TODO do we want to propagate ENOTDIR through the 'Maybe' to match the SyscallAccessor?
         // The glob implementation specifically checks for this error when dealing with symlinks
         // return .{ .err = Syscall.Error.fromCode(bun.sys.E.NOTDIR, Syscall.Tag.open) };
-        const res = FS.instance.fs.readDirectory(path, null, 0, false) catch |err| {
-            return err;
-        };
+        const res = try FS.instance.fs.readDirectory(path, null, 0, false);
         switch (res.*) {
             .entries => |entry| {
                 return .{ .result = .{ .value = entry } };
@@ -677,7 +675,7 @@ pub fn GlobWalker_(
                 this.iter_state.directory.at_cwd = false;
                 this.iter_state.directory.fd = .empty;
 
-                log("Transition(dirpath={s}, fd={}, component_idx={d})", .{ dir_path, fd, component_idx });
+                log("Transition(dirpath={s}, component_idx={d})", .{ dir_path, component_idx });
 
                 this.iter_state.directory.fd = fd;
                 const iterator = Accessor.DirIter.iterate(fd);

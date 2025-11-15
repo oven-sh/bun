@@ -1,4 +1,4 @@
-const { Readable } = require("internal/streams/readable");
+const Readable = require("internal/streams/readable");
 
 const {
   abortedSymbol,
@@ -26,6 +26,7 @@ const {
   headersTuple,
   webRequestOrResponseHasBodyValue,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
+  kAbortController,
 } = require("internal/http");
 
 const { FakeSocket } = require("internal/http/FakeSocket");
@@ -307,7 +308,6 @@ const IncomingMessagePrototype = {
     if (isAbortError(err)) {
       err = undefined;
     }
-
     var nodeHTTPResponse = this[kHandle];
     if (nodeHTTPResponse) {
       this[kHandle] = undefined;
@@ -332,6 +332,10 @@ const IncomingMessagePrototype = {
       if (socket && !socket.destroyed && shouldEmitAborted) {
         socket.destroy(err);
       }
+    }
+    const req = this.req;
+    if (req && !this.complete) {
+      req[kAbortController]?.abort?.();
     }
 
     if ($isCallable(cb)) {

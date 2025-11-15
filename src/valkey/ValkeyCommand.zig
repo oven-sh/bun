@@ -35,16 +35,16 @@ pub fn write(this: *const Command, writer: anytype) !void {
     }
 }
 
-pub fn format(this: Command, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: Command, writer: *std.Io.Writer) !void {
     try this.write(writer);
 }
 
 pub fn byteLength(this: *const Command) usize {
-    return std.fmt.count("{}", .{this.*});
+    return std.fmt.count("{f}", .{this.*});
 }
 
 pub fn serialize(this: *const Command, allocator: std.mem.Allocator) ![]u8 {
-    var buf = try std.ArrayList(u8).initCapacity(allocator, this.byteLength());
+    var buf = try std.array_list.Managed(u8).initCapacity(allocator, this.byteLength());
     errdefer buf.deinit();
     try this.write(buf.writer());
     return buf.items;
@@ -56,9 +56,9 @@ pub const Entry = struct {
     meta: Meta = .{},
     promise: Promise,
 
-    pub const Queue = std.fifo.LinearFifo(Entry, .Dynamic);
+    pub const Queue = bun.LinearFifo(Entry, .Dynamic);
 
-    pub fn deinit(self: *const @This(), allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         allocator.free(self.serialized_data);
     }
 
@@ -127,20 +127,20 @@ pub const Promise = struct {
         };
     }
 
-    pub fn resolve(self: *Promise, globalObject: *jsc.JSGlobalObject, value: *protocol.RESPValue) void {
+    pub fn resolve(self: *Promise, globalObject: *jsc.JSGlobalObject, value: *protocol.RESPValue) bun.JSTerminated!void {
         const options = protocol.RESPValue.ToJSOptions{
             .return_as_buffer = self.meta.return_as_buffer,
         };
 
         const js_value = value.toJSWithOptions(globalObject, options) catch |err| {
-            self.reject(globalObject, globalObject.takeError(err));
+            try self.reject(globalObject, globalObject.takeError(err));
             return;
         };
-        self.promise.resolve(globalObject, js_value);
+        try self.promise.resolve(globalObject, js_value);
     }
 
-    pub fn reject(self: *Promise, globalObject: *jsc.JSGlobalObject, jsvalue: JSError!jsc.JSValue) void {
-        self.promise.reject(globalObject, jsvalue);
+    pub fn reject(self: *Promise, globalObject: *jsc.JSGlobalObject, jsvalue: JSError!jsc.JSValue) bun.JSTerminated!void {
+        try self.promise.reject(globalObject, jsvalue);
     }
 
     pub fn deinit(self: *Promise) void {
@@ -153,10 +153,10 @@ pub const PromisePair = struct {
     meta: Meta,
     promise: Promise,
 
-    pub const Queue = std.fifo.LinearFifo(PromisePair, .Dynamic);
+    pub const Queue = bun.LinearFifo(PromisePair, .Dynamic);
 
-    pub fn rejectCommand(self: *PromisePair, globalObject: *jsc.JSGlobalObject, jsvalue: jsc.JSValue) void {
-        self.promise.reject(globalObject, jsvalue);
+    pub fn rejectCommand(self: *PromisePair, globalObject: *jsc.JSGlobalObject, jsvalue: jsc.JSValue) bun.JSTerminated!void {
+        try self.promise.reject(globalObject, jsvalue);
     }
 };
 

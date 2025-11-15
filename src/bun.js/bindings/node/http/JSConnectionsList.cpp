@@ -12,13 +12,10 @@ using namespace JSC;
 
 const ClassInfo JSConnectionsList::s_info = { "ConnectionsList"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSConnectionsList) };
 
-void JSConnectionsList::finishCreation(VM& vm, JSGlobalObject* globalObject, JSSet* allConnections, JSSet* activeConnections)
+void JSConnectionsList::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
-    m_allConnections.set(vm, this, allConnections);
-    m_activeConnections.set(vm, this, activeConnections);
 }
 
 template<typename Visitor>

@@ -266,6 +266,24 @@ describe.concurrent("napi", () => {
     });
   });
 
+  describe("napi_create_external_buffer", () => {
+    it("handles empty/null data without throwing", async () => {
+      const result = await checkSameOutput("test_napi_create_external_buffer_empty", []);
+      expect(result).toContain("PASS: napi_create_external_buffer with nullptr and zero length");
+      expect(result).toContain("PASS: napi_create_external_buffer with non-null data and zero length");
+      expect(result).toContain("PASS: napi_create_external_buffer with nullptr finalizer");
+      expect(result).not.toContain("FAIL");
+    });
+
+    it("empty buffer returns null pointer and 0 length from napi_get_buffer_info and napi_get_typedarray_info", async () => {
+      const result = await checkSameOutput("test_napi_empty_buffer_info", []);
+      expect(result).toContain("PASS: napi_get_buffer_info returns null pointer and 0 length for empty buffer");
+      expect(result).toContain("PASS: napi_get_typedarray_info returns null pointer and 0 length for empty buffer");
+      expect(result).toContain("PASS: napi_is_detached_arraybuffer returns true for empty buffer's arraybuffer");
+      expect(result).not.toContain("FAIL");
+    });
+  });
+
   describe("napi_async_work", () => {
     it("null checks execute callbacks", async () => {
       const output = await checkSameOutput("test_napi_async_work_execute_null_check", []);
@@ -529,6 +547,14 @@ describe.concurrent("napi", () => {
 
   it("behaves as expected when performing operations with an exception pending", async () => {
     await checkSameOutput("test_deferred_exceptions", []);
+  });
+
+  it("behaves as expected when performing operations with numeric string keys", async () => {
+    await checkSameOutput("test_napi_numeric_string_keys", []);
+  });
+
+  it("behaves as expected when performing operations with default values", async () => {
+    await checkSameOutput("test_napi_get_default_values", []);
   });
 
   it("NAPI finalizer iterator invalidation crash prevention", () => {

@@ -308,7 +308,7 @@ pub const PasswordObject = struct {
 pub const JSPasswordObject = struct {
     const PascalToUpperUnderscoreCaseFormatter = struct {
         input: []const u8,
-        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             for (self.input) |c| {
                 if (std.ascii.isUpper(c)) {
                     try writer.writeByte('_');
@@ -357,7 +357,7 @@ pub const JSPasswordObject = struct {
                 hash: []const u8,
 
                 pub fn toErrorInstance(this: Value, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
-                    const error_code = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "PASSWORD{}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}));
+                    const error_code = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "PASSWORD{f}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}));
                     defer bun.default_allocator.free(error_code);
                     const instance = globalObject.createErrorInstance("Password hashing failed with error \"{s}\"", .{@errorName(this.err)});
                     instance.put(globalObject, ZigString.static("code"), jsc.ZigString.init(error_code).toJS(globalObject));
@@ -365,7 +365,7 @@ pub const JSPasswordObject = struct {
                 }
             };
 
-            pub fn runFromJS(this: *Result) void {
+            pub fn runFromJS(this: *Result) bun.JSTerminated!void {
                 var promise = this.promise;
                 defer promise.deinit();
                 this.promise = .{};
@@ -375,12 +375,12 @@ pub const JSPasswordObject = struct {
                     .err => {
                         const error_instance = this.value.toErrorInstance(global);
                         bun.destroy(this);
-                        promise.reject(global, error_instance);
+                        try promise.reject(global, error_instance);
                     },
                     .hash => |value| {
                         const js_string = jsc.ZigString.init(value).toJS(global);
                         bun.destroy(this);
-                        promise.resolve(global, js_string);
+                        try promise.resolve(global, js_string);
                     },
                 }
             }
@@ -569,7 +569,7 @@ pub const JSPasswordObject = struct {
                 pass: bool,
 
                 pub fn toErrorInstance(this: Value, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
-                    const error_code = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "PASSWORD{}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}));
+                    const error_code = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "PASSWORD{f}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}));
                     defer bun.default_allocator.free(error_code);
                     const instance = globalObject.createErrorInstance("Password verification failed with error \"{s}\"", .{@errorName(this.err)});
                     instance.put(globalObject, ZigString.static("code"), jsc.ZigString.init(error_code).toJS(globalObject));
@@ -577,7 +577,7 @@ pub const JSPasswordObject = struct {
                 }
             };
 
-            pub fn runFromJS(this: *Result) void {
+            pub fn runFromJS(this: *Result) bun.JSTerminated!void {
                 var promise = this.promise;
                 defer promise.deinit();
                 this.promise = .{};
@@ -587,11 +587,11 @@ pub const JSPasswordObject = struct {
                     .err => {
                         const error_instance = this.value.toErrorInstance(global);
                         bun.destroy(this);
-                        promise.reject(global, error_instance);
+                        try promise.reject(global, error_instance);
                     },
                     .pass => |pass| {
                         bun.destroy(this);
-                        promise.resolve(global, jsc.JSValue.jsBoolean(pass));
+                        try promise.resolve(global, jsc.JSValue.jsBoolean(pass));
                     },
                 }
             }

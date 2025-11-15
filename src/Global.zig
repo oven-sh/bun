@@ -60,7 +60,7 @@ pub inline fn getStartTime() i128 {
     return bun.start_time;
 }
 
-extern "kernel32" fn SetThreadDescription(thread: std.os.windows.HANDLE, name: [*:0]const u16) callconv(std.os.windows.WINAPI) std.os.windows.HRESULT;
+extern "kernel32" fn SetThreadDescription(thread: std.os.windows.HANDLE, name: [*:0]const u16) callconv(.winapi) std.os.windows.HRESULT;
 
 pub fn setThreadName(name: [:0]const u8) void {
     if (Environment.isLinux) {
@@ -73,7 +73,7 @@ pub fn setThreadName(name: [:0]const u8) void {
     }
 }
 
-const ExitFn = *const fn () callconv(.C) void;
+const ExitFn = *const fn () callconv(.c) void;
 
 var on_exit_callbacks = std.ArrayListUnmanaged(ExitFn){};
 export fn Bun__atexit(function: ExitFn) void {
@@ -114,6 +114,9 @@ pub fn exit(code: u32) noreturn {
         bun.debug_allocator_data.backing = null;
     }
 
+    // Flush output before exiting to ensure all messages are visible
+    Output.flush();
+
     switch (Environment.os) {
         .mac => std.c.exit(@bitCast(code)),
         .windows => {
@@ -142,7 +145,7 @@ pub fn raiseIgnoringPanicHandler(sig: bun.SignalCode) noreturn {
     if (bun.Environment.os != .windows) {
         var sa: std.c.Sigaction = .{
             .handler = .{ .handler = std.posix.SIG.DFL },
-            .mask = std.posix.empty_sigset,
+            .mask = std.posix.sigemptyset(),
             .flags = std.posix.SA.RESETHAND,
         };
         _ = std.c.sigaction(@intFromEnum(sig), &sa, null);

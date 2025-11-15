@@ -51,7 +51,7 @@ pub const MacroContext = struct {
         bun.assert(!isMacroPath(import_record_path_without_macro_prefix));
 
         const input_specifier = brk: {
-            if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record_path, .bun)) |replacement| {
+            if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record_path, .bun, .{})) |replacement| {
                 break :brk replacement.path;
             }
 
@@ -584,16 +584,14 @@ pub const Runner = struct {
                 return result;
             }
 
-            pub fn call() callconv(.C) void {
+            pub fn call() callconv(.c) void {
                 const call_args_copy = call_args;
                 const local_result = @call(.auto, Run.runAsync, call_args_copy);
                 result = local_result;
             }
         };
 
-        // TODO: can change back to `return CallData.callWrapper(.{`
-        // when https://github.com/ziglang/zig/issues/16242 is fixed
-        return CallData.callWrapper(CallArgs{
+        return CallData.callWrapper(.{
             macro,
             log,
             allocator,

@@ -86,8 +86,6 @@ pub const Location = struct {
     length: usize = 0,
     /// Text on the line, avoiding the need to refetch the source code
     line_text: ?string = null,
-    // TODO: remove this unused field
-    suggestion: ?string = null,
     // TODO: document or remove
     offset: usize = 0,
 
@@ -96,7 +94,6 @@ pub const Location = struct {
         cost += this.file.len;
         cost += this.namespace.len;
         if (this.line_text) |text| cost += text.len;
-        if (this.suggestion) |text| cost += text.len;
         return cost;
     }
 
@@ -104,7 +101,6 @@ pub const Location = struct {
         builder.count(this.file);
         builder.count(this.namespace);
         if (this.line_text) |text| builder.count(text);
-        if (this.suggestion) |text| builder.count(text);
     }
 
     pub fn clone(this: Location, allocator: std.mem.Allocator) !Location {
@@ -115,7 +111,6 @@ pub const Location = struct {
             .column = this.column,
             .length = this.length,
             .line_text = if (this.line_text != null) try allocator.dupe(u8, this.line_text.?) else null,
-            .suggestion = if (this.suggestion != null) try allocator.dupe(u8, this.suggestion.?) else null,
             .offset = this.offset,
         };
     }
@@ -128,7 +123,6 @@ pub const Location = struct {
             .column = this.column,
             .length = this.length,
             .line_text = if (this.line_text != null) string_builder.append(this.line_text.?) else null,
-            .suggestion = if (this.suggestion != null) string_builder.append(this.suggestion.?) else null,
             .offset = this.offset,
         };
     }
@@ -140,7 +134,6 @@ pub const Location = struct {
             .line = this.line,
             .column = this.column,
             .line_text = this.line_text orelse "",
-            .suggestion = this.suggestion orelse "",
             .offset = @as(u32, @truncate(this.offset)),
         };
     }
@@ -148,7 +141,7 @@ pub const Location = struct {
     // don't really know what's safe to deinit here!
     pub fn deinit(_: *Location, _: std.mem.Allocator) void {}
 
-    pub fn init(file: string, namespace: string, line: i32, column: i32, length: u32, line_text: ?string, suggestion: ?string) Location {
+    pub fn init(file: string, namespace: string, line: i32, column: i32, length: u32, line_text: ?string) Location {
         return Location{
             .file = file,
             .namespace = namespace,
@@ -156,7 +149,6 @@ pub const Location = struct {
             .column = column,
             .length = length,
             .line_text = line_text,
-            .suggestion = suggestion,
             .offset = length,
         };
     }
@@ -256,7 +248,7 @@ pub const Data = struct {
 
     pub fn writeFormat(
         this: *const Data,
-        to: anytype,
+        to: *std.Io.Writer,
         kind: Kind,
         redact_sensitive_information: bool,
         comptime enable_ansi_colors: bool,
@@ -299,12 +291,12 @@ pub const Data = struct {
                         line_offset_for_second_line += std.fmt.count("{d} | ", .{location.line});
                     }
 
-                    try to.print("{}\n", .{bun.fmt.fmtJavaScript(line_text, .{
+                    try to.print("{f}\n", .{bun.fmt.fmtJavaScript(line_text, .{
                         .enable_colors = enable_ansi_colors,
                         .redact_sensitive_information = redact_sensitive_information,
                     })});
 
-                    try to.writeByteNTimes(' ', line_offset_for_second_line);
+                    try to.splatByteAll(' ', line_offset_for_second_line);
                     if ((comptime enable_ansi_colors) and message_color.len > 0) {
                         try to.writeAll(message_color);
                         try to.writeAll(color_name);
@@ -338,7 +330,7 @@ pub const Data = struct {
         if (this.location) |*location| {
             if (location.file.len > 0) {
                 try to.writeAll("\n");
-                try to.writeByteNTimes(' ', (kind.string().len + ": ".len) - "at ".len);
+                try to.splatByteAll(' ', (kind.string().len + ": ".len) - "at ".len);
 
                 try to.print(comptime Output.prettyFmt("<d>at <r><cyan>{s}<r>", enable_ansi_colors), .{
                     location.file,
@@ -513,7 +505,7 @@ pub const Msg = struct {
 
     pub fn writeFormat(
         msg: *const Msg,
-        to: anytype,
+        to: *std.Io.Writer,
         comptime enable_ansi_colors: bool,
     ) !void {
         try msg.data.writeFormat(to, msg.kind, msg.redact_sensitive_information, enable_ansi_colors);
@@ -605,7 +597,7 @@ pub const Range = struct {
 pub const Log = struct {
     warnings: u32 = 0,
     errors: u32 = 0,
-    msgs: std.ArrayList(Msg),
+    msgs: std.array_list.Managed(Msg),
     level: Level = if (Environment.isDebug) Level.info else Level.warn,
 
     clone_line_text: bool = false,
@@ -692,14 +684,14 @@ pub const Log = struct {
 
     pub fn init(allocator: std.mem.Allocator) Log {
         return Log{
-            .msgs = std.ArrayList(Msg).init(allocator),
+            .msgs = std.array_list.Managed(Msg).init(allocator),
             .level = default_log_level,
         };
     }
 
     pub fn initComptime(allocator: std.mem.Allocator) Log {
         return Log{
-            .msgs = std.ArrayList(Msg).init(allocator),
+            .msgs = std.array_list.Managed(Msg).init(allocator),
         };
     }
 
@@ -859,7 +851,7 @@ pub const Log = struct {
     }
 
     pub inline fn allocPrint(allocator: std.mem.Allocator, comptime fmt: string, args: anytype) OOM!string {
-        return switch (Output.enable_ansi_colors) {
+        return switch (Output.enable_ansi_colors_stderr) {
             inline else => |enable_ansi_colors| std.fmt.allocPrint(allocator, Output.prettyFmt(fmt, enable_ansi_colors), args),
         };
     }
@@ -1290,13 +1282,13 @@ pub const Log = struct {
         );
     }
 
-    pub fn print(self: *const Log, to: anytype) !void {
-        return switch (Output.enable_ansi_colors) {
+    pub fn print(self: *const Log, to: *std.Io.Writer) !void {
+        return switch (Output.enable_ansi_colors_stderr) {
             inline else => |enable_ansi_colors| self.printWithEnableAnsiColors(to, enable_ansi_colors),
         };
     }
 
-    pub fn printWithEnableAnsiColors(self: *const Log, to: anytype, comptime enable_ansi_colors: bool) !void {
+    pub fn printWithEnableAnsiColors(self: *const Log, to: *std.Io.Writer, comptime enable_ansi_colors: bool) !void {
         var needs_newline = false;
         if (self.warnings > 0 and self.errors > 0) {
             // Print warnings at the top

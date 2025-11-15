@@ -61,7 +61,7 @@ pub const Linker = struct {
         file_path: Fs.Path,
         fd: ?FileDescriptorType,
     ) !Fs.FileSystem.RealFS.ModKey {
-        var file: std.fs.File = if (fd) |_fd| _fd.stdFile() else try std.fs.openFileAbsolute(file_path.text, .{ .mode = .read_only });
+        var file: std.fs.File = if (fd) |_fd| _fd.stdFile() else try std.fs.cwd().openFile(file_path.text, .{ .mode = .read_only });
         Fs.FileSystem.setMaxFd(file.handle);
         const modkey = try Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs, file_path.text, file);
 
@@ -107,7 +107,7 @@ pub const Linker = struct {
         comptime is_bun: bool,
     ) !void {
         const source_dir = file_path.sourceDir();
-        var externals = std.ArrayList(u32).init(linker.allocator);
+        var externals = std.array_list.Managed(u32).init(linker.allocator);
         var had_resolve_errors = false;
 
         const is_deferred = result.pending_imports.len > 0;
@@ -142,7 +142,7 @@ pub const Linker = struct {
                     }
 
                     if (comptime is_bun) {
-                        if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, linker.options.target)) |replacement| {
+                        if (jsc.ModuleLoader.HardcodedModule.Alias.get(import_record.path.text, linker.options.target, .{ .rewrite_jest_for_tests = linker.options.rewrite_jest_for_tests })) |replacement| {
                             if (replacement.tag == .builtin and import_record.kind.isCommonJS())
                                 continue;
                             import_record.path.text = replacement.path;
@@ -159,29 +159,9 @@ pub const Linker = struct {
                             continue;
                         }
 
-                        // TODO: this is technical debt
-                        if (linker.options.rewrite_jest_for_tests) {
-                            if (strings.eqlComptime(
-                                import_record.path.text,
-                                "@jest/globals",
-                            ) or strings.eqlComptime(
-                                import_record.path.text,
-                                "vitest",
-                            )) {
-                                import_record.path.namespace = "bun";
-                                import_record.tag = .bun_test;
-                                import_record.path.text = "test";
-                                continue;
-                            }
-                        }
-
                         if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
                             import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                             import_record.path.namespace = "bun";
-
-                            if (strings.eqlComptime(import_record.path.text, "test")) {
-                                import_record.tag = .bun_test;
-                            }
 
                             // don't link bun
                             continue;

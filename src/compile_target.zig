@@ -31,7 +31,7 @@ const Libc = enum {
         };
     }
 
-    pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         if (self == .musl) {
             try writer.writeAll("-musl");
         }
@@ -40,7 +40,7 @@ const Libc = enum {
 
 const BaselineFormatter = struct {
     baseline: bool = false,
-    pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         if (self.baseline) {
             try writer.writeAll("-baseline");
         }
@@ -66,7 +66,7 @@ pub fn isDefault(this: *const CompileTarget) bool {
 }
 
 pub fn toNPMRegistryURL(this: *const CompileTarget, buf: []u8) ![]const u8 {
-    if (bun.getenvZ("BUN_COMPILE_TARGET_TARBALL_URL")) |url| {
+    if (bun.env_var.BUN_COMPILE_TARGET_TARBALL_URL.get()) |url| {
         if (strings.hasPrefixComptime(url, "http://") or strings.hasPrefixComptime(url, "https://"))
             return url;
     }
@@ -112,12 +112,11 @@ pub fn toNPMRegistryURLWithURL(this: *const CompileTarget, buf: []u8, registry_u
     };
 }
 
-pub fn format(this: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
-    try std.fmt.format(
-        writer,
+pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    try writer.print(
         // bun-darwin-x64-baseline-v1.0.0
         // This doesn't match up 100% with npm, but that's okay.
-        "bun-{s}-{s}{}{}-v{d}.{d}.{d}",
+        "bun-{s}-{s}{f}{f}-v{d}.{d}.{d}",
         .{
             this.os.npmName(),
             this.arch.npmName(),
@@ -421,7 +420,7 @@ pub fn from(input_: []const u8) CompileTarget {
 
                 if (unsupported_token) |token| {
                     Output.errGeneric(
-                        \\Unsupported target {} in "bun{s}"
+                        \\Unsupported target {f} in "bun{s}"
                         \\To see the supported targets:
                         \\  https://bun.com/docs/bundler/executables
                     , .{

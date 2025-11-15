@@ -74,27 +74,48 @@ pub const String = extern struct {
         return BunString__transferToJS(this, globalThis);
     }
 
-    pub fn toOwnedSlice(this: String, allocator: std.mem.Allocator) ![]u8 {
-        const bytes, _ = try this.toOwnedSliceReturningAllASCII(allocator);
+    pub fn toOwnedSlice(this: String, allocator: std.mem.Allocator) OOM![]u8 {
+        const bytes, _ = try this.toOwnedSliceImpl(allocator);
         return bytes;
     }
 
+    /// Returns `.{ utf8_bytes, is_all_ascii }`.
+    ///
+    /// `false` means the string contains at least one non-ASCII character.
     pub fn toOwnedSliceReturningAllASCII(this: String, allocator: std.mem.Allocator) OOM!struct { []u8, bool } {
-        switch (this.tag) {
-            .ZigString => return .{ try this.value.ZigString.toOwnedSlice(allocator), true },
-            .WTFStringImpl => {
-                var utf8_slice = this.value.WTFStringImpl.toUTF8WithoutRef(allocator);
-                if (utf8_slice.allocator.get()) |alloc| {
-                    if (!isWTFAllocator(alloc)) {
-                        return .{ @constCast(utf8_slice.slice()), false };
-                    }
-                }
+        const bytes, const ascii_status = try this.toOwnedSliceImpl(allocator);
+        const is_ascii = switch (ascii_status) {
+            .all_ascii => true,
+            .non_ascii => false,
+            .unknown => bun.strings.isAllASCII(bytes),
+        };
+        return .{ bytes, is_ascii };
+    }
 
-                return .{ @constCast((try utf8_slice.cloneIfNeeded(allocator)).slice()), true };
+    fn toOwnedSliceImpl(this: String, allocator: std.mem.Allocator) !struct { []u8, AsciiStatus } {
+        return switch (this.tag) {
+            .ZigString => .{ try this.value.ZigString.toOwnedSlice(allocator), .unknown },
+            .WTFStringImpl => blk: {
+                const utf8_slice = this.value.WTFStringImpl.toUTF8WithoutRef(allocator);
+                // `utf8_slice.allocator` is either null, or `allocator`.
+                errdefer utf8_slice.deinit();
+
+                const ascii_status: AsciiStatus = if (utf8_slice.allocator.isNull())
+                    .all_ascii // no allocation means the string was 8-bit and all ascii
+                else if (this.value.WTFStringImpl.is8Bit())
+                    .non_ascii // otherwise the allocator would be null for an 8-bit string
+                else
+                    .unknown; // string was 16-bit; may or may not be all ascii
+
+                const owned_slice = try utf8_slice.cloneIfBorrowed(allocator);
+                // `owned_slice.allocator` is guaranteed to be `allocator`.
+                break :blk .{ owned_slice.mut(), ascii_status };
             },
-            .StaticZigString => return .{ try this.value.StaticZigString.toOwnedSlice(allocator), false },
-            else => return .{ &[_]u8{}, false },
-        }
+            .StaticZigString => .{
+                try this.value.StaticZigString.toOwnedSlice(allocator), .unknown,
+            },
+            else => return .{ &.{}, .all_ascii }, // trivially all ascii
+        };
     }
 
     pub fn createIfDifferent(other: String, utf8_slice: []const u8) String {
@@ -183,7 +204,7 @@ pub const String = extern struct {
 
     pub fn cloneUTF16(bytes: []const u16) String {
         if (bytes.len == 0) return String.empty;
-        if (bun.strings.firstNonASCII16([]const u16, bytes) == null) {
+        if (bun.strings.firstNonASCII16(bytes) == null) {
             return validateRefCount(bun.cpp.BunString__fromUTF16ToLatin1(bytes.ptr, bytes.len));
         }
         return validateRefCount(bun.cpp.BunString__fromUTF16(bytes.ptr, bytes.len));
@@ -359,7 +380,7 @@ pub const String = extern struct {
         len: usize,
         isLatin1: bool,
         ptr: ?*anyopaque,
-        callback: ?*const fn (*anyopaque, *anyopaque, u32) callconv(.C) void,
+        callback: ?*const fn (*anyopaque, *anyopaque, u32) callconv(.c) void,
     ) String;
     extern fn BunString__createStaticExternal(
         bytes: [*]const u8,
@@ -371,7 +392,7 @@ pub const String = extern struct {
     /// buffer is the pointer to the buffer, either [*]u8 or [*]u16
     /// len is the number of characters in that buffer.
     pub fn ExternalStringImplFreeFunction(comptime Ctx: type) type {
-        return fn (ctx: Ctx, buffer: *anyopaque, len: u32) callconv(.C) void;
+        return fn (ctx: Ctx, buffer: *anyopaque, len: u32) callconv(.c) void;
     }
 
     /// Creates a `String` backed by a `WTF::ExternalStringImpl`.
@@ -493,8 +514,8 @@ pub const String = extern struct {
         return String.init(ZigString.fromBytes(value));
     }
 
-    pub fn format(self: String, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-        try self.toZigString().format(fmt, opts, writer);
+    pub fn format(self: String, writer: *std.Io.Writer) !void {
+        try self.toZigString().format(writer);
     }
 
     pub fn fromJS(value: bun.jsc.JSValue, globalObject: *jsc.JSGlobalObject) bun.JSError!String {
@@ -747,15 +768,26 @@ pub const String = extern struct {
         return ZigString.Slice.empty;
     }
 
+    /// Equivalent to calling `toUTF8WithoutRef` followed by `cloneIfBorrowed`.
+    pub fn toUTF8Owned(this: String, allocator: std.mem.Allocator) ZigString.Slice {
+        return bun.handleOom(this.toUTF8WithoutRef(allocator).cloneIfBorrowed(allocator));
+    }
+
+    /// The returned slice is always allocated by `allocator`.
+    pub fn toUTF8Bytes(this: String, allocator: std.mem.Allocator) []u8 {
+        return this.toUTF8Owned(allocator).mut();
+    }
+
     /// use `byteSlice` to get a `[]const u8`.
-    pub fn toSlice(this: String, allocator: std.mem.Allocator) SliceWithUnderlyingString {
+    pub fn toSlice(this: *String, allocator: std.mem.Allocator) SliceWithUnderlyingString {
+        defer this.* = .empty;
         return SliceWithUnderlyingString{
             .utf8 = this.toUTF8(allocator),
-            .underlying = this,
+            .underlying = this.*,
         };
     }
 
-    pub fn toThreadSafeSlice(this: *const String, allocator: std.mem.Allocator) bun.OOM!SliceWithUnderlyingString {
+    pub fn toThreadSafeSlice(this: *String, allocator: std.mem.Allocator) bun.OOM!SliceWithUnderlyingString {
         if (this.tag == .WTFStringImpl) {
             if (!this.value.WTFStringImpl.isThreadSafe()) {
                 const slice = this.value.WTFStringImpl.toUTF8WithoutRef(allocator);
@@ -825,7 +857,7 @@ pub const String = extern struct {
 
     pub fn createFormatForJS(globalObject: *jsc.JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError!jsc.JSValue {
         jsc.markBinding(@src());
-        var builder = std.ArrayList(u8).init(bun.default_allocator);
+        var builder = std.array_list.Managed(u8).init(bun.default_allocator);
         defer builder.deinit();
         bun.handleOom(builder.writer().print(fmt, args));
         return bun.cpp.BunString__createUTF8ForJS(globalObject, builder.items.ptr, builder.items.len);
@@ -1168,9 +1200,9 @@ pub const SliceWithUnderlyingString = struct {
         return this.utf8.slice();
     }
 
-    pub fn format(self: SliceWithUnderlyingString, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: SliceWithUnderlyingString, writer: *std.Io.Writer) !void {
         if (self.utf8.len == 0) {
-            try self.underlying.format(fmt, opts, writer);
+            try self.underlying.format(writer);
             return;
         }
 
@@ -1237,6 +1269,7 @@ const std = @import("std");
 const bun = @import("bun");
 const JSError = bun.JSError;
 const OOM = bun.OOM;
+const AsciiStatus = bun.strings.AsciiStatus;
 
 const jsc = bun.jsc;
 const JSValue = bun.jsc.JSValue;

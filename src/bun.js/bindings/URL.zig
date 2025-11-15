@@ -16,6 +16,20 @@ pub const URL = opaque {
     extern fn URL__getFileURLString(*String) String;
     extern fn URL__getHrefJoin(*String, *String) String;
     extern fn URL__pathFromFileURL(*String) String;
+    extern fn URL__hash(*URL) String;
+    extern fn URL__fragmentIdentifier(*URL) String;
+
+    /// Includes the leading '#'.
+    pub fn hash(url: *URL) String {
+        jsc.markBinding(@src());
+        return URL__hash(url);
+    }
+
+    /// Exactly the same as hash, excluding the leading '#'.
+    pub fn fragmentIdentifier(url: *URL) String {
+        jsc.markBinding(@src());
+        return URL__fragmentIdentifier(url);
+    }
 
     pub fn hrefFromString(str: bun.String) String {
         jsc.markBinding(@src());
@@ -86,10 +100,28 @@ pub const URL = opaque {
         jsc.markBinding(@src());
         return URL__search(url);
     }
+
+    /// Returns the host WITHOUT the port.
+    ///
+    /// Note that this does NOT match JS behavior, which returns the host with the port. See
+    /// `hostname` for the JS equivalent of `host`.
+    ///
+    /// ```
+    /// URL("http://example.com:8080").host() => "example.com"
+    /// ```
     pub fn host(url: *URL) String {
         jsc.markBinding(@src());
         return URL__host(url);
     }
+
+    /// Returns the host WITH the port.
+    ///
+    /// Note that this does NOT match JS behavior which returns the host without the port. See
+    /// `host` for the JS equivalent of `hostname`.
+    ///
+    /// ```
+    /// URL("http://example.com:8080").hostname() => "example.com:8080"
+    /// ```
     pub fn hostname(url: *URL) String {
         jsc.markBinding(@src());
         return URL__hostname(url);

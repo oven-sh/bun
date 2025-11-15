@@ -23,7 +23,7 @@ pub fn toBeEmpty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFra
                         _: *JSGlobalObject,
                         any_: ?*anyopaque,
                         _: JSValue,
-                    ) callconv(.C) void {
+                    ) callconv(.c) void {
                         bun.cast(*bool, any_.?).* = true;
                     }
                 }.anythingInIterator);
@@ -44,7 +44,7 @@ pub fn toBeEmpty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFra
         } else {
             const signature = comptime getSignature("toBeEmpty", "", false);
             const fmt = signature ++ "\n\nExpected value to be a string, object, or iterable" ++
-                "\n\nReceived: <red>{any}<r>\n";
+                "\n\nReceived: <red>{f}<r>\n";
             return globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
         }
     } else if (std.math.isNan(actual_length)) {
@@ -56,7 +56,7 @@ pub fn toBeEmpty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFra
     if (not and pass) {
         const signature = comptime getSignature("toBeEmpty", "", true);
         const fmt = signature ++ "\n\nExpected value <b>not<r> to be a string, object, or iterable" ++
-            "\n\nReceived: <red>{any}<r>\n";
+            "\n\nReceived: <red>{f}<r>\n";
         return globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
     }
 
@@ -66,13 +66,13 @@ pub fn toBeEmpty(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFra
     if (not) {
         const signature = comptime getSignature("toBeEmpty", "", true);
         const fmt = signature ++ "\n\nExpected value <b>not<r> to be empty" ++
-            "\n\nReceived: <red>{any}<r>\n";
+            "\n\nReceived: <red>{f}<r>\n";
         return globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
     }
 
     const signature = comptime getSignature("toBeEmpty", "", false);
     const fmt = signature ++ "\n\nExpected value to be empty" ++
-        "\n\nReceived: <red>{any}<r>\n";
+        "\n\nReceived: <red>{f}<r>\n";
     return globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
 }
 

@@ -22,6 +22,7 @@ pub const BunObject = struct {
     pub const gzipSync = toJSCallback(JSZlib.gzipSync);
     pub const indexOfLine = toJSCallback(Bun.indexOfLine);
     pub const inflateSync = toJSCallback(JSZlib.inflateSync);
+    pub const isBodyStreaming = toJSCallback(Bun.isBodyStreaming);
     pub const jest = toJSCallback(@import("../test/jest.zig").Jest.call);
     pub const listen = toJSCallback(host_fn.wrapStaticMethod(api.Listener, "listen", false));
     pub const mmap = toJSCallback(Bun.mmapFile);
@@ -158,6 +159,7 @@ pub const BunObject = struct {
         @export(&BunObject.gzipSync, .{ .name = callbackName("gzipSync") });
         @export(&BunObject.indexOfLine, .{ .name = callbackName("indexOfLine") });
         @export(&BunObject.inflateSync, .{ .name = callbackName("inflateSync") });
+        @export(&BunObject.isBodyStreaming, .{ .name = callbackName("isBodyStreaming") });
         @export(&BunObject.jest, .{ .name = callbackName("jest") });
         @export(&BunObject.listen, .{ .name = callbackName("listen") });
         @export(&BunObject.mmap, .{ .name = callbackName("mmap") });
@@ -987,6 +989,30 @@ pub const Crypto = @import("./crypto.zig");
 pub fn nanoseconds(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const ns = globalThis.bunVM().origin_timer.read();
     return jsc.JSValue.jsNumberFromUint64(ns);
+}
+
+pub fn isBodyStreaming(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+    const arguments = callframe.arguments_old(1);
+
+    // Expect exactly one argument
+    if (arguments.len < 1) {
+        return globalObject.throwNotEnoughArguments("isBodyStreaming", 1, 0);
+    }
+
+    const value = arguments.ptr[0];
+
+    // Check if it's a Response object
+    if (value.as(jsc.WebCore.Response)) |response| {
+        return jsc.JSValue.jsBoolean(response.isBodyStreaming(globalObject));
+    }
+
+    // Also support Request objects for consistency
+    if (value.as(jsc.WebCore.Request)) |request| {
+        return jsc.JSValue.jsBoolean(request.isBodyStreaming(globalObject));
+    }
+
+    // If it's not a Response or Request, throw an error
+    return globalObject.throwInvalidArgumentType("isBodyStreaming", "body", "Response or Request");
 }
 
 pub fn serve(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {

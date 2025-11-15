@@ -29,6 +29,7 @@ pub const getText = RequestMixin.getText;
 pub const getBytes = RequestMixin.getBytes;
 pub const getBody = RequestMixin.getBody;
 pub const getBodyUsed = RequestMixin.getBodyUsed;
+pub const isBodyStreaming = RequestMixin.isBodyStreaming;
 pub const getJSON = RequestMixin.getJSON;
 pub const getArrayBuffer = RequestMixin.getArrayBuffer;
 pub const getBlob = RequestMixin.getBlob;

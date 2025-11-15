@@ -1162,6 +1162,26 @@ pub fn Mixin(comptime Type: type) type {
             );
         }
 
+        pub fn isBodyStreaming(this: *Type, globalObject: *jsc.JSGlobalObject) bool {
+            const body_value = this.getBodyValue();
+
+            // Check if body is in Locked state with a readable stream first
+            if (body_value.* == .Locked) {
+                if (body_value.Locked.readable.held.has()) {
+                    return true;
+                }
+            }
+
+            // Check if the body has a ReadableStream attached via JS getter
+            if (@hasDecl(Type, "getBodyReadableStream")) {
+                if (this.getBodyReadableStream(globalObject) != null) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         fn lifetimeWrap(comptime Fn: anytype, comptime lifetime: jsc.WebCore.Lifetime) fn (*AnyBlob, *jsc.JSGlobalObject) jsc.JSValue {
             return struct {
                 fn wrap(this: *AnyBlob, globalObject: *jsc.JSGlobalObject) jsc.JSValue {

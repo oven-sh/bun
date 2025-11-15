@@ -43,6 +43,12 @@ pub fn installHoistedPackages(
         }
     }
 
+    // If there are no dependencies to install and the original lockfile had no dependencies either, don't create node_modules
+    // We still create node_modules if the original lockfile has packages (e.g., with --production filtering devDeps)
+    if (this.lockfile.buffers.hoisted_dependencies.items.len == 0 and original_tree_dep_ids.items.len == 0) {
+        return PackageInstall.Summary{};
+    }
+
     // If there was already a valid lockfile and so we did not resolve, i.e. there was zero network activity
     // the packages could still not be in the cache dir
     // this would be a common scenario in a CI environment

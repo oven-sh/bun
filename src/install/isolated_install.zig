@@ -614,6 +614,12 @@ pub fn installIsolatedPackages(
         };
     };
 
+    // If there are no packages to install and no lockfile packages, don't create node_modules
+    // We still create node_modules if lockfile has packages (e.g., with --production filtering devDeps)
+    if (store.entries.len == 0 and lockfile.packages.len == 0) {
+        return PackageInstall.Summary{};
+    }
+
     // setup node_modules/.bun
     const is_new_bun_modules = is_new_bun_modules: {
         const node_modules_path = bun.OSPathLiteral("node_modules");

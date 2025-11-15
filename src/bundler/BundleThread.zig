@@ -92,7 +92,7 @@ pub fn BundleThread(CompletionStruct: type) type {
                 instance.generation +|= 1;
 
                 if (has_bundled) {
-                    bun.mimalloc.mi_collect(false);
+                    if (bun.use_mimalloc) bun.mimalloc.mi_collect(false);
                     has_bundled = false;
                 }
 
@@ -105,7 +105,7 @@ pub fn BundleThread(CompletionStruct: type) type {
             var heap = ThreadLocalArena.init();
             defer heap.deinit();
 
-            const allocator = heap.allocator();
+            const allocator = bun.default_allocator;
             var ast_memory_allocator = try allocator.create(js_ast.ASTMemoryAllocator);
             ast_memory_allocator.* = .{ .allocator = allocator };
             ast_memory_allocator.reset();

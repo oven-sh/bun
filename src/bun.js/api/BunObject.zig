@@ -1299,13 +1299,7 @@ pub fn getValkeyDefaultClient(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject)
     const as_js = valkey.toJS(globalThis);
 
     valkey.this_value = jsc.JSRef.initWeak(as_js);
-    valkey._subscription_ctx = SubscriptionCtx.init(valkey) catch |err| {
-        if (err != error.JSError) {
-            _ = globalThis.throwError(err, "Failed to create Redis client") catch {};
-            return .zero;
-        }
-        return .zero;
-    };
+    valkey._subscription_ctx = SubscriptionCtx.init(valkey);
 
     return as_js;
 }
@@ -1450,7 +1444,7 @@ pub const JSZlib = struct {
         reader.deinit();
     }
     export fn global_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
-        bun.allocators.freeWithoutSize(ctx);
+        bun.default_free(ctx);
     }
     export fn compressor_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
         var compressor: *zlib.ZlibCompressorArrayList = bun.cast(*zlib.ZlibCompressorArrayList, ctx.?);
@@ -1734,7 +1728,7 @@ pub const JSZlib = struct {
 
 pub const JSZstd = struct {
     export fn deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
-        bun.allocators.freeWithoutSize(ctx);
+        bun.default_free(ctx);
     }
 
     inline fn getOptions(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!struct { jsc.Node.StringOrBuffer, ?JSValue } {

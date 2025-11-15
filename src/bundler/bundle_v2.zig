@@ -3020,7 +3020,7 @@ pub const BundleV2 = struct {
                     parse.path.namespace,
                     parse.path.text,
                 });
-                const load = bun.handleOom(bun.default_allocator.create(jsc.API.JSBundler.Load));
+                const load: *jsc.API.JSBundler.Load = bun.handleOom(bun.default_allocator.create(jsc.API.JSBundler.Load));
                 load.* = jsc.API.JSBundler.Load.init(this, parse);
                 load.dispatch();
                 return true;

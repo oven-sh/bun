@@ -81,7 +81,7 @@ function getNodeParallelTestTimeout(testPath) {
     return 90_000;
   }
   if (!isCI) return 60_000; // everything slower in debug mode
-  if (options["step"]?.includes("-asan-")) return 60_000;
+  if (isASAN) return 60_000;
   return 20_000;
 }
 
@@ -169,8 +169,13 @@ const { values: options, positionals: filters } = parseArgs({
     },
   },
 });
+startGroup("CLI Options", () => {
+  console.log(options);
+});
 
 const cliOptions = options;
+const isLSAN = options["step"]?.includes("-lsan-");
+const isASAN = options["step"]?.includes("-asan-") || isLSAN;
 
 if (cliOptions.junit) {
   try {
@@ -594,15 +599,14 @@ async function runTests() {
               NO_COLOR: "1",
               BUN_DEBUG_QUIET_LOGS: "1",
             };
-            if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
+            if ((isASAN || !isCI) && shouldValidateExceptions(testPath)) {
               env.BUN_JSC_validateExceptionChecks = "1";
               env.BUN_JSC_dumpSimulatedThrows = "1";
             }
-            if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
+            if ((isLSAN || !isCI) && shouldValidateLeakSan(testPath)) {
               env.BUN_DESTRUCT_VM_ON_EXIT = "1";
               env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
-              // prettier-ignore
-              env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+              env.LSAN_OPTIONS = `malloc_context_size=200:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
             }
             return runTest(title, async () => {
               const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -1340,15 +1344,14 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     GITHUB_ACTIONS: "true", // always true so annotations are parsed
     ...opts["env"],
   };
-  if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
+  if ((isASAN || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
     env.BUN_JSC_validateExceptionChecks = "1";
     env.BUN_JSC_dumpSimulatedThrows = "1";
   }
-  if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(relative(cwd, absPath))) {
+  if ((isLSAN || !isCI) && shouldValidateLeakSan(relative(cwd, absPath))) {
     env.BUN_DESTRUCT_VM_ON_EXIT = "1";
     env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
-    // prettier-ignore
-    env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
+    env.LSAN_OPTIONS = `malloc_context_size=200:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
   }
 
   const { ok, error, stdout, crashes } = await spawnBun(execPath, {
@@ -1963,8 +1966,9 @@ async function getExecPathFromBuildKite(target, buildId) {
   mkdirSync(releasePath, { recursive: true });
 
   let zipPath;
+  const build_target = target.includes("-lsan-") ? target.replace("-lsan-", "-asan-") : target;
   downloadLoop: for (let i = 0; i < 10; i++) {
-    const args = ["artifact", "download", "**", releasePath, "--step", target];
+    const args = ["artifact", "download", "**", releasePath, "--step", build_target];
     if (buildId) {
       args.push("--build", buildId);
     }
@@ -1985,12 +1989,12 @@ async function getExecPathFromBuildKite(target, buildId) {
       break downloadLoop;
     }
 
-    console.warn(`Waiting for ${target}.zip to be available...`);
-    await new Promise(resolve => setTimeout(resolve, i * 1000));
+    console.warn(`Waiting for ${build_target}.zip to be available...`);
+    await new Promise(resolve => setTimeout(resolve, (i + 1) * 1000));
   }
 
   if (!zipPath) {
-    throw new Error(`Could not find ${target}.zip from Buildkite: ${releasePath}`);
+    throw new Error(`Could not find ${build_target}.zip from Buildkite: ${releasePath}`);
   }
 
   await unzip(zipPath, releasePath);

@@ -711,11 +711,12 @@ pub const BunxCommand = struct {
             package_json.writeAll("{}\n") catch {};
         }
 
-        var args = bun.BoundedArray([]const u8, 8).fromSlice(&.{
+        var args = bun.BoundedArray([]const u8, 9).fromSlice(&.{
             try bun.selfExePath(),
             "add",
             install_param,
             "--no-summary",
+            "--trust",
         }) catch
             unreachable; // upper bound is known
 

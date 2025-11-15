@@ -1329,6 +1329,9 @@ my_config:
         // Octal numbers
         expect(YAML.stringify("0o777")).toBe('"0o777"');
         expect(YAML.stringify("0O644")).toBe('"0O644"');
+
+        // Zero prefix
+        expect(YAML.stringify({ a: "011", b: "110" })).toBe('{a: "011",b: "110"}');
       });
 
       test("quotes strings with colons followed by spaces", () => {

@@ -814,9 +814,9 @@ pub const RunCommand = struct {
                 }
             }
 
-            // Forward disable_default_env_files flag to env loader
-            // (skipping of default .env files and handling of --no-envfile/bunfig is in env_loader.zig)
-            this_transpiler.runEnvLoader(this_transpiler.options.env.disable_default_env_files) catch {};
+            // Always skip default .env files for package.json script runner
+            // (see comment in env_loader.zig:542-548 - the script's own bun instance loads .env)
+            this_transpiler.runEnvLoader(true) catch {};
         }
 
         this_transpiler.env.map.putDefault("npm_config_local_prefix", this_transpiler.fs.top_level_dir) catch unreachable;

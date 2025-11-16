@@ -1688,6 +1688,9 @@ pub const api = struct {
         /// env_files
         env_files: []const []const u8,
 
+        /// disable_default_env_files
+        disable_default_env_files: bool = false,
+
         /// extension_order
         extension_order: []const []const u8,
 

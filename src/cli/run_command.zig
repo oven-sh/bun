@@ -814,7 +814,9 @@ pub const RunCommand = struct {
                 }
             }
 
-            this_transpiler.runEnvLoader(true) catch {};
+            // Skip default env files for package.json scripts (see comment in env_loader.zig:542-548)
+            // Also respect --no-envfile flag or bunfig env.file = false
+            this_transpiler.runEnvLoader(true or this_transpiler.options.env.disable_default_files) catch {};
         }
 
         this_transpiler.env.map.putDefault("npm_config_local_prefix", this_transpiler.fs.top_level_dir) catch unreachable;

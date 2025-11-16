@@ -135,7 +135,7 @@ pub const Run = struct {
             try @import("./bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
             null,
         );
-        try bundle.runEnvLoader(false);
+        try bundle.runEnvLoader(bundle.options.env.disable_default_files);
         const mini = jsc.MiniEventLoop.initGlobal(bundle.env, null);
         mini.top_level_dir = ctx.args.absolute_working_dir orelse "";
         return bun.shell.Interpreter.initAndRunFromFile(ctx, mini, entry_path);

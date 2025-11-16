@@ -528,7 +528,7 @@ pub const Transpiler = struct {
             this.options.env.prefix = "BUN_";
         }
 
-        try this.runEnvLoader(false);
+        try this.runEnvLoader(this.options.env.disable_default_files);
 
         var is_production = this.env.isProduction();
 

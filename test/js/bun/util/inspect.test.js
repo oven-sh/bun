@@ -365,9 +365,9 @@ it("inspect", () => {
   });
   expect(Bun.inspect(mapWithOverriddenSize)).toBe("Map {}");
   expect(Bun.inspect(<div>foo</div>)).toBe("<div>foo</div>");
-  expect(Bun.inspect(<div hello>foo</div>)).toBe("<div hello=true>foo</div>");
-  expect(Bun.inspect(<div hello={1}>foo</div>)).toBe("<div hello=1>foo</div>");
-  expect(Bun.inspect(<div hello={123}>hi</div>)).toBe("<div hello=123>hi</div>");
+  expect(Bun.inspect(<div hello>foo</div>)).toBe("<div hello={true}>foo</div>");
+  expect(Bun.inspect(<div hello={1}>foo</div>)).toBe("<div hello={1}>foo</div>");
+  expect(Bun.inspect(<div hello={123}>hi</div>)).toBe("<div hello={123}>hi</div>");
   expect(Bun.inspect(<div hello="quoted">quoted</div>)).toBe('<div hello="quoted">quoted</div>');
   expect(
     Bun.inspect(

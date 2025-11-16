@@ -198,6 +198,8 @@ enum class DOMConstructorID : uint16_t {
     ReadableStreamSource,
     TransformStream,
     TransformStreamDefaultController,
+    CompressionStream,
+    DecompressionStream,
     WritableStream,
     WritableStreamDefaultController,
     WritableStreamDefaultWriter,

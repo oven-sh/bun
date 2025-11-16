@@ -754,14 +754,22 @@ pub const Value = union(Tag) {
                 return new_blob;
             },
             .InternalBlob => {
-                const new_blob = Blob.init(
-                    this.InternalBlob.toOwnedSlice(),
+                const bytes = this.InternalBlob.toOwnedSlice();
+                var new_blob = Blob.init(
+                    bytes,
                     // we will never resize it from here
                     // we have to use the default allocator
                     // even if it was actually allocated on a different thread
                     bun.default_allocator,
                     jsc.VirtualMachine.get().global,
                 );
+
+                // Preserve the was_string flag from InternalBlob by setting charset
+                // This allows wasString() to return true, which is used by Headers.from()
+                // to determine if a Content-Type header should be added
+                if (this.InternalBlob.was_string) {
+                    new_blob.charset = if (bun.strings.isAllASCII(bytes)) .all_ascii else .non_ascii;
+                }
 
                 this.* = .{ .Used = {} };
                 return new_blob;
@@ -771,17 +779,24 @@ pub const Value = union(Tag) {
                 var wtf = this.WTFStringImpl;
                 defer wtf.deref();
                 if (wtf.toUTF8IfNeeded(bun.default_allocator)) |allocated_slice| {
+                    const bytes = allocated_slice.slice();
                     new_blob = Blob.init(
-                        @constCast(allocated_slice.slice()),
+                        @constCast(bytes),
                         bun.default_allocator,
                         jsc.VirtualMachine.get().global,
                     );
+                    // Mark that this blob came from a string by setting charset
+                    // This allows wasString() to return true
+                    new_blob.charset = if (bun.strings.isAllASCII(bytes)) .all_ascii else .non_ascii;
                 } else {
+                    const bytes = wtf.latin1Slice();
                     new_blob = Blob.init(
-                        bun.handleOom(bun.default_allocator.dupe(u8, wtf.latin1Slice())),
+                        bun.handleOom(bun.default_allocator.dupe(u8, bytes)),
                         bun.default_allocator,
                         jsc.VirtualMachine.get().global,
                     );
+                    // Mark that this blob came from a string by setting charset
+                    new_blob.charset = if (bun.strings.isAllASCII(bytes)) .all_ascii else .non_ascii;
                 }
 
                 this.* = .{ .Used = {} };

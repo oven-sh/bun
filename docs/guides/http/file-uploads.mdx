@@ -65,6 +65,7 @@ First we use the [`.formData()`](https://developer.mozilla.org/en-US/docs/Web/AP
 
 Finally, we write the `Blob` to disk using [`Bun.write()`](https://bun.com/docs/api/file-io#writing-files-bun-write).
 
+{/* prettier-ignore */}
 ```ts index.ts icon="/icons/typescript.svg"
 const server = Bun.serve({
   port: 4000,
@@ -80,8 +81,7 @@ const server = Bun.serve({
       });
 
     // parse formdata at /action // [!code ++]
-    if (url.pathname === "/action") {
-      // [!code ++]
+    if (url.pathname === "/action") { // [!code ++]
       const formdata = await req.formData(); // [!code ++]
       const name = formdata.get("name"); // [!code ++]
       const profilePicture = formdata.get("profilePicture"); // [!code ++]

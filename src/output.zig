@@ -395,17 +395,27 @@ pub const Source = struct {
                     stderr_descriptor_type = OutputStreamDescriptor.terminal;
                 }
 
-                var enable_color: ?bool = null;
+                // Determine if colors should be enabled
+                // Priority:
+                // 1. FORCE_COLOR environment variable - always enables colors
+                // 2. NO_COLOR environment variable - always disables colors
+                // 3. Color terminal detection AND TTY - enables colors only for TTYs
+                // 4. Default - disable colors for files and pipes (non-TTY)
                 if (isForceColor()) {
-                    enable_color = true;
+                    enable_ansi_colors_stdout = true;
+                    enable_ansi_colors_stderr = true;
                 } else if (isNoColor()) {
-                    enable_color = false;
-                } else if (isColorTerminal() and (is_stdout_tty or is_stderr_tty)) {
-                    enable_color = true;
+                    enable_ansi_colors_stdout = false;
+                    enable_ansi_colors_stderr = false;
+                } else if (isColorTerminal()) {
+                    // Only enable colors if the specific stream is a TTY
+                    enable_ansi_colors_stdout = is_stdout_tty;
+                    enable_ansi_colors_stderr = is_stderr_tty;
+                } else {
+                    // Terminal doesn't support colors or not a TTY
+                    enable_ansi_colors_stdout = false;
+                    enable_ansi_colors_stderr = false;
                 }
-
-                enable_ansi_colors_stdout = enable_color orelse is_stdout_tty;
-                enable_ansi_colors_stderr = enable_color orelse is_stderr_tty;
             }
 
             stdout_stream = stdout;

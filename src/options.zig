@@ -2020,9 +2020,7 @@ pub const BundleOptions = struct {
             opts.env.files = transform.env_files;
         }
 
-        if (transform.disable_default_env_files) {
-            opts.env.disable_default_files = true;
-        }
+        opts.env.disable_default_env_files = transform.disable_default_env_files;
 
         if (transform.origin) |origin| {
             opts.origin = URL.parse(origin);
@@ -2230,7 +2228,7 @@ pub const Env = struct {
     files: []const []const u8 = &[_][]u8{},
 
     /// If true, disable loading of default .env files (from --no-envfile flag or bunfig)
-    disable_default_files: bool = false,
+    disable_default_env_files: bool = false,
 
     pub fn init(
         allocator: std.mem.Allocator,

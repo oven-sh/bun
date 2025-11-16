@@ -27,7 +27,7 @@ pub const ProcessHandle = struct {
 
     stdout: bun.io.BufferedReader = bun.io.BufferedReader.init(This),
     stderr: bun.io.BufferedReader = bun.io.BufferedReader.init(This),
-    buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    buffer: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
 
     process: ?struct {
         ptr: *bun.spawn.Process,
@@ -39,7 +39,7 @@ pub const ProcessHandle = struct {
     end_time: ?std.time.Instant = null,
 
     remaining_dependencies: usize = 0,
-    dependents: std.ArrayList(*This) = std.ArrayList(*This).init(bun.default_allocator),
+    dependents: std.array_list.Managed(*This) = std.array_list.Managed(*This).init(bun.default_allocator),
     visited: bool = false,
     visiting: bool = false,
 
@@ -147,7 +147,7 @@ const State = struct {
     event_loop: *bun.jsc.MiniEventLoop,
     remaining_scripts: usize = 0,
     // buffer for batched output
-    draw_buf: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    draw_buf: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
     last_lines_written: usize = 0,
     pretty_output: bool,
     shell_bin: [:0]const u8,
@@ -339,7 +339,7 @@ const State = struct {
     }
 
     fn flushDrawBuf(this: *This) void {
-        std.io.getStdOut().writeAll(this.draw_buf.items) catch {};
+        std.fs.File.stdout().writeAll(this.draw_buf.items) catch {};
     }
 
     pub fn abort(this: *This) void {
@@ -375,13 +375,13 @@ const AbortHandler = struct {
 
     var should_abort = false;
 
-    fn posixSignalHandler(sig: i32, info: *const std.posix.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
+    fn posixSignalHandler(sig: i32, info: *const std.posix.siginfo_t, _: ?*const anyopaque) callconv(.c) void {
         _ = sig;
         _ = info;
         should_abort = true;
     }
 
-    fn windowsCtrlHandler(dwCtrlType: std.os.windows.DWORD) callconv(std.os.windows.WINAPI) std.os.windows.BOOL {
+    fn windowsCtrlHandler(dwCtrlType: std.os.windows.DWORD) callconv(.winapi) std.os.windows.BOOL {
         if (dwCtrlType == std.os.windows.CTRL_C_EVENT) {
             should_abort = true;
             return std.os.windows.TRUE;
@@ -393,7 +393,7 @@ const AbortHandler = struct {
         if (Environment.isPosix) {
             const action = std.posix.Sigaction{
                 .handler = .{ .sigaction = AbortHandler.posixSignalHandler },
-                .mask = std.posix.empty_sigset,
+                .mask = std.posix.sigemptyset(),
                 .flags = std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND,
             };
             std.posix.sigaction(std.posix.SIG.INT, &action, null);
@@ -446,7 +446,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     }
 
     var filter_instance = try FilterArg.FilterSet.init(ctx.allocator, filters_to_use, fsinstance.top_level_dir);
-    var patterns = std.ArrayList([]u8).init(ctx.allocator);
+    var patterns = std.array_list.Managed([]u8).init(ctx.allocator);
 
     // Find package.json at workspace root
     var root_buf: bun.PathBuffer = undefined;
@@ -459,7 +459,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     defer package_json_iter.deinit();
 
     // Get list of packages that match the configuration
-    var scripts = std.ArrayList(ScriptConfig).init(ctx.allocator);
+    var scripts = std.array_list.Managed(ScriptConfig).init(ctx.allocator);
     // var scripts = std.ArrayHashMap([]const u8, ScriptConfig).init(ctx.allocator);
     while (try package_json_iter.next()) |package_json_path| {
         const dirpath = std.fs.path.dirname(package_json_path) orelse Global.crash();
@@ -495,7 +495,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             var copy_script_capacity: usize = original_content.len;
             for (ctx.passthrough) |part| copy_script_capacity += 1 + part.len;
             // we leak this
-            var copy_script = try std.ArrayList(u8).initCapacity(ctx.allocator, copy_script_capacity);
+            var copy_script = try std.array_list.Managed(u8).initCapacity(ctx.allocator, copy_script_capacity);
 
             try RunCommand.replacePackageManagerRun(&copy_script, original_content);
             const len_command_only = copy_script.items.len;
@@ -557,7 +557,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
     }
 
     // initialize the handles
-    var map = bun.StringHashMap(std.ArrayList(*ProcessHandle)).init(ctx.allocator);
+    var map = bun.StringHashMap(std.array_list.Managed(*ProcessHandle)).init(ctx.allocator);
     for (scripts.items, 0..) |*script, i| {
         state.handles[i] = ProcessHandle{
             .state = &state,
@@ -577,7 +577,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
             // Output.prettyErrorln("<r><red>error<r>: Duplicate package name: {s}", .{script.package_name});
             // Global.exit(1);
         } else {
-            res.value_ptr.* = std.ArrayList(*ProcessHandle).init(ctx.allocator);
+            res.value_ptr.* = std.array_list.Managed(*ProcessHandle).init(ctx.allocator);
             try res.value_ptr.append(&state.handles[i]);
             // &state.handles[i];
         }

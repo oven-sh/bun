@@ -35,13 +35,13 @@ pub const PackCommand = struct {
                     Output.prettyln("<b><blue>Shasum<r>: {s}", .{std.fmt.bytesToHex(shasum, .lower)});
                 }
                 if (maybe_integrity) |integrity| {
-                    Output.prettyln("<b><blue>Integrity<r>: {}", .{bun.fmt.integrity(integrity, .short)});
+                    Output.prettyln("<b><blue>Integrity<r>: {f}", .{bun.fmt.integrity(integrity, .short)});
                 }
-                Output.prettyln("<b><blue>Unpacked size<r>: {}", .{
+                Output.prettyln("<b><blue>Unpacked size<r>: {f}", .{
                     bun.fmt.size(stats.unpacked_size, .{ .space_between_number_and_unit = false }),
                 });
                 if (stats.packed_size > 0) {
-                    Output.pretty("<b><blue>Packed size<r>: {}\n", .{
+                    Output.pretty("<b><blue>Packed size<r>: {f}\n", .{
                         bun.fmt.size(stats.packed_size, .{ .space_between_number_and_unit = false }),
                     });
                 }
@@ -243,7 +243,7 @@ pub const PackCommand = struct {
     ) OOM!void {
         if (comptime Environment.isDebug) {
             for (excludes) |exclude| {
-                bun.assertf(exclude.flags.negated, "Illegal exclusion pattern '{s}'. Exclusion patterns are always negated.", .{exclude.glob});
+                bun.assertf(exclude.flags.negated, "Illegal exclusion pattern '{f}'. Exclusion patterns are always negated.", .{exclude.glob});
             }
         }
 
@@ -516,11 +516,11 @@ pub const PackCommand = struct {
         dir_subpath: string,
         entry_name: string,
     ) OOM!stringZ {
-        return std.fmt.allocPrintZ(allocator, "{s}{s}{s}", .{
+        return std.fmt.allocPrintSentinel(allocator, "{s}{s}{s}", .{
             dir_subpath,
             if (dir_subpath.len == 0) "" else "/",
             entry_name,
-        });
+        }, 0);
     }
 
     fn entryNameZ(
@@ -721,10 +721,10 @@ pub const PackCommand = struct {
 
                                 const dep_name = dep.key.?.asString(ctx.allocator) orelse continue;
 
-                                const dep_subpath = try std.fmt.allocPrintZ(ctx.allocator, "{s}/node_modules/{s}", .{
+                                const dep_subpath = try std.fmt.allocPrintSentinel(ctx.allocator, "{s}/node_modules/{s}", .{
                                     dir_subpath,
                                     dep_name,
-                                });
+                                }, 0);
 
                                 // starting at `node_modules/is-even/node_modules/is-odd`
                                 var dep_dir_depth: usize = bundled_dir_info[2] + 2;
@@ -1163,7 +1163,7 @@ pub const PackCommand = struct {
             };
     }
 
-    const BufferedFileReader = std.io.BufferedReader(1024 * 512, File.Reader);
+    const BufferedFileReader = bun.deprecated.BufferedReader(1024 * 512, File.Reader);
 
     pub fn pack(
         ctx: *Context,
@@ -1469,7 +1469,7 @@ pub const PackCommand = struct {
 
             if (comptime !for_publish) {
                 if (manager.options.pack_destination.len == 0 and manager.options.pack_filename.len == 0) {
-                    Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
+                    Output.pretty("\n{f}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
                 } else {
                     var dest_buf: PathBuffer = undefined;
                     const abs_tarball_dest, _ = tarballDestination(
@@ -1539,7 +1539,7 @@ pub const PackCommand = struct {
             return;
         }
 
-        var print_buf = std.ArrayList(u8).init(ctx.allocator);
+        var print_buf = std.array_list.Managed(u8).init(ctx.allocator);
         defer print_buf.deinit();
         const print_buf_writer = print_buf.writer();
 
@@ -1626,6 +1626,7 @@ pub const PackCommand = struct {
         defer ctx.allocator.destroy(file_reader);
         file_reader.* = .{
             .unbuffered_reader = undefined,
+            .buf = undefined,
         };
 
         var entry = Archive.Entry.new2(archive);
@@ -1637,7 +1638,7 @@ pub const PackCommand = struct {
                 progress = .{};
                 progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
                 node = progress.start("", pack_queue.count() + bundled_pack_queue.count() + 1);
-                node.unit = " files";
+                node.unit = .files;
             }
             defer if (log_level.showProgress()) node.end();
 
@@ -1697,7 +1698,7 @@ pub const PackCommand = struct {
                 };
                 defer file.close();
                 const stat = file.stat().unwrap() catch |err| {
-                    Output.err(err, "failed to stat file: \"{}\"", .{file.handle});
+                    Output.err(err, "failed to stat file: \"{f}\"", .{file.handle});
                     Global.crash();
                 };
 
@@ -1769,6 +1770,7 @@ pub const PackCommand = struct {
 
             file_reader.* = .{
                 .unbuffered_reader = tarball_file.reader(),
+                .buf = undefined,
             };
 
             var size: usize = 0;
@@ -1814,7 +1816,7 @@ pub const PackCommand = struct {
 
         if (comptime !for_publish) {
             if (manager.options.pack_destination.len == 0 and manager.options.pack_filename.len == 0) {
-                Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
+                Output.pretty("\n{f}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
             } else {
                 Output.pretty("\n{s}\n", .{abs_tarball_dest});
             }
@@ -1906,10 +1908,10 @@ pub const PackCommand = struct {
                 .auto,
             );
 
-            const tarball_name = std.fmt.bufPrint(dest_buf[strings.withoutTrailingSlash(tarball_destination_dir).len..], "/{}\x00", .{
+            const tarball_name = std.fmt.bufPrint(dest_buf[strings.withoutTrailingSlash(tarball_destination_dir).len..], "/{f}\x00", .{
                 fmtTarballFilename(package_name, package_version, .normalize),
             }) catch {
-                Output.errGeneric("archive destination name too long: \"{s}/{}\"", .{
+                Output.errGeneric("archive destination name too long: \"{s}/{f}\"", .{
                     strings.withoutTrailingSlash(tarball_destination_dir),
                     fmtTarballFilename(package_name, package_version, .normalize),
                 });
@@ -1941,7 +1943,7 @@ pub const PackCommand = struct {
             raw,
         };
 
-        pub fn format(this: TarballNameFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: TarballNameFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             if (this.style == .raw) {
                 return writer.print("{s}-{s}.tgz", .{ this.package_name, this.package_version });
             }
@@ -2013,7 +2015,7 @@ pub const PackCommand = struct {
         file_reader: *BufferedFileReader,
         archive: *Archive,
         entry: *Archive.Entry,
-        print_buf: *std.ArrayList(u8),
+        print_buf: *std.array_list.Managed(u8),
         bins: []const BinInfo,
     ) OOM!*Archive.Entry {
         const print_buf_writer = print_buf.writer();
@@ -2050,6 +2052,7 @@ pub const PackCommand = struct {
 
         file_reader.* = .{
             .unbuffered_reader = File.from(file).reader(),
+            .buf = undefined,
         };
 
         var read = file_reader.read(read_buf) catch |err| {
@@ -2125,7 +2128,7 @@ pub const PackCommand = struct {
                                                 allocator,
                                                 E.String,
                                                 .{
-                                                    .data = try std.fmt.allocPrint(allocator, "{s}{}", .{
+                                                    .data = try std.fmt.allocPrint(allocator, "{s}{f}", .{
                                                         switch (c) {
                                                             '^' => "^",
                                                             '~' => "~",
@@ -2465,7 +2468,7 @@ pub const PackCommand = struct {
     ) void {
         const root_dir = bun.FD.fromStdDir(root_dir_std);
         if (ctx.manager.options.log_level == .silent or ctx.manager.options.log_level == .quiet) return;
-        const packed_fmt = "<r><b><cyan>packed<r> {} {s}";
+        const packed_fmt = "<r><b><cyan>packed<r> {f} {s}";
 
         if (comptime is_dry_run) {
             const package_json_stat = root_dir.statat("package.json").unwrap() catch |err| {
@@ -2577,7 +2580,7 @@ pub const bindings = struct {
         const tarball_path = tarball_path_str.toUTF8(bun.default_allocator);
         defer tarball_path.deinit();
 
-        const tarball_file = File.from(std.fs.openFileAbsolute(tarball_path.slice(), .{}) catch |err| {
+        const tarball_file = File.from(std.fs.cwd().openFile(tarball_path.slice(), .{}) catch |err| {
             return global.throw("failed to open tarball file \"{s}\": {s}", .{ tarball_path.slice(), @errorName(err) });
         });
         defer tarball_file.close();
@@ -2610,7 +2613,7 @@ pub const bindings = struct {
             size: ?usize = null,
             contents: ?String = null,
         };
-        var entries_info = std.ArrayList(EntryInfo).init(bun.default_allocator);
+        var entries_info = std.array_list.Managed(EntryInfo).init(bun.default_allocator);
         defer entries_info.deinit();
 
         const archive = Archive.readNew();
@@ -2651,7 +2654,7 @@ pub const bindings = struct {
         var archive_entry: *Archive.Entry = undefined;
         var header_status = archive.readNextHeader(&archive_entry);
 
-        var read_buf = std.ArrayList(u8).init(bun.default_allocator);
+        var read_buf = std.array_list.Managed(u8).init(bun.default_allocator);
         defer read_buf.deinit();
 
         while (header_status != .eof) : (header_status = archive.readNextHeader(&archive_entry)) {
@@ -2664,7 +2667,7 @@ pub const bindings = struct {
                 else => {
                     const pathname_string = if (bun.Environment.isWindows) blk: {
                         const pathname_w = archive_entry.pathnameW();
-                        const list = std.ArrayList(u8).init(bun.default_allocator);
+                        const list = std.array_list.Managed(u8).init(bun.default_allocator);
                         var result = bun.handleOom(bun.strings.toUTF8ListWithType(list, pathname_w));
                         defer result.deinit();
                         break :blk String.cloneUTF8(result.items);

@@ -133,6 +133,20 @@ RUN ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "arm64"; else echo "amd64";
 
 RUN mkdir -p /var/cache/buildkite-agent /var/log/buildkite-agent /var/run/buildkite-agent /etc/buildkite-agent /var/lib/buildkite-agent/cache/bun
 
+# The following is necessary to configure buildkite to use a stable
+# checkout directory. sccache hashes absolute paths into its cache keys,
+# so if buildkite uses a different checkout path each time (which it does
+# by default), sccache will be useless.
+RUN mkdir -p -m 755 /var/lib/buildkite-agent/hooks && \
+    cat <<'EOF' > /var/lib/buildkite-agent/hooks/environment
+#!/bin/sh
+set -efu
+
+export BUILDKITE_BUILD_CHECKOUT_PATH=/var/lib/buildkite-agent/build
+EOF
+
+RUN chmod 744 /var/lib/buildkite-agent/hooks/environment
+
 COPY  ../*/agent.mjs /var/bun/scripts/
 
 ENV BUN_INSTALL_CACHE=/var/lib/buildkite-agent/cache/bun

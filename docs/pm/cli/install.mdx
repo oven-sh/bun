@@ -88,6 +88,13 @@ Lifecycle scripts will run in parallel during installation. To adjust the maximu
 bun install --concurrent-scripts 5
 ```
 
+Bun automatically optimizes postinstall scripts for popular packages (like `esbuild`, `sharp`, etc.) by determining which scripts need to run. To disable these optimizations:
+
+```bash terminal icon="terminal"
+BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER=1 bun install
+BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS=1 bun install
+```
+
 ---
 
 ## Workspaces
@@ -127,14 +134,14 @@ For more information on filtering with `bun install`, refer to [Package Manager 
 
 Bun supports npm's `"overrides"` and Yarn's `"resolutions"` in `package.json`. These are mechanisms for specifying a version range for _metadependencies_—the dependencies of your dependencies. Refer to [Package manager > Overrides and resolutions](/pm/overrides) for complete documentation.
 
+{/* prettier-ignore */}
 ```json package.json file="file-json"
 {
   "name": "my-app",
   "dependencies": {
     "foo": "^2.0.0"
   },
-  "overrides": {
-    // [!code ++]
+  "overrides": { // [!code ++]
     "bar": "~4.4.0" // [!code ++]
   } // [!code ++]
 }
@@ -231,7 +238,7 @@ Bun supports installing dependencies from Git, GitHub, and local or remotely-hos
 
 Bun supports two package installation strategies that determine how dependencies are organized in `node_modules`:
 
-### Hoisted installs (default for single projects)
+### Hoisted installs
 
 The traditional npm/Yarn approach that flattens dependencies into a shared `node_modules` directory:
 
@@ -249,7 +256,15 @@ bun install --linker isolated
 
 Isolated installs create a central package store in `node_modules/.bun/` with symlinks in the top-level `node_modules`. This ensures packages can only access their declared dependencies.
 
-For complete documentation on isolated installs, refer to [Package manager > Isolated installs](/pm/isolated-installs).
+### Default strategy
+
+The default linker strategy depends on whether you're starting fresh or have an existing project:
+
+- **New workspaces/monorepos**: `isolated` (prevents phantom dependencies)
+- **New single-package projects**: `hoisted` (traditional npm behavior)
+- **Existing projects (made pre-v1.3.2)**: `hoisted` (preserves backward compatibility)
+
+The default is controlled by a `configVersion` field in your lockfile. For a detailed explanation, see [Package manager > Isolated installs](/pm/isolated-installs).
 
 ---
 
@@ -289,7 +304,16 @@ For more advanced security scanning, including integration with services & custo
 
 ## Configuration
 
-The default behavior of `bun install` can be configured in `bunfig.toml`. The default values are shown below.
+### Configuring `bun install` with `bunfig.toml`
+
+`bunfig.toml` is searched for in the following paths on `bun install`, `bun remove`, and `bun add`:
+
+1. `$XDG_CONFIG_HOME/.bunfig.toml` or `$HOME/.bunfig.toml`
+2. `./bunfig.toml`
+
+If both are found, the results are merged together.
+
+Configuring with `bunfig.toml` is optional. Bun tries to be zero configuration in general, but that's not always possible. The default behavior of `bun install` can be configured in `bunfig.toml`. The default values are shown below.
 
 ```toml bunfig.toml icon="settings"
 [install]
@@ -319,8 +343,9 @@ dryRun = false
 concurrentScripts = 16 # (cpu count or GOMAXPROCS) x2
 
 # installation strategy: "hoisted" or "isolated"
-# default: "hoisted" (for single-project projects)
-# default: "isolated" (for monorepo projects)
+# default depends on lockfile configVersion and workspaces:
+# - configVersion = 1: "isolated" if using workspaces, otherwise "hoisted"
+# - configVersion = 0: "hoisted"
 linker = "hoisted"
 
 
@@ -329,7 +354,29 @@ minimumReleaseAge = 259200 # seconds
 minimumReleaseAgeExcludes = ["@types/node", "typescript"]
 ```
 
----
+### Configuring with environment variables
+
+Environment variables have a higher priority than `bunfig.toml`.
+
+| Name                               | Description                                                   |
+| ---------------------------------- | ------------------------------------------------------------- |
+| `BUN_CONFIG_REGISTRY`              | Set an npm registry (default: https://registry.npmjs.org)     |
+| `BUN_CONFIG_TOKEN`                 | Set an auth token (currently does nothing)                    |
+| `BUN_CONFIG_YARN_LOCKFILE`         | Save a Yarn v1-style yarn.lock                                |
+| `BUN_CONFIG_LINK_NATIVE_BINS`      | Point `bin` in package.json to a platform-specific dependency |
+| `BUN_CONFIG_SKIP_SAVE_LOCKFILE`    | Don’t save a lockfile                                         |
+| `BUN_CONFIG_SKIP_LOAD_LOCKFILE`    | Don’t load a lockfile                                         |
+| `BUN_CONFIG_SKIP_INSTALL_PACKAGES` | Don’t install any packages                                    |
+
+Bun always tries to use the fastest available installation method for the target platform. On macOS, that’s `clonefile` and on Linux, that’s `hardlink`. You can change which installation method is used with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fallsback to a platform-specific implementation of copying files.
+
+Bun stores installed packages from npm in `~/.bun/install/cache/${name}@${version}`. Note that if the semver version has a `build` or a `pre` tag, it is replaced with a hash of that value instead. This is to reduce the chances of errors from long file paths, but unfortunately complicates figuring out where a package was installed on disk.
+
+When the `node_modules` folder exists, before installing, Bun checks if the `"name"` and `"version"` in `package/package.json` in the expected node_modules folder matches the expected `name` and `version`. This is how it determines whether it should install. It uses a custom JSON parser which stops parsing as soon as it finds `"name"` and `"version"`.
+
+When a `bun.lock` doesn’t exist or `package.json` has changed dependencies, tarballs are downloaded & extracted eagerly while resolving.
+
+When a `bun.lock` exists and `package.json` hasn’t changed, Bun downloads missing dependencies lazily. If the package with a matching `name` & `version` already exists in the expected location within `node_modules`, Bun won’t attempt to download the tarball.
 
 ## CI/CD
 
@@ -378,6 +425,94 @@ jobs:
       - name: Build app
         run: bun run build
 ```
+
+## Platform-specific dependencies?
+
+bun stores normalized `cpu` and `os` values from npm in the lockfile, along with the resolved packages. It skips downloading, extracting, and installing packages disabled for the current target at runtime. This means the lockfile won't change between platforms/architectures even if the packages ultimately installed do change.
+
+### `--cpu` and `--os` flags
+
+You can override the target platform for package selection:
+
+```bash
+bun install --cpu=x64 --os=linux
+```
+
+This installs packages for the specified platform instead of the current system. Useful for cross-platform builds or when preparing deployments for different environments.
+
+**Accepted values for `--cpu`**: `arm64`, `x64`, `ia32`, `ppc64`, `s390x`
+
+**Accepted values for `--os`**: `linux`, `darwin`, `win32`, `freebsd`, `openbsd`, `sunos`, `aix`
+
+## Peer dependencies?
+
+Peer dependencies are handled similarly to yarn. `bun install` will automatically install peer dependencies. If the dependency is marked optional in `peerDependenciesMeta`, an existing dependency will be chosen if possible.
+
+## Lockfile
+
+`bun.lock` is Bun’s lockfile format. See [our blogpost about the text lockfile](https://bun.com/blog/bun-lock-text-lockfile).
+
+Prior to Bun 1.2, the lockfile was binary and called `bun.lockb`. Old lockfiles can be upgraded to the new format by running `bun install --save-text-lockfile --frozen-lockfile --lockfile-only`, and then deleting `bun.lockb`.
+
+## Cache
+
+To delete the cache:
+
+```bash
+bun pm cache rm
+# or
+rm -rf ~/.bun/install/cache
+```
+
+## Platform-specific backends
+
+`bun install` uses different system calls to install dependencies depending on the platform. This is a performance optimization. You can force a specific backend with the `--backend` flag.
+
+**`hardlink`** is the default backend on Linux. Benchmarking showed it to be the fastest on Linux.
+
+```bash
+rm -rf node_modules
+bun install --backend hardlink
+```
+
+**`clonefile`** is the default backend on macOS. Benchmarking showed it to be the fastest on macOS. It is only available on macOS.
+
+```bash
+rm -rf node_modules
+bun install --backend clonefile
+```
+
+**`clonefile_each_dir`** is similar to `clonefile`, except it clones each file individually per directory. It is only available on macOS and tends to perform slower than `clonefile`. Unlike `clonefile`, this does not recursively clone subdirectories in one system call.
+
+```bash
+rm -rf node_modules
+bun install --backend clonefile_each_dir
+```
+
+**`copyfile`** is the fallback used when any of the above fail, and is the slowest. on macOS, it uses `fcopyfile()` and on linux it uses `copy_file_range()`.
+
+```bash
+rm -rf node_modules
+bun install --backend copyfile
+```
+
+**`symlink`** is typically only used for `file:` dependencies (and eventually `link:`) internally. To prevent infinite loops, it skips symlinking the `node_modules` folder.
+
+If you install with `--backend=symlink`, Node.js won't resolve node_modules of dependencies unless each dependency has its own node_modules folder or you pass `--preserve-symlinks` to `node` or `bun`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
+
+```bash
+rm -rf node_modules
+bun install --backend symlink
+bun --preserve-symlinks ./my-file.js
+node --preserve-symlinks ./my-file.js # https://nodejs.org/api/cli.html#--preserve-symlinks
+```
+
+## npm registry metadata
+
+Bun uses a binary format for caching NPM registry responses. This loads much faster than JSON and tends to be smaller on disk.
+You will see these files in `~/.bun/install/cache/*.npm`. The filename pattern is `${hash(packageName)}.npm`. It’s a hash so that extra directories don’t need to be created for scoped packages.
+
+Bun's usage of `Cache-Control` ignores `Age`. This improves performance, but means bun may be about 5 minutes out of date to receive the latest package version metadata from npm.
 
 ## pnpm migration
 

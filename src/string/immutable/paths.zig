@@ -189,13 +189,13 @@ pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]u16 {
 pub fn toWPathNormalized16(wbuf: []u16, path: []const u16) [:0]u16 {
     var path_to_use = normalizeSlashesOnlyT(u16, wbuf, path, '\\', true);
 
-    // is there a current-dir prefix ".\\"? Let's remove it before converting to UTF-16
+    // is there a current-dir prefix ".\\"? Let's remove it before further processing
     const curdirPrefix: [2]u16 = .{ '.', '\\' };
     if (path_to_use.len > 2 and std.mem.startsWith(u16, path_to_use, &curdirPrefix)) {
         path_to_use = path_to_use[2..];
     }
 
-    // is there a trailing slash? Let's remove it before converting to UTF-16
+    // is there a trailing slash? Let's remove it before further processing
     if (path_to_use.len > 3 and bun.path.isSepAnyT(u16, path_to_use[path_to_use.len - 1])) {
         path_to_use = path_to_use[0 .. path_to_use.len - 1];
     }
@@ -211,12 +211,12 @@ pub fn toPathNormalized(buf: []u8, utf8: []const u8) [:0]const u8 {
 
     var path_to_use = normalizeSlashesOnly(renormalized, utf8, '\\');
 
-    // is there a current-dir prefix ".\\"? Let's remove it before converting to UTF-16
+    // is there a current-dir prefix ".\\"? Let's remove it before further processing
     if (path_to_use.len > 2 and std.mem.startsWith(u8, path_to_use, ".\\")) {
         path_to_use = path_to_use[2..];
     }
 
-    // is there a trailing slash? Let's remove it before converting to UTF-16
+    // is there a trailing slash? Let's remove it before further processing
     if (path_to_use.len > 3 and bun.path.isSepAny(path_to_use[path_to_use.len - 1])) {
         path_to_use = path_to_use[0 .. path_to_use.len - 1];
     }

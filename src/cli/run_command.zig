@@ -814,8 +814,8 @@ pub const RunCommand = struct {
                 }
             }
 
-            // Skip default env files for package.json scripts (see comment in env_loader.zig:542-548)
-            // Also respect --no-envfile flag or bunfig env.file = false
+            // Forward disable_default_env_files flag to env loader
+            // (skipping of default .env files and handling of --no-envfile/bunfig is in env_loader.zig)
             this_transpiler.runEnvLoader(this_transpiler.options.env.disable_default_env_files) catch {};
         }
 

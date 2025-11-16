@@ -1497,6 +1497,7 @@ pub const Tag = enum {
     e_require_resolve_string,
     e_require_call_target,
     e_require_resolve_call_target,
+    e_uint8array_identifier,
     e_missing,
     e_this,
     e_super,
@@ -2159,6 +2160,7 @@ pub const Data = union(Tag) {
     e_require_resolve_string: E.RequireResolveString,
     e_require_call_target,
     e_require_resolve_call_target,
+    e_uint8array_identifier,
 
     e_missing: E.Missing,
     e_this: E.This,
@@ -2623,6 +2625,7 @@ pub const Data = union(Tag) {
             // no data
             .e_require_call_target,
             .e_require_resolve_call_target,
+            .e_uint8array_identifier,
             .e_missing,
             .e_this,
             .e_super,

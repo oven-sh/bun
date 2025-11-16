@@ -4,7 +4,12 @@ import { isWindows } from "harness";
 
 describe("pathToFileURL", () => {
   it("should convert a path to a file url", () => {
-    expect(pathToFileURL("/path/to/file.js").href).toBe("file:///path/to/file.js");
+    if (isWindows) {
+      const result = pathToFileURL("/path/to/file.js").href;
+      expect(result).toMatch(/^file:\/\/\/[A-Z]:\/path\/to\/file\.js$/);
+    } else {
+      expect(pathToFileURL("/path/to/file.js").href).toBe("file:///path/to/file.js");
+    }
   });
 });
 
@@ -12,7 +17,10 @@ describe("fileURLToPath", () => {
   const absoluteErrorMessage = "File URL path must be an absolute";
   it("should convert a file url to a path", () => {
     if (isWindows) {
+      // This is still invalid on Windows because it lacks a drive letter
       expect(() => fileURLToPath("file:///path/to/file.js")).toThrow(absoluteErrorMessage);
+      // But a properly formed Windows file URL should work
+      expect(fileURLToPath("file:///C:/path/to/file.js")).toBe("C:\\path\\to\\file.js");
     } else {
       expect(fileURLToPath("file:///path/to/file.js")).toBe("/path/to/file.js");
     }
@@ -20,7 +28,10 @@ describe("fileURLToPath", () => {
 
   it("should convert a URL to a path", () => {
     if (isWindows) {
+      // This is still invalid on Windows because it lacks a drive letter
       expect(() => fileURLToPath(new URL("file:///path/to/file.js"))).toThrow(absoluteErrorMessage);
+      // But a properly formed Windows file URL should work
+      expect(fileURLToPath(new URL("file:///C:/path/to/file.js"))).toBe("C:\\path\\to\\file.js");
     } else {
       expect(fileURLToPath(new URL("file:///path/to/file.js"))).toBe("/path/to/file.js");
     }
@@ -48,5 +59,23 @@ describe("fileURLToPath", () => {
     const url = pathToFileURL(import.meta.path);
     expect(fileURLToPath(url)).toBe(import.meta.path);
     expect(fileURLToPath(import.meta.url)).toBe(import.meta.path);
+  });
+
+  it("should handle Windows paths starting with / correctly", () => {
+    if (isWindows) {
+      // Test the specific case that was failing with SolidStart
+      const testPaths = ["/test", "/@solid-refresh", "/node_modules/test"];
+
+      for (const testPath of testPaths) {
+        const url = pathToFileURL(testPath);
+        // Should include drive letter
+        expect(url.href).toMatch(/^file:\/\/\/[A-Z]:\//);
+
+        // Should roundtrip correctly
+        const result = fileURLToPath(url);
+        expect(result).toMatch(/^[A-Z]:\\/);
+        expect(result.toLowerCase()).toContain(testPath.replace(/\//g, "\\").toLowerCase());
+      }
+    }
   });
 });

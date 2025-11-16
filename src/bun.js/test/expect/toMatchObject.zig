@@ -34,7 +34,9 @@ pub fn toMatchObject(this: *Expect, globalThis: *JSGlobalObject, callFrame: *Cal
 
     const property_matchers = args[0];
 
-    var pass = try received_object.jestDeepMatch(property_matchers, globalThis, true);
+    // Do the comparison without mutation to avoid mutating user's objects
+    // This fixes issue #3521 where expect.any() was mutating the original object
+    var pass = try received_object.jestDeepMatch(property_matchers, globalThis, false);
 
     if (not) pass = !pass;
     if (pass) return .js_undefined;

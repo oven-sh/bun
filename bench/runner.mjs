@@ -16,7 +16,7 @@ export const bench = Mitata.bench;
 
 export function group(name, fn) {
   if (typeof name === "function") {
-    return Mitata.group(fn);
+    return Mitata.group(name);
   }
   return Mitata.group(name, fn);
 }

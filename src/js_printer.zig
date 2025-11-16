@@ -1674,43 +1674,60 @@ fn NewPrinter(
                     p.print("(");
                 }
 
-                if (p.options.input_files_for_dev_server) |input_files| {
-                    bun.assert(module_type == .internal_bake_dev);
-                    p.printSpaceBeforeIdentifier();
-                    p.printSymbol(p.options.hmr_ref);
-                    p.print(".require(");
-                    const path = input_files[record.source_index.get()].path;
-                    p.printStringLiteralUTF8(path.pretty, false);
-                    p.print(")");
-                } else if (!meta.was_unwrapped_require) {
-                    // Call the wrapper
-                    if (meta.wrapper_ref.isValid()) {
+                // Track if we printed anything in the dynamic import body
+                const has_dynamic_content = blk: {
+                    if (p.options.input_files_for_dev_server) |input_files| {
+                        bun.assert(module_type == .internal_bake_dev);
                         p.printSpaceBeforeIdentifier();
-                        p.printSymbol(meta.wrapper_ref);
-                        p.print("()");
+                        p.printSymbol(p.options.hmr_ref);
+                        p.print(".require(");
+                        const path = input_files[record.source_index.get()].path;
+                        p.printStringLiteralUTF8(path.pretty, false);
+                        p.print(")");
+                        break :blk true;
+                    } else if (!meta.was_unwrapped_require) {
+                        var printed_anything = false;
+                        // Call the wrapper
+                        if (meta.wrapper_ref.isValid()) {
+                            p.printSpaceBeforeIdentifier();
+                            p.printSymbol(meta.wrapper_ref);
+                            p.print("()");
+                            printed_anything = true;
 
+                            if (meta.exports_ref.isValid()) {
+                                p.print(",");
+                                p.printSpace();
+                            }
+                        }
+
+                        // Return the namespace object if this is an ESM file
                         if (meta.exports_ref.isValid()) {
-                            p.print(",");
-                            p.printSpace();
+                            // Wrap this with a call to "__toCommonJS()" if this is an ESM file
+                            const wrap_with_to_cjs = record.wrap_with_to_commonjs;
+                            if (wrap_with_to_cjs) {
+                                p.printSymbol(p.options.to_commonjs_ref);
+                                p.print("(");
+                            }
+                            p.printSymbol(meta.exports_ref);
+                            if (wrap_with_to_cjs) {
+                                p.print(")");
+                            }
+                            printed_anything = true;
                         }
+                        break :blk printed_anything;
+                    } else {
+                        if (!meta.exports_ref.isNull()) {
+                            p.printSymbol(meta.exports_ref);
+                            break :blk true;
+                        }
+                        break :blk false;
                     }
+                };
 
-                    // Return the namespace object if this is an ESM file
-                    if (meta.exports_ref.isValid()) {
-                        // Wrap this with a call to "__toCommonJS()" if this is an ESM file
-                        const wrap_with_to_cjs = record.wrap_with_to_commonjs;
-                        if (wrap_with_to_cjs) {
-                            p.printSymbol(p.options.to_commonjs_ref);
-                            p.print("(");
-                        }
-                        p.printSymbol(meta.exports_ref);
-                        if (wrap_with_to_cjs) {
-                            p.print(")");
-                        }
-                    }
-                } else {
-                    if (!meta.exports_ref.isNull())
-                        p.printSymbol(meta.exports_ref);
+                // If this is a dynamic import and we didn't print any content, print void 0
+                // to avoid generating invalid syntax like .then(() => )
+                if (record.kind == .dynamic and !has_dynamic_content and !wrap_with_to_esm) {
+                    p.print("void 0");
                 }
 
                 if (wrap_with_to_esm) {

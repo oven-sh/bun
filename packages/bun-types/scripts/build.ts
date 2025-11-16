@@ -4,7 +4,10 @@ import pkg from "../package.json";
 
 const BUN_VERSION = (process.env.BUN_VERSION || Bun.version || process.versions.bun).replace(/^.*v/, "");
 
-let claude = Bun.file(join(import.meta.dir, "..", "CLAUDE.md"));
+await Bun.write(join(import.meta.dir, "../package.json"), JSON.stringify({ ...pkg, version: BUN_VERSION }, null, 2));
+
+// copy CLAUDE.md
+let claude = Bun.file(join(import.meta.dir, "../../../src/init/rule.md"));
 if (await claude.exists()) {
   let original = await claude.text();
   const endOfFrontMatter = original.lastIndexOf("---\n");
@@ -13,7 +16,22 @@ if (await claude.exists()) {
     original = original.slice(endOfFrontMatter + "---\n".length).trim() + "\n";
   }
 
-  await claude.write(original);
+  await Bun.write(join(import.meta.dir, "../CLAUDE.md"), original);
 }
 
-await Bun.write(join(import.meta.dir, "..", "package.json"), JSON.stringify({ version: BUN_VERSION, ...pkg }, null, 2));
+// Copy docs
+const docsDir = join(import.meta.dir, "../docs");
+const sourceDocsDir = join(import.meta.dir, "../../../docs");
+await Bun.$`rm -rf ${docsDir}`;
+
+const sourceDocFiles = new Bun.Glob("**/*.{md,mdx}").scanSync({ cwd: sourceDocsDir });
+for (const file of sourceDocFiles) {
+  const content = await Bun.file(join(sourceDocsDir, file)).text();
+
+  const updatedContent = content
+    .replace(/\$BUN_LATEST_VERSION/g, BUN_VERSION)
+    .replace(/\[([^\]]*)\]\(\/([^)]*)\)/g, "[$1](/docs/$2)")
+    .replace(/https:\/\/bun\.com\/docs\/guides\//g, "https://bun.com/guides/");
+
+  await Bun.write(join(docsDir, file), updatedContent);
+}

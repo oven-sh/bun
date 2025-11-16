@@ -199,7 +199,7 @@ type Loader = "jsx" | "js" | "ts" | "tsx";
 
 interface TranspilerOptions {
   // Replace key with value. Value must be a JSON string.
-  // { "process.env.NODE_ENV": "\"production\"" }
+  // { "process.env.NODE_ENV": "\"production\" }
   define?: Record<string, string>,
 
   // Default loader for this transpiler
@@ -278,7 +278,7 @@ type Import = {
   // url() in CSS
   | "url-token"
   // The import was injected by Bun
-  | "internal" 
+  | "internal"
   // Entry point (not common)
   | "entry-point-build"
   | "entry-point-run"

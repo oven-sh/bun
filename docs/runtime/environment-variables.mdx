@@ -13,7 +13,7 @@ Bun reads the following files automatically (listed in order of increasing prece
 - `.env.production`, `.env.development`, `.env.test` (depending on value of `NODE_ENV`)
 - `.env.local`
 
-```txt .env icon="settings"
+```ini .env icon="settings"
 FOO=hello
 BAR=world
 ```
@@ -78,7 +78,7 @@ bun --env-file=.env.abc --env-file=.env.def run build
 
 Bun supports double quotes, single quotes, and template literal backticks:
 
-```txt .env icon="settings"
+```ini .env icon="settings"
 FOO='hello'
 FOO="hello"
 FOO=`hello`
@@ -88,7 +88,7 @@ FOO=`hello`
 
 Environment variables are automatically _expanded_. This means you can reference previously-defined variables in your environment variables.
 
-```txt .env icon="settings"
+```ini .env icon="settings"
 FOO=world
 BAR=hello$FOO
 ```
@@ -99,7 +99,7 @@ process.env.BAR; // => "helloworld"
 
 This is useful for constructing connection strings or other compound values.
 
-```txt .env icon="settings"
+```ini .env icon="settings"
 DB_USER=postgres
 DB_PASSWORD=secret
 DB_HOST=localhost
@@ -109,7 +109,7 @@ DB_URL=postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME
 
 This can be disabled by escaping the `$` with a backslash.
 
-```txt .env icon="settings"
+```ini .env icon="settings"
 FOO=world
 BAR=hello\$FOO
 ```

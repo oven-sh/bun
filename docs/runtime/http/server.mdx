@@ -32,12 +32,8 @@ const server = Bun.serve({
     // Redirect from /blog/hello to /blog/hello/world
     "/blog/hello": Response.redirect("/blog/hello/world"),
 
-    // Serve a file by buffering it in memory
-    "/favicon.ico": new Response(await Bun.file("./favicon.ico").bytes(), {
-      headers: {
-        "Content-Type": "image/x-icon",
-      },
-    }),
+    // Serve a file by lazily loading it into memory
+    "/favicon.ico": Bun.file("./favicon.ico"),
   },
 
   // (optional) fallback for unmatched routes:

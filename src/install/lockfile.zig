@@ -944,7 +944,7 @@ pub fn hoist(
         .install_root_dependencies = install_root_dependencies,
         .workspace_filters = workspace_filters,
         .packages_to_install = packages_to_install,
-        .pending_optional_peers = .init(bun.default_allocator),
+        .pending_optional_peers = .init(allocator),
     };
 
     try (Tree{}).processSubtree(

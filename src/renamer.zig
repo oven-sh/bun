@@ -814,6 +814,7 @@ pub const ExportRenamer = struct {
     pub fn clearRetainingCapacity(this: *ExportRenamer) void {
         this.used.clearRetainingCapacity();
         this.string_buffer.reset();
+        this.count = 0;
     }
 
     pub fn deinit(this: *ExportRenamer) void {

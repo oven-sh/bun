@@ -22,7 +22,7 @@ _long_short_completion() {
         COMPREPLY=( $(compgen -W "${wordlist}" -- "${cur_word}"));
         return;
     }
-    [[ "${cur_word}" =~ ^-[A-Za_z]+ ]] && {
+    [[ "${cur_word}" =~ ^-[A-Za-z]+ ]] && {
         COMPREPLY=( $(compgen -W "${short_options}" -- "${cur_word}"));
         return;
     }
@@ -55,9 +55,23 @@ _read_scripts_in_package_json() {
 
     # when a script is passed as an option, do not show other scripts as part of the completion anymore
     local re_prev_script="(^| )${prev}($| )";
+    # Build a regex for any selected script found in COMP_WORDS to guard the match
+    local selected_script=""
+    if [[ ${#package_json_compreply[@]} -gt 0 ]]; then
+        for w in "${COMP_WORDS[@]:1}"; do
+            for s in "${package_json_compreply[@]}"; do
+                if [[ "$w" == "$s" ]]; then
+                    selected_script="$w"
+                    break 2
+                fi
+            done
+        done
+    fi
+    local re_comp_word_script=""
+    [[ -n "$selected_script" ]] && re_comp_word_script="(^| )${selected_script}($| )"
     [[
         ( "${COMPREPLY[*]}" =~ ${re_prev_script} && -n "${COMP_WORDS[2]}" ) || \
-            ( "${COMPREPLY[*]}" =~ ${re_comp_word_script} )
+        ( -n "${re_comp_word_script}" && "${COMPREPLY[*]}" =~ ${re_comp_word_script} )
     ]] && {
         local re_script=$(echo ${package_json_compreply[@]} | sed 's/[^ ]*/(&)/g');
         local new_reply=$(echo "${COMPREPLY[@]}" | sed -E "s/$re_script//");

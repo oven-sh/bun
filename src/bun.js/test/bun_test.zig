@@ -924,6 +924,10 @@ pub const ExecutionEntryCfg = struct {
     /// 0 = unlimited timeout
     timeout: u32,
     has_done_parameter: bool,
+    /// Number of times to retry a failed test (0 = no retries)
+    retry_count: u32 = 0,
+    /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
+    repeat_count: u32 = 0,
 };
 pub const ExecutionEntry = struct {
     base: BaseScope,
@@ -935,9 +939,14 @@ pub const ExecutionEntry = struct {
     /// when this entry begins executing, the timespec will be set to the current time plus the timeout(ms).
     timespec: bun.timespec = .epoch,
     added_in_phase: AddedInPhase,
+    /// Number of times to retry a failed test (0 = no retries)
+    retry_count: u32,
+    /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
+    repeat_count: u32,
 
     next: ?*ExecutionEntry = null,
-    skip_to: ?*ExecutionEntry = null,
+    /// if this entry fails, go to the entry 'failure_skip_past.next'
+    failure_skip_past: ?*ExecutionEntry = null,
 
     const AddedInPhase = enum { preload, collection, execution };
 
@@ -948,6 +957,8 @@ pub const ExecutionEntry = struct {
             .timeout = cfg.timeout,
             .has_done_parameter = cfg.has_done_parameter,
             .added_in_phase = phase,
+            .retry_count = cfg.retry_count,
+            .repeat_count = cfg.repeat_count,
         });
 
         if (cb) |c| {

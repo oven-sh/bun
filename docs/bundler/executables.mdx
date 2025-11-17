@@ -90,7 +90,7 @@ The order of the `--target` flag does not matter, as long as they're delimited b
 | bun-linux-x64         | Linux            | x64          | ✅     | ✅       | glibc |
 | bun-linux-arm64       | Linux            | arm64        | ✅     | N/A      | glibc |
 | bun-windows-x64       | Windows          | x64          | ✅     | ✅       | -     |
-| ~~bun-windows-arm64~~ | Windows          | arm64        | ❌     | ❌       | -     |
+| ~~bun-windows-arm64~~ | ~~Windows~~      | ~~arm64~~    | ❌     | ❌       | -     |
 | bun-darwin-x64        | macOS            | x64          | ✅     | ✅       | -     |
 | bun-darwin-arm64      | macOS            | arm64        | ✅     | N/A      | -     |
 | bun-linux-x64-musl    | Linux            | x64          | ✅     | ✅       | musl  |
@@ -216,7 +216,7 @@ However, with the `BUN_BE_BUN=1` environment variable, it acts just like the `bu
 
 ```bash icon="terminal" terminal
 # With the env var, the executable acts like the `bun` CLI
-bun_BE_BUN=1 ./such-bun install
+BUN_BE_BUN=1 ./such-bun install
 ```
 
 ```txt
@@ -524,12 +524,46 @@ codesign -vvv --verify ./myapp
 
 ---
 
+## Code splitting
+
+Standalone executables support code splitting. Use `--compile` with `--splitting` to create an executable that loads code-split chunks at runtime.
+
+```bash
+bun build --compile --splitting ./src/entry.ts --outdir ./build
+```
+
+<CodeGroup>
+
+```ts src/entry.ts icon="/icons/typescript.svg"
+console.log("Entrypoint loaded");
+const lazy = await import("./lazy.ts");
+lazy.hello();
+```
+
+```ts src/lazy.ts icon="/icons/typescript.svg"
+export function hello() {
+  console.log("Lazy module loaded");
+}
+```
+
+</CodeGroup>
+
+```bash terminal icon="terminal"
+./build/entry
+```
+
+```txt
+Entrypoint loaded
+Lazy module loaded
+```
+
+---
+
 ## Unsupported CLI arguments
 
 Currently, the `--compile` flag can only accept a single entrypoint at a time and does not support the following flags:
 
-- `--outdir` — use `outfile` instead.
-- `--splitting`
+- `--outdir` — use `outfile` instead (except when using with `--splitting`).
 - `--public-path`
 - `--target=node` or `--target=browser`
 - `--no-bundle` - we always bundle everything into the executable.

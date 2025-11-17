@@ -15,6 +15,7 @@ describe("bundler", () => {
     },
     run: {
       stdout: "from_dotenv",
+      setCwd: true,
     },
   });
 
@@ -33,6 +34,7 @@ describe("bundler", () => {
     },
     run: {
       stdout: "not found",
+      setCwd: true,
     },
   });
 
@@ -51,6 +53,7 @@ describe("bundler", () => {
     },
     run: {
       stdout: "from_dotenv",
+      setCwd: true,
     },
   });
 
@@ -67,6 +70,7 @@ describe("bundler", () => {
     },
     run: {
       stdout: "from_shell",
+      setCwd: true,
       env: {
         TEST_VAR: "from_shell",
       },
@@ -91,6 +95,7 @@ console.log("PRELOAD");
     },
     run: {
       stdout: "PRELOAD\nENTRY",
+      setCwd: true,
     },
   });
 
@@ -115,6 +120,7 @@ console.log("PRELOAD");
     run: {
       // When bunfig is disabled, preload should NOT execute
       stdout: "ENTRY",
+      setCwd: true,
     },
   });
 
@@ -138,6 +144,7 @@ console.log("PRELOAD");
     },
     run: {
       stdout: "PRELOAD\nENTRY",
+      setCwd: true,
     },
   });
 
@@ -157,6 +164,7 @@ console.log("PRELOAD");
     },
     run: {
       stdout: "not found",
+      setCwd: true,
     },
   });
 
@@ -176,6 +184,7 @@ console.log("PRELOAD");
     },
     run: {
       stdout: "from_dotenv",
+      setCwd: true,
     },
   });
 
@@ -200,6 +209,7 @@ console.log("PRELOAD");
     },
     run: {
       stdout: "ENTRY",
+      setCwd: true,
     },
   });
 
@@ -224,6 +234,7 @@ console.log("PRELOAD");
     },
     run: {
       stdout: "PRELOAD\nENTRY",
+      setCwd: true,
     },
   });
 
@@ -250,6 +261,7 @@ console.log("PRELOAD");
     },
     run: {
       stdout: "not found\nENTRY",
+      setCwd: true,
     },
   });
 });

@@ -1070,6 +1070,12 @@ function expectBundled(
               target: compile,
               outfile: outfile,
             };
+          } else if (typeof compile === "object") {
+            // When compile is already an object, ensure it has outfile set
+            compile = {
+              ...compile,
+              outfile: outfile,
+            };
           }
         }
 

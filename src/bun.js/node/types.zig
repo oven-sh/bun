@@ -629,7 +629,10 @@ pub const PathLike = union(enum) {
                 return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);
             }
             const normal = path_handler.normalizeStringBuf(s, b, true, .windows, false);
-            return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);
+            // Normalization can strip "." and "./" to empty strings. Windows APIs
+            // don't support empty paths, so we need to use "." explicitly.
+            const path_to_convert = if (normal.len == 0) "." else normal;
+            return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), path_to_convert);
         }
 
         return sliceZWithForceCopy(this, buf, false);

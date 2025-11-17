@@ -189,14 +189,13 @@ extern "C" int __wrap_fcntl64(int fd, int cmd, ...)
     va_list ap;
     enum arg_type type = get_arg_type(cmd);
 
-    static fcntl64_func real_fcntl64;
-    static std::once_flag real_fcntl64_initialized;
-    std::call_once(real_fcntl64_initialized, []() {
-        real_fcntl64 = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl64");
-        if (!real_fcntl64) {
-            real_fcntl64 = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl");
+    static fcntl64_func real_fcntl64 = []() {
+        auto func = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl64");
+        if (!func) {
+            func = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl");
         }
-    });
+        return func;
+    }();
 
     switch (type) {
     case NO_ARG:

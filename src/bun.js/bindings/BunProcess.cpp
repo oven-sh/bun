@@ -950,99 +950,183 @@ static const NeverDestroyed<String>* getSignalNames()
 
 static void loadSignalNumberMap()
 {
-
-    static std::once_flag signalNameToNumberMapOnceFlag;
-    std::call_once(signalNameToNumberMapOnceFlag, [] {
-        auto signalNames = getSignalNames();
-        signalNameToNumberMap = new HashMap<String, int>();
-        signalNameToNumberMap->reserveInitialCapacity(31);
+    static HashMap<String, int> map = []() {
+        HashMap<String, int> m;
+        const auto* signalNames = getSignalNames();
+        m.reserveInitialCapacity(31);
 #if OS(WINDOWS)
         // libuv supported signals
-        signalNameToNumberMap->add(signalNames[1], SIGINT);
-        signalNameToNumberMap->add(signalNames[2], SIGQUIT);
-        signalNameToNumberMap->add(signalNames[9], SIGKILL);
-        signalNameToNumberMap->add(signalNames[15], SIGTERM);
-        signalNameToNumberMap->add(signalNames[27], SIGWINCH);
+        m.add(signalNames[1], SIGINT);
+        m.add(signalNames[2], SIGQUIT);
+        m.add(signalNames[9], SIGKILL);
+        m.add(signalNames[15], SIGTERM);
+        m.add(signalNames[27], SIGWINCH);
 #else
-        signalNameToNumberMap->add(signalNames[0], SIGHUP);
-        signalNameToNumberMap->add(signalNames[1], SIGINT);
-        signalNameToNumberMap->add(signalNames[2], SIGQUIT);
-        signalNameToNumberMap->add(signalNames[3], SIGILL);
+        m.add(signalNames[0], SIGHUP);
+        m.add(signalNames[1], SIGINT);
+        m.add(signalNames[2], SIGQUIT);
+        m.add(signalNames[3], SIGILL);
 #ifdef SIGTRAP
-        signalNameToNumberMap->add(signalNames[4], SIGTRAP);
+        m.add(signalNames[4], SIGTRAP);
 #endif
-        signalNameToNumberMap->add(signalNames[5], SIGABRT);
+        m.add(signalNames[5], SIGABRT);
 #ifdef SIGIOT
-        signalNameToNumberMap->add(signalNames[6], SIGIOT);
+        m.add(signalNames[6], SIGIOT);
 #endif
 #ifdef SIGBUS
-        signalNameToNumberMap->add(signalNames[7], SIGBUS);
+        m.add(signalNames[7], SIGBUS);
 #endif
-        signalNameToNumberMap->add(signalNames[8], SIGFPE);
-        signalNameToNumberMap->add(signalNames[9], SIGKILL);
+        m.add(signalNames[8], SIGFPE);
+        m.add(signalNames[9], SIGKILL);
 #ifdef SIGUSR1
-        signalNameToNumberMap->add(signalNames[10], SIGUSR1);
+        m.add(signalNames[10], SIGUSR1);
 #endif
-        signalNameToNumberMap->add(signalNames[11], SIGSEGV);
+        m.add(signalNames[11], SIGSEGV);
 #ifdef SIGUSR2
-        signalNameToNumberMap->add(signalNames[12], SIGUSR2);
+        m.add(signalNames[12], SIGUSR2);
 #endif
 #ifdef SIGPIPE
-        signalNameToNumberMap->add(signalNames[13], SIGPIPE);
+        m.add(signalNames[13], SIGPIPE);
 #endif
 #ifdef SIGALRM
-        signalNameToNumberMap->add(signalNames[14], SIGALRM);
+        m.add(signalNames[14], SIGALRM);
 #endif
-        signalNameToNumberMap->add(signalNames[15], SIGTERM);
+        m.add(signalNames[15], SIGTERM);
 #ifdef SIGCHLD
-        signalNameToNumberMap->add(signalNames[16], SIGCHLD);
+        m.add(signalNames[16], SIGCHLD);
 #endif
 #ifdef SIGCONT
-        signalNameToNumberMap->add(signalNames[17], SIGCONT);
+        m.add(signalNames[17], SIGCONT);
 #endif
 #ifdef SIGSTOP
-        signalNameToNumberMap->add(signalNames[18], SIGSTOP);
+        m.add(signalNames[18], SIGSTOP);
 #endif
 #ifdef SIGTSTP
-        signalNameToNumberMap->add(signalNames[19], SIGTSTP);
+        m.add(signalNames[19], SIGTSTP);
 #endif
 #ifdef SIGTTIN
-        signalNameToNumberMap->add(signalNames[20], SIGTTIN);
+        m.add(signalNames[20], SIGTTIN);
 #endif
 #ifdef SIGTTOU
-        signalNameToNumberMap->add(signalNames[21], SIGTTOU);
+        m.add(signalNames[21], SIGTTOU);
 #endif
 #ifdef SIGURG
-        signalNameToNumberMap->add(signalNames[22], SIGURG);
+        m.add(signalNames[22], SIGURG);
 #endif
 #ifdef SIGXCPU
-        signalNameToNumberMap->add(signalNames[23], SIGXCPU);
+        m.add(signalNames[23], SIGXCPU);
 #endif
 #ifdef SIGXFSZ
-        signalNameToNumberMap->add(signalNames[24], SIGXFSZ);
+        m.add(signalNames[24], SIGXFSZ);
 #endif
 #ifdef SIGVTALRM
-        signalNameToNumberMap->add(signalNames[25], SIGVTALRM);
+        m.add(signalNames[25], SIGVTALRM);
 #endif
 #ifdef SIGPROF
-        signalNameToNumberMap->add(signalNames[26], SIGPROF);
+        m.add(signalNames[26], SIGPROF);
 #endif
-        signalNameToNumberMap->add(signalNames[27], SIGWINCH);
+        m.add(signalNames[27], SIGWINCH);
 #ifdef SIGIO
-        signalNameToNumberMap->add(signalNames[28], SIGIO);
+        m.add(signalNames[28], SIGIO);
 #endif
 #ifdef SIGINFO
-        signalNameToNumberMap->add(signalNames[29], SIGINFO);
+        m.add(signalNames[29], SIGINFO);
 #endif
 
 #ifndef SIGINFO
-        signalNameToNumberMap->add(signalNames[29], 255);
+        m.add(signalNames[29], 255);
 #endif
 #ifdef SIGSYS
-        signalNameToNumberMap->add(signalNames[30], SIGSYS);
+        m.add(signalNames[30], SIGSYS);
 #endif
 #endif
-    });
+        return m;
+    }();
+    signalNameToNumberMap = &map;
+}
+
+static void loadSignalNameMap()
+{
+    static HashMap<int, String> map = []() {
+        HashMap<int, String> m;
+        const auto* signalNames = getSignalNames();
+        m.reserveInitialCapacity(31);
+        m.add(SIGHUP, signalNames[0]);
+        m.add(SIGINT, signalNames[1]);
+        m.add(SIGQUIT, signalNames[2]);
+        m.add(SIGILL, signalNames[3]);
+#ifdef SIGTRAP
+        m.add(SIGTRAP, signalNames[4]);
+#endif
+        m.add(SIGABRT, signalNames[5]);
+#ifdef SIGIOT
+        m.add(SIGIOT, signalNames[6]);
+#endif
+#ifdef SIGBUS
+        m.add(SIGBUS, signalNames[7]);
+#endif
+        m.add(SIGFPE, signalNames[8]);
+        m.add(SIGKILL, signalNames[9]);
+#ifdef SIGUSR1
+        m.add(SIGUSR1, signalNames[10]);
+#endif
+        m.add(SIGSEGV, signalNames[11]);
+#ifdef SIGUSR2
+        m.add(SIGUSR2, signalNames[12]);
+#endif
+#ifdef SIGPIPE
+        m.add(SIGPIPE, signalNames[13]);
+#endif
+#ifdef SIGALRM
+        m.add(SIGALRM, signalNames[14]);
+#endif
+        m.add(SIGTERM, signalNames[15]);
+#ifdef SIGCHLD
+        m.add(SIGCHLD, signalNames[16]);
+#endif
+#ifdef SIGCONT
+        m.add(SIGCONT, signalNames[17]);
+#endif
+#ifdef SIGSTOP
+        m.add(SIGSTOP, signalNames[18]);
+#endif
+#ifdef SIGTSTP
+        m.add(SIGTSTP, signalNames[19]);
+#endif
+#ifdef SIGTTIN
+        m.add(SIGTTIN, signalNames[20]);
+#endif
+#ifdef SIGTTOU
+        m.add(SIGTTOU, signalNames[21]);
+#endif
+#ifdef SIGURG
+        m.add(SIGURG, signalNames[22]);
+#endif
+#ifdef SIGXCPU
+        m.add(SIGXCPU, signalNames[23]);
+#endif
+#ifdef SIGXFSZ
+        m.add(SIGXFSZ, signalNames[24]);
+#endif
+#ifdef SIGVTALRM
+        m.add(SIGVTALRM, signalNames[25]);
+#endif
+#ifdef SIGPROF
+        m.add(SIGPROF, signalNames[26]);
+#endif
+        m.add(SIGWINCH, signalNames[27]);
+#ifdef SIGIO
+        m.add(SIGIO, signalNames[28]);
+#endif
+#ifdef SIGINFO
+        m.add(SIGINFO, signalNames[29]);
+#endif
+#ifdef SIGSYS
+        m.add(SIGSYS, signalNames[30]);
+#endif
+        return m;
+    }();
+    signalNumberToNameMap = &map;
 }
 
 bool isSignalName(WTF::String input)
@@ -1304,85 +1388,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 
         // Signal Handlers
         loadSignalNumberMap();
-        static std::once_flag signalNumberToNameMapOnceFlag;
-        std::call_once(signalNumberToNameMapOnceFlag, [] {
-            auto signalNames = getSignalNames();
-            signalNumberToNameMap = new HashMap<int, String>();
-            signalNumberToNameMap->reserveInitialCapacity(31);
-            signalNumberToNameMap->add(SIGHUP, signalNames[0]);
-            signalNumberToNameMap->add(SIGINT, signalNames[1]);
-            signalNumberToNameMap->add(SIGQUIT, signalNames[2]);
-            signalNumberToNameMap->add(SIGILL, signalNames[3]);
-#ifdef SIGTRAP
-            signalNumberToNameMap->add(SIGTRAP, signalNames[4]);
-#endif
-            signalNumberToNameMap->add(SIGABRT, signalNames[5]);
-#ifdef SIGIOT
-            signalNumberToNameMap->add(SIGIOT, signalNames[6]);
-#endif
-#ifdef SIGBUS
-            signalNumberToNameMap->add(SIGBUS, signalNames[7]);
-#endif
-            signalNumberToNameMap->add(SIGFPE, signalNames[8]);
-            signalNumberToNameMap->add(SIGKILL, signalNames[9]);
-#ifdef SIGUSR1
-            signalNumberToNameMap->add(SIGUSR1, signalNames[10]);
-#endif
-            signalNumberToNameMap->add(SIGSEGV, signalNames[11]);
-#ifdef SIGUSR2
-            signalNumberToNameMap->add(SIGUSR2, signalNames[12]);
-#endif
-#ifdef SIGPIPE
-            signalNumberToNameMap->add(SIGPIPE, signalNames[13]);
-#endif
-#ifdef SIGALRM
-            signalNumberToNameMap->add(SIGALRM, signalNames[14]);
-#endif
-            signalNumberToNameMap->add(SIGTERM, signalNames[15]);
-#ifdef SIGCHLD
-            signalNumberToNameMap->add(SIGCHLD, signalNames[16]);
-#endif
-#ifdef SIGCONT
-            signalNumberToNameMap->add(SIGCONT, signalNames[17]);
-#endif
-#ifdef SIGSTOP
-            signalNumberToNameMap->add(SIGSTOP, signalNames[18]);
-#endif
-#ifdef SIGTSTP
-            signalNumberToNameMap->add(SIGTSTP, signalNames[19]);
-#endif
-#ifdef SIGTTIN
-            signalNumberToNameMap->add(SIGTTIN, signalNames[20]);
-#endif
-#ifdef SIGTTOU
-            signalNumberToNameMap->add(SIGTTOU, signalNames[21]);
-#endif
-#ifdef SIGURG
-            signalNumberToNameMap->add(SIGURG, signalNames[22]);
-#endif
-#ifdef SIGXCPU
-            signalNumberToNameMap->add(SIGXCPU, signalNames[23]);
-#endif
-#ifdef SIGXFSZ
-            signalNumberToNameMap->add(SIGXFSZ, signalNames[24]);
-#endif
-#ifdef SIGVTALRM
-            signalNumberToNameMap->add(SIGVTALRM, signalNames[25]);
-#endif
-#ifdef SIGPROF
-            signalNumberToNameMap->add(SIGPROF, signalNames[26]);
-#endif
-            signalNumberToNameMap->add(SIGWINCH, signalNames[27]);
-#ifdef SIGIO
-            signalNumberToNameMap->add(SIGIO, signalNames[28]);
-#endif
-#ifdef SIGINFO
-            signalNumberToNameMap->add(SIGINFO, signalNames[29]);
-#endif
-#ifdef SIGSYS
-            signalNumberToNameMap->add(SIGSYS, signalNames[30]);
-#endif
-        });
+        loadSignalNameMap();
 
         if (!signalToContextIdsMap) {
             signalToContextIdsMap = new HashMap<int, SignalHandleValue>();

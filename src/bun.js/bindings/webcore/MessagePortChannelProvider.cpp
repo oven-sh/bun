@@ -34,19 +34,12 @@
 
 namespace WebCore {
 
-static MessagePortChannelProviderImpl* globalProvider;
-
 MessagePortChannelProvider& MessagePortChannelProvider::singleton()
 {
     // TODO: I think this assertion is relevant. Bun will call this on the Worker's thread
     // ASSERT(isMainThread());
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
-        if (!globalProvider)
-            globalProvider = new MessagePortChannelProviderImpl;
-    });
-
-    return *globalProvider;
+    static MessagePortChannelProviderImpl globalProvider;
+    return globalProvider;
 }
 
 // void MessagePortChannelProvider::setSharedProvider(MessagePortChannelProvider& provider)

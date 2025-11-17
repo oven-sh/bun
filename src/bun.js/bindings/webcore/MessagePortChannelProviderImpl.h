@@ -34,7 +34,6 @@ namespace WebCore {
 class MessagePortChannelProviderImpl final : public MessagePortChannelProvider {
 public:
     MessagePortChannelProviderImpl();
-    ~MessagePortChannelProviderImpl() final;
 
 private:
     void createNewMessagePortChannel(const MessagePortIdentifier& local, const MessagePortIdentifier& remote) final;

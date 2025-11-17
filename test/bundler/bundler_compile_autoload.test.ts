@@ -73,24 +73,24 @@ describe("bundler", () => {
     },
   });
 
-  // Test that bunfig.toml is loaded by default
+  // Test that bunfig.toml is loaded by default (preload is executed)
   itBundled("compile/AutoloadBunfigDefault", {
     compile: true,
     files: {
       "/entry.ts": /* js */ `
-        // bunfig.toml would affect resolution, macros, etc.
-        // For now just test that it doesn't crash when bunfig is present
-        console.log("SUCCESS");
+        console.log("ENTRY");
       `,
     },
     runtimeFiles: {
       "/bunfig.toml": `
-[install]
-cache = false
+preload = ["./preload.ts"]
+      `,
+      "/preload.ts": `
+console.log("PRELOAD");
       `,
     },
     run: {
-      stdout: "SUCCESS",
+      stdout: "PRELOAD\nENTRY",
     },
   });
 
@@ -101,17 +101,43 @@ cache = false
     },
     files: {
       "/entry.ts": /* js */ `
-        console.log("SUCCESS");
+        console.log("ENTRY");
       `,
     },
     runtimeFiles: {
       "/bunfig.toml": `
-[install]
-cache = false
+preload = ["./preload.ts"]
+      `,
+      "/preload.ts": `
+console.log("PRELOAD");
       `,
     },
     run: {
-      stdout: "SUCCESS",
+      // When bunfig is disabled, preload should NOT execute
+      stdout: "ENTRY",
+    },
+  });
+
+  // Test that bunfig.toml can be explicitly enabled with autoloadBunfig: true
+  itBundled("compile/AutoloadBunfigEnabled", {
+    compile: {
+      autoloadBunfig: true,
+    },
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("ENTRY");
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `
+preload = ["./preload.ts"]
+      `,
+      "/preload.ts": `
+console.log("PRELOAD");
+      `,
+    },
+    run: {
+      stdout: "PRELOAD\nENTRY",
     },
   });
 });

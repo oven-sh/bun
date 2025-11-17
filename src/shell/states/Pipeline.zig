@@ -107,7 +107,7 @@ fn setupCommands(this: *Pipeline) ?Yield {
                 closefd(pipe[1]);
             }
             const system_err = err.toShellSystemError();
-            return this.writeFailingError("bun: {s}\n", .{system_err.message});
+            return this.writeFailingError("bun: {f}\n", .{system_err.message});
         }
     }
 
@@ -126,7 +126,7 @@ fn setupCommands(this: *Pipeline) ?Yield {
                     .result => |s| s,
                     .err => |err| {
                         const system_err = err.toShellSystemError();
-                        return this.writeFailingError("bun: {s}\n", .{system_err.message});
+                        return this.writeFailingError("bun: {f}\n", .{system_err.message});
                     },
                 };
                 this.cmds.?[i] = .{

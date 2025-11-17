@@ -864,17 +864,17 @@ fn printRequest(request: picohttp.Request, url: string, ignore_insecure: bool, b
     request_.path = url;
 
     if (curl) {
-        Output.prettyErrorln("{}", .{request_.curl(ignore_insecure, body)});
+        Output.prettyErrorln("{f}", .{request_.curl(ignore_insecure, body)});
     }
 
-    Output.prettyErrorln("{}", .{request_});
+    Output.prettyErrorln("{f}", .{request_});
 
     Output.flush();
 }
 
 fn printResponse(response: picohttp.Response) void {
     @branchHint(.cold);
-    Output.prettyErrorln("{}", .{response});
+    Output.prettyErrorln("{f}", .{response});
     Output.flush();
 }
 
@@ -1008,11 +1008,19 @@ pub fn flushStream(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCont
 
 /// Write data to the socket (Just a error wrapper to easly handle amount written and error handling)
 fn writeToSocket(comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, data: []const u8) !usize {
-    const amount = socket.write(data);
-    if (amount < 0) {
-        return error.WriteFailed;
+    var remaining = data;
+    var total_written: usize = 0;
+    while (remaining.len > 0) {
+        const amount = socket.write(remaining);
+        if (amount < 0) {
+            return error.WriteFailed;
+        }
+        const wrote: usize = @intCast(amount);
+        total_written += wrote;
+        remaining = remaining[wrote..];
+        if (wrote == 0) break;
     }
-    return @intCast(amount);
+    return total_written;
 }
 
 /// Write data to the socket and buffer the unwritten data if there is backpressure
@@ -1261,7 +1269,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 this.setTimeout(socket, 5);
                 var stack_buffer = std.heap.stackFallback(1024 * 16, bun.default_allocator);
                 const allocator = stack_buffer.get();
-                var temporary_send_buffer = std.ArrayList(u8).fromOwnedSlice(allocator, &stack_buffer.buffer);
+                var temporary_send_buffer = std.array_list.Managed(u8).fromOwnedSlice(allocator, &stack_buffer.buffer);
                 temporary_send_buffer.items.len = 0;
                 defer temporary_send_buffer.deinit();
                 const writer = &temporary_send_buffer.writer();

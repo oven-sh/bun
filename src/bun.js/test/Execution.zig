@@ -76,7 +76,8 @@ pub const ExecutionSequence = struct {
     /// Index into ExecutionSequence.entries() for the entry that is not started or currently running
     active_entry: ?*ExecutionEntry,
     test_entry: ?*ExecutionEntry,
-    remaining_repeat_count: i64 = 1,
+    remaining_repeat_count: u32,
+    remaining_retry_count: u32,
     result: Result = .pending,
     executing: bool = false,
     started_at: bun.timespec = .epoch,
@@ -90,11 +91,18 @@ pub const ExecutionSequence = struct {
     } = .not_set,
     maybe_skip: bool = false,
 
-    pub fn init(first_entry: ?*ExecutionEntry, test_entry: ?*ExecutionEntry) ExecutionSequence {
+    pub fn init(cfg: struct {
+        first_entry: ?*ExecutionEntry,
+        test_entry: ?*ExecutionEntry,
+        retry_count: u32 = 0,
+        repeat_count: u32 = 0,
+    }) ExecutionSequence {
         return .{
-            .first_entry = first_entry,
-            .active_entry = first_entry,
-            .test_entry = test_entry,
+            .first_entry = cfg.first_entry,
+            .active_entry = cfg.first_entry,
+            .test_entry = cfg.test_entry,
+            .remaining_repeat_count = cfg.repeat_count,
+            .remaining_retry_count = cfg.retry_count,
         };
     }
 
@@ -177,7 +185,7 @@ pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSEr
     defer groupLog.end();
 
     // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
-    //   request a termination exception and kill any dangling processes
+    //   kill any dangling processes
     // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
     if (this.activeGroup()) |current_group| {
         const sequences = current_group.sequences(this);
@@ -186,7 +194,6 @@ pub fn handleTimeout(this: *Execution, globalThis: *jsc.JSGlobalObject) bun.JSEr
             if (sequence.active_entry) |entry| {
                 const now = bun.timespec.now();
                 if (entry.timespec.order(&now) == .lt) {
-                    globalThis.requestTermination();
                     const kill_count = globalThis.bunVM().auto_killer.kill();
                     if (kill_count.processes > 0) {
                         bun.Output.prettyErrorln("<d>killed {d} dangling process{s}<r>", .{ kill_count.processes, if (kill_count.processes != 1) "es" else "" });
@@ -350,8 +357,10 @@ fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGloba
     }
 
     const next_item = sequence.active_entry orelse {
-        bun.debugAssert(sequence.remaining_repeat_count == 0); // repeat count is decremented when the sequence is advanced, this should only happen if the sequence were empty. which should be impossible.
-        groupLog.log("runOne: no repeats left; wait for group completion.", .{});
+        // Sequence is complete - either because:
+        // 1. It ran out of entries (normal completion)
+        // 2. All retry/repeat attempts have been exhausted
+        groupLog.log("runOne: no more entries; sequence complete.", .{});
         return .done;
     };
     sequence.executing = true;
@@ -373,7 +382,7 @@ fn stepSequenceOne(buntest_strong: bun_test.BunTestPtr, globalThis: *jsc.JSGloba
                 },
             },
         };
-        groupLog.log("runSequence queued callback: {}", .{callback_data});
+        groupLog.log("runSequence queued callback: {f}", .{callback_data});
 
         if (BunTest.runTestCallback(buntest_strong, globalThis, cb.get(), next_item.has_done_parameter, callback_data, &next_item.timespec) != null) {
             now.* = bun.timespec.now();
@@ -412,7 +421,7 @@ pub fn getCurrentAndValidExecutionSequence(this: *Execution, data: bun_test.BunT
     groupLog.begin(@src());
     defer groupLog.end();
 
-    groupLog.log("runOneCompleted: data: {}", .{data});
+    groupLog.log("runOneCompleted: data: {f}", .{data});
 
     if (data != .execution) {
         groupLog.log("runOneCompleted: the data is not execution", .{});
@@ -456,7 +465,7 @@ fn advanceSequence(this: *Execution, sequence: *ExecutionSequence, group: *Concu
         sequence.executing = false;
         if (sequence.maybe_skip) {
             sequence.maybe_skip = false;
-            sequence.active_entry = entry.skip_to;
+            sequence.active_entry = if (entry.failure_skip_past) |failure_skip_past| failure_skip_past.next else null;
         } else {
             sequence.active_entry = entry.next;
         }
@@ -466,18 +475,32 @@ fn advanceSequence(this: *Execution, sequence: *ExecutionSequence, group: *Concu
 
     if (sequence.active_entry == null) {
         // just completed the sequence
-        this.onSequenceCompleted(sequence);
-        sequence.remaining_repeat_count -= 1;
-        if (sequence.remaining_repeat_count <= 0) {
-            // no repeats left; indicate completion
-            if (group.remaining_incomplete_entries == 0) {
-                bun.debugAssert(false); // remaining_incomplete_entries should never go below 0
-                return;
-            }
-            group.remaining_incomplete_entries -= 1;
-        } else {
+        const test_failed = sequence.result.isFail();
+        const test_passed = sequence.result.isPass(.pending_is_pass);
+
+        // Handle retry logic: if test failed and we have retries remaining, retry it
+        if (test_failed and sequence.remaining_retry_count > 0) {
+            sequence.remaining_retry_count -= 1;
             this.resetSequence(sequence);
+            return;
         }
+
+        // Handle repeat logic: if test passed and we have repeats remaining, repeat it
+        if (test_passed and sequence.remaining_repeat_count > 0) {
+            sequence.remaining_repeat_count -= 1;
+            this.resetSequence(sequence);
+            return;
+        }
+
+        // Only report the final result after all retries/repeats are done
+        this.onSequenceCompleted(sequence);
+
+        // No more retries or repeats; mark sequence as complete
+        if (group.remaining_incomplete_entries == 0) {
+            bun.debugAssert(false); // remaining_incomplete_entries should never go below 0
+            return;
+        }
+        group.remaining_incomplete_entries -= 1;
     }
 }
 fn onGroupStarted(_: *Execution, _: *ConcurrentGroup, globalThis: *jsc.JSGlobalObject) void {
@@ -494,7 +517,7 @@ fn onSequenceStarted(_: *Execution, sequence: *ExecutionSequence) void {
     sequence.started_at = bun.timespec.now();
 
     if (sequence.test_entry) |entry| {
-        log("Running test: \"{}\"", .{std.zig.fmtEscapes(entry.base.name orelse "(unnamed)")});
+        log("Running test: \"{f}\"", .{std.zig.fmtString(entry.base.name orelse "(unnamed)")});
 
         if (entry.base.test_id_for_debugger != 0) {
             if (jsc.VirtualMachine.get().debugger) |*debugger| {
@@ -581,13 +604,13 @@ pub fn resetSequence(this: *Execution, sequence: *ExecutionSequence) void {
         }
     }
 
-    if (sequence.result.isPass(.pending_is_pass)) {
-        // passed or pending; run again
-        sequence.* = .init(sequence.first_entry, sequence.test_entry);
-    } else {
-        // already failed or skipped; don't run again
-        sequence.active_entry = null;
-    }
+    // Preserve the current remaining_repeat_count and remaining_retry_count
+    sequence.* = .init(.{
+        .first_entry = sequence.first_entry,
+        .test_entry = sequence.test_entry,
+        .retry_count = sequence.remaining_retry_count,
+        .repeat_count = sequence.remaining_repeat_count,
+    });
     _ = this;
 }
 

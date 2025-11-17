@@ -107,7 +107,7 @@ pub const String = extern struct {
                 else
                     .unknown; // string was 16-bit; may or may not be all ascii
 
-                const owned_slice = try utf8_slice.cloneIfNeeded(allocator);
+                const owned_slice = try utf8_slice.cloneIfBorrowed(allocator);
                 // `owned_slice.allocator` is guaranteed to be `allocator`.
                 break :blk .{ owned_slice.mut(), ascii_status };
             },
@@ -380,7 +380,7 @@ pub const String = extern struct {
         len: usize,
         isLatin1: bool,
         ptr: ?*anyopaque,
-        callback: ?*const fn (*anyopaque, *anyopaque, u32) callconv(.C) void,
+        callback: ?*const fn (*anyopaque, *anyopaque, u32) callconv(.c) void,
     ) String;
     extern fn BunString__createStaticExternal(
         bytes: [*]const u8,
@@ -392,7 +392,7 @@ pub const String = extern struct {
     /// buffer is the pointer to the buffer, either [*]u8 or [*]u16
     /// len is the number of characters in that buffer.
     pub fn ExternalStringImplFreeFunction(comptime Ctx: type) type {
-        return fn (ctx: Ctx, buffer: *anyopaque, len: u32) callconv(.C) void;
+        return fn (ctx: Ctx, buffer: *anyopaque, len: u32) callconv(.c) void;
     }
 
     /// Creates a `String` backed by a `WTF::ExternalStringImpl`.
@@ -514,8 +514,8 @@ pub const String = extern struct {
         return String.init(ZigString.fromBytes(value));
     }
 
-    pub fn format(self: String, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-        try self.toZigString().format(fmt, opts, writer);
+    pub fn format(self: String, writer: *std.Io.Writer) !void {
+        try self.toZigString().format(writer);
     }
 
     pub fn fromJS(value: bun.jsc.JSValue, globalObject: *jsc.JSGlobalObject) bun.JSError!String {
@@ -768,6 +768,16 @@ pub const String = extern struct {
         return ZigString.Slice.empty;
     }
 
+    /// Equivalent to calling `toUTF8WithoutRef` followed by `cloneIfBorrowed`.
+    pub fn toUTF8Owned(this: String, allocator: std.mem.Allocator) ZigString.Slice {
+        return bun.handleOom(this.toUTF8WithoutRef(allocator).cloneIfBorrowed(allocator));
+    }
+
+    /// The returned slice is always allocated by `allocator`.
+    pub fn toUTF8Bytes(this: String, allocator: std.mem.Allocator) []u8 {
+        return this.toUTF8Owned(allocator).mut();
+    }
+
     /// use `byteSlice` to get a `[]const u8`.
     pub fn toSlice(this: *String, allocator: std.mem.Allocator) SliceWithUnderlyingString {
         defer this.* = .empty;
@@ -847,7 +857,7 @@ pub const String = extern struct {
 
     pub fn createFormatForJS(globalObject: *jsc.JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError!jsc.JSValue {
         jsc.markBinding(@src());
-        var builder = std.ArrayList(u8).init(bun.default_allocator);
+        var builder = std.array_list.Managed(u8).init(bun.default_allocator);
         defer builder.deinit();
         bun.handleOom(builder.writer().print(fmt, args));
         return bun.cpp.BunString__createUTF8ForJS(globalObject, builder.items.ptr, builder.items.len);
@@ -1190,9 +1200,9 @@ pub const SliceWithUnderlyingString = struct {
         return this.utf8.slice();
     }
 
-    pub fn format(self: SliceWithUnderlyingString, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: SliceWithUnderlyingString, writer: *std.Io.Writer) !void {
         if (self.utf8.len == 0) {
-            try self.underlying.format(fmt, opts, writer);
+            try self.underlying.format(writer);
             return;
         }
 

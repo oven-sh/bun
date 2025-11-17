@@ -10,7 +10,7 @@ pub const LinkerContext = struct {
     log: *Logger.Log = undefined,
 
     resolver: *Resolver = undefined,
-    cycle_detector: std.ArrayList(ImportTracker) = undefined,
+    cycle_detector: std.array_list.Managed(ImportTracker) = undefined,
 
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
     cjs_runtime_ref: Ref = Ref.None,
@@ -129,7 +129,7 @@ pub const LinkerContext = struct {
 
         pub fn computeLineOffsets(this: *LinkerContext, alloc: std.mem.Allocator, source_index: Index.Int) void {
             debug("Computing LineOffsetTable: {d}", .{source_index});
-            const line_offset_table: *bun.sourcemap.LineOffsetTable.List = &this.graph.files.items(.line_offset_table)[source_index];
+            const line_offset_table: *bun.SourceMap.LineOffsetTable.List = &this.graph.files.items(.line_offset_table)[source_index];
 
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
             const loader: options.Loader = this.parse_graph.input_files.items(.loader)[source_index];
@@ -142,7 +142,7 @@ pub const LinkerContext = struct {
 
             const approximate_line_count = this.graph.ast.items(.approximate_newline_count)[source_index];
 
-            line_offset_table.* = bun.sourcemap.LineOffsetTable.generate(
+            line_offset_table.* = bun.SourceMap.LineOffsetTable.generate(
                 alloc,
                 source.contents,
 
@@ -207,7 +207,7 @@ pub const LinkerContext = struct {
         this.log = bundle.transpiler.log;
 
         this.resolver = &bundle.transpiler.resolver;
-        this.cycle_detector = std.ArrayList(ImportTracker).init(this.allocator());
+        this.cycle_detector = std.array_list.Managed(ImportTracker).init(this.allocator());
 
         this.graph.reachable_files = reachable;
 
@@ -686,7 +686,7 @@ pub const LinkerContext = struct {
         results: std.MultiArrayList(CompileResultForSourceMap),
         chunk_abs_dir: string,
         can_have_shifts: bool,
-    ) !sourcemap.SourceMapPieces {
+    ) !SourceMap.SourceMapPieces {
         const trace = bun.perf.trace("Bundler.generateSourceMapForChunk");
         defer trace.end();
 
@@ -776,7 +776,7 @@ pub const LinkerContext = struct {
         );
 
         const mapping_start = j.len;
-        var prev_end_state = sourcemap.SourceMapState{};
+        var prev_end_state = SourceMap.SourceMapState{};
         var prev_column_offset: i32 = 0;
         const source_map_chunks = results.items(.source_map_chunk);
         const offsets = results.items(.generated_offset);
@@ -784,7 +784,7 @@ pub const LinkerContext = struct {
             const mapping_source_index = source_id_map.get(current_source_index) orelse
                 unreachable; // the pass above during printing of "sources" must add the index
 
-            var start_state = sourcemap.SourceMapState{
+            var start_state = SourceMap.SourceMapState{
                 .source_index = mapping_source_index,
                 .generated_line = offset.lines.zeroBased(),
                 .generated_column = offset.columns.zeroBased(),
@@ -794,7 +794,7 @@ pub const LinkerContext = struct {
                 start_state.generated_column += prev_column_offset;
             }
 
-            try sourcemap.appendSourceMapChunk(&j, worker.allocator, prev_end_state, start_state, chunk.buffer.list.items);
+            try SourceMap.appendSourceMapChunk(&j, worker.allocator, prev_end_state, start_state, chunk.buffer.list.items);
 
             prev_end_state = chunk.end_state;
             prev_end_state.source_index = mapping_source_index;
@@ -810,7 +810,7 @@ pub const LinkerContext = struct {
         if (comptime FeatureFlags.source_map_debug_id) {
             j.pushStatic("\",\n  \"debugId\": \"");
             j.push(
-                try std.fmt.allocPrint(worker.allocator, "{}", .{bun.sourcemap.DebugIDFormatter{ .id = isolated_hash }}),
+                try std.fmt.allocPrint(worker.allocator, "{f}", .{bun.SourceMap.DebugIDFormatter{ .id = isolated_hash }}),
                 worker.allocator,
             );
             j.pushStatic("\",\n  \"names\": []\n}");
@@ -821,7 +821,7 @@ pub const LinkerContext = struct {
         const done = try j.done(worker.allocator);
         bun.assert(done[0] == '{');
 
-        var pieces = sourcemap.SourceMapPieces.init(worker.allocator);
+        var pieces = SourceMap.SourceMapPieces.init(worker.allocator);
         if (can_have_shifts) {
             try pieces.prefix.appendSlice(done[0..mapping_start]);
             try pieces.mappings.appendSlice(done[mapping_start..mapping_end]);
@@ -979,7 +979,7 @@ pub const LinkerContext = struct {
 
                     // Require of a top-level await chain is forbidden
                     if (record.kind == .require) {
-                        var notes = std.ArrayList(Logger.Data).init(c.allocator());
+                        var notes = std.array_list.Managed(Logger.Data).init(c.allocator());
 
                         var tla_pretty_path: string = "";
                         var other_source_index = record.source_index.get();
@@ -1411,7 +1411,7 @@ pub const LinkerContext = struct {
 
     const SubstituteChunkFinalPathResult = struct {
         j: StringJoiner,
-        shifts: []sourcemap.SourceMapShifts,
+        shifts: []SourceMap.SourceMapShifts,
     };
 
     pub fn mangleLocalCss(c: *LinkerContext) void {
@@ -1526,7 +1526,7 @@ pub const LinkerContext = struct {
     pub fn sortedCrossChunkExportItems(
         c: *LinkerContext,
         export_refs: ChunkMeta.Map,
-        list: *std.ArrayList(StableRef),
+        list: *std.array_list.Managed(StableRef),
     ) void {
         var result = list.*;
         defer list.* = result;
@@ -1824,13 +1824,13 @@ pub const LinkerContext = struct {
     pub fn matchImportWithExport(
         c: *LinkerContext,
         init_tracker: ImportTracker,
-        re_exports: *std.ArrayList(js_ast.Dependency),
+        re_exports: *std.array_list.Managed(js_ast.Dependency),
     ) MatchImport {
         const cycle_detector_top = c.cycle_detector.items.len;
         defer c.cycle_detector.shrinkRetainingCapacity(cycle_detector_top);
 
         var tracker = init_tracker;
-        var ambiguous_results = std.ArrayList(MatchImport).init(c.allocator());
+        var ambiguous_results = std.array_list.Managed(MatchImport).init(c.allocator());
         defer ambiguous_results.clearAndFree();
 
         var result: MatchImport = MatchImport{};
@@ -2448,7 +2448,7 @@ pub const LinkerContext = struct {
 
             const import_ref = ref;
 
-            var re_exports = std.ArrayList(js_ast.Dependency).init(c.allocator());
+            var re_exports = std.array_list.Managed(js_ast.Dependency).init(c.allocator());
             const result = c.matchImportWithExport(.{
                 .source_index = Index.source(source_index),
                 .import_ref = import_ref,
@@ -2569,7 +2569,7 @@ pub const LinkerContext = struct {
 
         var pieces = brk: {
             errdefer j.deinit();
-            break :brk try std.ArrayList(OutputPiece).initCapacity(alloc, count);
+            break :brk try std.array_list.Managed(OutputPiece).initCapacity(alloc, count);
         };
         errdefer pieces.deinit();
         const complete_output = try j.done(alloc);
@@ -2684,11 +2684,11 @@ const MultiArrayList = bun.MultiArrayList;
 const MutableString = bun.MutableString;
 const OOM = bun.OOM;
 const Output = bun.Output;
+const SourceMap = bun.SourceMap;
 const StringJoiner = bun.StringJoiner;
 const bake = bun.bake;
 const base64 = bun.base64;
 const renamer = bun.renamer;
-const sourcemap = bun.sourcemap;
 const strings = bun.strings;
 const sync = bun.threading;
 const AutoBitSet = bun.bit_set.AutoBitSet;

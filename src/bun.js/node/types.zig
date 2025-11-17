@@ -132,8 +132,9 @@ pub const StringOrBuffer = union(enum) {
         switch (this.*) {
             .string => {
                 this.string.toThreadSafe();
+                const str = this.string;
                 this.* = .{
-                    .threadsafe_string = this.string,
+                    .threadsafe_string = str,
                 };
             },
             .threadsafe_string => {},
@@ -382,7 +383,7 @@ pub const Encoding = enum(u8) {
     }
 
     pub fn throwEncodingError(globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError {
-        return globalObject.ERR(.INVALID_ARG_VALUE, "encoding '{}' is an invalid encoding", .{value.fmtString(globalObject)}).throw();
+        return globalObject.ERR(.INVALID_ARG_VALUE, "encoding '{f}' is an invalid encoding", .{value.fmtString(globalObject)}).throw();
     }
 
     pub fn encodeWithSize(encoding: Encoding, globalObject: *jsc.JSGlobalObject, comptime size: usize, input: *const [size]u8) bun.JSError!jsc.JSValue {
@@ -402,8 +403,8 @@ pub const Encoding = enum(u8) {
                 var buf: [size * 4]u8 = undefined;
                 const out = std.fmt.bufPrint(
                     &buf,
-                    "{}",
-                    .{std.fmt.fmtSliceHexLower(input)},
+                    "{x}",
+                    .{input},
                 ) catch |err| switch (err) {
                     error.NoSpaceLeft => unreachable,
                 };
@@ -447,8 +448,8 @@ pub const Encoding = enum(u8) {
                 var buf: [max_size * 4]u8 = undefined;
                 const out = std.fmt.bufPrint(
                     &buf,
-                    "{}",
-                    .{std.fmt.fmtSliceHexLower(input)},
+                    "{x}",
+                    .{input},
                 ) catch |err| switch (err) {
                     error.NoSpaceLeft => unreachable,
                 };
@@ -535,9 +536,8 @@ pub const PathLike = union(enum) {
         switch (this.*) {
             .slice_with_underlying_string => {
                 this.slice_with_underlying_string.toThreadSafe();
-                this.* = .{
-                    .threadsafe_string = this.slice_with_underlying_string,
-                };
+                const slice_with_underlying_string = this.slice_with_underlying_string;
+                this.* = .{ .threadsafe_string = slice_with_underlying_string };
             },
             .buffer => {
                 this.buffer.buffer.value.protect();
@@ -781,14 +781,14 @@ pub const Valid = struct {
 
     pub fn pathNullBytes(slice: []const u8, global: *jsc.JSGlobalObject) bun.JSError!void {
         if (bun.strings.indexOfChar(slice, 0) != null) {
-            return global.ERR(.INVALID_ARG_VALUE, "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received {}", .{bun.fmt.quote(slice)}).throw();
+            return global.ERR(.INVALID_ARG_VALUE, "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received {f}", .{bun.fmt.quote(slice)}).throw();
         }
     }
 };
 
 pub const VectorArrayBuffer = struct {
     value: jsc.JSValue,
-    buffers: std.ArrayList(bun.PlatformIOVec),
+    buffers: std.array_list.Managed(bun.PlatformIOVec),
 
     pub fn toJS(this: VectorArrayBuffer, _: *jsc.JSGlobalObject) jsc.JSValue {
         return this.value;
@@ -799,7 +799,7 @@ pub const VectorArrayBuffer = struct {
             return globalObject.throwInvalidArguments("Expected ArrayBufferView[]", .{});
         }
 
-        var bufferlist = std.ArrayList(bun.PlatformIOVec).init(allocator);
+        var bufferlist = std.array_list.Managed(bun.PlatformIOVec).init(allocator);
         var i: usize = 0;
         const len = try val.getLength(globalObject);
         bun.handleOom(bufferlist.ensureTotalCapacityPrecise(len));
@@ -850,7 +850,7 @@ pub fn modeFromJS(ctx: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!?Mod
         break :brk std.fmt.parseInt(Mode, slice, 8) catch {
             var formatter = bun.jsc.ConsoleObject.Formatter{ .globalThis = ctx };
             defer formatter.deinit();
-            return ctx.throwValue(ctx.ERR(.INVALID_ARG_VALUE, "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}", .{value.toFmt(&formatter)}).toJS());
+            return ctx.throwValue(ctx.ERR(.INVALID_ARG_VALUE, "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {f}", .{value.toFmt(&formatter)}).toJS());
         };
     };
 
@@ -898,10 +898,7 @@ pub const PathOrFileDescriptor = union(Tag) {
         };
     }
 
-    pub fn format(this: jsc.Node.PathOrFileDescriptor, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        if (fmt.len != 0 and fmt[0] != 's') {
-            @compileError("Unsupported format argument: '" ++ fmt ++ "'.");
-        }
+    pub fn format(this: jsc.Node.PathOrFileDescriptor, writer: *std.Io.Writer) !void {
         switch (this) {
             .path => |p| try writer.writeAll(p.slice()),
             .fd => |fd| try writer.print("{}", .{fd}),
@@ -1030,7 +1027,7 @@ pub const FileSystemFlags = enum(c_int) {
             }
             // it's definitely wrong when the string is super long
             else if (str.len > 12) {
-                return ctx.throwInvalidArguments("Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
+                return ctx.throwInvalidArguments("Invalid flag '{f}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
             }
 
             const flags: i32 = brk: {
@@ -1054,7 +1051,7 @@ pub const FileSystemFlags = enum(c_int) {
 
                 break :brk map.getWithEql(str, jsc.ZigString.eqlComptime) orelse break :brk null;
             } orelse {
-                return ctx.throwInvalidArguments("Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
+                return ctx.throwInvalidArguments("Invalid flag '{f}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
             };
 
             return @enumFromInt(flags);

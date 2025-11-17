@@ -589,7 +589,7 @@ pub const CopyFileWindows = struct {
         destination_fd: bun.FileDescriptor = bun.invalid_fd,
         must_close_destination_fd: bool = false,
         written: usize = 0,
-        read_buf: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+        read_buf: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
         uv_buf: libuv.uv_buf_t = .{ .base = undefined, .len = 0 },
 
         pub fn start(read_write_loop: *ReadWriteLoop, this: *CopyFileWindows) bun.sys.Maybe(void) {
@@ -625,7 +625,7 @@ pub const CopyFileWindows = struct {
             return .success;
         }
 
-        fn onRead(req: *libuv.fs_t) callconv(.C) void {
+        fn onRead(req: *libuv.fs_t) callconv(.c) void {
             var this: *CopyFileWindows = @fieldParentPtr("io_request", req);
             bun.assert(req.data == @as(?*anyopaque, @ptrCast(this)));
 
@@ -637,7 +637,7 @@ pub const CopyFileWindows = struct {
 
             const rc = req.result;
 
-            bun.sys.syslog("uv_fs_read({}, {d}) = {d}", .{ source_fd, read_buf.len, rc.int() });
+            bun.sys.syslog("uv_fs_read({f}, {d}) = {d}", .{ source_fd, read_buf.len, rc.int() });
             if (rc.toError(.read)) |err| {
                 this.err = err;
                 this.onReadWriteLoopComplete();
@@ -673,7 +673,7 @@ pub const CopyFileWindows = struct {
             }
         }
 
-        fn onWrite(req: *libuv.fs_t) callconv(.C) void {
+        fn onWrite(req: *libuv.fs_t) callconv(.c) void {
             var this: *CopyFileWindows = @fieldParentPtr("io_request", req);
             bun.assert(req.data == @as(?*anyopaque, @ptrCast(this)));
             const buf = &this.read_write_loop.read_buf.items;
@@ -682,7 +682,7 @@ pub const CopyFileWindows = struct {
 
             const rc = req.result;
 
-            bun.sys.syslog("uv_fs_write({}, {d}) = {d}", .{ destination_fd, buf.len, rc.int() });
+            bun.sys.syslog("uv_fs_write({f}, {d}) = {d}", .{ destination_fd, buf.len, rc.int() });
 
             if (rc.toError(.write)) |err| {
                 this.err = err;
@@ -881,7 +881,7 @@ pub const CopyFileWindows = struct {
 
     fn copyfile(this: *CopyFileWindows) void {
         // This is for making it easier for us to test this code path
-        if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE)) {
+        if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE.get()) {
             this.prepareReadWriteLoop();
             return;
         }
@@ -1006,7 +1006,7 @@ pub const CopyFileWindows = struct {
         promise.reject(globalThis, err_instance) catch {}; // TODO: properly propagate exception upwards
     }
 
-    fn onCopyFile(req: *libuv.fs_t) callconv(.C) void {
+    fn onCopyFile(req: *libuv.fs_t) callconv(.c) void {
         var this: *CopyFileWindows = @fieldParentPtr("io_request", req);
         bun.assert(req.data == @as(?*anyopaque, @ptrCast(this)));
 
@@ -1014,7 +1014,7 @@ pub const CopyFileWindows = struct {
         event_loop.unrefConcurrently();
         const rc = req.result;
 
-        bun.sys.syslog("uv_fs_copyfile() = {}", .{rc});
+        bun.sys.syslog("uv_fs_copyfile() = {f}", .{rc});
         if (rc.errEnum()) |errno| {
             if (this.mkdirp_if_not_exists and errno == .NOENT) {
                 req.deinit();

@@ -457,7 +457,7 @@ fn doStop(this: *Listener, force_close: bool) void {
     }
 }
 
-pub fn finalize(this: *Listener) callconv(.C) void {
+pub fn finalize(this: *Listener) callconv(.c) void {
     log("finalize", .{});
     const listener = this.listener;
     this.listener = .none;
@@ -521,6 +521,19 @@ pub fn getPort(this: *Listener, _: *jsc.JSGlobalObject) JSValue {
         return .js_undefined;
     }
     return JSValue.jsNumber(this.connection.host.port);
+}
+
+pub fn getFD(this: *Listener, _: *jsc.JSGlobalObject) JSValue {
+    switch (this.listener) {
+        .uws => |uws_listener| {
+            switch (this.ssl) {
+                inline else => |ssl| {
+                    return uws_listener.socket(ssl).fd().toJSWithoutMakingLibUVOwned();
+                },
+            }
+        },
+        else => return JSValue.jsNumber(-1),
+    }
 }
 
 pub fn ref(this: *Listener, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
@@ -908,7 +921,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
         }
     }
 
-    fn onPipeClosed(pipe: *uv.Pipe) callconv(.C) void {
+    fn onPipeClosed(pipe: *uv.Pipe) callconv(.c) void {
         const this: *WindowsNamedPipeListeningContext = @ptrCast(@alignCast(pipe.data));
         this.deinit();
     }

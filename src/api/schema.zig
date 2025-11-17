@@ -2335,9 +2335,6 @@ pub const api = struct {
         /// line_text
         line_text: []const u8,
 
-        /// suggestion
-        suggestion: []const u8,
-
         /// offset
         offset: u32 = 0,
 
@@ -2349,7 +2346,6 @@ pub const api = struct {
             this.line = try reader.readValue(i32);
             this.column = try reader.readValue(i32);
             this.line_text = try reader.readValue([]const u8);
-            this.suggestion = try reader.readValue([]const u8);
             this.offset = try reader.readValue(u32);
             return this;
         }
@@ -2360,7 +2356,6 @@ pub const api = struct {
             try writer.writeInt(this.line);
             try writer.writeInt(this.column);
             try writer.writeValue(@TypeOf(this.line_text), this.line_text);
-            try writer.writeValue(@TypeOf(this.suggestion), this.suggestion);
             try writer.writeInt(this.offset);
         }
     };
@@ -2902,12 +2897,12 @@ pub const api = struct {
                 // Token
                 if (url.username.len == 0 and url.password.len > 0) {
                     registry.token = url.password;
-                    registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+                    registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{f}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
                 } else if (url.username.len > 0 and url.password.len > 0) {
                     registry.username = url.username;
                     registry.password = url.password;
 
-                    registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+                    registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{f}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
                 } else {
                     // Do not include a trailing slash. There might be parameters at the end.
                     registry.url = url.href;

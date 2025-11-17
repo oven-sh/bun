@@ -41,7 +41,7 @@ pub fn parse(comptime encoding: Encoding, allocator: std.mem.Allocator, input: [
     return .success(stream, &parser);
 }
 
-pub fn print(comptime encoding: Encoding, allocator: std.mem.Allocator, stream: Parser(encoding).Stream, writer: anytype) @TypeOf(writer).Error!void {
+pub fn print(comptime encoding: Encoding, allocator: std.mem.Allocator, stream: Parser(encoding).Stream, writer: anytype) std.Io.Writer.Error!void {
     var printer: Parser(encoding).Printer(@TypeOf(writer)) = .{
         .input = stream.input,
         .stream = stream,
@@ -61,7 +61,7 @@ pub const Context = enum {
     flow_key,
 
     pub const Stack = struct {
-        list: std.ArrayList(Context),
+        list: std.array_list.Managed(Context),
 
         pub fn init(allocator: std.mem.Allocator) Stack {
             return .{ .list = .init(allocator) };
@@ -161,7 +161,7 @@ pub const Indent = enum(usize) {
     };
 
     pub const Stack = struct {
-        list: std.ArrayList(Indent),
+        list: std.array_list.Managed(Indent),
 
         pub fn init(allocator: std.mem.Allocator) Stack {
             return .{ .list = .init(allocator) };
@@ -287,7 +287,7 @@ pub fn Parser(comptime enc: Encoding) type {
         tag_handles: bun.StringHashMap(void),
 
         // const PendingAliases = struct {
-        //     list: std.ArrayList(State),
+        //     list: std.array_list.Managed(State),
 
         //     const State = struct {
         //         name: String.Range,
@@ -297,7 +297,7 @@ pub fn Parser(comptime enc: Encoding) type {
         //     };
         // };
 
-        whitespace_buf: std.ArrayList(Whitespace),
+        whitespace_buf: std.array_list.Managed(Whitespace),
 
         stack_check: bun.StackCheck,
 
@@ -520,7 +520,7 @@ pub fn Parser(comptime enc: Encoding) type {
         };
 
         pub fn parseStream(self: *@This()) ParseError!Stream {
-            var docs: std.ArrayList(Document) = .init(self.allocator);
+            var docs: std.array_list.Managed(Document) = .init(self.allocator);
 
             // we want one null document if eof, not zero documents.
             var first = true;
@@ -680,7 +680,7 @@ pub fn Parser(comptime enc: Encoding) type {
         }
 
         pub fn parseDocument(self: *@This()) ParseError!Document {
-            var directives: std.ArrayList(Directive) = .init(self.allocator);
+            var directives: std.array_list.Managed(Directive) = .init(self.allocator);
 
             self.anchors.clearRetainingCapacity();
             self.tag_handles.clearRetainingCapacity();
@@ -745,7 +745,7 @@ pub fn Parser(comptime enc: Encoding) type {
             const sequence_line = self.line;
             _ = sequence_line;
 
-            var seq: std.ArrayList(Expr) = .init(self.allocator);
+            var seq: std.array_list.Managed(Expr) = .init(self.allocator);
 
             {
                 try self.context.set(.flow_in);
@@ -780,7 +780,7 @@ pub fn Parser(comptime enc: Encoding) type {
             const mapping_line = self.token.line;
             _ = mapping_line;
 
-            var props: std.ArrayList(G.Property) = .init(self.allocator);
+            var props: std.array_list.Managed(G.Property) = .init(self.allocator);
 
             {
                 try self.context.set(.flow_in);
@@ -891,7 +891,7 @@ pub fn Parser(comptime enc: Encoding) type {
             try self.block_indents.push(sequence_indent);
             defer self.block_indents.pop();
 
-            var seq: std.ArrayList(Expr) = .init(self.allocator);
+            var seq: std.array_list.Managed(Expr) = .init(self.allocator);
 
             var prev_line: Line = .from(0);
 
@@ -1011,7 +1011,7 @@ pub fn Parser(comptime enc: Encoding) type {
             try self.block_indents.push(mapping_indent);
             defer self.block_indents.pop();
 
-            var props: std.ArrayList(G.Property) = .init(self.allocator);
+            var props: std.array_list.Managed(G.Property) = .init(self.allocator);
 
             {
                 // try self.context.set(.block_in);
@@ -2802,7 +2802,7 @@ pub fn Parser(comptime enc: Encoding) type {
             const LiteralScalarCtx = struct {
                 chomp: Chomp,
                 leading_newlines: usize,
-                text: std.ArrayList(enc.unit()),
+                text: std.array_list.Managed(enc.unit()),
                 start: Pos,
                 content_indent: Indent,
                 previous_indent: Indent,
@@ -3109,7 +3109,7 @@ pub fn Parser(comptime enc: Encoding) type {
             const scalar_line = self.line;
             const scalar_indent = self.line_indent;
 
-            var text: std.ArrayList(enc.unit()) = .init(self.allocator);
+            var text: std.array_list.Managed(enc.unit()) = .init(self.allocator);
 
             var nl = false;
 
@@ -3210,7 +3210,7 @@ pub fn Parser(comptime enc: Encoding) type {
             const start = self.pos;
             const scalar_line = self.line;
             const scalar_indent = self.line_indent;
-            var text: std.ArrayList(enc.unit()) = .init(self.allocator);
+            var text: std.array_list.Managed(enc.unit()) = .init(self.allocator);
 
             var nl = false;
 
@@ -3390,7 +3390,7 @@ pub fn Parser(comptime enc: Encoding) type {
         fn decodeHexCodePoint(
             self: *@This(),
             comptime escape: Escape,
-            text: *std.ArrayList(enc.unit()),
+            text: *std.array_list.Managed(enc.unit()),
         ) DecodeHexCodePointError!void {
             var value: escape.cp() = 0;
             for (0..@intFromEnum(escape)) |_| {
@@ -4520,12 +4520,12 @@ pub fn Parser(comptime enc: Encoding) type {
 
         pub const String = union(enum) {
             range: Range,
-            list: std.ArrayList(enc.unit()),
+            list: std.array_list.Managed(enc.unit()),
 
             pub fn init(data: anytype) String {
                 return switch (@TypeOf(data)) {
                     Range => .{ .range = data },
-                    std.ArrayList(enc.unit()) => .{ .list = data },
+                    std.array_list.Managed(enc.unit()) => .{ .list = data },
                     else => @compileError("unexpected type"),
                 };
             }
@@ -4622,7 +4622,7 @@ pub fn Parser(comptime enc: Encoding) type {
                             .new => |unit| {
                                 switch (self.str) {
                                     .range => |range| {
-                                        var list: std.ArrayList(enc.unit()) = try .initCapacity(parser.allocator, range.len() + 1);
+                                        var list: std.array_list.Managed(enc.unit()) = try .initCapacity(parser.allocator, range.len() + 1);
                                         list.appendSliceAssumeCapacity(range.slice(parser.input));
                                         list.appendAssumeCapacity(unit);
                                         self.str = .{ .list = list };
@@ -4699,7 +4699,7 @@ pub fn Parser(comptime enc: Encoding) type {
 
                     switch (self.str) {
                         .range => |range| {
-                            var list: std.ArrayList(enc.unit()) = try .initCapacity(parser.allocator, range.len() + 1);
+                            var list: std.array_list.Managed(enc.unit()) = try .initCapacity(parser.allocator, range.len() + 1);
                             list.appendSliceAssumeCapacity(range.slice(parser.input));
                             list.appendAssumeCapacity(unit);
                             self.str = .{ .list = list };
@@ -4721,7 +4721,7 @@ pub fn Parser(comptime enc: Encoding) type {
 
                     switch (self.str) {
                         .range => |range| {
-                            var list: std.ArrayList(enc.unit()) = try .initCapacity(parser.allocator, range.len() + str.len);
+                            var list: std.array_list.Managed(enc.unit()) = try .initCapacity(parser.allocator, range.len() + str.len);
                             list.appendSliceAssumeCapacity(self.str.range.slice(parser.input));
                             list.appendSliceAssumeCapacity(str);
                             self.str = .{ .list = list };
@@ -4743,7 +4743,7 @@ pub fn Parser(comptime enc: Encoding) type {
 
                     switch (self.str) {
                         .range => |range| {
-                            var list: std.ArrayList(enc.unit()) = try .initCapacity(parser.allocator, range.len() + n);
+                            var list: std.array_list.Managed(enc.unit()) = try .initCapacity(parser.allocator, range.len() + n);
                             list.appendSliceAssumeCapacity(self.str.range.slice(parser.input));
                             list.appendNTimesAssumeCapacity(unit, n);
                             self.str = .{ .list = list };
@@ -4758,7 +4758,7 @@ pub fn Parser(comptime enc: Encoding) type {
                     return this.str.len();
                 }
 
-                pub fn done(self: *const @This()) String {
+                pub fn done(self: *@This()) String {
                     self.parser.whitespace_buf.clearRetainingCapacity();
                     return self.str;
                 }
@@ -4877,7 +4877,7 @@ pub fn Parser(comptime enc: Encoding) type {
         //     };
 
         //     pub const Sequence = struct {
-        //         list: std.ArrayList(Node),
+        //         list: std.array_list.Managed(Node),
 
         //         pub fn init(allocator: std.mem.Allocator) Sequence {
         //             return .{ .list = .init(allocator) };
@@ -4893,8 +4893,8 @@ pub fn Parser(comptime enc: Encoding) type {
         //     };
 
         //     pub const Mapping = struct {
-        //         keys: std.ArrayList(Node),
-        //         values: std.ArrayList(Node),
+        //         keys: std.array_list.Managed(Node),
+        //         values: std.array_list.Managed(Node),
 
         //         pub fn init(allocator: std.mem.Allocator) Mapping {
         //             return .{ .keys = .init(allocator), .values = .init(allocator) };
@@ -5009,7 +5009,7 @@ pub fn Parser(comptime enc: Encoding) type {
         };
 
         pub const Document = struct {
-            directives: std.ArrayList(Directive),
+            directives: std.array_list.Managed(Directive),
             root: Expr,
 
             pub fn deinit(this: *Document) void {
@@ -5018,7 +5018,7 @@ pub fn Parser(comptime enc: Encoding) type {
         };
 
         pub const Stream = struct {
-            docs: std.ArrayList(Document),
+            docs: std.array_list.Managed(Document),
             input: []const enc.unit(),
         };
 

@@ -487,6 +487,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #endif
     };
 
+    // Handle known yet-to-be-working in Bun
+    {
+        static constexpr ASCIILiteral better_sqlite3_node = "better_sqlite3.node"_s;
+        static constexpr ASCIILiteral better_sqlite3_message = "'better-sqlite3' is not yet supported in Bun.\nTrack the status in https://github.com/oven-sh/bun/issues/4290\nIn the meantime, you could try bun:sqlite which has a similar API."_s;
+        if (filename.endsWith(better_sqlite3_node)) {
+            return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED,
+                better_sqlite3_message);
+        }
+    }
+
     {
         auto utf8_filename = filename.tryGetUTF8(ConversionMode::LenientConversion);
         if (!utf8_filename) [[unlikely]] {
@@ -495,6 +505,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
         }
         utf8 = *utf8_filename;
     }
+
+    Bun__process_dlopen_count++;
 
 #if OS(WINDOWS)
     BunString filename_str = Bun::toString(filename);
@@ -510,8 +522,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #endif
 
     globalObject->m_pendingNapiModuleDlopenHandle = handle;
-
-    Bun__process_dlopen_count++;
 
     if (!handle) {
 #if OS(WINDOWS)
@@ -952,6 +962,7 @@ static void loadSignalNumberMap()
         signalNameToNumberMap->add(signalNames[2], SIGQUIT);
         signalNameToNumberMap->add(signalNames[9], SIGKILL);
         signalNameToNumberMap->add(signalNames[15], SIGTERM);
+        signalNameToNumberMap->add(signalNames[27], SIGWINCH);
 #else
         signalNameToNumberMap->add(signalNames[0], SIGHUP);
         signalNameToNumberMap->add(signalNames[1], SIGINT);
@@ -3430,14 +3441,23 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& ar
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue nextTick;
     if (!this->m_nextTickFunction) {
-        this->get(globalObject, Identifier::fromString(vm, "nextTick"_s));
+        nextTick = this->get(globalObject, Identifier::fromString(vm, "nextTick"_s));
         RETURN_IF_EXCEPTION(scope, void());
     }
 
     ASSERT(!args.isEmpty());
     JSObject* nextTickFn = this->m_nextTickFunction.get();
-    ASSERT(nextTickFn);
+    if (!nextTickFn) [[unlikely]] {
+        if (nextTick && nextTick.isObject())
+            nextTickFn = asObject(nextTick);
+        else {
+            throwVMError(globalObject, scope, "Failed to call nextTick"_s);
+            return;
+        }
+    }
     ASSERT_WITH_MESSAGE(!args.at(0).inherits<AsyncContextFrame>(), "queueNextTick must not pass an AsyncContextFrame. This will cause a crash.");
     JSC::call(globalObject, nextTickFn, args, "Failed to call nextTick"_s);
     RELEASE_AND_RETURN(scope, void());
@@ -3501,6 +3521,24 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
     JSValue function = JSValue::decode(func);
 
     process->queueNextTick<2>(globalObject, function, { JSValue::decode(arg1), JSValue::decode(arg2) });
+}
+
+// This does the equivalent of
+// return require.cache.get(Bun.main)
+static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(processObject->globalObject());
+    auto* bun = globalObject->bunObject();
+    RETURN_IF_EXCEPTION(scope, {});
+    auto& builtinNames = Bun::builtinNames(vm);
+    JSValue mainValue = bun->get(globalObject, builtinNames.mainPublicName());
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* requireMap = globalObject->requireMap();
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue mainModule = requireMap->get(globalObject, mainValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    return mainModule;
 }
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
@@ -3899,7 +3937,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   hrtime                           constructProcessHrtimeObject                        PropertyCallback
   isBun                            constructIsBun                                      PropertyCallback
   kill                             Process_functionKill                                Function 2
-  mainModule                       processObjectInternalsMainModuleCodeGenerator       Builtin|Accessor
+  mainModule                       constructMainModuleProperty                         PropertyCallback
   memoryUsage                      constructMemoryUsage                                PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                              PropertyCallback
   nextTick                         constructProcessNextTickFn                          PropertyCallback

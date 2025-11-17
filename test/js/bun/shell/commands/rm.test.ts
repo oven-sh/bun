@@ -162,7 +162,7 @@ foo/
       "sub_dir": {},
     };
 
-    const tempdir = tempDirWithFiles("rmdir", files);
+    const tempdir = tempDirWithFiles("rmsymlinks", files);
 
     // Create file symlink and remove it
     {

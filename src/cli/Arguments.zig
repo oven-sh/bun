@@ -148,6 +148,10 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--production                     Set NODE_ENV=production and enable minification") catch unreachable,
     clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production") catch unreachable,
     clap.parseParam("--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv") catch unreachable,
+    clap.parseParam("--compile-autoload-dotenv        Enable autoloading of .env files in standalone executable (default: true)") catch unreachable,
+    clap.parseParam("--no-compile-autoload-dotenv     Disable autoloading of .env files in standalone executable") catch unreachable,
+    clap.parseParam("--compile-autoload-bunfig        Enable autoloading of bunfig.toml in standalone executable (default: true)") catch unreachable,
+    clap.parseParam("--no-compile-autoload-bunfig     Disable autoloading of bunfig.toml in standalone executable") catch unreachable,
     clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
     clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
     clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
@@ -1016,6 +1020,22 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Global.crash();
             }
             ctx.bundler_options.compile_exec_argv = compile_exec_argv;
+        }
+
+        if (args.flag("--compile-autoload-dotenv")) {
+            ctx.bundler_options.compile_autoload_dotenv = true;
+        }
+
+        if (args.flag("--no-compile-autoload-dotenv")) {
+            ctx.bundler_options.compile_autoload_dotenv = false;
+        }
+
+        if (args.flag("--compile-autoload-bunfig")) {
+            ctx.bundler_options.compile_autoload_bunfig = true;
+        }
+
+        if (args.flag("--no-compile-autoload-bunfig")) {
+            ctx.bundler_options.compile_autoload_bunfig = false;
         }
 
         if (args.flag("--windows-hide-console")) {

@@ -26,7 +26,8 @@ pub const Run = struct {
         js_ast.Stmt.Data.Store.create();
         const arena = Arena.init();
 
-        if (!ctx.debug.loaded_bunfig) {
+        // Load bunfig.toml unless disabled by compile flags
+        if (!ctx.debug.loaded_bunfig and !graph.flags.disable_autoload_bunfig) {
             try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
         }
 
@@ -81,7 +82,13 @@ pub const Run = struct {
             .unspecified => {},
         }
 
-        b.options.env.behavior = .load_all_without_inlining;
+        // If .env loading is disabled, only load process env vars
+        // Otherwise, load all .env files
+        if (graph.flags.disable_default_env_files) {
+            b.options.env.behavior = .disable;
+        } else {
+            b.options.env.behavior = .load_all_without_inlining;
+        }
 
         b.configureDefines() catch {
             failWithBuildError(vm);

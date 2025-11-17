@@ -16,11 +16,11 @@ namespace Util::Functional {
 /// std::variant<int, std::string, double> var = /* ... */;
 /// std::visit(visitor, var);
 /// @endcode
-template <typename... Lambdas>
+template<typename... Lambdas>
 struct Overloaded : Lambdas... {
     using Lambdas::operator()...;
 };
 
-}  // namespace util::functional
+} // namespace util::functional
 
 #endif // BUN_UTIL_FUNCTIONAL_HPP

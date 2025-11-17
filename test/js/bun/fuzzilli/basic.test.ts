@@ -1,5 +1,5 @@
-import { describe, test, expect } from "bun:test";
 import { spawn } from "bun";
+import { describe, expect, test } from "bun:test";
 import { bunExe } from "harness";
 
 describe("fuzzilli command", () => {

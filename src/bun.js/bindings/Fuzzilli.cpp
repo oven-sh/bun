@@ -58,64 +58,66 @@ namespace FuzziliJsApi {
 
 namespace Messages {
 
-    /// @brief Force the program to crash in a specific way.
-    struct ForceCrash {
-        enum class Mode : std::uint8_t {
-            ImmediateCrash,
-            BuiltinTrap,
-            DCheckFailure,
-            OutOfBoundsWrite,
-            UseAfterFree,
-            NullPointerDereference,
-        };
-
-        Mode m_mode;
-
-        void dispatch() {
-        }
+/// @brief Force the program to crash in a specific way.
+struct ForceCrash {
+    enum class Mode : std::uint8_t {
+        ImmediateCrash,
+        BuiltinTrap,
+        DCheckFailure,
+        OutOfBoundsWrite,
+        UseAfterFree,
+        NullPointerDereference,
     };
 
-    /// @brief Crash the program if Address Sanitizer is not enabled.
-    struct EnsureAsanEnabled { };
+    Mode m_mode;
+
+    void dispatch()
+    {
+    }
+};
+
+/// @brief Crash the program if Address Sanitizer is not enabled.
+struct EnsureAsanEnabled {};
 
 } // namespace messages
 
 /// @brief The variant type representing all possible messages.
 using Message = std::variant<Messages::ForceCrash,
-                             Messages::EnsureAsanEnabled>;
+    Messages::EnsureAsanEnabled>;
 
-inline void serviceMessage(const Message& message) {
+inline void serviceMessage(const Message& message)
+{
     std::visit(Util::Functional::Overloaded {
-        [](const Messages::ForceCrash& msg) -> void {
-            switch (msg.m_mode) {
-                case Messages::ForceCrash::Mode::ImmediateCrash:
-                    std::abort();
-                case Messages::ForceCrash::Mode::BuiltinTrap:
-                    __builtin_trap();
-                case Messages::ForceCrash::Mode::DCheckFailure:
-                    assert(false);
-                case Messages::ForceCrash::Mode::OutOfBoundsWrite: {
-                    volatile char* p = static_cast<volatile char*>(std::malloc(1));
-                    p[-1] = 'A';
-                    std::free(const_cast<char*>(p));
-                    break;
-                }
-                case Messages::ForceCrash::Mode::UseAfterFree: {
-                    volatile char* p = static_cast<volatile char*>(std::malloc(1));
-                    std::free(const_cast<char*>(p));
-                    p[0] = 'A';
-                    break;
-                }
-                case Messages::ForceCrash::Mode::NullPointerDereference: {
-                    volatile std::uint64_t* p = nullptr;
-                    while (true)
-                        p = reinterpret_cast<volatile std::uint64_t*>(*p);
-                }
-            }
-        },
-        [](const Messages::EnsureAsanEnabled&) -> void {
-        }
-    }, message);
+                   [](const Messages::ForceCrash& msg) -> void {
+                       switch (msg.m_mode) {
+                       case Messages::ForceCrash::Mode::ImmediateCrash:
+                           std::abort();
+                       case Messages::ForceCrash::Mode::BuiltinTrap:
+                           __builtin_trap();
+                       case Messages::ForceCrash::Mode::DCheckFailure:
+                           assert(false);
+                       case Messages::ForceCrash::Mode::OutOfBoundsWrite: {
+                           volatile char* p = static_cast<volatile char*>(std::malloc(1));
+                           p[-1] = 'A';
+                           std::free(const_cast<char*>(p));
+                           break;
+                       }
+                       case Messages::ForceCrash::Mode::UseAfterFree: {
+                           volatile char* p = static_cast<volatile char*>(std::malloc(1));
+                           std::free(const_cast<char*>(p));
+                           p[0] = 'A';
+                           break;
+                       }
+                       case Messages::ForceCrash::Mode::NullPointerDereference: {
+                           volatile std::uint64_t* p = nullptr;
+                           while (true)
+                               p = reinterpret_cast<volatile std::uint64_t*>(*p);
+                       }
+                       }
+                   },
+                   [](const Messages::EnsureAsanEnabled&) -> void {
+                   } },
+        message);
 }
 
 std::expected<Message, std::string> parseMessageFromJS(JSC::JSGlobalObject* go, JSC::JSObject* object)
@@ -196,15 +198,15 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES fuzzilli(JSC::JSGlobalObject* go, J
     }
 }
 
-void Register(Zig::GlobalObject* go) {
+void Register(Zig::GlobalObject* go)
+{
     // Install signal handlers to ensure output is flushed before crashes.
     SysSignal::Register();
 
     go->putDirectNativeFunction(go->vm(), go, JSC::Identifier::fromString(go->vm(), "fuzzilli"_s),
-                                1, fuzzilli, JSC::ImplementationVisibility::Public,
-                                JSC::NoIntrinsic,
-                                JSC::PropertyAttribute::DontEnum |
-                                    JSC::PropertyAttribute::DontDelete);
+        1, fuzzilli, JSC::ImplementationVisibility::Public,
+        JSC::NoIntrinsic,
+        JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
 } // namespace FuzziliJsApi

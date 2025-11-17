@@ -1,5 +1,5 @@
 // https://github.com/oven-sh/bun/issues/24748
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import * as fs from "node:fs";
 
 test("fs.existsSync should work with '.' and './' on Windows", () => {

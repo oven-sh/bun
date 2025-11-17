@@ -704,7 +704,7 @@ function expectBundled(
 
     // Helper to add compile boolean flags
     const compileFlag = (prop: string, trueFlag: string, falseFlag: string): string[] => {
-      if (compile && typeof compile === "object" && prop in compile) {
+      if (compile && typeof compile === "object" && Object.prototype.hasOwnProperty.call(compile, prop)) {
         const value = (compile as any)[prop];
         if (value === true) return [trueFlag];
         if (value === false) return [falseFlag];

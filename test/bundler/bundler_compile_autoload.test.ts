@@ -159,4 +159,28 @@ console.log("PRELOAD");
       stdout: "not found",
     },
   });
+
+  // Test CLI backend with autoloadBunfig: false
+  itBundled("compile/AutoloadBunfigDisabledCLI", {
+    compile: {
+      autoloadBunfig: false,
+    },
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("ENTRY");
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `
+preload = ["./preload.ts"]
+      `,
+      "/preload.ts": `
+console.log("PRELOAD");
+      `,
+    },
+    run: {
+      stdout: "ENTRY",
+    },
+  });
 });

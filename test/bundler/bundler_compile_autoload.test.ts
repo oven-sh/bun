@@ -160,6 +160,25 @@ console.log("PRELOAD");
     },
   });
 
+  // Test CLI backend with autoloadDotenv: true
+  itBundled("compile/AutoloadDotenvEnabledCLI", {
+    compile: {
+      autoloadDotenv: true,
+    },
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(process.env.TEST_VAR || "not found");
+      `,
+    },
+    runtimeFiles: {
+      "/.env": `TEST_VAR=from_dotenv`,
+    },
+    run: {
+      stdout: "from_dotenv",
+    },
+  });
+
   // Test CLI backend with autoloadBunfig: false
   itBundled("compile/AutoloadBunfigDisabledCLI", {
     compile: {
@@ -181,6 +200,30 @@ console.log("PRELOAD");
     },
     run: {
       stdout: "ENTRY",
+    },
+  });
+
+  // Test CLI backend with autoloadBunfig: true
+  itBundled("compile/AutoloadBunfigEnabledCLI", {
+    compile: {
+      autoloadBunfig: true,
+    },
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("ENTRY");
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `
+preload = ["./preload.ts"]
+      `,
+      "/preload.ts": `
+console.log("PRELOAD");
+      `,
+    },
+    run: {
+      stdout: "PRELOAD\nENTRY",
     },
   });
 });

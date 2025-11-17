@@ -107,8 +107,8 @@ test("Express shim with bun.serve - POST with JSON", async () => {
       const app = express();
       
       app.post("/api/data", async (req, res) => {
-        // Note: body parsing would need to be implemented
-        res.json({ received: true });
+        // Echo back the parsed body to validate JSON parsing
+        res.json(req.body);
       });
       
       const server = Bun.serve({
@@ -144,7 +144,7 @@ test("Express shim with bun.serve - POST with JSON", async () => {
   ]);
 
   expect(exitCode).toBe(0);
-  expect(stdout).toContain('"received":true');
+  expect(stdout).toContain('"test":"data"');
 });
 
 test("Express shim - 404 for unmatched routes", async () => {

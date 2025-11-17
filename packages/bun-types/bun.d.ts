@@ -1933,6 +1933,16 @@ declare module "bun" {
     execArgv?: string[];
     executablePath?: string;
     outfile?: string;
+    /**
+     * Whether to autoload .env files when the standalone executable runs
+     * @default true
+     */
+    autoloadDotenv?: boolean;
+    /**
+     * Whether to autoload bunfig.toml when the standalone executable runs
+     * @default true
+     */
+    autoloadBunfig?: boolean;
     windows?: {
       hideConsole?: boolean;
       icon?: string;

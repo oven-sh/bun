@@ -1,0 +1,102 @@
+---
+title: Express.js with Bun.serve
+description: Native Express.js implementation for Bun.serve
+---
+
+# Express.js with Bun.serve
+
+Bun provides a native Express.js shim that works directly with `Bun.serve`, avoiding the Node.js compatibility layer for better performance.
+
+## Status
+
+This is an experimental implementation. Full Express.js compatibility is a work in progress.
+
+## Basic Usage
+
+```ts
+import express from "express"; // Uses native shim when available
+
+const app = express();
+
+app.get("/", (req, res) => {
+  res.send("Hello World");
+});
+
+// Works with bun.serve directly
+Bun.serve({
+  fetch: app.fetch.bind(app),
+  port: 3000,
+});
+```
+
+## Features
+
+- ✅ Basic routing (GET, POST, PUT, DELETE, PATCH)
+- ✅ Route parameters (`/users/:id`)
+- ✅ Middleware support
+- ✅ JSON body parsing
+- ✅ Request/Response API compatibility
+- ⚠️ Advanced features (views, advanced middleware, etc.) - coming soon
+
+## Example
+
+```ts
+import express from "express";
+
+const app = express();
+
+// Middleware
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.path}`);
+  next();
+});
+
+// Routes
+app.get("/users/:id", (req, res) => {
+  res.json({ userId: req.params.id });
+});
+
+app.post("/api/data", async (req, res) => {
+  const data = req.body;
+  res.json({ received: data });
+});
+
+// Start server
+Bun.serve({
+  fetch: app.fetch.bind(app),
+  port: 3000,
+});
+```
+
+## Differences from Node.js Express
+
+- Uses `Bun.serve` instead of Node.js HTTP server
+- Better performance due to native implementation
+- Some advanced Express features may not be available yet
+
+## Migration
+
+If you're using Express with Node.js compatibility:
+
+**Before:**
+```ts
+const app = express();
+app.listen(3000);
+```
+
+**After:**
+```ts
+const app = express();
+Bun.serve({
+  fetch: app.fetch.bind(app),
+  port: 3000,
+});
+```
+
+Or use the compatibility method:
+
+```ts
+const app = express();
+const server = app.listen(3000); // Returns Bun.serve server
+```
+

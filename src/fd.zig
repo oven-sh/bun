@@ -287,7 +287,7 @@ pub const FD = packed struct(backing_int) {
                     };
                 },
             },
-            else => @compileError("FD.close() not implemented for fd platform"),
+            .wasm => @compileError("FD.close() not implemented for fd platform"),
         };
         if (Environment.isDebug) {
             if (result) |err| {

@@ -422,7 +422,7 @@ pub const AnyResponse = union(enum) {
         return switch (@TypeOf(response)) {
             *uws.NewApp(true).Response => .{ .SSL = response },
             *uws.NewApp(false).Response => .{ .TCP = response },
-            else => @compileError(unreachable),
+            else => @compileError("unreachable"),
         };
     }
 

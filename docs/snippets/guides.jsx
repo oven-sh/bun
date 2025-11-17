@@ -13,6 +13,12 @@ export const GuidesList = () => {
       },
       {
         category: "Ecosystem",
+        title: "Use Next.js with Bun",
+        href: "/guides/ecosystem/nextjs",
+        cta: "View guide",
+      },
+      {
+        category: "Ecosystem",
         title: "Build a frontend using Vite and Bun",
         href: "/guides/ecosystem/vite",
         cta: "View guide",
@@ -21,12 +27,6 @@ export const GuidesList = () => {
         category: "Runtime",
         title: "Install TypeScript declarations for Bun",
         href: "/guides/runtime/typescript",
-        cta: "View guide",
-      },
-      {
-        category: "Streams",
-        title: "Convert a ReadableStream to a string",
-        href: "/guides/streams/to-string",
         cta: "View guide",
       },
       {

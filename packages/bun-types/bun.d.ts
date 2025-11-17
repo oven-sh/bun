@@ -1935,11 +1935,21 @@ declare module "bun" {
     outfile?: string;
     /**
      * Whether to autoload .env files when the standalone executable runs
+     *
+     * Standalone-only: applies only when building/running the standalone executable.
+     *
+     * Equivalent CLI flags: `--compile-autoload-dotenv`, `--no-compile-autoload-dotenv`
+     *
      * @default true
      */
     autoloadDotenv?: boolean;
     /**
      * Whether to autoload bunfig.toml when the standalone executable runs
+     *
+     * Standalone-only: applies only when building/running the standalone executable.
+     *
+     * Equivalent CLI flags: `--compile-autoload-bunfig`, `--no-compile-autoload-bunfig`
+     *
      * @default true
      */
     autoloadBunfig?: boolean;

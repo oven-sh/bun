@@ -9,7 +9,9 @@ Bun provides a native Express.js shim that works directly with `Bun.serve`, avoi
 
 ## Status
 
-This is an experimental implementation. Full Express.js compatibility is a work in progress.
+⚠️ **Experimental** - This is a proof-of-concept implementation. Full Express.js compatibility is a work in progress.
+
+**Note:** This shim is experimental and may have compatibility issues. Express.js works well via Bun's native `node:http` compatibility layer. This shim is provided to explore potential performance improvements, but benchmarks are needed to validate the approach. See [benchmarks](#benchmarks) below.
 
 ## Basic Usage
 
@@ -99,4 +101,21 @@ Or use the compatibility method:
 const app = express();
 const server = app.listen(3000); // Returns Bun.serve server
 ```
+
+## Benchmarks
+
+Performance benchmarks comparing Express via `node:http` vs the native shim are available in `bench/express-bun-serve/express-benchmark.ts`. Run with:
+
+```bash
+bun bench/express-bun-serve/express-benchmark.ts
+```
+
+**Important:** Benchmarks are needed to validate whether this shim provides meaningful performance improvements over Express via `node:http`. The shim may not be faster if Express's API design limits optimization opportunities.
+
+## Limitations & Considerations
+
+- **Compatibility:** This shim implements a subset of Express.js features. Some advanced features may not work.
+- **Performance:** Express.js API design may limit optimization opportunities. Benchmarks are required to prove performance benefits.
+- **Maintenance:** Shims can cause compatibility issues as Express evolves. Consider using Express via `node:http` for production use.
+- **Bun.serve routes:** Cannot use Bun.serve's native route syntax when using this shim - must use Express middleware/routing API.
 

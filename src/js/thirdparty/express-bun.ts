@@ -1,8 +1,17 @@
 /**
  * Native Express.js shim for Bun.serve
  *
+ * ⚠️ EXPERIMENTAL - This is a proof-of-concept implementation.
+ *
  * This provides a native Express.js implementation that works directly
- * with Bun.serve, avoiding the Node.js compatibility layer for better performance.
+ * with Bun.serve, avoiding the Node.js compatibility layer.
+ *
+ * **Important Considerations:**
+ * - Express.js already works well via Bun's native `node:http` compatibility layer
+ * - This shim may not provide meaningful performance improvements due to Express's API design
+ * - Benchmarks are needed to validate the approach (see BENCHMARK_README.md)
+ * - This is experimental and may have compatibility issues
+ * - Consider using Express via `node:http` for production use
  *
  * Usage:
  * ```ts
@@ -22,6 +31,17 @@
  */
 
 import type { Server } from "bun";
+
+// BodyInit is a standard Web API type
+type BodyInit =
+  | string
+  | Blob
+  | ArrayBuffer
+  | FormData
+  | URLSearchParams
+  | ReadableStream<Uint8Array>
+  | Uint8Array
+  | DataView;
 
 // Express Request object that wraps Bun's Request
 class ExpressRequest {
@@ -521,31 +541,37 @@ class ExpressApp {
 
   // Middleware and routing
   use(path: string | Middleware, ...handlers: Middleware[]): this {
-    return this._router.use(path as any, ...handlers);
+    this._router.use(path as any, ...handlers);
+    return this;
   }
 
   post(path: string | RegExp, ...handlers: RouteHandler[]): this {
-    return this._router.post(path, ...handlers);
+    this._router.post(path, ...handlers);
+    return this;
   }
 
   put(path: string | RegExp, ...handlers: RouteHandler[]): this {
-    return this._router.put(path, ...handlers);
+    this._router.put(path, ...handlers);
+    return this;
   }
 
   delete(path: string | RegExp, ...handlers: RouteHandler[]): this {
-    return this._router.delete(path, ...handlers);
+    this._router.delete(path, ...handlers);
+    return this;
   }
 
   patch(path: string | RegExp, ...handlers: RouteHandler[]): this {
-    return this._router.patch(path, ...handlers);
+    this._router.patch(path, ...handlers);
+    return this;
   }
 
   all(path: string | RegExp, ...handlers: RouteHandler[]): this {
-    return this._router.all(path, ...handlers);
+    this._router.all(path, ...handlers);
+    return this;
   }
 
   // Bun.serve integration
-  async fetch(bunRequest: Request, server?: Server): Promise<Response> {
+  async fetch(bunRequest: Request, server?: Server<any>): Promise<Response> {
     const req = new ExpressRequest(bunRequest);
     const res = new ExpressResponse();
 
@@ -773,7 +799,7 @@ class ExpressApp {
   }
 
   // Express.listen() compatibility - returns a Bun.serve server
-  listen(port?: number, callback?: () => void): Server {
+  listen(port?: number, callback?: () => void): Server<any> {
     const server = Bun.serve({
       port: port || 3000,
       fetch: this.fetch.bind(this),

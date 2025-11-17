@@ -226,4 +226,30 @@ console.log("PRELOAD");
       stdout: "PRELOAD\nENTRY",
     },
   });
+
+  // Test that both flags can be disabled together without interference
+  itBundled("compile/AutoloadBothDisabled", {
+    compile: {
+      autoloadDotenv: false,
+      autoloadBunfig: false,
+    },
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(process.env.TEST_VAR || "not found");
+        console.log("ENTRY");
+      `,
+    },
+    runtimeFiles: {
+      "/.env": `TEST_VAR=from_dotenv`,
+      "/bunfig.toml": `
+preload = ["./preload.ts"]
+      `,
+      "/preload.ts": `
+console.log("PRELOAD");
+      `,
+    },
+    run: {
+      stdout: "not found\nENTRY",
+    },
+  });
 });

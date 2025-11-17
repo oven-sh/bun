@@ -5326,16 +5326,27 @@ const Tokenizer = struct {
                     if (single_quote) break;
                 },
                 '\\' => {
-                    this.advance(1);
-                    if (!this.isEof()) {
-                        switch (this.nextByteUnchecked()) {
-                            // Escaped newline
-                            '\n', FORM_FEED_BYTE, '\r' => this.consumeNewline(),
-                            else => this.consumeEscapeAndWrite(&string_bytes),
-                        }
+                    this.advance(1); // skip the backslash
+
+                    switch (this.nextByteUnchecked()) {
+                        // skip newline
+                        '\n', FORM_FEED_BYTE, '\r' => this.consumeNewline(),
+
+                        else => {
+                            // If not newline, keep the backslash
+                            string_bytes.append(this.allocator, &[_]u8{'\\'});
+
+                            this.advance(1); // skip again
+
+                            if (!this.isEof()) {
+                                const next_byte = this.nextByteUnchecked();
+                                string_bytes.append(this.allocator, &[_]u8{next_byte});
+                                this.advance(1);
+                            }
+
+                            continue;
+                        },
                     }
-                    // else: escaped EOF, do nothing.
-                    continue;
                 },
                 0 => {
                     this.advance(1);
@@ -6932,7 +6943,6 @@ pub const serializer = struct {
                 for (str, 0..) |b, i| {
                     const escaped = switch (b) {
                         '"' => "\\\"",
-                        '\\' => "\\\\",
                         // replacement character
                         0 => bun.strings.encodeUTF8Comptime(0xFFD),
                         0x01...0x1F, 0x7F => null,

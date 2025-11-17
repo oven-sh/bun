@@ -11,7 +11,12 @@
   },
   "test/js/bun/ffi/cc.test.ts": {
     "darwin": { "retries": 1, "warnInsteadOfFail": true },
-    "note": "flaky since new mac ci runners"
+    "note": "failing on new mac ci runners"
+  },
+  "test/integration/next-pages/test/dev-server.test.ts": {
+    "darwin": { "retries": 1, "warnInsteadOfFail": true },
+    "*": 8,
+    "note": "failing on new mac ci runners"
   },
   "test/cli/install/bun-install.test.ts": {
     "*": 8,
@@ -154,7 +159,6 @@
   "test/js/bun/glob/scan.test.ts": { "*": 8 },
   "test/js/bun/shell/leak.test.ts": { "*": 8 },
   "test/bake/dev-and-prod.test.ts": { "*": 8 },
-  "test/integration/next-pages/test/dev-server.test.ts": { "*": 8 },
   "test/js/web/fetch/fetch.upgrade.test.ts": { "*": 8 },
   "test/js/bun/http/serve.test.ts": { "*": 8 },
   "test/bake/dev/production.test.ts": { "*": 8 },

@@ -1,7 +1,6 @@
 import { test, expect } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { relative, resolve } from "node:path";
-import express from "../../../../src/js/thirdparty/express-bun";
 
 // Compute the relative path from tempDir to the express-bun shim
 function getExpressImportPath(tempDirPath: string): string {
@@ -31,6 +30,7 @@ test("Express shim with bun.serve - basic GET route", async () => {
       });
       
       console.log(server.url.href);
+      server.stop();
     `,
   );
 

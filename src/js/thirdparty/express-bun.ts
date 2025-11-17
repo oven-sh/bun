@@ -49,9 +49,14 @@ class ExpressRequest {
     const cookieHeader = this._bunRequest.headers.get("cookie");
     if (cookieHeader) {
       for (const cookie of cookieHeader.split(";")) {
-        const [key, value] = cookie.trim().split("=");
-        if (key && value) {
-          this._cookies[key] = decodeURIComponent(value);
+        const trimmed = cookie.trim();
+        const equalIndex = trimmed.indexOf("=");
+        if (equalIndex > 0) {
+          const key = trimmed.slice(0, equalIndex);
+          const value = trimmed.slice(equalIndex + 1);
+          if (key && value) {
+            this._cookies[key] = decodeURIComponent(value);
+          }
         }
       }
     }
@@ -437,6 +442,26 @@ class Router {
   }
 
   private _route(method: string | undefined, path: string | RegExp, handlers: RouteHandler[]): this {
+    // Validate route path to mitigate ReDoS risk
+    if (typeof path === "string") {
+      // Limit parameter count to prevent excessive regex complexity
+      const paramCount = (path.match(/:(\w+)/g) || []).length;
+      if (paramCount > 50) {
+        throw new Error(`Route path has too many parameters (${paramCount}). Maximum allowed is 50.`);
+      }
+
+      // Reject paths with excessive wildcards that could cause backtracking
+      const wildcardCount = (path.match(/\*/g) || []).length;
+      if (wildcardCount > 10) {
+        throw new Error(`Route path has too many wildcards (${wildcardCount}). Maximum allowed is 10.`);
+      }
+
+      // Reject extremely long paths that could cause issues
+      if (path.length > 1000) {
+        throw new Error(`Route path is too long (${path.length} characters). Maximum allowed is 1000.`);
+      }
+    }
+
     this._stack.push({
       method,
       path,
@@ -599,19 +624,37 @@ class ExpressApp {
           matched = true;
         } else if (path.includes(":")) {
           // Parameter matching
+          // ReDoS mitigation: limit parameter count and pattern complexity
+          const paramCount = (path.match(/:(\w+)/g) || []).length;
+          if (paramCount > 50) {
+            // Skip matching if parameter count exceeds safe limit
+            continue;
+          }
+
           const pathPattern = path
             .replace(/\./g, "\\.")
             .replace(/:(\w+)/g, "([^/]+)")
             .replace(/\*/g, ".*");
-          const regex = new RegExp(`^${pathPattern}$`);
-          const match = pathname.match(regex);
-          if (match) {
-            matched = true;
-            const paramNames = path.match(/:(\w+)/g) || [];
-            for (let i = 0; i < paramNames.length; i++) {
-              const paramName = paramNames[i].slice(1);
-              params[paramName] = decodeURIComponent(match[i + 1]);
+
+          // Additional safety: limit pattern length to prevent excessive regex complexity
+          if (pathPattern.length > 2000) {
+            continue;
+          }
+
+          try {
+            const regex = new RegExp(`^${pathPattern}$`);
+            const match = pathname.match(regex);
+            if (match) {
+              matched = true;
+              const paramNames = path.match(/:(\w+)/g) || [];
+              for (let i = 0; i < paramNames.length; i++) {
+                const paramName = paramNames[i].slice(1);
+                params[paramName] = decodeURIComponent(match[i + 1]);
+              }
             }
+          } catch (e) {
+            // Skip invalid regex patterns
+            continue;
           }
         } else {
           // Exact or prefix match

@@ -41,13 +41,13 @@ pub fn ComptimeClap(
 
         pub fn parse(iter: anytype, opt: clap.ParseOptions) !@This() {
             const allocator = opt.allocator;
-            var multis = [_]std.ArrayList([]const u8){undefined} ** multi_options;
+            var multis = [_]std.array_list.Managed([]const u8){undefined} ** multi_options;
             for (&multis) |*multi| {
-                multi.* = std.ArrayList([]const u8).init(allocator);
+                multi.* = std.array_list.Managed([]const u8).init(allocator);
             }
 
-            var pos = std.ArrayList([]const u8).init(allocator);
-            var passthrough_positionals = std.ArrayList([]const u8).init(allocator);
+            var pos = std.array_list.Managed([]const u8).init(allocator);
+            var passthrough_positionals = std.array_list.Managed([]const u8).init(allocator);
 
             var res = @This(){
                 .single_options = [_]?[]const u8{null} ** single_options,

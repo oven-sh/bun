@@ -51,7 +51,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!j
     defer arena.deinit();
     var stack = std.heap.stackFallback(1024, arena.allocator());
     const allocator = stack.get();
-    var all_positionals = std.ArrayList([]const u8).init(allocator);
+    var all_positionals = std.array_list.Managed([]const u8).init(allocator);
 
     var log = logger.Log.init(allocator);
 

@@ -466,7 +466,7 @@ pub fn scan(
                 try p.import_records_for_current_part.append(allocator, st.import_record_index);
                 p.named_imports.ensureUnusedCapacity(p.allocator, st.items.len) catch unreachable;
                 for (st.items) |item| {
-                    const ref = item.name.ref orelse p.panic("Expected export from item to have a name {any}", .{st});
+                    const ref = item.name.ref orelse p.panic("Expected export from item to have a name", .{});
                     // Note that the imported alias is not item.Alias, which is the
                     // exported alias. This is somewhat confusing because each
                     // SExportFrom statement is basically SImport + SExportClause in one.

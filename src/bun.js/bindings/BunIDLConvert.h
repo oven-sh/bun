@@ -69,6 +69,32 @@ template<> struct WebCore::Converter<Bun::IDLStrictUndefined>
     }
 };
 
+template<typename IDL>
+struct WebCore::Converter<Bun::IDLLooseNullable<IDL>>
+    : Bun::DefaultTryConverter<Bun::IDLLooseNullable<IDL>> {
+
+    using ReturnType = WebCore::Converter<WebCore::IDLNullable<IDL>>::ReturnType;
+
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<ReturnType> tryConvert(
+        JSC::JSGlobalObject& globalObject,
+        JSC::JSValue value,
+        Ctx& ctx)
+    {
+        if (!value.toBoolean(&globalObject))
+            return IDL::nullValue();
+        return Bun::tryConvertIDL<IDL>(globalObject, value, ctx);
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static ReturnType convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
+    {
+        if (!value.toBoolean(&globalObject))
+            return IDL::nullValue();
+        return Bun::convertIDL<IDL>(globalObject, value, ctx);
+    }
+};
+
 template<> struct WebCore::Converter<Bun::IDLStrictBoolean>
     : Bun::DefaultTryConverter<Bun::IDLStrictBoolean> {
 

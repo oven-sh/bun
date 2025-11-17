@@ -21,7 +21,7 @@ pub const FileCopier = struct {
         };
     }
 
-    pub fn deinit(this: *const FileCopier) void {
+    pub fn deinit(this: *FileCopier) void {
         this.walker.deinit();
     }
 
@@ -127,7 +127,7 @@ pub const FileCopier = struct {
                     }
 
                     break :dest dest_dir.createFileZ(entry.path, .{}) catch |err| {
-                        Output.prettyErrorln("<r><red>{s}<r>: copy file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
+                        Output.prettyErrorln("<r><red>{s}<r>: copy file {f}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                         Global.exit(1);
                     };
                 };

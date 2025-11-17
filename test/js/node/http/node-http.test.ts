@@ -5,9 +5,8 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, randomPort } from "harness";
+import { bunEnv, bunExe, exampleSite, randomPort } from "harness";
 import { createTest } from "node-harness";
-import { spawnSync } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import nodefs, { unlinkSync } from "node:fs";
 import http, {
@@ -451,8 +450,14 @@ describe("node:http", () => {
       });
     });
 
-    it("should make a https:// GET request when passed string as first arg", done => {
-      const req = https.request("https://example.com", { headers: { "accept-encoding": "identity" } }, res => {
+    it("should make a https:// GET request when passed string as first arg", _done => {
+      const server = exampleSite();
+      function done(err?: Error) {
+        server.stop();
+        _done(err);
+      }
+
+      const req = https.request(server.url, { ca: server.ca, headers: { "accept-encoding": "identity" } }, res => {
         let data = "";
         res.setEncoding("utf8");
         res.on("data", chunk => {
@@ -826,7 +831,12 @@ describe("node:http", () => {
 
     it("should correctly stream a multi-chunk response #5320", async done => {
       runTest(done, (server, serverPort, done) => {
-        const req = request({ host: "localhost", port: `${serverPort}`, path: "/multi-chunk-response", method: "GET" });
+        const req = request({
+          host: "localhost",
+          port: `${serverPort}`,
+          path: "/multi-chunk-response",
+          method: "GET",
+        });
 
         req.on("error", err => done(err));
 
@@ -856,56 +866,26 @@ describe("node:http", () => {
   });
 
   describe("https.request with custom tls options", () => {
-    const createServer = () =>
-      new Promise(resolve => {
-        const server = createHttpsServer(
-          {
-            key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.key")),
-            cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.crt")),
-            rejectUnauthorized: true,
-          },
-          (req, res) => {
-            res.writeHead(200);
-            res.end("hello world");
-          },
-        );
+    it("supports custom tls args", async () => {
+      await using httpsServer = exampleSite();
 
-        listen(server, "https").then(url => {
-          resolve({
-            server,
-            close: () => server.close(),
-            url,
-          });
-        });
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const options: https.RequestOptions = {
+        method: "GET",
+        url: httpsServer.url.href as string,
+        port: httpsServer.url.port,
+        ca: httpsServer.ca,
+      };
+      const req = https.request(options, res => {
+        res.on("data", () => null);
+        res.on("end", resolve);
       });
 
-    it("supports custom tls args", async done => {
-      const { url, close } = await createServer();
-      try {
-        const options: https.RequestOptions = {
-          method: "GET",
-          url,
-          port: url.port,
-          ca: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost_ca.pem")),
-        };
-        const req = https.request(options, res => {
-          res.on("data", () => null);
-          res.on("end", () => {
-            close();
-            done();
-          });
-        });
+      req.on("error", reject);
 
-        req.on("error", error => {
-          close();
-          done(error);
-        });
+      req.end();
 
-        req.end();
-      } catch (e) {
-        close();
-        throw e;
-      }
+      await promise;
     });
   });
 
@@ -1070,9 +1050,10 @@ describe("node:http", () => {
     });
   });
 
-  test("test unix socket server", done => {
+  test("test unix socket server", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
     const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
-    const server = createServer((req, res) => {
+    await using server = createServer((req, res) => {
       expect(req.method).toStrictEqual("GET");
       expect(req.url).toStrictEqual("/bun?a=1");
       res.writeHead(200, {
@@ -1083,18 +1064,20 @@ describe("node:http", () => {
       res.end();
     });
 
-    server.listen(socketPath, () => {
-      // TODO: unix socket is not implemented in fetch.
-      const output = spawnSync("curl", ["--unix-socket", socketPath, "http://localhost/bun?a=1"]);
+    server.listen(socketPath, async () => {
       try {
-        expect(output.stdout.toString()).toStrictEqual("Bun\n");
-        done();
+        const response = await fetch(`http://localhost/bun?a=1`, {
+          unix: socketPath,
+        });
+        const text = await response.text();
+        expect(text).toBe("Bun\n");
+        resolve();
       } catch (err) {
-        done(err);
-      } finally {
-        server.close();
+        reject(err);
       }
     });
+
+    await promise;
   });
 
   test("should not decompress gzip, issue#4397", async () => {
@@ -1308,26 +1291,26 @@ describe("server.address should be valid IP", () => {
 });
 
 it("should propagate exception in sync data handler", async () => {
-  const { exitCode, stdout } = Bun.spawnSync({
+  await using proc = Bun.spawn({
     cmd: [bunExe(), "run", path.join(import.meta.dir, "node-http-error-in-data-handler-fixture.1.js")],
     stdout: "pipe",
     stderr: "inherit",
     env: bunEnv,
   });
-
-  expect(stdout.toString()).toContain("Test passed");
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toContain("Test passed");
   expect(exitCode).toBe(0);
 });
 
 it("should propagate exception in async data handler", async () => {
-  const { exitCode, stdout } = Bun.spawnSync({
+  await using proc = Bun.spawn({
     cmd: [bunExe(), "run", path.join(import.meta.dir, "node-http-error-in-data-handler-fixture.2.js")],
     stdout: "pipe",
     stderr: "inherit",
     env: bunEnv,
   });
-
-  expect(stdout.toString()).toContain("Test passed");
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toContain("Test passed");
   expect(exitCode).toBe(0);
 });
 
@@ -1700,5 +1683,28 @@ describe("HTTP Server Security Tests - Advanced", () => {
     clientErrors.length = 0;
     await doInvalidRequests(address);
     await Promise.all(clientErrors);
+  });
+
+  test("flushHeaders should send the headers immediately", async () => {
+    let headers_sent_at: number = 0;
+
+    let server_res: http.ServerResponse | undefined;
+    await using server = http.createServer(async (req, res) => {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      headers_sent_at = Date.now();
+      server_res = res;
+      res.flushHeaders();
+    });
+
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const address = server.address() as AddressInfo;
+    const response = await fetch(`http://127.0.0.1:${address.port}`);
+    expect(Date.now() - headers_sent_at).toBeLessThan(100);
+    expect(server_res).toBeDefined();
+    server_res!.write("Hello", () => {
+      server_res!.end(" World");
+    });
+    const text = await response.text();
+    expect(text).toBe("Hello World");
   });
 });

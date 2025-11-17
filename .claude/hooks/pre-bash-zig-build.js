@@ -92,7 +92,39 @@ if (argv0 === "timeout") {
 
   // Check if it's "bun bd" or "bun-debug bd" without other positional args
   if (actualCommand === "bun" || actualCommand.includes("bun-debug")) {
-    const positionalArgs = restArgs.filter(arg => !arg.startsWith("-"));
+    // Claude is a sneaky fucker
+    let positionalArgs = restArgs.filter(arg => !arg.startsWith("-"));
+    const redirectStderrToStdoutIndex = positionalArgs.findIndex(arg => arg === "2>&1");
+    if (redirectStderrToStdoutIndex !== -1) {
+      positionalArgs.splice(redirectStderrToStdoutIndex, 1);
+    }
+    const redirectStdoutToStderrIndex = positionalArgs.findIndex(arg => arg === "1>&2");
+    if (redirectStdoutToStderrIndex !== -1) {
+      positionalArgs.splice(redirectStdoutToStderrIndex, 1);
+    }
+
+    const redirectToFileIndex = positionalArgs.findIndex(arg => arg === ">");
+    if (redirectToFileIndex !== -1) {
+      positionalArgs.splice(redirectToFileIndex, 2);
+    }
+
+    const redirectToFileAppendIndex = positionalArgs.findIndex(arg => arg === ">>");
+    if (redirectToFileAppendIndex !== -1) {
+      positionalArgs.splice(redirectToFileAppendIndex, 2);
+    }
+
+    const redirectTOFileInlineIndex = positionalArgs.findIndex(arg => arg.startsWith(">"));
+    if (redirectTOFileInlineIndex !== -1) {
+      positionalArgs.splice(redirectTOFileInlineIndex, 1);
+    }
+
+    const pipeIndex = positionalArgs.findIndex(arg => arg === "|");
+    if (pipeIndex !== -1) {
+      positionalArgs = positionalArgs.slice(0, pipeIndex);
+    }
+
+    positionalArgs = positionalArgs.map(arg => arg.trim()).filter(Boolean);
+
     if (positionalArgs.length === 1 && positionalArgs[0] === "bd") {
       denyWithReason("error: Run `bun bd` without a timeout");
     }

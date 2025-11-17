@@ -39,7 +39,7 @@ pub fn isWindowsAbsolutePathMissingDriveLetter(comptime T: type, chars: []const 
 pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
     bun.unsafeAssert(buf.len > 0);
     const to_copy = trimPrefixComptime(u16, utf16, bun.windows.long_path_prefix);
-    const encode_into_result = copyUTF16IntoUTF8(buf[0 .. buf.len - 1], []const u16, to_copy);
+    const encode_into_result = copyUTF16IntoUTF8(buf[0 .. buf.len - 1], to_copy);
     bun.unsafeAssert(encode_into_result.written < buf.len);
     buf[encode_into_result.written] = 0;
     return buf[0..encode_into_result.written :0];
@@ -231,26 +231,6 @@ pub fn normalizeSlashesOnlyT(comptime T: type, buf: []T, path: []const T, compti
 
 pub fn normalizeSlashesOnly(buf: []u8, utf8: []const u8, comptime desired_slash: u8) []const u8 {
     return normalizeSlashesOnlyT(u8, buf, utf8, desired_slash, false);
-}
-
-pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
-    var renormalized: ?*bun.PathBuffer = null;
-    defer if (renormalized) |r| bun.path_buffer_pool.put(r);
-
-    var path_to_use = utf8;
-
-    if (bun.strings.containsChar(utf8, '/')) {
-        renormalized = bun.path_buffer_pool.get();
-        @memcpy(renormalized.?[0..utf8.len], utf8);
-        for (renormalized.?[0..utf8.len]) |*c| {
-            if (c.* == '/') {
-                c.* = '\\';
-            }
-        }
-        path_to_use = renormalized.?[0..utf8.len];
-    }
-
-    return toWDirPath(wbuf, path_to_use);
 }
 
 pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]u16 {

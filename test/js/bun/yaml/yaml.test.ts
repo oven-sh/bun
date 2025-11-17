@@ -494,6 +494,58 @@ document: 2
       expect(YAML.parse(yaml)).toEqual([{ document: 1 }, { document: 2 }]);
     });
 
+    test("document markers in quoted strings", () => {
+      const inputs = [
+        { expected: "hi ... hello", input: '"hi ... hello"' },
+        { expected: "hi ... hello", input: "'hi ... hello'" },
+        { expected: { foo: "hi ... hello" }, input: 'foo: "hi ... hello"' },
+        { expected: { foo: "hi ... hello" }, input: "foo: 'hi ... hello'" },
+        {
+          expected: "hi ... hello",
+          input: `"hi
+  ...
+  hello"`,
+        },
+        {
+          expected: "hi ... hello",
+          input: `'hi
+  ...
+  hello'`,
+        },
+        {
+          expected: { foo: "hi ... hello" },
+          input: `foo: "hi
+  ...
+  hello"`,
+        },
+        {
+          expected: { foo: "hi ... hello" },
+          input: `foo: 'hi
+  ...
+  hello'`,
+        },
+        {
+          expected: { foo: { bar: "hi ... hello" } },
+          input: `foo:
+  bar: "hi
+    ...
+    hello"`,
+        },
+        {
+          expected: { foo: { bar: "hi ... hello" } },
+          input: `foo:
+  bar: 'hi
+    ...
+    hello'`,
+        },
+      ];
+
+      for (const { input, expected } of inputs) {
+        expect(YAML.parse(input)).toEqual(expected);
+        expect(YAML.parse(YAML.stringify(YAML.parse(input)))).toEqual(expected);
+      }
+    });
+
     test("handles multiline strings", () => {
       const yaml = `
 literal: |
@@ -1038,6 +1090,40 @@ my_config:
       });
     });
 
+    const indicatorQuotingTests = [
+      "-",
+      "?",
+      ":",
+      ",",
+      "[",
+      "]",
+      "{",
+      "}",
+      "#",
+      "&",
+      "*",
+      "!",
+      "|",
+      ">",
+      "'",
+      '"',
+      "%",
+      "@",
+      "`",
+      " ",
+      "\t",
+      "\n",
+      "\r",
+    ];
+
+    for (const indicatorOrWhitespace of indicatorQuotingTests) {
+      test(`round-trip string starting with '${indicatorOrWhitespace}'`, () => {
+        const array = [{ key: indicatorOrWhitespace }];
+        expect(YAML.parse(YAML.stringify(array))).toEqual(array);
+        expect(YAML.parse(YAML.stringify(array, null, 2))).toEqual(array);
+      });
+    }
+
     test("strings are properly referenced", () => {
       const config = {
         version: "1.0",
@@ -1243,6 +1329,11 @@ my_config:
         // Octal numbers
         expect(YAML.stringify("0o777")).toBe('"0o777"');
         expect(YAML.stringify("0O644")).toBe('"0O644"');
+
+        // Zero prefix
+        expect(YAML.stringify({ a: "011", b: "110" })).toBe('{a: "011",b: "110"}');
+        expect(YAML.stringify(YAML.parse('"0123"'))).toBe('"0123"');
+        expect(YAML.stringify("0000123")).toBe('"0000123"');
       });
 
       test("quotes strings with colons followed by spaces", () => {

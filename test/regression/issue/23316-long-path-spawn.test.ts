@@ -89,7 +89,8 @@ test("spawn should handle cwd paths with disabled 8.3 names on Windows", async (
       stdout: "inherit",
       stderr: "inherit",
     });
-    await proc.exited;
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) throw new Error("process exited");
   } catch (e) {
     err = e;
   }

@@ -69,30 +69,29 @@ async function roundTrip(data, format) {
 }
 
 const formats = ["deflate", "gzip", "deflate-raw"];
+if (runAll) formats.push("brotli", "zstd");
 
-if (runAll) {
-  // Small data benchmarks (1KB)
-  group(`CompressionStream ${format.format(small.length)}`, () => {
-    for (const fmt of formats) {
-      try {
-        new CompressionStream(fmt);
-        bench(fmt, async () => await compress(small, fmt));
-      } catch (e) {
-        // Skip unsupported formats
-      }
+// Small data benchmarks (1KB)
+group(`CompressionStream ${format.format(small.length)}`, () => {
+  for (const fmt of formats) {
+    try {
+      new CompressionStream(fmt);
+      bench(fmt, async () => await compress(small, fmt));
+    } catch (e) {
+      // Skip unsupported formats
     }
-  });
+  }
+});
 
-  // Medium data benchmarks (100KB)
-  group(`CompressionStream ${format.format(medium.length)}`, () => {
-    for (const fmt of formats) {
-      try {
-        new CompressionStream(fmt);
-        bench(fmt, async () => await compress(medium, fmt));
-      } catch (e) {}
-    }
-  });
-}
+// Medium data benchmarks (100KB)
+group(`CompressionStream ${format.format(medium.length)}`, () => {
+  for (const fmt of formats) {
+    try {
+      new CompressionStream(fmt);
+      bench(fmt, async () => await compress(medium, fmt));
+    } catch (e) {}
+  }
+});
 
 // Large data benchmarks (1MB)
 group(`CompressionStream ${format.format(large.length)}`, () => {
@@ -119,23 +118,21 @@ for (const fmt of formats) {
   }
 }
 
-if (runAll) {
-  group(`DecompressionStream ${format.format(small.length)}`, () => {
-    for (const fmt of formats) {
-      if (compressedData[fmt]) {
-        bench(fmt, async () => await decompress(compressedData[fmt].small, fmt));
-      }
+group(`DecompressionStream ${format.format(small.length)}`, () => {
+  for (const fmt of formats) {
+    if (compressedData[fmt]) {
+      bench(fmt, async () => await decompress(compressedData[fmt].small, fmt));
     }
-  });
+  }
+});
 
-  group(`DecompressionStream ${format.format(medium.length)}`, () => {
-    for (const fmt of formats) {
-      if (compressedData[fmt]) {
-        bench(fmt, async () => await decompress(compressedData[fmt].medium, fmt));
-      }
+group(`DecompressionStream ${format.format(medium.length)}`, () => {
+  for (const fmt of formats) {
+    if (compressedData[fmt]) {
+      bench(fmt, async () => await decompress(compressedData[fmt].medium, fmt));
     }
-  });
-}
+  }
+});
 
 group(`DecompressionStream ${format.format(large.length)}`, () => {
   for (const fmt of formats) {
@@ -145,18 +142,15 @@ group(`DecompressionStream ${format.format(large.length)}`, () => {
   }
 });
 
-if (runAll) {
-  // Round-trip benchmarks
-  group(`roundtrip ${format.format(large.length)}`, () => {
-    for (const fmt of formats) {
-      try {
-        new CompressionStream(fmt);
-        bench(fmt, async () => await roundTrip(large, fmt));
-      } catch (e) {
-        // Skip unsupported formats
-      }
+group(`roundtrip ${format.format(large.length)}`, () => {
+  for (const fmt of formats) {
+    try {
+      new CompressionStream(fmt);
+      bench(fmt, async () => await roundTrip(large, fmt));
+    } catch (e) {
+      // Skip unsupported formats
     }
-  });
-}
+  }
+});
 
 await run();

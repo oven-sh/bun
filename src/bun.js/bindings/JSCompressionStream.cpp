@@ -9,6 +9,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 
 namespace WebCore {
+
 using namespace JSC;
 
 static JSC_DECLARE_CUSTOM_GETTER(jsCompressionStreamConstructor);
@@ -30,6 +31,7 @@ public:
         STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCompressionStreamPrototype, Base);
         return &vm.plainObjectSpace();
     }
+
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
@@ -131,7 +133,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCompressionStreamConstructor, (JSGlobalObject * lexic
     auto* prototype = jsDynamicCast<JSCompressionStreamPrototype*>(JSValue::decode(thisValue));
     if (!prototype)
         return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSCompressionStream::getConstructor(vm, prototype->globalObject()));
+    return JSValue::encode(JSCompressionStream::getConstructor(vm, lexicalGlobalObject));
 }
 
 } // namespace WebCore

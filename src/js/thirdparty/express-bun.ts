@@ -1,18 +1,18 @@
 /**
  * Native Express.js shim for Bun.serve
- * 
+ *
  * This provides a native Express.js implementation that works directly
  * with Bun.serve, avoiding the Node.js compatibility layer for better performance.
- * 
+ *
  * Usage:
  * ```ts
  * import express from "express";
  * const app = express();
- * 
+ *
  * app.get("/", (req, res) => {
  *   res.send("Hello World");
  * });
- * 
+ *
  * // Works with bun.serve directly
  * Bun.serve({
  *   fetch: app.fetch.bind(app),
@@ -90,10 +90,6 @@ class ExpressRequest {
     return this._bunRequest.headers;
   }
 
-  get header(): Headers {
-    return this._bunRequest.headers;
-  }
-
   get body(): any {
     return this._body;
   }
@@ -140,8 +136,22 @@ class ExpressRequest {
     return this._bunRequest.headers.get("x-requested-with") === "XMLHttpRequest";
   }
 
-  get(): string | null {
-    return this._bunRequest.headers.get(arguments[0] as string);
+  get(field: string): string | undefined {
+    if (typeof this._bunRequest.headers.get === "function") {
+      return this._bunRequest.headers.get(field) ?? undefined;
+    }
+    // Fallback: lowercased key lookup on headers object
+    const lowerField = field.toLowerCase();
+    for (const [key, value] of this._bunRequest.headers.entries()) {
+      if (key.toLowerCase() === lowerField) {
+        return value;
+      }
+    }
+    return undefined;
+  }
+
+  header(field: string): string | undefined {
+    return this.get(field);
   }
 
   is(type: string): string | false {
@@ -200,14 +210,6 @@ class ExpressResponse {
     this._statusCode = value;
   }
 
-  get status(): number {
-    return this._statusCode;
-  }
-
-  set status(value: number) {
-    this._statusCode = value;
-  }
-
   get headersSent(): boolean {
     return this._sent;
   }
@@ -244,20 +246,71 @@ class ExpressResponse {
   }
 
   cookie(name: string, value: string, options?: any): this {
-    // TODO: implement cookie options
-    const cookieValue = `${name}=${encodeURIComponent(value)}`;
-    const existing = this._headers.get("set-cookie");
-    if (existing) {
-      this._headers.set("set-cookie", `${existing}; ${cookieValue}`);
-    } else {
-      this._headers.set("set-cookie", cookieValue);
+    // Encode both name and value
+    const encodedName = encodeURIComponent(name);
+    const encodedValue = encodeURIComponent(value);
+
+    // Build cookie string starting with name=value
+    const parts: string[] = [`${encodedName}=${encodedValue}`];
+
+    // Serialize options
+    if (options) {
+      // Expires: Date -> toUTCString()
+      if (options.expires) {
+        if (options.expires instanceof Date) {
+          parts.push(`Expires=${options.expires.toUTCString()}`);
+        }
+      }
+
+      // Max-Age: number -> Max-Age=<number>
+      if (options.maxAge !== undefined && options.maxAge !== null) {
+        parts.push(`Max-Age=${options.maxAge}`);
+      }
+
+      // Path
+      if (options.path) {
+        parts.push(`Path=${options.path}`);
+      }
+
+      // Domain
+      if (options.domain) {
+        parts.push(`Domain=${options.domain}`);
+      }
+
+      // Secure flag (boolean)
+      if (options.secure === true) {
+        parts.push("Secure");
+      }
+
+      // HttpOnly flag (boolean)
+      if (options.httpOnly === true) {
+        parts.push("HttpOnly");
+      }
+
+      // SameSite
+      if (options.sameSite) {
+        const sameSiteValue = String(options.sameSite);
+        // Validate sameSite values
+        if (sameSiteValue === "Strict" || sameSiteValue === "Lax" || sameSiteValue === "None") {
+          parts.push(`SameSite=${sameSiteValue}`);
+        }
+      }
     }
+
+    // Join attributes with "; " and append to headers
+    const cookieString = parts.join("; ");
+    this._headers.append("set-cookie", cookieString);
+
     return this;
   }
 
   clearCookie(name: string, options?: any): this {
-    // TODO: implement cookie clearing with options
-    this.cookie(name, "", { expires: new Date(0) });
+    // Clear cookie by setting it with empty value and expiration
+    this.cookie(name, "", {
+      ...options,
+      expires: new Date(0),
+      maxAge: 0,
+    });
     return this;
   }
 
@@ -334,11 +387,7 @@ class ExpressResponse {
 }
 
 // Middleware function type
-type Middleware = (
-  req: ExpressRequest,
-  res: ExpressResponse,
-  next: (err?: any) => void
-) => void | Promise<void>;
+type Middleware = (req: ExpressRequest, res: ExpressResponse, next: (err?: any) => void) => void | Promise<void>;
 
 // Route handler type
 type RouteHandler = Middleware;
@@ -420,8 +469,19 @@ class ExpressApp {
     return this;
   }
 
-  get(setting: string): any {
-    return this._settings[setting];
+  // TypeScript overloads for get() method
+  // Overload 1: Get application setting
+  get(setting: string): any;
+  // Overload 2: Register GET route
+  get(path: string | RegExp, ...handlers: RouteHandler[]): this;
+  // Implementation
+  get(settingOrPath: string | RegExp, ...handlers: RouteHandler[]): any | this {
+    // If first argument is a string and only one argument, treat as setting getter
+    if (typeof settingOrPath === "string" && arguments.length === 1) {
+      return this._settings[settingOrPath];
+    }
+    // Otherwise, treat as route registration
+    return this._router.get(settingOrPath as string | RegExp, ...handlers);
   }
 
   enable(setting: string): this {
@@ -437,10 +497,6 @@ class ExpressApp {
   // Middleware and routing
   use(path: string | Middleware, ...handlers: Middleware[]): this {
     return this._router.use(path as any, ...handlers);
-  }
-
-  get(path: string | RegExp, ...handlers: RouteHandler[]): this {
-    return this._router.get(path, ...handlers);
   }
 
   post(path: string | RegExp, ...handlers: RouteHandler[]): this {
@@ -563,7 +619,13 @@ class ExpressApp {
           const comparePath = caseSensitive ? pathname : pathname.toLowerCase();
           const comparePattern = caseSensitive ? path : path.toLowerCase();
 
-          if (comparePath === comparePattern || comparePath.startsWith(comparePattern + "/")) {
+          // Special case: "/" matches all paths
+          if (comparePattern === "/") {
+            // Root path matches any path that starts with "/"
+            if (comparePath.startsWith("/")) {
+              matched = true;
+            }
+          } else if (comparePath === comparePattern || comparePath.startsWith(comparePattern + "/")) {
             matched = true;
           }
         }
@@ -615,7 +677,7 @@ class ExpressApp {
                       resolve();
                     }
                   })
-                  .catch((err) => {
+                  .catch(err => {
                     nextError = err;
                     reject(err);
                   });
@@ -692,4 +754,3 @@ express.Router = Router;
 
 // Only default export for builtin modules
 export default express;
-

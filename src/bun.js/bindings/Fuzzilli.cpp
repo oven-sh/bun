@@ -33,6 +33,7 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/ASCIILiteral.h>
+#include <JavaScriptCore/Completion.h>
 
 #define REPRL_CRFD 100
 #define REPRL_CWFD 101
@@ -166,6 +167,11 @@ extern "C" void __sanitizer_cov_trace_pc_guard_init(uint32_t* start, uint32_t* s
 extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t* guard);
 extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t* guard)
 {
+    // This function can be called during early program initialization (e.g., ASAN init)
+    // before Fuzzilli::sharedData is set up. We need to check for null.
+    if (!Fuzzilli::sharedData)
+        return;
+
     // There's a small race condition here: if this function executes in two threads for the same
     // edge at the same time, the first thread might disable the edge (by setting the guard to zero)
     // before the second thread fetches the guard value (and thus the index). However, our
@@ -177,6 +183,71 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     *guard = 0;
+}
+
+void Fuzzilli::runReprl(JSC::JSGlobalObject* globalObject)
+{
+    JSC::VM& vm = JSC::getVM(globalObject);
+    Vector<char> inputBuffer;
+
+    // Main REPRL loop - mimics WebKit's jsc shell
+    while (true) {
+        // Wait for 'cexe' command from fuzzer
+        waitForCommand();
+
+        // Read the JavaScript code to execute
+        readInput(&inputBuffer);
+
+        // Null-terminate the input
+        inputBuffer.append('\0');
+
+        int32_t result = 0;
+
+        {
+            // Create a new scope for each evaluation
+            auto scope = DECLARE_CATCH_SCOPE(vm);
+
+            // Create the source code
+            WTF::String sourceString = WTF::String::fromUTF8(inputBuffer.span());
+            JSC::SourceCode sourceCode = JSC::makeSource(
+                sourceString,
+                JSC::SourceOrigin { WTF::URL() },
+                JSC::SourceTaintedOrigin::Untainted
+            );
+
+            NakedPtr<JSC::Exception> exception;
+
+            // Evaluate the code
+            JSC::JSValue evalResult = JSC::evaluate(globalObject, sourceCode,
+                                                    globalObject->globalThis(), exception);
+
+            // Handle exceptions
+            if (exception) {
+                result = 1; // Non-zero indicates error
+                scope.clearException();
+            } else if (evalResult) {
+                // Optionally print the result (like a REPL would)
+                // Convert result to string and print
+                WTF::String resultString = evalResult.toWTFString(globalObject);
+                fprintf(stdout, "%s\n", resultString.utf8().data());
+            }
+        }
+
+        // Flush results and send status back
+        flushReprl(result);
+
+        // Clear for next iteration
+        inputBuffer.clear();
+    }
+}
+
+extern "C" void Fuzzilli__runReprl(JSC::JSGlobalObject* globalObject)
+{
+    // Initialize REPRL protocol (handshake, mmap input buffer)
+    Fuzzilli::initializeReprl();
+
+    // Run the main REPRL loop (never returns)
+    Fuzzilli::runReprl(globalObject);
 }
 
 #endif // BUN_FUZZILLI_ENABLED

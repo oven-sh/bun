@@ -915,6 +915,10 @@ if(USE_MIMALLOC_AS_DEFAULT_ALLOCATOR)
   target_compile_definitions(${bun} PRIVATE USE_MIMALLOC=1)
 endif()
 
+if(ENABLE_FUZZILLI)
+  target_compile_definitions(${bun} PRIVATE BUN_FUZZILLI_ENABLED=1)
+endif()
+
 target_compile_definitions(${bun} PRIVATE
   _HAS_EXCEPTIONS=0
   LIBUS_USE_OPENSSL=1

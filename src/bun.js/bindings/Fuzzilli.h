@@ -52,6 +52,8 @@ void flushReprl(int32_t result);
 
 void initializeReprl();
 
+void runReprl(JSC::JSGlobalObject* globalObject);
+
 } // namespace Fuzzilli
 
 #endif // BUN_FUZZILLI_ENABLED

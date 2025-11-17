@@ -192,7 +192,7 @@ foo/
       expect(await fileExists(`${tempdir}/sub_dir/file_symlink.txt`)).toBeTrue();
       expect(await fileExists(`${tempdir}/sub_dir/dir_symlink`)).toBeTrue();
       expect(await fileExists(`${tempdir}/sub_dir/dir_symlink/file.txt`)).toBeTrue();
-      await $`rm -r ./sub_dir`.cwd(`${tempdir}`);
+      await $`rm -r ./sub_dir`.cwd(tempdir);
       expect(await fileExists(`${tempdir}/sub_dir`)).toBeFalse();
       expect(await fileExists(`${tempdir}/keep_dir`)).toBeTrue();
       expect(await fileExists(`${tempdir}/keep_dir/file.txt`)).toBeTrue();

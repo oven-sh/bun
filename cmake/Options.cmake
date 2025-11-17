@@ -202,4 +202,6 @@ optionx(ERROR_LIMIT STRING "Maximum number of errors to show when compiling C++ 
 # bun.zig, and enables C++ code to also be aware of the option.
 set(USE_MIMALLOC_AS_DEFAULT_ALLOCATOR ON)
 
+optionx(ENABLE_FUZZILLI BOOL "If Fuzzilli support should be enabled" DEFAULT OFF)
+
 list(APPEND CMAKE_ARGS -DCMAKE_EXPORT_COMPILE_COMMANDS=ON)

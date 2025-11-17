@@ -17,7 +17,7 @@ pub const FuzzilliCommand = struct {
 
         // Verify REPRL file descriptors are available
         const REPRL_CRFD: c_int = 100;
-        verifyFd(REPRL_CRFD) catch {
+        if (!isValidFd(REPRL_CRFD)) {
             bun.Output.prettyErrorln(
                 "<r><red>error<r>: REPRL_CRFD (fd {d}) is not available. Run Bun under Fuzzilli.",
                 .{REPRL_CRFD},
@@ -27,7 +27,7 @@ pub const FuzzilliCommand = struct {
                 .{},
             );
             bun.Global.exit(1);
-        };
+        }
 
         bun.jsc.initialize(false);
 
@@ -48,8 +48,9 @@ pub const FuzzilliCommand = struct {
         unreachable;
     }
 
-    fn verifyFd(fd: c_int) !void {
-        const stat = try std.posix.fstat(fd);
-        _ = stat;
+    fn isValidFd(fd: c_int) bool {
+        // Use fcntl F_GETFD to check if fd is valid
+        const result = std.c.fcntl(fd, std.posix.F.GETFD);
+        return result != -1;
     }
 };

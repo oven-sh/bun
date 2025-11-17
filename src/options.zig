@@ -2227,7 +2227,7 @@ pub const Env = struct {
     /// List of explicit env files to load (e..g specified by --env-file args)
     files: []const []const u8 = &[_][]u8{},
 
-    /// If true, disable loading of default .env files (from --no-envfile flag or bunfig)
+    /// If true, disable loading of default .env files (from --no-env-file flag or bunfig)
     disable_default_env_files: bool = false,
 
     pub fn init(

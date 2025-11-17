@@ -4,13 +4,13 @@ import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
-test("--no-envfile disables .env loading", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "no-envfile-"));
+test("--no-env-file disables .env loading", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "no-env-file-"));
   try {
     writeFileSync(join(dir, ".env"), "FOO=bar");
     writeFileSync(join(dir, "index.js"), "console.log(process.env.FOO);");
 
-    // Without --no-envfile, .env should be loaded
+    // Without --no-env-file, .env should be loaded
     const proc1 = Bun.spawn({
       cmd: [bunExe(), "index.js"],
       env: bunEnv,
@@ -24,9 +24,9 @@ test("--no-envfile disables .env loading", async () => {
     expect(stdout1.trim()).toBe("bar");
     expect(exitCode1).toBe(0);
 
-    // With --no-envfile, .env should NOT be loaded
+    // With --no-env-file, .env should NOT be loaded
     const proc2 = Bun.spawn({
-      cmd: [bunExe(), "--no-envfile", "index.js"],
+      cmd: [bunExe(), "--no-env-file", "index.js"],
       env: bunEnv,
       cwd: dir,
       stderr: "pipe",
@@ -42,14 +42,14 @@ test("--no-envfile disables .env loading", async () => {
   }
 });
 
-test("--no-envfile disables .env.local loading", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "no-envfile-local-"));
+test("--no-env-file disables .env.local loading", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "no-env-file-local-"));
   try {
     writeFileSync(join(dir, ".env"), "FOO=bar");
     writeFileSync(join(dir, ".env.local"), "FOO=local");
     writeFileSync(join(dir, "index.js"), "console.log(process.env.FOO);");
 
-    // Without --no-envfile, .env.local should override .env
+    // Without --no-env-file, .env.local should override .env
     const proc1 = Bun.spawn({
       cmd: [bunExe(), "index.js"],
       env: bunEnv,
@@ -63,9 +63,9 @@ test("--no-envfile disables .env.local loading", async () => {
     expect(stdout1.trim()).toBe("local");
     expect(exitCode1).toBe(0);
 
-    // With --no-envfile, neither should be loaded
+    // With --no-env-file, neither should be loaded
     const proc2 = Bun.spawn({
-      cmd: [bunExe(), "--no-envfile", "index.js"],
+      cmd: [bunExe(), "--no-env-file", "index.js"],
       env: bunEnv,
       cwd: dir,
       stderr: "pipe",
@@ -81,14 +81,14 @@ test("--no-envfile disables .env.local loading", async () => {
   }
 });
 
-test("--no-envfile disables .env.development.local loading", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "no-envfile-dev-local-"));
+test("--no-env-file disables .env.development.local loading", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "no-env-file-dev-local-"));
   try {
     writeFileSync(join(dir, ".env"), "FOO=bar");
     writeFileSync(join(dir, ".env.development.local"), "FOO=dev-local");
     writeFileSync(join(dir, "index.js"), "console.log(process.env.FOO);");
 
-    // Without --no-envfile, .env.development.local should be loaded
+    // Without --no-env-file, .env.development.local should be loaded
     const proc1 = Bun.spawn({
       cmd: [bunExe(), "index.js"],
       env: bunEnv,
@@ -102,9 +102,9 @@ test("--no-envfile disables .env.development.local loading", async () => {
     expect(stdout1.trim()).toBe("dev-local");
     expect(exitCode1).toBe(0);
 
-    // With --no-envfile, it should NOT be loaded
+    // With --no-env-file, it should NOT be loaded
     const proc2 = Bun.spawn({
-      cmd: [bunExe(), "--no-envfile", "index.js"],
+      cmd: [bunExe(), "--no-env-file", "index.js"],
       env: bunEnv,
       cwd: dir,
       stderr: "pipe",
@@ -179,13 +179,13 @@ env = false
   }
 });
 
-test("--no-envfile with -e flag", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "no-envfile-eval-"));
+test("--no-env-file with -e flag", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "no-env-file-eval-"));
   try {
     writeFileSync(join(dir, ".env"), "FOO=bar");
 
     const proc = Bun.spawn({
-      cmd: [bunExe(), "--no-envfile", "-e", "console.log(process.env.FOO)"],
+      cmd: [bunExe(), "--no-env-file", "-e", "console.log(process.env.FOO)"],
       env: bunEnv,
       cwd: dir,
       stderr: "pipe",
@@ -201,16 +201,16 @@ test("--no-envfile with -e flag", async () => {
   }
 });
 
-test("--no-envfile combined with --env-file still loads explicit file", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "no-envfile-with-env-file-"));
+test("--no-env-file combined with --env-file still loads explicit file", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "no-env-file-with-env-file-"));
   try {
     writeFileSync(join(dir, ".env"), "FOO=bar");
     writeFileSync(join(dir, ".env.custom"), "FOO=custom");
     writeFileSync(join(dir, "index.js"), "console.log(process.env.FOO);");
 
-    // --no-envfile should skip .env but --env-file should load .env.custom
+    // --no-env-file should skip .env but --env-file should load .env.custom
     const proc = Bun.spawn({
-      cmd: [bunExe(), "--no-envfile", "--env-file", ".env.custom", "index.js"],
+      cmd: [bunExe(), "--no-env-file", "--env-file", ".env.custom", "index.js"],
       env: bunEnv,
       cwd: dir,
       stderr: "pipe",
@@ -255,15 +255,15 @@ env = true
   }
 });
 
-test("--no-envfile in production mode", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "no-envfile-production-"));
+test("--no-env-file in production mode", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "no-env-file-production-"));
   try {
     writeFileSync(join(dir, ".env"), "FOO=bar");
     writeFileSync(join(dir, ".env.production"), "FOO=prod");
     writeFileSync(join(dir, "index.js"), "console.log(process.env.FOO);");
 
     const proc = Bun.spawn({
-      cmd: [bunExe(), "--no-envfile", "index.js"],
+      cmd: [bunExe(), "--no-env-file", "index.js"],
       env: { ...bunEnv, NODE_ENV: "production" },
       cwd: dir,
       stderr: "pipe",

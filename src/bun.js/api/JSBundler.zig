@@ -179,12 +179,12 @@ pub const JSBundler = struct {
                     try this.outfile.appendSliceExact(slice.slice());
                 }
 
-                if (try object.getOwn(globalThis, "autoloadDotenv")) |autoload_dotenv| {
-                    this.autoload_dotenv = autoload_dotenv.toBoolean();
+                if (try object.getBooleanLoose(globalThis, "autoloadDotenv")) |autoload_dotenv| {
+                    this.autoload_dotenv = autoload_dotenv;
                 }
 
-                if (try object.getOwn(globalThis, "autoloadBunfig")) |autoload_bunfig| {
-                    this.autoload_bunfig = autoload_bunfig.toBoolean();
+                if (try object.getBooleanLoose(globalThis, "autoloadBunfig")) |autoload_bunfig| {
+                    this.autoload_bunfig = autoload_bunfig;
                 }
 
                 return this;

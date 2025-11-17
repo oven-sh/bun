@@ -702,6 +702,16 @@ function expectBundled(
       ? Object.entries(bundleErrors).flatMap(([file, v]) => v.map(error => ({ file, error })))
       : null;
 
+    // Helper to add compile boolean flags
+    const compileFlag = (prop: string, trueFlag: string, falseFlag: string): string[] => {
+      if (compile && typeof compile === "object" && prop in compile) {
+        const value = (compile as any)[prop];
+        if (value === true) return [trueFlag];
+        if (value === false) return [falseFlag];
+      }
+      return [];
+    };
+
     if (backend === "cli") {
       if (plugins) {
         throw new Error("plugins not possible in backend=CLI");
@@ -719,18 +729,8 @@ function expectBundled(
               compile && typeof compile === "object" && "execArgv" in compile
                 ? `--compile-exec-argv=${Array.isArray(compile.execArgv) ? compile.execArgv.join(" ") : compile.execArgv}`
                 : [],
-              compile && typeof compile === "object" && "autoloadDotenv" in compile && compile.autoloadDotenv === false
-                ? "--no-compile-autoload-dotenv"
-                : [],
-              compile && typeof compile === "object" && "autoloadDotenv" in compile && compile.autoloadDotenv === true
-                ? "--compile-autoload-dotenv"
-                : [],
-              compile && typeof compile === "object" && "autoloadBunfig" in compile && compile.autoloadBunfig === false
-                ? "--no-compile-autoload-bunfig"
-                : [],
-              compile && typeof compile === "object" && "autoloadBunfig" in compile && compile.autoloadBunfig === true
-                ? "--compile-autoload-bunfig"
-                : [],
+              compileFlag("autoloadDotenv", "--compile-autoload-dotenv", "--no-compile-autoload-dotenv"),
+              compileFlag("autoloadBunfig", "--compile-autoload-bunfig", "--no-compile-autoload-bunfig"),
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
               `--target=${target}`,

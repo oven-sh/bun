@@ -1022,20 +1022,40 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.bundler_options.compile_exec_argv = compile_exec_argv;
         }
 
-        if (args.flag("--compile-autoload-dotenv")) {
-            ctx.bundler_options.compile_autoload_dotenv = true;
+        // Handle --compile-autoload-dotenv flags
+        {
+            const has_positive = args.flag("--compile-autoload-dotenv");
+            const has_negative = args.flag("--no-compile-autoload-dotenv");
+
+            if (has_positive or has_negative) {
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--compile-autoload-dotenv requires --compile", .{});
+                    Global.crash();
+                }
+                if (has_positive and has_negative) {
+                    Output.errGeneric("Cannot use both --compile-autoload-dotenv and --no-compile-autoload-dotenv", .{});
+                    Global.crash();
+                }
+                ctx.bundler_options.compile_autoload_dotenv = has_positive;
+            }
         }
 
-        if (args.flag("--no-compile-autoload-dotenv")) {
-            ctx.bundler_options.compile_autoload_dotenv = false;
-        }
+        // Handle --compile-autoload-bunfig flags
+        {
+            const has_positive = args.flag("--compile-autoload-bunfig");
+            const has_negative = args.flag("--no-compile-autoload-bunfig");
 
-        if (args.flag("--compile-autoload-bunfig")) {
-            ctx.bundler_options.compile_autoload_bunfig = true;
-        }
-
-        if (args.flag("--no-compile-autoload-bunfig")) {
-            ctx.bundler_options.compile_autoload_bunfig = false;
+            if (has_positive or has_negative) {
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--compile-autoload-bunfig requires --compile", .{});
+                    Global.crash();
+                }
+                if (has_positive and has_negative) {
+                    Output.errGeneric("Cannot use both --compile-autoload-bunfig and --no-compile-autoload-bunfig", .{});
+                    Global.crash();
+                }
+                ctx.bundler_options.compile_autoload_bunfig = has_positive;
+            }
         }
 
         if (args.flag("--windows-hide-console")) {

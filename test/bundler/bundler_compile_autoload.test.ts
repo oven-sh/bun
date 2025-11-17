@@ -140,4 +140,23 @@ console.log("PRELOAD");
       stdout: "PRELOAD\nENTRY",
     },
   });
+
+  // Test CLI backend with autoloadDotenv: false
+  itBundled("compile/AutoloadDotenvDisabledCLI", {
+    compile: {
+      autoloadDotenv: false,
+    },
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(process.env.TEST_VAR || "not found");
+      `,
+    },
+    runtimeFiles: {
+      "/.env": `TEST_VAR=from_dotenv`,
+    },
+    run: {
+      stdout: "not found",
+    },
+  });
 });

@@ -55,8 +55,13 @@ pub const NapiEnv = opaque {
         return null;
     }
 
+    pub fn doFinalizer(self: *NapiEnv, finalize_cb: napi_finalize, finalize_data: ?*anyopaque, finalize_hint: ?*anyopaque) void {
+        NapiEnv__doFinalizer(self, finalize_cb, finalize_data, finalize_hint);
+    }
+
     extern fn NapiEnv__globalObject(*NapiEnv) *jsc.JSGlobalObject;
     extern fn NapiEnv__getAndClearPendingException(*NapiEnv, *JSValue) bool;
+    extern fn NapiEnv__doFinalizer(*NapiEnv, napi_finalize, ?*anyopaque, ?*anyopaque) void;
     extern fn napi_internal_get_version(*NapiEnv) u32;
     extern fn NapiEnv__deref(*NapiEnv) void;
     extern fn NapiEnv__ref(*NapiEnv) void;
@@ -1676,19 +1681,12 @@ pub const ThreadSafeFunction = struct {
     }
 
     pub fn deinit(this: *ThreadSafeFunction) void {
-        this.unref();
-
-        if (this.finalizer_fun) |fun| {
-            var finalizer: Finalizer = .{
-                .env = this.env,
-                .fun = fun,
-                .data = this.finalizer_data,
-            };
-            finalizer.enqueue();
-        } else {
-            this.env.deinit();
+        if (this.finalizer_fun != null) {
+            this.env.get().doFinalizer(this.finalizer_fun, this.finalizer_data, this.ctx);
         }
 
+        this.unref();
+        this.env.deinit();
         this.callback.deinit();
         this.queue.deinit();
         bun.destroy(this);

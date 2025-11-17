@@ -1,3 +1,4 @@
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
 
@@ -11,7 +12,9 @@ let proc = Bun.spawn({
   env: bunEnv,
 });
 await proc.exited;
-console.log([1, proc.exitCode, proc.signalCode]);
+console.log([1]);
+expect(proc.signalCode).toBeNull();
+expect(proc.exitCode).toBe(0);
 
 proc = Bun.spawn({
   cmd: [bunExe(), "install"],
@@ -20,7 +23,9 @@ proc = Bun.spawn({
   env: bunEnv,
 });
 await proc.exited;
-console.log([2, proc.exitCode, proc.signalCode]);
+console.log([2]);
+expect(proc.signalCode).toBeNull();
+expect(proc.exitCode).toBe(0);
 
 proc = Bun.spawn({
   cmd: [bunExe(), "--bun", "run", "build"],
@@ -29,4 +34,6 @@ proc = Bun.spawn({
   env: bunEnv,
 });
 await proc.exited;
-console.log([3, proc.exitCode, proc.signalCode]);
+console.log([3]);
+expect(proc.signalCode).toBeNull();
+expect(proc.exitCode).toBe(0);

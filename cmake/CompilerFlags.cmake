@@ -49,7 +49,9 @@ if(ENABLE_ASAN)
     DESCRIPTION "Enable AddressSanitizer"
     -fsanitize=address
   )
+endif()
 
+if(ENABLE_FUZZILLI)
   # Enable coverage instrumentation for fuzzing with Fuzzilli
   register_compiler_flags(
     DESCRIPTION "Enable coverage instrumentation for fuzzing"

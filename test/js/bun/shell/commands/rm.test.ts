@@ -18,7 +18,7 @@ const fileExists = async (path: string): Promise<boolean> =>
 
 const mkSymLink = (target: string, link: string) => {
   if (platform() === "win32") {
-    return $`pwsh -c 'New-Item -ItemType SymbolicLink "${link}" -Target "${target}" | Out-Null'`;
+    return $`pwsh -nol -noni -nop -c 'New-Item -ItemType SymbolicLink "${link}" -Target "${target}" | Out-Null'`;
   } else {
     return $`ln -s ${target} ${link}`;
   }
@@ -154,54 +154,50 @@ foo/
     }
   });
 
-  test(
-    "symbolic links",
-    async () => {
-      const files = {
-        "keep_file.txt": "",
-        "keep_dir": {},
-        "keep_dir/file.txt": "",
-        "sub_dir": {},
-      };
+  test("symbolic links", async () => {
+    const files = {
+      "keep_file.txt": "",
+      "keep_dir": {},
+      "keep_dir/file.txt": "",
+      "sub_dir": {},
+    };
 
-      const tempdir = tempDirWithFiles("rmdir", files);
+    const tempdir = tempDirWithFiles("rmdir", files);
 
-      // Create file symlink and remove it
-      {
-        await mkSymLink(`${tempdir}/keep_file.txt`, `${tempdir}/file_symlink.txt`);
-        expect(await fileExists(`${tempdir}/file_symlink.txt`)).toBeTrue();
-        await $`rm ./file_symlink.txt`.cwd(tempdir);
-        expect(await fileExists(`${tempdir}/file_symlink.txt`)).toBeFalse();
-        expect(await fileExists(`${tempdir}/keep_file.txt`)).toBeTrue();
-      }
+    // Create file symlink and remove it
+    {
+      await mkSymLink(`${tempdir}/keep_file.txt`, `${tempdir}/file_symlink.txt`);
+      expect(await fileExists(`${tempdir}/file_symlink.txt`)).toBeTrue();
+      await $`rm ./file_symlink.txt`.cwd(tempdir);
+      expect(await fileExists(`${tempdir}/file_symlink.txt`)).toBeFalse();
+      expect(await fileExists(`${tempdir}/keep_file.txt`)).toBeTrue();
+    }
 
-      // Create directory symlink and remove it
-      {
-        await mkSymLink(`${tempdir}/keep_dir`, `${tempdir}/dir_symlink`);
-        expect(await fileExists(`${tempdir}/dir_symlink`)).toBeTrue();
-        expect(await fileExists(`${tempdir}/dir_symlink/file.txt`)).toBeTrue();
-        await $`rm -r ./dir_symlink`.cwd(tempdir);
-        expect(await fileExists(`${tempdir}/dir_symlink`)).toBeFalse();
-        expect(await fileExists(`${tempdir}/keep_dir`)).toBeTrue();
-        expect(await fileExists(`${tempdir}/keep_dir/file.txt`)).toBeTrue();
-      }
+    // Create directory symlink and remove it
+    {
+      await mkSymLink(`${tempdir}/keep_dir`, `${tempdir}/dir_symlink`);
+      expect(await fileExists(`${tempdir}/dir_symlink`)).toBeTrue();
+      expect(await fileExists(`${tempdir}/dir_symlink/file.txt`)).toBeTrue();
+      await $`rm -r ./dir_symlink`.cwd(tempdir);
+      expect(await fileExists(`${tempdir}/dir_symlink`)).toBeFalse();
+      expect(await fileExists(`${tempdir}/keep_dir`)).toBeTrue();
+      expect(await fileExists(`${tempdir}/keep_dir/file.txt`)).toBeTrue();
+    }
 
-      // Create symlinks in sub_dir and remove it
-      {
-        await mkSymLink(`${tempdir}/keep_file.txt`, `${tempdir}/sub_dir/file_symlink.txt`);
-        await mkSymLink(`${tempdir}/keep_dir`, `${tempdir}/sub_dir/dir_symlink`);
-        expect(await fileExists(`${tempdir}/sub_dir`)).toBeTrue();
-        expect(await fileExists(`${tempdir}/sub_dir/file_symlink.txt`)).toBeTrue();
-        expect(await fileExists(`${tempdir}/sub_dir/dir_symlink`)).toBeTrue();
-        expect(await fileExists(`${tempdir}/sub_dir/dir_symlink/file.txt`)).toBeTrue();
-        await $`rm -r ./sub_dir`.cwd(`${tempdir}`);
-        expect(await fileExists(`${tempdir}/sub_dir`)).toBeFalse();
-        expect(await fileExists(`${tempdir}/keep_dir`)).toBeTrue();
-        expect(await fileExists(`${tempdir}/keep_dir/file.txt`)).toBeTrue();
-      }
-    },
-    { timeout: 1000 * 10 },
-  );
+    // Create symlinks in sub_dir and remove it
+    {
+      await mkSymLink(`${tempdir}/keep_file.txt`, `${tempdir}/sub_dir/file_symlink.txt`);
+      await mkSymLink(`${tempdir}/keep_dir`, `${tempdir}/sub_dir/dir_symlink`);
+      expect(await fileExists(`${tempdir}/sub_dir`)).toBeTrue();
+      expect(await fileExists(`${tempdir}/sub_dir/file_symlink.txt`)).toBeTrue();
+      expect(await fileExists(`${tempdir}/sub_dir/dir_symlink`)).toBeTrue();
+      expect(await fileExists(`${tempdir}/sub_dir/dir_symlink/file.txt`)).toBeTrue();
+      await $`rm -r ./sub_dir`.cwd(`${tempdir}`);
+      expect(await fileExists(`${tempdir}/sub_dir`)).toBeFalse();
+      expect(await fileExists(`${tempdir}/keep_dir`)).toBeTrue();
+      expect(await fileExists(`${tempdir}/keep_dir/file.txt`)).toBeTrue();
+    }
+  });
 });
 
 function packagejson() {

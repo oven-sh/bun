@@ -262,15 +262,17 @@ pub const Command = struct {
         switch (this.args) {
             inline .slices, .args => |args| {
                 for (args) |*arg| {
-                    try writer.print(
-                        "${d}\r\n{s}\r\n",
-                        .{ arg.byteLength(), arg.slice() },
-                    );
+                    const slice = arg.slice();
+                    try writer.print("${d}\r\n", .{arg.byteLength()});
+                    try writer.writeAll(slice);
+                    try writer.writeAll("\r\n");
                 }
             },
             .raw => |args| {
                 for (args) |arg| {
-                    try writer.print("${d}\r\n{s}\r\n", .{ arg.len, arg });
+                    try writer.print("${d}\r\n", .{arg.len});
+                    try writer.writeAll(arg);
+                    try writer.writeAll("\r\n");
                 }
             },
         }

@@ -5,12 +5,12 @@ import { RedisClient2 } from "bun";
 import { afterEach, describe, expect, it, test } from "bun:test";
 import { describeValkey, Url, ValkeyContext, ValkeyFaker } from "./test-utils";
 
-const randomEngine = random.mulberry32Prng(random.currentMonthSeed());
+const valkeyFaker = new ValkeyFaker(random.mulberry32Prng(random.currentMonthSeed()), {});
 
 // No need for describeValkey since we don't need a running Valkey server for these tests. No connection will be
 // established.
 describe("disconnected client", () => {
-  it.each(Url.generateValidSet(32, randomEngine))("should construct with URL %s", url => {
+  it.each(Url.generateValidSet(32, valkeyFaker.randomEngine))("should construct with URL %s", url => {
     const client = new RedisClient2(url);
     expect(client).toBeInstanceOf(RedisClient2);
   });
@@ -77,7 +77,7 @@ describeValkey(
 
       it.each(
         algo
-          .zip(ValkeyFaker.edgeCaseKeys(randomEngine, 16), ValkeyFaker.edgeCaseValues(randomEngine, 16))
+          .zip(valkeyFaker.edgeCaseKeys(16), valkeyFaker.edgeCaseValues(16))
           .map(pair => [pair[0].substring(0, 8), pair[1].substring(0, 8), pair[0], pair[1]]),
       )("roundtrip exists->get->set->exists->get for %s...->%s...", async (_, __, key, value) => {
         const client = await ctx.connectedClient();
@@ -767,7 +767,7 @@ describeValkey(
         const noExpiry = await redis.ttl(permanentKey);
         expect(noExpiry).toMatchInlineSnapshot(`-1`);
 
-        const nonExistentKey = "non-existent-" + random.utf8String(randomEngine, 32);
+        const nonExistentKey = "non-existent-" + random.utf8String(valkeyFaker.randomEngine, 32);
         const noKey = await redis.ttl(nonExistentKey);
         expect(noKey).toMatchInlineSnapshot(`-2`);
       });
@@ -3166,7 +3166,7 @@ describeValkey(
 
         expect<([string, number][] | null)[]>([[["one", 1]], [["two", 2]], [["three", 3]]]).toContainEqual(result3);
 
-        const emptyKey = "zrandmember-empty-" + random.utf8String(randomEngine, 32);
+        const emptyKey = "zrandmember-empty-" + random.utf8String(valkeyFaker.randomEngine, 32);
         const empty = await redis.zrandmember(emptyKey);
         expect(empty).toBeNull();
       });
@@ -4101,7 +4101,7 @@ describeValkey(
 
       test("should return empty array when ZPOPMIN on non-existent key", async () => {
         const redis = await ctx.connectedClient();
-        const nonExistentKey = "zpopmin-nonexistent-" + random.utf8String(randomEngine, 32);
+        const nonExistentKey = "zpopmin-nonexistent-" + random.utf8String(valkeyFaker.randomEngine, 32);
 
         const result = await redis.zpopmin(nonExistentKey);
         expect(result).toEqual([]);
@@ -4166,7 +4166,7 @@ describeValkey(
 
       test("should return empty array when ZPOPMAX on non-existent key", async () => {
         const redis = await ctx.connectedClient();
-        const nonExistentKey = "zpopmax-nonexistent-" + random.utf8String(randomEngine, 32);
+        const nonExistentKey = "zpopmax-nonexistent-" + random.utf8String(valkeyFaker.randomEngine, 32);
         const result = await redis.zpopmax(nonExistentKey);
         expect(result).toEqual([]);
       });
@@ -5529,7 +5529,7 @@ describeValkey(
 
       test("should set hash field only if it doesn't exist using hsetnx", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         const result1 = await redis.hsetnx(key, "name", "John");
         expect(result1).toBe(true);
@@ -5546,7 +5546,7 @@ describeValkey(
 
       test("should get and delete hash field using hgetdel", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30" });
 
@@ -5562,7 +5562,7 @@ describeValkey(
 
       test("should get and delete multiple hash fields using hgetdel", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30", city: "NYC" });
 
@@ -5576,7 +5576,7 @@ describeValkey(
 
       test("should get hash field with expiration using hgetex", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John" });
 
@@ -5594,7 +5594,7 @@ describeValkey(
 
       test("should get hash fields without expiration using hgetex", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30" });
 
@@ -5604,7 +5604,7 @@ describeValkey(
 
       test("should get hash fields with PX expiration using hgetex", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John" });
 
@@ -5619,7 +5619,7 @@ describeValkey(
 
       test("should get hash fields with EXAT using hgetex", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John" });
 
@@ -5630,7 +5630,7 @@ describeValkey(
 
       test("should get hash fields with PXAT using hgetex", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John" });
 
@@ -5641,7 +5641,7 @@ describeValkey(
 
       test("should get hash fields with PERSIST using hgetex", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hsetex(key, "EX", 100, "FIELDS", 1, "name", "John");
 
@@ -5651,7 +5651,7 @@ describeValkey(
 
       test("should get multiple hash fields and return null for missing fields using hgetex", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John" });
 
@@ -5661,7 +5661,7 @@ describeValkey(
 
       test("should set hash field with expiration using hsetex", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         const result = await redis.hsetex(key, "EX", 10, "FIELDS", 1, "name", "John");
         expect(result).toBe(1);
@@ -5677,7 +5677,7 @@ describeValkey(
 
       test("should set multiple hash fields with expiration using hsetex", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         const result = await redis.hsetex(key, "EX", 10, "FIELDS", 2, "name", "John", "age", "30");
         expect(result).toBe(1);
@@ -5695,7 +5695,7 @@ describeValkey(
 
       test("should set hash fields without expiration using hsetex", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         const result = await redis.hsetex(key, "FIELDS", 2, "name", "John", "age", "30");
         expect(result).toBe(1);
@@ -5709,7 +5709,7 @@ describeValkey(
 
       test("should set hash fields with PX (milliseconds) using hsetex", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         const result = await redis.hsetex(key, "PX", 5000, "FIELDS", 1, "name", "John");
         expect(result).toBe(1);
@@ -5719,7 +5719,7 @@ describeValkey(
 
       test("should set hash fields with EXAT (unix timestamp seconds) using hsetex", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         const futureTimestamp = Math.floor(Date.now() / 1000) + 60;
         const result = await redis.hsetex(key, "EXAT", futureTimestamp, "FIELDS", 1, "name", "John");
@@ -5730,7 +5730,7 @@ describeValkey(
 
       test("should set hash fields with PXAT (unix timestamp milliseconds) using hsetex", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         const futureTimestamp = Date.now() + 60000;
         const result = await redis.hsetex(key, "PXAT", futureTimestamp, "FIELDS", 1, "name", "John");
@@ -5741,7 +5741,7 @@ describeValkey(
 
       test("should set hash fields with KEEPTTL using hsetex", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hsetex(key, "EX", 100, "FIELDS", 1, "name", "John");
 
@@ -5753,7 +5753,7 @@ describeValkey(
 
       test("should set hash fields with FNX flag using hsetex", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John" });
 
@@ -5772,7 +5772,7 @@ describeValkey(
 
       test("should set hash fields with FXX flag using hsetex", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John" });
 
@@ -5792,7 +5792,7 @@ describeValkey(
 
       test("should set hash fields with FNX and EX combined using hsetex", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         const result1 = await redis.hsetex(key, "FNX", "EX", 10, "FIELDS", 2, "name", "John", "age", "30");
         expect(result1).toBe(1);
@@ -5809,7 +5809,7 @@ describeValkey(
 
       test("should set hash fields with FXX and PX combined using hsetex", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30" });
 
@@ -5822,7 +5822,7 @@ describeValkey(
 
       test("should check TTL of hash fields using httl", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hsetex(key, "EX", 100, "FIELDS", 1, "name", "John");
         await redis.hset(key, { age: "30" });
@@ -5837,7 +5837,7 @@ describeValkey(
 
       test("should check TTL of hash fields using hpttl in milliseconds", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30" });
 
@@ -5853,7 +5853,7 @@ describeValkey(
 
       test("should delete hash fields using hdel", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30", city: "NYC" });
 
@@ -5869,7 +5869,7 @@ describeValkey(
 
       test("should delete multiple hash fields using hdel", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30", city: "NYC", country: "USA" });
 
@@ -5882,14 +5882,14 @@ describeValkey(
 
       test("should return empty object for hgetall on non-existent key", async () => {
         const redis = await ctx.connectedClient();
-        const key = "nonexistent-hgetall-" + random.utf8String(randomEngine, 32);
+        const key = "nonexistent-hgetall-" + random.utf8String(valkeyFaker.randomEngine, 32);
         const result = await redis.hgetall(key);
         expect(result).toEqual({});
       });
 
       test("should check if hash field exists using hexists", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30" });
 
@@ -5902,7 +5902,7 @@ describeValkey(
 
       test("should get random field using hrandfield", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30", city: "NYC" });
 
@@ -5912,7 +5912,7 @@ describeValkey(
 
       test("should get multiple random fields using hrandfield with count", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30", city: "NYC" });
 
@@ -5926,7 +5926,7 @@ describeValkey(
 
       test("should get random fields with values using hrandfield WITHVALUES", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         const fullData = { name: "Andy", age: "30", city: "Cupertino" };
         await redis.hset(key, fullData);
@@ -5946,7 +5946,7 @@ describeValkey(
 
       test("should scan hash using hscan", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30", city: "NYC" });
 
@@ -5964,7 +5964,7 @@ describeValkey(
 
       test("should scan hash with pattern using hscan MATCH", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { field1: "val1", field2: "val2", other: "val3" });
 
@@ -5984,7 +5984,7 @@ describeValkey(
 
       test("should scan hash with count using hscan COUNT", async () => {
         const redis = await ctx.connectedClient();
-        const key = "user:" + random.utf8String(randomEngine, 8);
+        const key = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         const fields: Record<string, string> = {};
         for (let i = 0; i < 20; i++) {
@@ -6001,7 +6001,7 @@ describeValkey(
 
       test("should increment hash field by integer using hincrby", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hincrby-test:" + random.utf8String(randomEngine, 8);
+        const key = "hincrby-test:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { counter: "10" });
 
@@ -6017,7 +6017,7 @@ describeValkey(
 
       test("should increment hash field from zero using hincrby", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hincrby-zero-test:" + random.utf8String(randomEngine, 8);
+        const key = "hincrby-zero-test:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         const result = await redis.hincrby(key, "newfield", 42);
         expect(result).toBe(42);
@@ -6028,7 +6028,7 @@ describeValkey(
 
       test("should increment hash field by float using hincrbyfloat", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hincrbyfloat-test:" + random.utf8String(randomEngine, 8);
+        const key = "hincrbyfloat-test:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { price: "10.5" });
 
@@ -6044,7 +6044,7 @@ describeValkey(
 
       test("should increment hash field from zero using hincrbyfloat", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hincrbyfloat-zero-test:" + random.utf8String(randomEngine, 8);
+        const key = "hincrbyfloat-zero-test:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         const result = await redis.hincrbyfloat(key, "newfield", 3.14);
         expect(result).toBe("3.14");
@@ -6055,7 +6055,7 @@ describeValkey(
 
       test("should get all hash keys using hkeys", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hkeys-test:" + random.utf8String(randomEngine, 8);
+        const key = "hkeys-test:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30", city: "NYC" });
 
@@ -6069,7 +6069,7 @@ describeValkey(
 
       test("should return empty array for non-existent key using hkeys", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hkeys-nonexistent:" + random.utf8String(randomEngine, 8);
+        const key = "hkeys-nonexistent:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         const keys = await redis.hkeys(key);
         expect(keys).toEqual([]);
@@ -6077,7 +6077,7 @@ describeValkey(
 
       test("should get hash length using hlen", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hlen-test:" + random.utf8String(randomEngine, 8);
+        const key = "hlen-test:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30", city: "NYC" });
 
@@ -6091,7 +6091,7 @@ describeValkey(
 
       test("should return 0 for non-existent key using hlen", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hlen-nonexistent:" + random.utf8String(randomEngine, 8);
+        const key = "hlen-nonexistent:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         const length = await redis.hlen(key);
         expect(length).toBe(0);
@@ -6099,7 +6099,7 @@ describeValkey(
 
       test("should get multiple hash values using hmget", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hmget-test:" + random.utf8String(randomEngine, 8);
+        const key = "hmget-test:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30", city: "NYC" });
 
@@ -6109,7 +6109,7 @@ describeValkey(
 
       test("should return null for missing fields using hmget", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hmget-missing-test:" + random.utf8String(randomEngine, 8);
+        const key = "hmget-missing-test:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John" });
 
@@ -6119,7 +6119,7 @@ describeValkey(
 
       test("should get all hash values using hvals", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hvals-test:" + random.utf8String(randomEngine, 8);
+        const key = "hvals-test:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30", city: "NYC" });
 
@@ -6133,7 +6133,7 @@ describeValkey(
 
       test("should return empty array for non-existent key using hvals", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hvals-nonexistent:" + random.utf8String(randomEngine, 8);
+        const key = "hvals-nonexistent:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         const values = await redis.hvals(key);
         expect(values).toEqual([]);
@@ -6141,7 +6141,7 @@ describeValkey(
 
       test("should get hash field string length using hstrlen", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hstrlen-test:" + random.utf8String(randomEngine, 8);
+        const key = "hstrlen-test:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", description: "Software Engineer" });
 
@@ -6154,7 +6154,7 @@ describeValkey(
 
       test("should return 0 for non-existent field using hstrlen", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hstrlen-nonexistent:" + random.utf8String(randomEngine, 8);
+        const key = "hstrlen-nonexistent:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John" });
 
@@ -6164,7 +6164,7 @@ describeValkey(
 
       test("should expire hash fields using hexpire", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hexpire-test:" + random.utf8String(randomEngine, 8);
+        const key = "hexpire-test:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30", city: "NYC" });
 
@@ -6181,7 +6181,7 @@ describeValkey(
 
       test("should expire hash fields with NX flag using hexpire", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hexpire-nx-test:" + random.utf8String(randomEngine, 8);
+        const key = "hexpire-nx-test:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hsetex(key, "EX", 100, "FIELDS", 1, "name", "John");
         await redis.hset(key, { age: "30" });
@@ -6192,7 +6192,7 @@ describeValkey(
 
       test("should expire hash fields at specific time using hexpireat", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hexpireat-test:" + random.utf8String(randomEngine, 8);
+        const key = "hexpireat-test:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30" });
 
@@ -6209,7 +6209,7 @@ describeValkey(
 
       test("should get hash field expiration time using hexpiretime", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hexpiretime-test:" + random.utf8String(randomEngine, 8);
+        const key = "hexpiretime-test:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30" });
 
@@ -6225,7 +6225,7 @@ describeValkey(
 
       test("should expire hash fields at specific time in milliseconds using hpexpireat", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hpexpireat-test:" + random.utf8String(randomEngine, 8);
+        const key = "hpexpireat-test:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30" });
 
@@ -6242,7 +6242,7 @@ describeValkey(
 
       test("should get hash field expiration time in milliseconds using hpexpiretime", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hpexpiretime-test:" + random.utf8String(randomEngine, 8);
+        const key = "hpexpiretime-test:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30" });
 
@@ -6258,7 +6258,7 @@ describeValkey(
 
       test("should persist hash fields using hpersist", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hpersist-test:" + random.utf8String(randomEngine, 8);
+        const key = "hpersist-test:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hsetex(key, "EX", 100, "FIELDS", 2, "name", "John", "age", "30");
 
@@ -6271,7 +6271,7 @@ describeValkey(
 
       test("should return 0 for fields without expiration using hpersist", async () => {
         const redis = await ctx.connectedClient();
-        const key = "hpersist-noexpire-test:" + random.utf8String(randomEngine, 8);
+        const key = "hpersist-noexpire-test:" + random.utf8String(valkeyFaker.randomEngine, 8);
 
         await redis.hset(key, { name: "John", age: "30" });
 
@@ -6538,7 +6538,7 @@ describeValkey(
       test("should handle hash maps (dictionaries) as command responses", async () => {
         const redis = await ctx.connectedClient();
 
-        const userId = "user:" + random.utf8String(randomEngine, 8);
+        const userId = "user:" + random.utf8String(valkeyFaker.randomEngine, 8);
         const setResult = await redis.send("HSET", [userId, "name", "John", "age", "30", "active", "true"]);
         expect(setResult).toBeDefined();
 
@@ -6559,7 +6559,7 @@ describeValkey(
       test("should handle sets as command responses", async () => {
         const redis = await ctx.connectedClient();
 
-        const setKey = "colors:" + random.utf8String(randomEngine, 8);
+        const setKey = "colors:" + random.utf8String(valkeyFaker.randomEngine, 8);
         const addResult = await redis.send("SADD", [setKey, "red", "blue", "green"]);
         expect(addResult).toBeDefined();
 
@@ -6621,12 +6621,12 @@ describeValkey(
     });
 
     describe("Pub/Sub", () => {
-      test.each(ValkeyFaker.channels(randomEngine, 4))("publishing to channel %s does not fail", async (channel: string) => {
+      test.each(valkeyFaker.channels(4))("publishing to channel %s does not fail", async (channel: string) => {
         const client = await ctx.connectedClient();
-        expect(await client.publish(channel, ValkeyFaker.publishMessage(randomEngine))).toBe(0);
+        expect(await client.publish(channel, valkeyFaker.publishMessage())).toBe(0);
       });
 
-      test.each(ValkeyFaker.channels(randomEngine, 4))("subscribing to %s does not fail", async (channel: string) => {
+      test.each(valkeyFaker.channels(4))("subscribing to %s does not fail", async (channel: string) => {
         const client = await ctx.connectedClient();
         await client.subscribe(channel, () => {});
         console.log(`Subscribed to channel: ${channel}`);
@@ -6645,11 +6645,11 @@ describeValkey(
         await client.unsubscribe(channel);
       });
 
-      test.each(ValkeyFaker.channels(randomEngine, 4))("loopback on %s channel", async (testChannel: string) => {
+      test.each(valkeyFaker.channels(1))("loopback on %s channel", async (testChannel: string) => {
         const TEST_MESSAGE_COUNT = 128;
         const subscriber = await ctx.connectedClient();
 
-        const testMessage = ValkeyFaker.publishMessage(randomEngine);
+        const testMessage = valkeyFaker.publishMessage(1024 * 1024);
 
         const counter = new promises.AwaitableCounter();
         await subscriber.subscribe(testChannel, (message: string, channel: string) => {
@@ -6662,9 +6662,36 @@ describeValkey(
           expect(await subscriber.publish(testChannel, testMessage)).toBe(1);
         });
 
+        console.log(`Published ${TEST_MESSAGE_COUNT} messages to channel ${testChannel}, waiting for receipt...`);
         await counter.untilValue(TEST_MESSAGE_COUNT);
+        console.log(`All ${TEST_MESSAGE_COUNT} messages received on channel ${testChannel}.`);
         await subscriber.unsubscribe(testChannel);
+        console.log(`Unsubscribed from channel: ${testChannel}`);
       });
+
+      //test.each(valkeyFaker.channels(1))("extra-massive loopback on %s channel", async (testChannel: string) => {
+      //  const TEST_MESSAGE_COUNT = 8;
+      //  const subscriber = await ctx.connectedClient();
+
+      //  const testMessage = valkeyFaker.publishMessage();
+
+      //  const counter = new promises.AwaitableCounter();
+      //  await subscriber.subscribe(testChannel, (message: string, channel: string) => {
+      //    counter.increment();
+      //    expect(channel).toBe(testChannel);
+      //    expect(message).toBe(testMessage);
+      //  });
+
+      //  Array.from({ length: TEST_MESSAGE_COUNT }).forEach(async () => {
+      //    expect(await subscriber.publish(testChannel, testMessage)).toBe(1);
+      //  });
+
+      //  console.log(`Published ${TEST_MESSAGE_COUNT} messages to channel ${testChannel}, waiting for receipt...`);
+      //  await counter.untilValue(TEST_MESSAGE_COUNT);
+      //  console.log(`All ${TEST_MESSAGE_COUNT} messages received on channel ${testChannel}.`);
+      //  await subscriber.unsubscribe(testChannel);
+      //  console.log(`Unsubscribed from channel: ${testChannel}`);
+      //});
     });
   },
   { server: "redis://localhost:6379" },

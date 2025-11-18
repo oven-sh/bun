@@ -54,6 +54,8 @@
 #include "JavaScriptCore/JSInternalPromise.h"
 #include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSMapIterator.h"
+#include "JavaScriptCore/JSSet.h"
+#include "JavaScriptCore/JSSetIterator.h"
 #include "JavaScriptCore/JSModuleLoader.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
@@ -129,6 +131,7 @@
 #include "JSDOMFormData.h"
 #include "ZigGeneratedClasses.h"
 #include "JavaScriptCore/JSMapInlines.h"
+#include "JavaScriptCore/JSSetInlines.h"
 
 #include <JavaScriptCore/JSWeakMap.h>
 #include "JSURLSearchParams.h"
@@ -6554,6 +6557,38 @@ CPP_DECL [[ZIG_EXPORT(check_slow)]] void JSC__JSMap__set(JSC::JSMap* map, JSC::J
 CPP_DECL [[ZIG_EXPORT(check_slow)]] uint32_t JSC__JSMap__size(JSC::JSMap* map, JSC::JSGlobalObject* arg1)
 {
     return map->size();
+}
+
+CPP_DECL [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSSet__create(JSC::JSGlobalObject* arg0)
+{
+    return JSC::JSValue::encode(JSC::JSSet::create(arg0->vm(), arg0->setStructure()));
+}
+
+CPP_DECL [[ZIG_EXPORT(check_slow)]] void JSC__JSSet__add(JSC::JSSet* set, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
+{
+    set->add(arg1, JSC::JSValue::decode(JSValue2));
+}
+
+CPP_DECL [[ZIG_EXPORT(check_slow)]] bool JSC__JSSet__has(JSC::JSSet* set, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
+{
+    const JSC::JSValue value = JSC::JSValue::decode(JSValue2);
+    return set->has(arg1, value);
+}
+
+CPP_DECL [[ZIG_EXPORT(check_slow)]] bool JSC__JSSet__remove(JSC::JSSet* set, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
+{
+    const JSC::JSValue value = JSC::JSValue::decode(JSValue2);
+    return set->remove(arg1, value);
+}
+
+CPP_DECL [[ZIG_EXPORT(check_slow)]] void JSC__JSSet__clear(JSC::JSSet* set, JSC::JSGlobalObject* arg1)
+{
+    set->clear(arg1);
+}
+
+CPP_DECL [[ZIG_EXPORT(check_slow)]] uint32_t JSC__JSSet__size(JSC::JSSet* set, JSC::JSGlobalObject* arg1)
+{
+    return set->size();
 }
 
 CPP_DECL void JSC__VM__setControlFlowProfiler(JSC::VM* vm, bool isEnabled)

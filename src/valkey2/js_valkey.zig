@@ -4,9 +4,8 @@
 //!
 //! Some implementation notes follow.
 //!
-//! Note that all event-loop and reference counting logic is handled within
-//! ValkeyClientListener. This tightly couples into the lifecycle of
-//! ValkeyClient, versus the wrapper JsValkey object.
+//! Note that all event-loop and reference counting logic is handled within ValkeyClientListener.
+//! This tightly couples into the lifecycle of ValkeyClient, versus the wrapper JsValkey object.
 pub const JsValkey = struct {
     const DEFAULT_CONN_STR = "valkey://localhost:6379";
 
@@ -111,19 +110,63 @@ pub const JsValkey = struct {
             }
         }
 
-        /// TODO(markovejnovic): Is this signature correct? Can messages be things that aren't
-        ///                      necessarily []const u8?
+        /// Called when a push message is received for a subscription.
         pub fn onPush(
             self: *@This(),
             handler_id: u64,
             channel: []const u8,
             message: *const protocol.RESPValue,
         ) void {
-            Self.debug("{*}.onPush({}, {s}, {s})", .{ self, handler_id, channel, message });
+            Self.debug("{*}.onPush({}, {s}, {})", .{ self, handler_id, channel, message });
             const go = self.parent()._global_obj;
-            _ = go;
 
-            // TODO(markovejnovic): Call the callback.
+            // Convert handler_id back to JSValue (the callback function)
+            // handler_id was created as: @bitCast(@intFromEnum(handler_callback))
+            // So we reverse it: @enumFromInt(@bitCast(handler_id))
+            const handler_callback = @as(bun.jsc.JSValue, @enumFromInt(@as(u64, @bitCast(handler_id))));
+
+            bun.debugAssert(handler_callback.isCallable());
+            if (!handler_callback.isCallable()) {
+                bun.Output.debugPanic("Handler callback is not callable.", .{});
+                return;
+            }
+
+            // Convert channel to JS string
+            const channel_js = bun.String.fromBytes(channel).toJS(go);
+
+            // Convert message to JS value
+            const message_js = message.toJS(go) catch |err| {
+                Self.debug("Failed to convert message to JS: {}", .{err});
+                go.reportActiveExceptionAsUnhandled(err);
+                return;
+            };
+
+            // Call the callback with (message, channel) arguments
+            _ = handler_callback.callWithGlobalThis(
+                go,
+                &[_]bun.jsc.JSValue{ message_js, channel_js },
+            ) catch |err| {
+                Self.debug("Failed to call handler callback: {}", .{err});
+                go.reportActiveExceptionAsUnhandled(err);
+                return;
+            };
+        }
+
+        /// Called when a handler should be removed from GC protection (unsubscribe)
+        pub fn onCallbackDrop(self: *@This(), handler_id: u64) void {
+            const pp = self.parent();
+            const js_this = pp._js_this.tryGet() orelse return;
+            const go = pp._global_obj;
+
+            // Get the pushCallbacks Set
+            const set_value = Self.js.pushCallbacksGetCached(js_this) orelse return;
+            const js_set = bun.jsc.JSSet.fromJS(set_value) orelse return;
+
+            // Convert handler_id back to the original callback JSValue
+            // handler_id was created as: @bitCast(@intFromEnum(handler_callback))
+            // So we reverse it: @enumFromInt(@bitCast(handler_id))
+            const handler_callback = @as(bun.jsc.JSValue, @enumFromInt(@as(u64, @bitCast(handler_id))));
+            _ = bun.jsc.JSSet.remove(js_set, go, handler_callback) catch false;
         }
 
         pub fn onConnectError(self: *@This()) void {
@@ -388,6 +431,10 @@ pub const JsValkey = struct {
             conn_url.slice(),
             &self._client_listener,
         );
+
+        // Initialize the pushCallbacks Set to keep subscription handlers alive
+        const push_callbacks_set = bun.jsc.JSSet.create(go);
+        Self.js.pushCallbacksSetCached(js_this, go, push_callbacks_set);
 
         return self;
     }
@@ -850,7 +897,11 @@ pub const JsValkey = struct {
         return promise.toJS();
     }
 
-    pub fn set(this: *Self, go: *bun.jsc.JSGlobalObject, cf: *bun.jsc.CallFrame) bun.JSError!bun.jsc.JSValue {
+    pub fn set(
+        this: *Self,
+        go: *bun.jsc.JSGlobalObject,
+        cf: *bun.jsc.CallFrame,
+    ) bun.JSError!bun.jsc.JSValue {
         // TODO(markovejnovic): Implementation taken straight from the legacy code.
 
         const args_view = cf.arguments();
@@ -979,6 +1030,15 @@ pub const JsValkey = struct {
         }
 
         const handler_id: u64 = @bitCast(@intFromEnum(handler_callback));
+
+        // Add handler to pushCallbacks Set to keep it alive for GC
+        const js_this = self._js_this.tryGet() orelse return go.throwOutOfMemory();
+        const set_value = Self.js.pushCallbacksGetCached(js_this) orelse {
+            return go.throwOutOfMemory();
+        };
+        const js_set = bun.jsc.JSSet.fromJS(set_value) orelse return go.throwOutOfMemory();
+        try bun.jsc.JSSet.add(js_set, go, handler_callback);
+
         var ctx: RequestContext = .{ .user_request = .init(go, false) };
         self._client.subscribe(channel_slices.items, handler_id, &ctx) catch |err| {
             // Synchronous error: swap() gives us the promise and destroys the Strong

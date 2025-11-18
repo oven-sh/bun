@@ -129,8 +129,27 @@ export namespace Url {
   }
 }
 
+/** Constructor options for {@link ValkeyFaker}. */
+export interface ValkeyFakerOptions {
+  unfuzzy?: boolean;
+};
+
 /** Faker-eseque utilities for Valkey. */
-export namespace ValkeyFaker {
+export class ValkeyFaker {
+  #randomEngine: random.RandomEngine;
+  #options: ValkeyFakerOptions;
+  #unfuzzyGenerator: number;
+
+  constructor(randomEngine: random.RandomEngine, options: ValkeyFakerOptions = {}) {
+    this.#randomEngine = randomEngine;
+    this.#options = options;
+    this.#unfuzzyGenerator = 0;
+  }
+
+  get randomEngine(): random.RandomEngine {
+    return this.#randomEngine;
+  }
+
   /**
    * Generate a random binary-safe string suitable for use as a Redis/Valkey key.
    *
@@ -143,43 +162,54 @@ export namespace ValkeyFaker {
    * @param maxSize Maximum size in bytes (default: 512 MB)
    * @returns A binary-safe random string
    */
-  export function key(randomEngine: random.RandomEngine, maxSize: number = 512 * 1024 * 1024): string {
-    return random.dirtyLatin1String(randomEngine, maxSize);
+  key(maxSize: number = 512 * 1024 * 1024): string {
+    if (this.#options.unfuzzy) {
+      return `key:${this.#unfuzzyGenerator++}`;
+    }
+
+    return random.dirtyLatin1String(this.#randomEngine, maxSize);
   }
 
-  export function edgeCaseKeys(randomEngine: random.RandomEngine, count: number): string[] {
-    return Array.from({ length: count }, () => key(randomEngine, 512 * 1024));
+  edgeCaseKeys(count: number): string[] {
+    return Array.from({ length: count }, () => this.key(512 * 1024));
   }
 
-  export function keys(randomEngine: random.RandomEngine, count: number): string[] {
+  keys(count: number): string[] {
     // Use 1 KB max size for regular keys to keep tests fast. 1kB is still a reasonably large key.
-    return Array.from({ length: count }, () => key(randomEngine, 1024));
+    return Array.from({ length: count }, () => this.key(1024));
   }
 
   /** Generate a random binary-safe string suitable for use as a Redis/Valkey value. */
-  export function value(randomEngine: random.RandomEngine, maxSize: number = 512 * 1024 * 1024): string {
-    return random.dirtyLatin1String(randomEngine, maxSize);
+  value(maxSize: number = 512 * 1024 * 1024): string {
+    if (this.#options.unfuzzy) {
+      return `value:${this.#unfuzzyGenerator++}`;
+    }
+    return random.dirtyLatin1String(this.#randomEngine, random.range(this.randomEngine, 0, maxSize));
   }
 
-  export function edgeCaseValues(randomEngine: random.RandomEngine, count: number): string[] {
+  edgeCaseValues(count: number): string[] {
     // Use 1 KB max size for regular values to keep tests fast. 1kB is still a reasonably large value.
-    return Array.from({ length: count }, () => value(randomEngine, 512 * 1024));
+    return Array.from({ length: count }, () => this.value(512 * 1024));
   }
 
-  export function values(randomEngine: random.RandomEngine, count: number): string[] {
+  values(count: number): string[] {
     // Use 1 KB max size for regular values to keep tests fast. 1kB is still a reasonably large value.
-    return Array.from({ length: count }, () => value(randomEngine, 1024));
+    return Array.from({ length: count }, () => this.value(1024));
   }
 
-  export function channel(randomEngine: random.RandomEngine, maxSize: number = 256): string {
-    return random.dirtyLatin1String(randomEngine, maxSize);
+  channel(maxSize: number = 256): string {
+    if (this.#options.unfuzzy) {
+      return `channel:${this.#unfuzzyGenerator++}`;
+    }
+
+    return random.dirtyLatin1String(this.#randomEngine, maxSize);
   }
 
-  export function channels(randomEngine: random.RandomEngine, count: number): string[] {
-    return Array.from({ length: count }, () => channel(randomEngine, 256));
+  channels(count: number): string[] {
+    return Array.from({ length: count }, () => this.channel(256));
   }
 
-  export function publishMessage(randomEngine: random.RandomEngine, maxSize: number = 1024 * 1024): string {
-    return ValkeyFaker.value(randomEngine, maxSize);
+  publishMessage(maxSize: number = 512 * 1024 * 1024): string {
+    return this.value(maxSize);
   }
 }

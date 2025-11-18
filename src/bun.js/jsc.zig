@@ -61,6 +61,7 @@ pub const JSFunction = @import("./bindings/JSFunction.zig").JSFunction;
 pub const JSGlobalObject = @import("./bindings/JSGlobalObject.zig").JSGlobalObject;
 pub const JSInternalPromise = @import("./bindings/JSInternalPromise.zig").JSInternalPromise;
 pub const JSMap = @import("./bindings/JSMap.zig").JSMap;
+pub const JSSet = @import("./bindings/JSSet.zig").JSSet;
 pub const JSModuleLoader = @import("./bindings/JSModuleLoader.zig").JSModuleLoader;
 pub const JSObject = @import("./bindings/JSObject.zig").JSObject;
 pub const JSPromise = @import("./bindings/JSPromise.zig").JSPromise;

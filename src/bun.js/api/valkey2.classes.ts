@@ -182,6 +182,7 @@ export default [
     //values: ["onclose", "hello", "subscriptionCallbackMap"],
     values: [
       "connectionPromise", // Used to track the progress of the connection. Not exposed to JS.
+      "pushCallbacks", // Set of subscription handlers to keep them alive for GC
     ],
   }),
 ];

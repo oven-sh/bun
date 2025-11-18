@@ -283,13 +283,21 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             try map_entry.active.append(listener);
         }
 
-        fn removeActiveForChannel(self: *Self, channel_id: SubscriptionChannelId) void {
+        fn removeActiveForChannel(
+            self: *Self,
+            channel_id: SubscriptionChannelId,
+            callbacks: *ValkeyListener,
+        ) void {
             Self.debug("{*}.removeActiveForChannel({})", .{ self, channel_id });
 
             const map_entry = self.map.getPtr(channel_id) orelse {
                 return;
             };
 
+            // Notify our parent that this handler_id is now sunset.
+            for (map_entry.active.items) |*active| {
+                callbacks.onCallbackDrop(active.handler_id);
+            }
             map_entry.active.shrinkAndFree(map_entry.pending.items.len);
 
             if (map_entry.pending.items.len == 0) {
@@ -313,6 +321,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
             self: *Self,
             channel_id: SubscriptionChannelId,
             handler_id: SubscriptionHandlerId,
+            callbacks: *ValkeyListener,
         ) !void {
             Self.debug("{*} Removing active handler_id={} from channel_id {}...", .{
                 self,
@@ -343,6 +352,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
                 return;
             }
 
+            callbacks.onCallbackDrop(handler_id);
             _ = map_entry.active.swapRemove(active_idx.?);
 
             if (map_entry.active.items.len == 0 and map_entry.pending.items.len == 0) {
@@ -645,7 +655,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
 
                     // Note that handleResponse may change our state. If we're not in a state which
                     // supports the ingress buffer, we should stop processing.
-                    if (self._state == .linked) {
+                    if (self._state != .linked) {
                         return;
                     }
 
@@ -723,7 +733,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
 
         /// Invoked by onData for each ingress packet.
         fn onPacket(self: *Self, value: *protocol.RESPValue) !void {
-            Self.debug("{*}.onPacket({})", .{ self, value });
+            Self.debug("{*}.onPacket({s}(...))", .{ self, @tagName(value.*) });
 
             // If we receive a packet while not linked, something's really fucked up.
             bun.debugAssert(self._state == .linked);
@@ -898,7 +908,10 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
                             .all => {
                                 // The user request we unsubscribe from everything. Easy enough.
                                 for (req_ctx.channel_ids.items) |ch_id| {
-                                    self._subscriptions.removeActiveForChannel(ch_id);
+                                    self._subscriptions.removeActiveForChannel(
+                                        ch_id,
+                                        self._callbacks,
+                                    );
                                 }
                                 break :scan_loop true;
                             },
@@ -913,6 +926,7 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
                                         bun.handleOom(self._subscriptions.removeActiveHandler(
                                             ch_id,
                                             handler_id,
+                                            self._callbacks,
                                         ));
 
                                         // If all_resolved is already false, there's no need to
@@ -1170,7 +1184,17 @@ pub fn ValkeyClient(comptime ValkeyListener: type, comptime UserRequestContext: 
         /// Invoked whenever a write action went through. The nominal use-case is to push more
         /// data.
         pub fn onWritable(self: *Self) void {
-            _ = self;
+            Self.debug("{*}.onWritable()", .{self});
+
+            // When the socket becomes writable, we should try to flush any remaining data in the
+            // egress buffer. This is especially important for large messages that couldn't be sent
+            // in one go.
+            switch (self._state) {
+                .linked => {
+                    self._state.flushEgressBuffer();
+                },
+                else => {},
+            }
         }
 
         /// TODO(markovejnovic): When is it invoked?
@@ -1953,8 +1977,7 @@ pub fn SocketIO(ValkeyClientType: type) type {
 
         /// Given a concrete socket, update the opaque socket of `self`.
         ///
-        /// Necessary because the socket type can only be deduced at
-        /// runtime.
+        /// Necessary because the socket type can only be deduced at runtime.
         fn patchSocket(self: *Self, concrete_socket: anytype, comptime ssl_mode: SslMode) void {
             self._socket = switch (ssl_mode) {
                 .with_ssl => bun.uws.AnySocket{ .SocketTLS = concrete_socket },

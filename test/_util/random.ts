@@ -193,24 +193,35 @@ export namespace FileSystem {
  * code points 0-255.
  */
 export function dirtyLatin1String(randomEngine: RandomEngine, length: number): string {
-  // TODO(markovejnovic): This was claude.
-
   // Generate a random size between 1 byte and maxSize
   const size = range(randomEngine, 1, length + 1);
 
-  // Create buffer and fill with random bytes using uniform distribution
+  // Create buffer and fill with random bytes
   const buffer = Buffer.allocUnsafe(size);
 
-  // Optimize: generate 4 bytes per random engine call
-  for (let i = 0; i < size; ) {
-    // Get ~32 bits of randomness
-    const rand = Math.floor(randomEngine() * 0x100000000);
+  // Process in chunks of 4 bytes for efficiency
+  const fullChunks = (size / 4) | 0; // Faster than Math.floor
+  const remainder = size % 4;
 
-    // Extract up to 4 bytes
-    if (i < size) buffer[i++] = rand & 0xFF;
-    if (i < size) buffer[i++] = (rand >>> 8) & 0xFF;
-    if (i < size) buffer[i++] = (rand >>> 16) & 0xFF;
-    if (i < size) buffer[i++] = (rand >>> 24) & 0xFF;
+  let i = 0;
+
+  // Handle complete 4-byte chunks without conditionals
+  for (let chunk = 0; chunk < fullChunks; chunk++) {
+    // Get 32 bits of randomness (| 0 coerces to int32, faster than Math.floor)
+    const rand = (randomEngine() * 0x100000000) | 0;
+
+    buffer[i++] = rand & 0xFF;
+    buffer[i++] = (rand >>> 8) & 0xFF;
+    buffer[i++] = (rand >>> 16) & 0xFF;
+    buffer[i++] = (rand >>> 24) & 0xFF;
+  }
+
+  // Handle remaining bytes
+  if (remainder > 0) {
+    const rand = (randomEngine() * 0x100000000) | 0;
+    if (remainder >= 1) buffer[i++] = rand & 0xFF;
+    if (remainder >= 2) buffer[i++] = (rand >>> 8) & 0xFF;
+    if (remainder >= 3) buffer[i++] = (rand >>> 16) & 0xFF;
   }
 
   // Use latin1 encoding to preserve all byte values

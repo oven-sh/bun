@@ -192,6 +192,15 @@ CPP_DECL bool JSC__JSMap__remove(JSC::JSMap* arg0, JSC::JSGlobalObject* arg1, JS
 CPP_DECL void JSC__JSMap__set(JSC::JSMap* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2, JSC::EncodedJSValue JSValue3);
 CPP_DECL uint32_t JSC__JSMap__size(JSC::JSMap* arg0, JSC::JSGlobalObject* arg1);
 
+#pragma mark - JSC::JSSet
+
+CPP_DECL JSC::EncodedJSValue JSC__JSSet__create(JSC::JSGlobalObject* arg0);
+CPP_DECL void JSC__JSSet__add(JSC::JSSet* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
+CPP_DECL bool JSC__JSSet__has(JSC::JSSet* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
+CPP_DECL bool JSC__JSSet__remove(JSC::JSSet* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
+CPP_DECL void JSC__JSSet__clear(JSC::JSSet* arg0, JSC::JSGlobalObject* arg1);
+CPP_DECL uint32_t JSC__JSSet__size(JSC::JSSet* arg0, JSC::JSGlobalObject* arg1);
+
 #pragma mark - JSC::JSValue
 
 CPP_DECL void JSC__JSValue__then(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2, SYSV_ABI JSC::EncodedJSValue(* ArgFn3)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1), SYSV_ABI JSC::EncodedJSValue(* ArgFn4)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));

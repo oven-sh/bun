@@ -53,21 +53,21 @@ pub fn BabyList(comptime Type: type) type {
             const unsupported_arg_msg = "unsupported argument to `moveFromList`: *" ++
                 @typeName(ListType);
 
-            const items = if (comptime std.meta.hasFn(ListType, "moveToUnmanaged"))
-                list_ptr.moveToUnmanaged().items
-            else if (comptime @hasField(ListType, "items"))
-                list_ptr.items
-            else if (comptime std.meta.hasFn(ListType, "slice"))
-                list_ptr.slice()
-            else
-                @compileError(unsupported_arg_msg);
-
             const capacity = if (comptime @hasField(ListType, "capacity"))
                 list_ptr.capacity
             else if (comptime @hasField(ListType, "cap"))
                 list_ptr.cap
             else if (comptime std.meta.hasFn(ListType, "capacity"))
                 list_ptr.capacity()
+            else
+                @compileError(unsupported_arg_msg);
+
+            const items = if (comptime std.meta.hasFn(ListType, "moveToUnmanaged"))
+                list_ptr.moveToUnmanaged().items
+            else if (comptime @hasField(ListType, "items"))
+                list_ptr.items
+            else if (comptime std.meta.hasFn(ListType, "slice"))
+                list_ptr.slice()
             else
                 @compileError(unsupported_arg_msg);
 

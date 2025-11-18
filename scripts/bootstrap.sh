@@ -1304,7 +1304,6 @@ install_rust() {
 		;;
 	freebsd)
 		install_packages lang/rust
-		# append_to_profile "export CARGO_HOME=$HOME/.cargo"
 		create_directory "$HOME/.cargo/bin"
 		append_to_path "$HOME/.cargo/bin"
 		;;

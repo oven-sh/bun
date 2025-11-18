@@ -18,6 +18,14 @@ class Size {
   ) {}
 }
 
+class ThrowInTest {
+  value = 42;
+}
+
+class ThrowInSerialize {
+  value = 99;
+}
+
 // Add serializers at the top level
 expect.addSnapshotSerializer({
   test: val => val instanceof Point,
@@ -38,6 +46,23 @@ expect.addSnapshotSerializer({
 expect.addSnapshotSerializer({
   test: val => val instanceof Size,
   print: val => `Size{${val.width}x${val.height}}`,
+});
+
+expect.addSnapshotSerializer({
+  test: val => {
+    if (val instanceof ThrowInTest) {
+      throw new Error("Test function error");
+    }
+    return false;
+  },
+  serialize: val => `ThrowInTest(${val.value})`,
+});
+
+expect.addSnapshotSerializer({
+  test: val => val instanceof ThrowInSerialize,
+  serialize: () => {
+    throw new Error("Serialize function error");
+  },
 });
 
 test("snapshot serializers work for custom formatting", () => {
@@ -70,20 +95,6 @@ test("snapshot serializers apply to object fields", () => {
 });
 
 test("test function throwing error propagates to expect()", () => {
-  class ThrowInTest {
-    value = 42;
-  }
-
-  expect.addSnapshotSerializer({
-    test: val => {
-      if (val instanceof ThrowInTest) {
-        throw new Error("Test function error");
-      }
-      return false;
-    },
-    serialize: val => `ThrowInTest(${val.value})`,
-  });
-
   const obj = new ThrowInTest();
   expect(() => {
     expect(obj).toMatchInlineSnapshot();
@@ -91,17 +102,6 @@ test("test function throwing error propagates to expect()", () => {
 });
 
 test("serialize function throwing error propagates to expect()", () => {
-  class ThrowInSerialize {
-    value = 99;
-  }
-
-  expect.addSnapshotSerializer({
-    test: val => val instanceof ThrowInSerialize,
-    serialize: () => {
-      throw new Error("Serialize function error");
-    },
-  });
-
   const obj = new ThrowInSerialize();
   expect(() => {
     expect(obj).toMatchInlineSnapshot();

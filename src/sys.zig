@@ -53,8 +53,7 @@ pub const syscall = switch (Environment.os) {
     .linux => std.os.linux,
     // macOS requires using libc
     .mac => std.c,
-    .windows => @compileError("not implemented"),
-    .wasm => @compileError("not implemented"),
+    .windows, .wasm => @compileError("not implemented"),
 };
 
 fn toPackedO(number: anytype) std.posix.O {
@@ -699,8 +698,7 @@ pub fn mkdiratZ(dir_fd: bun.FileDescriptor, file_path: [*:0]const u8, mode: mode
     return switch (Environment.os) {
         .mac => Maybe(void).errnoSysP(syscall.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse .success,
         .linux => Maybe(void).errnoSysP(linux.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse .success,
-        .windows => @compileError("mkdir is not implemented on this platform"),
-        .wasm => @compileError("mkdir is not implemented on this platform"),
+        .windows, .wasm => @compileError("mkdir is not implemented on this platform"),
     };
 }
 
@@ -2332,8 +2330,7 @@ pub fn renameat2(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.F
         const rc = switch (comptime Environment.os) {
             .linux => std.os.linux.renameat2(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
             .mac => bun.c.renameatx_np(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
-            .windows => @compileError("renameat2() is not implemented on this platform"),
-            .wasm => @compileError("renameat2() is not implemented on this platform"),
+            .windows, .wasm => @compileError("renameat2() is not implemented on this platform"),
         };
 
         if (Maybe(void).errnoSys(rc, .rename)) |err| {

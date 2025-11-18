@@ -831,8 +831,7 @@ fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const an
     const addr = switch (bun.Environment.os) {
         .linux => @intFromPtr(info.fields.sigfault.addr),
         .mac => @intFromPtr(info.addr),
-        .windows => @compileError("unreachable"),
-        .wasm => @compileError("unreachable"),
+        .windows, .wasm => @compileError("unreachable"),
     };
 
     crashHandler(

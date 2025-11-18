@@ -1,4 +1,6 @@
 // Example Zig bindings for SnapshotSerializers
+// This file is for documentation only and is not compiled.
+// The actual bindings are used directly in expect.zig and pretty_format.zig
 // This shows how to use the exported C++ functions from Zig
 
 const std = @import("std");

@@ -49,7 +49,7 @@ private:
 
     void finishCreation(JSC::VM& vm);
 
-    // Arrays stored in reverse order (most recent first for iteration)
+    // Arrays store serializers with most recent last; iterated in reverse order
     JSC::WriteBarrier<JSC::JSArray> m_testCallbacks;
     JSC::WriteBarrier<JSC::JSArray> m_serializeCallbacks;
 

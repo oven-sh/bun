@@ -697,6 +697,40 @@ declare module "bun:test" {
      * Ensures that a specific number of assertions are made
      */
     assertions(neededAssertions: number): void;
+
+    /**
+     * Add a custom snapshot serializer to customize how values are formatted in snapshots.
+     *
+     * @example
+     * class Point {
+     *   constructor(public x: number, public y: number) {}
+     * }
+     *
+     * expect.addSnapshotSerializer({
+     *   test: (val) => val instanceof Point,
+     *   serialize: (val) => `Point(${val.x}, ${val.y})`,
+     * });
+     *
+     * expect(new Point(1, 2)).toMatchInlineSnapshot(`Point(1, 2)`);
+     *
+     * @param serializer The snapshot serializer configuration
+     */
+    addSnapshotSerializer(serializer: {
+      /**
+       * Test function to determine if this serializer should be used for a value
+       */
+      test: (val: any) => boolean;
+      /**
+       * Serialize function to convert the value to a string.
+       * Either `serialize` or `print` must be provided.
+       */
+      serialize?: (val: any) => string;
+      /**
+       * Print function to convert the value to a string (alternative to serialize).
+       * Either `serialize` or `print` must be provided.
+       */
+      print?: (val: any) => string;
+    }): void;
   }
 
   /**

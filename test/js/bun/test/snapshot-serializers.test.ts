@@ -68,3 +68,42 @@ test("snapshot serializers apply to object fields", () => {
     }
   `);
 });
+
+test("test function throwing error propagates to expect()", () => {
+  class ThrowInTest {
+    value = 42;
+  }
+
+  expect.addSnapshotSerializer({
+    test: val => {
+      if (val instanceof ThrowInTest) {
+        throw new Error("Test function error");
+      }
+      return false;
+    },
+    serialize: val => `ThrowInTest(${val.value})`,
+  });
+
+  const obj = new ThrowInTest();
+  expect(() => {
+    expect(obj).toMatchInlineSnapshot();
+  }).toThrow("Test function error");
+});
+
+test("serialize function throwing error propagates to expect()", () => {
+  class ThrowInSerialize {
+    value = 99;
+  }
+
+  expect.addSnapshotSerializer({
+    test: val => val instanceof ThrowInSerialize,
+    serialize: () => {
+      throw new Error("Serialize function error");
+    },
+  });
+
+  const obj = new ThrowInSerialize();
+  expect(() => {
+    expect(obj).toMatchInlineSnapshot();
+  }).toThrow("Serialize function error");
+});

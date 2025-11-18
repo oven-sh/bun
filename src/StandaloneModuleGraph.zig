@@ -7,6 +7,7 @@ pub const StandaloneModuleGraph = struct {
     files: bun.StringArrayHashMap(File),
     entry_point_id: u32 = 0,
     compile_exec_argv: []const u8 = "",
+    flags: Flags = .{},
 
     // We never want to hit the filesystem for these files
     // We use the `/$bunfs/` prefix to indicate that it's a virtual path
@@ -289,6 +290,13 @@ pub const StandaloneModuleGraph = struct {
         modules_ptr: bun.StringPointer = .{},
         entry_point_id: u32 = 0,
         compile_exec_argv_ptr: bun.StringPointer = .{},
+        flags: Flags = .{},
+    };
+
+    pub const Flags = packed struct(u32) {
+        disable_default_env_files: bool = false,
+        disable_autoload_bunfig: bool = false,
+        _padding: u30 = 0,
     };
 
     const trailer = "\n---- Bun! ----\n";
@@ -334,6 +342,7 @@ pub const StandaloneModuleGraph = struct {
             .files = modules,
             .entry_point_id = offsets.entry_point_id,
             .compile_exec_argv = sliceToZ(raw_bytes, offsets.compile_exec_argv_ptr),
+            .flags = offsets.flags,
         };
     }
 
@@ -349,7 +358,7 @@ pub const StandaloneModuleGraph = struct {
         return bytes[ptr.offset..][0..ptr.length :0];
     }
 
-    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format, compile_exec_argv: []const u8) ![]u8 {
+    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format, compile_exec_argv: []const u8, flags: Flags) ![]u8 {
         var serialize_trace = bun.perf.trace("StandaloneModuleGraph.serialize");
         defer serialize_trace.end();
 
@@ -498,6 +507,7 @@ pub const StandaloneModuleGraph = struct {
             .modules_ptr = string_builder.appendCount(std.mem.sliceAsBytes(modules.items)),
             .compile_exec_argv_ptr = string_builder.appendCountZ(compile_exec_argv),
             .byte_count = string_builder.len,
+            .flags = flags,
         };
 
         _ = string_builder.append(std.mem.asBytes(&offsets));
@@ -979,8 +989,9 @@ pub const StandaloneModuleGraph = struct {
         windows_options: bun.options.WindowsOptions,
         compile_exec_argv: []const u8,
         self_exe_path: ?[]const u8,
+        flags: Flags,
     ) !CompileResult {
-        const bytes = toBytes(allocator, module_prefix, output_files, output_format, compile_exec_argv) catch |err| {
+        const bytes = toBytes(allocator, module_prefix, output_files, output_format, compile_exec_argv, flags) catch |err| {
             return CompileResult.failFmt("failed to generate module graph bytes: {s}", .{@errorName(err)});
         };
         if (bytes.len == 0) return CompileResult.fail(.no_output_files);

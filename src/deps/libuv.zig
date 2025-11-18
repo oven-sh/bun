@@ -654,14 +654,29 @@ pub const Loop = extern struct {
         return null;
     }
 
-    pub fn close(ptr: *Loop) void {
-        _ = uv_loop_close(ptr);
+    fn closeWalkCb(handle: ?*uv_handle_t, data: ?*anyopaque) callconv(.c) void {
+        _ = data;
+        const h = handle.?;
+        if (uv_is_closing(h) == 0) {
+            uv_close(h, null);
+        }
     }
 
-    pub fn closeIfExists() void {
-        if (threadlocal_loop) |loop| {
-            loop.close();
+    pub fn close() void {
+        const loop = threadlocal_loop orelse {
+            return;
+        };
+
+        if (uv_loop_close(loop).errEnum()) |err| {
+            if (err == .BUSY) {
+                uv_stop(loop);
+                uv_walk(loop, &closeWalkCb, null);
+                _ = uv_run(loop, .default);
+                bun.debugAssert(uv_loop_close(loop) == .zero);
+            }
         }
+
+        threadlocal_loop = null;
     }
 
     threadlocal var threadlocal_loop_data: Loop = undefined;
@@ -2115,7 +2130,7 @@ pub const uv_free_func = ?*const fn (?*anyopaque) callconv(.c) void;
 pub extern fn uv_library_shutdown() void;
 pub extern fn uv_replace_allocator(malloc_func: uv_malloc_func, realloc_func: uv_realloc_func, calloc_func: uv_calloc_func, free_func: uv_free_func) c_int;
 pub extern fn uv_loop_init(loop: *uv_loop_t) ReturnCode;
-pub extern fn uv_loop_close(loop: *uv_loop_t) c_int;
+pub extern fn uv_loop_close(loop: *uv_loop_t) ReturnCode;
 pub extern fn uv_loop_new() *uv_loop_t;
 pub extern fn uv_loop_delete(*uv_loop_t) void;
 pub extern fn uv_loop_size() usize;

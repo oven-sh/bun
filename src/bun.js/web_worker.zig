@@ -622,7 +622,7 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         arena_.deinit();
     }
 
-    bun.windows.libuv.Loop.closeIfExists();
+    bun.windows.libuv.Loop.close();
 
     bun.exitThread();
 }

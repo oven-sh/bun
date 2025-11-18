@@ -1846,12 +1846,11 @@ pub const js_bindings = struct {
     const JSValue = jsc.JSValue;
 
     pub fn generate(global: *jsc.JSGlobalObject) jsc.JSValue {
-        const obj = jsc.JSValue.createEmptyObject(global, 3);
+        const obj = jsc.JSValue.createEmptyObject(global, 8);
         inline for (.{
             .{ "getMachOImageZeroOffset", jsGetMachOImageZeroOffset },
             .{ "getFeaturesAsVLQ", jsGetFeaturesAsVLQ },
             .{ "getFeatureData", jsGetFeatureData },
-
             .{ "segfault", jsSegfault },
             .{ "panic", jsPanic },
             .{ "rootError", jsRootError },

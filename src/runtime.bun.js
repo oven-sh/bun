@@ -1,6 +1,5 @@
 export * from "./runtime";
 
-// TODO: these are duplicated from bundle_v2.js, can we ... not do that?
 export var __using = (stack, value, async) => {
   if (value != null) {
     if (typeof value !== "object" && typeof value !== "function")

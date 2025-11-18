@@ -803,14 +803,6 @@ pub const Value = union(enum) {
         pub fn toBinary(_: Decimal, _: FieldType) !Data {
             bun.todoPanic(@src(), "Decimal.toBinary not implemented", .{});
         }
-
-        // pub fn fromData(data: *const Data) !Decimal {
-        //     return fromBinary(data.slice());
-        // }
-
-        // pub fn fromBinary(_: []const u8) Decimal {
-        //     bun.todoPanic(@src(), "Decimal.toBinary not implemented", .{});
-        // }
     };
 };
 

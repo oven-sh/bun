@@ -176,7 +176,6 @@ export async function prerender(meta: Bake.RouteMetadata) {
   try {
     html = await renderToStaticHtml(rscPayload, meta.modules);
   } catch (err) {
-    //console.error("ah fuck");
     return undefined;
   }
   const rsc = new Blob(rscChunks, { type: "text/x-component" });

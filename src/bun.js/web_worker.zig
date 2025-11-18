@@ -622,6 +622,8 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         arena_.deinit();
     }
 
+    bun.windows.libuv.Loop.closeIfExists();
+
     bun.exitThread();
 }
 

@@ -992,7 +992,8 @@ pub fn Parser(comptime enc: Encoding) type {
 
             pub fn merge(self: *MappingProps, merge_props: []const G.Property) OOM!void {
                 try self.#list.ensureUnusedCapacity(merge_props.len);
-                next_merge_prop: for (merge_props) |merge_prop| {
+                var iter = std.mem.reverseIterator(merge_props);
+                next_merge_prop: while (iter.next()) |merge_prop| {
                     const merge_key = merge_prop.key.?;
                     for (self.#list.items()) |existing_prop| {
                         const existing_key = existing_prop.key.?;

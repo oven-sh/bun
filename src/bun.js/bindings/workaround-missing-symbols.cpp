@@ -1,3 +1,7 @@
+#include <iostream>
+#include <print>
+#include <utility>
+
 #if defined(WIN32)
 
 #include <cstdint>
@@ -190,11 +194,18 @@ extern "C" int __wrap_fcntl64(int fd, int cmd, ...)
     enum arg_type type = get_arg_type(cmd);
 
     static fcntl64_func real_fcntl64 = []() {
-        auto func = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl64");
-        if (!func) {
-            func = (fcntl64_func)dlsym(RTLD_NEXT, "fcntl");
+        auto func = reinterpret_cast<fcntl64_func>(dlsym(RTLD_NEXT, "fcntl64"));
+        if (func) {
+            return func;
         }
-        return func;
+
+        func = reinterpret_cast<fcntl64_func>(dlsym(RTLD_NEXT, "fcntl"));
+        if (func) {
+            return func;
+        }
+
+        std::println(std::cerr, "Error: Failed to locate real fcntl64 or fcntl");
+        std::abort();
     }();
 
     switch (type) {

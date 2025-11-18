@@ -53,7 +53,7 @@ pub const syscall = switch (Environment.os) {
     .linux => std.os.linux,
     // macOS requires using libc
     .mac => std.c,
-    else => @compileError("not implemented"),
+    .windows, .wasm => @compileError("not implemented"),
 };
 
 fn toPackedO(number: anytype) std.posix.O {
@@ -698,7 +698,7 @@ pub fn mkdiratZ(dir_fd: bun.FileDescriptor, file_path: [*:0]const u8, mode: mode
     return switch (Environment.os) {
         .mac => Maybe(void).errnoSysP(syscall.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse .success,
         .linux => Maybe(void).errnoSysP(linux.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse .success,
-        else => @compileError("mkdir is not implemented on this platform"),
+        .windows, .wasm => @compileError("mkdir is not implemented on this platform"),
     };
 }
 
@@ -760,7 +760,7 @@ pub fn mkdir(file_path: [:0]const u8, flags: mode_t) Maybe(void) {
             ) orelse .success;
         },
 
-        else => @compileError("mkdir is not implemented on this platform"),
+        .wasm => @compileError("mkdir is not implemented on this platform"),
     };
 }
 
@@ -1718,7 +1718,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
 
             return Maybe(usize){ .result = bytes_written };
         },
-        else => @compileError("Not implemented yet"),
+        .wasm => @compileError("Not implemented yet"),
     };
 }
 
@@ -1992,7 +1992,7 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
 
             return Maybe(usize){ .result = amount_read };
         },
-        else => @compileError("read is not implemented on this platform"),
+        .wasm => @compileError("read is not implemented on this platform"),
     };
 }
 
@@ -2023,7 +2023,7 @@ pub fn poll(fds: []std.posix.pollfd, timeout: i32) Maybe(usize) {
         const rc = switch (Environment.os) {
             .mac => darwin_nocancel.@"poll$NOCANCEL"(fds.ptr, fds.len, timeout),
             .linux => linux.poll(fds.ptr, fds.len, timeout),
-            else => @compileError("poll is not implemented on this platform"),
+            .wasm => @compileError("poll is not implemented on this platform"),
         };
         if (Maybe(usize).errnoSys(rc, .poll)) |err| {
             if (err.getErrno() == .INTR) continue;
@@ -2038,7 +2038,7 @@ pub fn ppoll(fds: []std.posix.pollfd, timeout: ?*std.posix.timespec, sigmask: ?*
         const rc = switch (Environment.os) {
             .mac => darwin_nocancel.@"ppoll$NOCANCEL"(fds.ptr, fds.len, timeout, sigmask),
             .linux => linux.ppoll(fds.ptr, fds.len, timeout, sigmask),
-            else => @compileError("ppoll is not implemented on this platform"),
+            .wasm => @compileError("ppoll is not implemented on this platform"),
         };
         if (Maybe(usize).errnoSys(rc, .ppoll)) |err| {
             if (err.getErrno() == .INTR) continue;
@@ -2330,7 +2330,7 @@ pub fn renameat2(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.F
         const rc = switch (comptime Environment.os) {
             .linux => std.os.linux.renameat2(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
             .mac => bun.c.renameatx_np(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
-            else => @compileError("renameat2() is not implemented on this platform"),
+            .windows, .wasm => @compileError("renameat2() is not implemented on this platform"),
         };
 
         if (Maybe(void).errnoSys(rc, .rename)) |err| {
@@ -2703,7 +2703,7 @@ pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
 }
 
 pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8) {
-    switch (comptime builtin.os.tag) {
+    switch (Environment.os) {
         .windows => {
             var wide_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
             const wide_slice = bun.windows.GetFinalPathNameByHandle(fd.cast(), .{}, wide_buf[0..]) catch {
@@ -2713,7 +2713,7 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8
             // Trust that Windows gives us valid UTF-16LE.
             return .{ .result = @constCast(bun.strings.fromWPath(out_buffer, wide_slice)) };
         },
-        .macos, .ios, .watchos, .tvos => {
+        .mac => {
             // On macOS, we can use F.GETPATH fcntl command to query the OS for
             // the path to the file descriptor.
             @memset(out_buffer[0..out_buffer.*.len], 0);
@@ -2733,7 +2733,7 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8
                 .result => |result| .{ .result = result },
             };
         },
-        else => @compileError("querying for canonical path of a handle is unsupported on this host"),
+        .wasm => @compileError("querying for canonical path of a handle is unsupported on this host"),
     }
 }
 
@@ -3430,29 +3430,23 @@ pub fn isExecutableFileOSPath(path: bun.OSPathSliceZ) bool {
 
     if (comptime Environment.isWindows) {
         // Rationale: `GetBinaryTypeW` does not work on .cmd files.
-        // Windows does not have executable permission like posix does, instead we
-        // can just look at the file extension to determine executable status.
-        @compileError("Do not use isExecutableFilePath on Windows");
+        // SaferiIsExecutableFileType works on .cmd files.
+        // The following file name extensions are examples of executable file types. This is not a complete list.
+        // .bat
+        // .cmd
+        // .com
+        // .exe
+        // .js
+        // .lnk
+        // .pif
+        // .pl
+        // .shs
+        // .url
+        // .vbs
+        // The security policy Microsoft Management Console (MMC) snap-in (Secpol.msc) controls which extensions are considered executable file types.
 
-        // var out: windows.DWORD = 0;
-        // const rc = kernel32.GetBinaryTypeW(path, &out);
-
-        // const result = if (rc == windows.FALSE)
-        //     false
-        // else switch (out) {
-        //     kernel32.SCS_32BIT_BINARY,
-        //     kernel32.SCS_64BIT_BINARY,
-        //     kernel32.SCS_DOS_BINARY,
-        //     kernel32.SCS_OS216_BINARY,
-        //     kernel32.SCS_PIF_BINARY,
-        //     kernel32.SCS_POSIX_BINARY,
-        //     => true,
-        //     else => false,
-        // };
-
-        // log("GetBinaryTypeW({f}) = {d}. isExecutable={}", .{ bun.fmt.utf16(path), out, result });
-
-        // return result;
+        // we pass false to include .exe files (see https://learn.microsoft.com/en-us/windows/win32/api/winsafer/nf-winsafer-saferiisexecutablefiletype)
+        return bun.windows.SaferiIsExecutableFileType(path, w.FALSE) != w.FALSE;
     }
 
     @compileError("TODO: isExecutablePath");

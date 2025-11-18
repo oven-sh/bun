@@ -287,7 +287,7 @@ pub const FD = packed struct(backing_int) {
                     };
                 },
             },
-            else => @compileError("FD.close() not implemented for fd platform"),
+            .wasm => @compileError("FD.close() not implemented for fd platform"),
         };
         if (Environment.isDebug) {
             if (result) |err| {
@@ -346,6 +346,9 @@ pub const FD = packed struct(backing_int) {
     /// After calling, the input file descriptor is no longer valid and must not be used.
     /// If an error is thrown, the file descriptor is cleaned up for you.
     pub fn toJS(any_fd: FD, global: *jsc.JSGlobalObject) JSValue {
+        if (!any_fd.isValid()) {
+            return JSValue.jsNumberFromInt32(-1);
+        }
         const uv_owned_fd = any_fd.makeLibUVOwned() catch {
             any_fd.close();
             return global.throwValue((jsc.SystemError{
@@ -354,6 +357,24 @@ pub const FD = packed struct(backing_int) {
             }).toErrorInstance(global)) catch .zero;
         };
         return JSValue.jsNumberFromInt32(uv_owned_fd.uv());
+    }
+
+    /// Convert an FD to a JavaScript number without transferring ownership to libuv.
+    /// Unlike toJS(), this does not call makeLibUVOwned() on Windows, so the caller
+    /// retains ownership and must close the FD themselves.
+    /// Returns -1 for invalid file descriptors.
+    /// On Windows: returns Uint64 for system handles, Int32 for uv file descriptors.
+    pub fn toJSWithoutMakingLibUVOwned(any_fd: FD) JSValue {
+        if (!any_fd.isValid()) {
+            return JSValue.jsNumberFromInt32(-1);
+        }
+        if (Environment.isWindows) {
+            return switch (any_fd.kind) {
+                .system => JSValue.jsNumberFromUint64(@intCast(any_fd.value.as_system)),
+                .uv => JSValue.jsNumberFromInt32(any_fd.value.as_uv),
+            };
+        }
+        return JSValue.jsNumberFromInt32(any_fd.value.as_system);
     }
 
     pub const Stdio = enum(u8) {

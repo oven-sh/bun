@@ -39,7 +39,7 @@ pub const Version = struct {
         .mac => "darwin",
         .linux => "linux",
         .windows => "windows",
-        else => @compileError("Unsupported OS for Bun Upgrade"),
+        .wasm => @compileError("Unsupported OS for Bun Upgrade"),
     };
 
     pub const arch_label = if (Environment.isAarch64) "aarch64" else "x64";
@@ -422,6 +422,7 @@ pub const UpgradeCommand = struct {
         {
             var refresher = Progress{};
             var progress = refresher.start("Downloading", version.size);
+            progress.unit = .bytes;
             refresher.refresh();
             var async_http = try ctx.allocator.create(HTTP.AsyncHTTP);
             var zip_file_buffer = try ctx.allocator.create(MutableString);

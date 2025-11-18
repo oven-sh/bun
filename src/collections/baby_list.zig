@@ -53,12 +53,12 @@ pub fn BabyList(comptime Type: type) type {
             const unsupported_arg_msg = "unsupported argument to `moveFromList`: *" ++
                 @typeName(ListType);
 
-            const items = if (comptime @hasField(ListType, "items"))
+            const items = if (comptime std.meta.hasFn(ListType, "moveToUnmanaged"))
+                list_ptr.moveToUnmanaged().items
+            else if (comptime @hasField(ListType, "items"))
                 list_ptr.items
             else if (comptime std.meta.hasFn(ListType, "slice"))
                 list_ptr.slice()
-            else if (comptime std.meta.hasFn(ListType, "items"))
-                list_ptr.items()
             else
                 @compileError(unsupported_arg_msg);
 
@@ -90,9 +90,8 @@ pub fn BabyList(comptime Type: type) type {
                 list_ptr.* = .empty;
             } else {
                 this.#allocator.set(bun.allocators.asStd(allocator));
-                if (comptime std.meta.hasFn(ListType, "initIn")) {
-                    list_ptr.* = .initIn(allocator);
-                } else {
+                // `moveToUnmanaged` already cleared the old list.
+                if (comptime !std.meta.hasFn(ListType, "moveToUnmanaged")) {
                     list_ptr.* = .init(allocator);
                 }
             }

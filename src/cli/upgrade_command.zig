@@ -19,7 +19,7 @@ pub const Version = struct {
 
                 return std.fmt.allocPrint(
                     bun.default_allocator,
-                    "bun-canary-timestamp-{any}",
+                    "bun-canary-timestamp-{f}",
                     .{
                         bun.fmt.hexIntLower(
                             bun.hash(
@@ -422,6 +422,7 @@ pub const UpgradeCommand = struct {
         {
             var refresher = Progress{};
             var progress = refresher.start("Downloading", version.size);
+            progress.unit = .bytes;
             refresher.refresh();
             var async_http = try ctx.allocator.create(HTTP.AsyncHTTP);
             var zip_file_buffer = try ctx.allocator.create(MutableString);
@@ -561,7 +562,7 @@ pub const UpgradeCommand = struct {
                     // Run a powershell script to unzip the file
                     const unzip_script = try std.fmt.allocPrint(
                         ctx.allocator,
-                        "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \"{}\" \"{}\" -Force",
+                        "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \"{f}\" \"{f}\" -Force",
                         .{
                             bun.fmt.escapePowershell(tmpname),
                             bun.fmt.escapePowershell(tmpdir_path),
@@ -757,10 +758,10 @@ pub const UpgradeCommand = struct {
                     // we rename the old executable to a temporary name, and then move the new executable to the old name.
                     // This is because Windows locks the executable while it's running.
                     current_executable_buf[target_dir_.len] = '\\';
-                    outdated_filename = try std.fmt.allocPrintZ(ctx.allocator, "{s}\\{s}.outdated", .{
+                    outdated_filename = try std.fmt.allocPrintSentinel(ctx.allocator, "{s}\\{s}.outdated", .{
                         target_dirname,
                         target_filename,
-                    });
+                    }, 0);
                     std.posix.rename(destination_executable, outdated_filename.?) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
                         Output.prettyErrorln("<r><red>error:<r> Failed to rename current executable {s}", .{@errorName(err)});

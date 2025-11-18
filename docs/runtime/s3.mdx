@@ -697,7 +697,7 @@ To list some or all (up to 1,000) objects in a bucket, you can use the `S3Client
 ```ts s3.ts icon="/icons/typescript.svg" highlight={12, 15-20, 24-29}
 import { S3Client } from "bun";
 
-const credentials = { ... }
+const credentials = {
   accessKeyId: "your-access-key",
   secretAccessKey: "your-secret-key",
   bucket: "my-bucket",

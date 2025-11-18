@@ -1392,22 +1392,26 @@ create_buildkite_user() {
 		create_file "$file"
 	done
 
+	# The following is necessary to configure buildkite to use a stable
+	# checkout directory. sccache hashes absolute paths into its cache keys,
+	# so if buildkite uses a different checkout path each time (which it does
+	# by default), sccache will be useless.
 	local opts=$-
 	set -ef
 
 	# I do not want to use create_file because it creates directories with 777
 	# permissions and files with 664 permissions. This is dumb, for obvious
 	# reasons.
-	local hook_dir="${home}/hooks"
-	mkdir -p -m 755 "${hook_dir}";
-	cat <<EOF > "${hook_dir}/environment"
+	local hook_dir=${home}/hooks
+	mkdir -p -m 755 "${hook_dir}"
+	cat << EOF > "${hook_dir}/environment"
 #!/bin/sh
 set -efu
 
 export BUILDKITE_BUILD_CHECKOUT_PATH=${home}/build
 EOF
+	execute_sudo chmod +x "${hook_dir}/environment"
 	execute_sudo chown -R "$user:$group" "$hook_dir"
-	execute_sudo chmod 744 "${hook_dir}/environment"
 
 	set +ef -"$opts"
 }

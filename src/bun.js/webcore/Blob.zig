@@ -4320,7 +4320,16 @@ pub const Any = union(enum) {
 
     pub fn contentType(self: *const @This()) []const u8 {
         return switch (self.*) {
-            .Blob => self.Blob.content_type,
+            .Blob => {
+                // If the blob came from a string but has no explicit content-type,
+                // return text/plain;charset=utf-8
+                if (self.Blob.content_type.len == 0 and
+                    (self.Blob.charset == .all_ascii or self.Blob.charset == .non_ascii))
+                {
+                    return MimeType.text.value;
+                }
+                return self.Blob.content_type;
+            },
             .WTFStringImpl => MimeType.text.value,
             // .InlineBlob => self.InlineBlob.contentType(),
             .InternalBlob => self.InternalBlob.contentType(),
@@ -4329,7 +4338,7 @@ pub const Any = union(enum) {
 
     pub fn wasString(self: *const @This()) bool {
         return switch (self.*) {
-            .Blob => self.Blob.charset == .all_ascii,
+            .Blob => self.Blob.charset == .all_ascii or self.Blob.charset == .non_ascii,
             .WTFStringImpl => true,
             // .InlineBlob => self.InlineBlob.was_string,
             .InternalBlob => self.InternalBlob.was_string,
@@ -4772,7 +4781,6 @@ export fn Blob__ref(self: *Blob) void {
 export fn Blob__deref(self: *Blob) void {
     bun.assertf(self.isHeapAllocated(), "cannot deref: this Blob is not heap-allocated", .{});
     if (self.#ref_count.decrement() == .should_destroy) {
-        self.#ref_count.increment(); // deinit has its own isHeapAllocated() guard around bun.destroy(this), so this is needed to ensure that returns true.
         self.deinit();
     }
 }

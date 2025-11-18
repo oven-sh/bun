@@ -147,8 +147,12 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
                 return error.JSError;
             }
         else
-            .{
-                .allocator = bun.default_allocator,
+            Headers.from(null, bun.default_allocator, .{
+                .body = &blob,
+            }) catch {
+                blob.detach();
+                globalThis.throwOutOfMemory();
+                return error.JSError;
             };
 
         // Generate ETag if not already present

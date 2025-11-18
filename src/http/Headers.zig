@@ -153,7 +153,11 @@ pub fn from(fetch_headers_ref: ?*FetchHeaders, allocator: std.mem.Allocator, opt
     const buf_len_before_content_type = buf_len;
     const needs_content_type = brk: {
         if (options.body) |body| {
-            if (body.hasContentTypeFromUser() and (fetch_headers_ref == null or !fetch_headers_ref.?.fastHas(.ContentType))) {
+            // Add Content-Type header if:
+            // 1. The body has a content type from the user (e.g., Blob with explicit content type)
+            // 2. OR the body was created from a string (needs text/plain;charset=utf-8)
+            // AND no Content-Type header already exists
+            if ((body.hasContentTypeFromUser() or body.wasString()) and (fetch_headers_ref == null or !fetch_headers_ref.?.fastHas(.ContentType))) {
                 header_count += 1;
                 buf_len += @as(u32, @truncate(body.contentType().len + "Content-Type".len));
                 break :brk true;

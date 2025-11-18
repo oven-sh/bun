@@ -58,19 +58,3 @@ private:
 };
 
 } // namespace Bun
-
-// Exposed to Zig
-extern "C" {
-
-[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue SnapshotSerializers__add(
-    Zig::GlobalObject* globalObject,
-    JSC::EncodedJSValue encodedSerializers,
-    JSC::EncodedJSValue encodedTestCallback,
-    JSC::EncodedJSValue encodedSerializeCallback);
-
-[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue SnapshotSerializers__serialize(
-    Zig::GlobalObject* globalObject,
-    JSC::EncodedJSValue encodedSerializers,
-    JSC::EncodedJSValue encodedValue);
-
-} // extern "C"

@@ -325,8 +325,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             }
             JSC::Options::assertOptionsAreCoherent();
         }
-
-        Fuzzilli::tryInitialize();
     }); // end std::call_once lambda
 
     // NOLINTEND

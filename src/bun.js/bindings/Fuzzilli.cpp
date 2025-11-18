@@ -35,11 +35,12 @@
 #include <wtf/text/ASCIILiteral.h>
 #include <JavaScriptCore/Completion.h>
 
-#define REPRL_CRFD 100
-#define REPRL_CWFD 101
-#define REPRL_DRFD 102
-#define REPRL_DWFD 103
-#define REPRL_MAX_DATA_SIZE (16 * 1024 * 1024)
+static constexpr auto REPRL_CRFD = 100;
+static constexpr auto REPRL_CWFD = 101;
+static constexpr auto REPRL_DRFD = 102;
+static constexpr auto REPRL_DWFD = 103;
+
+static constexpr auto REPRL_MAX_DATA_SIZE = 16 * 1024 * 1024;
 
 #define SHM_SIZE 0x100000
 #define MAX_EDGES ((SHM_SIZE - 4) * 8)
@@ -89,25 +90,49 @@ void Fuzzilli::waitForCommand()
 SUPPRESS_COVERAGE
 void Fuzzilli::initializeCoverage(uint32_t* start, uint32_t* stop)
 {
+    fprintf(stderr, "[FUZZILLI] initializeCoverage() called: start=%p, stop=%p\n", start, stop);
+    fflush(stderr);
+
     RELEASE_ASSERT_WITH_MESSAGE(!edgesStart && !edgesStop, "Coverage instrumentation is only supported for a single module");
 
     edgesStart = start;
     edgesStop = stop;
 
+    fprintf(stderr, "[FUZZILLI] Checking for SHM_ID environment variable\n");
+    fflush(stderr);
+
     if (const char* shmKey = getenv("SHM_ID")) {
+        fprintf(stderr, "[FUZZILLI] SHM_ID found: %s\n", shmKey);
+        fflush(stderr);
+
         int32_t fd = shm_open(shmKey, O_RDWR, S_IREAD | S_IWRITE);
         RELEASE_ASSERT_WITH_MESSAGE(fd >= 0, "Failed to open shared memory region: %s", strerror(errno));
+
+        fprintf(stderr, "[FUZZILLI] Shared memory opened, fd=%d\n", fd);
+        fflush(stderr);
 
         sharedData = static_cast<SharedData*>(mmap(0, SHM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0));
         RELEASE_ASSERT_WITH_MESSAGE(sharedData != MAP_FAILED, "Failed to mmap shared memory region");
 
-        dataLogLn("[COV] edge counters initialized. Shared memory: %s with %zu edges.", shmKey, edgesStop - edgesStart);
-    } else
-        sharedData = static_cast<SharedData*>(malloc(SHM_SIZE));
+        fprintf(stderr, "[FUZZILLI] Shared memory mapped at %p\n", sharedData);
+        fflush(stderr);
 
+        dataLogLn("[COV] edge counters initialized. Shared memory: %s with %zu edges.", shmKey, edgesStop - edgesStart);
+    } else {
+        fprintf(stderr, "[FUZZILLI] SHM_ID not found, using malloc\n");
+        fflush(stderr);
+        sharedData = static_cast<SharedData*>(malloc(SHM_SIZE));
+        fprintf(stderr, "[FUZZILLI] Allocated sharedData at %p\n", sharedData);
+        fflush(stderr);
+    }
+
+    fprintf(stderr, "[FUZZILLI] Resetting coverage edges\n");
+    fflush(stderr);
     resetCoverageEdges();
 
     sharedData->numEdges = static_cast<uint32_t>(edgesStop - edgesStart);
+    fprintf(stderr, "[FUZZILLI] initializeCoverage() completed, numEdges=%u\n", sharedData->numEdges);
+    fflush(stderr);
 }
 
 void Fuzzilli::readInput(Vector<char>* buffer)
@@ -141,16 +166,31 @@ void Fuzzilli::flushReprl(int32_t result)
 
 void Fuzzilli::initializeReprl()
 {
+    fprintf(stderr, "[FUZZILLI] initializeReprl() starting\n");
+    fflush(stderr);
+
     std::array<char, 4> helo { 'H', 'E', 'L', 'O' };
 
+    fprintf(stderr, "[FUZZILLI] Sending HELO handshake\n");
+    fflush(stderr);
     WRITE_TO_FUZZILLI(helo.data(), helo.size());
+
+    fprintf(stderr, "[FUZZILLI] Reading HELO response\n");
+    fflush(stderr);
     READ_FROM_FUZZILLI(helo.data(), helo.size());
 
+    fprintf(stderr, "[FUZZILLI] Verifying HELO response\n");
+    fflush(stderr);
     RELEASE_ASSERT_WITH_MESSAGE(equalSpans(std::span { helo } , "HELO"_span), "[REPRL] Invalid response from parent");
 
+    fprintf(stderr, "[FUZZILLI] Mapping input buffer\n");
+    fflush(stderr);
     // Mmap the data input buffer.
     reprlInputData = static_cast<char*>(mmap(0, REPRL_MAX_DATA_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, REPRL_DRFD, 0));
     RELEASE_ASSERT(reprlInputData != MAP_FAILED);
+
+    fprintf(stderr, "[FUZZILLI] initializeReprl() completed successfully\n");
+    fflush(stderr);
 }
 
 
@@ -187,16 +227,37 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 void Fuzzilli::runReprl(JSC::JSGlobalObject* globalObject)
 {
+    fprintf(stderr, "[FUZZILLI] runReprl() starting\n");
+    fflush(stderr);
+
+    fprintf(stderr, "[FUZZILLI] Getting VM from globalObject\n");
+    fflush(stderr);
     JSC::VM& vm = JSC::getVM(globalObject);
+
+    fprintf(stderr, "[FUZZILLI] Creating input buffer\n");
+    fflush(stderr);
     Vector<char> inputBuffer;
 
+    fprintf(stderr, "[FUZZILLI] Entering main REPRL loop\n");
+    fflush(stderr);
+
     // Main REPRL loop - mimics WebKit's jsc shell
+    int iteration = 0;
     while (true) {
+        fprintf(stderr, "[FUZZILLI] Loop iteration %d: waiting for command\n", iteration);
+        fflush(stderr);
+
         // Wait for 'cexe' command from fuzzer
         waitForCommand();
 
+        fprintf(stderr, "[FUZZILLI] Loop iteration %d: reading input\n", iteration);
+        fflush(stderr);
+
         // Read the JavaScript code to execute
         readInput(&inputBuffer);
+
+        fprintf(stderr, "[FUZZILLI] Loop iteration %d: null-terminating input\n", iteration);
+        fflush(stderr);
 
         // Null-terminate the input
         inputBuffer.append('\0');
@@ -204,8 +265,14 @@ void Fuzzilli::runReprl(JSC::JSGlobalObject* globalObject)
         int32_t result = 0;
 
         {
+            fprintf(stderr, "[FUZZILLI] Loop iteration %d: creating catch scope\n", iteration);
+            fflush(stderr);
+
             // Create a new scope for each evaluation
             auto scope = DECLARE_CATCH_SCOPE(vm);
+
+            fprintf(stderr, "[FUZZILLI] Loop iteration %d: creating source code\n", iteration);
+            fflush(stderr);
 
             // Create the source code
             WTF::String sourceString = WTF::String::fromUTF8(inputBuffer.span());
@@ -217,14 +284,22 @@ void Fuzzilli::runReprl(JSC::JSGlobalObject* globalObject)
 
             NakedPtr<JSC::Exception> exception;
 
+            fprintf(stderr, "[FUZZILLI] Loop iteration %d: evaluating code\n", iteration);
+            fflush(stderr);
+
             // Evaluate the code
             JSC::JSValue evalResult = JSC::evaluate(globalObject, sourceCode,
                                                     globalObject->globalThis(), exception);
+
+            fprintf(stderr, "[FUZZILLI] Loop iteration %d: handling result\n", iteration);
+            fflush(stderr);
 
             // Handle exceptions
             if (exception) {
                 result = 1; // Non-zero indicates error
                 scope.clearException();
+                fprintf(stderr, "[FUZZILLI] Loop iteration %d: exception occurred\n", iteration);
+                fflush(stderr);
             } else if (evalResult) {
                 // Optionally print the result (like a REPL would)
                 // Convert result to string and print
@@ -233,21 +308,41 @@ void Fuzzilli::runReprl(JSC::JSGlobalObject* globalObject)
             }
         }
 
+        fprintf(stderr, "[FUZZILLI] Loop iteration %d: flushing REPRL\n", iteration);
+        fflush(stderr);
+
         // Flush results and send status back
         flushReprl(result);
 
+        fprintf(stderr, "[FUZZILLI] Loop iteration %d: clearing buffer\n", iteration);
+        fflush(stderr);
+
         // Clear for next iteration
         inputBuffer.clear();
+
+        iteration++;
     }
 }
 
 extern "C" void Fuzzilli__runReprl(JSC::JSGlobalObject* globalObject)
 {
+    fprintf(stderr, "[FUZZILLI] Fuzzilli__runReprl() called from Zig\n");
+    fprintf(stderr, "[FUZZILLI] globalObject = %p\n", globalObject);
+    fflush(stderr);
+
     // Initialize REPRL protocol (handshake, mmap input buffer)
+    fprintf(stderr, "[FUZZILLI] Calling initializeReprl()\n");
+    fflush(stderr);
     Fuzzilli::initializeReprl();
+
+    fprintf(stderr, "[FUZZILLI] initializeReprl() returned, calling runReprl()\n");
+    fflush(stderr);
 
     // Run the main REPRL loop (never returns)
     Fuzzilli::runReprl(globalObject);
+
+    fprintf(stderr, "[FUZZILLI] ERROR: runReprl() returned (should never happen)\n");
+    fflush(stderr);
 }
 
 #endif // BUN_FUZZILLI_ENABLED

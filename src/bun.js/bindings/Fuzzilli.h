@@ -60,10 +60,5 @@ void runReprl(JSC::JSGlobalObject* globalObject);
 
 namespace Fuzzilli {
 
-constexpr void tryInitialize() noexcept {
-#ifdef BUN_FUZZILLI_ENABLED
-    initializeReprl();
-#endif
-}
 
 } // namespace Fuzzilli

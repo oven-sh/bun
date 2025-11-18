@@ -710,7 +710,10 @@ pub const Expect = struct {
 
         var pretty_value = std.Io.Writer.Allocating.init(default_allocator);
         defer pretty_value.deinit();
-        try this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value.writer, fn_name);
+        this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value.writer, fn_name) catch |err| return switch (err) {
+            error.WriteFailed => error.OutOfMemory,
+            else => |e| e,
+        };
 
         var start_indent: ?[]const u8 = null;
         var end_indent: ?[]const u8 = null;
@@ -795,7 +798,7 @@ pub const Expect = struct {
 
         return .js_undefined;
     }
-    pub fn matchAndFmtSnapshot(this: *Expect, globalThis: *JSGlobalObject, value: JSValue, property_matchers: ?JSValue, pretty_value: *std.Io.Writer, comptime fn_name: []const u8) bun.JSError!void {
+    pub fn matchAndFmtSnapshot(this: *Expect, globalThis: *JSGlobalObject, value: JSValue, property_matchers: ?JSValue, pretty_value: *std.Io.Writer, comptime fn_name: []const u8) (bun.JSError || std.Io.Writer.Error)!void {
         if (property_matchers) |_prop_matchers| {
             if (!value.isObject()) {
                 const signature = comptime getSignature(fn_name, "<green>properties<r><d>, <r>hint", false);
@@ -816,16 +819,15 @@ pub const Expect = struct {
             }
         }
 
-        value.jestSnapshotPrettyFormat(pretty_value, globalThis) catch {
-            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
-            defer formatter.deinit();
-            return globalThis.throw("Failed to pretty format value: {f}", .{value.toFmt(&formatter)});
-        };
+        try value.jestSnapshotPrettyFormat(pretty_value, globalThis);
     }
     pub fn snapshot(this: *Expect, globalThis: *JSGlobalObject, value: JSValue, property_matchers: ?JSValue, hint: []const u8, comptime fn_name: []const u8) bun.JSError!JSValue {
         var pretty_value = std.Io.Writer.Allocating.init(default_allocator);
         defer pretty_value.deinit();
-        try this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value.writer, fn_name);
+        this.matchAndFmtSnapshot(globalThis, value, property_matchers, &pretty_value.writer, fn_name) catch |err| return switch (err) {
+            error.WriteFailed => error.OutOfMemory,
+            else => |e| e,
+        };
 
         const existing_value = Jest.runner.?.snapshots.getOrPut(this, pretty_value.written(), hint) catch |err| {
             var buntest_strong = this.bunTest() orelse return globalThis.throw("Snapshot matchers cannot be used outside of a test", .{});

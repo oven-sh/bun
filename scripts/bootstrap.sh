@@ -1139,8 +1139,8 @@ install_build_essentials() {
 	install_llvm
 	install_osxcross
 	install_gcc
-	install_sccache
 	install_rust
+	install_sccache
 	install_docker
 }
 
@@ -1260,8 +1260,12 @@ install_sccache() {
 	case "$os" in
 		linux)
 			;;
-		*)
+		freebsd)
+			cargo install sccache --locked --version 0.12.0
 			return
+			;;
+		*)
+			error "Unsupported platform: $os"
 			;;
 	esac
 
@@ -1292,11 +1296,17 @@ install_sccache() {
 }
 
 install_rust() {
-	case "$pm" in
-	apk)
+	case "$distro" in
+	alpine)
 		install_packages \
 			rust \
 			cargo
+		;;
+	freebsd)
+		install_packages lang/rust
+		# append_to_profile "export CARGO_HOME=$HOME/.cargo"
+		create_directory "$HOME/.cargo/bin"
+		append_to_path "$HOME/.cargo/bin"
 		;;
 	*)
 		rust_home="/opt/rust"

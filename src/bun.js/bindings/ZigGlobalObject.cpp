@@ -122,6 +122,7 @@
 #include "JSSink.h"
 #include "JSSocketAddressDTO.h"
 #include "JSSQLStatement.h"
+#include "SnapshotSerializers.h"
 #include "JSStringDecoder.h"
 #include "JSTextEncoder.h"
 #include "JSTextEncoderStream.h"
@@ -2349,6 +2350,12 @@ void GlobalObject::finishCreation(VM& vm)
             init.setPrototype(prototype);
             init.setStructure(structure);
             init.setConstructor(constructor);
+        });
+
+    m_SnapshotSerializersStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* structure = Bun::SnapshotSerializers::createStructure(init.vm, init.global, jsNull());
+            init.setStructure(structure);
         });
 
     m_JSBufferListClassStructure.initLater(

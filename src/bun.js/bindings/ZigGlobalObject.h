@@ -201,6 +201,7 @@ public:
     WebCore::JSBuiltinInternalFunctions& builtinInternalFunctions() { return m_builtinInternalFunctions; }
     JSC::Structure* FFIFunctionStructure() const { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }
     JSC::Structure* NapiClassStructure() const { return m_NapiClassStructure.getInitializedOnMainThread(this); }
+    JSC::Structure* SnapshotSerializersStructure() const { return m_SnapshotSerializersStructure.getInitializedOnMainThread(this); }
 
     JSC::Structure* FileSinkStructure() const { return m_JSFileSinkClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* FileSink() const { return m_JSFileSinkClassStructure.constructorInitializedOnMainThread(this); }
@@ -528,6 +529,7 @@ public:
     V(private, LazyClassStructure, m_JSBufferListClassStructure)                                             \
     V(private, LazyClassStructure, m_JSFFIFunctionStructure)                                                 \
     V(private, LazyClassStructure, m_JSFileSinkClassStructure)                                               \
+    V(private, LazyClassStructure, m_SnapshotSerializersStructure)                                           \
     V(private, LazyClassStructure, m_JSHTTPResponseSinkClassStructure)                                       \
     V(private, LazyClassStructure, m_JSHTTPSResponseSinkClassStructure)                                      \
     V(private, LazyClassStructure, m_JSNetworkSinkClassStructure)                                            \

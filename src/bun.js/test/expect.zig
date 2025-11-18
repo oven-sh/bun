@@ -968,6 +968,50 @@ pub const Expect = struct {
         return .js_undefined;
     }
 
+    /// Implements `expect.addSnapshotSerializer({ test, serialize })`
+    pub fn addSnapshotSerializer(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
+        const arg = callFrame.argumentsAsArray(1)[0];
+
+        const runner = Jest.runner orelse {
+            return globalThis.throwPretty("<d>expect.<r>addSnapshotSerializer<d>(<r>serializer<d>)<r>\n\nSnapshot serializers can only be added during test execution\n", .{});
+        };
+
+        // Parse options using bindv2
+        const options = try SnapshotSerializerOptions.fromJS(globalThis, arg);
+
+        // Validate test function
+        if (!options.test_fn.jsType().isFunction()) {
+            return globalThis.throwPretty("<d>expect.<r>addSnapshotSerializer<d>(<r>serializer<d>)<r>\n\nExpected 'test' to be a function\n", .{});
+        }
+
+        // Get serialize or print function
+        var serialize_fn_value = options.serialize_fn;
+        if (serialize_fn_value.isUndefinedOrNull()) {
+            serialize_fn_value = options.print_fn;
+        }
+
+        if (serialize_fn_value.isUndefinedOrNull()) {
+            return globalThis.throwPretty("<d>expect.<r>addSnapshotSerializer<d>(<r>serializer<d>)<r>\n\nExpected serializer object to have a 'serialize' or 'print' function\n", .{});
+        }
+
+        if (!serialize_fn_value.jsType().isFunction()) {
+            return globalThis.throwPretty("<d>expect.<r>addSnapshotSerializer<d>(<r>serializer<d>)<r>\n\nExpected 'serialize' or 'print' to be a function\n", .{});
+        }
+
+        // Get or create the SnapshotSerializers object
+        const serializers = runner.snapshots.serializers.get() orelse blk: {
+            // Create a new SnapshotSerializers object
+            const new_serializers = SnapshotSerializers__create(globalThis);
+            runner.snapshots.serializers.set(globalThis, new_serializers);
+            break :blk new_serializers;
+        };
+
+        // Add the serializer
+        _ = SnapshotSerializers__add(globalThis, serializers, options.test_fn, serialize_fn_value);
+
+        return .js_undefined;
+    }
+
     const CustomMatcherParamsFormatter = struct {
         colors: bool,
         globalThis: *JSGlobalObject,
@@ -1171,8 +1215,6 @@ pub const Expect = struct {
 
         return thisValue;
     }
-
-    pub const addSnapshotSerializer = notImplementedStaticFn;
 
     pub fn hasAssertions(globalThis: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         _ = callFrame;
@@ -2131,6 +2173,10 @@ extern fn ExpectMatcherUtils__getSingleton(globalThis: *JSGlobalObject) JSValue;
 extern fn Expect__getPrototype(globalThis: *JSGlobalObject) JSValue;
 extern fn ExpectStatic__getPrototype(globalThis: *JSGlobalObject) JSValue;
 
+extern fn SnapshotSerializers__create(globalThis: *JSGlobalObject) JSValue;
+extern fn SnapshotSerializers__add(globalThis: *JSGlobalObject, serializers: JSValue, testCallback: JSValue, serializeCallback: JSValue) JSValue;
+extern fn SnapshotSerializers__serialize(globalThis: *JSGlobalObject, serializers: JSValue, value: JSValue) JSValue;
+
 comptime {
     @export(&ExpectMatcherUtils.createSingleton, .{ .name = "ExpectMatcherUtils_createSigleton" });
     @export(&Expect.readFlagsAndProcessPromise, .{ .name = "Expect_readFlagsAndProcessPromise" });
@@ -2271,3 +2317,6 @@ const jest = bun.jsc.Jest;
 const DescribeScope = jest.DescribeScope;
 const Jest = jest.Jest;
 const TestRunner = jest.TestRunner;
+
+const bindgen_generated = @import("bindgen_generated");
+const SnapshotSerializerOptions = bindgen_generated.snapshot_serializer_options.SnapshotSerializerOptions;

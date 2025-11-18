@@ -45,12 +45,6 @@ extern "C" int kill(int pid, int sig)
 
 #endif
 
-#if !defined(WIN32)
-#ifndef UNLIKELY
-#define UNLIKELY(x) __builtin_expect(!!(x), 0)
-#endif
-#endif
-
 // if linux
 #if defined(__linux__)
 #include <features.h>

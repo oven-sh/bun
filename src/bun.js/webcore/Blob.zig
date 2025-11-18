@@ -2670,7 +2670,7 @@ pub fn getWriter(
                     return globalThis.throwValue(err.withPath(pathlike.path.slice()).toJS(globalThis));
                 },
             }
-            @compileError(unreachable);
+            @compileError("unreachable");
         };
 
         const is_stdout_or_stderr = brk: {

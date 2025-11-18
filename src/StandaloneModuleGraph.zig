@@ -1380,7 +1380,7 @@ pub const StandaloneModuleGraph = struct {
                     return error.FileNotFound;
                 };
             },
-            else => @compileError("TODO"),
+            .wasm => @compileError("TODO"),
         }
     }
 

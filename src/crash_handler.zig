@@ -322,7 +322,7 @@ pub fn crashHandler(
                             }
                         },
                         .mac, .linux => {},
-                        else => @compileError("TODO"),
+                        .wasm => @compileError("TODO"),
                     }
 
                     writer.writeAll(": ") catch std.posix.abort();
@@ -831,7 +831,7 @@ fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const an
     const addr = switch (bun.Environment.os) {
         .linux => @intFromPtr(info.fields.sigfault.addr),
         .mac => @intFromPtr(info.addr),
-        else => @compileError(unreachable),
+        .windows, .wasm => @compileError("unreachable"),
     };
 
     crashHandler(
@@ -895,7 +895,7 @@ pub fn init() void {
         .mac, .linux => {
             resetOnPosix();
         },
-        else => @compileError("TODO"),
+        .wasm => @compileError("TODO"),
     }
 }
 
@@ -1532,7 +1532,7 @@ fn report(url: []const u8) void {
                 },
             }
         },
-        else => @compileError("Not implemented"),
+        .wasm => @compileError("Not implemented"),
     }
 }
 

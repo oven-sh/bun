@@ -103,8 +103,13 @@ JSValue SnapshotSerializers::serialize(JSGlobalObject* globalObject, JSValue val
     // RAII guard to manage m_isExecuting flag
     class ExecutionGuard {
     public:
-        ExecutionGuard(bool& flag) : m_flag(flag) { m_flag = true; }
+        ExecutionGuard(bool& flag)
+            : m_flag(flag)
+        {
+            m_flag = true;
+        }
         ~ExecutionGuard() { m_flag = false; }
+
     private:
         bool& m_flag;
     };
@@ -139,8 +144,6 @@ JSValue SnapshotSerializers::serialize(JSGlobalObject* globalObject, JSValue val
 
         // If the test returns truthy, use this serializer
         if (testResult.toBoolean(globalObject)) {
-            RETURN_IF_EXCEPTION(scope, {});
-
             JSValue serializeCallback = serializeCallbacks->getIndex(globalObject, static_cast<unsigned>(i));
             RETURN_IF_EXCEPTION(scope, {});
 

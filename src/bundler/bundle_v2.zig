@@ -2042,6 +2042,10 @@ pub const BundleV2 = struct {
                     compile_options.executable_path.slice()
                 else
                     null,
+                .{
+                    .disable_default_env_files = !compile_options.autoload_dotenv,
+                    .disable_autoload_bunfig = !compile_options.autoload_bunfig,
+                },
             ) catch |err| {
                 return bun.StandaloneModuleGraph.CompileResult.failFmt("{s}", .{@errorName(err)});
             };

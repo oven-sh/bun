@@ -64,7 +64,7 @@ JSHeapData* JSHeapData::ensureHeapData(Heap& heap)
     if (!Options::useGlobalGC())
         return new JSHeapData(heap);
 
-    static JSHeapData singleton {heap};
+    static JSHeapData singleton { heap };
     return &singleton;
 }
 

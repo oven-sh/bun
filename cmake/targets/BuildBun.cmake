@@ -917,6 +917,10 @@ endif()
 
 if(ENABLE_FUZZILLI)
   target_compile_definitions(${bun} PRIVATE BUN_FUZZILLI_ENABLED=1)
+  target_sources(${bun} PRIVATE
+    ${CWD}/src/fuzzilli/client.cpp
+    ${CWD}/src/fuzzilli/session.cpp
+  )
 endif()
 
 target_compile_definitions(${bun} PRIVATE

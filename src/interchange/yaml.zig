@@ -1035,9 +1035,7 @@ pub fn Parser(comptime enc: Encoding) type {
             }
 
             pub fn moveList(self: *MappingProps) G.Property.List {
-                const list: G.Property.List = .moveFromList(&self.#list);
-                self.* = undefined;
-                return list;
+                return .moveFromList(&self.#list);
             }
         };
 

@@ -25,25 +25,6 @@ register_command(
   ALWAYS_RUN
 )
 
-if(GIT_CHANGED_SOURCES)
-  set(ZIG_FORMAT_CHANGED_SOURCES)
-  foreach(source ${ZIG_FORMAT_SOURCES})
-    list(FIND GIT_CHANGED_SOURCES ${source} index)
-    if(NOT ${index} EQUAL -1)
-      list(APPEND ZIG_FORMAT_CHANGED_SOURCES ${source})
-    endif()
-  endforeach()
-endif()
-
-if(ZIG_FORMAT_CHANGED_SOURCES)
-  set(ZIG_FORMAT_DIFF_COMMAND ${ZIG_EXECUTABLE}
-    fmt
-    ${ZIG_FORMAT_CHANGED_SOURCES}
-  )
-else()
-  set(ZIG_FORMAT_DIFF_COMMAND ${CMAKE_COMMAND} -E echo "No changed files for zig-format")
-endif()
-
 register_command(
   TARGET
     zig-format-diff

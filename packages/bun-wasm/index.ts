@@ -144,7 +144,7 @@ const env = {
   },
   // These functions return the result of shifting a left by b bits.
   __ashlti3(a: number, b: number) {
-    return (a | 0) >> (b | 0);
+    return (a | 0) << (b | 0);
   },
   /* Returns: convert a to a double, rounding toward even. */
   __floatuntidf(a: number) {

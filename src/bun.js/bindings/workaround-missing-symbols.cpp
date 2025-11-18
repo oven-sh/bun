@@ -1,6 +1,4 @@
 #include <iostream>
-#include <print>
-#include <utility>
 
 #if defined(WIN32)
 
@@ -204,7 +202,7 @@ extern "C" int __wrap_fcntl64(int fd, int cmd, ...)
             return func;
         }
 
-        std::println(std::cerr, "Error: Failed to locate real fcntl64 or fcntl");
+        std::cerr << "Error: Failed to locate real fcntl64 or fcntl\n";
         std::abort();
     }();
 

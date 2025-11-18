@@ -1,4 +1,5 @@
-#ifdef BUN_FUZZILLI_ENABLED
+#include "log.hpp"
+#include <unistd.h>
 
 #include "session.hpp"
 #include "client.hpp"
@@ -23,21 +24,27 @@ public:
     ~FuzzilliSession() {}
 
 private:
-    Client m_client { ClientConfig {
-        .commandReadFD = 1,
-        .commandWriteFD = 1,
-        .dataReadFD = 0,
-        .dataWriteFD = 1,
-    }};
+    Log m_log { "/tmp/fuzzilli-bun.log" };
+
+    Client m_client {
+        m_log,
+        ClientConfig {
+            .commandReadFD = STDIN_FILENO,
+            .commandWriteFD = STDOUT_FILENO,
+            .dataReadFD = STDIN_FILENO,
+            .dataWriteFD = STDOUT_FILENO,
+        }
+    };
 
     void exchangeHelo() {
         m_client.sendCommand(heloMessage);
+        m_log << "Sent HELO to Fuzzilli\n";
 
-        std::string response;
-        response.reserve(heloMessage.size());
-        m_client.receiveCommand(response.begin(), response.size());
+        std::string response(heloMessage.size(), '\0');
+        response.resize(m_client.receiveCommand(response.begin(), heloMessage.size()));
+        m_log << "Received HELO response from Fuzzilli: " << response << "\n";
         if (response != heloMessage) {
-            // TODO(markovejnovic): Log
+            m_log << "Invalid HELO response from Fuzzilli: " << response << "\n";
             std::abort();
         }
     }
@@ -48,5 +55,3 @@ private:
 extern "C" void bun__fuzzilli__begin() {
     bun::fuzzilli::FuzzilliSession run;
 }
-
-#endif // BUN_FUZZILLI_ENABLED

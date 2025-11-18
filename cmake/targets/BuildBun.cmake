@@ -920,6 +920,7 @@ if(ENABLE_FUZZILLI)
   target_sources(${bun} PRIVATE
     ${CWD}/src/fuzzilli/client.cpp
     ${CWD}/src/fuzzilli/session.cpp
+    ${CWD}/src/fuzzilli/log.cpp
   )
 endif()
 

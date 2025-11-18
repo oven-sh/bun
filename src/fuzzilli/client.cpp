@@ -1,3 +1,5 @@
+#include "log.hpp"
+#include <cstring>
 #ifdef BUN_FUZZILLI_ENABLED
 
 #include "client.hpp"
@@ -8,8 +10,9 @@
 
 namespace bun::fuzzilli {
 
-Client::Client(ClientConfig config)
-    : m_config(std::move(config))
+Client::Client(Log& log, ClientConfig config)
+    : m_config(std::move(config)),
+      m_log(log)
 {
 }
 
@@ -17,11 +20,11 @@ Client::~Client()
 {
 }
 
-std::size_t Client::forceRead(int fd, std::span<char> buffer)
+std::size_t Client::forceRead(int fd, std::span<char> buffer, std::size_t maxBytes)
 {
-    const ssize_t res = read(fd, buffer.data(), buffer.size());
+    const ssize_t res = read(fd, buffer.data(), maxBytes);
     if (res < 0) {
-        // TODO(markovejnovic): Log
+        m_log << "Error reading from fd " << fd << " -- " << strerror(errno) << "\n";
         std::abort();
     }
 
@@ -32,7 +35,7 @@ void Client::forceWrite(int fd, std::string_view data)
 {
     const int written = write(fd, data.data(), data.size());
     if (written != static_cast<int>(data.size())) {
-        // TODO(markovejnovic): Log
+        m_log << "Error writing to fd " << fd << "\n";
         std::abort();
     }
 }

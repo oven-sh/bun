@@ -2315,7 +2315,7 @@ const ZigString = jsc.ZigString;
 
 const jest = bun.jsc.Jest;
 const DescribeScope = jest.DescribeScope;
-const Jest = jest.Jest;
+pub const Jest = jest.Jest;
 const TestRunner = jest.TestRunner;
 
 const bindgen_generated = @import("bindgen_generated");

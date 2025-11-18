@@ -641,9 +641,9 @@ const WTFStringImpl = @import("../string.zig").WTFStringImpl;
 
 const bun = @import("bun");
 const Async = bun.Async;
+const Environment = bun.Environment;
 const Output = bun.Output;
 const assert = bun.assert;
-const Environment = bun.Environment;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;

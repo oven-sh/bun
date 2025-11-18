@@ -59,10 +59,10 @@ size_t Fuzzilli::numPendingRejectedPromises { 0 };
 void Fuzzilli::resetCoverageEdges()
 {
     uint64_t n = 0;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     for (uint32_t* edge = edgesStart; edge < edgesStop && n < MAX_EDGES; edge++)
         *edge = ++n;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 
 FilePrintStream& Fuzzilli::logFile()
@@ -181,7 +181,7 @@ void Fuzzilli::initializeReprl()
 
     fprintf(stderr, "[FUZZILLI] Verifying HELO response\n");
     fflush(stderr);
-    RELEASE_ASSERT_WITH_MESSAGE(equalSpans(std::span { helo } , "HELO"_span), "[REPRL] Invalid response from parent");
+    RELEASE_ASSERT_WITH_MESSAGE(equalSpans(std::span { helo }, "HELO"_span), "[REPRL] Invalid response from parent");
 
     fprintf(stderr, "[FUZZILLI] Mapping input buffer\n");
     fflush(stderr);
@@ -192,7 +192,6 @@ void Fuzzilli::initializeReprl()
     fprintf(stderr, "[FUZZILLI] initializeReprl() completed successfully\n");
     fflush(stderr);
 }
-
 
 extern "C" void __sanitizer_cov_trace_pc_guard_init(uint32_t* start, uint32_t* stop);
 extern "C" void __sanitizer_cov_trace_pc_guard_init(uint32_t* start, uint32_t* stop)
@@ -218,9 +217,9 @@ extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t* guard)
     // instrumentation ignores the first edge (see libcoverage.c) and so the race is unproblematic.
 
     uint32_t index = *guard;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     Fuzzilli::sharedData->edges[index / 8] |= 1 << (index % 8);
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     *guard = 0;
 }
@@ -279,8 +278,7 @@ void Fuzzilli::runReprl(JSC::JSGlobalObject* globalObject)
             JSC::SourceCode sourceCode = JSC::makeSource(
                 sourceString,
                 JSC::SourceOrigin { WTF::URL() },
-                JSC::SourceTaintedOrigin::Untainted
-            );
+                JSC::SourceTaintedOrigin::Untainted);
 
             NakedPtr<JSC::Exception> exception;
 
@@ -289,7 +287,7 @@ void Fuzzilli::runReprl(JSC::JSGlobalObject* globalObject)
 
             // Evaluate the code
             JSC::JSValue evalResult = JSC::evaluate(globalObject, sourceCode,
-                                                    globalObject->globalThis(), exception);
+                globalObject->globalThis(), exception);
 
             fprintf(stderr, "[FUZZILLI] Loop iteration %d: handling result\n", iteration);
             fflush(stderr);

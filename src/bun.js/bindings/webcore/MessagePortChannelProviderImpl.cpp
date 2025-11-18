@@ -35,7 +35,8 @@ namespace WebCore {
 MessagePortChannelProviderImpl::MessagePortChannelProviderImpl() = default;
 
 MessagePortChannelProviderImpl::~MessagePortChannelProviderImpl()
-{ }
+{
+}
 
 void MessagePortChannelProviderImpl::createNewMessagePortChannel(const MessagePortIdentifier& local, const MessagePortIdentifier& remote)
 {

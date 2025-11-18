@@ -1,9 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-
 extern "c" fn Fuzzilli__runReprl(globalObject: *bun.jsc.JSGlobalObject) void;
-
-const Run = bun.bun_js.Run;
 
 pub const FuzzilliCommand = struct {
     pub fn exec(ctx: bun.cli.Command.Context) !void {
@@ -69,3 +64,7 @@ pub const FuzzilliCommand = struct {
         return result != -1;
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const Run = bun.bun_js.Run;

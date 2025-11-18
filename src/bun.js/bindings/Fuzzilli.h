@@ -60,5 +60,4 @@ void runReprl(JSC::JSGlobalObject* globalObject);
 
 namespace Fuzzilli {
 
-
 } // namespace Fuzzilli

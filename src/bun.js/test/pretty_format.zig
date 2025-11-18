@@ -873,7 +873,7 @@ pub const JestPrettyFormat = struct {
             // Try snapshot serializers first
             if (expect.Jest.runner) |runner| {
                 if (runner.snapshots.serializers.get()) |serializers| {
-                    const result = SnapshotSerializers__serialize(this.globalThis, serializers, value);
+                    const result = try bun.cpp.SnapshotSerializers__serialize(this.globalThis, serializers, value);
                     if (!result.isNull() and result.isString()) {
                         var writer = WrappedWriter(Writer){ .ctx = writer_, .estimated_line_length = &this.estimated_line_length };
                         defer {
@@ -2157,8 +2157,6 @@ pub const JestPrettyFormat = struct {
         return true;
     }
 };
-
-extern fn SnapshotSerializers__serialize(globalThis: *JSGlobalObject, serializers: JSValue, value: JSValue) JSValue;
 
 const string = []const u8;
 

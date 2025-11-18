@@ -1001,13 +1001,13 @@ pub const Expect = struct {
         // Get or create the SnapshotSerializers object
         const serializers = runner.snapshots.serializers.get() orelse blk: {
             // Create a new SnapshotSerializers object
-            const new_serializers = SnapshotSerializers__create(globalThis);
+            const new_serializers = try bun.cpp.SnapshotSerializers__create(globalThis);
             runner.snapshots.serializers.set(globalThis, new_serializers);
             break :blk new_serializers;
         };
 
         // Add the serializer
-        _ = SnapshotSerializers__add(globalThis, serializers, options.test_fn, serialize_fn_value);
+        _ = try bun.cpp.SnapshotSerializers__add(globalThis, serializers, options.test_fn, serialize_fn_value);
 
         return .js_undefined;
     }
@@ -2172,10 +2172,6 @@ extern fn ExpectMatcherUtils__getSingleton(globalThis: *JSGlobalObject) JSValue;
 
 extern fn Expect__getPrototype(globalThis: *JSGlobalObject) JSValue;
 extern fn ExpectStatic__getPrototype(globalThis: *JSGlobalObject) JSValue;
-
-extern fn SnapshotSerializers__create(globalThis: *JSGlobalObject) JSValue;
-extern fn SnapshotSerializers__add(globalThis: *JSGlobalObject, serializers: JSValue, testCallback: JSValue, serializeCallback: JSValue) JSValue;
-extern fn SnapshotSerializers__serialize(globalThis: *JSGlobalObject, serializers: JSValue, value: JSValue) JSValue;
 
 comptime {
     @export(&ExpectMatcherUtils.createSingleton, .{ .name = "ExpectMatcherUtils_createSigleton" });

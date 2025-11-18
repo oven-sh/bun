@@ -173,7 +173,7 @@ using namespace JSC;
 
 // Zig-exported functions
 
-extern "C" JSC::EncodedJSValue SnapshotSerializers__create(Zig::GlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue SnapshotSerializers__create(Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     auto* structure = globalObject->SnapshotSerializersStructure();

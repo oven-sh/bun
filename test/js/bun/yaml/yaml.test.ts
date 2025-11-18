@@ -887,6 +887,23 @@ my_config:
         expect(YAML.parse(input)).toEqual(expected);
       });
 
+      test("duplicate merge key", () => {
+        const input = `
+---
+<<: {x: 1, y: 2}
+foo: bar
+<<: {z: 3, t: 4}
+`;
+
+        expect(YAML.parse(input)).toEqual({
+          x: 1,
+          y: 2,
+          z: 3,
+          t: 4,
+          foo: "bar",
+        });
+      });
+
       test("duplicate keys from the same anchor", () => {
         let input = `
 defaults: &d

@@ -1011,7 +1011,7 @@ pub const FFI = struct {
                     .linux => "so",
                     .mac => "dylib",
                     .windows => "dll",
-                    else => @compileError("TODO"),
+                    .wasm => @compileError("TODO"),
                 },
             )) |resolved| {
                 @memcpy(filepath_buf[0..resolved.len], resolved);

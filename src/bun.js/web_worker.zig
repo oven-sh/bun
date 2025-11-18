@@ -622,7 +622,9 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         arena_.deinit();
     }
 
-    bun.windows.libuv.Loop.close();
+    if (comptime Environment.isWindows) {
+        bun.windows.libuv.Loop.shutdown();
+    }
 
     bun.exitThread();
 }
@@ -641,6 +643,7 @@ const bun = @import("bun");
 const Async = bun.Async;
 const Output = bun.Output;
 const assert = bun.assert;
+const Environment = bun.Environment;
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;

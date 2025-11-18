@@ -662,7 +662,7 @@ pub const Loop = extern struct {
         }
     }
 
-    pub fn close() void {
+    pub fn shutdown() void {
         const loop = threadlocal_loop orelse {
             return;
         };

@@ -611,6 +611,10 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         loop_.internal_loop_data.jsc_vm = null;
     }
 
+    if (comptime Environment.isWindows) {
+        bun.windows.libuv.Loop.shutdown();
+    }
+
     this.deinit();
 
     if (vm_to_deinit) |vm| {
@@ -620,10 +624,6 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     bun.deleteAllPoolsForThreadExit();
     if (arena) |*arena_| {
         arena_.deinit();
-    }
-
-    if (comptime Environment.isWindows) {
-        bun.windows.libuv.Loop.shutdown();
     }
 
     bun.exitThread();

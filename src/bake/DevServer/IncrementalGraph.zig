@@ -1775,13 +1775,8 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                                 .utf8,
                             );
                         }
-                        // Include overlay preference in the config passed to the HMR runtime
-                        if (options.overlay) {
-                            try w.writeAll(",\n  overlay: true");
-                        } else {
-                            try w.writeAll(",\n  overlay: false");
-                        }
-                        try w.writeAll("\n})");
+                        try w.print(",\n overlay: {s}", .{if (options.overlay) "true" else "false"});
+
                     },
                     .hmr_chunk => switch (side) {
                         .client => {

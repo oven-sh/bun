@@ -949,7 +949,7 @@ pub fn spawnMaybeSync(
     const resultPid = jsc.JSValue.jsNumberFromInt32(subprocess.pid());
     subprocess.finalize();
 
-    const sync_value = jsc.JSValue.createEmptyObject(globalThis, 5 + @as(usize, @intFromBool(!signalCode.isEmptyOrUndefinedOrNull())));
+    const sync_value = jsc.JSValue.createEmptyObject(globalThis, 0);
     sync_value.put(globalThis, jsc.ZigString.static("exitCode"), exitCode);
     if (!signalCode.isEmptyOrUndefinedOrNull()) {
         sync_value.put(globalThis, jsc.ZigString.static("signalCode"), signalCode);

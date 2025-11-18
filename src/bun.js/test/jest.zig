@@ -179,7 +179,7 @@ pub const Jest = struct {
     }
 
     pub fn createTestModule(globalObject: *JSGlobalObject) bun.JSError!JSValue {
-        const module = JSValue.createEmptyObject(globalObject, 20);
+        const module = JSValue.createEmptyObject(globalObject, 23);
 
         const test_scope_functions = try bun_test.ScopeFunctions.createBound(globalObject, .@"test", .zero, .{}, bun_test.ScopeFunctions.strings.@"test");
         module.put(globalObject, ZigString.static("test"), test_scope_functions);
@@ -204,6 +204,7 @@ pub const Jest = struct {
         module.put(globalObject, ZigString.static("expect"), Expect.js.getConstructor(globalObject));
         module.put(globalObject, ZigString.static("expectTypeOf"), ExpectTypeOf.js.getConstructor(globalObject));
 
+        // will add more 9 properties in the module here so we need to allocate 23 properties
         createMockObjects(globalObject, module);
 
         return module;
@@ -229,7 +230,7 @@ pub const Jest = struct {
         mockFn.put(globalObject, ZigString.static("restore"), restoreAllMocks);
         mockFn.put(globalObject, ZigString.static("clearAllMocks"), clearAllMocks);
 
-        const jest = JSValue.createEmptyObject(globalObject, 10);
+        const jest = JSValue.createEmptyObject(globalObject, 11);
         jest.put(globalObject, ZigString.static("fn"), mockFn);
         jest.put(globalObject, ZigString.static("mock"), mockModuleFn);
         jest.put(globalObject, ZigString.static("spyOn"), spyOn);

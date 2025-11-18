@@ -494,7 +494,7 @@ async function runTests() {
     if (isBuildkite) {
       // Group flaky tests together, regardless of the title
       const context = flaky ? "flaky" : title;
-      const style = flaky || title.startsWith("vendor") ? "warning" : "error";
+      const style = flaky ? "warning" : "error";
       if (!flaky) attempt = 1; // no need to show the retries count on failures, we know it maxed out
 
       if (title.startsWith("vendor")) {

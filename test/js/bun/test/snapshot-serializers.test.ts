@@ -26,6 +26,10 @@ class ThrowInSerialize {
   value = 99;
 }
 
+class ReturnNonString {
+  value = 123;
+}
+
 // Add serializers at the top level
 expect.addSnapshotSerializer({
   test: val => val instanceof Point,
@@ -63,6 +67,11 @@ expect.addSnapshotSerializer({
   serialize: () => {
     throw new Error("Serialize function error");
   },
+});
+
+expect.addSnapshotSerializer({
+  test: val => val instanceof ReturnNonString,
+  serialize: val => val.value, // Returns a number, not a string
 });
 
 test("snapshot serializers work for custom formatting", () => {
@@ -106,4 +115,11 @@ test("serialize function throwing error propagates to expect()", () => {
   expect(() => {
     expect(obj).toMatchInlineSnapshot();
   }).toThrow("Serialize function error");
+});
+
+test("serialize function returning non-string throws error", () => {
+  const obj = new ReturnNonString();
+  expect(() => {
+    expect(obj).toMatchInlineSnapshot();
+  }).toThrow("Snapshot serializer must return a string");
 });

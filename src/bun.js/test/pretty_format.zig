@@ -874,7 +874,14 @@ pub const JestPrettyFormat = struct {
             if (expect.Jest.runner) |runner| {
                 if (runner.snapshots.serializers.get()) |serializers| {
                     const result = try bun.cpp.SnapshotSerializers__serialize(this.globalThis, serializers, value);
-                    if (!result.isNull() and result.isString()) {
+                    if (!result.isNull()) {
+                        // Serializer matched but returned non-string value
+                        if (!result.isString()) {
+                            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = this.globalThis };
+                            defer formatter.deinit();
+                            return this.globalThis.throw("Snapshot serializer must return a string, received: {any}", .{result.toFmt(&formatter)});
+                        }
+
                         var writer = WrappedWriter(Writer){ .ctx = writer_, .estimated_line_length = &this.estimated_line_length };
                         defer {
                             if (writer.failed) {

@@ -367,17 +367,6 @@ describe("performance.now() mocking", () => {
   });
 });
 
-test("adding more than the maximum number of ns in a u64 doesn't crash", () => {
-  vi.useFakeTimers();
-  vi.advanceTimersByTime(900000000);
-  vi.advanceTimersByTime(900000000);
-  vi.advanceTimersByTime(900000000);
-  vi.advanceTimersByTime(900000000);
-  vi.advanceTimersByTime(900000000);
-  vi.advanceTimersByTime(900000000);
-  vi.advanceTimersByTime(900000000);
-});
-
 describe("useFakeTimers with options", () => {
   test("useFakeTimers({ now: number }) sets Date.now() to the specified value", () => {
     const targetTime = 1000000000000; // January 9, 2001

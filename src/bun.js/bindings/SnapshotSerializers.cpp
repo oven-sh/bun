@@ -48,7 +48,7 @@ SnapshotSerializers* SnapshotSerializers::create(VM& vm, Structure* structure)
     return serializers;
 }
 
-bool SnapshotSerializers::addSerializer(JSGlobalObject* globalObject, JSValue testCallback, JSValue serializeCallback)
+void SnapshotSerializers::addSerializer(JSGlobalObject* globalObject, JSValue testCallback, JSValue serializeCallback)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -56,18 +56,18 @@ bool SnapshotSerializers::addSerializer(JSGlobalObject* globalObject, JSValue te
     // Check for re-entrancy
     if (m_isExecuting) {
         throwTypeError(globalObject, scope, "Cannot add snapshot serializer from within a test or serialize callback"_s);
-        return false;
+        RELEASE_AND_RETURN(scope, );
     }
 
     // Validate that both callbacks are callable
     if (!testCallback.isCallable()) {
         throwTypeError(globalObject, scope, "Snapshot serializer test callback must be a function"_s);
-        return false;
+        RELEASE_AND_RETURN(scope, );
     }
 
     if (!serializeCallback.isCallable()) {
         throwTypeError(globalObject, scope, "Snapshot serializer serialize callback must be a function"_s);
-        return false;
+        RELEASE_AND_RETURN(scope, );
     }
 
     // Get the arrays
@@ -76,17 +76,15 @@ bool SnapshotSerializers::addSerializer(JSGlobalObject* globalObject, JSValue te
 
     if (!testCallbacks || !serializeCallbacks) {
         throwOutOfMemoryError(globalObject, scope);
-        return false;
+        RELEASE_AND_RETURN(scope, );
     }
 
     // Add to the end of the arrays (most recent last, we'll iterate in reverse)
     testCallbacks->push(globalObject, testCallback);
-    RETURN_IF_EXCEPTION(scope, false);
+    RETURN_IF_EXCEPTION(scope, );
 
     serializeCallbacks->push(globalObject, serializeCallback);
-    RETURN_IF_EXCEPTION(scope, false);
-
-    return true;
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 JSValue SnapshotSerializers::serialize(JSGlobalObject* globalObject, JSValue value)
@@ -198,18 +196,14 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue SnapshotSerializers
 
     if (!serializers) {
         throwTypeError(globalObject, scope, "Invalid SnapshotSerializers object"_s);
-        return JSValue::encode(jsUndefined());
+        RELEASE_AND_RETURN(scope, {});
     }
 
     JSValue testCallback = JSValue::decode(encodedTestCallback);
     JSValue serializeCallback = JSValue::decode(encodedSerializeCallback);
 
-    bool success = serializers->addSerializer(globalObject, testCallback, serializeCallback);
+    serializers->addSerializer(globalObject, testCallback, serializeCallback);
     RETURN_IF_EXCEPTION(scope, {});
-
-    if (success) {
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
-    }
 
     return JSValue::encode(jsUndefined());
 }
@@ -227,7 +221,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue SnapshotSerializers
 
     if (!serializers) {
         throwTypeError(globalObject, scope, "Invalid SnapshotSerializers object"_s);
-        return JSValue::encode(jsNull());
+        RELEASE_AND_RETURN(scope, {});
     }
 
     JSValue value = JSValue::decode(encodedValue);

@@ -36,10 +36,6 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    // Add a new snapshot serializer
-    // Returns true on success, false if in re-entrant call (and throws)
-    bool addSerializer(JSC::JSGlobalObject* globalObject, JSC::JSValue testCallback, JSC::JSValue serializeCallback);
-
     // Test a value and serialize if a matching serializer is found
     // Returns the serialized string or null
     JSC::JSValue serialize(JSC::JSGlobalObject* globalObject, JSC::JSValue value);

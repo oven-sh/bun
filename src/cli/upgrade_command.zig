@@ -309,6 +309,7 @@ pub const UpgradeCommand = struct {
 
     const exe_subpath = Version.folder_name ++ std.fs.path.sep_str ++ "bun" ++ exe_suffix;
     const profile_exe_subpath = Version.profile_folder_name ++ std.fs.path.sep_str ++ "bun-profile" ++ exe_suffix;
+    const asan_exe_subpath = Version.folder_name ++ std.fs.path.sep_str ++ "bun-asan" ++ exe_suffix;
 
     const manual_upgrade_command = switch (Environment.os) {
         .linux, .mac => "curl -fsSL https://bun.com/install | bash",
@@ -502,8 +503,12 @@ pub const UpgradeCommand = struct {
             _ = bun.sys.chdir("", tmpdir_z);
 
             const tmpname = "bun.zip";
-            const exe =
-                if (use_profile) profile_exe_subpath else exe_subpath;
+            const exe = if (Environment.enable_asan)
+                asan_exe_subpath
+            else if (use_profile)
+                profile_exe_subpath
+            else
+                exe_subpath;
 
             var zip_file = save_dir.createFileZ(tmpname, .{ .truncate = true }) catch |err| {
                 Output.prettyErrorln("<r><red>error:<r> Failed to open temp file {s}", .{@errorName(err)});

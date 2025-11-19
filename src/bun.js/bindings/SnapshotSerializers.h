@@ -37,7 +37,7 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     // Add a new snapshot serializer
-    // Returns true on success, false if in re-entrant call (and throws)
+    // Throws TypeError if callbacks are not callable or if called re-entrantly
     void addSerializer(JSC::JSGlobalObject* globalObject, JSC::JSValue testCallback, JSC::JSValue serializeCallback);
 
     // Test a value and serialize if a matching serializer is found

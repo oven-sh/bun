@@ -317,7 +317,7 @@ pub const GetAddrInfo = struct {
         address: std.net.Address,
         ttl: i32 = 0,
 
-        pub const List = std.ArrayList(Result);
+        pub const List = std.array_list.Managed(Result);
 
         pub const Any = union(enum) {
             addrinfo: ?*std.c.addrinfo,
@@ -401,7 +401,7 @@ pub fn addressToString(address: *const std.net.Address) bun.OOM!bun.String {
         std.posix.AF.INET6 => {
             var stack = std.heap.stackFallback(512, default_allocator);
             const allocator = stack.get();
-            var out = try std.fmt.allocPrint(allocator, "{any}", .{address.*});
+            var out = try std.fmt.allocPrint(allocator, "{f}", .{address.*});
             defer allocator.free(out);
             // TODO: this is a hack, fix it
             // This removes [.*]:port

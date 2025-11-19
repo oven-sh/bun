@@ -14,7 +14,7 @@ comptime {
 
 var title_mutex = bun.Mutex{};
 
-pub fn getTitle(_: *JSGlobalObject, title: *bun.String) callconv(.C) void {
+pub fn getTitle(_: *JSGlobalObject, title: *bun.String) callconv(.c) void {
     title_mutex.lock();
     defer title_mutex.unlock();
     const str = bun.cli.Bun__Node__ProcessTitle;
@@ -22,7 +22,7 @@ pub fn getTitle(_: *JSGlobalObject, title: *bun.String) callconv(.C) void {
 }
 
 // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
-pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *bun.String) callconv(.C) void {
+pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *bun.String) callconv(.c) void {
     defer newvalue.deref();
     title_mutex.lock();
     defer title_mutex.unlock();
@@ -36,11 +36,11 @@ pub fn setTitle(globalObject: *JSGlobalObject, newvalue: *bun.String) callconv(.
     bun.cli.Bun__Node__ProcessTitle = new_title;
 }
 
-pub fn createArgv0(globalObject: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+pub fn createArgv0(globalObject: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
     return jsc.ZigString.fromUTF8(bun.argv[0]).toJS(globalObject);
 }
 
-pub fn getExecPath(globalObject: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+pub fn getExecPath(globalObject: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
     const out = bun.selfExePath() catch {
         // if for any reason we are unable to get the executable path, we just return argv[0]
         return createArgv0(globalObject);
@@ -69,7 +69,7 @@ fn createExecArgv(globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     if (vm.standalone_module_graph) |graph| {
         if (graph.compile_exec_argv.len > 0) {
             // Use tokenize to split the compile_exec_argv string by whitespace
-            var args = std.ArrayList(bun.String).init(temp_alloc);
+            var args = std.array_list.Managed(bun.String).init(temp_alloc);
             defer args.deinit();
             defer for (args.items) |*arg| arg.deref();
 
@@ -87,7 +87,7 @@ fn createExecArgv(globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         return try jsc.JSValue.createEmptyArray(globalObject, 0);
     }
 
-    var args = try std.ArrayList(bun.String).initCapacity(temp_alloc, bun.argv.len - 1);
+    var args = try std.array_list.Managed(bun.String).initCapacity(temp_alloc, bun.argv.len - 1);
     defer args.deinit();
     defer for (args.items) |*arg| arg.deref();
 
@@ -146,7 +146,7 @@ fn createExecArgv(globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
     return bun.String.toJSArray(globalObject, args.items);
 }
 
-fn createArgv(globalObject: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+fn createArgv(globalObject: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
     const vm = globalObject.bunVM();
 
     // Allocate up to 32 strings in stack
@@ -220,7 +220,7 @@ pub fn getExecArgv(global: *JSGlobalObject) callconv(.c) JSValue {
     return Bun__Process__getExecArgv(global);
 }
 
-pub fn getEval(globalObject: *jsc.JSGlobalObject) callconv(.C) jsc.JSValue {
+pub fn getEval(globalObject: *jsc.JSGlobalObject) callconv(.c) jsc.JSValue {
     const vm = globalObject.bunVM();
     if (vm.module_loader.eval_source) |source| {
         return jsc.ZigString.init(source.contents).toJS(globalObject);
@@ -298,7 +298,7 @@ pub fn exit(globalObject: *jsc.JSGlobalObject, code: u8) callconv(.c) void {
 }
 
 // TODO: switch this to using *bun.wtf.String when it is added
-pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.C) void {
+pub fn Bun__Process__editWindowsEnvVar(k: bun.String, v: bun.String) callconv(.c) void {
     comptime bun.assert(bun.Environment.isWindows);
     if (k.tag == .Empty) return;
     const wtf1 = k.value.WTFStringImpl;
@@ -339,11 +339,11 @@ comptime {
 }
 
 pub export fn Bun__NODE_NO_WARNINGS() bool {
-    return bun.getRuntimeFeatureFlag(.NODE_NO_WARNINGS);
+    return bun.feature_flag.NODE_NO_WARNINGS.get();
 }
 
 pub export fn Bun__suppressCrashOnProcessKillSelfIfDesired() void {
-    if (bun.getRuntimeFeatureFlag(.BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF)) {
+    if (bun.feature_flag.BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF.get()) {
         bun.crash_handler.suppressReporting();
     }
 }

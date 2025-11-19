@@ -49,12 +49,12 @@ pub const Bunfig = struct {
             // Token
             if (url.username.len == 0 and url.password.len > 0) {
                 registry.token = url.password;
-                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{f}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
             } else if (url.username.len > 0 and url.password.len > 0) {
                 registry.username = url.username;
                 registry.password = url.password;
 
-                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+                registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{f}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
             } else {
                 // Do not include a trailing slash. There might be parameters at the end.
                 registry.url = url.href;
@@ -129,7 +129,7 @@ pub const Bunfig = struct {
         ) !void {
             if (expr.asArray()) |array_| {
                 var array = array_;
-                var preloads = try std.ArrayList(string).initCapacity(allocator, array.array.items.len);
+                var preloads = try std.array_list.Managed(string).initCapacity(allocator, array.array.items.len);
                 errdefer preloads.deinit();
                 while (array.next()) |item| {
                     try this.expectString(item);
@@ -145,6 +145,43 @@ pub const Bunfig = struct {
                 }
             } else if (expr.data != .e_null) {
                 try this.addError(expr.loc, "Expected preload to be an array");
+            }
+        }
+
+        fn loadEnvConfig(this: *Parser, expr: js_ast.Expr) !void {
+            switch (expr.data) {
+                .e_null => {
+                    // env = null -> disable default .env files
+                    this.bunfig.disable_default_env_files = true;
+                },
+                .e_boolean => |boolean| {
+                    // env = false -> disable default .env files
+                    // env = true -> keep default behavior (load .env files)
+                    if (!boolean.value) {
+                        this.bunfig.disable_default_env_files = true;
+                    }
+                },
+                .e_object => |obj| {
+                    // env = { file: false } -> disable default .env files
+                    if (obj.get("file")) |file_expr| {
+                        switch (file_expr.data) {
+                            .e_null => {
+                                this.bunfig.disable_default_env_files = true;
+                            },
+                            .e_boolean => |boolean| {
+                                if (!boolean.value) {
+                                    this.bunfig.disable_default_env_files = true;
+                                }
+                            },
+                            else => {
+                                try this.addError(file_expr.loc, "Expected 'file' to be a boolean or null");
+                            },
+                        }
+                    }
+                },
+                else => {
+                    try this.addError(expr.loc, "Expected 'env' to be a boolean, null, or an object");
+                },
             }
         }
 
@@ -189,6 +226,10 @@ pub const Bunfig = struct {
             if (json.get("origin")) |expr| {
                 try this.expectString(expr);
                 this.bunfig.origin = try expr.data.e_string.string(allocator);
+            }
+
+            if (json.get("env")) |env_expr| {
+                try this.loadEnvConfig(env_expr);
             }
 
             if (comptime cmd == .RunCommand or cmd == .AutoCommand) {
@@ -731,6 +772,30 @@ pub const Bunfig = struct {
                             },
                         }
                     }
+
+                    if (install_obj.get("publicHoistPattern")) |public_hoist_pattern_expr| {
+                        install.public_hoist_pattern = bun.install.PnpmMatcher.fromExpr(
+                            allocator,
+                            public_hoist_pattern_expr,
+                            this.log,
+                            this.source,
+                        ) catch |err| switch (err) {
+                            error.OutOfMemory => |oom| return oom,
+                            error.UnexpectedExpr, error.InvalidRegExp => return error.@"Invalid Bunfig",
+                        };
+                    }
+
+                    if (install_obj.get("hoistPattern")) |hoist_pattern_expr| {
+                        install.hoist_pattern = bun.install.PnpmMatcher.fromExpr(
+                            allocator,
+                            hoist_pattern_expr,
+                            this.log,
+                            this.source,
+                        ) catch |err| switch (err) {
+                            error.OutOfMemory => |oom| return oom,
+                            error.UnexpectedExpr, error.InvalidRegExp => return error.@"Invalid Bunfig",
+                        };
+                    }
                 }
 
                 if (json.get("run")) |run_expr| {
@@ -1101,7 +1166,7 @@ pub const Bunfig = struct {
                 else => {
                     this.log.addErrorFmtOpts(
                         this.allocator,
-                        "expected string but received {}",
+                        "expected string but received {f}",
                         .{
                             @as(js_ast.Expr.Tag, expr.data),
                         },
@@ -1120,7 +1185,7 @@ pub const Bunfig = struct {
             if (@as(js_ast.Expr.Tag, expr.data) != token) {
                 this.log.addErrorFmtOpts(
                     this.allocator,
-                    "expected {} but received {}",
+                    "expected {f} but received {f}",
                     .{
                         token,
                         @as(js_ast.Expr.Tag, expr.data),

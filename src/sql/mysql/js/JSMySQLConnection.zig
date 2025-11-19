@@ -37,6 +37,7 @@ pub const ref = RefCount.ref;
 pub const deref = RefCount.deref;
 
 pub fn onAutoFlush(this: *@This()) bool {
+    debug("onAutoFlush", .{});
     if (this.#connection.hasBackpressure()) {
         this.auto_flusher.registered = false;
         // if we have backpressure, wait for onWritable
@@ -93,8 +94,8 @@ fn getTimeoutInterval(this: *@This()) u32 {
     };
 }
 pub fn resetConnectionTimeout(this: *@This()) void {
-    debug("resetConnectionTimeout", .{});
     const interval = this.getTimeoutInterval();
+    debug("resetConnectionTimeout {d}", .{interval});
     if (this.timer.state == .ACTIVE) {
         this.#vm.timer.remove(&this.timer);
     }
@@ -122,16 +123,16 @@ pub fn onConnectionTimeout(this: *@This()) void {
 
     switch (this.#connection.status) {
         .connected => {
-            this.failFmt(error.IdleTimeout, "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
+            this.failFmt(error.IdleTimeout, "Idle timeout reached after {f}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
         },
         .connecting => {
-            this.failFmt(error.ConnectionTimedOut, "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt(error.ConnectionTimedOut, "Connection timeout after {f}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
         .handshaking,
         .authenticating,
         .authentication_awaiting_pk,
         => {
-            this.failFmt(error.ConnectionTimedOut, "Connection timeout after {} (during authentication)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt(error.ConnectionTimedOut, "Connection timeout after {f} (during authentication)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
         .disconnected, .failed => {},
     }
@@ -140,7 +141,7 @@ pub fn onConnectionTimeout(this: *@This()) void {
 pub fn onMaxLifetimeTimeout(this: *@This()) void {
     this.max_lifetime_timer.state = .FIRED;
     if (this.#connection.status == .failed) return;
-    this.failFmt(error.LifetimeTimeout, "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
+    this.failFmt(error.LifetimeTimeout, "Max lifetime timeout reached after {f}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
 }
 fn setupMaxLifetimeTimerIfNecessary(this: *@This()) void {
     if (this.max_lifetime_interval_ms == 0) return;
@@ -178,6 +179,7 @@ pub fn close(this: *@This()) void {
 }
 
 fn drainInternal(this: *@This()) void {
+    debug("drainInternal", .{});
     if (this.#vm.isShuttingDown()) return this.close();
     this.ref();
     defer this.deref();
@@ -225,13 +227,15 @@ fn SocketHandler(comptime ssl: bool) type {
             const socket = _socket(s);
             this.#connection.setSocket(socket);
 
-            this.setupMaxLifetimeTimerIfNecessary();
-            this.resetConnectionTimeout();
             if (socket == .SocketTCP) {
-                // when upgrading to TLS the onOpen callback will be called again and at this moment we dont wanna to change the status to handshaking
+                // This handshake is not TLS handleshake is actually the MySQL handshake
+                // When a connection is upgraded to TLS, the onOpen callback is called again and at this moment we dont wanna to change the status to handshaking
                 this.#connection.status = .handshaking;
                 this.ref(); // keep a ref for the socket
             }
+            // Only set up the timers after all status changes are complete — the timers rely on the status to determine timeouts.
+            this.setupMaxLifetimeTimerIfNecessary();
+            this.resetConnectionTimeout();
             this.updateReferenceType();
         }
 
@@ -305,15 +309,17 @@ fn updateReferenceType(this: *@This()) void {
     if (this.#connection.isActive()) {
         debug("connection is active", .{});
         if (this.#js_value.isNotEmpty() and this.#js_value == .weak) {
-            debug("strong ref", .{});
+            debug("strong ref until connection is closed", .{});
             this.#js_value.upgrade(this.#globalObject);
         }
-        this.#poll_ref.ref(this.#vm);
+        if (this.#connection.status == .connected and this.#connection.isIdle()) {
+            this.#poll_ref.unref(this.#vm);
+        } else {
+            this.#poll_ref.ref(this.#vm);
+        }
         return;
     }
-    debug("connection is not active", .{});
     if (this.#js_value.isNotEmpty() and this.#js_value == .strong) {
-        debug("week ref", .{});
         this.#js_value.downgrade();
     }
     this.#poll_ref.unref(this.#vm);

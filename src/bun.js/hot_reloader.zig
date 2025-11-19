@@ -291,7 +291,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 this.transpiler.resolver.watcher = bun.resolver.ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(this.bun_watcher.?);
             }
 
-            clear_screen = !this.transpiler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors);
+            clear_screen = !this.transpiler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors_stdout);
 
             reloader.getContext().start() catch @panic("Failed to start File Watcher");
         }
@@ -374,7 +374,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         }
 
                         if (this.verbose)
-                            debug("File changed: {s} ({})", .{ fs.relativeTo(file_path), event });
+                            debug("File changed: {s}", .{fs.relativeTo(file_path)});
 
                         if (event.op.write or event.op.delete or event.op.rename) {
                             if (comptime Environment.isMac) {
@@ -535,7 +535,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                         }
 
                         if (this.verbose) {
-                            debug("Dir change: {s} (affecting {d}, {})", .{ fs.relativeTo(file_path), affected.len, event });
+                            debug("Dir change: {s} (affecting {d})", .{ fs.relativeTo(file_path), affected.len });
                         }
                     },
                 }

@@ -34,7 +34,7 @@ const ObjectRestoreStatus = struct {
 
 const S3ListObjectsContents = struct {
     key: []const u8,
-    etag: ?[]const u8,
+    etag: ?bun.ptr.OwnedIn([]const u8, bun.allocators.MaybeOwned(bun.DefaultAllocator)),
     checksum_type: ?[]const u8,
     checksum_algorithme: ?[]const u8,
     last_modified: ?[]const u8,
@@ -42,6 +42,10 @@ const S3ListObjectsContents = struct {
     storage_class: ?[]const u8,
     owner: ?ObjectOwner,
     restore_status: ?ObjectRestoreStatus,
+
+    pub fn deinit(self: *S3ListObjectsContents) void {
+        if (self.etag) |*etag| etag.deinit();
+    }
 };
 
 pub const S3ListObjectsV2Result = struct {
@@ -55,11 +59,12 @@ pub const S3ListObjectsV2Result = struct {
     continuation_token: ?[]const u8,
     next_continuation_token: ?[]const u8,
     start_after: ?[]const u8,
-    common_prefixes: ?std.ArrayList([]const u8),
-    contents: ?std.ArrayList(S3ListObjectsContents),
+    common_prefixes: ?std.array_list.Managed([]const u8),
+    contents: ?std.array_list.Managed(S3ListObjectsContents),
 
-    pub fn deinit(this: @This()) void {
+    pub fn deinit(this: *const @This()) void {
         if (this.contents) |contents| {
+            for (contents.items) |*item| item.deinit();
             contents.deinit();
         }
         if (this.common_prefixes) |common_prefixes| {
@@ -67,7 +72,7 @@ pub const S3ListObjectsV2Result = struct {
         }
     }
 
-    pub fn toJS(this: @This(), globalObject: *JSGlobalObject) bun.JSError!JSValue {
+    pub fn toJS(this: *const @This(), globalObject: *JSGlobalObject) bun.JSError!JSValue {
         const jsResult = JSValue.createEmptyObject(globalObject, 12);
 
         if (this.name) |name| {
@@ -113,11 +118,11 @@ pub const S3ListObjectsV2Result = struct {
             const jsContents = try JSValue.createEmptyArray(globalObject, contents.items.len);
 
             for (contents.items, 0..) |item, i| {
-                const objectInfo = JSValue.createEmptyObject(globalObject, 1);
+                const objectInfo = JSValue.createEmptyObject(globalObject, 0);
                 objectInfo.put(globalObject, jsc.ZigString.static("key"), try bun.String.createUTF8ForJS(globalObject, item.key));
 
                 if (item.etag) |etag| {
-                    objectInfo.put(globalObject, jsc.ZigString.static("eTag"), try bun.String.createUTF8ForJS(globalObject, etag));
+                    objectInfo.put(globalObject, jsc.ZigString.static("eTag"), try bun.String.createUTF8ForJS(globalObject, etag.get()));
                 }
 
                 if (item.checksum_algorithme) |checksum_algorithme| {
@@ -141,7 +146,7 @@ pub const S3ListObjectsV2Result = struct {
                 }
 
                 if (item.owner) |owner| {
-                    const jsOwner = JSValue.createEmptyObject(globalObject, 2);
+                    const jsOwner = JSValue.createEmptyObject(globalObject, 0);
                     if (owner.id) |id| {
                         jsOwner.put(globalObject, jsc.ZigString.static("id"), try bun.String.createUTF8ForJS(globalObject, id));
                     }
@@ -163,7 +168,7 @@ pub const S3ListObjectsV2Result = struct {
             const jsCommonPrefixes = try JSValue.createEmptyArray(globalObject, common_prefixes.items.len);
 
             for (common_prefixes.items, 0..) |prefix, i| {
-                const jsPrefix = JSValue.createEmptyObject(globalObject, 1);
+                const jsPrefix = JSValue.createEmptyObject(globalObject, 0);
                 jsPrefix.put(globalObject, jsc.ZigString.static("prefix"), try bun.String.createUTF8ForJS(globalObject, prefix));
                 try jsCommonPrefixes.putIndex(globalObject, @intCast(i), jsPrefix);
             }
@@ -191,8 +196,8 @@ pub fn parseS3ListObjectsResult(xml: []const u8) !S3ListObjectsV2Result {
         .start_after = null,
     };
 
-    var contents = std.ArrayList(S3ListObjectsContents).init(bun.default_allocator);
-    var common_prefixes = std.ArrayList([]const u8).init(bun.default_allocator);
+    var contents = std.array_list.Managed(S3ListObjectsContents).init(bun.default_allocator);
+    var common_prefixes = std.array_list.Managed([]const u8).init(bun.default_allocator);
 
     // we dont use trailing ">" as it may finish with xmlns=...
     if (strings.indexOf(xml, "<ListBucketResult")) |delete_result_pos| {
@@ -218,6 +223,7 @@ pub fn parseS3ListObjectsResult(xml: []const u8) !S3ListObjectsV2Result {
                     var object_size: ?i64 = null;
                     var storage_class: ?[]const u8 = null;
                     var etag: ?[]const u8 = null;
+                    var etag_owned: bool = false;
                     var checksum_type: ?[]const u8 = null;
                     var checksum_algorithme: ?[]const u8 = null;
                     var owner_id: ?[]const u8 = null;
@@ -281,7 +287,9 @@ pub fn parseS3ListObjectsResult(xml: []const u8) !S3ListObjectsV2Result {
 
                                         if (len != 0) {
                                             etag = output[0 .. input.len - len * 5]; // 5 = "&quot;".len - 1 for replacement "
+                                            etag_owned = true;
                                         } else {
+                                            bun.default_allocator.free(output);
                                             etag = input;
                                         }
 
@@ -373,7 +381,7 @@ pub fn parseS3ListObjectsResult(xml: []const u8) !S3ListObjectsV2Result {
 
                         try contents.append(.{
                             .key = object_key_val,
-                            .etag = etag,
+                            .etag = if (etag) |etag_| if (etag_owned) .fromRawIn(etag_, .init()) else .fromRawIn(etag_, .initBorrowed()) else null,
                             .checksum_type = checksum_type,
                             .checksum_algorithme = checksum_algorithme,
                             .last_modified = last_modified,
@@ -477,6 +485,7 @@ pub fn parseS3ListObjectsResult(xml: []const u8) !S3ListObjectsV2Result {
         if (contents.items.len != 0) {
             result.contents = contents;
         } else {
+            for (contents.items) |*item| item.deinit();
             contents.deinit();
         }
 

@@ -1538,7 +1538,7 @@ export function parseNumber(value) {
 
 /**
  * @param {string} string
- * @returns {"darwin" | "linux" | "windows"}
+ * @returns {"darwin" | "linux" | "windows" | "freebsd"}
  */
 export function parseOs(string) {
   if (/darwin|apple|mac/i.test(string)) {
@@ -1549,6 +1549,9 @@ export function parseOs(string) {
   }
   if (/win/i.test(string)) {
     return "windows";
+  }
+  if (/freebsd/i.test(string)) {
+    return "freebsd";
   }
   throw new Error(`Unsupported operating system: ${string}`);
 }
@@ -1900,21 +1903,20 @@ export function getUsernameForDistro(distro) {
   if (/windows/i.test(distro)) {
     return "administrator";
   }
-
   if (/alpine|centos/i.test(distro)) {
     return "root";
   }
-
   if (/debian/i.test(distro)) {
     return "admin";
   }
-
   if (/ubuntu/i.test(distro)) {
     return "ubuntu";
   }
-
   if (/amazon|amzn|al\d+|rhel/i.test(distro)) {
     return "ec2-user";
+  }
+  if (/freebsd/i.test(distro)) {
+    return "root";
   }
 
   throw new Error(`Unsupported distro: ${distro}`);
@@ -2492,7 +2494,7 @@ export function formatAnnotationToHtml(annotation, options = {}) {
  * @param {AnnotationOptions} [options]
  * @returns {AnnotationResult}
  */
-export function parseAnnotations(content, options = {}) {
+export function parseAnnotations(content) {
   /** @type {Annotation[]} */
   const annotations = [];
 

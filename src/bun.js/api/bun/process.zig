@@ -36,7 +36,7 @@ const IO_COUNTERS = extern struct {
     OtherTransferCount: u64 = 0,
 };
 
-extern "kernel32" fn GetProcessIoCounters(handle: std.os.windows.HANDLE, counters: *IO_COUNTERS) callconv(std.os.windows.WINAPI) c_int;
+extern "kernel32" fn GetProcessIoCounters(handle: std.os.windows.HANDLE, counters: *IO_COUNTERS) callconv(.winapi) c_int;
 
 pub fn uv_getrusage(process: *uv.uv_process_t) win_rusage {
     var usage_info: Rusage = .{ .utime = .{}, .stime = .{} };
@@ -382,7 +382,7 @@ pub const Process = struct {
         }
     }
 
-    fn onExitUV(process: *uv.uv_process_t, exit_status: i64, term_signal: c_int) callconv(.C) void {
+    fn onExitUV(process: *uv.uv_process_t, exit_status: i64, term_signal: c_int) callconv(.c) void {
         const poller: *PollerWindows = @fieldParentPtr("uv", process);
         var this: *Process = @fieldParentPtr("poller", poller);
         const exit_code: u8 = if (exit_status >= 0) @as(u8, @truncate(@as(u64, @intCast(exit_status)))) else 0;
@@ -416,7 +416,7 @@ pub const Process = struct {
         }
     }
 
-    fn onCloseUV(uv_handle: *uv.uv_process_t) callconv(.C) void {
+    fn onCloseUV(uv_handle: *uv.uv_process_t) callconv(.c) void {
         const poller: *Poller = @fieldParentPtr("uv", uv_handle);
         var this: *Process = @fieldParentPtr("poller", poller);
         bun.windows.libuv.log("Process.onClose({d})", .{uv_handle.pid});
@@ -603,7 +603,7 @@ pub const Status = union(enum) {
         };
     }
 
-    pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         if (self.signalCode()) |signal_code| {
             if (signal_code.toExitCode()) |code| {
                 try writer.print("code: {d}", .{code});
@@ -619,7 +619,7 @@ pub const Status = union(enum) {
                 try writer.print("signal: {d}", .{@intFromEnum(signal)});
             },
             .err => |err| {
-                try writer.print("{}", .{err});
+                try writer.print("{f}", .{err});
             },
             else => {},
         }
@@ -741,7 +741,7 @@ const WaiterThreadPosix = struct {
     fn NewQueue(comptime T: type) type {
         return struct {
             queue: ConcurrentQueue = .{},
-            active: std.ArrayList(*T) = std.ArrayList(*T).init(bun.default_allocator),
+            active: std.array_list.Managed(*T) = std.array_list.Managed(*T).init(bun.default_allocator),
 
             const TaskQueueEntry = struct {
                 process: *T,
@@ -913,7 +913,7 @@ const WaiterThreadPosix = struct {
         thread.detach();
     }
 
-    fn wakeup(_: c_int) callconv(.C) void {
+    fn wakeup(_: c_int) callconv(.c) void {
         const one = @as([8]u8, @bitCast(@as(usize, 1)));
         _ = bun.sys.write(instance.eventfd, &one).unwrap() catch 0;
     }
@@ -924,8 +924,8 @@ const WaiterThreadPosix = struct {
         }
 
         if (comptime Environment.isLinux) {
-            var current_mask = std.posix.empty_sigset;
-            std.os.linux.sigaddset(&current_mask, std.posix.SIG.CHLD);
+            var current_mask = std.posix.sigemptyset();
+            std.os.linux.sigaddset(current_mask[0..1], std.posix.SIG.CHLD);
             const act = std.posix.Sigaction{
                 .handler = .{ .handler = &wakeup },
                 .mask = current_mask,
@@ -960,7 +960,7 @@ const WaiterThreadPosix = struct {
 
                 _ = std.posix.poll(&polls, std.math.maxInt(i32)) catch 0;
             } else {
-                var mask = std.posix.empty_sigset;
+                var mask = std.posix.sigemptyset();
                 var signal: c_int = std.posix.SIG.CHLD;
                 const rc = std.c.sigwait(&mask, &signal);
                 _ = rc;
@@ -1016,7 +1016,7 @@ pub const WindowsSpawnResult = struct {
     stdin: StdioResult = .unavailable,
     stdout: StdioResult = .unavailable,
     stderr: StdioResult = .unavailable,
-    extra_pipes: std.ArrayList(StdioResult) = std.ArrayList(StdioResult).init(bun.default_allocator),
+    extra_pipes: std.array_list.Managed(StdioResult) = std.array_list.Managed(StdioResult).init(bun.default_allocator),
     stream: bool = true,
     sync: bool = false,
 
@@ -1101,7 +1101,7 @@ pub const PosixSpawnResult = struct {
     stdout: ?bun.FileDescriptor = null,
     stderr: ?bun.FileDescriptor = null,
     ipc: ?bun.FileDescriptor = null,
-    extra_pipes: std.ArrayList(bun.FileDescriptor) = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator),
+    extra_pipes: std.array_list.Managed(bun.FileDescriptor) = std.array_list.Managed(bun.FileDescriptor).init(bun.default_allocator),
 
     memfds: [3]bool = .{ false, false, false },
 
@@ -1261,12 +1261,12 @@ pub fn spawnProcessPosix(
         try actions.chdir(options.cwd);
     }
     var spawned = PosixSpawnResult{};
-    var extra_fds = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator);
+    var extra_fds = std.array_list.Managed(bun.FileDescriptor).init(bun.default_allocator);
     errdefer extra_fds.deinit();
     var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
     const allocator = stack_fallback.get();
-    var to_close_at_end = std.ArrayList(bun.FileDescriptor).init(allocator);
-    var to_set_cloexec = std.ArrayList(bun.FileDescriptor).init(allocator);
+    var to_close_at_end = std.array_list.Managed(bun.FileDescriptor).init(allocator);
+    var to_set_cloexec = std.array_list.Managed(bun.FileDescriptor).init(allocator);
     defer {
         for (to_set_cloexec.items) |fd| {
             _ = bun.sys.setCloseOnExec(fd);
@@ -1279,7 +1279,7 @@ pub fn spawnProcessPosix(
         to_close_at_end.clearAndFree();
     }
 
-    var to_close_on_error = std.ArrayList(bun.FileDescriptor).init(allocator);
+    var to_close_on_error = std.array_list.Managed(bun.FileDescriptor).init(allocator);
 
     errdefer {
         for (to_close_on_error.items) |fd| {
@@ -1492,7 +1492,7 @@ pub fn spawnProcessPosix(
         .result => |pid| {
             spawned.pid = pid;
             spawned.extra_pipes = extra_fds;
-            extra_fds = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator);
+            extra_fds = std.array_list.Managed(bun.FileDescriptor).init(bun.default_allocator);
 
             if (comptime Environment.isLinux) {
                 // If it's spawnSync and we want to block the entire thread
@@ -1553,7 +1553,7 @@ pub fn spawnProcessWindows(
 
     uv_process_options.cwd = cwd.ptr;
 
-    var uv_files_to_close = std.ArrayList(uv.uv_file).init(allocator);
+    var uv_files_to_close = std.array_list.Managed(uv.uv_file).init(allocator);
 
     var failed = false;
 
@@ -1578,7 +1578,7 @@ pub fn spawnProcessWindows(
         uv_process_options.flags |= uv.UV_PROCESS_DETACHED;
     }
 
-    var stdio_containers = try std.ArrayList(uv.uv_stdio_container_t).initCapacity(allocator, 3 + options.extra_fds.len);
+    var stdio_containers = try std.array_list.Managed(uv.uv_stdio_container_t).initCapacity(allocator, 3 + options.extra_fds.len);
     defer stdio_containers.deinit();
     @memset(stdio_containers.allocatedSlice(), std.mem.zeroes(uv.uv_stdio_container_t));
     stdio_containers.items.len = 3 + options.extra_fds.len;
@@ -1595,6 +1595,7 @@ pub fn spawnProcessWindows(
     var dup_src: ?u32 = null;
     var dup_tgt: ?u32 = null;
     inline for (0..3) |fd_i| {
+        const pipe_flags = uv.UV_CREATE_PIPE | uv.UV_READABLE_PIPE | uv.UV_WRITABLE_PIPE;
         const stdio: *uv.uv_stdio_container_t = stdios[fd_i];
 
         const flag = comptime if (fd_i == 0) @as(u32, uv.O.RDONLY) else @as(u32, uv.O.WRONLY);
@@ -1640,7 +1641,7 @@ pub fn spawnProcessWindows(
             },
             .buffer => |my_pipe| {
                 try my_pipe.init(loop, false).unwrap();
-                stdio.flags = uv.UV_CREATE_PIPE | if (fd_i == 0) uv.UV_READABLE_PIPE else uv.UV_WRITABLE_PIPE;
+                stdio.flags = pipe_flags;
                 stdio.data.stream = @ptrCast(my_pipe);
             },
             .pipe => |fd| {
@@ -1751,7 +1752,7 @@ pub fn spawnProcessWindows(
 
     var result = WindowsSpawnResult{
         .process_ = process,
-        .extra_pipes = try std.ArrayList(WindowsSpawnResult.StdioResult).initCapacity(bun.default_allocator, options.extra_fds.len),
+        .extra_pipes = try std.array_list.Managed(WindowsSpawnResult.StdioResult).initCapacity(bun.default_allocator, options.extra_fds.len),
     };
 
     const result_stdios = .{ &result.stdin, &result.stdout, &result.stderr };
@@ -1841,8 +1842,8 @@ pub const sync = struct {
 
     pub const Result = struct {
         status: Status,
-        stdout: std.ArrayList(u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
-        stderr: std.ArrayList(u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
+        stdout: std.array_list.Managed(u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
+        stderr: std.array_list.Managed(u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
 
         pub fn isOK(this: *const Result) bool {
             return this.status.isOK();
@@ -1855,7 +1856,7 @@ pub const sync = struct {
     };
 
     const SyncWindowsPipeReader = struct {
-        chunks: std.ArrayList([]u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
+        chunks: std.array_list.Managed([]u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
         pipe: *uv.Pipe,
 
         err: bun.sys.E = .SUCCESS,
@@ -1878,7 +1879,7 @@ pub const sync = struct {
             this.pipe.close(onClose);
         }
 
-        fn onClose(pipe: *uv.Pipe) callconv(.C) void {
+        fn onClose(pipe: *uv.Pipe) callconv(.c) void {
             const this: *SyncWindowsPipeReader = pipe.getData(SyncWindowsPipeReader) orelse @panic("Expected SyncWindowsPipeReader to have data");
             const context = this.context;
             const chunks = this.chunks.items;
@@ -2007,7 +2008,7 @@ pub const sync = struct {
                 switch (reader.start()) {
                     .err => |err| {
                         _ = this.process.kill(1);
-                        Output.panic("Unexpected error starting {s} pipe reader\n{}", .{ @tagName(tag), err });
+                        Output.panic("Unexpected error starting {s} pipe reader\n{f}", .{ @tagName(tag), err });
                     },
                     .result => {},
                 }
@@ -2020,11 +2021,11 @@ pub const sync = struct {
 
         const result = Result{
             .status = this.status orelse @panic("Expected Process to have exited when waiting_count == 0"),
-            .stdout = std.ArrayList(u8).fromOwnedSlice(
+            .stdout = std.array_list.Managed(u8).fromOwnedSlice(
                 bun.default_allocator,
                 bun.handleOom(flattenOwnedChunks(bun.default_allocator, bun.default_allocator, this.stdout)),
             ),
-            .stderr = std.ArrayList(u8).fromOwnedSlice(
+            .stderr = std.array_list.Managed(u8).fromOwnedSlice(
                 bun.default_allocator,
                 bun.handleOom(flattenOwnedChunks(bun.default_allocator, bun.default_allocator, this.stderr)),
             ),
@@ -2066,7 +2067,7 @@ pub const sync = struct {
 
         try string_builder.allocate(bun.default_allocator);
 
-        var args = bun.handleOom(std.ArrayList(?[*:0]u8).initCapacity(bun.default_allocator, argv.len + 1));
+        var args = bun.handleOom(std.array_list.Managed(?[*:0]u8).initCapacity(bun.default_allocator, argv.len + 1));
         defer args.deinit();
 
         for (argv) |arg| {
@@ -2108,9 +2109,9 @@ pub const sync = struct {
 
         Bun__sendPendingSignalIfNecessary();
 
-        var out = [2]std.ArrayList(u8){
-            std.ArrayList(u8).init(bun.default_allocator),
-            std.ArrayList(u8).init(bun.default_allocator),
+        var out = [2]std.array_list.Managed(u8){
+            std.array_list.Managed(u8).init(bun.default_allocator),
+            std.array_list.Managed(u8).init(bun.default_allocator),
         };
         var out_fds = [2]bun.FileDescriptor{ process.stdout orelse bun.invalid_fd, process.stderr orelse bun.invalid_fd };
         var success = false;

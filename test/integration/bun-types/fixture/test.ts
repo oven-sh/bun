@@ -79,6 +79,10 @@ describe("bun:test", () => {
   });
 });
 
+test.each([1, 2, 3])("test.each", a => {
+  expectType<1 | 2 | 3>(a);
+});
+
 // inference should work when data is passed directly in
 test.each([
   ["a", true, 5],

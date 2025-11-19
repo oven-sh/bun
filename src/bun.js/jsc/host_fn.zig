@@ -55,7 +55,7 @@ fn debugExceptionAssertion(globalThis: *JSGlobalObject, value: JSValue, comptime
                     \\Native function returned a non-zero JSValue while an exception is pending
                     \\
                     \\    fn: {s}
-                    \\ value: {}
+                    \\ value: {f}
                     \\
                 , .{
                     &func, // use `(lldb) image lookup --address 0x1ec4` to discover what function failed
@@ -696,7 +696,7 @@ pub fn wrapInstanceMethod(
                 }
             }
 
-            return @call(.always_inline, @field(Container, name), args);
+            return @call(bun.callmod_inline, @field(Container, name), args);
         }
     }.method;
 }
@@ -838,7 +838,7 @@ pub fn wrapStaticMethod(
 
             defer iter.deinit();
 
-            return @call(.always_inline, @field(Container, name), args);
+            return @call(bun.callmod_inline, @field(Container, name), args);
         }
     }.method;
 }

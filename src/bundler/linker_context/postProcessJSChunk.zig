@@ -110,7 +110,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
     errdefer j.deinit();
     const output_format = c.options.output_format;
 
-    var line_offset: bun.sourcemap.LineColumnOffset.Optional = if (c.options.source_maps != .none) .{ .value = .{} } else .{ .null = {} };
+    var line_offset: bun.SourceMap.LineColumnOffset.Optional = if (c.options.source_maps != .none) .{ .value = .{} } else .{ .null = {} };
 
     // Concatenate the generated JavaScript chunks together
 
@@ -445,7 +445,7 @@ pub fn generateEntryPointTailJS(
     r: renamer.Renamer,
 ) CompileResult {
     const flags: JSMeta.Flags = c.graph.meta.items(.flags)[source_index];
-    var stmts = std.ArrayList(Stmt).init(temp_allocator);
+    var stmts = std.array_list.Managed(Stmt).init(temp_allocator);
     defer stmts.deinit();
     const ast: JSAst = c.graph.ast.get(source_index);
 
@@ -541,7 +541,7 @@ pub fn generateEntryPointTailJS(
                         // entry point is a CommonJS-style module, since that would generate an ES6
                         // export statement that's not top-level. Instead, we will export the CommonJS
                         // exports as a default export later on.
-                        var items = std.ArrayList(js_ast.ClauseItem).init(temp_allocator);
+                        var items = std.array_list.Managed(js_ast.ClauseItem).init(temp_allocator);
                         const cjs_export_copies = c.graph.meta.items(.cjs_export_copies)[source_index];
 
                         var had_default_export = false;

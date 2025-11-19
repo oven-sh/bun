@@ -2,7 +2,7 @@ import assert from "node:assert";
 import util from "node:util";
 import { CodeStyle, Type } from "./base";
 
-export const bool: Type = new (class extends Type {
+export const bool = new (class extends Type {
   /** Converts to a boolean, as if by calling `Boolean`. */
   get loose() {
     return LooseBool;
@@ -23,7 +23,7 @@ export const bool: Type = new (class extends Type {
   }
 })();
 
-export const LooseBool: Type = new (class extends Type {
+export const LooseBool = new (class extends Type {
   get idlType() {
     return "::WebCore::IDLBoolean";
   }
@@ -163,7 +163,7 @@ const looseSignedTypes: { [width: number]: LooseIntegerType } = {
   64: LooseI64,
 };
 
-export const f64: Type = new (class extends Type {
+export const f64 = new (class extends Type {
   /** Does not allow NaN or infinities. */
   get finite() {
     return FiniteF64;
@@ -196,7 +196,7 @@ export const f64: Type = new (class extends Type {
   }
 })();
 
-export const FiniteF64: Type = new (class extends Type {
+export const FiniteF64 = new (class extends Type {
   get idlType() {
     return "::Bun::IDLFiniteDouble";
   }
@@ -213,7 +213,7 @@ export const FiniteF64: Type = new (class extends Type {
   }
 })();
 
-export const LooseF64: Type = new (class extends Type {
+export const LooseF64 = new (class extends Type {
   get idlType() {
     return "::WebCore::IDLUnrestrictedDouble";
   }

@@ -1,7 +1,7 @@
 const Echo = @This();
 
 /// Should be allocated with the arena from Builtin
-output: std.ArrayList(u8),
+output: std.array_list.Managed(u8),
 
 state: union(enum) {
     idle,

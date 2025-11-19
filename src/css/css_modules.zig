@@ -76,8 +76,7 @@ pub const CssModule = struct {
 
     pub fn referenceDashed(
         this: *CssModule,
-        comptime W: type,
-        dest: *css.Printer(W),
+        dest: *css.Printer,
         name: []const u8,
         from: *const ?css.css_properties.css_modules.Specifier,
         source_index: u32,
@@ -133,8 +132,7 @@ pub const CssModule = struct {
 
     pub fn handleComposes(
         _: *CssModule,
-        comptime W: type,
-        _: *css.Printer(W),
+        _: *css.Printer,
         selectors: *const css.selector.parser.SelectorList,
         _: *const css.css_properties.css_modules.Composes,
         _: u32,

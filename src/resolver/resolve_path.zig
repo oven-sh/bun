@@ -37,6 +37,16 @@ inline fn nqlAtIndexCaseInsensitive(comptime string_count: comptime_int, index: 
     return false;
 }
 
+/// The given string contains separators that match the platform's path separator style.
+pub fn hasPlatformPathSeparators(input_path: []const u8) bool {
+    if (bun.Environment.isWindows) {
+        // Windows accepts both forward and backward slashes as path separators
+        return bun.strings.indexOfAny(input_path, "\\/") != null;
+    } else {
+        return bun.strings.containsChar(input_path, '/');
+    }
+}
+
 const IsSeparatorFunc = fn (char: u8) bool;
 const IsSeparatorFuncT = fn (comptime T: type, char: anytype) bool;
 const LastSeparatorFunction = fn (slice: []const u8) ?usize;
@@ -487,7 +497,7 @@ pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
             const separator = lastIndexOfSeparatorWindows(str) orelse return std.fs.path.diskDesignatorWindows(str);
             return str[0..separator];
         },
-        else => @compileError("not implemented"),
+        .nt => @compileError("not implemented"),
     }
 }
 

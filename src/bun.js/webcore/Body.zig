@@ -737,10 +737,11 @@ pub const Value = union(Tag) {
     /// This ensures that blobs originating from strings get the proper Content-Type header.
     fn internalBlobToBlob(internal_blob_input: InternalBlob) Blob {
         var internal_blob = internal_blob_input;
+        const allocator = internal_blob.bytes.allocator;
         const bytes = internal_blob.toOwnedSlice();
         var new_blob = Blob.init(
             bytes,
-            bun.default_allocator,
+            allocator,
             jsc.VirtualMachine.get().global,
         );
 

@@ -715,23 +715,30 @@ declare module "bun:test" {
      *
      * @param serializer The snapshot serializer configuration
      */
-    addSnapshotSerializer(serializer: {
-      /**
-       * Test function to determine if this serializer should be used for a value
-       */
-      test: (val: any) => boolean;
-      /**
-       * Serialize function to convert the value to a string.
-       * Either `serialize` or `print` must be provided.
-       */
-      serialize?: (val: any) => string;
-      /**
-       * Print function to convert the value to a string (alternative to serialize).
-       * Either `serialize` or `print` must be provided.
-       */
-      print?: (val: any) => string;
-    }): void;
+    addSnapshotSerializer(serializer: SnapshotSerializer): void;
   }
+
+  export type SnapshotSerializer =
+    | {
+        /**
+         * Test function to determine if this serializer should be used for a value
+         */
+        test: (val: any) => boolean;
+        /**
+         * Serialize function to convert the value to a string.
+         */
+        serialize: (val: any) => string;
+      }
+    | {
+        /**
+         * Test function to determine if this serializer should be used for a value
+         */
+        test: (val: any) => boolean;
+        /**
+         * @deprecated Specify `serialize` instead
+         */
+        print: (val: any) => string;
+      };
 
   /**
    * You can extend this interface with declaration merging, in order to add type support for custom matchers.

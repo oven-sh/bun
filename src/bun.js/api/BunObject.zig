@@ -53,6 +53,7 @@ pub const BunObject = struct {
     pub const FFI = toJSLazyPropertyCallback(Bun.FFIObject.getter);
     pub const FileSystemRouter = toJSLazyPropertyCallback(Bun.getFileSystemRouter);
     pub const Glob = toJSLazyPropertyCallback(Bun.getGlobConstructor);
+    pub const Mutex = toJSLazyPropertyCallback(Bun.getMutexConstructor);
     pub const MD4 = toJSLazyPropertyCallback(Crypto.MD4.getter);
     pub const MD5 = toJSLazyPropertyCallback(Crypto.MD5.getter);
     pub const SHA1 = toJSLazyPropertyCallback(Crypto.SHA1.getter);
@@ -129,6 +130,7 @@ pub const BunObject = struct {
         @export(&BunObject.TOML, .{ .name = lazyPropertyCallbackName("TOML") });
         @export(&BunObject.YAML, .{ .name = lazyPropertyCallbackName("YAML") });
         @export(&BunObject.Glob, .{ .name = lazyPropertyCallbackName("Glob") });
+        @export(&BunObject.Mutex, .{ .name = lazyPropertyCallbackName("Mutex") });
         @export(&BunObject.Transpiler, .{ .name = lazyPropertyCallbackName("Transpiler") });
         @export(&BunObject.argv, .{ .name = lazyPropertyCallbackName("argv") });
         @export(&BunObject.cwd, .{ .name = lazyPropertyCallbackName("cwd") });
@@ -1266,6 +1268,10 @@ pub fn getYAMLObject(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSVa
 
 pub fn getGlobConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     return jsc.API.Glob.js.getConstructor(globalThis);
+}
+
+pub fn getMutexConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
+    return jsc.API.Mutex.js.getConstructor(globalThis);
 }
 
 pub fn getS3ClientConstructor(globalThis: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {

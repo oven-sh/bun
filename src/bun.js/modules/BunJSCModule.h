@@ -364,7 +364,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint,
     size_t current_commit = 0;
     size_t peak_commit = 0;
     size_t page_faults = 0;
-    #if USE(MIMALLOC)
+#if USE(MIMALLOC)
     size_t elapsed_msecs = 0;
     size_t user_msecs = 0;
     size_t system_msecs = 0;

@@ -27,15 +27,7 @@ public:
 private:
     Log m_log { "/tmp/fuzzilli-bun.log" };
 
-    Client m_client {
-        m_log,
-        ClientConfig {
-            .commandReadFD = STDIN_FILENO,
-            .commandWriteFD = STDOUT_FILENO,
-            .dataReadFD = STDIN_FILENO,
-            .dataWriteFD = STDOUT_FILENO,
-        }
-    };
+    Client m_client { m_log };
 
     void exchangeHelo() {
         m_client.sendCommand(heloMessage);

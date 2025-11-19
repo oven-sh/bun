@@ -72,7 +72,6 @@
 #include "ConsoleObject.h"
 #include "DOMWrapperWorld-class.h"
 #include "ErrorStackTrace.h"
-#include "Fuzzilli.h"
 #include "IDLTypes.h"
 #include "ImportMetaObject.h"
 #include "JS2Native.h"

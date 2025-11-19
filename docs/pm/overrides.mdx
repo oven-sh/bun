@@ -5,14 +5,14 @@ description: "Control metadependency versions with npm overrides and Yarn resolu
 
 Bun supports npm's `"overrides"` and Yarn's `"resolutions"` in `package.json`. These are mechanisms for specifying a version range for _metadependencies_—the dependencies of your dependencies.
 
+{/* prettier-ignore */}
 ```json package.json icon="file-json"
 {
   "name": "my-app",
   "dependencies": {
     "foo": "^2.0.0"
   },
-  "overrides": {
-    // [!code ++]
+  "overrides": { // [!code ++]
     "bar": "~4.4.0" // [!code ++]
   } // [!code ++]
 }
@@ -50,14 +50,14 @@ Add `bar` to the `"overrides"` field in `package.json`. Bun will defer to the sp
   overrides](https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides) are not supported.
 </Note>
 
+{/* prettier-ignore */}
 ```json package.json icon="file-json"
 {
   "name": "my-app",
   "dependencies": {
     "foo": "^2.0.0"
   },
-  "overrides": {
-    // [!code ++]
+  "overrides": { // [!code ++]
     "bar": "~4.4.0" // [!code ++]
   } // [!code ++]
 }
@@ -69,14 +69,14 @@ The syntax is similar for `"resolutions"`, which is Yarn's alternative to `"over
 
 As with `"overrides"`, _nested resolutions_ are not currently supported.
 
+{/* prettier-ignore */}
 ```json package.json icon="file-json"
 {
   "name": "my-app",
   "dependencies": {
     "foo": "^2.0.0"
   },
-  "resolutions": {
-    // [!code ++]
+  "resolutions": { // [!code ++]
     "bar": "~4.4.0" // [!code ++]
   } // [!code ++]
 }

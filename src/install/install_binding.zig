@@ -4,7 +4,7 @@ pub const bun_install_js_bindings = struct {
     const JSGlobalObject = jsc.JSGlobalObject;
 
     pub fn generate(global: *JSGlobalObject) JSValue {
-        const obj = JSValue.createEmptyObject(global, 2);
+        const obj = JSValue.createEmptyObject(global, 1);
         const parseLockfile = ZigString.static("parseLockfile");
         obj.put(global, parseLockfile, jsc.createCallback(global, parseLockfile, 1, jsParseLockfile));
         return obj;

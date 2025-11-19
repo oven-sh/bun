@@ -154,10 +154,8 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
                 .allocator = bun.default_allocator,
             };
 
-        if (was_string) {
-            if (headers.getContentType() == null) {
-                bun.handleOom(headers.append("Content-Type", bun.http.MimeType.text_plain.value));
-            }
+        if (was_string and headers.getContentType() == null) {
+            bun.handleOom(headers.append("Content-Type", bun.http.MimeType.text_plain.value));
         }
 
         // Generate ETag if not already present

@@ -819,8 +819,7 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
             /* Link this socket to the close-list and let it be deleted after this iteration */
             s->next = s->context->loop->data.closed_head;
             s->context->loop->data.closed_head = s;
-            // mark the old socket as closed (dont put it back in the event loop by mistake)
-            s->prev = (struct us_socket_t *) s->context;
+            s->flags.is_closed = 1;
         }
         if (c) {
             c->connecting_head = new_s;

@@ -144,7 +144,7 @@ const Platform = switch (Environment.os) {
     .linux => @import("./watcher/INotifyWatcher.zig"),
     .mac => @import("./watcher/KEventWatcher.zig"),
     .windows => WindowsWatcher,
-    else => @compileError("Unsupported platform"),
+    .wasm => @compileError("Unsupported platform"),
 };
 
 pub const WatchEvent = struct {

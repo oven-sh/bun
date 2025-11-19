@@ -1418,7 +1418,7 @@ using namespace JSC;
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsUseRealTimers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    globalObject->overridenDateNow = std::numeric_limits<double>::quiet_NaN();
+    globalObject->overridenDateNow = -1;
     return JSValue::encode(callframe->thisValue());
 }
 

@@ -242,7 +242,12 @@ fn advanceTimersByTime(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFr
         return globalObject.throwInvalidArguments("advanceTimersToNextTimer() expects a number of milliseconds", .{});
     }
     const current = current_time.getTimespecNow() orelse return globalObject.throwInvalidArguments("Fake timers not initialized. Initialize with useFakeTimers() first.", .{});
-    const target = current.addMsFloat(arg.asNumber());
+    const arg_number = arg.asNumber();
+    const max_advance = std.math.maxInt(u32);
+    if (arg_number < 0 or arg_number > max_advance) {
+        return globalObject.throwInvalidArguments("advanceTimersToNextTimer() ms is out of range. It must be >= 0 and <= {d}. Received {d:.0}", .{ max_advance, arg_number });
+    }
+    const target = current.addMsFloat(arg_number);
 
     this.executeUntil(globalObject, target);
     current_time.set(globalObject, .{ .offset = &target });

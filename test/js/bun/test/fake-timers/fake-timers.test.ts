@@ -305,6 +305,7 @@ describe("performance.now() mocking", () => {
   });
 
   test("performance.now() returns to real time when fake timers are disabled", () => {
+    const initialRealTime = performance.now();
     vi.useFakeTimers();
     const initialFakeTime = performance.now();
     expect(initialFakeTime).toBe(0);
@@ -315,12 +316,8 @@ describe("performance.now() mocking", () => {
     vi.useRealTimers();
 
     // After disabling fake timers, performance.now() should return real time
-    // The real time should be close to when we started (within a few ms)
-    // It should NOT be the advanced fake time
     const realNow = performance.now();
-    // Allow 10ms tolerance for rounding
-    expect(Math.abs(realNow - initialFakeTime)).toBeLessThan(1000);
-    expect(realNow).toBeLessThan(advancedFakeTime); // Real time hasn't advanced as much as fake time
+    expect(realNow - initialRealTime).toBeLessThan(100);
   });
 
   test("performance.now() advances with advanceTimersToNextTimer", () => {

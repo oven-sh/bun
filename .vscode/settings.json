@@ -30,7 +30,6 @@
   "zig.initialSetupDone": true,
   "zig.buildOption": "build",
   "zig.zls.zigLibPath": "${workspaceFolder}/vendor/zig/lib",
-  "zig.buildArgs": ["-Dgenerated-code=./build/debug/codegen", "--watch", "-fincremental"],
   "zig.zls.buildOnSaveStep": "check",
   // "zig.zls.enableBuildOnSave": true,
   // "zig.buildOnSave": true,
@@ -169,4 +168,9 @@
   },
   "git.detectSubmodules": false,
   "bun.test.customScript": "./build/debug/bun-debug test",
+  "zig.buildOnSaveArgs": [
+    "-Dgenerated-code=./build/debug/codegen",
+    "--watch",
+    "-fincremental"
+  ],
 }

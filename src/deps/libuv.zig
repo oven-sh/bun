@@ -368,7 +368,7 @@ pub const Handle = extern struct {
 
     pub const Type = enum(c_uint) {
         unknown = 0,
-        async = 1,
+        @"async" = 1,
         check = 2,
         fs_event = 3,
         fs_poll = 4,

@@ -123,7 +123,7 @@ pub const StateKind = enum(u8) {
     expansion,
     if_clause,
     condexpr,
-    async,
+    @"async",
     subshell,
 };
 

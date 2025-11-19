@@ -40,7 +40,7 @@ pub fn init(
     interpreter.async_commands_executing += 1;
     const async_cmd = parent.create(Async);
     async_cmd.* = .{
-        .base = State.initWithNewAllocScope(.async, interpreter, shell_state),
+        .base = State.initWithNewAllocScope(.@"async", interpreter, shell_state),
         .node = node,
         .parent = parent,
         .io = io,

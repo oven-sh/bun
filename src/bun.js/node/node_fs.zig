@@ -20,7 +20,7 @@ else
 // All async FS functions are run in a thread pool, but some implementations may
 // decide to do something slightly different. For example, reading a file has
 // an extra stack buffer in the async case.
-pub const Flavor = enum { sync, async };
+pub const Flavor = enum { sync, @"async" };
 
 pub const Async = struct {
     pub const access = NewAsyncFSTask(Return.Access, Arguments.Access, NodeFS.access);
@@ -377,7 +377,7 @@ pub const Async = struct {
                 var this: *Task = @alignCast(@fieldParentPtr("task", task));
 
                 var node_fs = NodeFS{};
-                this.result = function(&node_fs, this.args, .async);
+                this.result = function(&node_fs, this.args, .@"async");
 
                 if (this.result == .err) {
                     this.result.err = this.result.err.clone(bun.default_allocator);

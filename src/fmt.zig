@@ -731,7 +731,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
     pub const Keyword = enum {
         abstract,
         as,
-        async,
+        @"async",
         await,
         case,
         @"catch",
@@ -796,7 +796,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
             return switch (this) {
                 .abstract => .blue,
                 .as => .blue,
-                .async => .magenta,
+                .@"async" => .magenta,
                 .await => .magenta,
                 .case => .magenta,
                 .@"catch" => .magenta,

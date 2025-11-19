@@ -10,7 +10,6 @@
     "search.seedWithNearestWord": true,
     "search.smartCase": true,
     "search.followSymlinks": false,
-    "zig.buildOnSave": false,
     "files.associations": {
       "*.idl": "cpp",
       "memory": "cpp",
@@ -91,6 +90,7 @@
       "__memory": "cpp",
       "memory_resource": "cpp"
     },
-    "git.ignoreLimitWarning": true
+    "git.ignoreLimitWarning": true,
+    "zig.buildOnSaveProvider": false
   }
 }

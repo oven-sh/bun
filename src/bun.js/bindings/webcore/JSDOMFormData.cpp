@@ -680,7 +680,8 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
             }
         } else {
             seenKeys.add(key);
-            obj->putDirect(vm, ident, toJSValue(value), 0);
+            obj->putDirectMayBeIndex(lexicalGlobalObject, ident, toJSValue(value));
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
     }
 

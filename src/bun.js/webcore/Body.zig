@@ -274,7 +274,7 @@ pub const Value = union(Tag) {
 
     pub fn wasString(this: *const Value) bool {
         return switch (this.*) {
-            .InternalBlob => this.InternalBlob.was_string,
+            .InternalBlob => |*blob| blob.was_string,
             .WTFStringImpl => true,
             else => false,
         };

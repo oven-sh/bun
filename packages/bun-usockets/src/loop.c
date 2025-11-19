@@ -42,8 +42,10 @@ extern void __attribute((__noreturn__)) Bun__panic(const char* message, size_t l
 extern void Bun__internal_ensureDateHeaderTimerIsEnabled(struct us_loop_t *loop);
 
 void sweep_timer_cb(struct us_internal_callback_t *cb);
-void sweep_timer_cb_noop(struct us_internal_callback_t *cb) {
-}
+
+// when the sweep timer is disabled, we don't need to do anything
+void sweep_timer_noop(struct us_timer_t *timer) {}
+
 void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_timer_count++;
     if (loop->data.sweep_timer_count == 1) {
@@ -55,7 +57,7 @@ void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
 void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_timer_count--;
     if (loop->data.sweep_timer_count == 0) {
-        us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_cb_noop, 0, 0);
+        us_timer_set(loop->data.sweep_timer, (void (*)(struct us_timer_t *)) sweep_timer_noop, 0, 0);
     }
 }
 

@@ -646,7 +646,7 @@ pub const OperatingSystem = enum(u16) {
         .linux => @enumFromInt(linux),
         .mac => @enumFromInt(darwin),
         .windows => @enumFromInt(win32),
-        else => @compileError("Unsupported operating system: " ++ @tagName(Environment.os)),
+        .wasm => @compileError("Unsupported operating system: " ++ @tagName(Environment.os)),
     };
 
     pub fn isMatch(this: OperatingSystem, target: OperatingSystem) bool {
@@ -672,7 +672,7 @@ pub const OperatingSystem = enum(u16) {
         .linux => "linux",
         .mac => "darwin",
         .windows => "win32",
-        else => @compileError("Unsupported operating system: " ++ @tagName(current)),
+        .wasm => @compileError("Unsupported operating system: " ++ @tagName(current)),
     };
 
     pub fn negatable(this: OperatingSystem) Negatable(OperatingSystem) {
@@ -765,13 +765,13 @@ pub const Architecture = enum(u16) {
     pub const current: Architecture = switch (Environment.arch) {
         .arm64 => @enumFromInt(arm64),
         .x64 => @enumFromInt(x64),
-        else => @compileError("Specify architecture: " ++ Environment.arch),
+        .wasm => @compileError("Specify architecture: " ++ Environment.arch),
     };
 
     pub const current_name = switch (Environment.arch) {
         .arm64 => "arm64",
         .x64 => "x64",
-        else => @compileError("Unsupported architecture: " ++ @tagName(current)),
+        .wasm => @compileError("Unsupported architecture: " ++ @tagName(current)),
     };
 
     pub const NameMap = bun.ComptimeStringMap(u16, .{

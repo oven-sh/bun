@@ -57,6 +57,8 @@ pub const JSBundler = struct {
             windows_description: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             windows_copyright: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             outfile: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            autoload_dotenv: bool = true,
+            autoload_bunfig: bool = true,
 
             pub fn fromJS(globalThis: *jsc.JSGlobalObject, config: jsc.JSValue, allocator: std.mem.Allocator, compile_target: ?CompileTarget) JSError!?CompileOptions {
                 var this = CompileOptions{
@@ -175,6 +177,14 @@ pub const JSBundler = struct {
                     var slice = try outfile.toSlice(globalThis, bun.default_allocator);
                     defer slice.deinit();
                     try this.outfile.appendSliceExact(slice.slice());
+                }
+
+                if (try object.getBooleanLoose(globalThis, "autoloadDotenv")) |autoload_dotenv| {
+                    this.autoload_dotenv = autoload_dotenv;
+                }
+
+                if (try object.getBooleanLoose(globalThis, "autoloadBunfig")) |autoload_bunfig| {
+                    this.autoload_bunfig = autoload_bunfig;
                 }
 
                 return this;

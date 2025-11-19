@@ -843,7 +843,7 @@ export fn ZigString__freeGlobal(ptr: [*]const u8, len: usize) void {
         bun.assert(Mimalloc.mi_is_in_heap_region(ptr));
     }
     // we must untag the string pointer
-    bun.default_free(untagged);
+    bun.allocators.free(untagged);
 }
 
 const string = []const u8;

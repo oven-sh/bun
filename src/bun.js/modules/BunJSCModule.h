@@ -359,22 +359,18 @@ JSC_DECLARE_HOST_FUNCTION(functionCreateMemoryFootprint);
 JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint,
     (JSGlobalObject * globalObject, CallFrame*))
 {
-    size_t elapsed_msecs = 0;
-    size_t user_msecs = 0;
-    size_t system_msecs = 0;
     size_t current_rss = 0;
     size_t peak_rss = 0;
     size_t current_commit = 0;
     size_t peak_commit = 0;
     size_t page_faults = 0;
-
-#if USE(MIMALLOC)
+    #if USE(MIMALLOC)
+    size_t elapsed_msecs = 0;
+    size_t user_msecs = 0;
+    size_t system_msecs = 0;
     mi_process_info(&elapsed_msecs, &user_msecs, &system_msecs, &current_rss,
         &peak_rss, &current_commit, &peak_commit, &page_faults);
 #else
-    (void)elapsed_msecs;
-    (void)user_msecs;
-    (void)system_msecs;
     // pass the test in test/js/bun/jsc/bun-jsc.test.ts
     // this is not a configuration we publish so it doesn't need to be perfectly accurate
     // TODO: putting this todo here anyway so that it's searchable for the future should we decide to change our mind

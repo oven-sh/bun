@@ -11,7 +11,7 @@ extern "C" JSC::EncodedJSValue JSUint8Array__fromDefaultAllocator(JSC::JSGlobalO
     JSC::JSUint8Array* uint8Array;
     if (length > 0) [[likely]] {
         auto buffer = ArrayBuffer::createFromBytes({ ptr, length }, createSharedTask<void(void*)>([](void* p) {
-            bun_free(p);
+            BUN_FREE(p);
         }));
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>(), WTFMove(buffer), 0, length);
     } else {
@@ -26,7 +26,7 @@ extern "C" JSC::EncodedJSValue JSArrayBuffer__fromDefaultAllocator(JSC::JSGlobal
     RefPtr<ArrayBuffer> buffer;
     if (length > 0) [[likely]] {
         buffer = ArrayBuffer::createFromBytes({ ptr, length }, createSharedTask<void(void*)>([](void* p) {
-            bun_free(p);
+            BUN_FREE(p);
         }));
     } else {
         buffer = ArrayBuffer::create(0, 1);

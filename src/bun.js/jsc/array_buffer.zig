@@ -633,7 +633,7 @@ pub const MarkedArrayBuffer = struct {
 };
 
 pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) void {
-    bun.default_free(bytes_);
+    bun.allocators.free(bytes_);
 }
 
 pub export fn BlobArrayBuffer_deallocator(_: *anyopaque, blob: *anyopaque) void {

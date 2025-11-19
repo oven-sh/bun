@@ -9,7 +9,7 @@ pub const BrotliAllocator = struct {
             return zone.malloc_zone_malloc(len) orelse bun.outOfMemory();
         }
 
-        return bun.default_malloc(len) orelse bun.outOfMemory();
+        return bun.allocators.malloc(len) orelse bun.outOfMemory();
     }
 
     pub fn free(_: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
@@ -19,7 +19,7 @@ pub const BrotliAllocator = struct {
             return;
         }
 
-        bun.default_free(data);
+        bun.allocators.free(data);
     }
 };
 

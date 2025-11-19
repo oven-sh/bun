@@ -775,9 +775,9 @@ fn libraryInit() void {
 
     const rc = ares_library_init_mem(
         ARES_LIB_INIT_ALL,
-        bun.default_malloc,
-        bun.default_free,
-        bun.default_realloc,
+        bun.allocators.malloc,
+        bun.allocators.free,
+        bun.allocators.realloc,
     );
     if (rc != ARES_SUCCESS) {
         std.debug.panic("ares_library_init_mem failed: {d}", .{rc});

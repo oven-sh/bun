@@ -11,25 +11,11 @@ pub const env_var = @import("./env_var.zig");
 pub const feature_flag = env_var.feature_flag;
 
 pub const use_mimalloc = @import("build_options").use_mimalloc;
-pub const default_allocator: std.mem.Allocator = (allocators.Default{}).allocator();
+pub const default_allocator: std.mem.Allocator = allocators.c_allocator;
 /// Zero-sized type whose `allocator` method returns `default_allocator`.
 pub const DefaultAllocator = allocators.Default;
 /// Zeroing memory allocator
-pub const z_allocator: std.mem.Allocator = if (use_mimalloc) allocators.z_allocator else std.heap.c_allocator;
-
-pub const default_malloc = if (use_mimalloc) mimalloc.mi_malloc else std.c.malloc;
-pub const default_free = if (use_mimalloc) mimalloc.mi_free else std.c.free;
-pub const default_realloc = if (use_mimalloc) mimalloc.mi_realloc else std.c.realloc;
-pub const default_calloc = if (use_mimalloc) mimalloc.mi_calloc else std.c.calloc;
-pub fn default_malloc_usable_size(p: ?*const anyopaque) usize {
-    if (use_mimalloc) return mimalloc.mi_usable_size(p);
-    return switch (Environment.os) {
-        .mac => std.c.malloc_size(p),
-        .linux => std.c.malloc_usable_size(p),
-        .windows => std.c._msize(p),
-        .wasm => @compileError("unreachable"),
-    };
-}
+pub const z_allocator: std.mem.Allocator = allocators.z_allocator;
 
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug or Environment.enable_asan) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug or Environment.enable_asan) .auto else .@"inline";

@@ -59,18 +59,18 @@ pub fn initClient() *boring.SSL {
 // may result in deadlocks, crashes, or memory corruption.
 
 export fn OPENSSL_memory_alloc(size: usize) ?*anyopaque {
-    return bun.default_malloc(size);
+    return bun.allocators.malloc(size);
 }
 
 // BoringSSL always expects memory to be zero'd
 export fn OPENSSL_memory_free(ptr: *anyopaque) void {
-    const len = bun.default_malloc_usable_size(ptr);
+    const len = bun.allocators.usable_size(ptr);
     @memset(@as([*]u8, @ptrCast(ptr))[0..len], 0);
-    bun.default_free(ptr);
+    bun.allocators.free(ptr);
 }
 
 export fn OPENSSL_memory_get_size(ptr: ?*const anyopaque) usize {
-    return bun.default_malloc_usable_size(ptr);
+    return bun.allocators.usable_size(ptr);
 }
 
 const INET6_ADDRSTRLEN = if (bun.Environment.isWindows) 65 else 46;

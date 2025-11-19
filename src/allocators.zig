@@ -1,8 +1,13 @@
 pub const c_allocator = basic.c_allocator;
 pub const z_allocator = basic.z_allocator;
-pub const freeWithoutSize = basic.freeWithoutSize;
 pub const mimalloc = @import("./allocators/mimalloc.zig");
 pub const MimallocArena = @import("./allocators/MimallocArena.zig");
+
+pub const malloc = basic.malloc;
+pub const realloc = basic.realloc;
+pub const calloc = basic.calloc;
+pub const free = basic.free;
+pub const usable_size = basic.usable_size;
 
 pub const allocation_scope = @import("./allocators/allocation_scope.zig");
 pub const AllocationScope = allocation_scope.AllocationScope;
@@ -916,7 +921,6 @@ pub fn unpackNullable(comptime Allocator: type, allocator: Nullable(Allocator)) 
 pub const Default = struct {
     pub fn allocator(self: Default) std.mem.Allocator {
         _ = self;
-        if (!bun.use_mimalloc) return std.heap.c_allocator;
         return c_allocator;
     }
 

@@ -103,9 +103,9 @@
 #define ZIG_NONNULL
 
 #if USE(MIMALLOC)
-#define bun_free(ptr) mi_free(ptr)
+#define BUN_FREE(ptr) mi_free(ptr)
 #else
-#define bun_free(ptr) free(ptr)
+#define BUN_FREE(ptr) free(ptr)
 #endif
 
 #endif

@@ -81,7 +81,6 @@ function getNodeParallelTestTimeout(testPath) {
     return 90_000;
   }
   if (!isCI) return 60_000; // everything slower in debug mode
-  if (isASAN) return 60_000;
   return 20_000;
 }
 
@@ -175,7 +174,7 @@ startGroup("CLI Options", () => {
 
 const cliOptions = options;
 const isLSAN = options["step"]?.includes("-lsan-");
-const isASAN = options["step"]?.includes("-asan-") || isLSAN;
+const isASAN = options["step"]?.includes("-asan-");
 
 if (cliOptions.junit) {
   try {

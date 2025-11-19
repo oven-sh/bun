@@ -35,10 +35,10 @@ pub fn main() void {
     // So it's safest to put it very early in the main function.
     if (Environment.isWindows) {
         _ = _bun.windows.libuv.uv_replace_allocator(
-            &_bun.default_malloc,
-            &_bun.default_realloc,
-            &_bun.default_calloc,
-            &_bun.default_free,
+            &_bun.allocators.malloc,
+            &_bun.allocators.realloc,
+            &_bun.allocators.calloc,
+            &_bun.allocators.free,
         );
         _bun.handleOom(_bun.windows.env.convertEnvToWTF8());
         environ = @ptrCast(std.os.environ.ptr);

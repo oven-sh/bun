@@ -24,16 +24,10 @@ describe("bun", () => {
       test.todo(`respects NO_COLOR=${JSON.stringify(value)} to enable color`, () => {
         const { stdout } = spawnSync({
           cmd: [bunExe()],
-          env:
-            value === undefined
-              ? {
-                  ...bunEnv,
-                  NO_COLOR: undefined,
-                }
-              : {
-                  ...bunEnv,
-                  NO_COLOR: value,
-                },
+          env: {
+            ...bunEnv,
+            NO_COLOR: value,
+          },
         });
         expect(stdout.toString()).toMatch(/\u001b\[\d+m/);
       });

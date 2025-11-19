@@ -921,6 +921,7 @@ if(ENABLE_FUZZILLI)
     ${CWD}/src/fuzzilli/client.cpp
     ${CWD}/src/fuzzilli/session.cpp
     ${CWD}/src/fuzzilli/log.cpp
+    ${CWD}/src/fuzzilli/reprl.cpp
   )
 endif()
 

@@ -3957,7 +3957,7 @@ pub fn spawnWatcherChild(
 /// broke when I just used it. Not sure. ... but this works!
 fn @"windows process.dlopen"(str: *bun.String) callconv(.c) ?*anyopaque {
     if (comptime !bun.Environment.isWindows) {
-        @compileError(unreachable);
+        @compileError("unreachable");
     }
 
     var buf: bun.WPathBuffer = undefined;

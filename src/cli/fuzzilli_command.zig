@@ -1,7 +1,3 @@
-const bun = @import("bun");
-const JSC = bun.jsc;
-const std = @import("std");
-
 /// C++ function that runs the Fuzzilli REPRL loop
 /// Takes a callback pointer for executing JavaScript
 extern "c" fn bun__fuzzilli__begin_with_global(callback: ?*const anyopaque) void;
@@ -59,3 +55,8 @@ pub const FuzzilliCommand = struct {
         bun.Output.printErrorln("[Zig] bun__fuzzilli__begin_with_global() returned (should never happen)", .{});
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const JSC = bun.jsc;

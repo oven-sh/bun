@@ -23,7 +23,10 @@ public:
 
 /// @note This borrows the file descriptor; it does not take ownership of it.
 struct FileDataStreamBuf : public DataStreamBuf {
-    constexpr FileDataStreamBuf(int fd) : m_fd(fd) {}
+    constexpr FileDataStreamBuf(int fd)
+        : m_fd(fd)
+    {
+    }
 
 private:
     int m_fd;
@@ -38,8 +41,10 @@ public:
     ///
     /// @note Borrows the file descriptor.
     static DataStream fromEnv(int dataReadFd);
+
 private:
-    constexpr DataStream(std::unique_ptr<DataStreamBuf>&& buf) : m_buf(std::move(buf)) {};
+    constexpr DataStream(std::unique_ptr<DataStreamBuf>&& buf)
+        : m_buf(std::move(buf)) {};
 
     std::unique_ptr<DataStreamBuf> m_buf;
 };

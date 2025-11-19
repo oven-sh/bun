@@ -38,8 +38,9 @@ public:
     void sendCommand(std::string_view);
     void sendData(std::string_view);
 
-    template <typename It>
-    std::size_t receiveFd(It it, int fd, std::size_t numBytes) {
+    template<typename It>
+    std::size_t receiveFd(It it, int fd, std::size_t numBytes)
+    {
         static constexpr std::size_t bufSize = 128;
         std::array<char, bufSize> buffer;
 
@@ -48,7 +49,7 @@ public:
             std::size_t toRead = std::min(bufSize, numBytes - written);
             std::size_t count = forceRead(fd, buffer, toRead);
 
-            if (count == 0) break;  // EOF or error
+            if (count == 0) break; // EOF or error
 
             it = std::ranges::copy_n(buffer.begin(), count, it).out;
             written += count;
@@ -57,14 +58,16 @@ public:
         return written;
     }
 
-    template <typename It>
-    std::size_t receiveCommand(It it, std::size_t maxSize = defaultMaxCmdSize) {
+    template<typename It>
+    std::size_t receiveCommand(It it, std::size_t maxSize = defaultMaxCmdSize)
+    {
         m_log << "Receiving command up to " << maxSize << " bytes\n";
         return receiveFd(it, m_config.commandReadFD, maxSize);
     }
 
-    template <typename It>
-    std::size_t receiveData(It it, std::size_t maxSize = defaultMaxDataSize) {
+    template<typename It>
+    std::size_t receiveData(It it, std::size_t maxSize = defaultMaxDataSize)
+    {
         m_log << "Receiving data up to " << maxSize << " bytes\n";
         return receiveFd(it, m_config.dataReadFD, maxSize);
     }

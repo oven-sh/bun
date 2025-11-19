@@ -6,7 +6,10 @@ namespace bun::fuzzilli {
 
 class Log {
 public:
-    constexpr Log(int fd) : m_fd(fd) {}
+    constexpr Log(int fd)
+        : m_fd(fd)
+    {
+    }
     Log(std::filesystem::path const& path);
     Log& operator<<(std::string_view message);
     Log& operator<<(std::int64_t message);

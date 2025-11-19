@@ -31,7 +31,7 @@ pub const FuzzilliCommand = struct {
         };
 
         // Always embed the REPRL script (it's small and not worth the runtime overhead)
-        const reprl_script = @embedFile("../js/internal/fuzzilli-reprl-minimal.ts");
+        const reprl_script = @embedFile("../js/internal/fuzzilli-reprl.ts");
 
         // Create temp file for the script
         var temp_dir = std.fs.cwd().openDir("/tmp", .{}) catch {

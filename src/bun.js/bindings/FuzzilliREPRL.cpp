@@ -13,6 +13,8 @@
 #include <sys/stat.h>
 #include <cerrno>
 
+#define REPRL_DWFD 103
+
 #if __has_feature(address_sanitizer) || defined(__SANITIZE_ADDRESS__)
 #include <sanitizer/asan_interface.h>
 #endif
@@ -149,8 +151,9 @@ static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionFuzzilli(JSC::JSGlob
             WTF::String output = arg1.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
 
-            fprintf(stdout, "FUZZILLI_PRINT: %s\n", output.utf8().data());
-            fflush(stdout);
+            FILE* f = fdopen(REPRL_DWFD, "w");
+            fprintf(f, "%s\n", output.utf8().data());
+            fflush(f);
         }
     }
 
@@ -269,9 +272,7 @@ extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t* guard) {
 // Function to reset coverage for next REPRL iteration
 // This should be called after each script execution
 extern "C" void Bun__REPRL__resetCoverage() {
-    if (__shmem && __edges_start && __edges_stop) {
-        __sanitizer_cov_reset_edgeguards();
-    }
+    __sanitizer_cov_reset_edgeguards();
 }
 
 #else

@@ -15,7 +15,7 @@ const fs = require("node:fs");
 // ============================================================================
 
 // Bun global is already available
-globalThis.Bun = Bun;
+// globalThis.Bun = Bun;
 
 // File system APIs
 globalThis.file = Bun.file;
@@ -318,6 +318,8 @@ while (true) {
   const status_bytes = Buffer.alloc(4);
   status_bytes.writeUInt32LE(status, 0);
   fs.writeSync(REPRL_CWFD, status_bytes);
+
+  Bun.resetCoverage();
 }
 
 // Export to satisfy module bundler

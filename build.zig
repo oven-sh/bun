@@ -606,6 +606,7 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
     obj.no_link_obj = opts.os != .windows;
 
     if (opts.enable_asan and !enableFastBuild(b)) {
+        obj.sanitize_coverage_trace_pc_guard = true;
         if (@hasField(Build.Module, "sanitize_address")) {
             obj.root_module.sanitize_address = true;
         } else {

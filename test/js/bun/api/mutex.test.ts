@@ -76,3 +76,29 @@ test("Mutex tryLock returns false when already locked", async () => {
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"false"`);
   expect(exitCode).toBe(0);
 });
+
+test("Mutex unlock without lock (undefined behavior)", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", 'const m = new Bun.Mutex(); m.unlock(); console.log("ok");'],
+    env: bunEnv,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"ok"`);
+  expect(exitCode).not.toBe(0);
+  expect(stderr).toContain("assert");
+});
+
+test("Mutex double unlock", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", 'const m = new Bun.Mutex(); m.lock(); m.unlock(); m.unlock(); console.log("ok");'],
+    env: bunEnv,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"ok"`);
+  expect(exitCode).not.toBe(0);
+  expect(stderr).toContain("assert");
+});

@@ -143,16 +143,26 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
                 .body = &blob,
             }) catch |err| {
                 blob.detach();
-                globalThis.throwOutOfMemory();
-                return err;
+                switch (err) {
+                    error.OutOfMemory => {
+                        globalThis.throwOutOfMemory();
+                        return err;
+                    },
+                    else => return err,
+                }
             }
         else
             Headers.from(null, bun.default_allocator, .{
                 .body = &blob,
             }) catch |err| {
                 blob.detach();
-                globalThis.throwOutOfMemory();
-                return err;
+                switch (err) {
+                    error.OutOfMemory => {
+                        globalThis.throwOutOfMemory();
+                        return err;
+                    },
+                    else => return err,
+                }
             };
 
         // Generate ETag if not already present

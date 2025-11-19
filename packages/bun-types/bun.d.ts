@@ -1788,7 +1788,7 @@ declare module "bun" {
      * @see {@link outdir} required for `"linked"` maps
      * @see {@link publicPath} to customize the base url of linked source maps
      */
-    sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean;
+    sourcemap?: "none" | "linked" | "inline" | "external" | boolean;
 
     /**
      * package.json `exports` conditions used when resolving imports
@@ -1933,6 +1933,26 @@ declare module "bun" {
     execArgv?: string[];
     executablePath?: string;
     outfile?: string;
+    /**
+     * Whether to autoload .env files when the standalone executable runs
+     *
+     * Standalone-only: applies only when building/running the standalone executable.
+     *
+     * Equivalent CLI flags: `--compile-autoload-dotenv`, `--no-compile-autoload-dotenv`
+     *
+     * @default true
+     */
+    autoloadDotenv?: boolean;
+    /**
+     * Whether to autoload bunfig.toml when the standalone executable runs
+     *
+     * Standalone-only: applies only when building/running the standalone executable.
+     *
+     * Equivalent CLI flags: `--compile-autoload-bunfig`, `--no-compile-autoload-bunfig`
+     *
+     * @default true
+     */
+    autoloadBunfig?: boolean;
     windows?: {
       hideConsole?: boolean;
       icon?: string;

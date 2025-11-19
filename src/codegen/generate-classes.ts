@@ -2171,7 +2171,7 @@ const JavaScriptCoreBindings = struct {
       output += `
         pub fn ${classSymbolName(typeName, "finalize")}(thisValue: *${typeName}) callconv(jsc.conv) void {
           if (comptime Environment.enable_logs) log_zig_finalize("${typeName}", thisValue);
-          @call(.always_inline, ${typeName}.finalize, .{thisValue});
+          @call(bun.callmod_inline, ${typeName}.finalize, .{thisValue});
         }
       `;
     }
@@ -2214,7 +2214,7 @@ const JavaScriptCoreBindings = struct {
       output += `
         pub fn ${classSymbolName(typeName, "call")}(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
           if (comptime Environment.enable_logs) log_zig_call("${typeName}", callFrame);
-          return @call(.always_inline, jsc.toJSHostFn(${typeName}.call), .{globalObject, callFrame});
+          return @call(bun.callmod_inline, jsc.toJSHostFn(${typeName}.call), .{globalObject, callFrame});
         }
       `;
     }
@@ -2224,7 +2224,7 @@ const JavaScriptCoreBindings = struct {
       output += `
         pub fn ${classSymbolName(typeName, "getInternalProperties")}(thisValue: *${typeName}, globalObject: *jsc.JSGlobalObject, thisValue: jsc.JSValue) callconv(jsc.conv) jsc.JSValue {
           if (comptime Environment.enable_logs) log_zig_get_internal_properties("${typeName}");
-          return @call(.always_inline, ${typeName}.getInternalProperties, .{thisValue, globalObject, thisValue});
+          return @call(bun.callmod_inline, ${typeName}.getInternalProperties, .{thisValue, globalObject, thisValue});
         }
       `;
     }
@@ -2240,9 +2240,9 @@ const JavaScriptCoreBindings = struct {
           if (comptime Environment.enable_logs) log_zig_getter("${typeName}", "${name}");
           return switch (@typeInfo(@typeInfo(@TypeOf(${typeName}.${getter})).@"fn".return_type.?)) {
             .error_union => {
-              return @call(.always_inline, jsc.toJSHostCall, .{globalObject, @src(), ${typeName}.${getter}, .{this, ${thisValue ? "thisValue," : ""} globalObject}});
+              return @call(bun.callmod_inline, jsc.toJSHostCall, .{globalObject, @src(), ${typeName}.${getter}, .{this, ${thisValue ? "thisValue," : ""} globalObject}});
             },
-            else => @call(.always_inline, ${typeName}.${getter}, .{this, ${thisValue ? "thisValue," : ""} globalObject}),
+            else => @call(bun.callmod_inline, ${typeName}.${getter}, .{this, ${thisValue ? "thisValue," : ""} globalObject}),
           };
         }
       `;
@@ -2257,10 +2257,10 @@ const JavaScriptCoreBindings = struct {
               if (error_union.payload != void) {
                 @compileError("Setter return type must be JSError!void or void");
               }
-              return @call(.always_inline, jsc.host_fn.toJSHostSetterValue, .{globalObject, @call(.always_inline, ${typeName}.${setter}, .{this, ${thisValue ? "thisValue," : ""} globalObject, value})});
+              return @call(bun.callmod_inline, jsc.host_fn.toJSHostSetterValue, .{globalObject, @call(bun.callmod_inline, ${typeName}.${setter}, .{this, ${thisValue ? "thisValue," : ""} globalObject, value})});
             },
             .void => {
-              @call(.always_inline, ${typeName}.${setter}, .{this, ${thisValue ? "thisValue," : ""} globalObject, value});
+              @call(bun.callmod_inline, ${typeName}.${setter}, .{this, ${thisValue ? "thisValue," : ""} globalObject, value});
               return true;
             },
             else => @compileError("Setter return type must be JSError!void or void"),
@@ -2284,7 +2284,7 @@ const JavaScriptCoreBindings = struct {
           output += `
         pub fn ${names.fn}(thisValue: *${typeName}, globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame${proto[name].passThis ? ", js_this_value: jsc.JSValue" : ""}) callconv(jsc.conv) jsc.JSValue {
           if (comptime Environment.enable_logs) log_zig_method("${typeName}", "${name}", callFrame);
-          return @call(.always_inline, jsc.toJSHostCall, .{globalObject, @src(), ${typeName}.${fn}, .{thisValue, globalObject, callFrame${proto[name].passThis ? ", js_this_value" : ""}}});
+          return @call(bun.callmod_inline, jsc.toJSHostCall, .{globalObject, @src(), ${typeName}.${fn}, .{thisValue, globalObject, callFrame${proto[name].passThis ? ", js_this_value" : ""}}});
         }
         `;
         }
@@ -2302,10 +2302,10 @@ const JavaScriptCoreBindings = struct {
           if (comptime Environment.enable_logs) log_zig_class_getter("${typeName}", "${name}");
           return switch (@typeInfo(@typeInfo(@TypeOf(${typeName}.${getter})).@"fn".return_type.?)) {
             .error_union => {
-              return @call(.always_inline, jsc.toJSHostCall, .{globalObject, @src(), ${typeName}.${getter}, .{globalObject, ${thisValue ? "thisValue," : ""} propertyName}});
+              return @call(bun.callmod_inline, jsc.toJSHostCall, .{globalObject, @src(), ${typeName}.${getter}, .{globalObject, ${thisValue ? "thisValue," : ""} propertyName}});
             },
             else => {
-              return @call(.always_inline, ${typeName}.${getter}, .{globalObject, ${thisValue ? "thisValue," : ""} propertyName});
+              return @call(bun.callmod_inline, ${typeName}.${getter}, .{globalObject, ${thisValue ? "thisValue," : ""} propertyName});
             },
           };
         }
@@ -2316,7 +2316,7 @@ const JavaScriptCoreBindings = struct {
           output += `
         pub fn ${names.setter}(globalObject: *jsc.JSGlobalObject, thisValue: jsc.JSValue, target: jsc.JSValue) callconv(jsc.conv) bool {
           if (comptime Environment.enable_logs) log_zig_class_setter("${typeName}", "${name}", target);
-          return @call(.always_inline, ${typeName}.${setter || accessor.setter}, .{thisValue, globalObject, target});
+          return @call(bun.callmod_inline, ${typeName}.${setter || accessor.setter}, .{thisValue, globalObject, target});
         }
         `;
         }
@@ -2330,7 +2330,7 @@ const JavaScriptCoreBindings = struct {
             .map(ZigDOMJITArgTypeDefinition)
             .join(", ")}) callconv(jsc.conv) jsc.JSValue {
             if (comptime Environment.enable_logs) log_zig_class_domjit("${typeName}", "${name}");
-            return @call(.always_inline, ${typeName}.${DOMJITName(fn)}, .{thisValue, globalObject, ${args.map((_, i) => `arg${i}`).join(", ")}});
+            return @call(bun.callmod_inline, ${typeName}.${DOMJITName(fn)}, .{thisValue, globalObject, ${args.map((_, i) => `arg${i}`).join(", ")}});
           }
           `;
           }
@@ -2338,7 +2338,7 @@ const JavaScriptCoreBindings = struct {
           output += `
         pub fn ${names.fn}(globalObject: *jsc.JSGlobalObject, callFrame: *jsc.CallFrame) callconv(jsc.conv) jsc.JSValue {
           if (comptime Environment.enable_logs) log_zig_class_method("${typeName}", "${name}", callFrame);
-          return @call(.always_inline, jsc.toJSHostFn(${typeName}.${fn}), .{globalObject, callFrame});
+          return @call(bun.callmod_inline, jsc.toJSHostFn(${typeName}.${fn}), .{globalObject, callFrame});
         }
         `;
         }
@@ -2350,7 +2350,7 @@ const JavaScriptCoreBindings = struct {
       output += `
       pub fn ${symbolName(typeName, "onStructuredCloneSerialize")}(thisValue: *${typeName}, globalObject: *jsc.JSGlobalObject, ctx: *anyopaque, writeBytes: WriteBytesFn) callconv(jsc.conv) void {
         if (comptime Environment.enable_logs) log_zig_structured_clone_serialize("${typeName}");
-        @call(.always_inline, ${typeName}.onStructuredCloneSerialize, .{thisValue, globalObject, ctx, writeBytes});
+        @call(bun.callmod_inline, ${typeName}.onStructuredCloneSerialize, .{thisValue, globalObject, ctx, writeBytes});
       }
       `;
 
@@ -2359,7 +2359,7 @@ const JavaScriptCoreBindings = struct {
         output += `
         pub fn ${exports.get("structuredClone_transferable")}(thisValue: *${typeName}, globalObject: *jsc.JSGlobalObject, ctx: *anyopaque, write: WriteBytesFn) callconv(jsc.conv) void {
           if (comptime Environment.enable_logs) log_zig_structured_clone_transfer("${typeName}");
-          @call(.always_inline, ${typeName}.onStructuredCloneTransfer, .{thisValue, globalObject, ctx, write});
+          @call(bun.callmod_inline, ${typeName}.onStructuredCloneTransfer, .{thisValue, globalObject, ctx, write});
         }
         `;
       }
@@ -2369,7 +2369,7 @@ const JavaScriptCoreBindings = struct {
       output += `
       pub fn ${symbolName(typeName, "onStructuredCloneDeserialize")}(globalObject: *jsc.JSGlobalObject, ptr: *[*]u8, end: [*]u8) callconv(jsc.conv) jsc.JSValue {
         if (comptime Environment.enable_logs) log_zig_structured_clone_deserialize("${typeName}");
-        return @call(.always_inline, jsc.toJSHostCall, .{ globalObject, @src(), ${typeName}.onStructuredCloneDeserialize, .{globalObject, ptr, end} });
+        return @call(bun.callmod_inline, jsc.toJSHostCall, .{ globalObject, @src(), ${typeName}.onStructuredCloneDeserialize, .{globalObject, ptr, end} });
       }
       `;
     } else {

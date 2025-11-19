@@ -2293,8 +2293,12 @@ test "fuzz Expect.trimLeadingWhitespaceForInlineSnapshot" {
 
 const string = []const u8;
 
+pub const Jest = jest.Jest;
+
+const bindgen_generated = @import("bindgen_generated");
 const std = @import("std");
 const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
+const SnapshotSerializerOptions = bindgen_generated.snapshot_serializer_options.SnapshotSerializerOptions;
 
 const bun = @import("bun");
 const Environment = bun.Environment;
@@ -2313,8 +2317,4 @@ const ZigString = jsc.ZigString;
 
 const jest = bun.jsc.Jest;
 const DescribeScope = jest.DescribeScope;
-pub const Jest = jest.Jest;
 const TestRunner = jest.TestRunner;
-
-const bindgen_generated = @import("bindgen_generated");
-const SnapshotSerializerOptions = bindgen_generated.snapshot_serializer_options.SnapshotSerializerOptions;

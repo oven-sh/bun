@@ -5,26 +5,43 @@
 #include "JavaScriptCore/InitializeThreading.h"
 #include "JavaScriptCore/SourceCode.h"
 #include "JavaScriptCore/SourceOrigin.h"
-#include "ZigGlobalObject.h"
+#include "JavaScriptCore/JSGlobalObject.h"
 #include "wtf/NakedPtr.h"
 #include <span>
 
 namespace bun::fuzzilli {
 
 Reprl::Reprl() : m_vm(JSC::VM::create(JSC::HeapType::Large)) {
+    fprintf(stderr, "[Fuzzilli] Reprl() constructor started\n");
+    fprintf(stderr, "[Fuzzilli] VM created\n");
+
+    // Acquire heap access before creating the global object
+    fprintf(stderr, "[Fuzzilli] About to acquire heap access\n");
+    m_vm->heap.acquireAccess();
+    fprintf(stderr, "[Fuzzilli] Heap access acquired\n");
+
+    fprintf(stderr, "[Fuzzilli] About to acquire JS lock\n");
     JSC::JSLockHolder locker(m_vm.get());
+    fprintf(stderr, "[Fuzzilli] JS lock acquired\n");
 
-    auto* structure = Zig::GlobalObject::createStructure(m_vm.get());
+    // Use vanilla JSC::JSGlobalObject instead of Zig::GlobalObject
+    // This avoids needing the full Bun VirtualMachine infrastructure
+    fprintf(stderr, "[Fuzzilli] About to create global object structure\n");
+    auto* structure = JSC::JSGlobalObject::createStructure(m_vm.get(), JSC::jsNull());
     if (!structure) {
-        fprintf(stderr, "Failed to create global object structure\n");
+        fprintf(stderr, "[Fuzzilli] ERROR: Failed to create global object structure\n");
         std::abort();
     }
+    fprintf(stderr, "[Fuzzilli] Global object structure created\n");
 
-    m_globalObject = Zig::GlobalObject::create(m_vm.get(), structure);
+    fprintf(stderr, "[Fuzzilli] About to create global object\n");
+    m_globalObject = JSC::JSGlobalObject::create(m_vm.get(), structure);
     if (!m_globalObject) {
-        fprintf(stderr, "Failed to create global object\n");
+        fprintf(stderr, "[Fuzzilli] ERROR: Failed to create global object\n");
         std::abort();
     }
+    fprintf(stderr, "[Fuzzilli] Global object created successfully\n");
+    fprintf(stderr, "[Fuzzilli] Reprl() constructor completed\n");
 }
 
 Reprl::~Reprl() {

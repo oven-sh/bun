@@ -93,11 +93,7 @@ pub const All = struct {
         switch (timer.in_heap) {
             .none => if (Environment.ci_assert) bun.assert(false), // can't remove a timer that was not inserted
             .regular => this.timers.remove(timer),
-            .fake => {
-                this.fake_timers.timers.remove(timer);
-                timer.in_heap = .none;
-                timer.state = .CANCELLED;
-            },
+            .fake => this.fake_timers.timers.remove(timer),
         }
         timer.in_heap = .none;
         timer.state = .CANCELLED;

@@ -138,32 +138,18 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
             headers.fastRemove(.ContentLength);
         }
 
-        var headers: Headers = if (response.getInitHeaders()) |h|
-            Headers.from(h, bun.default_allocator, .{
-                .body = &blob,
-            }) catch |err| {
-                blob.detach();
-                switch (err) {
-                    error.OutOfMemory => {
-                        globalThis.throwOutOfMemory();
-                        return err;
-                    },
-                    else => return err,
-                }
+        var headers: Headers = Headers.from(response.getInitHeaders(), bun.default_allocator, .{
+            .body = &blob,
+        }) catch |err| {
+            blob.detach();
+            switch (err) {
+                error.OutOfMemory => {
+                    globalThis.throwOutOfMemory();
+                    return err;
+                },
+                else => return err,
             }
-        else
-            Headers.from(null, bun.default_allocator, .{
-                .body = &blob,
-            }) catch |err| {
-                blob.detach();
-                switch (err) {
-                    error.OutOfMemory => {
-                        globalThis.throwOutOfMemory();
-                        return err;
-                    },
-                    else => return err,
-                }
-            };
+        };
 
         // Generate ETag if not already present
         if (headers.get("etag") == null) {

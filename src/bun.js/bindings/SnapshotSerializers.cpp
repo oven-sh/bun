@@ -114,7 +114,7 @@ JSValue SnapshotSerializers::serialize(JSGlobalObject* globalObject, JSValue val
     // Check for re-entrancy
     if (m_isExecuting) {
         throwTypeError(globalObject, scope, "Cannot serialize from within a test or serialize callback"_s);
-        return jsNull();
+        RELEASE_AND_RETURN(scope, {});
     }
 
     // RAII guard to manage m_isExecuting flag
@@ -184,7 +184,8 @@ JSValue SnapshotSerializers::serialize(JSGlobalObject* globalObject, JSValue val
             throwTypeError(globalObject, scope, "Snapshot serializer serialize callback must return a string"_s);
             RELEASE_AND_RETURN(scope, {});
         }
-        RELEASE_AND_RETURN(scope, result);
+
+        return result;
     }
 
     // No matching serializer found
@@ -252,5 +253,5 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue SnapshotSerializers
     JSValue result = serializers->serialize(globalObject, value);
     RETURN_IF_EXCEPTION(scope, {});
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(result));
+    return JSValue::encode(result);
 }

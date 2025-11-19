@@ -106,8 +106,8 @@ pub fn next(this: *Stmt) Yield {
             return condexpr.start();
         },
         .@"async" => {
-            const async = Async.init(this.base.interpreter, this.base.shell, child.async, Async.ParentPtr.init(this), this.io.copy());
-            return async.start();
+            const asyncTask = Async.init(this.base.interpreter, this.base.shell, child.async_expr, Async.ParentPtr.init(this), this.io.copy());
+            return asyncTask.start();
         },
     }
 }

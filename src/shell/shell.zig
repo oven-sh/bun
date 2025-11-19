@@ -354,7 +354,7 @@ pub const AST = struct {
         /// Note that commands in a pipeline cannot be async
         /// TODO: Extra indirection for essentially a boolean feels bad for performance
         /// could probably find a more efficient way to encode this information.
-        async: *Expr,
+        async_expr: *Expr,
 
         pub fn memoryCost(this: *const @This()) usize {
             return switch (this.*) {
@@ -371,7 +371,7 @@ pub const AST = struct {
                 .subshell => |subshell| subshell.memoryCost(),
                 .@"if" => |@"if"| @"if".memoryCost(),
                 .condexpr => |condexpr| condexpr.memoryCost(),
-                .async => |async| async.memoryCost(),
+                .@"async" => |async_expr| async_expr.memoryCost(),
             };
         }
 
@@ -394,7 +394,7 @@ pub const AST = struct {
             subshell,
             @"if",
             condexpr,
-            async,
+            @"async",
         };
     };
 

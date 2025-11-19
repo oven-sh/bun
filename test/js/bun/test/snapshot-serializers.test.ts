@@ -18,18 +18,6 @@ class Size {
   ) {}
 }
 
-class ThrowInTest {
-  value = 42;
-}
-
-class ThrowInSerialize {
-  value = 99;
-}
-
-class ReturnNonString {
-  value = 123;
-}
-
 class CustomSerializer {
   constructor(public opts: { test: (val: unknown) => boolean; serialize: (val: unknown) => string }) {}
 }
@@ -54,28 +42,6 @@ expect.addSnapshotSerializer({
 expect.addSnapshotSerializer({
   test: val => val instanceof Size,
   print: val => `Size{${val.width}x${val.height}}`,
-});
-
-expect.addSnapshotSerializer({
-  test: val => {
-    if (val instanceof ThrowInTest) {
-      throw new Error("Test function error");
-    }
-    return false;
-  },
-  serialize: val => `ThrowInTest(${val.value})`,
-});
-
-expect.addSnapshotSerializer({
-  test: val => val instanceof ThrowInSerialize,
-  serialize: () => {
-    throw new Error("Serialize function error");
-  },
-});
-
-expect.addSnapshotSerializer({
-  test: val => val instanceof ReturnNonString,
-  serialize: val => val.value, // Returns a number, not a string
 });
 
 expect.addSnapshotSerializer({
@@ -113,21 +79,34 @@ test("snapshot serializers apply to object fields", () => {
 });
 
 test("test function throwing error propagates to expect()", () => {
-  const obj = new ThrowInTest();
+  const obj = new CustomSerializer({
+    test: () => {
+      throw new Error("Test function error");
+    },
+    serialize: () => "test",
+  });
   expect(() => {
     expect(obj).toMatchInlineSnapshot();
   }).toThrow("Test function error");
 });
 
 test("serialize function throwing error propagates to expect()", () => {
-  const obj = new ThrowInSerialize();
+  const obj = new CustomSerializer({
+    test: () => true,
+    serialize: () => {
+      throw new Error("Serialize function error");
+    },
+  });
   expect(() => {
     expect(obj).toMatchInlineSnapshot();
   }).toThrow("Serialize function error");
 });
 
 test("serialize function returning non-string throws error", () => {
-  const obj = new ReturnNonString();
+  const obj = new CustomSerializer({
+    test: () => true,
+    serialize: () => 123 as unknown as string,
+  });
   expect(() => {
     expect(obj).toMatchInlineSnapshot();
   }).toThrow("Snapshot serializer serialize callback must return a string");

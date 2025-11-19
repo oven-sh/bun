@@ -53,9 +53,7 @@ void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls) {
         /* Link this socket to the close-list and let it be deleted after this iteration */
         s->next = loop->data.closed_head;
         loop->data.closed_head = s;
-
-        /* Any socket with prev = context is marked as closed */
-        s->prev = (struct us_socket_t *) context;
+        s->flags.is_closed = 1;
     }
 
     /* We cannot immediately free a listen socket as we can be inside an accept loop */
@@ -388,6 +386,7 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     s->long_timeout = 255;
     s->flags.low_prio_state = 0;
     s->flags.is_paused = 0;
+    s->flags.is_closed = 0;
     s->flags.is_ipc = 0;
     s->next = 0;
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
@@ -424,6 +423,7 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     s->flags.low_prio_state = 0;
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     s->flags.is_paused = 0;
+    s->flags.is_closed = 0;
     s->flags.is_ipc = 0;
     s->next = 0;
     us_internal_socket_context_link_listen_socket(ssl, context, ls);
@@ -455,6 +455,7 @@ struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_cont
     socket->flags.low_prio_state = 0;
     socket->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     socket->flags.is_paused = 0;
+    socket->flags.is_closed = 0;
     socket->flags.is_ipc = 0;
     socket->connect_state = NULL;
     socket->connect_next = NULL;
@@ -585,6 +586,7 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         flags->low_prio_state = 0;
         flags->allow_half_open = (c->options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
         flags->is_paused = 0;
+        flags->is_closed = 0;
         flags->is_ipc = 0;
         /* Link it into context so that timeout fires properly */
         us_internal_socket_context_link_socket(0, context, s);
@@ -762,6 +764,7 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_con
     connect_socket->flags.low_prio_state = 0;
     connect_socket->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     connect_socket->flags.is_paused = 0;
+    connect_socket->flags.is_closed = 0;
     connect_socket->flags.is_ipc = 0;
     connect_socket->connect_state = NULL;
     connect_socket->connect_next = NULL;

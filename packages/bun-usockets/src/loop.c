@@ -119,6 +119,7 @@ void us_internal_loop_unlink(struct us_loop_t *loop, struct us_socket_context_t 
             context->next->prev = context->prev;
         }
     }
+    context->next = context->prev = 0;
 }
 
 /* This functions should never run recursively */
@@ -351,6 +352,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.low_prio_state = 0;
                         s->flags.allow_half_open = listen_socket->s.flags.allow_half_open;
                         s->flags.is_paused = 0;
+                        s->flags.is_closed = 0;
                         s->flags.is_ipc = 0;
 
                         /* We always use nodelay */

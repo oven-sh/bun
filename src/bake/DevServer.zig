@@ -22,12 +22,11 @@ pub const Options = struct {
     framework: bake.Framework,
     bundler_options: bake.SplitBundlerOptions,
     broadcast_console_log_from_browser_to_server: bool,
-    /// Whether to render in-browser error overlay on the client (HMR)
-    client_overlay: bool = true,
 
     // Debugging features
     dump_sources: ?[]const u8 = if (Environment.isDebug) ".bake-debug" else null,
     dump_state_on_crash: ?bool = null,
+    client_overlay: bool = true,
 };
 
 // The fields `client_graph`, `server_graph`, `directory_watchers`, and `assets`

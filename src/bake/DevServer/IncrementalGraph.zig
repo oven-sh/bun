@@ -1776,7 +1776,6 @@ pub fn IncrementalGraph(comptime side: bake.Side) type {
                             );
                         }
                         try w.print(",\n overlay: {s}", .{if (options.overlay) "true" else "false"});
-
                     },
                     .hmr_chunk => switch (side) {
                         .client => {

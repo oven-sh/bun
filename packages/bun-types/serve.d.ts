@@ -515,6 +515,15 @@ declare module "bun" {
           console?: boolean;
 
           /**
+           * Show error overlay in the browser when errors occur during development.
+           *
+           * When disabled, errors will only appear in the browser console instead of showing an overlay on the page.
+           *
+           * @default true
+           */
+          clientOverlay?: boolean;
+
+          /**
            * Enable automatic workspace folders for Chrome DevTools
            *
            * This lets you persistently edit files in the browser. It works by adding the following route to the server:

@@ -28,6 +28,10 @@ interface Config {
    * If true, the client will receive console logs from the server.
    */
   console: boolean;
+  /**
+   * If true, the client will show an error overlay when errors occur.
+   */
+  overlay: boolean;
 }
 
 /**

@@ -150,6 +150,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
         if (headers.get("etag") == null) {
             if (blob.slice().len > 0) {
                 ETag.appendToHeaders(blob.slice(), &headers) catch {
+                    headers.deinit();
                     blob.detach();
                     return globalThis.throwOutOfMemory();
                 };

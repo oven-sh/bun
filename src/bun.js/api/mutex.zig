@@ -35,6 +35,7 @@ pub fn tryLock(this: *Mutex, _: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSEr
 }
 
 const bun = @import("root").bun;
+
 const jsc = @import("root").bun.JSC;
 const JSGlobalObject = jsc.JSGlobalObject;
 const JSValue = jsc.JSValue;

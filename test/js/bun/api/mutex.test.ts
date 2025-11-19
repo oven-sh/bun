@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 
 test("Mutex constructor", async () => {
   await using proc = Bun.spawn({
@@ -7,11 +7,7 @@ test("Mutex constructor", async () => {
     env: bunEnv,
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"object"`);
   expect(exitCode).toBe(0);
@@ -32,11 +28,7 @@ test("Mutex lock and unlock", async () => {
     env: bunEnv,
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"success"`);
   expect(exitCode).toBe(0);
@@ -57,11 +49,7 @@ test("Mutex tryLock returns boolean", async () => {
     env: bunEnv,
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"boolean true"`);
   expect(exitCode).toBe(0);
@@ -83,13 +71,8 @@ test("Mutex tryLock returns false when already locked", async () => {
     env: bunEnv,
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"false"`);
   expect(exitCode).toBe(0);
 });
-

@@ -3293,11 +3293,6 @@ pub const timespec = extern struct {
     pub fn minIgnoreEpoch(a: timespec, b: timespec) timespec {
         return if (a.orderIgnoreEpoch(b) == .lt) a else b;
     }
-
-    pub fn isMockedTime(this: *const timespec) bool {
-        _ = this;
-        // TODO
-    }
 };
 
 pub const UUID = @import("./bun.js/uuid.zig");

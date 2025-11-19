@@ -94,7 +94,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
         const bodyValue = response.getBodyValue();
         bodyValue.toBlobIfPossible();
 
-        const blob: AnyBlob = brk: {
+        var blob: AnyBlob = brk: {
             switch (bodyValue.*) {
                 .Used => {
                     return globalThis.throwInvalidArguments("Response body has already been used", .{});
@@ -143,18 +143,18 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
         }) catch |err| {
             blob.detach();
             switch (err) {
-                error.OutOfMemory => {
-                    globalThis.throwOutOfMemory();
-                    return err;
-                },
-                else => return err,
+                error.OutOfMemory => return globalThis.throwOutOfMemory(),
+                else => return globalThis.throwError(err, "Failed to create headers"),
             }
         };
 
         // Generate ETag if not already present
         if (headers.get("etag") == null) {
             if (blob.slice().len > 0) {
-                try ETag.appendToHeaders(blob.slice(), &headers);
+                ETag.appendToHeaders(blob.slice(), &headers) catch {
+                    blob.detach();
+                    return globalThis.throwOutOfMemory();
+                };
             }
         }
 

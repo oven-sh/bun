@@ -15,7 +15,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSErr
 }
 
 pub fn finalize(this: *Mutex) callconv(.c) void {
-    const alloc = jsc.VirtualMachine.get().allocator;
+    const alloc = bun.default_allocator;
     alloc.destroy(this);
 }
 

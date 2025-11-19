@@ -65,22 +65,22 @@ pub fn Intrusive(
 
             return findMaxInternal(self.context, root, root, less);
         }
-        fn findMaxInternal(ctx: Context, node: *T, current_max: *T, lessFn: *const fn (ctx: Context, a: *T, b: *T) bool) *T {
+        fn findMaxInternal(ctx: Context, node: *T, current_max: *T) *T {
             var max_so_far = current_max;
 
             // Update max if current node is greater
-            if (lessFn(ctx, max_so_far, node)) {
+            if (less(ctx, max_so_far, node)) {
                 max_so_far = node;
             }
 
             // Traverse children
             if (node.heap.child) |child| {
-                max_so_far = findMaxInternal(ctx, child, max_so_far, lessFn);
+                max_so_far = findMaxInternal(ctx, child, max_so_far);
             }
 
             // Traverse siblings
             if (node.heap.next) |next_sibling| {
-                max_so_far = findMaxInternal(ctx, next_sibling, max_so_far, lessFn);
+                max_so_far = findMaxInternal(ctx, next_sibling, max_so_far);
             }
 
             return max_so_far;

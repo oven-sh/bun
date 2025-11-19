@@ -63,7 +63,7 @@ pub fn Intrusive(
         pub fn findMax(self: *const Self) ?*T {
             const root = self.root orelse return null;
 
-            return findMaxInternal(self.context, root, root, less);
+            return findMaxInternal(self.context, root, root);
         }
         fn findMaxInternal(ctx: Context, node: *T, current_max: *T) *T {
             var max_so_far = current_max;

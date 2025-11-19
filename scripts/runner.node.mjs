@@ -607,7 +607,7 @@ async function runTests() {
               env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
               env.LSAN_OPTIONS = `malloc_context_size=200:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
             }
-            return runTest(title, async () => {
+            return runTest(title, async index => {
               const { ok, error, stdout, crashes } = await spawnBun(execPath, {
                 cwd: cwd,
                 args: [
@@ -616,7 +616,7 @@ async function runTests() {
                   absoluteTestPath,
                 ],
                 timeout: getNodeParallelTestTimeout(title),
-                env,
+                env: { ...env, TEST_SERIAL_ID: index },
                 stdout: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stdout, chunk),
                 stderr: parallelism > 1 ? () => {} : chunk => pipeTestStdout(process.stderr, chunk),
               });

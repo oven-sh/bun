@@ -142,10 +142,8 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
             .body = &blob,
         }) catch |err| {
             blob.detach();
-            switch (err) {
-                error.OutOfMemory => return globalThis.throwOutOfMemory(),
-                else => return globalThis.throwError(err, "Failed to create headers"),
-            }
+            if (err == error.OutOfMemory) globalThis.throwOutOfMemory();
+            return err;
         };
 
         // Generate ETag if not already present

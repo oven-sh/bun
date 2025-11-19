@@ -30,6 +30,10 @@ class ReturnNonString {
   value = 123;
 }
 
+class CustomSerializer {
+  constructor(public opts: { test: (val: unknown) => boolean; serialize: (val: unknown) => string }) {}
+}
+
 // Add serializers at the top level
 expect.addSnapshotSerializer({
   test: val => val instanceof Point,
@@ -72,6 +76,11 @@ expect.addSnapshotSerializer({
 expect.addSnapshotSerializer({
   test: val => val instanceof ReturnNonString,
   serialize: val => val.value, // Returns a number, not a string
+});
+
+expect.addSnapshotSerializer({
+  test: val => (val instanceof CustomSerializer ? val.opts.test(val) : false),
+  serialize: val => val.opts.serialize(val),
 });
 
 test("snapshot serializers work for custom formatting", () => {
@@ -122,4 +131,32 @@ test("serialize function returning non-string throws error", () => {
   expect(() => {
     expect(obj).toMatchInlineSnapshot();
   }).toThrow("Snapshot serializer serialize callback must return a string");
+});
+
+test("cannot add snapshot serializer from within a test callback", () => {
+  expect(() => {
+    expect(
+      new CustomSerializer({
+        test: () => {
+          expect.addSnapshotSerializer({ test: () => true, serialize: () => "test" });
+          return true;
+        },
+        serialize: () => "test",
+      }),
+    ).toMatchInlineSnapshot();
+  }).toThrow("Cannot add snapshot serializer from within a test or serialize callback");
+});
+
+test("cannot add snapshot serializer from within a serialize callback", () => {
+  expect(() => {
+    expect(
+      new CustomSerializer({
+        test: () => true,
+        serialize: () => {
+          expect.addSnapshotSerializer({ test: () => true, serialize: () => "test" });
+          return "test";
+        },
+      }),
+    ).toMatchInlineSnapshot();
+  }).toThrow("Cannot add snapshot serializer from within a test or serialize callback");
 });

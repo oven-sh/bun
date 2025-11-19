@@ -157,27 +157,34 @@ JSValue SnapshotSerializers::serialize(JSGlobalObject* globalObject, JSValue val
         JSValue testResult = call(globalObject, testCallback, callData, jsUndefined(), args);
         RETURN_IF_EXCEPTION(scope, {});
 
-        // If the test returns truthy, use this serializer
-        if (testResult.toBoolean(globalObject)) {
-            JSValue serializeCallback = serializeCallbacks->getIndex(globalObject, static_cast<unsigned>(i));
-            RETURN_IF_EXCEPTION(scope, {});
-
-            if (!serializeCallback.isCallable()) {
-                continue;
-            }
-
-            // Call the serialize function with the value
-            auto serializeCallData = JSC::getCallData(serializeCallback);
-            MarkedArgumentBuffer serializeArgs;
-            serializeArgs.append(value);
-            ASSERT(!serializeArgs.hasOverflowed());
-
-            JSValue result = call(globalObject, serializeCallback, serializeCallData, jsUndefined(), serializeArgs);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            // Return the serialized result (should be a string or null)
-            RELEASE_AND_RETURN(scope, result);
+        // If the test returns falsey, continue
+        if (!testResult.toBoolean(globalObject)) {
+            continue;
         }
+
+        // Use this serializer
+        JSValue serializeCallback = serializeCallbacks->getIndex(globalObject, static_cast<unsigned>(i));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (!serializeCallback.isCallable()) {
+            continue;
+        }
+
+        // Call the serialize function with the value
+        auto serializeCallData = JSC::getCallData(serializeCallback);
+        MarkedArgumentBuffer serializeArgs;
+        serializeArgs.append(value);
+        ASSERT(!serializeArgs.hasOverflowed());
+
+        JSValue result = call(globalObject, serializeCallback, serializeCallData, jsUndefined(), serializeArgs);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        // Error if the result is not a string
+        if (!result.isString()) {
+            throwTypeError(globalObject, scope, "Snapshot serializer serialize callback must return a string"_s);
+            RELEASE_AND_RETURN(scope, {});
+        }
+        RELEASE_AND_RETURN(scope, result);
     }
 
     // No matching serializer found

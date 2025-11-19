@@ -876,11 +876,7 @@ pub const JestPrettyFormat = struct {
                     const result = try bun.cpp.SnapshotSerializers__serialize(this.globalThis, serializers, value);
                     if (!result.isNull()) {
                         // Serializer matched but returned non-string value
-                        if (!result.isString()) {
-                            var formatter = jsc.ConsoleObject.Formatter{ .globalThis = this.globalThis };
-                            defer formatter.deinit();
-                            return this.globalThis.throw("Snapshot serializer must return a string, received: {any}", .{result.toFmt(&formatter)});
-                        }
+                        if (bun.Environment.ci_assert) bun.assert(result.isString());
 
                         var writer = WrappedWriter(Writer){ .ctx = writer_, .estimated_line_length = &this.estimated_line_length };
                         defer {

@@ -121,5 +121,5 @@ test("serialize function returning non-string throws error", () => {
   const obj = new ReturnNonString();
   expect(() => {
     expect(obj).toMatchInlineSnapshot();
-  }).toThrow("Snapshot serializer must return a string");
+  }).toThrow("Snapshot serializer serialize callback must return a string");
 });

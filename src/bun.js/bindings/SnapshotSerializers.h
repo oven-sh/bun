@@ -49,9 +49,13 @@ private:
 
     void finishCreation(JSC::VM& vm);
 
+    // Lazy getters for arrays (following JSMockFunction pattern)
+    JSC::JSArray* getTestCallbacks(JSC::JSGlobalObject* globalObject) const;
+    JSC::JSArray* getSerializeCallbacks(JSC::JSGlobalObject* globalObject) const;
+
     // Arrays store serializers with most recent last; iterated in reverse order
-    JSC::WriteBarrier<JSC::JSArray> m_testCallbacks;
-    JSC::WriteBarrier<JSC::JSArray> m_serializeCallbacks;
+    mutable JSC::WriteBarrier<JSC::JSArray> m_testCallbacks;
+    mutable JSC::WriteBarrier<JSC::JSArray> m_serializeCallbacks;
 
     // Re-entrancy guard
     bool m_isExecuting { false };

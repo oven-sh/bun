@@ -22,10 +22,32 @@ SnapshotSerializers::SnapshotSerializers(VM& vm, Structure* structure)
 void SnapshotSerializers::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
+}
 
-    // Initialize empty arrays
-    m_testCallbacks.set(vm, this, JSC::constructEmptyArray(this->globalObject(), nullptr, 0));
-    m_serializeCallbacks.set(vm, this, JSC::constructEmptyArray(this->globalObject(), nullptr, 0));
+JSArray* SnapshotSerializers::getTestCallbacks(JSGlobalObject* globalObject) const
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* val = m_testCallbacks.get();
+    if (!val) {
+        val = JSC::constructEmptyArray(globalObject, nullptr, 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        m_testCallbacks.set(vm, this, val);
+    }
+    return val;
+}
+
+JSArray* SnapshotSerializers::getSerializeCallbacks(JSGlobalObject* globalObject) const
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* val = m_serializeCallbacks.get();
+    if (!val) {
+        val = JSC::constructEmptyArray(globalObject, nullptr, 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        m_serializeCallbacks.set(vm, this, val);
+    }
+    return val;
 }
 
 template<typename Visitor>
@@ -70,14 +92,11 @@ void SnapshotSerializers::addSerializer(JSGlobalObject* globalObject, JSValue te
         RELEASE_AND_RETURN(scope, );
     }
 
-    // Get the arrays
-    JSArray* testCallbacks = m_testCallbacks.get();
-    JSArray* serializeCallbacks = m_serializeCallbacks.get();
-
-    if (!testCallbacks || !serializeCallbacks) {
-        throwOutOfMemoryError(globalObject, scope);
-        RELEASE_AND_RETURN(scope, );
-    }
+    // Get the arrays (lazily initialized)
+    JSArray* testCallbacks = getTestCallbacks(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    JSArray* serializeCallbacks = getSerializeCallbacks(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
 
     // Add to the end of the arrays (most recent last, we'll iterate in reverse)
     testCallbacks->push(globalObject, testCallback);
@@ -113,12 +132,10 @@ JSValue SnapshotSerializers::serialize(JSGlobalObject* globalObject, JSValue val
     };
     ExecutionGuard guard(m_isExecuting);
 
-    JSArray* testCallbacks = m_testCallbacks.get();
-    JSArray* serializeCallbacks = m_serializeCallbacks.get();
-
-    if (!testCallbacks || !serializeCallbacks) {
-        return jsNull();
-    }
+    JSArray* testCallbacks = getTestCallbacks(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSArray* serializeCallbacks = getSerializeCallbacks(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     unsigned length = testCallbacks->length();
 

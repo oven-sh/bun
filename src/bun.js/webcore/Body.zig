@@ -733,6 +733,27 @@ pub const Value = union(Tag) {
             }
         }
     }
+    /// Helper function to convert InternalBlob to Blob while preserving the was_string flag.
+    /// This ensures that blobs originating from strings get the proper Content-Type header.
+    fn internalBlobToBlob(internal_blob_input: InternalBlob) Blob {
+        var internal_blob = internal_blob_input;
+        const bytes = internal_blob.toOwnedSlice();
+        var new_blob = Blob.init(
+            bytes,
+            bun.default_allocator,
+            jsc.VirtualMachine.get().global,
+        );
+
+        // Preserve the was_string flag from InternalBlob by setting charset
+        // This allows wasString() to return true, which is used by Headers.from()
+        // to determine if a Content-Type header should be added
+        if (internal_blob_input.was_string) {
+            new_blob.charset = if (bun.strings.isAllASCII(bytes)) .all_ascii else .non_ascii;
+        }
+
+        return new_blob;
+    }
+
     pub fn slice(this: *const Value) []const u8 {
         return switch (this.*) {
             .Blob => this.Blob.sharedView(),
@@ -754,25 +775,9 @@ pub const Value = union(Tag) {
                 return new_blob;
             },
             .InternalBlob => {
-                const bytes = this.InternalBlob.toOwnedSlice();
-                var new_blob = Blob.init(
-                    bytes,
-                    // we will never resize it from here
-                    // we have to use the default allocator
-                    // even if it was actually allocated on a different thread
-                    bun.default_allocator,
-                    jsc.VirtualMachine.get().global,
-                );
-
-                // Preserve the was_string flag from InternalBlob by setting charset
-                // This allows wasString() to return true, which is used by Headers.from()
-                // to determine if a Content-Type header should be added
-                if (this.InternalBlob.was_string) {
-                    new_blob.charset = if (bun.strings.isAllASCII(bytes)) .all_ascii else .non_ascii;
-                }
-
+                const internal_blob = this.InternalBlob;
                 this.* = .{ .Used = {} };
-                return new_blob;
+                return internalBlobToBlob(internal_blob);
             },
             .WTFStringImpl => {
                 var new_blob: Blob = undefined;
@@ -1063,13 +1068,9 @@ pub const Value = union(Tag) {
         }
 
         if (this.* == .InternalBlob) {
-            var internal_blob = this.InternalBlob;
+            const internal_blob = this.InternalBlob;
             this.* = .{
-                .Blob = Blob.init(
-                    internal_blob.toOwnedSlice(),
-                    internal_blob.bytes.allocator,
-                    globalThis,
-                ),
+                .Blob = internalBlobToBlob(internal_blob),
             };
         }
 

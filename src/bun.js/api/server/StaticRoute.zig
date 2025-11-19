@@ -141,18 +141,18 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
         var headers: Headers = if (response.getInitHeaders()) |h|
             Headers.from(h, bun.default_allocator, .{
                 .body = &blob,
-            }) catch {
+            }) catch |err| {
                 blob.detach();
                 globalThis.throwOutOfMemory();
-                return error.JSError;
+                return err;
             }
         else
             Headers.from(null, bun.default_allocator, .{
                 .body = &blob,
-            }) catch {
+            }) catch |err| {
                 blob.detach();
                 globalThis.throwOutOfMemory();
-                return error.JSError;
+                return err;
             };
 
         // Generate ETag if not already present

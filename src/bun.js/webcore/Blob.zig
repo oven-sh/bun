@@ -34,6 +34,11 @@ content_type_was_set: bool = false,
 
 /// JavaScriptCore strings are either latin1 or UTF-16
 /// When UTF-16, they're nearly always due to non-ascii characters
+///
+/// This field also serves to track whether a blob originated from a string.
+/// When .all_ascii or .non_ascii, the blob came from a string and should
+/// default to Content-Type: text/plain;charset=utf-8 if no explicit
+/// content-type was set. See Blob.Any.wasString() and Blob.Any.contentType().
 charset: strings.AsciiStatus = .unknown,
 
 /// Was it created via file constructor?
@@ -4323,9 +4328,7 @@ pub const Any = union(enum) {
             .Blob => {
                 // If the blob came from a string but has no explicit content-type,
                 // return text/plain;charset=utf-8
-                if (self.Blob.content_type.len == 0 and
-                    (self.Blob.charset == .all_ascii or self.Blob.charset == .non_ascii))
-                {
+                if (self.Blob.content_type.len == 0 and self.Blob.charset != .unknown) {
                     return MimeType.text.value;
                 }
                 return self.Blob.content_type;
@@ -4338,7 +4341,7 @@ pub const Any = union(enum) {
 
     pub fn wasString(self: *const @This()) bool {
         return switch (self.*) {
-            .Blob => self.Blob.charset == .all_ascii or self.Blob.charset == .non_ascii,
+            .Blob => self.Blob.charset != .unknown,
             .WTFStringImpl => true,
             // .InlineBlob => self.InlineBlob.was_string,
             .InternalBlob => self.InternalBlob.was_string,

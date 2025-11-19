@@ -2729,7 +2729,7 @@ pub inline fn resolveSourcePath(
             },
             sub_path,
         }) catch
-            @compileError(unreachable))[0..].*;
+            @compileError("unreachable"))[0..].*;
         break :path &resolved;
     };
 }

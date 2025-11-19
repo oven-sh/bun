@@ -132,6 +132,7 @@ pub fn spawnMaybeSync(
     var maybe_ipc_mode: if (is_sync) void else ?IPC.Mode = if (is_sync) {} else null;
     var ipc_callback: JSValue = .zero;
     var extra_fds = std.array_list.Managed(bun.spawn.SpawnOptions.Stdio).init(bun.default_allocator);
+    defer extra_fds.deinit();
     var argv0: ?[*:0]const u8 = null;
     var ipc_channel: i32 = -1;
     var timeout: ?i32 = null;
@@ -948,7 +949,7 @@ pub fn spawnMaybeSync(
     const resultPid = jsc.JSValue.jsNumberFromInt32(subprocess.pid());
     subprocess.finalize();
 
-    const sync_value = jsc.JSValue.createEmptyObject(globalThis, 5 + @as(usize, @intFromBool(!signalCode.isEmptyOrUndefinedOrNull())));
+    const sync_value = jsc.JSValue.createEmptyObject(globalThis, 0);
     sync_value.put(globalThis, jsc.ZigString.static("exitCode"), exitCode);
     if (!signalCode.isEmptyOrUndefinedOrNull()) {
         sync_value.put(globalThis, jsc.ZigString.static("signalCode"), signalCode);

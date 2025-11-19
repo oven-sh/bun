@@ -2042,6 +2042,10 @@ pub const BundleV2 = struct {
                     compile_options.executable_path.slice()
                 else
                     null,
+                .{
+                    .disable_default_env_files = !compile_options.autoload_dotenv,
+                    .disable_autoload_bunfig = !compile_options.autoload_bunfig,
+                },
             ) catch |err| {
                 return bun.StandaloneModuleGraph.CompileResult.failFmt("{s}", .{@errorName(err)});
             };
@@ -2147,7 +2151,6 @@ pub const BundleV2 = struct {
                 .pending => unreachable,
                 .err => try this.toJSError(promise, globalThis),
                 .value => |*build| {
-                    const build_output = jsc.JSValue.createEmptyObject(globalThis, 3);
                     const output_files = build.output_files.items;
                     const output_files_js = jsc.JSValue.createEmptyArray(globalThis, output_files.len) catch return promise.reject(globalThis, error.JSError);
                     if (output_files_js == .zero) {
@@ -2199,7 +2202,7 @@ pub const BundleV2 = struct {
                             return promise.reject(globalThis, err);
                         };
                     }
-
+                    const build_output = jsc.JSValue.createEmptyObject(globalThis, 3);
                     build_output.put(globalThis, jsc.ZigString.static("outputs"), output_files_js);
                     build_output.put(globalThis, jsc.ZigString.static("success"), .true);
                     build_output.put(

@@ -44,6 +44,8 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
         flags: NewFlags(debug_mode) = .{},
 
         upgrade_context: ?*uws.SocketContext = null,
+        /// Index into server.route_websocket_contexts for route-specific WebSocket handlers
+        route_websocket_context_index: ?u32 = null,
 
         /// We can only safely free once the request body promise is finalized
         /// and the response is rejected

@@ -29,9 +29,9 @@ pub const VM = opaque {
     }
 
     /// deprecated in favor of getAPILock to avoid an annoying callback wrapper
-    extern fn JSC__VM__holdAPILock(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.C) void) void;
+    extern fn JSC__VM__holdAPILock(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.c) void) void;
     /// deprecated in favor of getAPILock to avoid an annoying callback wrapper
-    pub fn holdAPILock(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.C) void) void {
+    pub fn holdAPILock(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.c) void) void {
         JSC__VM__holdAPILock(this, ctx, callback);
     }
 
@@ -51,8 +51,8 @@ pub const VM = opaque {
         }
     };
 
-    extern fn JSC__VM__deferGC(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.C) void) void;
-    pub fn deferGC(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.C) void) void {
+    extern fn JSC__VM__deferGC(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.c) void) void;
+    pub fn deferGC(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.c) void) void {
         JSC__VM__deferGC(this, ctx, callback);
     }
     extern fn JSC__VM__reportExtraMemory(*VM, usize) void;

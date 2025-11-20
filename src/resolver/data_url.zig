@@ -134,7 +134,7 @@ pub const DataURL = struct {
                 break :use_base64;
             }
 
-            var buf = std.ArrayList(u8).init(allocator);
+            var buf = std.array_list.Managed(u8).init(allocator);
             errdefer buf.deinit();
             const success2 = encodeStringAsPercentEscapedDataURL(&buf, mime_type, text) catch unreachable;
             if (!success2) {

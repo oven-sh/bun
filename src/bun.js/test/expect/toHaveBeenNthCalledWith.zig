@@ -12,7 +12,7 @@ pub fn toHaveBeenNthCalledWith(this: *Expect, globalThis: *JSGlobalObject, callf
     if (!calls.jsType().isArray()) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
-        return this.throw(globalThis, comptime getSignature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", false), "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {any}", .{value.toFmt(&formatter)});
+        return this.throw(globalThis, comptime getSignature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", false), "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {f}", .{value.toFmt(&formatter)});
     }
 
     if (arguments.len == 0 or !arguments[0].isAnyInt()) {
@@ -67,7 +67,7 @@ pub fn toHaveBeenNthCalledWith(this: *Expect, globalThis: *JSGlobalObject, callf
 
     if (this.flags.not) {
         const signature = comptime getSignature("toHaveBeenNthCalledWith", "<green>n<r>, <green>...expected<r>", true);
-        return this.throw(globalThis, signature, "\n\nExpected call #{d} not to be with: <green>{any}<r>\nBut it was.", .{
+        return this.throw(globalThis, signature, "\n\nExpected call #{d} not to be with: <green>{f}<r>\nBut it was.", .{
             nthCallNum,
             expected_args_js_array.toFmt(&formatter),
         });
@@ -90,7 +90,7 @@ pub fn toHaveBeenNthCalledWith(this: *Expect, globalThis: *JSGlobalObject, callf
         .globalThis = globalThis,
         .not = false,
     };
-    return this.throw(globalThis, signature, "\n\nCall #{d}:\n{any}\n", .{ nthCallNum, diff_format });
+    return this.throw(globalThis, signature, "\n\nCall #{d}:\n{f}\n", .{ nthCallNum, diff_format });
 }
 
 const bun = @import("bun");

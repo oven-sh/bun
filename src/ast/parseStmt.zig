@@ -372,7 +372,7 @@ pub fn ParseStmt(
                         const namespace_ref = p.storeNameInRef(
                             std.fmt.allocPrint(
                                 p.allocator,
-                                "import_{}",
+                                "import_{f}",
                                 .{
                                     path_name.fmtIdentifier(),
                                 },
@@ -1401,4 +1401,4 @@ const fs = js_parser.fs;
 
 const std = @import("std");
 const List = std.ArrayListUnmanaged;
-const ListManaged = std.ArrayList;
+const ListManaged = std.array_list.Managed;

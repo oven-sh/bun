@@ -88,6 +88,8 @@ cpu: Npm.Architecture = Npm.Architecture.current,
 /// Override OS for optional dependencies filtering
 os: Npm.OperatingSystem = Npm.OperatingSystem.current,
 
+config_version: ?bun.ConfigVersion = null,
+
 pub const PublishConfig = struct {
     access: ?Access = null,
     tag: string = "",

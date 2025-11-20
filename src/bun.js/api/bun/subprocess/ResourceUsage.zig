@@ -62,7 +62,7 @@ pub fn getContextSwitches(this: *ResourceUsage, globalObject: *JSGlobalObject) J
     return ctx;
 }
 
-pub fn finalize(this: *ResourceUsage) callconv(.C) void {
+pub fn finalize(this: *ResourceUsage) callconv(.c) void {
     bun.destroy(this);
 }
 

@@ -451,7 +451,7 @@ pub const AsyncModule = struct {
         }
         log.deinit();
 
-        debug("fulfill: {any}", .{specifier});
+        debug("fulfill: {f}", .{specifier});
 
         try bun.jsc.fromJSHostCallGeneric(globalThis, @src(), Bun__onFulfillAsyncModule, .{
             globalThis,
@@ -566,47 +566,47 @@ pub const AsyncModule = struct {
         const msg: []u8 = try switch (result.err) {
             error.TarballHTTP400 => std.fmt.allocPrint(
                 bun.default_allocator,
-                "HTTP 400 downloading package '{s}@{any}'",
+                "HTTP 400 downloading package '{s}@{f}'",
                 msg_args,
             ),
             error.TarballHTTP401 => std.fmt.allocPrint(
                 bun.default_allocator,
-                "HTTP 401 downloading package '{s}@{any}'",
+                "HTTP 401 downloading package '{s}@{f}'",
                 msg_args,
             ),
             error.TarballHTTP402 => std.fmt.allocPrint(
                 bun.default_allocator,
-                "HTTP 402 downloading package '{s}@{any}'",
+                "HTTP 402 downloading package '{s}@{f}'",
                 msg_args,
             ),
             error.TarballHTTP403 => std.fmt.allocPrint(
                 bun.default_allocator,
-                "HTTP 403 downloading package '{s}@{any}'",
+                "HTTP 403 downloading package '{s}@{f}'",
                 msg_args,
             ),
             error.TarballHTTP404 => std.fmt.allocPrint(
                 bun.default_allocator,
-                "HTTP 404 downloading package '{s}@{any}'",
+                "HTTP 404 downloading package '{s}@{f}'",
                 msg_args,
             ),
             error.TarballHTTP4xx => std.fmt.allocPrint(
                 bun.default_allocator,
-                "HTTP 4xx downloading package '{s}@{any}'",
+                "HTTP 4xx downloading package '{s}@{f}'",
                 msg_args,
             ),
             error.TarballHTTP5xx => std.fmt.allocPrint(
                 bun.default_allocator,
-                "HTTP 5xx downloading package '{s}@{any}'",
+                "HTTP 5xx downloading package '{s}@{f}'",
                 msg_args,
             ),
             error.TarballFailedToExtract => std.fmt.allocPrint(
                 bun.default_allocator,
-                "Failed to extract tarball for package '{s}@{any}'",
+                "Failed to extract tarball for package '{s}@{f}'",
                 msg_args,
             ),
             else => |err| std.fmt.allocPrint(
                 bun.default_allocator,
-                "{s} downloading package '{s}@{any}'",
+                "{s} downloading package '{s}@{f}'",
                 .{
                     bun.asByteSlice(@errorName(err)),
                     result.name,

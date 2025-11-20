@@ -132,7 +132,7 @@ const RopeStringEncoder = struct {
     tail: usize = 0,
     any_non_ascii: bool = false,
 
-    pub fn append8(it: *jsc.JSString.Iterator, ptr: [*]const u8, len: u32) callconv(.C) void {
+    pub fn append8(it: *jsc.JSString.Iterator, ptr: [*]const u8, len: u32) callconv(.c) void {
         var this = bun.cast(*RopeStringEncoder, it.data.?);
         const result = strings.copyLatin1IntoUTF8StopOnNonASCII(this.buf[this.tail..], ptr[0..len], true);
         if (result.read == std.math.maxInt(u32) and result.written == std.math.maxInt(u32)) {
@@ -142,12 +142,12 @@ const RopeStringEncoder = struct {
             this.tail += result.written;
         }
     }
-    pub fn append16(it: *jsc.JSString.Iterator, _: [*]const u16, _: u32) callconv(.C) void {
+    pub fn append16(it: *jsc.JSString.Iterator, _: [*]const u16, _: u32) callconv(.c) void {
         var this = bun.cast(*RopeStringEncoder, it.data.?);
         this.any_non_ascii = true;
         it.stop = 1;
     }
-    pub fn write8(it: *jsc.JSString.Iterator, ptr: [*]const u8, len: u32, offset: u32) callconv(.C) void {
+    pub fn write8(it: *jsc.JSString.Iterator, ptr: [*]const u8, len: u32, offset: u32) callconv(.c) void {
         var this = bun.cast(*RopeStringEncoder, it.data.?);
         const result = strings.copyLatin1IntoUTF8StopOnNonASCII(this.buf[offset..], ptr[0..len], true);
         if (result.read == std.math.maxInt(u32) and result.written == std.math.maxInt(u32)) {
@@ -155,7 +155,7 @@ const RopeStringEncoder = struct {
             this.any_non_ascii = true;
         }
     }
-    pub fn write16(it: *jsc.JSString.Iterator, _: [*]const u16, _: u32, _: u32) callconv(.C) void {
+    pub fn write16(it: *jsc.JSString.Iterator, _: [*]const u16, _: u32, _: u32) callconv(.c) void {
         var this = bun.cast(*RopeStringEncoder, it.data.?);
         this.any_non_ascii = true;
         it.stop = 1;

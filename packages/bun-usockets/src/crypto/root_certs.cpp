@@ -203,8 +203,6 @@ STACK_OF(X509) *us_get_root_extra_cert_instances() {
 }
 
 STACK_OF(X509) *us_get_root_system_cert_instances() {
-  if (!us_should_use_system_ca())
-    return NULL;
   // Ensure single-path initialization via us_internal_init_root_certs
   auto certs = us_get_default_ca_certificates();
   return certs->root_system_cert_instances;
@@ -216,13 +214,9 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     return NULL;
   }
 
-  // Only load system default paths when NODE_USE_SYSTEM_CA=1
-  // Otherwise, rely on bundled certificates only (like Node.js behavior)
-  if (us_should_use_system_ca()) {
-    if (!X509_STORE_set_default_paths(store)) {
-      X509_STORE_free(store);
-      return NULL;
-    }
+  if (!X509_STORE_set_default_paths(store)) {
+    X509_STORE_free(store);
+    return NULL;
   }
 
   us_default_ca_certificates *default_ca_certificates = us_get_default_ca_certificates();

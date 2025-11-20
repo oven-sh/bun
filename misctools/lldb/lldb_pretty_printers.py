@@ -570,7 +570,7 @@ type_tag_handlers = {
     'fn_noreturn_no_args': lambda payload: 'fn() noreturn',
     'fn_void_no_args': lambda payload: 'fn() void',
     'fn_naked_noreturn_no_args': lambda payload: 'fn() callconv(.Naked) noreturn',
-    'fn_ccc_void_no_args': lambda payload: 'fn() callconv(.C) void',
+    'fn_ccc_void_no_args': lambda payload: 'fn() callconv(.c) void',
     'single_const_pointer_to_comptime_int': lambda payload: '*const comptime_int',
     'manyptr_u8': lambda payload: '[*]u8',
     'manyptr_const_u8': lambda payload: '[*]const u8',

@@ -31,7 +31,7 @@ pub const ZigStackFrame = extern struct {
         }
 
         if (!this.source_url.isEmpty()) {
-            frame.file = try std.fmt.allocPrint(allocator, "{}", .{this.sourceURLFormatter(root_path, origin, true, false)});
+            frame.file = try std.fmt.allocPrint(allocator, "{f}", .{this.sourceURLFormatter(root_path, origin, true, false)});
         }
 
         frame.position = this.position;
@@ -49,7 +49,7 @@ pub const ZigStackFrame = extern struct {
         remapped: bool = false,
         root_path: string = "",
 
-        pub fn format(this: SourceURLFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: SourceURLFormatter, writer: *std.Io.Writer) !void {
             if (this.enable_color) {
                 try writer.writeAll(Output.prettyFmt("<r><cyan>", true));
             }
@@ -110,28 +110,26 @@ pub const ZigStackFrame = extern struct {
             if (!this.exclude_line_column) {
                 if (this.position.line.isValid() and this.position.column.isValid()) {
                     if (this.enable_color) {
-                        try std.fmt.format(
-                            writer,
+                        try writer.print(
                             comptime Output.prettyFmt("<yellow>{d}<r><d>:<yellow>{d}<r>", true),
                             .{ this.position.line.oneBased(), this.position.column.oneBased() },
                         );
                     } else {
-                        try std.fmt.format(writer, "{d}:{d}", .{
+                        try writer.print("{d}:{d}", .{
                             this.position.line.oneBased(),
                             this.position.column.oneBased(),
                         });
                     }
                 } else if (this.position.line.isValid()) {
                     if (this.enable_color) {
-                        try std.fmt.format(
-                            writer,
+                        try writer.print(
                             comptime Output.prettyFmt("<yellow>{d}<r>", true),
                             .{
                                 this.position.line.oneBased(),
                             },
                         );
                     } else {
-                        try std.fmt.format(writer, "{d}", .{
+                        try writer.print("{d}", .{
                             this.position.line.oneBased(),
                         });
                     }
@@ -146,21 +144,21 @@ pub const ZigStackFrame = extern struct {
         enable_color: bool,
         is_async: bool,
 
-        pub fn format(this: NameFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: NameFormatter, writer: *std.Io.Writer) !void {
             const name = this.function_name;
 
             switch (this.code_type) {
                 .Eval => {
                     if (this.enable_color) {
-                        try std.fmt.format(writer, comptime Output.prettyFmt("<r><d>", true) ++ "eval" ++ Output.prettyFmt("<r>", true), .{});
+                        try writer.print(comptime Output.prettyFmt("<r><d>", true) ++ "eval" ++ Output.prettyFmt("<r>", true), .{});
                     } else {
                         try writer.writeAll("eval");
                     }
                     if (!name.isEmpty()) {
                         if (this.enable_color) {
-                            try std.fmt.format(writer, comptime Output.prettyFmt(" <r><b><i>{}<r>", true), .{name});
+                            try writer.print(comptime Output.prettyFmt(" <r><b><i>{f}<r>", true), .{name});
                         } else {
-                            try std.fmt.format(writer, " {}", .{name});
+                            try writer.print(" {f}", .{name});
                         }
                     }
                 },
@@ -168,23 +166,23 @@ pub const ZigStackFrame = extern struct {
                     if (!name.isEmpty()) {
                         if (this.enable_color) {
                             if (this.is_async) {
-                                try std.fmt.format(writer, comptime Output.prettyFmt("<r><b><i>async {}<r>", true), .{name});
+                                try writer.print(comptime Output.prettyFmt("<r><b><i>async {f}<r>", true), .{name});
                             } else {
-                                try std.fmt.format(writer, comptime Output.prettyFmt("<r><b><i>{}<r>", true), .{name});
+                                try writer.print(comptime Output.prettyFmt("<r><b><i>{f}<r>", true), .{name});
                             }
                         } else {
                             if (this.is_async) {
-                                try std.fmt.format(writer, "async {}", .{name});
+                                try writer.print("async {f}", .{name});
                             } else {
-                                try std.fmt.format(writer, "{}", .{name});
+                                try writer.print("{f}", .{name});
                             }
                         }
                     } else {
                         if (this.enable_color) {
                             if (this.is_async) {
-                                try std.fmt.format(writer, comptime Output.prettyFmt("<r><d>", true) ++ "async <anonymous>" ++ Output.prettyFmt("<r>", true), .{});
+                                try writer.print(comptime Output.prettyFmt("<r><d>", true) ++ "async <anonymous>" ++ Output.prettyFmt("<r>", true), .{});
                             } else {
-                                try std.fmt.format(writer, comptime Output.prettyFmt("<r><d>", true) ++ "<anonymous>" ++ Output.prettyFmt("<r>", true), .{});
+                                try writer.print(comptime Output.prettyFmt("<r><d>", true) ++ "<anonymous>" ++ Output.prettyFmt("<r>", true), .{});
                             }
                         } else {
                             if (this.is_async) {
@@ -197,17 +195,17 @@ pub const ZigStackFrame = extern struct {
                 .Global => {},
                 .Wasm => {
                     if (!name.isEmpty()) {
-                        try std.fmt.format(writer, "{}", .{name});
+                        try writer.print("{f}", .{name});
                     } else {
                         try writer.writeAll("WASM");
                     }
                 },
                 .Constructor => {
-                    try std.fmt.format(writer, "new {}", .{name});
+                    try writer.print("new {f}", .{name});
                 },
                 else => {
                     if (!name.isEmpty()) {
-                        try std.fmt.format(writer, "{}", .{name});
+                        try writer.print("{f}", .{name});
                     }
                 },
             }

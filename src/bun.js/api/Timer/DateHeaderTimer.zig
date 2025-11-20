@@ -65,7 +65,7 @@ pub fn run(this: *DateHeaderTimer, vm: *VirtualMachine) void {
     }
 }
 
-pub export fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop: *uws.Loop) callconv(.C) void {
+pub export fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop: *uws.Loop) callconv(.c) void {
     if (jsc.VirtualMachine.getOrNull()) |vm| {
         vm.timer.updateDateHeaderTimerIfNecessary(loop, vm);
     }

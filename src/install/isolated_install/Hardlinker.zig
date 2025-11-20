@@ -31,7 +31,7 @@ pub fn deinit(this: *Hardlinker) void {
 pub fn link(this: *Hardlinker) OOM!sys.Maybe(void) {
     if (bun.install.PackageManager.verbose_install) {
         bun.Output.prettyErrorln(
-            \\Hardlinking {} to {}
+            \\Hardlinking {f} to {f}
         ,
             .{
                 bun.fmt.fmtOSPath(this.src.slice(), .{ .path_sep = .auto }),
@@ -84,7 +84,7 @@ pub fn link(this: *Hardlinker) OOM!sys.Maybe(void) {
                             => {
                                 if (bun.install.PackageManager.verbose_install) {
                                     bun.Output.prettyErrorln(
-                                        \\Hardlinking {} to a path that already exists: {}
+                                        \\Hardlinking {f} to a path that already exists: {f}
                                     ,
                                         .{
                                             bun.fmt.fmtOSPath(this.src.slice(), .{ .path_sep = .auto }),
@@ -112,7 +112,7 @@ pub fn link(this: *Hardlinker) OOM!sys.Maybe(void) {
                             => {
                                 if (bun.install.PackageManager.verbose_install) {
                                     bun.Output.prettyErrorln(
-                                        \\Hardlinking {} to a path that doesn't exist: {}
+                                        \\Hardlinking {f} to a path that doesn't exist: {f}
                                     ,
                                         .{
                                             bun.fmt.fmtOSPath(this.src.slice(), .{ .path_sep = .auto }),

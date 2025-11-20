@@ -20,7 +20,7 @@ state: union(enum) {
     waiting_write_err,
     done,
 } = .idle,
-args: std.ArrayList([:0]const u8),
+args: std.array_list.Managed([:0]const u8),
 
 pub const ShellCondExprStatTask = struct {
     task: ShellTask(@This(), runFromThreadPool, runFromMainThread, log),
@@ -75,16 +75,16 @@ pub fn init(
         .io = io,
         .args = undefined,
     };
-    condexpr.args = std.ArrayList([:0]const u8).init(condexpr.base.allocator());
+    condexpr.args = std.array_list.Managed([:0]const u8).init(condexpr.base.allocator());
     return condexpr;
 }
 
-pub fn format(this: *const CondExpr, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: *const CondExpr, writer: *std.Io.Writer) !void {
     try writer.print("CondExpr(0x{x}, op={s})", .{ @intFromPtr(this), @tagName(this.node.op) });
 }
 
 pub fn start(this: *CondExpr) Yield {
-    log("{} start", .{this});
+    log("{f} start", .{this});
     return .{ .cond_expr = this };
 }
 
@@ -226,7 +226,7 @@ pub fn childDone(this: *CondExpr, child: ChildPtr, exit_code: ExitCode) Yield {
             const err = this.state.expanding_args.expansion.state.err;
             defer err.deinit(bun.default_allocator);
             this.state.expanding_args.expansion.deinit();
-            return this.writeFailingError("{}\n", .{err});
+            return this.writeFailingError("{f}\n", .{err});
         }
         child.deinit();
         return this.next();

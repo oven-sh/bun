@@ -317,6 +317,10 @@ set(BUN_CPP_OUTPUTS
   ${CODEGEN_PATH}/cpp.zig
 )
 
+set(BUN_CI_INFO_OUTPUTS
+  ${CODEGEN_PATH}/ci_info.zig
+)
+
 register_command(
   TARGET
     bun-cppbind
@@ -332,6 +336,21 @@ register_command(
     ${BUN_CXX_SOURCES}
   OUTPUTS
     ${BUN_CPP_OUTPUTS}
+)
+
+register_command(
+  TARGET
+    bun-ci-info
+  COMMENT
+    "Generating CI info"
+  COMMAND
+    ${BUN_EXECUTABLE}
+      ${CWD}/src/codegen/ci_info.ts
+      ${CODEGEN_PATH}/ci_info.zig
+  SOURCES
+    ${BUN_JAVASCRIPT_CODEGEN_SOURCES}
+  OUTPUTS
+    ${BUN_CI_INFO_OUTPUTS}
 )
 
 register_command(
@@ -612,6 +631,7 @@ set(BUN_ZIG_GENERATED_SOURCES
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   ${BUN_JAVASCRIPT_OUTPUTS}
   ${BUN_CPP_OUTPUTS}
+  ${BUN_CI_INFO_OUTPUTS}
   ${BUN_BINDGENV2_ZIG_OUTPUTS}
 )
 

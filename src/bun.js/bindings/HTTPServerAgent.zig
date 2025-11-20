@@ -37,7 +37,7 @@ pub fn notifyServerStopped(this: *const HTTPServerAgent, server: jsc.API.AnyServ
 pub fn notifyServerRoutesUpdated(this: *const HTTPServerAgent, server: jsc.API.AnyServer) !void {
     if (this.agent) |agent| {
         const config = server.config();
-        var routes = std.ArrayList(Route).init(bun.default_allocator);
+        var routes = std.array_list.Managed(Route).init(bun.default_allocator);
         defer {
             for (routes.items) |*route| {
                 route.deinit();

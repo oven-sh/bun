@@ -102,7 +102,7 @@ pub const List = struct {
         list: std.MultiArrayList(ServerComponentBoundary).Slice,
 
         pub fn hash(_: Adapter, key: Index.Int) u32 {
-            return std.hash.uint32(key);
+            return std.hash.int(@as(u32, key));
         }
 
         pub fn eql(adapt: Adapter, a: Index.Int, _: void, b_index: usize) bool {

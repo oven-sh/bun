@@ -65,7 +65,7 @@ pub fn StatFSType(comptime big: bool) type {
                     statfs_.f_files,
                     statfs_.f_ffree,
                 },
-                else => @compileError("Unsupported OS"),
+                .wasm => @compileError("Unsupported OS"),
             };
             return .{
                 ._fstype = @truncate(@as(i64, @intCast(fstype_))),

@@ -11,6 +11,9 @@ pub const ListenSocket = opaque {
     pub fn getSocket(this: *ListenSocket) *uws.us_socket_t {
         return @ptrCast(this);
     }
+    pub fn socket(this: *ListenSocket, comptime is_ssl: bool) uws.NewSocketHandler(is_ssl) {
+        return uws.NewSocketHandler(is_ssl).from(this.getSocket());
+    }
 };
 
 const c = struct {

@@ -20,7 +20,7 @@ else
 // All async FS functions are run in a thread pool, but some implementations may
 // decide to do something slightly different. For example, reading a file has
 // an extra stack buffer in the async case.
-pub const Flavor = enum { sync, @"async" };
+pub const Flavor = enum { sync, async };
 
 pub const Async = struct {
     pub const access = NewAsyncFSTask(Return.Access, Arguments.Access, NodeFS.access);
@@ -259,7 +259,7 @@ pub const Async = struct {
                 return task.promise.value();
             }
 
-            fn uv_callback(req: *uv.fs_t) callconv(.C) void {
+            fn uv_callback(req: *uv.fs_t) callconv(.c) void {
                 defer uv.uv_fs_req_cleanup(req);
                 const this: *Task = @ptrCast(@alignCast(req.data.?));
                 var node_fs = NodeFS{};
@@ -273,7 +273,7 @@ pub const Async = struct {
                 this.globalObject.bunVM().eventLoop().enqueueTask(jsc.Task.init(this));
             }
 
-            fn uv_callbackreq(req: *uv.fs_t) callconv(.C) void {
+            fn uv_callbackreq(req: *uv.fs_t) callconv(.c) void {
                 defer uv.uv_fs_req_cleanup(req);
                 const this: *Task = @ptrCast(@alignCast(req.data.?));
                 var node_fs = NodeFS{};
@@ -377,7 +377,7 @@ pub const Async = struct {
                 var this: *Task = @alignCast(@fieldParentPtr("task", task));
 
                 var node_fs = NodeFS{};
-                this.result = function(&node_fs, this.args, .@"async");
+                this.result = function(&node_fs, this.args, .async);
 
                 if (this.result == .err) {
                     this.result.err = this.result.err.clone(bun.default_allocator);
@@ -961,9 +961,9 @@ pub const AsyncReaddirRecursiveTask = struct {
 
     pub const ResultListEntry = struct {
         pub const Value = union(Return.Readdir.Tag) {
-            with_file_types: std.ArrayList(bun.jsc.Node.Dirent),
-            buffers: std.ArrayList(Buffer),
-            files: std.ArrayList(bun.String),
+            with_file_types: std.array_list.Managed(bun.jsc.Node.Dirent),
+            buffers: std.array_list.Managed(Buffer),
+            files: std.array_list.Managed(bun.String),
 
             pub fn deinit(this: *@This()) void {
                 switch (this.*) {
@@ -1041,9 +1041,9 @@ pub const AsyncReaddirRecursiveTask = struct {
             .subtask_count = .{ .raw = 1 },
             .root_path = PathString.init(bun.handleOom(bun.default_allocator.dupeZ(u8, args.path.slice()))),
             .result_list = switch (args.tag()) {
-                .files => .{ .files = std.ArrayList(bun.String).init(bun.default_allocator) },
+                .files => .{ .files = std.array_list.Managed(bun.String).init(bun.default_allocator) },
                 .with_file_types => .{ .with_file_types = .init(bun.default_allocator) },
-                .buffers => .{ .buffers = std.ArrayList(Buffer).init(bun.default_allocator) },
+                .buffers => .{ .buffers = std.array_list.Managed(Buffer).init(bun.default_allocator) },
             },
         });
         task.ref.ref(vm);
@@ -1066,7 +1066,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                 var stack = std.heap.stackFallback(8192, bun.default_allocator);
 
                 // This is a stack-local copy to avoid resizing heap-allocated arrays in the common case of a small directory
-                var entries = std.ArrayList(ResultType).init(stack.get());
+                var entries = std.array_list.Managed(ResultType).init(stack.get());
 
                 defer entries.deinit();
 
@@ -1116,7 +1116,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         this.performWork(this.root_path.sliceAssumeZ(), &buf, true);
     }
 
-    pub fn writeResults(this: *AsyncReaddirRecursiveTask, comptime ResultType: type, result: *std.ArrayList(ResultType)) void {
+    pub fn writeResults(this: *AsyncReaddirRecursiveTask, comptime ResultType: type, result: *std.array_list.Managed(ResultType)) void {
         if (result.items.len > 0) {
             const Field = switch (ResultType) {
                 bun.String => .files,
@@ -1128,7 +1128,7 @@ pub const AsyncReaddirRecursiveTask = struct {
             errdefer {
                 bun.default_allocator.destroy(list);
             }
-            var clone = bun.handleOom(std.ArrayList(ResultType).initCapacity(bun.default_allocator, result.items.len));
+            var clone = bun.handleOom(std.array_list.Managed(ResultType).initCapacity(bun.default_allocator, result.items.len));
             clone.appendSliceAssumeCapacity(result.items);
             _ = this.result_list_count.fetchAdd(clone.items.len, .monotonic);
             list.* = ResultListEntry{ .next = null, .value = @unionInit(ResultListEntry.Value, @tagName(Field), clone) };
@@ -1866,7 +1866,7 @@ pub const Arguments = struct {
                         if (str.eqlComptime("dir")) break :link_type .dir;
                         if (str.eqlComptime("file")) break :link_type .file;
                         if (str.eqlComptime("junction")) break :link_type .junction;
-                        return ctx.ERR(.INVALID_ARG_VALUE, "Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", .{str}).throw();
+                        return ctx.ERR(.INVALID_ARG_VALUE, "Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{f}\"", .{str}).throw();
                     }
                     // not a string. fallthrough to auto detect.
                     return ctx.ERR(.INVALID_ARG_VALUE, "Symlink type must be one of \"dir\", \"file\", or \"junction\".", .{}).throw();
@@ -3733,7 +3733,7 @@ pub const NodeFS = struct {
             return ret.success;
         }
 
-        @compileError(unreachable);
+        @compileError("unreachable");
     }
 
     pub fn exists(this: *NodeFS, args: Arguments.Exists, _: Flavor) Maybe(Return.Exists) {
@@ -4010,7 +4010,7 @@ pub const NodeFS = struct {
             },
         }
 
-        var working_mem: *bun.OSPathBuffer = @alignCast(@ptrCast(&this.sync_error_buf));
+        var working_mem: *bun.OSPathBuffer = @ptrCast(@alignCast(&this.sync_error_buf));
 
         @memcpy(working_mem[0..len], path[0..len]);
 
@@ -4435,7 +4435,7 @@ pub const NodeFS = struct {
         fd: bun.FileDescriptor,
         basename: [:0]const u8,
         comptime ExpectedType: type,
-        entries: *std.ArrayList(ExpectedType),
+        entries: *std.array_list.Managed(ExpectedType),
     ) Maybe(void) {
         const is_u16 = comptime Environment.isWindows and (ExpectedType == bun.String or ExpectedType == bun.jsc.Node.Dirent);
 
@@ -4538,7 +4538,7 @@ pub const NodeFS = struct {
         async_task: *AsyncReaddirRecursiveTask,
         basename: [:0]const u8,
         comptime ExpectedType: type,
-        entries: *std.ArrayList(ExpectedType),
+        entries: *std.array_list.Managed(ExpectedType),
         comptime is_root: bool,
     ) Maybe(void) {
         const root_basename = async_task.root_path.slice();
@@ -4673,10 +4673,10 @@ pub const NodeFS = struct {
         args: Arguments.Readdir,
         root_basename: [:0]const u8,
         comptime ExpectedType: type,
-        entries: *std.ArrayList(ExpectedType),
+        entries: *std.array_list.Managed(ExpectedType),
     ) Maybe(void) {
         var iterator_stack = std.heap.stackFallback(128, bun.default_allocator);
-        var stack = std.fifo.LinearFifo([:0]const u8, .{ .Dynamic = {} }).init(iterator_stack.get());
+        var stack = bun.LinearFifo([:0]const u8, .{ .Dynamic = {} }).init(iterator_stack.get());
         var basename_stack = std.heap.stackFallback(8192 * 2, bun.default_allocator);
         const basename_allocator = basename_stack.get();
         defer {
@@ -4800,7 +4800,7 @@ pub const NodeFS = struct {
                     bun.String => {
                         bun.handleOom(entries.append(jsc.WebCore.encoding.toBunString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(name_to_copy)), name_to_copy), args.encoding)));
                     },
-                    else => @compileError(unreachable),
+                    else => @compileError("unreachable"),
                 }
             }
         }
@@ -4850,7 +4850,7 @@ pub const NodeFS = struct {
         if (comptime recursive and flavor == .sync) {
             var buf_to_pass: bun.PathBuffer = undefined;
 
-            var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
+            var entries = std.array_list.Managed(ExpectedType).init(bun.default_allocator);
             return switch (readdirWithEntriesRecursiveSync(&buf_to_pass, args, path, ExpectedType, &entries)) {
                 .err => |err| {
                     for (entries.items) |*result| {
@@ -4896,7 +4896,7 @@ pub const NodeFS = struct {
 
         defer fd.close();
 
-        var entries = std.ArrayList(ExpectedType).init(bun.default_allocator);
+        var entries = std.array_list.Managed(ExpectedType).init(bun.default_allocator);
         return switch (readdirWithEntries(args, fd, path, ExpectedType, &entries)) {
             .err => |err| return .{
                 .err = err,
@@ -5139,7 +5139,7 @@ pub const NodeFS = struct {
             }
         }
 
-        var buf = std.ArrayList(u8).init(bun.default_allocator);
+        var buf = std.array_list.Managed(u8).init(bun.default_allocator);
         defer if (!did_succeed) buf.clearAndFree();
         buf.ensureTotalCapacityPrecise(
             @min(
@@ -5889,7 +5889,7 @@ pub const NodeFS = struct {
         bun.assert(flavor == .sync);
 
         const watcher = args.createStatWatcher() catch |err| {
-            const buf = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to watch file {}", .{bun.fmt.QuotedFormatter{ .text = args.path.slice() }}));
+            const buf = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "Failed to watch file {f}", .{bun.fmt.QuotedFormatter{ .text = args.path.slice() }}));
             defer bun.default_allocator.free(buf);
             args.global_this.throwValue((jsc.SystemError{
                 .message = bun.String.init(buf),
@@ -6544,7 +6544,7 @@ pub const NodeFS = struct {
 
 fn throwInvalidFdError(global: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError {
     if (value.isNumber()) {
-        return global.ERR(.OUT_OF_RANGE, "The value of \"fd\" is out of range. It must be an integer. Received {d}", .{bun.fmt.double(value.asNumber())}).throw();
+        return global.ERR(.OUT_OF_RANGE, "The value of \"fd\" is out of range. It must be an integer. Received {f}", .{bun.fmt.double(value.asNumber())}).throw();
     }
     return global.throwInvalidArgumentTypeValue("fd", "number", value);
 }
@@ -6604,6 +6604,8 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
                             },
                             error.FileNotFound,
                             error.AccessDenied,
+                            error.PermissionDenied,
+                            error.ProcessNotFound,
                             error.SymLinkLoop,
                             error.ProcessFdQuotaExceeded,
                             error.NameTooLong,
@@ -6640,6 +6642,7 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
                         error.FileNotFound,
                         error.NotDir,
                         error.AccessDenied,
+                        error.PermissionDenied,
                         error.InvalidUtf8,
                         error.InvalidWtf8,
                         error.SymLinkLoop,
@@ -6696,6 +6699,8 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
                             },
 
                             error.AccessDenied,
+                            error.PermissionDenied,
+                            error.ProcessNotFound,
                             error.SymLinkLoop,
                             error.ProcessFdQuotaExceeded,
                             error.NameTooLong,
@@ -6722,6 +6727,7 @@ pub fn zigDeleteTree(self: std.fs.Dir, sub_path: []const u8, kind_hint: std.fs.F
                             },
 
                             error.AccessDenied,
+                            error.PermissionDenied,
                             error.InvalidUtf8,
                             error.InvalidWtf8,
                             error.SymLinkLoop,
@@ -6764,6 +6770,8 @@ fn zigDeleteTreeOpenInitialSubpath(self: std.fs.Dir, sub_path: []const u8, kind_
                     error.NotDir,
                     error.FileNotFound,
                     error.AccessDenied,
+                    error.PermissionDenied,
+                    error.ProcessNotFound,
                     error.SymLinkLoop,
                     error.ProcessFdQuotaExceeded,
                     error.NameTooLong,
@@ -6789,6 +6797,7 @@ fn zigDeleteTreeOpenInitialSubpath(self: std.fs.Dir, sub_path: []const u8, kind_
 
                     error.FileNotFound,
                     error.AccessDenied,
+                    error.PermissionDenied,
                     error.InvalidUtf8,
                     error.InvalidWtf8,
                     error.SymLinkLoop,
@@ -6847,6 +6856,8 @@ fn zigDeleteTreeMinStackSizeWithKindHint(self: std.fs.Dir, sub_path: []const u8,
                             },
 
                             error.AccessDenied,
+                            error.PermissionDenied,
+                            error.ProcessNotFound,
                             error.SymLinkLoop,
                             error.ProcessFdQuotaExceeded,
                             error.NameTooLong,
@@ -6881,6 +6892,7 @@ fn zigDeleteTreeMinStackSizeWithKindHint(self: std.fs.Dir, sub_path: []const u8,
                             },
 
                             error.AccessDenied,
+                            error.PermissionDenied,
                             error.InvalidUtf8,
                             error.InvalidWtf8,
                             error.SymLinkLoop,

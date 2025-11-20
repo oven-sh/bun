@@ -32,7 +32,7 @@ pub fn writeInternal(this: *HandshakeResponse41, comptime Context: type, writer:
     // Write client capabilities flags (4 bytes)
     const caps = this.capability_flags.toInt();
     try writer.int4(caps);
-    debug("Client capabilities: [{}] 0x{x:0>8} sequence_id: {d}", .{ this.capability_flags, caps, this.sequence_id });
+    debug("Client capabilities: [{f}] 0x{x:0>8} sequence_id: {d}", .{ this.capability_flags, caps, this.sequence_id });
 
     // Write max packet size (4 bytes)
     try writer.int4(this.max_packet_size);

@@ -90,7 +90,7 @@ pub const PublishCommand = struct {
                         const stripped = pathname[slash + 1 ..];
                         if (stripped.len == 0) continue;
 
-                        Output.pretty("<b><cyan>packed<r> {} {}\n", .{
+                        Output.pretty("<b><cyan>packed<r> {f} {f}\n", .{
                             bun.fmt.size(size, .{ .space_between_number_and_unit = false }),
                             bun.fmt.fmtOSPath(stripped, .{}),
                         });
@@ -113,7 +113,7 @@ pub const PublishCommand = struct {
                             }
                         }
                     } else {
-                        Output.pretty("<b><cyan>packed<r> {} {}\n", .{
+                        Output.pretty("<b><cyan>packed<r> {f} {f}\n", .{
                             bun.fmt.size(size, .{ .space_between_number_and_unit = false }),
                             bun.fmt.fmtOSPath(pathname, .{}),
                         });
@@ -457,13 +457,13 @@ pub const PublishCommand = struct {
         version: string,
         registry: *const Npm.Registry.Scope,
     ) bool {
-        var url_buf = std.ArrayList(u8).init(allocator);
+        var url_buf = std.array_list.Managed(u8).init(allocator);
         defer url_buf.deinit();
         const registry_url = strings.withoutTrailingSlash(registry.url.href);
         const encoded_name = bun.fmt.dependencyUrl(package_name);
 
         // Try to get package metadata to check if version exists
-        url_buf.writer().print("{s}/{s}", .{ registry_url, encoded_name }) catch return false;
+        url_buf.writer().print("{s}/{f}", .{ registry_url, encoded_name }) catch return false;
 
         const package_url = URL.parse(url_buf.items);
 
@@ -473,7 +473,7 @@ pub const PublishCommand = struct {
         var headers = http.HeaderBuilder{};
         headers.count("accept", "application/json");
 
-        var auth_buf = std.ArrayList(u8).init(allocator);
+        var auth_buf = std.array_list.Managed(u8).init(allocator);
         defer auth_buf.deinit();
 
         if (registry.token.len > 0) {
@@ -587,7 +587,7 @@ pub const PublishCommand = struct {
 
         var response_buf = try MutableString.init(ctx.allocator, 1024);
 
-        try print_writer.print("{s}/{s}", .{
+        try print_writer.print("{s}/{f}", .{
             strings.withoutTrailingSlash(registry.url.href),
             bun.fmt.dependencyUrl(ctx.package_name),
         });
@@ -861,7 +861,7 @@ pub const PublishCommand = struct {
                             break :nanoseconds 500 * std.time.ns_per_ms;
                         };
 
-                        std.time.sleep(nanoseconds);
+                        std.Thread.sleep(nanoseconds);
                         continue;
                     },
                     200 => {
@@ -935,7 +935,7 @@ pub const PublishCommand = struct {
 
         const version_without_build_tag = Dependency.withoutBuildTag(package_version);
 
-        const integrity_fmt = try std.fmt.allocPrint(allocator, "{}", .{bun.fmt.integrity(integrity, .full)});
+        const integrity_fmt = try std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.integrity(integrity, .full)});
 
         try json.setString(allocator, "_id", try std.fmt.allocPrint(allocator, "{s}@{s}", .{ package_name, version_without_build_tag }));
         try json.setString(allocator, "_integrity", integrity_fmt);
@@ -954,7 +954,7 @@ pub const PublishCommand = struct {
             ),
             .value = Expr.init(
                 E.String,
-                .{ .data = try std.fmt.allocPrint(allocator, "{}", .{bun.fmt.integrity(integrity, .full)}) },
+                .{ .data = try std.fmt.allocPrint(allocator, "{f}", .{bun.fmt.integrity(integrity, .full)}) },
                 logger.Loc.Empty,
             ),
         };
@@ -979,7 +979,7 @@ pub const PublishCommand = struct {
             .value = Expr.init(
                 E.String,
                 .{
-                    .data = try std.fmt.allocPrint(allocator, "http://{s}/{s}/-/{}", .{
+                    .data = try std.fmt.allocPrint(allocator, "http://{s}/{s}/-/{f}", .{
                         // always use replace https with http
                         // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
                         strings.withoutTrailingSlash(strings.withoutPrefixComptime(registry.url.href, "https://")),
@@ -1052,7 +1052,7 @@ pub const PublishCommand = struct {
         if (json.asProperty("bin")) |bin_query| {
             switch (bin_query.expr.data) {
                 .e_string => |bin_str| {
-                    var bin_props = std.ArrayList(G.Property).init(allocator);
+                    var bin_props = std.array_list.Managed(G.Property).init(allocator);
                     const normalized = strings.withoutPrefixComptimeZ(
                         path.normalizeBufZ(
                             try bin_str.string(allocator),
@@ -1087,7 +1087,7 @@ pub const PublishCommand = struct {
                     );
                 },
                 .e_object => |bin_obj| {
-                    var bin_props = std.ArrayList(G.Property).init(allocator);
+                    var bin_props = std.array_list.Managed(G.Property).init(allocator);
                     for (bin_obj.properties.slice()) |bin_prop| {
                         const key = key: {
                             if (bin_prop.key) |key| {
@@ -1168,7 +1168,7 @@ pub const PublishCommand = struct {
                 const bin_dir_str = bin_query.expr.asString(allocator) orelse {
                     return;
                 };
-                var bin_props = std.ArrayList(G.Property).init(allocator);
+                var bin_props = std.array_list.Managed(G.Property).init(allocator);
                 const normalized_bin_dir = try allocator.dupeZ(
                     u8,
                     strings.withoutTrailingSlash(
@@ -1210,12 +1210,12 @@ pub const PublishCommand = struct {
                     while (iter.next().unwrap() catch null) |entry| {
                         const name, const subpath = name_and_subpath: {
                             const name = entry.name.slice();
-                            const join = try std.fmt.allocPrintZ(allocator, "{s}{s}{s}", .{
+                            const join = try std.fmt.allocPrintSentinel(allocator, "{s}{s}{s}", .{
                                 dir_subpath,
                                 // only using posix separators
                                 if (dir_subpath.len == 0) "" else std.fs.path.sep_str_posix,
                                 strings.withoutTrailingSlash(name),
-                            });
+                            }, 0);
 
                             break :name_and_subpath .{ join[join.len - name.len ..][0..name.len :0], join };
                         };
@@ -1272,7 +1272,7 @@ pub const PublishCommand = struct {
             if (auth_type) |auth| @tagName(auth) else "web"
         else
             "legacy";
-        const ci_name = bun.detectCI();
+        const ci_name = bun.ci.detectCIName();
 
         {
             headers.count("accept", "*/*");
@@ -1299,14 +1299,7 @@ pub const PublishCommand = struct {
             }
             headers.count("npm-command", "publish");
 
-            try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{
-                Global.user_agent,
-                Global.os_name,
-                Global.arch_name,
-                uses_workspaces,
-                if (ci_name != null) " ci/" else "",
-                ci_name orelse "",
-            });
+            try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{ Global.user_agent, Global.os_name, Global.arch_name, uses_workspaces, if (ci_name != null) " ci/" else "", ci_name orelse "" });
             // headers.count("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
             headers.count("user-agent", print_buf.items);
             print_buf.clearRetainingCapacity();
@@ -1348,14 +1341,7 @@ pub const PublishCommand = struct {
             }
             headers.append("npm-command", "publish");
 
-            try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{
-                Global.user_agent,
-                Global.os_name,
-                Global.arch_name,
-                uses_workspaces,
-                if (ci_name != null) " ci/" else "",
-                ci_name orelse "",
-            });
+            try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{ Global.user_agent, Global.os_name, Global.arch_name, uses_workspaces, if (ci_name != null) " ci/" else "", ci_name orelse "" });
             // headers.append("user-agent", "npm/10.8.3 node/v24.3.0 darwin arm64 workspaces/false");
             headers.append("user-agent", print_buf.items);
             print_buf.clearRetainingCapacity();
@@ -1420,7 +1406,7 @@ pub const PublishCommand = struct {
 
         // "_attachments"
         {
-            try writer.print(",\"_attachments\":{{\"{}\":{{\"content_type\":\"{s}\",\"data\":\"", .{
+            try writer.print(",\"_attachments\":{{\"{f}\":{{\"content_type\":\"{s}\",\"data\":\"", .{
                 Pack.fmtTarballFilename(ctx.package_name, ctx.package_version, .raw),
                 "application/octet-stream",
             });

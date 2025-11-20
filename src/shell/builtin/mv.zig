@@ -360,7 +360,7 @@ pub fn batchedMoveTaskDone(this: *Mv, task: *ShellMvBatchedTask) void {
     if (exec.tasks_done >= exec.task_count) {
         if (exec.err) |err| {
             const e = err.toShellSystemError();
-            const buf = this.bltn().fmtErrorArena(.mv, "{}: {}\n", .{ e.path, e.message });
+            const buf = this.bltn().fmtErrorArena(.mv, "{f}: {f}\n", .{ e.path, e.message });
             _ = this.writeFailingError(buf, err.errno);
             return;
         }

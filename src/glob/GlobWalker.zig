@@ -675,7 +675,7 @@ pub fn GlobWalker_(
                 this.iter_state.directory.at_cwd = false;
                 this.iter_state.directory.fd = .empty;
 
-                log("Transition(dirpath={s}, fd={}, component_idx={d})", .{ dir_path, fd, component_idx });
+                log("Transition(dirpath={s}, component_idx={d})", .{ dir_path, component_idx });
 
                 this.iter_state.directory.fd = fd;
                 const iterator = Accessor.DirIter.iterate(fd);

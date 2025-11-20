@@ -843,14 +843,20 @@ const Stringifier = struct {
             '0' => {
                 if (i == start) {
                     if (i + 1 < str.length()) {
-                        const nc = str.charAt(i + 1);
-                        if (nc == 'x' or nc == 'X') {
-                            base = .hex;
-                        } else if (nc == 'o' or nc == 'O') {
-                            base = .oct;
-                        } else {
-                            offset.* = i;
-                            return false;
+                        switch (str.charAt(i + 1)) {
+                            'x', 'X' => {
+                                base = .hex;
+                            },
+                            'o', 'O' => {
+                                base = .oct;
+                            },
+                            '0'...'9' => {
+                                // 0 prefix allowed
+                            },
+                            else => {
+                                offset.* = i;
+                                return false;
+                            },
                         }
                         i += 1;
                     } else {

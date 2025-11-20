@@ -497,7 +497,7 @@ pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
             const separator = lastIndexOfSeparatorWindows(str) orelse return std.fs.path.diskDesignatorWindows(str);
             return str[0..separator];
         },
-        else => @compileError("not implemented"),
+        .nt => @compileError("not implemented"),
     }
 }
 

@@ -103,7 +103,7 @@ pub fn constructor(
     const mappings_str = mappings_value.toUTF8(arena_allocator);
     defer mappings_str.deinit();
 
-    var names = std.ArrayList(bun.String).init(bun.default_allocator);
+    var names = std.array_list.Managed(bun.String).init(bun.default_allocator);
     errdefer {
         for (names.items) |*str| {
             str.deref();
@@ -111,7 +111,7 @@ pub fn constructor(
         names.deinit();
     }
 
-    var sources = std.ArrayList(bun.String).init(bun.default_allocator);
+    var sources = std.array_list.Managed(bun.String).init(bun.default_allocator);
     errdefer {
         for (sources.items) |*str| {
             str.deref();

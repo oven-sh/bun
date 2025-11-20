@@ -12,7 +12,7 @@ pub fn toHaveBeenLastCalledWith(this: *Expect, globalThis: *JSGlobalObject, call
     if (!calls.jsType().isArray()) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
-        return this.throw(globalThis, comptime getSignature("toHaveBeenLastCalledWith", "<green>...expected<r>", false), "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {any}", .{value.toFmt(&formatter)});
+        return this.throw(globalThis, comptime getSignature("toHaveBeenLastCalledWith", "<green>...expected<r>", false), "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {f}", .{value.toFmt(&formatter)});
     }
 
     const totalCalls: u32 = @truncate(try calls.getLength(globalThis));
@@ -26,7 +26,7 @@ pub fn toHaveBeenLastCalledWith(this: *Expect, globalThis: *JSGlobalObject, call
         if (!lastCallValue.jsType().isArray()) {
             var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
             defer formatter.deinit();
-            return globalThis.throw("Expected value must be a mock function with calls: {any}", .{value.toFmt(&formatter)});
+            return globalThis.throw("Expected value must be a mock function with calls: {f}", .{value.toFmt(&formatter)});
         }
 
         if (try lastCallValue.getLength(globalThis) != arguments.len) {
@@ -58,14 +58,14 @@ pub fn toHaveBeenLastCalledWith(this: *Expect, globalThis: *JSGlobalObject, call
 
     if (this.flags.not) {
         const signature = comptime getSignature("toHaveBeenLastCalledWith", "<green>...expected<r>", true);
-        return this.throw(globalThis, signature, "\n\nExpected last call not to be with: <green>{any}<r>\nBut it was.", .{
+        return this.throw(globalThis, signature, "\n\nExpected last call not to be with: <green>{f}<r>\nBut it was.", .{
             expected_args_js_array.toFmt(&formatter),
         });
     }
     const signature = comptime getSignature("toHaveBeenLastCalledWith", "<green>...expected<r>", false);
 
     if (totalCalls == 0) {
-        return this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nBut it was not called.", .{
+        return this.throw(globalThis, signature, "\n\nExpected: <green>{f}<r>\nBut it was not called.", .{
             expected_args_js_array.toFmt(&formatter),
         });
     }
@@ -76,7 +76,7 @@ pub fn toHaveBeenLastCalledWith(this: *Expect, globalThis: *JSGlobalObject, call
         .globalThis = globalThis,
         .not = false,
     };
-    return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_format});
+    return this.throw(globalThis, signature, "\n\n{f}\n", .{diff_format});
 }
 
 const bun = @import("bun");

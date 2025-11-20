@@ -1568,4 +1568,4 @@ const statementCaresAboutScope = js_parser.statementCaresAboutScope;
 
 const std = @import("std");
 const List = std.ArrayListUnmanaged;
-const ListManaged = std.ArrayList;
+const ListManaged = std.array_list.Managed;

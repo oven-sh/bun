@@ -5474,6 +5474,15 @@ extern "C" JSC::EncodedJSValue WebCore__AbortSignal__abortReason(WebCore::AbortS
     return JSC::JSValue::encode(abortSignal->reason().getValue(jsNull()));
 }
 
+extern "C" WebCore::AbortSignalTimeout WebCore__AbortSignal__getTimeout(WebCore::AbortSignal* arg0)
+{
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    if (!abortSignal->hasActiveTimeoutTimer()) {
+        return nullptr;
+    }
+    return abortSignal->getTimeout();
+}
+
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__ref(WebCore::AbortSignal* abortSignal)
 {
     abortSignal->ref();

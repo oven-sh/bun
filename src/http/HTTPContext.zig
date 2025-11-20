@@ -164,7 +164,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
         /// is set, then we can only reuse the socket for HTTP Keep Alive if
         /// `reject_unauthorized` is set to `false`.
         pub fn releaseSocket(this: *@This(), socket: HTTPSocket, did_have_handshaking_error_while_reject_unauthorized_is_false: bool, hostname: []const u8, port: u16) void {
-            // log("releaseSocket(0x{})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
+            // log("releaseSocket(0x{f})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
 
             if (comptime Environment.allow_assert) {
                 assert(!socket.isClosed());

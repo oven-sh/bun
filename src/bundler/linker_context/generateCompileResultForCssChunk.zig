@@ -22,7 +22,7 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
     defer trace.end();
 
     var arena = &worker.temporary_arena;
-    var buffer_writer = js_printer.BufferWriter.init(worker.allocator);
+    var allocating_writer = std.Io.Writer.Allocating.init(worker.allocator);
     defer _ = arena.reset(.retain_capacity);
 
     const css_import = chunk.content.css.imports_in_chunk_in_order.at(imports_in_chunk_index);
@@ -39,7 +39,7 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
             };
             _ = switch (css.toCssWithWriter(
                 worker.allocator,
-                &buffer_writer,
+                &allocating_writer.writer,
                 printer_options,
                 .{
                     .import_records = &css_import.condition_import_records,
@@ -62,7 +62,7 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
             };
             return CompileResult{
                 .css = .{
-                    .result = .{ .result = buffer_writer.getWritten() },
+                    .result = .{ .result = allocating_writer.written() },
                     .source_index = Index.invalid.get(),
                 },
             };
@@ -78,7 +78,7 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
             };
             _ = switch (css.toCssWithWriter(
                 worker.allocator,
-                &buffer_writer,
+                &allocating_writer.writer,
                 printer_options,
                 .{
                     .import_records = &import_records,
@@ -101,7 +101,7 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
             };
             return CompileResult{
                 .css = .{
-                    .result = .{ .result = buffer_writer.getWritten() },
+                    .result = .{ .result = allocating_writer.written() },
 
                     .source_index = Index.invalid.get(),
                 },
@@ -115,7 +115,7 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
             };
             _ = switch (css.toCssWithWriter(
                 worker.allocator,
-                &buffer_writer,
+                &allocating_writer.writer,
                 printer_options,
                 .{
                     .import_records = &c.graph.ast.items(.import_records)[idx.get()],
@@ -137,7 +137,7 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
             };
             return CompileResult{
                 .css = .{
-                    .result = .{ .result = buffer_writer.getWritten() },
+                    .result = .{ .result = allocating_writer.written() },
                     .source_index = idx.get(),
                 },
             };
@@ -149,12 +149,13 @@ pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
 
+const std = @import("std");
+
 const bun = @import("bun");
 const BabyList = bun.BabyList;
 const Environment = bun.Environment;
 const ImportRecord = bun.ImportRecord;
 const ThreadPoolLib = bun.ThreadPool;
-const js_printer = bun.js_printer;
 const options = bun.options;
 
 const js_ast = bun.ast;

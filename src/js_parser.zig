@@ -314,7 +314,7 @@ pub const JSXTag = struct {
 pub inline fn generatedSymbolName(name: []const u8) []const u8 {
     comptime {
         const hash = std.hash.Wyhash.hash(0, name);
-        const hash_str = std.fmt.comptimePrint("_{}", .{bun.fmt.truncatedHash32(@intCast(hash))});
+        const hash_str = std.fmt.comptimePrint("_{f}", .{bun.fmt.truncatedHash32(@intCast(hash))});
         return name ++ hash_str;
     }
 }
@@ -1259,7 +1259,7 @@ pub const T = js_lexer.T;
 pub const std = @import("std");
 pub const AutoHashMap = std.AutoHashMap;
 const List = std.ArrayListUnmanaged;
-const ListManaged = std.ArrayList;
+const ListManaged = std.array_list.Managed;
 const Allocator = std.mem.Allocator;
 
 const _runtime = @import("./runtime.zig");

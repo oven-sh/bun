@@ -33,7 +33,7 @@ pub const StripOpts = struct {
 
 /// Windows PE Binary manipulation for codesigning standalone executables
 pub const PEFile = struct {
-    data: std.ArrayList(u8),
+    data: std.array_list.Managed(u8),
     allocator: Allocator,
     // Store offsets instead of pointers to avoid invalidation after resize
     dos_header_offset: usize,
@@ -222,7 +222,7 @@ pub const PEFile = struct {
 
     pub fn init(allocator: Allocator, pe_data: []const u8) !*PEFile {
         // 1. Reserve capacity as before
-        var data = try std.ArrayList(u8).initCapacity(allocator, pe_data.len + 64 * 1024);
+        var data = try std.array_list.Managed(u8).initCapacity(allocator, pe_data.len + 64 * 1024);
         try data.appendSlice(pe_data);
 
         const self = try allocator.create(PEFile);

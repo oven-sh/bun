@@ -31,7 +31,7 @@ pub fn NewParser_(
         pub const is_typescript_enabled = js_parser_features.typescript;
         pub const is_jsx_enabled = js_parser_jsx != .none;
         pub const only_scan_imports_and_do_not_visit = js_parser_features.scan_only;
-        const ImportRecordList = if (only_scan_imports_and_do_not_visit) *std.ArrayList(ImportRecord) else std.ArrayList(ImportRecord);
+        const ImportRecordList = if (only_scan_imports_and_do_not_visit) *std.array_list.Managed(ImportRecord) else std.array_list.Managed(ImportRecord);
         const NamedImportsType = if (only_scan_imports_and_do_not_visit) *js_ast.Ast.NamedImports else js_ast.Ast.NamedImports;
         const NeedsJSXType = if (only_scan_imports_and_do_not_visit) bool else void;
         pub const track_symbol_usage_during_parse_pass = only_scan_imports_and_do_not_visit and is_typescript_enabled;
@@ -202,7 +202,7 @@ pub fn NewParser_(
 
         has_called_runtime: bool = false,
 
-        legacy_cjs_import_stmts: std.ArrayList(Stmt),
+        legacy_cjs_import_stmts: std.array_list.Managed(Stmt),
 
         injected_define_symbols: List(Ref) = .{},
         symbol_uses: SymbolUseMap = .{},
@@ -3428,8 +3428,8 @@ pub fn NewParser_(
         }
 
         pub fn panicLoc(p: *P, comptime fmt: string, args: anytype, loc: ?logger.Loc) noreturn {
-            var panic_buffer = p.allocator.alloc(u8, 32 * 1024) catch unreachable;
-            var panic_stream = std.io.fixedBufferStream(panic_buffer);
+            const panic_buffer = p.allocator.alloc(u8, 32 * 1024) catch unreachable;
+            var panic_stream = std.Io.Writer.fixed(panic_buffer);
 
             // panic during visit pass leaves the lexer at the end, which
             // would make this location absolutely useless.
@@ -3445,9 +3445,9 @@ pub fn NewParser_(
             }
 
             p.log.level = .verbose;
-            p.log.print(panic_stream.writer()) catch unreachable;
+            p.log.print(&panic_stream) catch unreachable;
 
-            Output.panic(fmt ++ "\n{s}", args ++ .{panic_buffer[0..panic_stream.pos]});
+            Output.panic(fmt ++ "\n{s}", args ++ .{panic_stream.buffered()});
         }
 
         pub fn jsxStringsToMemberExpression(p: *P, loc: logger.Loc, parts: []const []const u8) !Expr {
@@ -3724,7 +3724,7 @@ pub fn NewParser_(
                                         }
                                     },
                                     else => {
-                                        Output.panic("Unexpected type in export default: {any}", .{s2});
+                                        Output.panic("Unexpected type in export default", .{});
                                     },
                                 }
                             },
@@ -4889,7 +4889,7 @@ pub fn NewParser_(
                                 target = p.newExpr(E.Dot{ .target = p.newExpr(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc), .name = "prototype", .name_loc = loc }, loc);
                             }
 
-                            var array: std.ArrayList(Expr) = .init(p.allocator);
+                            var array: std.array_list.Managed(Expr) = .init(p.allocator);
 
                             if (p.options.features.emit_decorator_metadata) {
                                 switch (prop.kind) {
@@ -6496,7 +6496,7 @@ pub fn NewParser_(
                         .other,
                         std.fmt.allocPrint(
                             p.allocator,
-                            "require_{any}",
+                            "require_{f}",
                             .{p.source.fmtIdentifier()},
                         ) catch |err| bun.handleOom(err),
                     ) catch |err| bun.handleOom(err);
@@ -6685,7 +6685,7 @@ pub fn NewParser_(
                 break :brk false;
             };
 
-            this.symbols = std.ArrayList(Symbol).init(allocator);
+            this.symbols = std.array_list.Managed(Symbol).init(allocator);
 
             if (comptime !only_scan_imports_and_do_not_visit) {
                 this.import_records = @TypeOf(this.import_records).init(allocator);
@@ -6822,6 +6822,6 @@ const statementCaresAboutScope = js_parser.statementCaresAboutScope;
 
 const std = @import("std");
 const List = std.ArrayListUnmanaged;
-const ListManaged = std.ArrayList;
 const Map = std.AutoHashMapUnmanaged;
 const Allocator = std.mem.Allocator;
+const ListManaged = std.array_list.Managed;

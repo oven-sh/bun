@@ -67,6 +67,11 @@ pub const UntrustedCommand = struct {
                     const dep = pm.lockfile.buffers.dependencies.items[dep_id];
                     const alias = dep.name.slice(buf);
                     const package_id = pm.lockfile.buffers.resolutions.items[dep_id];
+
+                    if (package_id >= packages.len) {
+                        continue;
+                    }
+
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
 
@@ -230,9 +235,11 @@ pub const TrustCommand = struct {
                     const dep = pm.lockfile.buffers.dependencies.items[dep_id];
                     const alias = dep.name.slice(buf);
                     const package_id = pm.lockfile.buffers.resolutions.items[dep_id];
-                    if (comptime Environment.allow_assert) {
-                        bun.assertWithLocation(package_id != Install.invalid_package_id, @src());
+
+                    if (package_id >= packages.len) {
+                        continue;
                     }
+
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
 

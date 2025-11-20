@@ -651,7 +651,7 @@ pub fn Bun__fetch_(
                             return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
                         }
                         defer href.deref();
-                        const buffer = try std.fmt.allocPrint(allocator, "{s}{}", .{ url_proxy_buffer, href });
+                        const buffer = try std.fmt.allocPrint(allocator, "{s}{f}", .{ url_proxy_buffer, href });
                         url = ZigURL.parse(buffer[0..url.href.len]);
                         if (url.isFile()) {
                             url_type = URLType.file;
@@ -1211,7 +1211,7 @@ pub fn Bun__fetch_(
                                 .{
                                     .value = .{
                                         .InternalBlob = .{
-                                            .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, bun.handleOom(bun.default_allocator.dupe(u8, err.message))),
+                                            .bytes = std.array_list.Managed(u8).fromOwnedSlice(bun.default_allocator, bun.handleOom(bun.default_allocator.dupe(u8, err.message))),
                                             .was_string = true,
                                         },
                                     },

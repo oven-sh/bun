@@ -2,7 +2,7 @@
 
 const Self = @This();
 
-array_list: std.ArrayListAligned(u8, @alignOf(std.c.max_align_t)),
+array_list: std.array_list.AlignedManaged(u8, .of(std.c.max_align_t)),
 
 fn alloc(ptr: *anyopaque, len: usize, alignment: std.mem.Alignment, _: usize) ?[*]u8 {
     bun.assert(alignment.toByteUnits() <= @alignOf(std.c.max_align_t));

@@ -1,13 +1,13 @@
 //! for the collection phase of test execution where we discover all the test() calls
 
 locked: bool = false, // set to true after collection phase ends
-describe_callback_queue: std.ArrayList(QueuedDescribe),
-current_scope_callback_queue: std.ArrayList(QueuedDescribe),
+describe_callback_queue: std.array_list.Managed(QueuedDescribe),
+current_scope_callback_queue: std.array_list.Managed(QueuedDescribe),
 
 root_scope: *DescribeScope,
 active_scope: *DescribeScope,
 
-filter_buffer: std.ArrayList(u8),
+filter_buffer: std.array_list.Managed(u8),
 
 const QueuedDescribe = struct {
     callback: jsc.Strong.Deprecated,

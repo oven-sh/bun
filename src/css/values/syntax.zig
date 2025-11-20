@@ -36,7 +36,7 @@ pub const SyntaxString = union(enum) {
         return css.implementDeepClone(@This(), this, allocator);
     }
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
         try dest.writeChar('"');
         switch (this.*) {
             .universal => try dest.writeChar('*'),
@@ -49,7 +49,7 @@ pub const SyntaxString = union(enum) {
                         try dest.delim('|', true);
                     }
 
-                    try component.toCss(W, dest);
+                    try component.toCss(dest);
                 }
             },
         }
@@ -281,8 +281,8 @@ pub const SyntaxComponent = struct {
         return .{ .result = SyntaxComponent{ .kind = kind, .multiplier = multiplier } };
     }
 
-    pub fn toCss(this: *const SyntaxComponent, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        try this.kind.toCss(W, dest);
+    pub fn toCss(this: *const SyntaxComponent, dest: *Printer) PrintErr!void {
+        try this.kind.toCss(dest);
         return switch (this.multiplier) {
             .none => {},
             .comma => dest.writeChar('#'),
@@ -384,7 +384,7 @@ pub const SyntaxComponentKind = union(enum) {
         }
     }
 
-    pub fn toCss(this: *const SyntaxComponentKind, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const SyntaxComponentKind, dest: *Printer) PrintErr!void {
         return switch (this.*) {
             .length => try dest.writeStr("<length>"),
             .number => try dest.writeStr("<number>"),
@@ -466,22 +466,22 @@ pub const ParsedComponent = union(enum) {
 
     const This = @This();
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
         return switch (this.*) {
-            .length => |*v| try v.toCss(W, dest),
-            .number => |*v| try CSSNumberFns.toCss(v, W, dest),
-            .percentage => |*v| try v.toCss(W, dest),
-            .length_percentage => |*v| try v.toCss(W, dest),
-            .color => |*v| try v.toCss(W, dest),
-            .image => |*v| try v.toCss(W, dest),
-            .url => |*v| try v.toCss(W, dest),
-            .integer => |*v| try CSSIntegerFns.toCss(v, W, dest),
-            .angle => |*v| try v.toCss(W, dest),
-            .time => |*v| try v.toCss(W, dest),
-            .resolution => |*v| try v.toCss(W, dest),
-            .transform_function => |*v| try v.toCss(W, dest),
-            .transform_list => |*v| try v.toCss(W, dest),
-            .custom_ident => |*v| try CustomIdentFns.toCss(v, W, dest),
+            .length => |*v| try v.toCss(dest),
+            .number => |*v| try CSSNumberFns.toCss(v, dest),
+            .percentage => |*v| try v.toCss(dest),
+            .length_percentage => |*v| try v.toCss(dest),
+            .color => |*v| try v.toCss(dest),
+            .image => |*v| try v.toCss(dest),
+            .url => |*v| try v.toCss(dest),
+            .integer => |*v| try CSSIntegerFns.toCss(v, dest),
+            .angle => |*v| try v.toCss(dest),
+            .time => |*v| try v.toCss(dest),
+            .resolution => |*v| try v.toCss(dest),
+            .transform_function => |*v| try v.toCss(dest),
+            .transform_list => |*v| try v.toCss(dest),
+            .custom_ident => |*v| try CustomIdentFns.toCss(v, dest),
             .literal => |*v| css.serializer.serializeIdentifier(v.v, dest) catch return dest.addFmtError(),
             .repeated => |*r| {
                 var first = true;
@@ -495,10 +495,10 @@ pub const ParsedComponent = union(enum) {
                     } else {
                         first = false;
                     }
-                    try component.toCss(W, dest);
+                    try component.toCss(dest);
                 }
             },
-            .token_list => |*t| try t.toCss(W, dest, false),
+            .token_list => |*t| try t.toCss(dest, false),
         };
     }
 

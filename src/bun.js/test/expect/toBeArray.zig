@@ -17,11 +17,11 @@ pub fn toBeArray(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFra
 
     if (not) {
         const signature = comptime getSignature("toBeArray", "", true);
-        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
+        return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{f}<r>\n", .{received});
     }
 
     const signature = comptime getSignature("toBeArray", "", false);
-    return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{any}<r>\n", .{received});
+    return this.throw(globalThis, signature, "\n\n" ++ "Received: <red>{f}<r>\n", .{received});
 }
 
 const bun = @import("bun");

@@ -130,7 +130,7 @@ fn generateClientReferenceProxy(task: *ServerComponentParseTask, data: Data.Refe
         .data = if (task.ctx.transpiler.options.dev_server != null)
             data.other_source.path.pretty
         else
-            try std.fmt.allocPrint(b.allocator, "{}S{d:0>8}", .{
+            try std.fmt.allocPrint(b.allocator, "{f}S{d:0>8}", .{
                 bun.fmt.hexIntLower(task.ctx.unique_key),
                 data.other_source.index.get(),
             }),

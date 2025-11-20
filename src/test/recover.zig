@@ -77,7 +77,7 @@ pub fn call(
 extern "ntdll" fn RtlRestoreContext(
     ContextRecord: *const CONTEXT,
     ExceptionRecord: ?*const EXCEPTION_RECORD,
-) callconv(WINAPI) noreturn;
+) callconv(.winapi) noreturn;
 
 // darwin, bsd, gnu linux
 extern "c" fn setcontext(ucp: *const std.c.ucontext_t) noreturn;
@@ -129,4 +129,3 @@ const std = @import("std");
 
 const CONTEXT = std.os.windows.CONTEXT;
 const EXCEPTION_RECORD = std.os.windows.EXCEPTION_RECORD;
-const WINAPI = std.os.windows.WINAPI;

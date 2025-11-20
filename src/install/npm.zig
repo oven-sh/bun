@@ -20,9 +20,9 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
     }
 
     const auth_type = if (manager.options.publish_config.auth_type) |auth_type| @tagName(auth_type) else "web";
-    const ci_name = bun.detectCI();
+    const ci_name = bun.ci.detectCIName();
 
-    var print_buf = std.ArrayList(u8).init(allocator);
+    var print_buf = std.array_list.Managed(u8).init(allocator);
     defer print_buf.deinit();
     var print_writer = print_buf.writer();
 
@@ -69,14 +69,7 @@ pub fn whoami(allocator: std.mem.Allocator, manager: *PackageManager) WhoamiErro
         headers.append("npm-auth-type", auth_type);
         headers.append("npm-command", "whoami");
 
-        try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{
-            Global.user_agent,
-            Global.os_name,
-            Global.arch_name,
-            false,
-            if (ci_name != null) " ci/" else "",
-            ci_name orelse "",
-        });
+        try print_writer.print("{s} {s} {s} workspaces/{}{s}{s}", .{ Global.user_agent, Global.os_name, Global.arch_name, false, if (ci_name != null) " ci/" else "", ci_name orelse "" });
         headers.append("user-agent", print_buf.items);
         print_buf.clearRetainingCapacity();
 
@@ -175,7 +168,7 @@ pub fn responseError(
         break :message @"error";
     };
 
-    Output.prettyErrorln("\n<red>{d}<r>{s}{s}: {s}\n", .{
+    Output.prettyErrorln("\n<red>{d}<r>{s}{s}: {f}\n", .{
         res.status_code,
         if (res.status.len > 0) " " else "",
         res.status,
@@ -361,7 +354,7 @@ pub const Registry = struct {
 
             if (needs_normalize) {
                 url = URL.parse(
-                    try std.fmt.allocPrint(allocator, "{s}://{}/{s}/", .{
+                    try std.fmt.allocPrint(allocator, "{s}://{f}/{s}/", .{
                         url.displayProtocol(),
                         url.displayHost(),
                         strings.trim(url.pathname, "/"),
@@ -584,7 +577,7 @@ pub fn Negatable(comptime T: type) type {
         }
 
         /// writes to a one line json array with a trailing comma and space, or writes a string
-        pub fn toJson(field: T, writer: anytype) @TypeOf(writer).Error!void {
+        pub fn toJson(field: T, writer: anytype) std.Io.Writer.Error!void {
             if (field == .none) {
                 // [] means everything, so unrecognized value
                 try writer.writeAll(
@@ -653,7 +646,7 @@ pub const OperatingSystem = enum(u16) {
         .linux => @enumFromInt(linux),
         .mac => @enumFromInt(darwin),
         .windows => @enumFromInt(win32),
-        else => @compileError("Unsupported operating system: " ++ @tagName(Environment.os)),
+        .wasm => @compileError("Unsupported operating system: " ++ @tagName(Environment.os)),
     };
 
     pub fn isMatch(this: OperatingSystem, target: OperatingSystem) bool {
@@ -679,7 +672,7 @@ pub const OperatingSystem = enum(u16) {
         .linux => "linux",
         .mac => "darwin",
         .windows => "win32",
-        else => @compileError("Unsupported operating system: " ++ @tagName(current)),
+        .wasm => @compileError("Unsupported operating system: " ++ @tagName(current)),
     };
 
     pub fn negatable(this: OperatingSystem) Negatable(OperatingSystem) {
@@ -772,13 +765,13 @@ pub const Architecture = enum(u16) {
     pub const current: Architecture = switch (Environment.arch) {
         .arm64 => @enumFromInt(arm64),
         .x64 => @enumFromInt(x64),
-        else => @compileError("Specify architecture: " ++ Environment.arch),
+        .wasm => @compileError("Specify architecture: " ++ Environment.arch),
     };
 
     pub const current_name = switch (Environment.arch) {
         .arm64 => "arm64",
         .x64 => "x64",
-        else => @compileError("Unsupported architecture: " ++ @tagName(current)),
+        .wasm => @compileError("Unsupported architecture: " ++ @tagName(current)),
     };
 
     pub const NameMap = bun.ComptimeStringMap(u16, .{
@@ -929,11 +922,11 @@ pub const PackageManifest = struct {
     }
 
     pub fn byteLength(this: *const PackageManifest, scope: *const Registry.Scope) usize {
-        var counter = std.io.countingWriter(std.io.null_writer);
-        const writer = counter.writer();
+        var counter = std.Io.Writer.Discarding.init(&.{});
+        const writer = &counter.writer;
 
         Serializer.write(this, scope, @TypeOf(writer), writer) catch return 0;
-        return counter.bytes_written;
+        return counter.count;
     }
 
     pub const Serializer = struct {
@@ -1057,7 +1050,7 @@ pub const PackageManifest = struct {
             var stack_fallback = std.heap.stackFallback(64 * 1024, bun.default_allocator);
 
             const allocator = stack_fallback.get();
-            var buffer = try std.ArrayList(u8).initCapacity(allocator, this.byteLength(scope) + 64);
+            var buffer = try std.array_list.Managed(u8).initCapacity(allocator, this.byteLength(scope) + 64);
             defer buffer.deinit();
             const writer = &buffer.writer();
             try Serializer.write(this, scope, @TypeOf(writer), writer);
@@ -1241,9 +1234,9 @@ pub const PackageManifest = struct {
         fn manifestFileName(buf: []u8, file_id: u64, scope: *const Registry.Scope) ![:0]const u8 {
             const file_id_hex_fmt = bun.fmt.hexIntLower(file_id);
             return if (scope.url_hash == Registry.default_url_hash)
-                try std.fmt.bufPrintZ(buf, "{any}.npm", .{file_id_hex_fmt})
+                try std.fmt.bufPrintZ(buf, "{f}.npm", .{file_id_hex_fmt})
             else
-                try std.fmt.bufPrintZ(buf, "{any}-{any}.npm", .{ file_id_hex_fmt, bun.fmt.hexIntLower(scope.url_hash) });
+                try std.fmt.bufPrintZ(buf, "{f}-{f}.npm", .{ file_id_hex_fmt, bun.fmt.hexIntLower(scope.url_hash) });
         }
 
         pub fn save(this: *const PackageManifest, scope: *const Registry.Scope, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
@@ -1255,7 +1248,7 @@ pub const PackageManifest = struct {
             const file_id_hex_fmt = bun.fmt.hexIntLower(file_id);
             const hex_timestamp: usize = @intCast(@max(std.time.milliTimestamp(), 0));
             const hex_timestamp_fmt = bun.fmt.hexIntLower(hex_timestamp);
-            try dest_path_stream_writer.print("{any}.npm-{any}", .{ file_id_hex_fmt, hex_timestamp_fmt });
+            try dest_path_stream_writer.print("{f}.npm-{f}", .{ file_id_hex_fmt, hex_timestamp_fmt });
             try dest_path_stream_writer.writeByte(0);
             const tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
             const out_path = try manifestFileName(&out_path_buf, file_id, scope);
@@ -1366,7 +1359,7 @@ pub const PackageManifest = struct {
             const registry = registry_str.toUTF8(bun.default_allocator);
             defer registry.deinit();
 
-            const manifest_file = std.fs.openFileAbsolute(manifest_filename.slice(), .{}) catch |err| {
+            const manifest_file = std.fs.cwd().openFile(manifest_filename.slice(), .{}) catch |err| {
                 return global.throw("failed to open manifest file \"{s}\": {s}", .{ manifest_filename.slice(), @errorName(err) });
             };
             defer manifest_file.close();
@@ -1399,9 +1392,9 @@ pub const PackageManifest = struct {
 
             for (package_manifest.versions, 0..) |version, i| {
                 if (i == package_manifest.versions.len - 1)
-                    try writer.print("\"{}\"]}}", .{version.fmt(package_manifest.string_buf)})
+                    try writer.print("\"{f}\"]}}", .{version.fmt(package_manifest.string_buf)})
                 else
-                    try writer.print("\"{}\",", .{version.fmt(package_manifest.string_buf)});
+                    try writer.print("\"{f}\",", .{version.fmt(package_manifest.string_buf)});
             }
 
             var result = bun.String.borrowUTF8(buf.items);
@@ -1882,7 +1875,7 @@ pub const PackageManifest = struct {
         defer all_extern_strings_dedupe_map.deinit();
         var version_extern_strings_dedupe_map = ExternalStringMapDeduper.initContext(default_allocator, .{});
         defer version_extern_strings_dedupe_map.deinit();
-        var optional_peer_dep_names = std.ArrayList(u64).init(default_allocator);
+        var optional_peer_dep_names = std.array_list.Managed(u64).init(default_allocator);
         defer optional_peer_dep_names.deinit();
 
         var bundled_deps_set = bun.StringSet.init(allocator);

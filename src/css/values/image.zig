@@ -189,7 +189,7 @@ pub const Image = union(enum) {
     //     @panic(css.todo_stuff.depth);
     // }
 
-    // pub fn toCss(this: *const Image, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    // pub fn toCss(this: *const Image, dest: *css.Printer) css.PrintErr!void {
     //     _ = this; // autofix
     //     _ = dest; // autofix
     //     @panic(css.todo_stuff.depth);
@@ -239,8 +239,8 @@ pub const ImageSet = struct {
         } };
     }
 
-    pub fn toCss(this: *const ImageSet, comptime W: type, dest: *css.Printer(W)) PrintErr!void {
-        try this.vendor_prefix.toCss(W, dest);
+    pub fn toCss(this: *const ImageSet, dest: *css.Printer) PrintErr!void {
+        try this.vendor_prefix.toCss(dest);
         try dest.writeStr("image-set(");
         var first = true;
         for (this.options.items) |*option| {
@@ -249,7 +249,7 @@ pub const ImageSet = struct {
             } else {
                 try dest.delim(',', false);
             }
-            try option.toCss(W, dest, this.vendor_prefix != VendorPrefix{ .none = true });
+            try option.toCss(dest, this.vendor_prefix != VendorPrefix{ .none = true });
         }
         return dest.writeChar(')');
     }
@@ -335,8 +335,7 @@ pub const ImageSetOption = struct {
 
     pub fn toCss(
         this: *const ImageSetOption,
-        comptime W: type,
-        dest: *css.Printer(W),
+        dest: *css.Printer,
         is_prefixed: bool,
     ) PrintErr!void {
         if (this.image == .url and !is_prefixed) {
@@ -357,7 +356,7 @@ pub const ImageSetOption = struct {
                 css.serializer.serializeString(try dest.getImportRecordUrl(this.image.url.import_record_idx), dest) catch return dest.addFmtError();
             }
         } else {
-            try this.image.toCss(W, dest);
+            try this.image.toCss(dest);
         }
 
         // TODO: Throwing an error when `self.resolution = Resolution::Dppx(0.0)`
@@ -373,7 +372,7 @@ pub const ImageSetOption = struct {
             dest.targets = .{};
             break :targets targets;
         };
-        try this.resolution.toCss(W, dest);
+        try this.resolution.toCss(dest);
         dest.targets = targets;
 
         if (this.file_type) |file_type| {

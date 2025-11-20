@@ -46,7 +46,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         const State = enum { initializing, reading, failed };
 
         const HTTPClient = @This();
-        pub fn register(_: *jsc.JSGlobalObject, _: *anyopaque, ctx: *uws.SocketContext) callconv(.C) void {
+        pub fn register(_: *jsc.JSGlobalObject, _: *anyopaque, ctx: *uws.SocketContext) callconv(.c) void {
             Socket.configure(
                 ctx,
                 true,
@@ -84,7 +84,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             header_names: ?[*]const jsc.ZigString,
             header_values: ?[*]const jsc.ZigString,
             header_count: usize,
-        ) callconv(.C) ?*HTTPClient {
+        ) callconv(.c) ?*HTTPClient {
             const vm = global.bunVM();
 
             bun.assert(vm.event_loop_handle != null);
@@ -181,7 +181,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.clearInput();
             this.body.clearAndFree(bun.default_allocator);
         }
-        pub fn cancel(this: *HTTPClient) callconv(.C) void {
+        pub fn cancel(this: *HTTPClient) callconv(.c) void {
             this.clearData();
 
             // Either of the below two operations - closing the TCP socket or clearing the C++ reference could trigger a deref
@@ -556,7 +556,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             }
         }
 
-        pub fn memoryCost(this: *HTTPClient) callconv(.C) usize {
+        pub fn memoryCost(this: *HTTPClient) callconv(.c) usize {
             var cost: usize = @sizeOf(HTTPClient);
             cost += this.body.capacity;
             cost += this.to_send.len;
@@ -629,11 +629,11 @@ const NonUTF8Headers = struct {
     names: []const jsc.ZigString,
     values: []const jsc.ZigString,
 
-    pub fn format(self: NonUTF8Headers, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: NonUTF8Headers, writer: *std.Io.Writer) !void {
         const count = self.names.len;
         var i: usize = 0;
         while (i < count) : (i += 1) {
-            try std.fmt.format(writer, "{any}: {any}\r\n", .{ self.names[i], self.values[i] });
+            try writer.print("{f}: {f}\r\n", .{ self.names[i], self.values[i] });
         }
     }
 
@@ -728,7 +728,7 @@ fn buildRequestBody(
     const pico_headers = PicoHTTP.Headers{ .headers = headers_ };
 
     // Build extra headers string, skipping the ones we handle
-    var extra_headers_buf = std.ArrayList(u8).init(allocator);
+    var extra_headers_buf = std.array_list.Managed(u8).init(allocator);
     defer extra_headers_buf.deinit();
     const writer = extra_headers_buf.writer();
 
@@ -744,7 +744,7 @@ fn buildRequestBody(
         {
             continue;
         }
-        try std.fmt.format(writer, "{any}: {any}\r\n", .{ name, value });
+        try writer.print("{f}: {f}\r\n", .{ name, value });
     }
 
     // Build request with user overrides
@@ -752,12 +752,12 @@ fn buildRequestBody(
         return try std.fmt.allocPrint(
             allocator,
             "GET {s} HTTP/1.1\r\n" ++
-                "Host: {any}\r\n" ++
+                "Host: {f}\r\n" ++
                 "Connection: Upgrade\r\n" ++
                 "Upgrade: websocket\r\n" ++
                 "Sec-WebSocket-Version: 13\r\n" ++
                 "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n" ++
-                "{s}" ++
+                "{f}" ++
                 "{s}" ++
                 "\r\n",
             .{ pathname_.slice(), h, pico_headers, extra_headers_buf.items },
@@ -767,12 +767,12 @@ fn buildRequestBody(
     return try std.fmt.allocPrint(
         allocator,
         "GET {s} HTTP/1.1\r\n" ++
-            "Host: {any}\r\n" ++
+            "Host: {f}\r\n" ++
             "Connection: Upgrade\r\n" ++
             "Upgrade: websocket\r\n" ++
             "Sec-WebSocket-Version: 13\r\n" ++
             "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n" ++
-            "{s}" ++
+            "{f}" ++
             "{s}" ++
             "\r\n",
         .{ pathname_.slice(), host_fmt, pico_headers, extra_headers_buf.items },

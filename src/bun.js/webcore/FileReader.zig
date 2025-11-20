@@ -159,7 +159,11 @@ pub fn eventLoop(this: *const FileReader) jsc.EventLoopHandle {
 }
 
 pub fn loop(this: *const FileReader) *bun.Async.Loop {
-    return this.eventLoop().loop();
+    if (comptime bun.Environment.isWindows) {
+        return this.eventLoop().loop().uv_loop;
+    } else {
+        return this.eventLoop().loop();
+    }
 }
 
 pub fn setup(

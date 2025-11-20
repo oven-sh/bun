@@ -308,7 +308,7 @@ pub fn generateCodeForFileInChunkJS(
         switch (flags.wrap) {
             .cjs => {
                 // Only include the arguments that are actually used
-                var args = std.ArrayList(G.Arg).initCapacity(
+                var args = std.array_list.Managed(G.Arg).initCapacity(
                     temp_allocator,
                     if (ast.flags.uses_module_ref or ast.flags.uses_exports_ref) 2 else 0,
                 ) catch unreachable;

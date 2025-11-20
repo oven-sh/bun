@@ -3,6 +3,7 @@ const EventEmitter: typeof import("node:events").EventEmitter = require("node:ev
 const { Duplex, Stream } = require("node:stream");
 const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
 const { validateObject, validateLinkHeaderValue, validateBoolean, validateInteger } = require("internal/validators");
+const { ConnResetException } = require("internal/shared");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { throwOnInvalidTLSArray } = require("internal/tls");
@@ -27,7 +28,6 @@ const {
   setIsNextIncomingMessageHTTPS,
   callCloseCallback,
   emitCloseNT,
-  ConnResetException,
   NodeHTTPResponseAbortEvent,
   STATUS_CODES,
   isTlsSymbol,

@@ -74,7 +74,7 @@ pub fn initGlobal(env: ?*bun.DotEnv.Loader, cwd: ?[]const u8) *MiniEventLoop {
     return global;
 }
 
-const Queue = std.fifo.LinearFifo(*AnyTaskWithExtraContext, .Dynamic);
+const Queue = bun.LinearFifo(*AnyTaskWithExtraContext, .Dynamic);
 
 pub const Task = AnyTaskWithExtraContext;
 

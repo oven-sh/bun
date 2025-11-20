@@ -3,6 +3,7 @@
 exports[`pnpm-lock.yaml migration simple pnpm lockfile migration produces correct bun.lock: simple-pnpm-migration 1`] = `
 "{
   "lockfileVersion": 1,
+  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "simple-pnpm-test",
@@ -24,6 +25,7 @@ exports[`pnpm-lock.yaml migration simple pnpm lockfile migration produces correc
 exports[`pnpm-lock.yaml migration pnpm workspace lockfile migration: workspace-pnpm-migration 1`] = `
 "{
   "lockfileVersion": 1,
+  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "monorepo-root",
@@ -85,6 +87,7 @@ exports[`pnpm-lock.yaml migration pnpm workspace lockfile migration: workspace-p
 exports[`pnpm-lock.yaml migration pnpm with npm protocol aliases: npm-aliases-pnpm-migration 1`] = `
 "{
   "lockfileVersion": 1,
+  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "alias-test",

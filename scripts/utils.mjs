@@ -2494,7 +2494,7 @@ export function formatAnnotationToHtml(annotation, options = {}) {
  * @param {AnnotationOptions} [options]
  * @returns {AnnotationResult}
  */
-export function parseAnnotations(content, options = {}) {
+export function parseAnnotations(content) {
   /** @type {Annotation[]} */
   const annotations = [];
 

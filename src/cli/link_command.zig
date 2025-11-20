@@ -46,7 +46,7 @@ fn link(ctx: Command.Context) !void {
                 Global.crash();
             } else if (!strings.isNPMPackageName(name)) {
                 if (manager.options.log_level != .silent) {
-                    Output.prettyErrorln("<r><red>error:<r> invalid package.json name \"{s}\" <d>in \"{any}\"<r>", .{
+                    Output.prettyErrorln("<r><red>error:<r> invalid package.json name \"{s}\" <d>in \"{s}\"<r>", .{
                         name,
                         package_json_source.path.text,
                     });
@@ -108,7 +108,7 @@ fn link(ctx: Command.Context) !void {
                     bun.windows.libuv.UV_FS_SYMLINK_JUNCTION,
                 )) {
                     .err => |err| {
-                        Output.prettyErrorln("<r><red>error:<r> failed to create junction to node_modules in global dir due to error {}", .{err});
+                        Output.prettyErrorln("<r><red>error:<r> failed to create junction to node_modules in global dir due to error {f}", .{err});
                         Global.crash();
                     },
                     .result => {},
@@ -141,6 +141,8 @@ fn link(ctx: Command.Context) !void {
                 .bin = package.bin,
                 .node_modules_path = &node_modules_path,
                 .global_bin_path = manager.options.bin_path,
+                .target_node_modules_path = &node_modules_path,
+                .target_package_name = strings.StringOrTinyString.init(name),
 
                 // .destination_dir_subpath = destination_dir_subpath,
                 .package_name = strings.StringOrTinyString.init(name),

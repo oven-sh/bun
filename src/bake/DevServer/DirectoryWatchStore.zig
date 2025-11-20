@@ -94,7 +94,7 @@ fn insert(
     // TODO: watch the parent dir too.
     const dev = store.owner();
 
-    debug.log("DirectoryWatchStore.insert({}, {}, {})", .{
+    debug.log("DirectoryWatchStore.insert({f}, {f}, {f})", .{
         bun.fmt.quote(dir_name_to_watch),
         bun.fmt.quote(file_path),
         bun.fmt.quote(specifier),
@@ -159,7 +159,7 @@ fn insert(
     } else .{ bun.invalid_fd, false };
     errdefer if (Watcher.requires_file_descriptors) if (owned_fd) fd.close();
     if (Watcher.requires_file_descriptors)
-        debug.log("-> fd: {} ({s})", .{
+        debug.log("-> fd: {f} ({s})", .{
             fd,
             if (owned_fd) "from dir cache" else "owned fd",
         });
@@ -205,7 +205,7 @@ pub fn freeDependencyIndex(store: *DirectoryWatchStore, alloc: Allocator, index:
 pub fn freeEntry(store: *DirectoryWatchStore, alloc: Allocator, entry_index: usize) void {
     const entry = store.watches.values()[entry_index];
 
-    debug.log("DirectoryWatchStore.freeEntry({d}, {})", .{
+    debug.log("DirectoryWatchStore.freeEntry({d}, {f})", .{
         entry_index,
         entry.dir,
     });

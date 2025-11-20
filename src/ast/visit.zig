@@ -374,7 +374,7 @@ pub fn Visit(
                     st.kind = p.selectLocalKind(st.kind);
                 },
                 else => {
-                    p.panic("Unexpected stmt in visitForLoopInit: {any}", .{stmt});
+                    p.panic("Unexpected stmt in visitForLoopInit", .{});
                 },
             }
 
@@ -670,9 +670,9 @@ pub fn Visit(
 
                         if (to_add > 0) {
                             // to match typescript behavior, we also must prepend to the class body
-                            var stmts = std.ArrayList(Stmt).fromOwnedSlice(p.allocator, constructor.func.body.stmts);
+                            var stmts = std.array_list.Managed(Stmt).fromOwnedSlice(p.allocator, constructor.func.body.stmts);
                             stmts.ensureUnusedCapacity(to_add) catch unreachable;
-                            var class_body = std.ArrayList(G.Property).fromOwnedSlice(p.allocator, class.properties);
+                            var class_body = std.array_list.Managed(G.Property).fromOwnedSlice(p.allocator, class.properties);
                             class_body.ensureUnusedCapacity(to_add) catch unreachable;
                             var j: usize = 0;
 
@@ -1371,4 +1371,4 @@ const options = js_parser.options;
 const std = @import("std");
 const AutoHashMap = std.AutoHashMap;
 const List = std.ArrayListUnmanaged;
-const ListManaged = std.ArrayList;
+const ListManaged = std.array_list.Managed;

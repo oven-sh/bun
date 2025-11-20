@@ -324,9 +324,9 @@ pub const Route = struct {
                     if (server.config().isDevelopment()) {
                         switch (bun.Output.enable_ansi_colors_stderr) {
                             inline else => |enable_ansi_colors| {
-                                var writer = bun.Output.errorWriterBuffered();
-                                this.state.err.printWithEnableAnsiColors(&writer, enable_ansi_colors) catch {};
-                                writer.context.flush() catch {};
+                                const writer = bun.Output.errorWriterBuffered();
+                                this.state.err.printWithEnableAnsiColors(writer, enable_ansi_colors) catch {};
+                                writer.flush() catch {};
                             },
                         }
                     }
@@ -372,7 +372,7 @@ pub const Route = struct {
                         var hashbuf: [64]u8 = undefined;
                         const etag_str = std.fmt.bufPrint(
                             &hashbuf,
-                            "{}",
+                            "{f}",
                             .{bun.fmt.hexIntLower(output_file.hash)},
                         ) catch |err| switch (err) {
                             error.NoSpaceLeft => unreachable,

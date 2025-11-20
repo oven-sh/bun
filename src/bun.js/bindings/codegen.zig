@@ -1,5 +1,5 @@
-pub const CallbackGetterFn = fn (jsc.JSValue) callconv(.C) jsc.JSValue;
-pub const CallbackSetterFn = fn (jsc.JSValue, jsc.JSValue) callconv(.C) void;
+pub const CallbackGetterFn = fn (jsc.JSValue) callconv(.c) jsc.JSValue;
+pub const CallbackSetterFn = fn (jsc.JSValue, jsc.JSValue) callconv(.c) void;
 
 pub fn CallbackWrapper(comptime Getter: *const CallbackGetterFn, comptime Setter: *const CallbackSetterFn) type {
     return struct {

@@ -222,10 +222,10 @@ const LinuxImpl = struct {
             ts.nsec = @as(@TypeOf(ts.nsec), @intCast(timeout_ns % std.time.ns_per_s));
         }
 
-        const rc = linux.futex_wait(
-            @as(*const i32, @ptrCast(&ptr.raw)),
-            linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAIT,
-            @as(i32, @bitCast(expect)),
+        const rc = linux.futex_4arg(
+            @ptrCast(&ptr.raw),
+            .{ .cmd = .WAIT, .private = true },
+            expect,
             if (timeout != null) &ts else null,
         );
 
@@ -244,11 +244,7 @@ const LinuxImpl = struct {
     }
 
     fn wake(ptr: *const atomic.Value(u32), max_waiters: u32) void {
-        const rc = linux.futex_wake(
-            @as(*const i32, @ptrCast(&ptr.raw)),
-            linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAKE,
-            std.math.cast(i32, max_waiters) orelse std.math.maxInt(i32),
-        );
+        const rc = linux.futex_3arg(&ptr.raw, .{ .cmd = .WAKE, .private = true }, @bitCast(std.math.cast(i32, max_waiters) orelse std.math.maxInt(i32)));
 
         switch (linux.E.init(rc)) {
             .SUCCESS => {}, // successful wake up

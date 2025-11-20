@@ -15,17 +15,17 @@ pub const NamespaceRule = struct {
 
     const This = @This();
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
         try dest.writeStr("@namespace ");
         if (this.prefix) |*prefix| {
-            try css.css_values.ident.IdentFns.toCss(prefix, W, dest);
+            try css.css_values.ident.IdentFns.toCss(prefix, dest);
             try dest.writeChar(' ');
         }
 
-        try css.css_values.string.CSSStringFns.toCss(&this.url, W, dest);
+        try css.css_values.string.CSSStringFns.toCss(&this.url, dest);
         try dest.writeChar(';');
     }
 

@@ -1903,6 +1903,7 @@ test("matching workspace devDependency and npm peerDependency", async () => {
     .toMatchInlineSnapshot(`
     "{
       "lockfileVersion": 1,
+      "configVersion": 1,
       "workspaces": {
         "": {
           "name": "foo",

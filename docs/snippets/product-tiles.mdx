@@ -1,0 +1,94 @@
+export const ProductTiles = ({ categories, hideButtons = false }) => {
+  const [activeCategory, setActiveCategory] = useState(categories[0].id)
+  const [activeSubTab, setActiveSubTab] = useState(
+    categories[0].items[0]?.id ?? null
+  )
+
+const currentCategory = categories.find((cat) => cat.id === activeCategory)
+const currentSub = currentCategory?.items.find(
+(item) => item.id === activeSubTab
+)
+
+return (
+
+<div className="not-prose space-y-6">
+{!hideButtons && (
+<div className="flex flex-wrap gap-2">
+{categories.map((cat) => (
+<button
+key={cat.id}
+onClick={() => {
+setActiveCategory(cat.id)
+setActiveSubTab(cat.items[0]?.id ?? null)
+}}
+className={`px-4 py-2 text-sm rounded-full font-medium transition-colors ${activeCategory === cat.id
+              ? 'bg-[#0A0B0D] text-white dark:bg-white dark:text-[#0A0B0D] border-black'
+              : 'bg-gray-100 dark:bg-white/10 text-black dark:text-white'
+              }`} >
+{cat.label}
+</button>
+))}
+</div>
+)}
+
+      <div>
+        {currentCategory?.items?.length ? (
+          <div className="flex flex-col lg:flex-row gap-6 bg-gray-100 dark:bg-[#141414] rounded-2xl">
+            <div className="flex flex-col w-full lg:w-1/2 space-y-2 p-4">
+              {currentCategory.items.map((item) => (
+                <a
+                  key={item.id}
+                  href={item.href}
+                  onMouseOver={() => setActiveSubTab(item.id)}
+                  className={`flex items-start gap-1.5 text-left px-5 py-3 rounded-2xl transition-all ${activeSubTab === item.id
+                    ? 'bg-white dark:bg-white/5'
+                    : ''
+                    }`}
+                >
+                  <div className="text-xl mr-3 mt-1"><img src={item.icon} alt={item.title} className="w-8 h-8" /></div>
+                  <div className="flex-1">
+                    <h3 className="font-medium text-base text-black dark:text-white">
+                      {item.title}
+                    </h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">{item.desc}</p>
+                  </div>
+                  <div className={`flex items-center justify-center min-w-[24px] self-center ${activeSubTab === item.id ? 'opacity-100' : 'opacity-0'}`}>
+                    <div className="hidden dark:block">
+                      <Icon icon="chevron-right" size="14" color="#FFF" />
+                    </div>
+                    <div className="block dark:hidden">
+                      <Icon icon="chevron-right" size="14" color="#0A0B0D" />
+                    </div>
+                  </div>
+                </a>
+              ))}
+            </div>
+            <div className="group w-full h-fit lg:w-1/2 rounded-2xl flex items-center justify-center  overflow-hidden min-h-[320px] p-4">
+              {currentSub?.image ? (
+              <>
+                <img
+                  src={currentSub.image.light}
+                  alt={currentSub.title}
+                  className="block dark:hidden w-full h-full object-cover rounded-xl"
+                />
+                <img
+                  src={currentSub.image.dark}
+                  alt={currentSub.title}
+                  className="hidden dark:block w-full h-full object-cover rounded-xl"
+                />
+              </>
+              ) : (
+                <p className="text-gray-400 dark:text-gray-500 p-8">No preview available</p>
+              )}
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            No features available for this category.
+          </p>
+        )}
+      </div>
+    </div>
+
+)
+}

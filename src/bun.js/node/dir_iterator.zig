@@ -34,8 +34,8 @@ pub const Iterator = NewIterator(false);
 pub const IteratorW = NewIterator(true);
 
 pub fn NewIterator(comptime use_windows_ospath: bool) type {
-    return switch (builtin.os.tag) {
-        .macos, .ios, .freebsd, .netbsd, .dragonfly, .openbsd, .solaris => struct {
+    return switch (bun.Environment.os) {
+        .mac => struct {
             dir: FD,
             seek: i64,
             buf: [8192]u8 align(@alignOf(std.posix.system.dirent)),
@@ -233,14 +233,14 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
 
                         self.first = false;
                         if (io.Information == 0) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = 0", .{self.dir});
+                            bun.sys.syslog("NtQueryDirectoryFile({f}) = 0", .{self.dir});
                             return .{ .result = null };
                         }
                         self.index = 0;
                         self.end_index = io.Information;
                         // If the handle is not a directory, we'll get STATUS_INVALID_PARAMETER.
                         if (rc == .INVALID_PARAMETER) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ self.dir, @tagName(rc) });
+                            bun.sys.syslog("NtQueryDirectoryFile({f}) = {s}", .{ self.dir, @tagName(rc) });
                             return .{
                                 .err = .{
                                     .errno = @intFromEnum(bun.sys.SystemErrno.ENOTDIR),
@@ -250,13 +250,13 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         }
 
                         if (rc == .NO_MORE_FILES) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ self.dir, @tagName(rc) });
+                            bun.sys.syslog("NtQueryDirectoryFile({f}) = {s}", .{ self.dir, @tagName(rc) });
                             self.end_index = self.index;
                             return .{ .result = null };
                         }
 
                         if (rc != .SUCCESS) {
-                            bun.sys.syslog("NtQueryDirectoryFile({}) = {s}", .{ self.dir, @tagName(rc) });
+                            bun.sys.syslog("NtQueryDirectoryFile({f}) = {s}", .{ self.dir, @tagName(rc) });
 
                             if ((bun.windows.Win32Error.fromNTStatus(rc).toSystemErrno())) |errno| {
                                 return .{
@@ -275,7 +275,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                             };
                         }
 
-                        bun.sys.syslog("NtQueryDirectoryFile({}) = {d}", .{ self.dir, self.end_index });
+                        bun.sys.syslog("NtQueryDirectoryFile({f}) = {d}", .{ self.dir, self.end_index });
                     }
 
                     const dir_info: FILE_DIRECTORY_INFORMATION_PTR = @ptrCast(@alignCast(&self.buf[self.index]));
@@ -329,7 +329,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                 }
             }
         },
-        .wasi => struct {
+        .wasm => struct {
             dir: FD,
             buf: [8192]u8, // TODO align(@alignOf(os.wasi.dirent_t)),
             cookie: u64,
@@ -393,7 +393,6 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                 }
             }
         },
-        else => @compileError("unimplemented"),
     };
 }
 
@@ -414,14 +413,8 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
 
         pub fn init(dir: FD) Self {
             return Self{
-                .iter = switch (builtin.os.tag) {
-                    .macos,
-                    .ios,
-                    .freebsd,
-                    .netbsd,
-                    .dragonfly,
-                    .openbsd,
-                    .solaris,
+                .iter = switch (bun.Environment.os) {
+                    .mac,
                     => IteratorType{
                         .dir = dir,
                         .seek = 0,
@@ -429,7 +422,7 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
                         .end_index = 0,
                         .buf = undefined,
                     },
-                    .linux, .haiku => IteratorType{
+                    .linux => IteratorType{
                         .dir = dir,
                         .index = 0,
                         .end_index = 0,
@@ -443,14 +436,13 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
                         .buf = undefined,
                         .name_data = undefined,
                     },
-                    .wasi => IteratorType{
+                    .wasm => IteratorType{
                         .dir = dir,
                         .cookie = posix.wasi.DIRCOOKIE_START,
                         .index = 0,
                         .end_index = 0,
                         .buf = undefined,
                     },
-                    else => @compileError("unimplemented"),
                 },
             };
         }

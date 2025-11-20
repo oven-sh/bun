@@ -95,7 +95,7 @@ pub const PathWatcher = struct {
     const Callback = *const fn (ctx: ?*anyopaque, event: Event, is_file: bool) void;
     const UpdateEndCallback = *const fn (ctx: ?*anyopaque) void;
 
-    fn uvEventCallback(event: *uv.uv_fs_event_t, filename: ?[*:0]const u8, events: c_int, status: uv.ReturnCode) callconv(.C) void {
+    fn uvEventCallback(event: *uv.uv_fs_event_t, filename: ?[*:0]const u8, events: c_int, status: uv.ReturnCode) callconv(.c) void {
         if (event.data == null) {
             Output.debugWarn("uvEventCallback called with null data", .{});
             return;
@@ -137,7 +137,7 @@ pub const PathWatcher = struct {
         var debug_count: if (bun.Environment.isDebug) usize else u0 = 0;
         for (this.handlers.values(), 0..) |*event, i| {
             if (event.emit(hash, timestamp, event_type)) {
-                const ctx: *FSWatcher = @alignCast(@ptrCast(this.handlers.keys()[i]));
+                const ctx: *FSWatcher = @ptrCast(@alignCast(this.handlers.keys()[i]));
                 onPathUpdateFn(ctx, event_type.toEvent(switch (ctx.encoding) {
                     .utf8 => .{ .string = bun.String.cloneUTF8(path) },
                     else => .{ .bytes_to_free = bun.handleOom(bun.default_allocator.dupeZ(u8, path)) },
@@ -215,7 +215,7 @@ pub const PathWatcher = struct {
         return .{ .result = this };
     }
 
-    fn uvClosedCallback(handler: *anyopaque) callconv(.C) void {
+    fn uvClosedCallback(handler: *anyopaque) callconv(.c) void {
         log("onClose", .{});
         const event = bun.cast(*uv.uv_fs_event_t, handler);
         const this = bun.cast(*PathWatcher, event.data);

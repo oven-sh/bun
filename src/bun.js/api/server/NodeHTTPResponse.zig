@@ -193,6 +193,9 @@ pub fn upgrade(this: *NodeHTTPResponse, data_value: JSValue, sec_websocket_proto
     if (this.raw_response) |raw_response| {
         this.raw_response = null;
         this.flags.upgraded = true;
+        // Unref the poll_ref since the socket is now upgraded to WebSocket
+        // and will have its own lifecycle management
+        this.poll_ref.unref(this.server.globalThis().bunVM());
         _ = raw_response.upgrade(*ServerWebSocket, ws, websocket_key, sec_websocket_protocol_value, sec_websocket_extensions_value, upgrade_ctx);
     }
     return true;
@@ -275,7 +278,7 @@ pub fn create(
     response_ptr: *anyopaque,
     upgrade_ctx: ?*anyopaque,
     node_response_ptr: *?*NodeHTTPResponse,
-) callconv(.C) jsc.JSValue {
+) callconv(.c) jsc.JSValue {
     const vm = globalObject.bunVM();
     const method = HTTP.Method.which(request.method()) orelse HTTP.Method.OPTIONS;
     // GET in node.js can have a body

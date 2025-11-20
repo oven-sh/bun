@@ -26,7 +26,7 @@ function expectInstanceOf<T>(value: unknown, constructor: new (...args: any[]) =
   expect(value).toBeInstanceOf(constructor);
 }
 
-function test<T = undefined, R extends string = never>(
+function test<T = undefined, R extends string = string>(
   name: string,
   options: Bun.Serve.Options<T, R>,
   {
@@ -814,5 +814,46 @@ test("multiple properties combined", {
   },
   error(error) {
     return new Response(`Combined server error: ${error.message}`, { status: 500 });
+  },
+});
+
+test("#24819 regression", {
+  development: !process.env.production,
+  routes: {
+    "/health": {
+      GET: new Response("OK"),
+      POST: req => {
+        expectType(req).is<Bun.BunRequest<"/health">>();
+        return Response.json("Sup");
+      },
+    },
+  },
+});
+
+// @ts-expect-error
+test("#24819 regression with no response requires websocket", {
+  development: !process.env.production,
+  routes: {
+    "/health": {
+      GET: new Response("OK"),
+      POST: req => {
+        expectType(req).is<Bun.BunRequest<"/health">>();
+      },
+    },
+  },
+});
+
+test("#24819 regression with websocket is happy", {
+  websocket: {
+    message: console.log,
+  },
+  development: !process.env.production,
+  routes: {
+    "/health": {
+      GET: new Response("OK"),
+      POST: req => {
+        expectType(req).is<Bun.BunRequest<"/health">>();
+      },
+    },
   },
 });

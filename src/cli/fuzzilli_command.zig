@@ -21,7 +21,7 @@ pub const FuzzilliCommand = if (bun.Environment.enable_fuzzilli) struct {
         };
 
         // Always embed the REPRL script (it's small and not worth the runtime overhead)
-        const reprl_script = @embedFile("../js/internal/fuzzilli-reprl.ts");
+        const reprl_script = @embedFile("../js/fuzz/fuzzilli-reprl.ts");
 
         // Create temp file for the script
         var temp_dir = std.fs.cwd().openDir("/tmp", .{}) catch {

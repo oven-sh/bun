@@ -627,7 +627,10 @@ pub const Command = struct {
             RootCommandMatcher.case("prune") => .ReservedCommand,
             RootCommandMatcher.case("list") => .PackageManagerCommand,
             RootCommandMatcher.case("why") => .WhyCommand,
-            RootCommandMatcher.case("fuzzilli") => .FuzzilliCommand,
+            RootCommandMatcher.case("fuzzilli") => if (bun.Environment.enable_fuzzilli)
+                .FuzzilliCommand
+            else
+                .AutoCommand,
 
             RootCommandMatcher.case("-e") => .AutoCommand,
 
@@ -938,9 +941,13 @@ pub const Command = struct {
                 } else Tag.printHelp(.ExecCommand, true);
             },
             .FuzzilliCommand => {
-                const ctx = try Command.init(allocator, log, .FuzzilliCommand);
-                try FuzzilliCommand.exec(ctx);
-                return;
+                if (bun.Environment.enable_fuzzilli) {
+                    const ctx = try Command.init(allocator, log, .FuzzilliCommand);
+                    try FuzzilliCommand.exec(ctx);
+                    return;
+                } else {
+                    return error.UnrecognizedCommand;
+                }
             },
         }
     }

@@ -10,7 +10,7 @@ extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int
 
 const Run = bun.bun_js.Run;
 
-pub const FuzzilliCommand = struct {
+pub const FuzzilliCommand = if (bun.Environment.enable_fuzzilli) struct {
     pub fn exec(ctx: Command.Context) !void {
         @branchHint(.cold);
 
@@ -63,4 +63,4 @@ pub const FuzzilliCommand = struct {
         const stat = try std_posix.fstat(fd);
         _ = stat;
     }
-};
+} else {};

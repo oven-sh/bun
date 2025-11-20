@@ -442,6 +442,8 @@ static JSValue constructBunPeekObject(VM& vm, JSObject* bunObject)
     return peekFunction;
 }
 
+#if FUZZILLI_ENABLED
+
 extern "C" void Bun__REPRL__resetCoverage();
 
 JSC_DEFINE_HOST_FUNCTION(jsResetCoverage, (JSGlobalObject* globalObject, JSC::CallFrame*))
@@ -450,12 +452,15 @@ JSC_DEFINE_HOST_FUNCTION(jsResetCoverage, (JSGlobalObject* globalObject, JSC::Ca
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+
 static JSValue constructResetCoverage(VM& vm, JSObject* bunObject)
 {
     JSGlobalObject* globalObject = bunObject->globalObject();
     JSFunction* resetCoverageFn = JSFunction::create(vm, globalObject, 0, "resetCoverage"_s, jsResetCoverage, ImplementationVisibility::Public, NoIntrinsic);
     return resetCoverageFn;
 }
+
+#endif
 
 extern "C" uint64_t Bun__readOriginTimer(void*);
 extern "C" double Bun__readOriginTimerStart(void*);
@@ -781,7 +786,9 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     password                                       constructPasswordObject                                             DontDelete|PropertyCallback
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1
     peek                                           constructBunPeekObject                                              DontDelete|PropertyCallback
+#if FUZZILLI_ENABLED
     resetCoverage                                  constructResetCoverage                                              DontDelete|PropertyCallback
+#endif
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
     randomUUIDv7                                   Bun__randomUUIDv7                                                   DontDelete|Function 2
     randomUUIDv5                                   Bun__randomUUIDv5                                                   DontDelete|Function 3

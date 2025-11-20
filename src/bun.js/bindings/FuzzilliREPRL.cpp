@@ -1,3 +1,4 @@
+#ifdef FUZZILLI_ENABLED
 #include "root.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/CallFrame.h"
@@ -293,3 +294,4 @@ extern "C" void Bun__REPRL__resetCoverage() {
 #endif // ASAN
 
 } // extern "C"
+#endif // FUZZILLI_ENABLED

@@ -611,6 +611,12 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         loop_.internal_loop_data.jsc_vm = null;
     }
 
+    if (vm_to_deinit) |vm| {
+        // this deinit needs to happen before `Loop.shutdown`
+        // in order to not call uv_close on the gc timer twice.
+        vm.gc_controller.deinit();
+    }
+
     if (comptime Environment.isWindows) {
         bun.windows.libuv.Loop.shutdown();
     }
@@ -618,7 +624,6 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
     this.deinit();
 
     if (vm_to_deinit) |vm| {
-        vm.gc_controller.deinit();
         vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
     }
     bun.deleteAllPoolsForThreadExit();

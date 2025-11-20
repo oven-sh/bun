@@ -669,7 +669,6 @@ pub const Loop = extern struct {
 
         if (uv_loop_close(loop).errEnum()) |err| {
             if (err == .BUSY) {
-                uv_stop(loop);
                 uv_walk(loop, &closeWalkCb, null);
                 _ = uv_run(loop, .default);
                 bun.debugAssert(uv_loop_close(loop) == .zero);

@@ -192,6 +192,15 @@
 #include "JSHTTPParser.h"
 #include <exception>
 #include <mutex>
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <string>
+#include <wtf/NeverDestroyed.h>
+#if OS(DARWIN)
+#include <CoreFoundation/CoreFoundation.h>
+#include <wtf/RetainPtr.h>
+#endif
 #include "JSBunRequest.h"
 #include "ServerRouteList.h"
 
@@ -203,7 +212,9 @@
 #include "NodeFSStatFSBinding.h"
 #include "NodeDirent.h"
 
-#if !OS(WINDOWS)
+#if OS(WINDOWS)
+#include <windows.h>
+#else
 #include <dlfcn.h>
 #endif
 
@@ -215,6 +226,184 @@
 #endif
 
 using namespace Bun;
+
+namespace {
+
+static inline bool isAsciiAlphaString(const std::string& segment)
+{
+    for (char ch : segment) {
+        if (!std::isalpha(static_cast<unsigned char>(ch)))
+            return false;
+    }
+    return true;
+}
+
+static inline void toLowerInPlace(std::string& segment)
+{
+    for (char& ch : segment)
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+}
+
+static inline void toUpperInPlace(std::string& segment)
+{
+    for (char& ch : segment)
+        ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+}
+
+static std::string normalizeLocaleTag(std::string locale)
+{
+    if (locale.empty())
+        return {};
+
+    size_t start = locale.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos)
+        return {};
+    size_t end = locale.find_last_not_of(" \t\r\n");
+    locale = locale.substr(start, end - start + 1);
+
+    size_t dotPos = locale.find('.');
+    if (dotPos != std::string::npos)
+        locale.resize(dotPos);
+
+    size_t atPos = locale.find('@');
+    if (atPos != std::string::npos)
+        locale.resize(atPos);
+
+    if (locale.empty())
+        return {};
+
+    std::string result;
+    result.reserve(locale.size());
+
+    unsigned segmentIndex = 0;
+    size_t pos = 0;
+    while (pos < locale.size()) {
+        size_t next = locale.find_first_of("-_", pos);
+        size_t len = next == std::string::npos ? locale.size() - pos : next - pos;
+        if (len) {
+            std::string segment = locale.substr(pos, len);
+            if (!segment.empty()) {
+                if (!result.empty())
+                    result.push_back('-');
+                if (segmentIndex == 0) {
+                    toLowerInPlace(segment);
+                } else if ((segment.length() == 2 || segment.length() == 3) && isAsciiAlphaString(segment)) {
+                    toUpperInPlace(segment);
+                } else if (segment.length() == 4 && isAsciiAlphaString(segment)) {
+                    segment[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(segment[0])));
+                    for (size_t i = 1; i < segment.length(); ++i)
+                        segment[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(segment[i])));
+                } else {
+                    toLowerInPlace(segment);
+                }
+                result += segment;
+                ++segmentIndex;
+            }
+        } else
+            ++segmentIndex;
+
+        if (next == std::string::npos)
+            break;
+        pos = next + 1;
+    }
+
+    if (result == "c" || result == "posix")
+        return {};
+
+    return result;
+}
+
+static String normalizedLocaleFromString(std::string locale)
+{
+    auto normalized = normalizeLocaleTag(WTFMove(locale));
+    if (normalized.empty())
+        return { };
+    return String::fromUTF8(normalized.data(), normalized.length());
+}
+
+static String normalizedLocaleFromCString(const char* locale)
+{
+    if (!locale || !locale[0])
+        return { };
+    return normalizedLocaleFromString(std::string(locale));
+}
+
+static String normalizedLocaleFromString(const String& locale)
+{
+    if (locale.isEmpty())
+        return { };
+    auto utf8 = locale.utf8();
+    if (utf8.isNull() || !utf8.length())
+        return { };
+    return normalizedLocaleFromString(std::string(utf8.data(), utf8.length()));
+}
+
+static String localeFromEnvironment()
+{
+    static constexpr const char* keys[] = { "LC_ALL", "LC_MESSAGES", "LANG" };
+    for (auto* key : keys) {
+        if (const char* value = getenv(key)) {
+            auto normalized = normalizedLocaleFromCString(value);
+            if (!normalized.isEmpty())
+                return normalized;
+        }
+    }
+    return { };
+}
+
+#if OS(WINDOWS)
+static String localeFromWindows()
+{
+    WCHAR buffer[LOCALE_NAME_MAX_LENGTH];
+    int length = GetUserDefaultLocaleName(buffer, LOCALE_NAME_MAX_LENGTH);
+    if (!length)
+        return { };
+    return normalizedLocaleFromString(String(buffer, length - 1));
+}
+#endif
+
+#if OS(DARWIN)
+static String localeFromDarwin()
+{
+    auto locale = adoptCF(CFLocaleCopyCurrent());
+    if (!locale)
+        return { };
+    CFStringRef identifier = CFLocaleGetIdentifier(locale.get());
+    if (!identifier)
+        return { };
+    return normalizedLocaleFromString(String(identifier));
+}
+#endif
+
+static String computeDefaultLocale()
+{
+    auto envLocale = localeFromEnvironment();
+    if (!envLocale.isEmpty())
+        return envLocale;
+#if OS(WINDOWS)
+    auto winLocale = localeFromWindows();
+    if (!winLocale.isEmpty())
+        return winLocale;
+#endif
+#if OS(DARWIN)
+    auto darwinLocale = localeFromDarwin();
+    if (!darwinLocale.isEmpty())
+        return darwinLocale;
+#endif
+    return "en-US"_s;
+}
+
+} // anonymous namespace
+
+namespace Bun {
+
+String defaultLanguage(JSGlobalObject*)
+{
+    static NeverDestroyed<String> locale(computeDefaultLocale());
+    return locale;
+}
+
+} // namespace Bun
 
 BUN_DECLARE_HOST_FUNCTION(Bun__NodeUtil__jsParseArgs);
 BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2__getUnpackedSettings);
@@ -736,7 +925,7 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
         &currentScriptExecutionOwner,
         &scriptExecutionStatus,
         &unsafeEvalNoop, // reportViolationForUnsafeEval
-        nullptr, // defaultLanguage
+        &Bun::defaultLanguage,
         &compileStreaming,
         &instantiateStreaming,
         &Zig::deriveShadowRealmGlobalObject,
@@ -766,7 +955,7 @@ const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
         &currentScriptExecutionOwner,
         &scriptExecutionStatus,
         &unsafeEvalNoop, // reportViolationForUnsafeEval
-        nullptr, // defaultLanguage
+        &Bun::defaultLanguage,
         &compileStreaming,
         &instantiateStreaming,
         &Zig::deriveShadowRealmGlobalObject,

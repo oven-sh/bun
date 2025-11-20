@@ -64,6 +64,10 @@
 #include "JavaScriptCore/GetterSetter.h"
 
 namespace Bun {
+WTF::String defaultLanguage(JSC::JSGlobalObject*);
+}
+
+namespace Bun {
 using namespace WebCore;
 
 static JSInternalPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, JSC::JSValue parameters, const JSC::SourceOrigin& sourceOrigin);
@@ -756,7 +760,7 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         &currentScriptExecutionOwner,
         &scriptExecutionStatus,
         &unsafeEvalNoop, // reportViolationForUnsafeEval
-        nullptr, // defaultLanguage
+        &defaultLanguage,
         nullptr, // compileStreaming
         nullptr, // instantiateStreaming
         nullptr,

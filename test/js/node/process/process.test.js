@@ -142,8 +142,9 @@ it("process.release", () => {
   const platform = process.platform == "win32" ? "windows" : process.platform;
   const arch = { arm64: "aarch64", x64: "x64" }[process.arch] || process.arch;
   const abi = familySync() === "musl" ? "-musl" : "";
-  const nonbaseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}${abi}.zip`;
-  const baseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}${abi}-baseline.zip`;
+  const asan = basename(process.argv0) === "bun-asan" ? "-asan" : ""; // TODO: use process.config.variables.asan
+  const nonbaseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}${abi}${asan}.zip`;
+  const baseline = `https://github.com/oven-sh/bun/releases/download/bun-v${process.versions.bun}/bun-${platform}-${arch}${abi}-baseline${asan}.zip`;
 
   expect(process.release.sourceUrl).toBeOneOf([nonbaseline, baseline]);
 });

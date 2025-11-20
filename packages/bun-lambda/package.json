@@ -9,11 +9,14 @@
     "prettier": "^2.8.2"
   },
   "dependencies": {
-    "aws4fetch": "^1.0.17"
+    "aws4fetch": "^1.0.17",
   },
   "scripts": {
     "build-layer": "bun scripts/build-layer.ts",
     "publish-layer": "bun scripts/publish-layer.ts",
     "format": "prettier --write ."
+  },
+  "overrides": {
+    "braces": "^3.0.3"
   }
 }

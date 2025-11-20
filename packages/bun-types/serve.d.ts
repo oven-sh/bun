@@ -486,13 +486,15 @@ declare module "bun" {
   }
 
   namespace Serve {
-    type ExtractRouteParams<T> = T extends `${string}:${infer Param}/${infer Rest}`
-      ? { [K in Param]: string } & ExtractRouteParams<Rest>
-      : T extends `${string}:${infer Param}`
-        ? { [K in Param]: string }
-        : T extends `${string}*`
-          ? {}
-          : {};
+    type ExtractRouteParams<T> = string extends T
+      ? Record<string, string>
+      : T extends `${string}:${infer Param}/${infer Rest}`
+        ? { [K in Param]: string } & ExtractRouteParams<Rest>
+        : T extends `${string}:${infer Param}`
+          ? { [K in Param]: string }
+          : T extends `${string}*`
+            ? {}
+            : {};
 
     /**
      * Development configuration for {@link Bun.serve}
@@ -788,7 +790,7 @@ declare module "bun" {
      * } satisfies Bun.Serve.Options<{ name: string }>;
      * ```
      */
-    type Options<WebSocketData, R extends string = never> = Bun.__internal.XOR<
+    type Options<WebSocketData, R extends string = string> = Bun.__internal.XOR<
       HostnamePortServeOptions<WebSocketData>,
       UnixServeOptions<WebSocketData>
     > &

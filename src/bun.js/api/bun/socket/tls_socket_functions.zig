@@ -259,7 +259,7 @@ pub fn getSharedSigalgs(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.
 pub fn getCipher(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
     const ssl_ptr = this.socket.ssl() orelse return .js_undefined;
     const cipher = BoringSSL.SSL_get_current_cipher(ssl_ptr);
-    var result = JSValue.createEmptyObject(globalObject, 3);
+    var result = JSValue.createEmptyObject(globalObject, 0);
 
     if (cipher == null) {
         result.put(globalObject, ZigString.static("name"), JSValue.jsNull());

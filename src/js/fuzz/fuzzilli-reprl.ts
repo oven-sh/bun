@@ -321,6 +321,3 @@ while (true) {
 
   resetCoverage();
 }
-
-// Export to satisfy module bundler
-export default {};

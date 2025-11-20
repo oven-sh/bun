@@ -260,7 +260,7 @@ extern "C" unsigned getJSCBytecodeCacheVersion()
 
 // Declare fuzzilli function registration from FuzzilliREPRL.cpp
 #ifdef FUZZILLI_ENABLED
-extern "C" void Bun__REPRL__registerFuzzilliFunction(Zig::GlobalObject*);
+extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
 #endif
 
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode)
@@ -509,7 +509,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 #ifdef FUZZILLI_ENABLED
     // Register fuzzilli() function if in fuzzilli mode
     if (std::getenv("BUN_FUZZILLI_MODE")) {
-        Bun__REPRL__registerFuzzilliFunction(static_cast<Zig::GlobalObject*>(globalObject));
+        Bun__REPRL__registerFuzzilliFunctions(static_cast<Zig::GlobalObject*>(globalObject));
     }
 #endif
 

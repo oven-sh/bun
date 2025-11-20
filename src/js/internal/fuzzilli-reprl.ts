@@ -319,7 +319,7 @@ while (true) {
   status_bytes.writeUInt32LE(status, 0);
   fs.writeSync(REPRL_CWFD, status_bytes);
 
-  Bun.resetCoverage();
+  resetCoverage();
 }
 
 // Export to satisfy module bundler

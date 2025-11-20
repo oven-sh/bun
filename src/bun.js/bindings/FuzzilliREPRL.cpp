@@ -163,29 +163,6 @@ static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionFuzzilli(JSC::JSGlob
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-// Register the fuzzilli() function on a Bun global object
-void Bun__REPRL__registerFuzzilliFunction(Zig::GlobalObject* globalObject)
-{
-    JSC::VM& vm = globalObject->vm();
-
-    // Install signal handlers to ensure output is flushed before crashes
-    // This is important for ASAN output to be captured
-    signal(SIGABRT, fuzzilliSignalHandler);
-    signal(SIGSEGV, fuzzilliSignalHandler);
-    signal(SIGILL, fuzzilliSignalHandler);
-    signal(SIGFPE, fuzzilliSignalHandler);
-
-    globalObject->putDirectNativeFunction(
-        vm,
-        globalObject,
-        JSC::Identifier::fromString(vm, "fuzzilli"_s),
-        2, // max 2 arguments
-        functionFuzzilli,
-        JSC::ImplementationVisibility::Public,
-        JSC::NoIntrinsic,
-        JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
-}
-
 // ============================================================================
 // Coverage instrumentation for Fuzzilli
 // Based on workerd implementation
@@ -277,9 +254,43 @@ extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t* guard)
 
 // Function to reset coverage for next REPRL iteration
 // This should be called after each script execution
-extern "C" void Bun__REPRL__resetCoverage()
+JSC_DEFINE_HOST_FUNCTION(jsResetCoverage, (JSC::JSGlobalObject* globalObject, JSC::CallFrame*))
 {
     __sanitizer_cov_reset_edgeguards();
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+// Register the fuzzilli() function on a Bun global object
+void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject* globalObject)
+{
+    JSC::VM& vm = globalObject->vm();
+
+    // Install signal handlers to ensure output is flushed before crashes
+    // This is important for ASAN output to be captured
+    signal(SIGABRT, fuzzilliSignalHandler);
+    signal(SIGSEGV, fuzzilliSignalHandler);
+    signal(SIGILL, fuzzilliSignalHandler);
+    signal(SIGFPE, fuzzilliSignalHandler);
+
+    globalObject->putDirectNativeFunction(
+        vm,
+        globalObject,
+        JSC::Identifier::fromString(vm, "fuzzilli"_s),
+        2, // max 2 arguments
+        functionFuzzilli,
+        JSC::ImplementationVisibility::Public,
+        JSC::NoIntrinsic,
+        JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+
+    globalObject->putDirectNativeFunction(
+        vm,
+        globalObject,
+        JSC::Identifier::fromString(vm, "resetCoverage"_s),
+        0,
+        jsResetCoverage,
+        JSC::ImplementationVisibility::Public,
+        JSC::NoIntrinsic,
+        JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
 #else
@@ -296,7 +307,6 @@ extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t* guard)
     (void)guard;
 }
 
-extern "C" void Bun__REPRL__resetCoverage()
 {
 }
 

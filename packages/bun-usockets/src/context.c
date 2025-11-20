@@ -811,7 +811,7 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
 
     struct us_connecting_socket_t *c = s->connect_state;
     struct us_socket_t *new_s = s;
-    if (ext_size != -1 && old_ext_size < ext_size) {
+    if (ext_size != -1) {
         struct us_poll_t *pool_ref = &s->p;
         new_s = (struct us_socket_t *) us_poll_resize(pool_ref, loop, sizeof(struct us_socket_t) + ext_size, sizeof(struct us_socket_t) + old_ext_size);
         // previous socket is no longer valid, so we need to mark it as closed

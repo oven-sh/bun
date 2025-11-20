@@ -36,7 +36,7 @@ for (const file of sourceDocFiles) {
       "$1(/docs/$3$4)",
     )
     // Convert non-copied content to absolute URLs (images, blog, etc.)
-    .replace(/(!?\[([^\]]*)\])\(\/(images|blog)(\/[^)]*)\)/g, "$1(https://bun.com/$3$4)")
+    .replace(/(!?\[([^\]]*)\])\(\/(images|blog)(\/[^)]*)?\)/g, "$1(https://bun.com/$3$4)")
     .replace(/https:\/\/bun\.com\/docs\/guides\//g, "https://bun.com/guides/");
 
   await Bun.write(join(docsDir, file), updatedContent);

@@ -45,13 +45,10 @@ describe.concurrent("bun prune", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    // Assert presence of usage/synopsis line
     expect(stdout).toContain("Usage");
     expect(stdout).toContain("bun prune");
     expect(stdout).toContain("[flags]");
-    // Assert presence of summary/description
     expect(stdout).toContain("Remove packages");
-    // Assert presence of key flags
     expect(stdout).toContain("--production");
     expect(stdout).toContain("--dry-run");
   });
@@ -67,7 +64,6 @@ describe.concurrent("bun prune", () => {
       }),
     });
 
-    // First install dependencies
     await using installProc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
@@ -177,7 +173,6 @@ describe.concurrent("bun prune", () => {
       }),
     });
 
-    // Install all dependencies
     await using installProc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
@@ -229,7 +224,6 @@ describe.concurrent("bun prune", () => {
       }),
     });
 
-    // First install dependencies
     await using installProc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
@@ -282,7 +276,6 @@ describe.concurrent("bun prune", () => {
       }),
     });
 
-    // First install dependencies
     await using installProc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
@@ -361,7 +354,6 @@ describe.concurrent("bun prune", () => {
       }),
     });
 
-    // Install all dependencies
     await using installProc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
@@ -428,7 +420,6 @@ linkWorkspacePackages = true
 `,
     });
 
-    // Install all dependencies
     await using installProc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
@@ -480,7 +471,6 @@ linkWorkspacePackages = true
       }),
     });
 
-    // Install dependencies
     await using installProc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
@@ -526,7 +516,6 @@ linkWorkspacePackages = true
       }),
     });
 
-    // Install dependencies
     await using installProc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
@@ -579,7 +568,6 @@ linkWorkspacePackages = true
       }),
     });
 
-    // Install dependencies
     await using installProc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
@@ -631,7 +619,6 @@ linkWorkspacePackages = true
       }),
     });
 
-    // Install dependencies
     await using installProc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
@@ -683,7 +670,6 @@ linkWorkspacePackages = true
       }),
     });
 
-    // Install dependencies
     await using installProc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
@@ -843,7 +829,6 @@ linker = "isolated"
     expect(lodashExists).toBe(false);
   });
 
-  // TODO(bun-39): Recursive traversal implemented but not working - debugging needed
   it("should handle isolated linker mode with nested node_modules", async () => {
     // Set up dummy registry handler for is-number package
     const urls: string[] = [];
@@ -929,7 +914,6 @@ linker = "isolated"
       }),
     });
 
-    // Install dependencies
     await using installProc = Bun.spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),

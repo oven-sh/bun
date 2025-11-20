@@ -1,0 +1,4 @@
+exclude:
+  paths:
+    - test
+    - scripts

@@ -1,14 +1,4 @@
-const std = @import("std");
-const bun = @import("bun");
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const std_posix = std.posix;
-const Command = bun.cli.Command;
-
 extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
-
-const Run = bun.bun_js.Run;
 
 pub const FuzzilliCommand = if (bun.Environment.enable_fuzzilli) struct {
     pub fn exec(ctx: Command.Context) !void {
@@ -64,3 +54,13 @@ pub const FuzzilliCommand = if (bun.Environment.enable_fuzzilli) struct {
         _ = stat;
     }
 } else {};
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const Command = bun.cli.Command;
+const Run = bun.bun_js.Run;
+
+const std = @import("std");
+const std_posix = std.posix;

@@ -23,7 +23,8 @@
 extern "C" {
 
 // Signal handler to ensure output is flushed before crash
-static void fuzzilliSignalHandler(int sig) {
+static void fuzzilliSignalHandler(int sig)
+{
     // Flush all output
     fflush(stdout);
     fflush(stderr);
@@ -39,7 +40,8 @@ static void fuzzilliSignalHandler(int sig) {
 // This function is used by Fuzzilli to:
 // 1. Test crash detection with fuzzilli('FUZZILLI_CRASH', type)
 // 2. Print output with fuzzilli('FUZZILLI_PRINT', value)
-static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionFuzzilli(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) {
+static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionFuzzilli(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -66,84 +68,84 @@ static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionFuzzilli(JSC::JSGlob
 
         // Trigger different types of crashes for testing (similar to V8 implementation)
         switch (crashType) {
-            case 0:
-                // IMMEDIATE_CRASH - Simple abort
-                std::abort();
-                break;
+        case 0:
+            // IMMEDIATE_CRASH - Simple abort
+            std::abort();
+            break;
 
-            case 1:
-                // CHECK failure - assertion in release builds
-                // Use __builtin_trap() for a direct crash
-                __builtin_trap();
-                break;
+        case 1:
+            // CHECK failure - assertion in release builds
+            // Use __builtin_trap() for a direct crash
+            __builtin_trap();
+            break;
 
-            case 2:
-                // DCHECK failure - always crash (use trap instead of assert which is disabled in release)
-                __builtin_trap();
-                break;
+        case 2:
+            // DCHECK failure - always crash (use trap instead of assert which is disabled in release)
+            __builtin_trap();
+            break;
 
-            case 3:
-                // Wild write - heap buffer overflow (will be caught by ASAN)
-                {
-                    volatile char* buffer = new char[10];
-                    buffer[20] = 'x'; // Write past the end - ASAN should catch this
-                    // Don't delete to make it more obvious
-                }
-                break;
+        case 3:
+            // Wild write - heap buffer overflow (will be caught by ASAN)
+            {
+                volatile char* buffer = new char[10];
+                buffer[20] = 'x'; // Write past the end - ASAN should catch this
+                // Don't delete to make it more obvious
+            }
+            break;
 
-            case 4:
-                // Use-after-free (will be caught by ASAN)
-                {
-                    volatile char* buffer = new char[10];
-                    delete[] buffer;
-                    buffer[0] = 'x'; // Use after free - ASAN should catch this
-                }
-                break;
+        case 4:
+            // Use-after-free (will be caught by ASAN)
+            {
+                volatile char* buffer = new char[10];
+                delete[] buffer;
+                buffer[0] = 'x'; // Use after free - ASAN should catch this
+            }
+            break;
 
-            case 5:
-                // Null pointer dereference
-                {
-                    volatile int* ptr = nullptr;
-                    *ptr = 42;
-                }
-                break;
+        case 5:
+            // Null pointer dereference
+            {
+                volatile int* ptr = nullptr;
+                *ptr = 42;
+            }
+            break;
 
-            case 6:
-                // Stack buffer overflow (will be caught by ASAN)
-                {
-                    volatile char buffer[10];
-                    volatile char* p = const_cast<char*>(buffer);
-                    p[20] = 'x'; // Write past stack buffer
-                }
-                break;
+        case 6:
+            // Stack buffer overflow (will be caught by ASAN)
+            {
+                volatile char buffer[10];
+                volatile char* p = const_cast<char*>(buffer);
+                p[20] = 'x'; // Write past stack buffer
+            }
+            break;
 
-            case 7:
-                // Double free (will be caught by ASAN)
-                {
-                    char* buffer = new char[10];
-                    delete[] buffer;
-                    delete[] buffer; // Double free - ASAN should catch this
-                }
-                break;
+        case 7:
+            // Double free (will be caught by ASAN)
+            {
+                char* buffer = new char[10];
+                delete[] buffer;
+                delete[] buffer; // Double free - ASAN should catch this
+            }
+            break;
 
-            case 8:
-                // Verify DEBUG or ASAN is enabled
+        case 8:
+            // Verify DEBUG or ASAN is enabled
 #if defined(DEBUG) || __has_feature(address_sanitizer) || defined(__SANITIZE_ADDRESS__)
-                // Expected to be compiled with debug or ASAN, don't crash
-                fprintf(stdout, "DEBUG or ASAN is enabled\n");
-                fflush(stdout);
+            // Expected to be compiled with debug or ASAN, don't crash
+            fprintf(stdout, "DEBUG or ASAN is enabled\n");
+            fflush(stdout);
 #else
-                // If neither DEBUG nor ASAN is enabled, crash to indicate misconfiguration
-                fprintf(stderr, "ERROR: Expected DEBUG or ASAN to be enabled\n");
-                fflush(stderr);
-                std::abort();
+            // If neither DEBUG nor ASAN is enabled, crash to indicate misconfiguration
+            fprintf(stderr, "ERROR: Expected DEBUG or ASAN to be enabled\n");
+            fflush(stderr);
+            std::abort();
 #endif
-                break;
+            break;
 
-            default:
-                // Unknown crash type, just abort
-                std::abort();
-                break;
+        default:
+            // Unknown crash type, just abort
+            std::abort();
+            break;
         }
     } else if (command == "FUZZILLI_PRINT"_s) {
         // Optional: Print the second argument
@@ -162,7 +164,8 @@ static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionFuzzilli(JSC::JSGlob
 }
 
 // Register the fuzzilli() function on a Bun global object
-void Bun__REPRL__registerFuzzilliFunction(Zig::GlobalObject* globalObject) {
+void Bun__REPRL__registerFuzzilliFunction(Zig::GlobalObject* globalObject)
+{
     JSC::VM& vm = globalObject->vm();
 
     // Install signal handlers to ensure output is flushed before crashes
@@ -180,8 +183,7 @@ void Bun__REPRL__registerFuzzilliFunction(Zig::GlobalObject* globalObject) {
         functionFuzzilli,
         JSC::ImplementationVisibility::Public,
         JSC::NoIntrinsic,
-        JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete
-    );
+        JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
 // ============================================================================
@@ -206,7 +208,8 @@ static uint32_t* __edges_start = nullptr;
 static uint32_t* __edges_stop = nullptr;
 
 // Reset edge guards for next iteration
-static void __sanitizer_cov_reset_edgeguards() {
+static void __sanitizer_cov_reset_edgeguards()
+{
     if (!__edges_start || !__edges_stop) return;
     uint64_t N = 0;
     for (uint32_t* x = __edges_start; x < __edges_stop && N < MAX_EDGES; x++) {
@@ -215,7 +218,8 @@ static void __sanitizer_cov_reset_edgeguards() {
 }
 
 // Called by the compiler to initialize coverage instrumentation
-extern "C" void __sanitizer_cov_trace_pc_guard_init(uint32_t* start, uint32_t* stop) {
+extern "C" void __sanitizer_cov_trace_pc_guard_init(uint32_t* start, uint32_t* stop)
+{
     // Avoid duplicate initialization
     if (start == stop || *start) return;
 
@@ -257,7 +261,8 @@ extern "C" void __sanitizer_cov_trace_pc_guard_init(uint32_t* start, uint32_t* s
 }
 
 // Called by the compiler for each edge
-extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t* guard) {
+extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t* guard)
+{
     // There's a small race condition here: if this function executes in two threads for the same
     // edge at the same time, the first thread might disable the edge (by setting the guard to zero)
     // before the second thread fetches the guard value (and thus the index). However, our
@@ -272,23 +277,27 @@ extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t* guard) {
 
 // Function to reset coverage for next REPRL iteration
 // This should be called after each script execution
-extern "C" void Bun__REPRL__resetCoverage() {
+extern "C" void Bun__REPRL__resetCoverage()
+{
     __sanitizer_cov_reset_edgeguards();
 }
 
 #else
 
 // Stub implementations when ASAN is not enabled
-extern "C" void __sanitizer_cov_trace_pc_guard_init(uint32_t* start, uint32_t* stop) {
+extern "C" void __sanitizer_cov_trace_pc_guard_init(uint32_t* start, uint32_t* stop)
+{
     (void)start;
     (void)stop;
 }
 
-extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t* guard) {
+extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t* guard)
+{
     (void)guard;
 }
 
-extern "C" void Bun__REPRL__resetCoverage() {
+extern "C" void Bun__REPRL__resetCoverage()
+{
 }
 
 #endif // ASAN

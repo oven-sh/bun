@@ -446,7 +446,7 @@ static JSValue constructBunPeekObject(VM& vm, JSObject* bunObject)
 
 extern "C" void Bun__REPRL__resetCoverage();
 
-JSC_DEFINE_HOST_FUNCTION(jsResetCoverage, (JSGlobalObject* globalObject, JSC::CallFrame*))
+JSC_DEFINE_HOST_FUNCTION(jsResetCoverage, (JSGlobalObject * globalObject, JSC::CallFrame*))
 {
     Bun__REPRL__resetCoverage();
     return JSC::JSValue::encode(JSC::jsUndefined());

@@ -154,6 +154,19 @@ fn confirm(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
 }
 
 pub const prompt = struct {
+    /// Helper to set or unset O_NONBLOCK flag on a file descriptor.
+    fn setBlocking(fd_native: std.posix.fd_t, block: bool) !void {
+        const fd = bun.FD.fromNative(fd_native);
+        const flags = try bun.sys.fcntl(fd, std.posix.F.GETFL, 0).unwrap();
+        var new_flags = flags;
+        if (block) {
+            new_flags &= ~@as(@TypeOf(flags), bun.O.NONBLOCK);
+        } else {
+            new_flags |= bun.O.NONBLOCK;
+        }
+        _ = try bun.sys.fcntl(fd, std.posix.F.SETFL, new_flags).unwrap();
+    }
+
     fn handleBackspace(input: *std.ArrayList(u8), cursor_index: *usize) void {
         if (cursor_index.* > 0) {
             const old_cursor_index = cursor_index.*;
@@ -166,6 +179,7 @@ pub const prompt = struct {
                 }
                 cursor_index.* = start;
             } else {
+                // Fallback: delete one byte if invalid UTF-8
                 _ = input.orderedRemove(old_cursor_index - 1);
                 cursor_index.* -= 1;
             }
@@ -175,32 +189,106 @@ pub const prompt = struct {
     fn utf8Prev(slice: []const u8, index: usize) ?usize {
         if (index == 0) return null;
         var i = index - 1;
-        // Search backward for the start byte of a codepoint.
+        // Search backward for the start byte of a codepoint, or the beginning of the string.
         // A continuation byte starts with 0b10xxxxxx.
         while (i > 0 and (slice[i] & 0b11000000) == 0b10000000) {
             i -= 1;
         }
-        // If we found a start byte, return its index.
-        // This handles ASCII (0xxxxxxx) and multibyte start bytes (11xxxxxx).
-        // If we stopped at 0, it's either a valid start byte or an invalid continuation byte.
-        // We return i, and the caller's logic will handle the deletion.
         return i;
     }
 
     fn utf8Next(slice: []const u8, index: usize) ?usize {
         if (index >= slice.len) return null;
-        // Use the project's internal function to get the byte length of the codepoint.
+        // Get the byte length of the codepoint at `index`.
         const len = bun.strings.utf8ByteSequenceLength(slice[index]);
         const next_index = index + len;
         if (next_index > slice.len) return null;
         return next_index;
     }
 
-    fn fullRedraw(stdout_writer: anytype, input: *std.ArrayList(u8), cursor_index: usize, prompt_width: usize) !void {
-        // 1. Move cursor to the start of the input area using absolute positioning (column prompt_width + 1).
-        _ = try stdout_writer.print("\x1b[{d}G", .{prompt_width + 1});
+    fn getTerminalWidth() usize {
+        var w: std.c.winsize = undefined;
+        // Query terminal size using ioctl.
+        if (std.c.ioctl(bun.FD.stdout().native(), std.c.T.IOCGWINSZ, &w) == 0) {
+            if (w.col > 0) {
+                return w.col;
+            }
+        }
+        return 80; // Default width if ioctl fails or reports invalid width
+    }
 
-        // 2. Write the entire input buffer, expanding tabs to spaces to ensure correct alignment.
+    /// Calculates the row and column position of a `byte_index` within a `slice`,
+    /// accounting for terminal wrapping and tab characters.
+    fn calculateWrappedPosition(slice: []const u8, byte_index: usize, start_column: usize, terminal_width: usize) struct { row: usize, col: usize } {
+        var row: usize = 0;
+        var col: usize = start_column;
+        var i: usize = 0;
+        while (i < byte_index) {
+            const char = slice[i];
+            if (char == '\t') {
+                const tab_width = 8;
+                const next_tab_stop = ((col / tab_width) + 1) * tab_width;
+                const spaces_to_add = next_tab_stop - col;
+                if (col + spaces_to_add > terminal_width) {
+                    row += 1;
+                    col = spaces_to_add;
+                } else {
+                    col += spaces_to_add;
+                }
+                i += 1;
+            } else {
+                const codepoint_slice = slice[i..];
+                const next_codepoint_start = utf8Next(codepoint_slice, 0);
+                const codepoint_len = next_codepoint_start orelse 1; // Default to 1 byte if invalid UTF-8
+                const char_width = columnWidth(codepoint_slice[0..codepoint_len]);
+
+                if (col + char_width > terminal_width) {
+                    row += 1;
+                    col = char_width;
+                } else {
+                    col += char_width;
+                }
+                i += codepoint_len;
+            }
+        }
+        return .{ .row = row, .col = col };
+    }
+
+    /// Redraws the entire prompt and input line, handling cursor positioning and line wrapping.
+    /// This function ensures the terminal display correctly reflects the current input state.
+    fn fullRedraw(
+        stdout_writer: anytype,
+        input: *std.ArrayList(u8),
+        cursor_index: usize,
+        prompt_width: usize,
+        last_cursor_row: *usize,
+    ) !void {
+        const terminal_width = getTerminalWidth();
+
+        // Calculate future positions of the end of the text and the cursor.
+        const end_pos = calculateWrappedPosition(input.items, input.items.len, prompt_width, terminal_width);
+        const cursor_pos = calculateWrappedPosition(input.items, cursor_index, prompt_width, terminal_width);
+
+        // Move cursor up to the original prompt line.
+        if (last_cursor_row.* > 0) {
+            try stdout_writer.print("\x1b[{d}A", .{last_cursor_row.*});
+        }
+        try stdout_writer.writeAll("\r"); // Move to column 0
+
+        // Create space for new lines if the input has wrapped.
+        var r: usize = 0;
+        while (r < end_pos.row) : (r += 1) {
+            try stdout_writer.writeAll("\n");
+        }
+        // Move cursor back up to the starting line for drawing.
+        if (end_pos.row > 0) {
+            try stdout_writer.print("\x1b[{d}A", .{end_pos.row});
+        }
+
+        // Clear the current line from prompt start and everything below it.
+        try stdout_writer.print("\x1b[{d}G", .{prompt_width + 1});
+        try stdout_writer.writeAll("\x1b[J"); // Clear from cursor to end of screen
+
         var i: usize = 0;
         var current_column = prompt_width;
         while (i < input.items.len) {
@@ -209,11 +297,17 @@ pub const prompt = struct {
                 const tab_width = 8;
                 const next_tab_stop = ((current_column / tab_width) + 1) * tab_width;
                 const spaces_to_add = next_tab_stop - current_column;
+
+                if (current_column + spaces_to_add > terminal_width) {
+                    try stdout_writer.writeAll("\r\n");
+                    current_column = 0;
+                }
+
                 var j: usize = 0;
                 while (j < spaces_to_add) : (j += 1) {
-                    _ = stdout_writer.writeByte(' ') catch {};
+                    _ = try stdout_writer.writeByte(' ');
                 }
-                current_column = next_tab_stop;
+                current_column += spaces_to_add;
                 i += 1;
             } else {
                 const codepoint_slice = input.items[i..];
@@ -221,23 +315,36 @@ pub const prompt = struct {
                 const codepoint_len = next_codepoint_start orelse 1;
                 const char_width = columnWidth(codepoint_slice[0..codepoint_len]);
 
-                _ = stdout_writer.writeAll(codepoint_slice[0..codepoint_len]) catch {};
-
+                if (current_column + char_width > terminal_width) {
+                    try stdout_writer.writeAll("\r\n");
+                    current_column = 0;
+                }
+                _ = try stdout_writer.writeAll(codepoint_slice[0..codepoint_len]);
                 current_column += char_width;
                 i += codepoint_len;
             }
         }
 
-        // 3. Clear the rest of the line.
-        _ = stdout_writer.writeAll("\x1b[K") catch {};
+        // Update the last known cursor row for the next redraw.
+        last_cursor_row.* = cursor_pos.row;
 
-        // 4. Move cursor to the correct column position using absolute positioning.
-        const new_column_width = columnPosition(input.items, cursor_index, prompt_width);
-        _ = stdout_writer.print("\x1b[{d}G", .{prompt_width + new_column_width + 1}) catch {};
+        // Position the cursor at its final target position.
+        // First move up to the origin, then down to the target row and column.
+        if (end_pos.row > 0) {
+            try stdout_writer.print("\x1b[{d}A", .{end_pos.row});
+        }
+        try stdout_writer.writeAll("\r"); // Move to column 0
+
+        if (cursor_pos.row > 0) {
+            try stdout_writer.print("\x1b[{d}B", .{cursor_pos.row});
+        }
+        try stdout_writer.print("\x1b[{d}G", .{cursor_pos.col + 1});
 
         bun.Output.flush();
     }
 
+    /// Calculates the column position of a `byte_index` within a `slice`,
+    /// without accounting for terminal wrapping.
     fn calculateColumn(slice: []const u8, byte_index: usize, start_column: usize) usize {
         var column: usize = start_column;
         var i: usize = 0;
@@ -249,7 +356,6 @@ pub const prompt = struct {
                 column = ((column / tab_width) + 1) * tab_width;
                 i += 1;
             } else {
-                // Use the project's visible width function for other characters
                 const codepoint_slice = slice[i..];
                 const next_codepoint_start = utf8Next(codepoint_slice, 0);
                 const codepoint_len = next_codepoint_start orelse 1;
@@ -262,16 +368,12 @@ pub const prompt = struct {
         return column;
     }
 
-    fn columnPosition(slice: []const u8, byte_index: usize, start_column: usize) usize {
-        return calculateColumn(slice, byte_index, start_column) - start_column;
-    }
-
+    /// Determines the visible width of a UTF-8 slice in terminal columns.
     fn columnWidth(slice: []const u8) usize {
         return bun.strings.visible.width.utf8(slice);
     }
 
-    /// Adapted from `std.io.Reader.readUntilDelimiterArrayList` to only append
-    /// and assume capacity.
+    /// Reads bytes from a reader into an ArrayList until a delimiter is found or max_size is reached.
     pub fn readUntilDelimiterArrayListAppendAssumeCapacity(
         reader: anytype,
         array_list: *std.array_list.Managed(u8),
@@ -293,8 +395,7 @@ pub const prompt = struct {
         }
     }
 
-    /// Adapted from `std.io.Reader.readUntilDelimiterArrayList` to always append
-    /// and not resize.
+    /// Reads bytes from a reader into an ArrayList until a delimiter is found, dynamically resizing the list.
     fn readUntilDelimiterArrayListInfinity(
         reader: anytype,
         array_list: *std.array_list.Managed(u8),
@@ -313,12 +414,9 @@ pub const prompt = struct {
 
     extern fn Bun__ttySetMode(fd: i32, mode: i32) i32;
 
+    /// Implements the `prompt` Web API, providing an interactive TTY input
+    /// with editing capabilities or falling back to a simple line reader.
     /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-prompt
-    /// This implementation has two modes:
-    /// 1. If stdin is an interactive TTY, it switches the terminal to raw mode to
-    ///    provide a rich editing experience with cursor movement.
-    /// 2. If stdin is not a TTY (e.g., piped input), it falls back to a simple
-    ///    buffered line reader.
     pub fn call(
         globalObject: *jsc.JSGlobalObject,
         callframe: *jsc.CallFrame,
@@ -329,34 +427,19 @@ pub const prompt = struct {
         var output = bun.Output.writer();
         const has_message = arguments.len != 0;
         const has_default = arguments.len >= 2;
-        // 4. Set default to the result of optionally truncating default.
-        // *  We don't really need to do this.
-        const default = if (has_default) arguments[1] else .null;
+        const default_value = if (has_default) arguments[1] else .null;
 
         if (has_message) {
-            // 2. Set message to the result of normalizing newlines given message.
-            // *  Not pertinent to a server runtime so we will just let the terminal handle this.
-
-            // 3. Set message to the result of optionally truncating message.
-            // *  Not necessary so we won't do it.
             const message = try arguments[0].toSlice(globalObject, allocator);
             defer message.deinit();
 
             output.writeAll(message.slice()) catch {
-                // 1. If we cannot show simple dialogs for this, then return null.
-                return .null;
+                return .null; // Failed to show message
             };
         }
 
-        // 4. Set default to the result of optionally truncating default.
-
-        // 5. Show message to the user, treating U+000A LF as a line break,
-        //    and ask the user to either respond with a string value or
-        //    abort. The response must be defaulted to the value given by
-        //    default.
         output.writeAll(if (has_message) " " else "Prompt ") catch {
-            // 1. If we cannot show simple dialogs for this, then return false.
-            return .false;
+            return .null; // Failed to show prompt
         };
 
         if (has_default) {
@@ -364,17 +447,13 @@ pub const prompt = struct {
             defer default_string.deinit();
 
             output.print("[{s}] ", .{default_string.slice()}) catch {
-                // 1. If we cannot show simple dialogs for this, then return false.
-                return .false;
+                return .null; // Failed to show default value
             };
         }
 
-        // 6. Invoke WebDriver BiDi user prompt opened with this, "prompt" and message.
-        // *  Not relevant in a server context.
         bun.Output.flush();
 
-        // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
-        // deleting the entire line
+        // On Windows, unset `ENABLE_VIRTUAL_TERMINAL_INPUT` to prevent backspace from deleting the entire line.
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
             bun.windows.updateStdioModeFlags(.std_in, .{ .unset = c.ENABLE_VIRTUAL_TERMINAL_INPUT }) catch null;
 
@@ -384,27 +463,27 @@ pub const prompt = struct {
             }
         };
 
-        // 7. Pause while waiting for the user's response.
+        // Handle interactive TTY input for non-Windows systems.
         if ((comptime !Environment.isWindows) and bun.c.isatty(bun.FD.stdin().native()) == 1) {
             const original_ttymode = Bun__ttySetMode(bun.FD.stdin().native(), 1);
-            var pending_sigint = false;
+            const stdin_fd = bun.FD.stdin().native();
 
-            defer {
-                _ = Bun__ttySetMode(bun.FD.stdin().native(), original_ttymode);
-                // Move cursor to next line after input is done
-                _ = bun.Output.writer().writeAll("\n") catch {};
-                bun.Output.flush();
-                if (pending_sigint) {
-                    _ = std.c.kill(std.c.getpid(), std.posix.SIG.INT);
-                }
-            }
+            const LoopResult = enum {
+                InputLine,
+                Cancelled, // Ctrl+C, Ctrl+D, or I/O error
+                Error,
+            };
+            var loop_result: LoopResult = .Error; // Default to Error
+
+            var pending_sigint = false;
 
             var input = std.ArrayList(u8).init(allocator);
             defer input.deinit();
             var cursor_index: usize = 0;
             var prompt_width: usize = 0;
+            var last_cursor_row: usize = 0;
 
-            // Calculate prompt width for redraws
+            // Calculate initial prompt width.
             if (has_message) {
                 const message = try arguments[0].toSlice(globalObject, allocator);
                 defer message.deinit();
@@ -419,47 +498,53 @@ pub const prompt = struct {
                 prompt_width += columnWidth("[") + columnWidth(default_string.slice()) + columnWidth("] ");
             }
 
+            // Deferred cleanup: restore terminal settings and print a newline.
+            defer {
+                _ = Bun__ttySetMode(stdin_fd, original_ttymode);
+                _ = bun.Output.writer().writeAll("\n") catch {};
+                bun.Output.flush();
+                if (pending_sigint) {
+                    _ = std.c.kill(std.c.getpid(), std.posix.SIG.INT);
+                }
+            }
+
             const reader = bun.Output.buffered_stdin.reader();
             const stdout_writer = bun.Output.writer();
 
+            // Main input loop for interactive TTY.
             while (true) {
-                const byte = reader.readByte() catch {
-                    // Real I/O error or EOF from upstream (not user EOT)
-                    return .null;
+                const first_byte = reader.readByte() catch {
+                    loop_result = .Cancelled; // Treat I/O error as cancellation (EOF)
+                    break;
                 };
 
-                switch (byte) {
-                    std.ascii.control_code.ht => {
-                        try input.insert(cursor_index, byte);
-                        cursor_index += 1;
-                    },
-
-                    // End of input
+                // Handle terminal exit control codes.
+                switch (first_byte) {
                     std.ascii.control_code.lf, std.ascii.control_code.cr => {
-                        if (input.items.len == 0 and !has_default) return bun.String.empty.toJS(globalObject);
-                        if (input.items.len == 0) return default;
-
-                        return bun.String.createUTF8ForJS(globalObject, input.items);
+                        loop_result = .InputLine;
+                        break;
                     },
-
-                    // Backspace
-                    std.ascii.control_code.bs, std.ascii.control_code.del => handleBackspace(&input, &cursor_index),
-
-                    // Ctrl+C
-                    std.ascii.control_code.etx => {
-                        // This will trigger the defer and restore terminal settings
+                    std.ascii.control_code.etx => { // Ctrl+C
                         pending_sigint = true;
-                        return .null;
+                        loop_result = .Cancelled;
+                        break;
                     },
+                    std.ascii.control_code.eot => { // Ctrl+D (EOT)
+                        loop_result = .Cancelled;
+                        break;
+                    },
+                    else => {},
+                }
 
-                    // Escape sequence (e.g., arrow keys, alt+backspace)
-                    std.ascii.control_code.esc => block: {
+                // Process escape sequences or batch pasted input.
+                if (first_byte == std.ascii.control_code.esc) {
+                    block: {
                         const byte2 = reader.readByte() catch break :block;
 
-                        // Alt+Backspace -> treat as regular backspace
+                        // Alt+Backspace check
                         if (byte2 == std.ascii.control_code.del or byte2 == std.ascii.control_code.bs) {
                             handleBackspace(&input, &cursor_index);
-                            break :block; // Exit escape sequence handler to allow redraw
+                            break :block;
                         }
 
                         // Standard escape sequence (e.g., arrow keys)
@@ -469,9 +554,8 @@ pub const prompt = struct {
 
                         var final_byte = reader.readByte() catch break :block;
 
-                        // Check for complex sequence (e.g., ESC [ 3 ~ or ESC [ 1 ; 5 D)
+                        // Consume parameters until the final command byte.
                         if (final_byte >= '0' and final_byte <= '9') {
-                            // Consume parameters until the final command byte
                             while (true) {
                                 const peek = reader.readByte() catch break;
                                 if ((peek >= 'A' and peek <= 'Z') or peek == '~') {
@@ -481,6 +565,7 @@ pub const prompt = struct {
                             }
                         }
 
+                        // Execute the action (e.g., 'D' for Left arrow, 'C' for Right arrow).
                         switch (final_byte) {
                             'D' => { // Left arrow
                                 if (cursor_index > 0) {
@@ -492,16 +577,11 @@ pub const prompt = struct {
                                     cursor_index = utf8Next(input.items, cursor_index) orelse cursor_index + 1;
                                 }
                             },
-                            'H' => { // Home
-                                cursor_index = 0;
-                            },
-                            'F' => { // End
-                                cursor_index = input.items.len;
-                            },
-                            '~' => { // Handles Delete (e.g. ESC [ 3 ~)
+                            'H' => cursor_index = 0, // Home
+                            'F' => cursor_index = input.items.len, // End
+                            '~' => { // Delete (e.g., ESC [ 3 ~)
                                 if (cursor_index < input.items.len) {
                                     const next_codepoint_start = utf8Next(input.items, cursor_index);
-
                                     if (next_codepoint_start) |end| {
                                         var i: usize = 0;
                                         while (i < end - cursor_index) : (i += 1) {
@@ -515,81 +595,124 @@ pub const prompt = struct {
                             },
                             else => {},
                         }
-                    },
+                    }
+                } else {
+                    // Handle batch paste by temporarily setting stdin to non-blocking mode.
+                    var batch = std.ArrayList(u8).init(allocator);
+                    try batch.append(first_byte);
 
-                    // Ctrl+D (EOT)
-                    std.ascii.control_code.eot => {
-                        return .null;
-                    },
+                    batch_read_block: {
+                        if (setBlocking(stdin_fd, false)) {
+                            // Successfully set non-blocking mode
+                        } else |_| {
+                            // Handle error from setBlocking
+                            loop_result = .Error;
+                            break :batch_read_block;
+                        }
+                        defer setBlocking(stdin_fd, true) catch {};
 
-                    else => {
-                        try input.insert(cursor_index, byte);
-                        cursor_index += 1;
-                    },
+                        while (true) {
+                            const next_byte = reader.readByte() catch |err| {
+                                if (err == error.WouldBlock or err == error.FileBusy) {
+                                    break; // Batch paste complete
+                                }
+                                loop_result = .Error; // Propagate I/O error
+                                break :batch_read_block;
+                            };
+                            try batch.append(next_byte);
+                        }
+                    }
+
+                    // Process the entire batch of input bytes.
+                    for (batch.items) |b| {
+                        switch (b) {
+                            std.ascii.control_code.ht => {
+                                try input.insert(cursor_index, b);
+                                cursor_index += 1;
+                            },
+                            // Check for exit control codes that might be part of a paste.
+                            std.ascii.control_code.lf, std.ascii.control_code.cr => {
+                                loop_result = .InputLine;
+                                break; // Exit batch and main loop
+                            },
+                            std.ascii.control_code.bs, std.ascii.control_code.del => handleBackspace(&input, &cursor_index),
+
+                            // Handle standard printable characters and UTF-8 bytes.
+                            else => {
+                                try input.insert(cursor_index, b);
+                                cursor_index += 1;
+                            },
+                        }
+                    }
+                    batch.deinit();
+
+                    if (loop_result == .InputLine) {
+                        break; // Exit main loop if a line-end was found in the batch
+                    }
                 }
-                fullRedraw(stdout_writer, &input, cursor_index, prompt_width) catch {
-                    return .null;
+
+                // Redraw the terminal once after processing input.
+                fullRedraw(stdout_writer, &input, cursor_index, prompt_width, &last_cursor_row) catch {
+                    loop_result = .Error;
+                    break;
                 };
-            }
+            } // End of while (true)
+
+            // Determine and return the final value based on loop result.
+            return switch (loop_result) {
+                .InputLine => {
+                    if (input.items.len == 0 and !has_default) return bun.String.empty.toJS(globalObject);
+                    if (input.items.len == 0) return default_value;
+                    return bun.String.createUTF8ForJS(globalObject, input.items);
+                },
+                .Cancelled, .Error => .null,
+            };
         }
 
-        // Fallback for non-interactive terminals (or Windows)
+        // Fallback for non-interactive terminals (or Windows).
         const reader = bun.Output.buffered_stdin.reader();
         var second_byte: ?u8 = null;
         const first_byte = reader.readByte() catch {
-            // 8. Let result be null if the user aborts, or otherwise the string
-            //    that the user responded with.
-            return .null;
+            return .null; // I/O error or EOF
         };
 
         if (first_byte == '\n') {
-            // 8. Let result be null if the user aborts, or otherwise the string
-            //    that the user responded with.
-            return default;
+            return default_value;
         } else if (first_byte == '\r') {
             const second = reader.readByte() catch return .null;
             second_byte = second;
-            if (second == '\n') return default;
+            if (second == '\n') return default_value;
         }
 
         var input = std.array_list.Managed(u8).initCapacity(allocator, 2048) catch {
+        var input = std.ArrayList(u8).initCapacity(allocator, 2048) catch {
             // 8. Let result be null if the user aborts, or otherwise the string
             //    that the user responded with.
             return .null;
+            return .null; // Out of memory
         };
         defer input.deinit();
 
         input.appendAssumeCapacity(first_byte);
         if (second_byte) |second| input.appendAssumeCapacity(second);
 
-        // All of this code basically just first tries to load the input into a
-        // buffer of size 2048. If that is too small, then increase the buffer
-        // size to 4096. If that is too small, then just dynamically allocate
-        // the rest.
+        // Read the rest of the line, handling potential buffer overflows by resizing.
         readUntilDelimiterArrayListAppendAssumeCapacity(reader, &input, '\n', 2048) catch |e| {
             if (e != error.StreamTooLong) {
-                // 8. Let result be null if the user aborts, or otherwise the string
-                //    that the user responded with.
-                return .null;
+                return .null; // I/O error
             }
 
             input.ensureTotalCapacity(4096) catch {
-                // 8. Let result be null if the user aborts, or otherwise the string
-                //    that the user responded with.
-                return .null;
+                return .null; // Out of memory
             };
 
             readUntilDelimiterArrayListAppendAssumeCapacity(reader, &input, '\n', 4096) catch |e2| {
                 if (e2 != error.StreamTooLong) {
-                    // 8. Let result be null if the user aborts, or otherwise the string
-                    //    that the user responded with.
-                    return .null;
+                    return .null; // I/O error
                 }
 
                 readUntilDelimiterArrayListInfinity(reader, &input, '\n') catch {
-                    // 8. Let result be null if the user aborts, or otherwise the string
-                    //    that the user responded with.
-                    return .null;
+                    return .null; // I/O error
                 };
             };
         };
@@ -603,14 +726,6 @@ pub const prompt = struct {
             bun.assert(input.items[input.items.len - 1] != '\r');
         }
 
-        // 8. Let result be null if the user aborts, or otherwise the string
-        //    that the user responded with.
-
-        // 9. Invoke WebDriver BiDi user prompt closed with this, false if
-        //    result is null or true otherwise, and result.
-        // *  Too complex for server context.
-
-        // 9. Return result.
         return bun.String.createUTF8ForJS(globalObject, input.items);
     }
 };

@@ -34,6 +34,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
         return;
     }
     defer debugger.must_block_until_connected = false;
+    bun.analytics.Features.debugger += 1;
 
     Debugger.log("spin", .{});
     while (futex_atomic.load(.monotonic) > 0) {

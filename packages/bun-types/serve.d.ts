@@ -283,7 +283,8 @@ declare module "bun" {
      *     return new Response();
      *   },
      *   websocket: {
-     *     open(ws) {
+     *     data: {} as {accessToken: string | null},
+     *     message(ws) {
      *       console.log(ws.data.accessToken);
      *     }
      *   }
@@ -1280,7 +1281,7 @@ declare module "bun" {
    * });
    * ```
    */
-  function serve<WebSocketData = undefined, R extends string = string>(
+  function serve<WebSocketData = undefined, R extends string = never>(
     options: Serve.Options<WebSocketData, R>,
   ): Server<WebSocketData>;
 }

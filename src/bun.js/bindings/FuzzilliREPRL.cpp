@@ -254,7 +254,7 @@ extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t* guard)
 
 // Function to reset coverage for next REPRL iteration
 // This should be called after each script execution
-JSC_DEFINE_HOST_FUNCTION(jsResetCoverage, (JSC::JSGlobalObject* globalObject, JSC::CallFrame*))
+JSC_DEFINE_HOST_FUNCTION(jsResetCoverage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
 {
     __sanitizer_cov_reset_edgeguards();
     return JSC::JSValue::encode(JSC::jsUndefined());

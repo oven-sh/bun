@@ -59,6 +59,7 @@
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
 #include "BunIDLConvert.h"
+#include "BunLocale.h"
 #include "BunObject.h"
 #include "GeneratedBunObject.h"
 #include "BunPlugin.h"
@@ -342,7 +343,7 @@ static String localeFromEnvironment()
 {
     static constexpr const char* keys[] = { "LC_ALL", "LC_MESSAGES", "LANG" };
     for (auto* key : keys) {
-        if (const char* value = getenv(key)) {
+        if (const char* value = std::getenv(key)) {
             auto normalized = normalizedLocaleFromCString(value);
             if (!normalized.isEmpty())
                 return normalized;

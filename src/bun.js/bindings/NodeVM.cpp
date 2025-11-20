@@ -8,6 +8,7 @@
 #include <JavaScriptCore/SourceProvider.h>
 
 #include "BunClientData.h"
+#include "BunLocale.h"
 #include "NodeVM.h"
 #include "NodeVMScript.h"
 #include "NodeVMModule.h"
@@ -62,10 +63,6 @@
 #include "../vm/SigintWatcher.h"
 
 #include "JavaScriptCore/GetterSetter.h"
-
-namespace Bun {
-WTF::String defaultLanguage(JSC::JSGlobalObject*);
-}
 
 namespace Bun {
 using namespace WebCore;
@@ -760,7 +757,7 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         &currentScriptExecutionOwner,
         &scriptExecutionStatus,
         &unsafeEvalNoop, // reportViolationForUnsafeEval
-        &defaultLanguage,
+        &Bun::defaultLanguage,
         nullptr, // compileStreaming
         nullptr, // instantiateStreaming
         nullptr,

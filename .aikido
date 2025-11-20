@@ -2,3 +2,4 @@ exclude:
   paths:
     - test
     - scripts
+    - bench

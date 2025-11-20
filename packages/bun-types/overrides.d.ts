@@ -23,16 +23,6 @@ interface BunConsumerConvenienceMethods {
    * Consume as JSON
    */
   json(): Promise<any>;
-
-  /**
-   * Consume as a FormData instance
-   */
-  formData(): Promise<FormData>;
-
-  /**
-   * Consume as an ArrayBuffer
-   */
-  arrayBuffer(): Promise<ArrayBuffer>;
 }
 
 declare module "stream/web" {
@@ -51,6 +41,21 @@ declare module "buffer" {
     // slightly different from just "copying in the methods" (the difference is
     // related to how type parameters are resolved)
     bytes(): Promise<Uint8Array<ArrayBuffer>>;
+
+    /**
+     * Consume the blob as a FormData instance
+     */
+    formData(): Promise<FormData>;
+
+    /**
+     * Consume the blob as an ArrayBuffer
+     */
+    arrayBuffer(): Promise<ArrayBuffer>;
+
+    /**
+     * Returns a readable stream of the blob's contents
+     */
+    stream(): ReadableStream<Uint8Array<ArrayBuffer>>;
   }
 }
 

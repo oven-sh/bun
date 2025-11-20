@@ -712,7 +712,6 @@ linkWorkspacePackages = true
     // Extract count from dry-run output (e.g., "3 packages would be removed")
     const dryRunMatch = dryRunStdout.match(/(\d+) package.*would be removed/);
     if (!dryRunMatch) {
-      console.log("Dry-run stdout:", dryRunStdout);
       throw new Error("Could not find package count in dry-run output");
     }
     const dryRunCount = parseInt(dryRunMatch[1]);

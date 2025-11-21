@@ -3626,7 +3626,7 @@ pub fn emitMemoryVisualizerMessageTimer(timer: *EventLoopTimer, _: *const bun.ti
     assert(dev.magic == .valid);
     dev.emitMemoryVisualizerMessage();
     timer.state = .FIRED;
-    dev.vm.timer.update(timer, &bun.timespec.msFromNow(1000));
+    dev.vm.timer.update(timer, &bun.timespec.msFromNow(.allow_mocked_time, 1000));
 }
 
 pub fn emitMemoryVisualizerMessageIfNeeded(dev: *DevServer) void {

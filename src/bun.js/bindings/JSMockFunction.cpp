@@ -28,8 +28,6 @@
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
 
-BUN_DECLARE_HOST_FUNCTION(JSMock__jsUseFakeTimers);
-BUN_DECLARE_HOST_FUNCTION(JSMock__jsUseRealTimers);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsNow);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsSetSystemTime);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsRestoreAllMocks);
@@ -1418,16 +1416,22 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
 using namespace Bun;
 using namespace JSC;
 
-// This is a stub. Exists so that the same code can be run in Jest
-BUN_DEFINE_HOST_FUNCTION(JSMock__jsUseFakeTimers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
-{
-    return JSValue::encode(callframe->thisValue());
-}
-
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsUseRealTimers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     globalObject->overridenDateNow = -1;
     return JSValue::encode(callframe->thisValue());
+}
+
+// Helper function for Zig to set the overriden Date.now() time
+extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__setOverridenDateNow(JSC::JSGlobalObject* globalObject, double time_ms)
+{
+    globalObject->overridenDateNow = time_ms;
+}
+
+// Helper function for Zig to get the current Unix epoch time in milliseconds
+extern "C" [[ZIG_EXPORT(nothrow)]] double JSMock__getCurrentUnixTimeMs()
+{
+    return WTF::WallTime::now().secondsSinceEpoch().milliseconds();
 }
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsNow, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
@@ -1444,7 +1448,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
         }
         return JSValue::encode(callframe->thisValue());
     }
-    // number > 0 is a valid date otherwise it's invalid and we should reset the time (set to -1)
+    // number > 0 is a valid date otherwise it's invalid and we should reset the time (set to NaN)
     globalObject->overridenDateNow = (argument0.isNumber() && argument0.asNumber() >= 0) ? argument0.asNumber() : -1;
 
     return JSValue::encode(callframe->thisValue());

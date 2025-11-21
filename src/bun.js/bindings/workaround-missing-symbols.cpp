@@ -1,4 +1,5 @@
 #include <iostream>
+#include <cstdlib>
 
 #if defined(WIN32)
 
@@ -9,7 +10,6 @@
 #include <fcntl.h>
 #include <windows.h>
 #include <string.h>
-#include <cstdlib>
 
 #undef _environ
 #undef environ

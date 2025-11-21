@@ -72,6 +72,23 @@ bun --env-file=.env.1 src/index.ts
 bun --env-file=.env.abc --env-file=.env.def run build
 ```
 
+## Disabling automatic `.env` loading
+
+Use `--no-env-file` to disable Bun's automatic `.env` file loading. This is useful in production environments or CI/CD pipelines where you want to rely solely on system environment variables.
+
+```sh
+bun run --no-env-file index.ts
+```
+
+This can also be configured in `bunfig.toml`:
+
+```toml bunfig.toml icon="settings"
+# Disable loading .env files
+env = false
+```
+
+Explicitly provided environment files via `--env-file` will still be loaded even when default loading is disabled.
+
 ---
 
 ## Quotation marks

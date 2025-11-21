@@ -507,10 +507,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     JSC::gcProtect(globalObject);
 
 #ifdef FUZZILLI_ENABLED
-    // Register fuzzilli() function if in fuzzilli mode
-    if (std::getenv("BUN_FUZZILLI_MODE")) {
-        Bun__REPRL__registerFuzzilliFunctions(static_cast<Zig::GlobalObject*>(globalObject));
-    }
+    Bun__REPRL__registerFuzzilliFunctions(static_cast<Zig::GlobalObject*>(globalObject));
 #endif
 
     vm.setOnComputeErrorInfo(computeErrorInfoWrapperToString);

@@ -44,6 +44,7 @@ pub const JSBundler = struct {
         env_prefix: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         tsconfig_override: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         compile: ?CompileOptions = null,
+        nativefill: bool = false,
 
         pub const CompileOptions = struct {
             compile_target: CompileTarget = .{},
@@ -315,6 +316,10 @@ pub const JSBundler = struct {
 
             if (try config.getBooleanLoose(globalThis, "macros")) |macros_flag| {
                 this.no_macros = !macros_flag;
+            }
+
+            if (try config.getBooleanLoose(globalThis, "nativefill")) |nativefill| {
+                this.nativefill = nativefill;
             }
 
             if (try config.getBooleanLoose(globalThis, "bytecode")) |bytecode| {

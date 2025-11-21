@@ -21,9 +21,7 @@ pub fn deinit(this: *@This()) void {
     this.structure.deinit();
     if (this.fields) |fields| {
         this.fields = null;
-        for (fields) |*name| {
-            name.deinit();
-        }
+        for (fields) |*name| name.deinit();
         bun.default_allocator.free(fields);
     }
 }

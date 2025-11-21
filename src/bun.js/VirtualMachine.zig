@@ -856,8 +856,6 @@ pub fn onExit(this: *VirtualMachine) void {
     }
 }
 
-extern fn Zig__GlobalObject__destructOnExit(*JSGlobalObject) void;
-
 pub fn globalExit(this: *VirtualMachine) noreturn {
     bun.assert(this.isShuttingDown());
     // FIXME: we should be doing this, but we're not, but unfortunately doing it
@@ -866,7 +864,7 @@ pub fn globalExit(this: *VirtualMachine) noreturn {
 
     if (this.shouldDestructMainThreadOnExit()) {
         if (this.eventLoop().forever_timer) |t| t.deinit(true);
-        Zig__GlobalObject__destructOnExit(this.global);
+        bun.cpp.Zig__GlobalObject__destructOnExit(this.global);
         this.transpiler.deinit();
         this.gc_controller.deinit();
         this.deinit();

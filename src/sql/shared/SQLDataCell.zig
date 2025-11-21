@@ -26,7 +26,7 @@ pub const SQLDataCell = extern struct {
 
     pub const Value = extern union {
         null: u8,
-        string: ?bun.WTF.StringImpl,
+        string: bun.String,
         float8: f64,
         int4: i32,
         int8: i64,
@@ -34,7 +34,7 @@ pub const SQLDataCell = extern struct {
         date: f64,
         date_with_time_zone: f64,
         bytea: [2]usize,
-        json: ?bun.WTF.StringImpl,
+        json: bun.String,
         array: Array,
         typed_array: TypedArray,
         raw: Raw,
@@ -91,14 +91,10 @@ pub const SQLDataCell = extern struct {
 
         switch (this.tag) {
             .string => {
-                if (this.value.string) |str| {
-                    str.deref();
-                }
+                this.value.string.deref();
             },
             .json => {
-                if (this.value.json) |str| {
-                    str.deref();
-                }
+                this.value.json.deref();
             },
             .bytea => {
                 if (this.value.bytea[1] == 0) return;

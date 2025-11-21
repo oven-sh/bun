@@ -55,6 +55,8 @@ export const sharedTypes: Record<string, string> = {
   "JSC::CustomGetterSetter": "bun.jsc.CustomGetterSetter",
   "JSC::SourceProvider": "bun.jsc.SourceProvider",
   "JSC::CallFrame": "bun.jsc.CallFrame",
+  "JSC::JSCell": "bun.jsc.JSCell",
+  "Bun::ExternColumnIdentifier": "bun.jsc.JSObject.ExternColumnIdentifier",
   "JSC::JSObject": "bun.jsc.JSObject",
   "JSC::JSString": "bun.jsc.JSString",
   "JSC::Exception": "bun.jsc.Exception",

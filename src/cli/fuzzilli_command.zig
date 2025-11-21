@@ -1,4 +1,3 @@
-extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 
 pub const FuzzilliCommand = if (bun.Environment.enable_fuzzilli) struct {
     pub fn exec(ctx: Command.Context) !void {
@@ -10,7 +9,6 @@ pub const FuzzilliCommand = if (bun.Environment.enable_fuzzilli) struct {
         }
 
         // Set an environment variable so we can detect fuzzilli mode in JavaScript
-        _ = setenv("BUN_FUZZILLI_MODE", "1", 1);
 
         // Verify REPRL file descriptors are available
         const REPRL_CRFD: c_int = 100;

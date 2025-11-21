@@ -321,6 +321,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
     s->flags.is_ipc = ipc;
     s->flags.is_closed = 0;
     s->flags.is_ssl = 0;
+    s->flags.last_write_failed = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -367,7 +368,7 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
 
     int written = bsd_send(us_poll_fd(&s->p), data, length);
     if (written != length) {
-        s->context->loop->data.last_write_failed = 1;
+        s->flags.last_write_failed = 1;
         us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     }
 
@@ -404,7 +405,7 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char* data, int length, 
     int sent = bsd_sendmsg(us_poll_fd(&s->p), &msg, 0);
 
     if (sent != length) {
-        s->context->loop->data.last_write_failed = 1;
+        s->flags.last_write_failed = 1;
         us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     }
 

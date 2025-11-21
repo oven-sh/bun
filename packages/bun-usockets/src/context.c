@@ -391,6 +391,7 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     s->flags.is_ipc = 0;
     s->flags.is_closed = 0;
     s->flags.is_ssl = ssl > 0;
+    s->flags.last_write_failed = 0;
     s->next = 0;
 
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
@@ -430,6 +431,7 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     s->flags.is_ipc = 0;
     s->flags.is_closed = 0;
     s->flags.is_ssl = ssl > 0;
+    s->flags.last_write_failed = 0;
     s->next = 0;
     us_internal_socket_context_link_listen_socket(ssl, context, ls);
 
@@ -463,6 +465,7 @@ struct us_socket_t* us_socket_context_connect_resolved_dns(int ssl, struct us_so
     socket->flags.is_ipc = 0;
     socket->flags.is_closed = 0;
     socket->flags.is_ssl = ssl > 0;
+    socket->flags.last_write_failed = 0;
     socket->connect_state = NULL;
     socket->connect_next = NULL;
 
@@ -595,6 +598,7 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         flags->is_ipc = 0;
         flags->is_closed = 0;
         flags->is_ssl = c->ssl;
+        flags->last_write_failed = 0;
         /* Link it into context so that timeout fires properly */
         us_internal_socket_context_link_socket(0, context, s);
 
@@ -774,6 +778,7 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_con
     connect_socket->flags.is_ipc = 0;
     connect_socket->flags.is_closed = 0;
     connect_socket->flags.is_ssl = ssl > 0;
+    connect_socket->flags.last_write_failed = 0;
     connect_socket->connect_state = NULL;
     connect_socket->connect_next = NULL;
     us_internal_socket_context_link_socket(ssl, context, connect_socket);

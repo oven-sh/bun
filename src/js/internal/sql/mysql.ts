@@ -61,18 +61,36 @@ initMySQL(
     /// prepared statements
     $assert(result instanceof SQLResultArray, "Invalid result array");
 
+    // prepare for next query
+    query[_handle].setPendingValue(new SQLResultArray());
+
     result.count = count || 0;
     result.lastInsertRowid = last_insert_rowid;
     result.affectedRows = affected_rows || 0;
-    if (queries) {
-      const queriesIndex = queries.indexOf(query);
-      if (queriesIndex !== -1) {
-        queries.splice(queriesIndex, 1);
+    const last_result = query[_results];
+
+    if (!last_result) {
+      query[_results] = result;
+    } else {
+      if (last_result instanceof SQLResultArray) {
+        // multiple results
+        query[_results] = [last_result, result];
+      } else {
+        // 3 or more results
+        last_result.push(result);
       }
     }
-    try {
-      query.resolve(result);
-    } catch {}
+    if (is_last) {
+      if (queries) {
+        const queriesIndex = queries.indexOf(query);
+        if (queriesIndex !== -1) {
+          queries.splice(queriesIndex, 1);
+        }
+      }
+      try {
+        query.resolve(query[_results]);
+      } catch {}
+    }
   },
 
   function onRejectMySQLQuery(query: Query<any, any>, reject: Error | MySQLErrorOptions, queries: Query<any, any>[]) {

@@ -198,6 +198,8 @@ enum class DOMConstructorID : uint16_t {
     ReadableStreamSource,
     TransformStream,
     TransformStreamDefaultController,
+    CompressionStream,
+    DecompressionStream,
     WritableStream,
     WritableStreamDefaultController,
     WritableStreamDefaultWriter,
@@ -860,7 +862,7 @@ enum class DOMConstructorID : uint16_t {
     EventEmitter,
 };
 
-static constexpr unsigned numberOfDOMConstructorsBase = 846;
+static constexpr unsigned numberOfDOMConstructorsBase = 848;
 
 static constexpr unsigned bunExtraConstructors = 3;
 

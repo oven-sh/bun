@@ -13,7 +13,7 @@ Bun reads the following files automatically (listed in order of increasing prece
 - `.env.production`, `.env.development`, `.env.test` (depending on value of `NODE_ENV`)
 - `.env.local`
 
-```txt .env icon="settings"
+```ini .env icon="settings"
 FOO=hello
 BAR=world
 ```
@@ -46,7 +46,7 @@ bun exec 'FOO=helloworld bun run dev'
 
 On Windows, `package.json` scripts called with `bun run` will automatically use the **bun shell**, making the following also cross-platform.
 
-```json package.json
+```json package.json icon="file-json"
 "scripts": {
   "dev": "NODE_ENV=development bun --watch app.ts",
 },
@@ -72,13 +72,30 @@ bun --env-file=.env.1 src/index.ts
 bun --env-file=.env.abc --env-file=.env.def run build
 ```
 
+## Disabling automatic `.env` loading
+
+Use `--no-env-file` to disable Bun's automatic `.env` file loading. This is useful in production environments or CI/CD pipelines where you want to rely solely on system environment variables.
+
+```sh
+bun run --no-env-file index.ts
+```
+
+This can also be configured in `bunfig.toml`:
+
+```toml bunfig.toml icon="settings"
+# Disable loading .env files
+env = false
+```
+
+Explicitly provided environment files via `--env-file` will still be loaded even when default loading is disabled.
+
 ---
 
 ## Quotation marks
 
 Bun supports double quotes, single quotes, and template literal backticks:
 
-```txt .env icon="settings"
+```ini .env icon="settings"
 FOO='hello'
 FOO="hello"
 FOO=`hello`
@@ -88,7 +105,7 @@ FOO=`hello`
 
 Environment variables are automatically _expanded_. This means you can reference previously-defined variables in your environment variables.
 
-```txt .env icon="settings"
+```ini .env icon="settings"
 FOO=world
 BAR=hello$FOO
 ```
@@ -99,7 +116,7 @@ process.env.BAR; // => "helloworld"
 
 This is useful for constructing connection strings or other compound values.
 
-```txt .env icon="settings"
+```ini .env icon="settings"
 DB_USER=postgres
 DB_PASSWORD=secret
 DB_HOST=localhost
@@ -109,7 +126,7 @@ DB_URL=postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME
 
 This can be disabled by escaping the `$` with a backslash.
 
-```txt .env icon="settings"
+```ini .env icon="settings"
 FOO=world
 BAR=hello\$FOO
 ```

@@ -284,6 +284,8 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamSource;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTransformStream;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTransformStreamDefaultController;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCompressionStream;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDecompressionStream;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStream;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStreamDefaultController;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStreamDefaultWriter;

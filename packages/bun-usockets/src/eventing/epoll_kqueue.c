@@ -299,8 +299,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
             // > Multiple events which trigger the filter do not result in multiple kevents being placed on the kqueue
             // > Instead, the filter will aggregate the events into a single kevent struct
             int events = 0
-                | ((filter & EVFILT_READ) ? LIBUS_SOCKET_READABLE : 0)
-                | ((filter & EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
+                | ((filter == EVFILT_READ) ? LIBUS_SOCKET_READABLE : 0)
+                | ((filter == EVFILT_WRITE) ? LIBUS_SOCKET_WRITABLE : 0);
 
             // Note: EV_ERROR only sets the error in data as part of changelist. Not in this call!
             const int error = (flags & (EV_ERROR)) ? ((int)fflags || 1) : 0;

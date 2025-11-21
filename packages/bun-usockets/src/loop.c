@@ -376,6 +376,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
     }
     case POLL_TYPE_SOCKET_SHUT_DOWN:
     case POLL_TYPE_SOCKET: {
+            
             /* We should only use s, no p after this point */
             struct us_socket_t *s = (struct us_socket_t *) p;
             /* The context can change after calling a callback but the loop is always the same */
@@ -393,7 +394,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                 /* If we have no failed write or if we shut down, then stop polling for more writable */
                 if (!s->flags.last_write_failed || us_socket_is_shut_down(0, s)) {
-                    us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
+                    us_poll_change(&s->p, loop, (s->flags.is_paused ? 0 : LIBUS_SOCKET_READABLE));
                 }
             }
 
@@ -501,7 +502,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     } else if (!length) {
                         eof = 1; // lets handle EOF in the same place
                         break;
-                    } else if (length == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
+                    } else if (length == LIBUS_SOCKET_ERROR) {
+                        if(bsd_would_block()) {
+                            break;
+                        }
                         /* Todo: decide also here what kind of reason we should give */
                         s = us_socket_close(0, s, LIBUS_ERR, NULL);
                         return;

@@ -272,6 +272,14 @@ pub const Value = union(Tag) {
         };
     }
 
+    pub fn wasString(this: *const Value) bool {
+        return switch (this.*) {
+            .InternalBlob => |*blob| blob.was_string,
+            .WTFStringImpl => true,
+            else => false,
+        };
+    }
+
     pub const heap_breakdown_label = "BodyValue";
     pub const ValueError = union(enum) {
         AbortReason: jsc.CommonAbortReason,

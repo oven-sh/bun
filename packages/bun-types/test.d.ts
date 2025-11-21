@@ -715,29 +715,36 @@ declare module "bun:test" {
      *
      * @param serializer The snapshot serializer configuration
      */
-    addSnapshotSerializer(serializer: SnapshotSerializer): void;
+    addSnapshotSerializer<T>(serializer: SnapshotSerializer<T>): void;
   }
 
-  export type SnapshotSerializer =
+  export type SnapshotSerializer<T> =
     | {
         /**
          * Test function to determine if this serializer should be used for a value
          */
-        test: (val: any) => boolean;
+        test(val: unknown): val is T;
         /**
          * Serialize function to convert the value to a string.
          */
-        serialize: (val: any) => string;
+        serialize: (val: T) => string;
       }
     | {
         /**
          * Test function to determine if this serializer should be used for a value
          */
-        test: (val: any) => boolean;
+        test: (val: unknown) => boolean;
         /**
-         * @deprecated Specify `serialize` instead
+         * Serialize function to convert the value to a string.
          */
-        print: (val: any) => string;
+        serialize: (val: T) => string;
+      }
+    | {
+        test: (val: unknown) => boolean;
+        /**
+         * @deprecated Pass `serialize` instead of `print`.
+         */
+        print: (val: T) => string;
       };
 
   /**

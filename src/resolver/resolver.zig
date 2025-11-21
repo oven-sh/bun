@@ -176,7 +176,11 @@ pub const Result = struct {
         success: Result,
         failure: anyerror,
         pending: PendingResolution,
-        not_found: void,
+        not_found: struct {
+            /// Optional: the resolved file path that doesn't exist (e.g., from package exports)
+            /// Empty string if not available
+            path: string = "",
+        },
     };
 
     pub fn path(this: *Result) ?*Path {
@@ -340,7 +344,11 @@ pub const MatchResult = struct {
     is_external: bool = false,
 
     pub const Union = union(enum) {
-        not_found: void,
+        not_found: struct {
+            /// Optional: the resolved file path that doesn't exist (e.g., from package exports)
+            /// Empty string if not available
+            path: string = "",
+        },
         success: MatchResult,
         pending: PendingResolution,
         failure: anyerror,
@@ -675,7 +683,7 @@ pub const Resolver = struct {
             r.debug_logs = DebugLogs.init(r.allocator) catch unreachable;
         }
 
-        if (import_path.len == 0) return .{ .not_found = {} };
+        if (import_path.len == 0) return .{ .not_found = .{} };
 
         if (r.opts.mark_builtins_as_external) {
             if (strings.hasPrefixComptime(import_path, "node:") or
@@ -783,7 +791,7 @@ pub const Resolver = struct {
                         };
                     }
 
-                    return .{ .not_found = {} };
+                    return .{ .not_found = .{} };
                 } else if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(source_dir)) {
                     if (import_path.len > 2 and isDotSlash(import_path[0..2])) {
                         const buf = bufs(.import_path_for_standalone_module_graph);
@@ -848,7 +856,7 @@ pub const Resolver = struct {
         // anyways would cause assertion failures.
         if (bun.strings.containsChar(import_path, 0)) {
             r.flushDebugLogs(.fail) catch {};
-            return .{ .not_found = {} };
+            return .{ .not_found = .{} };
         }
 
         var tmp = r.resolveWithoutSymlinks(source_dir_normalized, import_path, kind, global_cache);
@@ -910,9 +918,9 @@ pub const Resolver = struct {
                 r.flushDebugLogs(.fail) catch {};
                 return .{ .pending = pending };
             },
-            .not_found => {
+            .not_found => |nf| {
                 r.flushDebugLogs(.fail) catch {};
-                return .{ .not_found = {} };
+                return .{ .not_found = .{ .path = nf.path } };
             },
         }
     }
@@ -1173,7 +1181,7 @@ pub const Resolver = struct {
                 };
             }
 
-            return .{ .not_found = {} };
+            return .{ .not_found = .{} };
         }
 
         // Check both relative and package paths for CSS URL tokens, with relative
@@ -1196,7 +1204,7 @@ pub const Resolver = struct {
                     }
                 }
                 bun.debugAssert(!check_package); // always from JavaScript
-                return .{ .not_found = {} }; // bail out now since there isn't anywhere else to check
+                return .{ .not_found = .{} }; // bail out now since there isn't anywhere else to check
             } else {
                 switch (r.checkRelativePath(source_dir, import_path, kind, global_cache)) {
                     .success => |res| return .{ .success = res },
@@ -1223,7 +1231,7 @@ pub const Resolver = struct {
                 if (had_node_prefix) {
                     // Module resolution fails automatically for unknown node builtins
                     if (!bun.jsc.ModuleLoader.HardcodedModule.Alias.has(import_path_without_node_prefix, .node, .{})) {
-                        return .{ .not_found = {} };
+                        return .{ .not_found = .{} };
                     }
 
                     // Valid node:* modules becomes {} in the output
@@ -1281,6 +1289,7 @@ pub const Resolver = struct {
 
             if (r.custom_dir_paths) |custom_paths| {
                 @branchHint(.unlikely);
+                var last_not_found_path: []const u8 = "";
                 for (custom_paths) |custom_path| {
                     const custom_utf8 = custom_path.toUTF8WithoutRef(bun.default_allocator);
                     defer custom_utf8.deinit();
@@ -1288,20 +1297,32 @@ pub const Resolver = struct {
                         .success => |res| return .{ .success = res },
                         .pending => |p| return .{ .pending = p },
                         .failure => |p| return .{ .failure = p },
-                        .not_found => {},
+                        .not_found => |nf| {
+                            // Remember the last resolved path for error messages
+                            if (nf.path.len > 0) last_not_found_path = nf.path;
+                        },
                     }
+                }
+                // If we tried all custom paths and none succeeded, return the last resolved path
+                if (last_not_found_path.len > 0) {
+                    return .{ .not_found = .{ .path = last_not_found_path } };
                 }
             } else {
                 switch (r.checkPackagePath(source_dir, import_path, kind, global_cache)) {
                     .success => |res| return .{ .success = res },
                     .pending => |p| return .{ .pending = p },
                     .failure => |p| return .{ .failure = p },
-                    .not_found => {},
+                    .not_found => |nf| {
+                        // Propagate the resolved path for better error messages
+                        if (nf.path.len > 0) {
+                            return .{ .not_found = .{ .path = nf.path } };
+                        }
+                    },
                 }
             }
         }
 
-        return .{ .not_found = {} };
+        return .{ .not_found = .{} };
     }
 
     pub fn checkRelativePath(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind, global_cache: GlobalCache) Result.Union {
@@ -1380,13 +1401,13 @@ pub const Resolver = struct {
                 .jsx = r.opts.jsx,
             } };
         } else {
-            return .{ .not_found = {} };
+            return .{ .not_found = .{} };
         }
     }
 
     pub fn checkPackagePath(r: *ThisResolver, source_dir: string, unremapped_import_path: string, kind: ast.ImportKind, global_cache: GlobalCache) Result.Union {
         var import_path = unremapped_import_path;
-        var source_dir_info = r.dirInfoCached(source_dir) catch (return .{ .not_found = {} }) orelse dir: {
+        var source_dir_info = r.dirInfoCached(source_dir) catch (return .{ .not_found = .{} }) orelse dir: {
             // It is possible to resolve with a source file that does not exist:
             // A. Bundler plugin refers to a non-existing `resolveDir`.
             // B. `createRequire()` is called with a path that does not exist. This was
@@ -1417,10 +1438,10 @@ pub const Resolver = struct {
             // directory tree has been visited. `null` is theoretically
             // impossible since the drive root should always exist.
             while (std.fs.path.dirname(closest_dir)) |current| : (closest_dir = current) {
-                if (r.dirInfoCached(current) catch return .{ .not_found = {} }) |dir|
+                if (r.dirInfoCached(current) catch return .{ .not_found = .{} }) |dir|
                     break :dir dir;
             }
-            return .{ .not_found = {} };
+            return .{ .not_found = .{} };
         };
 
         if (r.care_about_browser_field) {
@@ -1541,7 +1562,7 @@ pub const Resolver = struct {
             },
             .pending => |p| return .{ .pending = p },
             .failure => |p| return .{ .failure = p },
-            else => return .{ .not_found = {} },
+            .not_found => |nf| return .{ .not_found = .{ .path = nf.path } },
         }
     }
 
@@ -1821,11 +1842,23 @@ pub const Resolver = struct {
                                 {
                                     const esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
 
+                                    // Compute the absolute path now for error messages later
+                                    const abs_esm_path = if (esm_resolution.path.len > 0) brk: {
+                                        const parts = [_]string{
+                                            abs_package_path,
+                                            strings.withoutLeadingPathSeparator(esm_resolution.path),
+                                        };
+                                        break :brk r.fs.absBuf(&parts, bufs(.esm_absolute_package_path_joined));
+                                    } else "";
+
                                     if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
                                         var result_copy = result;
                                         result_copy.is_node_module = true;
                                         result_copy.module_type = module_type;
                                         return .{ .success = result_copy };
+                                    } else if (abs_esm_path.len > 0) {
+                                        // handleESMResolution returned null but we have a resolved path - file doesn't exist
+                                        return .{ .not_found = .{ .path = abs_esm_path } };
                                     }
                                 }
 
@@ -1870,7 +1903,7 @@ pub const Resolver = struct {
                                     };
                                 }
 
-                                return .{ .not_found = {} };
+                                return .{ .not_found = .{} };
                             }
                         }
                     }
@@ -2012,7 +2045,7 @@ pub const Resolver = struct {
                         .pending => |pending| return .{ .pending = pending },
                         .failure => |err| return .{ .failure = err },
                         // this means we looked it up in the registry and the package doesn't exist or the version doesn't exist
-                        .not_found => return .{ .not_found = {} },
+                        .not_found => return .{ .not_found = .{} },
                     }
                 };
 
@@ -2034,7 +2067,7 @@ pub const Resolver = struct {
                             },
                             .extract, .extracting => |st| {
                                 if (!global_cache.canInstall()) {
-                                    return .{ .not_found = {} };
+                                    return .{ .not_found = .{} };
                                 }
                                 var builder = Semver.String.Builder{};
                                 esm.count(&builder);
@@ -2150,7 +2183,7 @@ pub const Resolver = struct {
                                     };
                                 }
 
-                                return .{ .not_found = {} };
+                                return .{ .not_found = .{} };
                             }
                         }
 
@@ -2172,7 +2205,7 @@ pub const Resolver = struct {
             }
         }
 
-        return .{ .not_found = {} };
+        return .{ .not_found = .{} };
     }
     fn dirInfoForResolution(
         r: *ThisResolver,
@@ -2274,7 +2307,11 @@ pub const Resolver = struct {
     }
 
     const DependencyToResolve = union(enum) {
-        not_found: void,
+        not_found: struct {
+            /// Optional: the resolved file path that doesn't exist (e.g., from package exports)
+            /// Empty string if not available
+            path: string = "",
+        },
         pending: PendingResolution,
         failure: anyerror,
         resolution: Resolution,
@@ -2375,7 +2412,7 @@ pub const Resolver = struct {
                     };
                 },
                 .not_found => {
-                    return .{ .not_found = {} };
+                    return .{ .not_found = .{} };
                 },
                 .failure => |err| {
                     return .{ .failure = err };
@@ -2527,7 +2564,7 @@ pub const Resolver = struct {
             if (r.loadAsFileOrDirectory(resolved, kind)) |result| {
                 return .{ .success = result };
             }
-            return .{ .not_found = {} };
+            return .{ .not_found = .{} };
         }
     }
 
@@ -3114,7 +3151,7 @@ pub const Resolver = struct {
             if (r.debug_logs) |*debug| {
                 debug.addNoteFmt("The path \"{s}\" must not equal \"#\" and must not start with \"#/\"", .{import_path});
             }
-            return .{ .not_found = {} };
+            return .{ .not_found = .{} };
         }
         var module_type = options.ModuleType.unknown;
 
@@ -3170,7 +3207,7 @@ pub const Resolver = struct {
             return .{ .success = result };
         }
 
-        return .{ .not_found = {} };
+        return .{ .not_found = .{} };
     }
 
     const BrowserMapPath = struct {

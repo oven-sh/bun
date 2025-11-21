@@ -70,7 +70,7 @@ pub const ResolveMessage = struct {
         return jsc.JSValue.jsNumber(@as(i32, 0));
     }
 
-    pub fn fmt(allocator: std.mem.Allocator, specifier: string, referrer: string, err: anyerror, import_kind: bun.ImportKind) !string {
+    pub fn fmt(allocator: std.mem.Allocator, specifier: string, referrer: string, err: anyerror, import_kind: bun.ImportKind, resolved_path: string) !string {
         if (import_kind != .require_resolve and bun.strings.hasPrefixComptime(specifier, "node:")) {
             // This matches Node.js exactly.
             return try std.fmt.allocPrint(allocator, "No such built-in module: {s}", .{specifier});
@@ -79,6 +79,10 @@ pub const ResolveMessage = struct {
             error.ModuleNotFound => {
                 if (strings.eqlComptime(referrer, "bun:main")) {
                     return try std.fmt.allocPrint(allocator, "Module not found '{s}'", .{specifier});
+                }
+                // If we have a resolved path, show it (e.g., from package exports)
+                if (resolved_path.len > 0) {
+                    return try std.fmt.allocPrint(allocator, "Cannot find module \"{s}\" imported from \"{s}\"", .{ resolved_path, referrer });
                 }
                 if (Resolver.isPackagePath(specifier) and !strings.containsChar(specifier, '/')) {
                     return try std.fmt.allocPrint(allocator, "Cannot find package '{s}' from '{s}'", .{ specifier, referrer });

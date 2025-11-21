@@ -5,7 +5,7 @@
 const REPRL_CRFD = 100; // Control read FD
 const REPRL_CWFD = 101; // Control write FD
 const REPRL_DRFD = 102; // Data read FD
-const REPRL_DWFD = 103; // Data write FD
+const _REPRL_DWFD = 103; // Data write FD
 
 const fs = require("node:fs");
 
@@ -214,19 +214,19 @@ globalThis.MOCK_FILE = {
   json: () => Promise.resolve({ mock: "data" }),
   blob: () => Promise.resolve(new Blob(["mock"], { type: "text/plain" })),
   stream: () => new ReadableStream(),
-  slice: (start, end) => globalThis.MOCK_FILE,
+  slice: (_start, _end) => globalThis.MOCK_FILE,
   writer: () => ({ write: () => 0, end: () => 0, flush: () => Promise.resolve() }),
 };
 
 // Mock SQLite database
 globalThis.MOCK_DB = {
-  query: (sql, ...params) => ({
+  query: (_sql, ..._params) => ({
     all: () => [{ id: 1, name: "test" }],
     get: () => ({ id: 1, name: "test" }),
     run: () => ({ changes: 1, lastInsertRowid: 1 }),
     values: () => [[1, "test"]],
   }),
-  prepare: sql => globalThis.MOCK_DB.query(sql),
+  prepare: _sql => globalThis.MOCK_DB.query(_sql),
   exec: () => {},
   close: () => {},
   serialize: () => new Uint8Array(100),
@@ -235,7 +235,7 @@ globalThis.MOCK_DB = {
 
 // Mock Glob
 globalThis.MOCK_GLOB = {
-  scan: pattern => ({
+  scan: _pattern => ({
     [Symbol.asyncIterator]: async function* () {
       yield "file1.txt";
       yield "file2.txt";
@@ -253,8 +253,8 @@ globalThis.MOCK_GLOB = {
 // The Zig code should have already checked, but double-check here
 try {
   // Try to stat fd 100 to see if it exists
-  const stat = fs.fstatSync(REPRL_CRFD);
-} catch (e) {
+  fs.fstatSync(REPRL_CRFD);
+} catch {
   // FD doesn't exist - not running under Fuzzilli
   console.error("ERROR: REPRL file descriptors not available. Must run under Fuzzilli.");
   process.exit(1);
@@ -306,9 +306,9 @@ while (true) {
   try {
     // Use indirect eval to execute in global scope
     (0, eval)(script);
-  } catch (e) {
+  } catch (_e) {
     // Print uncaught exception like workerd does
-    console.log(`uncaught:${e}`);
+    console.log(`uncaught:${_e}`);
     exit_code = 1;
   }
 

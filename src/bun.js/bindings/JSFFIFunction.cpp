@@ -103,10 +103,7 @@ extern "C" void Bun__FFIFunction_setDataPtr(JSC::EncodedJSValue jsValue, void* p
 
     function->dataPtr = ptr;
 }
-extern "C" void Bun__untrackFFIFunction(Zig::GlobalObject* globalObject, JSC::EncodedJSValue function)
-{
-    globalObject->untrackFFIFunction(JSC::jsCast<JSC::JSFunction*>(JSC::JSValue::decode(function)));
-}
+
 extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, bool addPtrField, void* symbolFromDynamicLibrary)
 {
     if (addPtrField) {

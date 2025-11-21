@@ -1446,7 +1446,6 @@ pub const FFI = struct {
                 // val.allocator.free(val.step.compiled.buf);
                 if (val.step.compiled.js_function != .zero) {
                     _ = globalThis;
-                    // _ = jsc.untrackFunction(globalThis, val.step.compiled.js_function);
                     val.step.compiled.js_function = .zero;
                 }
 

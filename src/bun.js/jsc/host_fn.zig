@@ -283,11 +283,6 @@ const private = struct {
         inputFunctionPtr: ?*anyopaque,
     ) JSValue;
 
-    pub extern fn Bun__untrackFFIFunction(
-        globalObject: *JSGlobalObject,
-        function: JSValue,
-    ) bool;
-
     pub extern fn Bun__FFIFunction_getDataPtr(JSValue) ?*anyopaque;
     pub extern fn Bun__FFIFunction_setDataPtr(JSValue, ?*anyopaque) void;
 };
@@ -329,14 +324,6 @@ pub fn NewFunctionWithData(
         toJSHostFn(function),
         data,
     );
-}
-
-pub fn untrackFunction(
-    globalObject: *JSGlobalObject,
-    value: JSValue,
-) bool {
-    jsc.markBinding(@src());
-    return private.Bun__untrackFFIFunction(globalObject, value);
 }
 
 pub const DOMEffect = struct {

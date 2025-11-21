@@ -80,7 +80,7 @@ pub const Config = struct {
                     const value_type = property_value.jsType();
 
                     if (!value_type.isStringLike()) {
-                        return globalThis.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
+                        return globalThis.throwInvalidArguments("define \"{f}\" must be a JSON string", .{prop});
                     }
 
                     names[define_iter.i] = prop.toOwnedSlice(allocator) catch unreachable;
@@ -89,7 +89,7 @@ pub const Config = struct {
                     if (val.len == 0) {
                         val = jsc.ZigString.init("\"\"");
                     }
-                    values[define_iter.i] = std.fmt.allocPrint(allocator, "{}", .{val}) catch unreachable;
+                    values[define_iter.i] = std.fmt.allocPrint(allocator, "{f}", .{val}) catch unreachable;
                 }
 
                 this.transform.define = api.StringMap{
@@ -109,7 +109,7 @@ pub const Config = struct {
                     try external.toZigString(&zig_str, globalThis);
                     if (zig_str.len == 0) break :external;
                     var single_external = allocator.alloc(string, 1) catch unreachable;
-                    single_external[0] = std.fmt.allocPrint(allocator, "{}", .{zig_str}) catch unreachable;
+                    single_external[0] = std.fmt.allocPrint(allocator, "{f}", .{zig_str}) catch unreachable;
                     this.transform.external = single_external;
                 } else if (toplevel_type.isArray()) {
                     const count = try external.getLength(globalThis);
@@ -126,7 +126,7 @@ pub const Config = struct {
                         var zig_str = jsc.ZigString.init("");
                         try entry.toZigString(&zig_str, globalThis);
                         if (zig_str.len == 0) continue;
-                        externals[i] = std.fmt.allocPrint(allocator, "{}", .{zig_str}) catch unreachable;
+                        externals[i] = std.fmt.allocPrint(allocator, "{f}", .{zig_str}) catch unreachable;
                         i += 1;
                     }
 
@@ -330,7 +330,7 @@ pub const Config = struct {
                             if (!value.isString()) continue;
                             const str = try value.getZigString(globalThis);
                             if (str.len == 0) continue;
-                            const name = std.fmt.bufPrint(buf.items.ptr[buf.items.len..buf.capacity], "{}", .{str}) catch {
+                            const name = std.fmt.bufPrint(buf.items.ptr[buf.items.len..buf.capacity], "{f}", .{str}) catch {
                                 return globalThis.throwInvalidArguments("Error reading exports.eliminate. TODO: utf-16", .{});
                             };
                             const name_slice = buf.items.ptr[buf.items.len..][0..name.len];
@@ -624,7 +624,7 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject, allocator
 
     if (value.isString()) {
         const str = JSAst.E.String{
-            .data = try std.fmt.allocPrint(allocator, "{}", .{try value.getZigString(globalThis)}),
+            .data = try std.fmt.allocPrint(allocator, "{f}", .{try value.getZigString(globalThis)}),
         };
         const out = try allocator.create(JSAst.E.String);
         out.* = str;
@@ -666,7 +666,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     }
 
     if ((config.log.warnings + config.log.errors) > 0) {
-        return globalThis.throwValue(try config.log.toJS(globalThis, allocator, "Failed to create transpiler"));
+        return globalThis.throwValue(try config.log.toJS(globalThis, bun.default_allocator, "Failed to create transpiler"));
     }
 
     const log = &config.log;
@@ -677,7 +677,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         jsc.VirtualMachine.get().transpiler.env,
     ) catch |err| {
         if ((log.warnings + log.errors) > 0) {
-            return globalThis.throwValue(try log.toJS(globalThis, allocator, "Failed to create transpiler"));
+            return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to create transpiler"));
         }
 
         return globalThis.throwError(err, "Error creating transpiler");
@@ -688,7 +688,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     transpiler.options.env.behavior = .disable;
     transpiler.configureDefines() catch |err| {
         if ((log.warnings + log.errors) > 0) {
-            return globalThis.throwValue(try log.toJS(globalThis, allocator, "Failed to load define"));
+            return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to load define"));
         }
         return globalThis.throwError(err, "Failed to load define");
     };

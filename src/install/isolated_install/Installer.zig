@@ -127,19 +127,19 @@ pub const Installer = struct {
 
         switch (err) {
             .link_package => |link_err| {
-                Output.err(link_err, "failed to link package: {s}@{}", .{
+                Output.err(link_err, "failed to link package: {s}@{f}", .{
                     pkg_name.slice(string_buf),
                     pkg_res.fmt(string_buf, .auto),
                 });
             },
             .symlink_dependencies => |symlink_err| {
-                Output.err(symlink_err, "failed to symlink dependencies for package: {s}@{}", .{
+                Output.err(symlink_err, "failed to symlink dependencies for package: {s}@{f}", .{
                     pkg_name.slice(string_buf),
                     pkg_res.fmt(string_buf, .auto),
                 });
             },
             .patching => |patch_log| {
-                Output.errGeneric("failed to patch package: {s}@{}", .{
+                Output.errGeneric("failed to patch package: {s}@{f}", .{
                     pkg_name.slice(string_buf),
                     pkg_res.fmt(string_buf, .auto),
                 });
@@ -171,7 +171,7 @@ pub const Installer = struct {
                 var store_path: bun.RelPath(.{ .sep = .auto }) = .init();
                 defer store_path.deinit();
 
-                store_path.appendFmt("node_modules/{}", .{
+                store_path.appendFmt("node_modules/{f}", .{
                     Store.Entry.fmtStorePath(entry_id, this.store, this.lockfile),
                 });
 
@@ -530,9 +530,9 @@ pub const Installer = struct {
                                             if (PackageManager.verbose_install) {
                                                 Output.prettyErrorln(
                                                     \\<red><b>error<r><d>:<r>Failed to hardlink package folder
-                                                    \\{}
-                                                    \\<d>From: {s}<r>
-                                                    \\<d>  To: {}<r>
+                                                    \\{f}
+                                                    \\<d>From: {f}<r>
+                                                    \\<d>  To: {f}<r>
                                                     \\<r>
                                                 ,
                                                     .{
@@ -589,9 +589,9 @@ pub const Installer = struct {
                                             if (PackageManager.verbose_install) {
                                                 Output.prettyErrorln(
                                                     \\<red><b>error<r><d>:<r>Failed to copy package
-                                                    \\{}
-                                                    \\<d>From: {s}<r>
-                                                    \\<d>  To: {}<r>
+                                                    \\{f}
+                                                    \\<d>From: {f}<r>
+                                                    \\<d>  To: {f}<r>
                                                     \\<r>
                                                 ,
                                                     .{
@@ -637,7 +637,7 @@ pub const Installer = struct {
 
                             if (installer.manager.options.log_level.isVerbose()) {
                                 bun.Output.prettyErrorln(
-                                    \\Cloning {} to {}
+                                    \\Cloning {f} to {f}
                                 ,
                                     .{
                                         bun.fmt.fmtOSPath(pkg_cache_dir_subpath.sliceZ(), .{ .path_sep = .auto }),
@@ -714,9 +714,9 @@ pub const Installer = struct {
                                     if (PackageManager.verbose_install) {
                                         Output.prettyErrorln(
                                             \\<red><b>error<r><d>:<r>Failed to hardlink package
-                                            \\{}
+                                            \\{f}
                                             \\<d>From: {s}<r>
-                                            \\<d>  To: {}<r>
+                                            \\<d>  To: {f}<r>
                                             \\<r>
                                         ,
                                             .{
@@ -742,9 +742,9 @@ pub const Installer = struct {
                                     if (PackageManager.verbose_install) {
                                         Output.prettyErrorln(
                                             \\<red><b>error<r><d>:<r>Failed to open cache directory for copyfile
-                                            \\{}
+                                            \\{f}
                                             \\<d>From: {s}<r>
-                                            \\<d>  To: {}<r>
+                                            \\<d>  To: {f}<r>
                                             \\<r>
                                         ,
                                             .{
@@ -777,9 +777,9 @@ pub const Installer = struct {
                                     if (PackageManager.verbose_install) {
                                         Output.prettyErrorln(
                                             \\<red><b>error<r><d>:<r>Failed to copy package
-                                            \\{}
+                                            \\{f}
                                             \\<d>From: {s}<r>
-                                            \\<d>  To: {}<r>
+                                            \\<d>  To: {f}<r>
                                             \\<r>
                                         ,
                                             .{
@@ -930,7 +930,11 @@ pub const Installer = struct {
                     if (pkg_res.tag != .root and (pkg_res.tag == .workspace or is_trusted)) enqueue_lifecycle_scripts: {
                         var pkg_scripts: Package.Scripts = pkg_script_lists[pkg_id];
                         if (is_trusted and manager.postinstall_optimizer.shouldIgnoreLifecycleScripts(
-                            pkg_name_hashes[pkg_id],
+                            .{
+                                .name_hash = pkg_name_hash,
+                                .version = if (pkg_res.tag == .npm) pkg_res.value.npm.version else null,
+                                .version_buf = lockfile.buffers.string_bytes.items,
+                            },
                             installer.lockfile.buffers.resolutions.items,
                             pkg_metas,
                             manager.options.cpu,
@@ -1216,11 +1220,11 @@ pub const Installer = struct {
         switch (pkg_res.tag) {
             .workspace => {
                 if (this.lockfile.workspace_versions.get(pkg_name_hash)) |workspace_version| {
-                    try writer.print("{}", .{workspace_version.fmt(string_buf)});
+                    try writer.print("{f}", .{workspace_version.fmt(string_buf)});
                 }
             },
             else => {
-                try writer.print("{}", .{pkg_res.fmt(string_buf, .posix)});
+                try writer.print("{f}", .{pkg_res.fmt(string_buf, .posix)});
             },
         }
 
@@ -1270,7 +1274,7 @@ pub const Installer = struct {
             target.append("..");
         }
 
-        target.appendFmt("{}/node_modules/{s}", .{
+        target.appendFmt("{f}/node_modules/{s}", .{
             Store.Entry.fmtStorePath(entry_id, this.store, this.lockfile),
             pkg_name.slice(string_buf),
         });
@@ -1311,7 +1315,7 @@ pub const Installer = struct {
         }
         const name_hash = name_hashes[pkg_id];
 
-        if (postinstall_optimizer.get(name_hash)) |optimizer| {
+        if (postinstall_optimizer.get(.{ .name_hash = name_hash })) |optimizer| {
             switch (optimizer) {
                 .native_binlink => {
                     const manager = this.manager;
@@ -1474,7 +1478,7 @@ pub const Installer = struct {
                 buf.append("node_modules");
             },
             else => {
-                buf.appendFmt("node_modules/" ++ Store.modules_dir_name ++ "/{}/node_modules", .{
+                buf.appendFmt("node_modules/" ++ Store.modules_dir_name ++ "/{f}/node_modules", .{
                     Store.Entry.fmtStorePath(entry_id, this.store, this.lockfile),
                 });
             },
@@ -1507,7 +1511,7 @@ pub const Installer = struct {
                 if (dep_id != invalid_dependency_id) {
                     const pkg_name = pkg_names[pkg_id];
                     buf.append("node_modules/" ++ Store.modules_dir_name);
-                    buf.appendFmt("{}", .{
+                    buf.appendFmt("{f}", .{
                         Store.Entry.fmtStorePath(entry_id, this.store, this.lockfile),
                     });
                     buf.append("node_modules");
@@ -1533,7 +1537,7 @@ pub const Installer = struct {
             else => {
                 const pkg_name = pkg_names[pkg_id];
                 buf.append("node_modules/" ++ Store.modules_dir_name);
-                buf.appendFmt("{}", .{
+                buf.appendFmt("{f}", .{
                     Store.Entry.fmtStorePath(entry_id, this.store, this.lockfile),
                 });
                 buf.append("node_modules");

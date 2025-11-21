@@ -816,7 +816,7 @@ pub const S3Credentials = struct {
                     }
 
                     // Join query parameters with &
-                    var query_string = std.ArrayList(u8).init(allocator);
+                    var query_string = std.array_list.Managed(u8).init(allocator);
                     defer query_string.deinit();
                     for (query_parts.slice(), 0..) |part, i| {
                         if (i > 0) try query_string.append('&');
@@ -869,7 +869,7 @@ pub const S3Credentials = struct {
                 }
 
                 // Join URL query parameters with &
-                var url_query_string = std.ArrayList(u8).init(url_allocator);
+                var url_query_string = std.array_list.Managed(u8).init(url_allocator);
                 defer url_query_string.deinit();
                 for (url_query_parts.slice(), 0..) |part, i| {
                     if (i > 0) try url_query_string.append('&');

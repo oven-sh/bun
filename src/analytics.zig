@@ -39,6 +39,7 @@ pub const Features = struct {
     pub var bunfig: usize = 0;
     pub var define: usize = 0;
     pub var dotenv: usize = 0;
+    pub var debugger: usize = 0;
     pub var external: usize = 0;
     pub var extracted_packages: usize = 0;
     pub var fetch: usize = 0;
@@ -98,7 +99,7 @@ pub const Features = struct {
     }
 
     pub const Formatter = struct {
-        pub fn format(_: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(_: Formatter, writer: *std.Io.Writer) !void {
             const fields = comptime brk: {
                 const info: std.builtin.Type = @typeInfo(Features);
                 var buffer: [info.@"struct".decls.len][]const u8 = .{""} ** info.@"struct".decls.len;

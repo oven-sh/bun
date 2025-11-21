@@ -1431,12 +1431,12 @@ pub fn GlobWalker_(
             if (component.len == 0) return null;
 
             out: {
-                if (component.len == 1 and pattern[component.start] == '.') {
+                if (bun.strings.eqlComptime(pattern[component.start .. component.start + component.len], ".")) {
                     component.syntax_hint = .Dot;
                     has_relative_patterns.* = true;
                     break :out;
                 }
-                if (component.len == 2 and pattern[component.start] == '.' and pattern[component.start + 1] == '.') {
+                if (bun.strings.eqlComptime(pattern[component.start .. component.start + component.len], "..")) {
                     component.syntax_hint = .DotBack;
                     has_relative_patterns.* = true;
                     break :out;

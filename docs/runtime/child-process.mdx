@@ -289,7 +289,7 @@ childProc.disconnect();
 
 To use IPC between a `bun` process and a Node.js process, set `serialization: "json"` in `Bun.spawn`. This is because Node.js and Bun use different JavaScript engines with different object serialization formats.
 
-```ts bun-node-ipc.js icon="file-code"
+```js bun-node-ipc.js icon="file-code"
 if (typeof Bun !== "undefined") {
   const prefix = `[bun ${process.versions.bun} 🐇]`;
   const node = Bun.spawn({

@@ -408,6 +408,10 @@ export const GuidesList = () => {
             href: "/guides/test/coverage-threshold",
           },
           {
+            title: "Selectively run tests concurrently with glob patterns",
+            href: "/guides/test/concurrent-test-glob",
+          },
+          {
             title: "Generate code coverage reports with the Bun test runner",
             href: "/guides/test/coverage",
           },

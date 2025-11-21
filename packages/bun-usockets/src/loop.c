@@ -194,13 +194,14 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
         loop_data->low_prio_head = s->next;
         if (s->next) s->next->prev = 0;
         s->next = 0;
-        if (us_socket_is_closed(0, s)) {
-            s->flags.low_prio_state = 2;
-            us_socket_context_unref(0, s->context);
-            continue;
-        }
+        // if (us_socket_is_closed(0, s)) {
+        //     s->flags.low_prio_state = 2;
+        //     us_socket_context_unref(0, s->context);
+        //     continue;
+        // }
         us_internal_socket_context_link_socket(0, s->context, s);
-        us_socket_context_unref(0, s->context);
+        //TODO: ssl flag is important when unrefing the context
+        // us_socket_context_unref(0, s->context);
         us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
 
         s->flags.low_prio_state = 2;

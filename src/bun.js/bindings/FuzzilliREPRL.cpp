@@ -17,7 +17,6 @@
 
 #define REPRL_DWFD 103
 
-
 extern "C" {
 
 // Signal handler to ensure output is flushed before crash

@@ -32,6 +32,7 @@ const BunBuildOptions = struct {
     /// enable debug logs in release builds
     enable_logs: bool = false,
     enable_asan: bool,
+    enable_fuzzilli: bool,
     enable_valgrind: bool,
     use_mimalloc: bool,
     tracy_callstack_depth: u16,
@@ -81,6 +82,7 @@ const BunBuildOptions = struct {
         opts.addOption(bool, "baseline", this.isBaseline());
         opts.addOption(bool, "enable_logs", this.enable_logs);
         opts.addOption(bool, "enable_asan", this.enable_asan);
+        opts.addOption(bool, "enable_fuzzilli", this.enable_fuzzilli);
         opts.addOption(bool, "enable_valgrind", this.enable_valgrind);
         opts.addOption(bool, "use_mimalloc", this.use_mimalloc);
         opts.addOption([]const u8, "reported_nodejs_version", b.fmt("{f}", .{this.reported_nodejs_version}));
@@ -255,6 +257,7 @@ pub fn build(b: *Build) !void {
         .tracy_callstack_depth = b.option(u16, "tracy_callstack_depth", "") orelse 10,
         .enable_logs = b.option(bool, "enable_logs", "Enable logs in release") orelse false,
         .enable_asan = b.option(bool, "enable_asan", "Enable asan") orelse false,
+        .enable_fuzzilli = b.option(bool, "enable_fuzzilli", "Enable fuzzilli instrumentation") orelse false,
         .enable_valgrind = b.option(bool, "enable_valgrind", "Enable valgrind") orelse false,
         .use_mimalloc = b.option(bool, "use_mimalloc", "Use mimalloc as default allocator") orelse false,
         .llvm_codegen_threads = b.option(u32, "llvm_codegen_threads", "Number of threads to use for LLVM codegen") orelse 1,
@@ -490,6 +493,7 @@ fn addMultiCheck(
                 .no_llvm = root_build_options.no_llvm,
                 .enable_asan = root_build_options.enable_asan,
                 .enable_valgrind = root_build_options.enable_valgrind,
+                .enable_fuzzilli = root_build_options.enable_fuzzilli,
                 .use_mimalloc = root_build_options.use_mimalloc,
                 .override_no_export_cpp_apis = root_build_options.override_no_export_cpp_apis,
             };
@@ -605,13 +609,20 @@ fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
 
     obj.no_link_obj = opts.os != .windows;
 
+
     if (opts.enable_asan and !enableFastBuild(b)) {
         if (@hasField(Build.Module, "sanitize_address")) {
+            if (opts.enable_fuzzilli) {
+                obj.sanitize_coverage_trace_pc_guard = true;
+            }
             obj.root_module.sanitize_address = true;
         } else {
             const fail_step = b.addFail("asan is not supported on this platform");
             obj.step.dependOn(&fail_step.step);
         }
+    } else if (opts.enable_fuzzilli) {
+        const fail_step = b.addFail("fuzzilli requires asan");
+        obj.step.dependOn(&fail_step.step);
     }
     obj.bundle_compiler_rt = false;
     obj.bundle_ubsan_rt = false;

@@ -183,6 +183,35 @@ console.log(process.execArgv); // ["--smol", "--user-agent=MyBot"]
 
 ---
 
+## Disabling automatic config loading
+
+By default, standalone executables look for `.env` and `bunfig.toml` files in the directory where the executable is run. You can disable this behavior at build time for deterministic execution regardless of the user's working directory.
+
+```bash icon="terminal" terminal
+# Disable .env loading
+bun build --compile --no-compile-autoload-dotenv ./app.ts --outfile myapp
+
+# Disable bunfig.toml loading
+bun build --compile --no-compile-autoload-bunfig ./app.ts --outfile myapp
+
+# Disable both
+bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig ./app.ts --outfile myapp
+```
+
+You can also configure this via the JavaScript API:
+
+```ts
+await Bun.build({
+  entrypoints: ["./app.ts"],
+  compile: {
+    autoloadDotenv: false, // Disable .env loading
+    autoloadBunfig: false, // Disable bunfig.toml loading
+  },
+});
+```
+
+---
+
 ## Act as the Bun CLI
 
 <Note>New in Bun v1.2.16</Note>

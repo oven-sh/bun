@@ -266,6 +266,8 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForReadableStreamSource;
     std::unique_ptr<IsoSubspace> m_subspaceForTransformStream;
     std::unique_ptr<IsoSubspace> m_subspaceForTransformStreamDefaultController;
+    std::unique_ptr<IsoSubspace> m_subspaceForCompressionStream;
+    std::unique_ptr<IsoSubspace> m_subspaceForDecompressionStream;
     std::unique_ptr<IsoSubspace> m_subspaceForWritableStream;
     std::unique_ptr<IsoSubspace> m_subspaceForWritableStreamDefaultController;
     std::unique_ptr<IsoSubspace> m_subspaceForWritableStreamDefaultWriter;

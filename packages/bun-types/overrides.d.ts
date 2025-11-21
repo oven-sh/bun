@@ -1,5 +1,7 @@
 export {};
 
+type TODO = any;
+
 /**
  * This is like a BodyMixin, but exists to more things
  * (e.g. Blob, ReadableStream, Response, etc.)
@@ -235,7 +237,7 @@ declare global {
           "MKACTIVITY",
           "CHECKOUT",
           "MERGE",
-          "M - SEARCH",
+          "M-SEARCH",
           "NOTIFY",
           "SUBSCRIBE",
           "UNSUBSCRIBE",
@@ -272,7 +274,7 @@ declare global {
           "MKACTIVITY",
           "CHECKOUT",
           "MERGE",
-          "M - SEARCH",
+          "M-SEARCH",
           "NOTIFY",
           "SUBSCRIBE",
           "UNSUBSCRIBE",
@@ -296,7 +298,7 @@ declare global {
           "FLUSH",
           "QUERY",
         ];
-        HTTPParser: unknown;
+        HTTPParser: HTTPParserConstructor;
         ConnectionsList: unknown;
       };
       binding(m: string): object;
@@ -304,6 +306,34 @@ declare global {
 
     interface ProcessVersions extends Dict<string> {
       bun: string;
+    }
+
+    interface HTTPParserConstructor {
+      new (): TODO;
+
+      REQUEST: 1;
+      RESPONSE: 2;
+
+      kOnMessageBegin: 0;
+      kOnHeaders: 1;
+      kOnHeadersComplete: 2;
+      kOnBody: 3;
+      kOnMessageComplete: 4;
+      kOnExecute: 5;
+      kOnTimeout: 6;
+
+      kLenientNone: 0;
+      kLenientHeaders: 1;
+      kLenientChunkedLength: 2;
+      kLenientKeepAlive: 4;
+      kLenientTransferEncoding: 8;
+      kLenientVersion: 16;
+      kLenientDataAfterClose: 32;
+      kLenientOptionalLFAfterCR: 64;
+      kLenientOptionalCRLFAfterChunk: 128;
+      kLenientOptionalCRBeforeLF: 256;
+      kLenientSpacesAfterChunkSize: 512;
+      kLenientAll: 1023;
     }
   }
 }

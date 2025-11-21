@@ -278,6 +278,8 @@ public:
 
     JSC::JSFunction* wasmStreamingConsumeStreamFunction() const { return m_wasmStreamingConsumeStreamFunction.getInitializedOnMainThread(this); }
 
+    JSC::JSFunction* snapshotSerializersSerializeFunction() const { return m_snapshotSerializersSerializeFunction.getInitializedOnMainThread(this); }
+
     JSObject* requireFunctionUnbound() const { return m_requireFunctionUnbound.getInitializedOnMainThread(this); }
     JSObject* requireResolveFunctionUnbound() const { return m_requireResolveFunctionUnbound.getInitializedOnMainThread(this); }
     Bun::InternalModuleRegistry* internalModuleRegistry() const { return m_internalModuleRegistry.getInitializedOnMainThread(this); }
@@ -633,7 +635,8 @@ public:
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMDontContextify)                                    \
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMUseMainContextDefaultLoader)                       \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcSerializeFunction)                                \
-    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcParseHandleFunction)
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcParseHandleFunction)                              \
+    V(private, LazyPropertyOfGlobalObject<JSFunction>, m_snapshotSerializersSerializeFunction)
 
 #define DECLARE_GLOBALOBJECT_GC_MEMBER(visibility, T, name) \
     visibility:                                             \

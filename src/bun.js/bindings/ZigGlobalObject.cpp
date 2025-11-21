@@ -2287,6 +2287,10 @@ void GlobalObject::finishCreation(VM& vm)
         init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcSerializeCodeGenerator(init.vm), init.owner));
     });
 
+    m_snapshotSerializersSerializeFunction.initLater([](const LazyProperty<JSC::JSGlobalObject, JSC::JSFunction>::Initializer& init) {
+        init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::snapshotSerializersSerializeCodeGenerator(init.vm), init.owner));
+    });
+
     m_JSFileSinkClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FileSink);

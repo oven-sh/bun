@@ -146,7 +146,8 @@ JSValue SnapshotSerializers::serialize(JSGlobalObject* globalObject, JSValue val
     RETURN_IF_EXCEPTION(scope, {});
 
     // Use JavaScript builtin for iteration to avoid deoptimization at boundaries
-    JSFunction* serializeBuiltin = JSFunction::create(vm, globalObject, snapshotSerializersSerializeCodeGenerator(vm), globalObject->globalScope());
+    // Get the cached function from the global object
+    JSFunction* serializeBuiltin = jsCast<Zig::GlobalObject*>(globalObject)->snapshotSerializersSerializeFunction();
 
     MarkedArgumentBuffer args;
     args.append(testCallbacks);

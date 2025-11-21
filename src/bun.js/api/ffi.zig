@@ -780,7 +780,6 @@ pub const FFI = struct {
                         &str,
                         @as(u32, @intCast(function.arg_types.items.len)),
                         bun.cast(*const jsc.JSHostFn, compiled.ptr),
-                        false,
                         true,
                         function.symbol_from_dynamic_library,
                     );
@@ -1134,7 +1133,6 @@ pub const FFI = struct {
                         &str,
                         @as(u32, @intCast(function.arg_types.items.len)),
                         bun.cast(*const jsc.JSHostFn, compiled.ptr),
-                        false,
                         true,
                         function.symbol_from_dynamic_library,
                     );
@@ -1237,7 +1235,6 @@ pub const FFI = struct {
                         name,
                         @as(u32, @intCast(function.arg_types.items.len)),
                         bun.cast(*jsc.JSHostFn, compiled.ptr),
-                        false,
                         true,
                         function.symbol_from_dynamic_library,
                     );

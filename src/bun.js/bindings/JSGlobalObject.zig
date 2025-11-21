@@ -784,7 +784,7 @@ pub const JSGlobalObject = opaque {
         // when querying from JavaScript, 'func.len'
         comptime argument_count: u32,
     ) JSValue {
-        return jsc.host_fn.NewRuntimeFunction(global, ZigString.static(display_name), argument_count, jsc.toJSHostFn(function), false, false, null);
+        return jsc.host_fn.NewRuntimeFunction(global, ZigString.static(display_name), argument_count, jsc.toJSHostFn(function), false, null);
     }
 
     /// Get a lazily-initialized `JSC::String` from `BunCommonStrings.h`.

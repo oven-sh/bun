@@ -176,6 +176,9 @@ struct us_socket_flags {
     bool writable_emitted: 1;
     bool has_error: 1;
     bool has_received_eof: 1;
+    #ifdef LIBUS_USE_KQUEUE
+    bool needs_update: 1;
+    #endif
 
 } __attribute__((packed));
 
@@ -234,6 +237,9 @@ struct us_udp_socket_t {
     bool writable_emitted: 1;
     bool has_error: 1;
     bool has_received_eof: 1;
+    #ifdef LIBUS_USE_KQUEUE
+    bool needs_update: 1;
+    #endif
     struct us_udp_socket_t *next;
 };
 

@@ -184,6 +184,9 @@ struct us_udp_socket_t *us_create_udp_socket(
     udp->writable_emitted = true;
     udp->has_error = false;
     udp->has_received_eof = false;
+    #ifdef LIBUS_USE_KQUEUE
+    udp->needs_update = false;
+    #endif
 
     udp->on_data = data_cb;
     udp->on_drain = drain_cb;

@@ -329,6 +329,9 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
     s->flags.writable_emitted = true;
     s->flags.has_error = false;
     s->flags.has_received_eof = false;
+    #ifdef LIBUS_USE_KQUEUE
+    s->flags.needs_update = false;
+    #endif
     s->connect_state = NULL;
     s->connect_next = NULL;
 

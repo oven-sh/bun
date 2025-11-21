@@ -205,10 +205,20 @@ bool us_internal_us_poll_is_pollable(struct us_poll_t *p) {
         case POLL_TYPE_SOCKET: {
             struct us_socket_t* s = (struct us_socket_t*)p;
             struct us_socket_flags flags = s->flags;
+            #ifdef LIBUS_USE_KQUEUE
+            if(!flags.needs_update) {
+                return false;
+            }
+            #endif
             return flags.is_readable || !flags.writable_emitted || flags.has_received_eof || flags.has_error;
         }
         case POLL_TYPE_UDP: {
             struct us_udp_socket_t *u = (struct us_udp_socket_t *) p;
+            #ifdef LIBUS_USE_KQUEUE
+            if(!u->needs_update) {
+                return false;
+            }
+            #endif
             return u->is_readable || !u->writable_emitted || u->has_received_eof || u->has_error;
         }
         default:

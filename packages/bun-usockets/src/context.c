@@ -392,6 +392,9 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     s->flags.writable_emitted = true;
     s->flags.has_error = false;
     s->flags.has_received_eof = false;
+    #ifdef LIBUS_USE_KQUEUE
+    s->flags.needs_update = false;
+    #endif
     s->next = 0;
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     us_internal_socket_context_link_listen_socket(ssl, context, ls);
@@ -434,6 +437,9 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     s->flags.writable_emitted = true;
     s->flags.has_error = false;
     s->flags.has_received_eof = false;
+    #ifdef LIBUS_USE_KQUEUE
+    s->flags.needs_update = false;
+    #endif
     s->next = 0;
     us_internal_socket_context_link_listen_socket(ssl, context, ls);
 
@@ -470,6 +476,9 @@ struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_cont
     socket->flags.writable_emitted = true;
     socket->flags.has_error = false;
     socket->flags.has_received_eof = false;
+    #ifdef LIBUS_USE_KQUEUE
+    socket->flags.needs_update = false;
+    #endif
     socket->connect_state = NULL;
     socket->connect_next = NULL;
 
@@ -605,6 +614,9 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         flags->writable_emitted = true;
         flags->has_error = false;
         flags->has_received_eof = false;
+        #ifdef LIBUS_USE_KQUEUE
+        flags->needs_update = false;
+        #endif
         /* Link it into context so that timeout fires properly */
         us_internal_socket_context_link_socket(0, context, s);
 
@@ -787,6 +799,9 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_con
     connect_socket->flags.writable_emitted = true;
     connect_socket->flags.has_error = false;
     connect_socket->flags.has_received_eof = false;
+    #ifdef LIBUS_USE_KQUEUE
+    connect_socket->flags.needs_update = false;
+    #endif
     connect_socket->connect_state = NULL;
     connect_socket->connect_next = NULL;
     us_internal_socket_context_link_socket(ssl, context, connect_socket);

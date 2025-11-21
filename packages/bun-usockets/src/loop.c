@@ -329,6 +329,9 @@ void us_internal_update_ready_poll_state(struct us_poll_t *p, int error, int eof
             if (eof != 0) {
                 s->flags.has_received_eof = true;
             }
+            #ifdef LIBUS_USE_KQUEUE
+            s->flags.needs_update = true;
+            #endif
             break;
         }
         case POLL_TYPE_UDP: {
@@ -346,6 +349,9 @@ void us_internal_update_ready_poll_state(struct us_poll_t *p, int error, int eof
             if (eof != 0) {
                 u->has_received_eof = true;
             }
+            #ifdef LIBUS_USE_KQUEUE
+            u->needs_update = true;
+            #endif
             break;
         }
     }
@@ -365,13 +371,20 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
             break;
         }
     case POLL_TYPE_SEMI_SOCKET: {
+        
             /* Both connect and listen sockets are semi-sockets
              * but they poll for different events */
             if (us_poll_events(p) == LIBUS_SOCKET_WRITABLE) {
                 struct us_socket_t* s = (struct us_socket_t *) p;
+                #ifdef LIBUS_USE_KQUEUE
+                s->flags.needs_update = false;
+                #endif
                 us_internal_socket_after_open(s, s->flags.has_error || s->flags.has_received_eof);
             } else {
                 struct us_listen_socket_t *listen_socket = (struct us_listen_socket_t *) p;
+                #ifdef LIBUS_USE_KQUEUE
+                listen_socket->s.flags.needs_update = false;
+                #endif
                 struct bsd_addr_t addr;
 
                 LIBUS_SOCKET_DESCRIPTOR client_fd = bsd_accept_socket(us_poll_fd(p), &addr);
@@ -403,6 +416,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
                         s->flags.writable_emitted = true;
                         s->flags.has_error = false;
                         s->flags.has_received_eof = false;
+                        #ifdef LIBUS_USE_KQUEUE
+                        s->flags.needs_update = false;
+                        #endif
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -425,6 +441,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
     case POLL_TYPE_SOCKET: {
             /* We should only use s, no p after this point */
             struct us_socket_t *s = (struct us_socket_t *) p;
+            #ifdef LIBUS_USE_KQUEUE
+            s->flags.needs_update = false;
+            #endif
             /* The context can change after calling a callback but the loop is always the same */
             struct us_loop_t* loop = s->context->loop;
             struct us_socket_flags* flags = &s->flags;
@@ -611,6 +630,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
         }
         case POLL_TYPE_UDP: {
             struct us_udp_socket_t *u = (struct us_udp_socket_t *) p;
+            #ifdef LIBUS_USE_KQUEUE
+            u->needs_update = false;
+            #endif
             bool has_error = u->has_error;
             if (u->closed) {
                 break;

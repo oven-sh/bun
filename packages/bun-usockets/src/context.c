@@ -54,8 +54,8 @@ void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls) {
         s->next = loop->data.closed_head;
         loop->data.closed_head = s;
 
-        /* Any socket with prev = context is marked as closed */
-        s->prev = (struct us_socket_t *) context;
+        
+        s->flags.is_closed = 1;
     }
 
     /* We cannot immediately free a listen socket as we can be inside an accept loop */
@@ -107,6 +107,7 @@ void us_internal_socket_context_unlink_listen_socket(int ssl, struct us_socket_c
             next->prev = prev;
         }
     }
+    ls->s.prev = ls->s.next = 0;
     us_socket_context_unref(ssl, context);
 }
 
@@ -130,6 +131,7 @@ void us_internal_socket_context_unlink_socket(int ssl, struct us_socket_context_
             next->prev = prev;
         }
     }
+    s->prev = s->next = 0;
     us_internal_disable_sweep_timer(context->loop);
     us_socket_context_unref(ssl, context);
 }
@@ -148,6 +150,7 @@ void us_internal_socket_context_unlink_connecting_socket(int ssl, struct us_sock
             next->prev_pending = prev;
         }
     }
+    c->prev_pending = c->next_pending = 0;
     us_internal_disable_sweep_timer(context->loop);
     us_socket_context_unref(ssl, context);
 }
@@ -386,7 +389,10 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     s->flags.low_prio_state = 0;
     s->flags.is_paused = 0;
     s->flags.is_ipc = 0;
+    s->flags.is_closed = 0;
+    s->flags.is_ssl = ssl > 0;
     s->next = 0;
+
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     us_internal_socket_context_link_listen_socket(ssl, context, ls);
 
@@ -422,6 +428,8 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     s->flags.is_paused = 0;
     s->flags.is_ipc = 0;
+    s->flags.is_closed = 0;
+    s->flags.is_ssl = ssl > 0;
     s->next = 0;
     us_internal_socket_context_link_listen_socket(ssl, context, ls);
 
@@ -430,7 +438,7 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     return ls;
 }
 
-struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_context_t *context, struct sockaddr_storage* addr, int options, int socket_ext_size) {
+struct us_socket_t* us_socket_context_connect_resolved_dns(int ssl, struct us_socket_context_t *context, struct sockaddr_storage* addr, int options, int socket_ext_size) {
     LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(addr, options);
     if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
         return NULL;
@@ -453,6 +461,8 @@ struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_cont
     socket->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     socket->flags.is_paused = 0;
     socket->flags.is_ipc = 0;
+    socket->flags.is_closed = 0;
+    socket->flags.is_ssl = ssl > 0;
     socket->connect_state = NULL;
     socket->connect_next = NULL;
 
@@ -514,7 +524,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
     struct sockaddr_storage addr;
     if (try_parse_ip(host, port, &addr)) {
         *has_dns_resolved = 1;
-        return us_socket_context_connect_resolved_dns(context, &addr, options, socket_ext_size);
+        return us_socket_context_connect_resolved_dns(ssl, context, &addr, options, socket_ext_size);
     }
 
     struct addrinfo_request* ai_req;
@@ -534,7 +544,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
             struct sockaddr_storage addr;
             init_addr_with_port(&entries->info, port, &addr);
             *has_dns_resolved = 1;
-            struct us_socket_t *s = us_socket_context_connect_resolved_dns(context, &addr, options, socket_ext_size);
+            struct us_socket_t *s = us_socket_context_connect_resolved_dns(ssl, context, &addr, options, socket_ext_size);
             Bun__addrinfo_freeRequest(ai_req, s == NULL);
             return s;
         }
@@ -583,6 +593,8 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         flags->allow_half_open = (c->options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
         flags->is_paused = 0;
         flags->is_ipc = 0;
+        flags->is_closed = 0;
+        flags->is_ssl = c->ssl;
         /* Link it into context so that timeout fires properly */
         us_internal_socket_context_link_socket(0, context, s);
 
@@ -760,6 +772,8 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_con
     connect_socket->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     connect_socket->flags.is_paused = 0;
     connect_socket->flags.is_ipc = 0;
+    connect_socket->flags.is_closed = 0;
+    connect_socket->flags.is_ssl = ssl > 0;
     connect_socket->connect_state = NULL;
     connect_socket->connect_next = NULL;
     us_internal_socket_context_link_socket(ssl, context, connect_socket);

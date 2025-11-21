@@ -1,24 +1,22 @@
 #ifdef FUZZILLI_ENABLED
-#include "root.h"
-#include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/CallFrame.h"
 #include "JavaScriptCore/Identifier.h"
-#include "wtf/text/WTFString.h"
+#include "JavaScriptCore/JSGlobalObject.h"
 #include "ZigGlobalObject.h"
+#include "root.h"
+#include "wtf/text/WTFString.h"
+#include <cerrno>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
-#include <unistd.h>
 #include <fcntl.h>
+#include <sanitizer/asan_interface.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <cerrno>
+#include <unistd.h>
 
 #define REPRL_DWFD 103
 
-#if __has_feature(address_sanitizer) || defined(__SANITIZE_ADDRESS__)
-#include <sanitizer/asan_interface.h>
-#endif
 
 extern "C" {
 
@@ -130,16 +128,9 @@ static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionFuzzilli(JSC::JSGlob
 
         case 8:
             // Verify DEBUG or ASAN is enabled
-#if defined(DEBUG) || __has_feature(address_sanitizer) || defined(__SANITIZE_ADDRESS__)
             // Expected to be compiled with debug or ASAN, don't crash
             fprintf(stdout, "DEBUG or ASAN is enabled\n");
             fflush(stdout);
-#else
-            // If neither DEBUG nor ASAN is enabled, crash to indicate misconfiguration
-            fprintf(stderr, "ERROR: Expected DEBUG or ASAN to be enabled\n");
-            fflush(stderr);
-            std::abort();
-#endif
             break;
 
         default:
@@ -168,8 +159,6 @@ static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionFuzzilli(JSC::JSGlob
 // Based on workerd implementation
 // Only enabled when ASAN is active
 // ============================================================================
-
-#if __has_feature(address_sanitizer) || defined(__SANITIZE_ADDRESS__)
 
 #define SHM_SIZE 0x200000
 #define MAX_EDGES ((SHM_SIZE - 4) * 8)
@@ -293,24 +282,6 @@ void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject* globalObject)
         JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
-#else
-
-// Stub implementations when ASAN is not enabled
-extern "C" void __sanitizer_cov_trace_pc_guard_init(uint32_t* start, uint32_t* stop)
-{
-    (void)start;
-    (void)stop;
-}
-
-extern "C" void __sanitizer_cov_trace_pc_guard(uint32_t* guard)
-{
-    (void)guard;
-}
-
-{
-}
-
-#endif // ASAN
-
 } // extern "C"
+
 #endif // FUZZILLI_ENABLED

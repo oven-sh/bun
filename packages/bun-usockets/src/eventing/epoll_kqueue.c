@@ -441,7 +441,7 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
         kqueue_change(loop->fd, p->state.fd, old_events, events, p);
 #endif
         /* Set all removed events to null-polls in pending ready poll list */
-        us_internal_loop_update_pending_ready_polls(loop, p, p, old_events, events);
+        // us_internal_loop_update_pending_ready_polls(loop, p, p, old_events, events);
     }
 }
 

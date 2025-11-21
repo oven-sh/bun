@@ -102,7 +102,7 @@ bun upgrade --canary
 - Runtime
   - [`bun run`](https://bun.com/docs/cli/run)
   - [File types (Loaders)](https://bun.com/docs/runtime/loaders)
-  - [TypeScript](https://bun.com/docs/runtime/typescript)
+  - [TypeScript](https://bun.com/docs/typescript)
   - [JSX](https://bun.com/docs/runtime/jsx)
   - [Environment variables](https://bun.com/docs/runtime/env)
   - [Bun APIs](https://bun.com/docs/runtime/bun-apis)
@@ -328,7 +328,7 @@ bun upgrade --canary
   - [Import a HTML file as text](https://bun.com/guides/runtime/import-html)
   - [Install and run Bun in GitHub Actions](https://bun.com/guides/runtime/cicd)
   - [Debugging Bun with the web debugger](https://bun.com/guides/runtime/web-debugger)
-  - [Install TypeScript declarations for Bun](https://bun.com/guides/runtime/typescript)
+  - [Install TypeScript declarations for Bun](https://bun.com/guides/typescript)
   - [Debugging Bun with the VS Code extension](https://bun.com/guides/runtime/vscode-debugger)
   - [Inspect memory usage using V8 heap snapshots](https://bun.com/guides/runtime/heap-snapshot)
   - [Define and replace static globals & constants](https://bun.com/guides/runtime/define-constant)

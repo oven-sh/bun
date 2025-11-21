@@ -49,8 +49,10 @@ function write(out) {
   let endCb = false;
 
   // First, write until it gets some backpressure
+  console.error(`${name} writing`);
   while (out.write(buf, common.mustSucceed()));
-
+  // out.write(buf, common.mustSucceed())
+  console.error(`${name} wrote`);
   // Now end, and make sure that we don't get the 'finish' event
   // before the tick where the cb gets called.  We give it until
   // nextTick because this is added as a listener before the endcb

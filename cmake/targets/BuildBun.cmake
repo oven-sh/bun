@@ -915,6 +915,16 @@ if(USE_MIMALLOC_AS_DEFAULT_ALLOCATOR)
   target_compile_definitions(${bun} PRIVATE USE_MIMALLOC=1)
 endif()
 
+if(ENABLE_FUZZILLI)
+  target_compile_definitions(${bun} PRIVATE BUN_FUZZILLI_ENABLED=1)
+  target_sources(${bun} PRIVATE
+    ${CWD}/src/fuzzilli/client.cpp
+    ${CWD}/src/fuzzilli/session.cpp
+    ${CWD}/src/fuzzilli/log.cpp
+    ${CWD}/src/fuzzilli/reprl.cpp
+  )
+endif()
+
 target_compile_definitions(${bun} PRIVATE
   _HAS_EXCEPTIONS=0
   LIBUS_USE_OPENSSL=1

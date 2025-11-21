@@ -2995,7 +2995,6 @@ void GlobalObject::visitAdditionalChildren(Visitor& visitor)
     thisObject->globalEventScope->visitJSEventListeners(visitor);
 
     thisObject->m_aboutToBeNotifiedRejectedPromises.visit(thisObject, visitor);
-    thisObject->m_ffiFunctions.visit(thisObject, visitor);
 
     ScriptExecutionContext* context = thisObject->scriptExecutionContext();
     visitor.addOpaqueRoot(context);
@@ -3557,17 +3556,6 @@ bool GlobalObject::hasNapiFinalizers() const
 }
 
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
-
-void GlobalObject::trackFFIFunction(JSC::JSFunction* function)
-{
-    this->m_ffiFunctions.append(vm(), this, function);
-}
-bool GlobalObject::untrackFFIFunction(JSC::JSFunction* function)
-{
-    return this->m_ffiFunctions.removeFirstMatching(this, [&](JSC::WriteBarrier<JSC::JSFunction>& untrackedFunction) -> bool {
-        return untrackedFunction.get() == function;
-    });
-}
 
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
 {

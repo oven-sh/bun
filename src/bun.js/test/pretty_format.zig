@@ -874,7 +874,7 @@ pub const JestPrettyFormat = struct {
             if (expect.Jest.runner) |runner| {
                 if (runner.snapshots.serializers.get()) |serializers| {
                     const result = try bun.cpp.SnapshotSerializers__serialize(this.globalThis, serializers, value);
-                    if (!result.isNull()) {
+                    if (!result.isUndefinedOrNull()) {
                         // Serializer matched but returned non-string value
                         if (bun.Environment.ci_assert) bun.assert(result.isString());
 

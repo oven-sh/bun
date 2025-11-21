@@ -6,11 +6,14 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/JSFunction.h>
 #include "ErrorCode.h"
+#include "WebCoreJSBuiltins.h"
 
 namespace Bun {
 
 using namespace JSC;
+using namespace WebCore;
 
 const ClassInfo SnapshotSerializers::s_info = { "SnapshotSerializers"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(SnapshotSerializers) };
 
@@ -111,6 +114,11 @@ JSValue SnapshotSerializers::serialize(JSGlobalObject* globalObject, JSValue val
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // If no serializers are registered, return undefined
+    if (!m_testCallbacks.get() || m_testCallbacks.get()->length() == 0) {
+        return jsUndefined();
+    }
+
     // Check for re-entrancy
     if (m_isExecuting) {
         throwTypeError(globalObject, scope, "Cannot serialize from within a test or serialize callback"_s);
@@ -137,59 +145,19 @@ JSValue SnapshotSerializers::serialize(JSGlobalObject* globalObject, JSValue val
     JSArray* serializeCallbacks = getSerializeCallbacks(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    unsigned length = testCallbacks->length();
+    // Use JavaScript builtin for iteration to avoid deoptimization at boundaries
+    JSFunction* serializeBuiltin = JSFunction::create(vm, globalObject, snapshotSerializersSerializeCodeGenerator(vm), globalObject->globalScope());
 
-    // Iterate through serializers in reverse order (most recent to least recent)
-    for (int i = static_cast<int>(length) - 1; i >= 0; i--) {
-        JSValue testCallback = testCallbacks->getIndex(globalObject, static_cast<unsigned>(i));
-        RETURN_IF_EXCEPTION(scope, {});
+    MarkedArgumentBuffer args;
+    args.append(testCallbacks);
+    args.append(serializeCallbacks);
+    args.append(value);
+    ASSERT(!args.hasOverflowed());
 
-        if (!testCallback.isCallable()) {
-            continue;
-        }
+    JSValue result = call(globalObject, serializeBuiltin, args, "snapshotSerializersSerialize"_s);
+    RETURN_IF_EXCEPTION(scope, {});
 
-        // Call the test function with the value
-        auto callData = JSC::getCallData(testCallback);
-        MarkedArgumentBuffer args;
-        args.append(value);
-        ASSERT(!args.hasOverflowed());
-
-        JSValue testResult = call(globalObject, testCallback, callData, jsUndefined(), args);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        // If the test returns falsey, continue
-        if (!testResult.toBoolean(globalObject)) {
-            continue;
-        }
-
-        // Use this serializer
-        JSValue serializeCallback = serializeCallbacks->getIndex(globalObject, static_cast<unsigned>(i));
-        RETURN_IF_EXCEPTION(scope, {});
-
-        if (!serializeCallback.isCallable()) {
-            continue;
-        }
-
-        // Call the serialize function with the value
-        auto serializeCallData = JSC::getCallData(serializeCallback);
-        MarkedArgumentBuffer serializeArgs;
-        serializeArgs.append(value);
-        ASSERT(!serializeArgs.hasOverflowed());
-
-        JSValue result = call(globalObject, serializeCallback, serializeCallData, jsUndefined(), serializeArgs);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        // Error if the result is not a string
-        if (!result.isString()) {
-            throwTypeError(globalObject, scope, "Snapshot serializer serialize callback must return a string"_s);
-            RELEASE_AND_RETURN(scope, {});
-        }
-
-        return result;
-    }
-
-    // No matching serializer found
-    return jsNull();
+    return result;
 }
 
 } // namespace Bun

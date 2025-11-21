@@ -1,4 +1,3 @@
-
 pub const FuzzilliCommand = if (bun.Environment.enable_fuzzilli) struct {
     pub fn exec(ctx: Command.Context) !void {
         @branchHint(.cold);

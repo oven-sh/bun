@@ -21,7 +21,7 @@ pub const FuzzilliCommand = if (bun.Environment.enable_fuzzilli) struct {
         const reprl_script = @embedFile("../js/eval/fuzzilli-reprl.ts");
 
         // Create temp file for the script
-        var temp_dir = bun.FD.cwd().openDir("/tmp", .{}) catch {
+        var temp_dir = bun.FD.cwd().stdDir().openDir("/tmp", .{}) catch {
             Output.prettyErrorln("<r><red>error<r>: Could not access /tmp directory", .{});
             Global.exit(1);
         };

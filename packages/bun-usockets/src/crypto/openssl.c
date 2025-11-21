@@ -703,7 +703,7 @@ int ssl_is_low_prio(struct us_internal_ssl_socket_t *s) {
    * step is CPU intensive, and we want to speed up the rest of connection
    * establishing if the CPU intensive work is already done, so fully
    * established connections increase lineary over time under high load */
-  return SSL_in_init(s->ssl);
+  return SSL_get_state(s->ssl) & SSL_ST_BEFORE;
 }
 
 /* Per-context functions */

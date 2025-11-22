@@ -237,7 +237,7 @@ pub fn tickQueueWithCount(this: *EventLoop, virtual_machine: *VirtualMachine, co
             @field(Task.Tag, @typeName(JSCDeferredWorkTask)) => {
                 var jsc_task: *JSCDeferredWorkTask = task.get(JSCDeferredWorkTask).?;
                 jsc.markBinding(@src());
-                try jsc_task.run();
+                jsc_task.run() catch |err| try reportErrorOrTerminate(global, err);
             },
             @field(Task.Tag, @typeName(WriteFileTask)) => {
                 var transform_task: *WriteFileTask = task.get(WriteFileTask).?;

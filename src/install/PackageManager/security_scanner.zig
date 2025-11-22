@@ -725,13 +725,31 @@ pub const SecurityScanSubprocess = struct {
 
         const spawn_cwd = FileSystem.instance.top_level_dir;
 
+        // On Windows, we need to pre-allocate uv.Pipe for .buffer/.ipc
+        // The spawn code will initialize it and return it in extra_pipes
+        const json_pipe_windows = if (comptime Environment.isWindows)
+            bun.default_allocator.create(bun.windows.libuv.Pipe) catch bun.outOfMemory()
+        else
+            undefined;
+
+        // We need to keep extra_fds array alive since it's passed by reference
+        const extra_fds_windows = if (comptime Environment.isWindows)
+            [_]bun.spawn.SpawnOptions.Stdio{ .{ .pipe = ipc_pipe_fds[1] }, .{ .buffer = json_pipe_windows } }
+        else
+            undefined;
+
+        const extra_fds_posix = if (comptime Environment.isPosix)
+            [_]bun.spawn.SpawnOptions.Stdio{ .{ .pipe = ipc_pipe_fds[1] }, .ipc }
+        else
+            undefined;
+
         const spawn_options = if (comptime Environment.isWindows)
             bun.spawn.SpawnOptions{
                 .stdout = .inherit,
                 .stderr = .inherit,
                 .stdin = .inherit,
                 .cwd = spawn_cwd,
-                .extra_fds = &.{ .{ .pipe = ipc_pipe_fds[1] }, .{ .buffer = bun.default_allocator.create(bun.windows.libuv.Pipe) catch bun.outOfMemory() } },
+                .extra_fds = &extra_fds_windows,
                 .windows = .{
                     .loop = jsc.EventLoopHandle.init(&this.manager.event_loop),
                 },
@@ -742,7 +760,7 @@ pub const SecurityScanSubprocess = struct {
                 .stderr = .inherit,
                 .stdin = .inherit,
                 .cwd = spawn_cwd,
-                .extra_fds = &.{ .{ .pipe = ipc_pipe_fds[1] }, .ipc },
+                .extra_fds = &extra_fds_posix,
             };
 
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), @ptrCast(std.os.environ.ptr))).unwrap();

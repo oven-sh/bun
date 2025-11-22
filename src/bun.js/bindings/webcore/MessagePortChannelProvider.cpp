@@ -38,8 +38,9 @@ MessagePortChannelProvider& MessagePortChannelProvider::singleton()
 {
     // TODO: I think this assertion is relevant. Bun will call this on the Worker's thread
     // ASSERT(isMainThread());
-    static MessagePortChannelProviderImpl globalProvider;
-    return globalProvider;
+    // Intentionally leak to avoid destructor ordering issues during program exit
+    static MessagePortChannelProviderImpl* globalProvider = new MessagePortChannelProviderImpl;
+    return *globalProvider;
 }
 
 // void MessagePortChannelProvider::setSharedProvider(MessagePortChannelProvider& provider)

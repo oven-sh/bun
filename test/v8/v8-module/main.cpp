@@ -1114,6 +1114,33 @@ void perform_object_set_by_key(const FunctionCallbackInfo<Value> &info) {
   }
 }
 
+void test_v8_value_type_checks(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  if (info.Length() < 1) {
+    return fail(info, "Expected 1 argument");
+  }
+
+  Local<Value> value = info[0];
+  
+  // Test all type checks
+  printf("IsMap: %s\n", value->IsMap() ? "true" : "false");
+  printf("IsArray: %s\n", value->IsArray() ? "true" : "false");
+  printf("IsInt32: %s\n", value->IsInt32() ? "true" : "false");
+  printf("IsBigInt: %s\n", value->IsBigInt() ? "true" : "false");
+  
+  // Also test some existing checks for comparison
+  printf("IsNumber: %s\n", value->IsNumber() ? "true" : "false");
+  printf("IsUint32: %s\n", value->IsUint32() ? "true" : "false");
+  printf("IsObject: %s\n", value->IsObject() ? "true" : "false");
+  printf("IsBoolean: %s\n", value->IsBoolean() ? "true" : "false");
+  printf("IsString: %s\n", value->IsString() ? "true" : "false");
+  printf("IsFunction: %s\n", value->IsFunction() ? "true" : "false");
+  
+  return ok(info);
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -1165,6 +1192,8 @@ void initialize(Local<Object> exports, Local<Value> module,
                   perform_object_get_by_key);
   NODE_SET_METHOD(exports, "perform_object_set_by_key",
                   perform_object_set_by_key);
+  NODE_SET_METHOD(exports, "test_v8_value_type_checks",
+                  test_v8_value_type_checks);
 
   // without this, node hits a UAF deleting the Global
   node::AddEnvironmentCleanupHook(context->GetIsolate(),

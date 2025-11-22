@@ -1463,7 +1463,7 @@ pub fn NewSocket(comptime ssl: bool) type {
             // reconfigure context to use the new wrapper handlers
             Socket.unsafeConfigure(this.socket.context().?, true, true, WrappedSocket, TCPHandler);
             const TLSHandler = NewWrappedHandler(true);
-            const new_socket = this.socket.wrapTLS(options, ext_size, true, WrappedSocket, TLSHandler) orelse {
+            const new_socket = this.socket.wrapTLS(options, ext_size, @sizeOf(*anyopaque), true, WrappedSocket, TLSHandler) orelse {
                 const err = BoringSSL.ERR_get_error();
                 defer if (err != 0) BoringSSL.ERR_clear_error();
                 tls.wrapped = .none;

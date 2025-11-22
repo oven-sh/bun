@@ -53,9 +53,7 @@ void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls) {
         /* Link this socket to the close-list and let it be deleted after this iteration */
         s->next = loop->data.closed_head;
         loop->data.closed_head = s;
-
-        /* Any socket with prev = context is marked as closed */
-        s->prev = (struct us_socket_t *) context;
+        s->flags.is_closed = 1;
     }
 
     /* We cannot immediately free a listen socket as we can be inside an accept loop */
@@ -95,7 +93,7 @@ void us_internal_socket_context_unlink_listen_socket(int ssl, struct us_socket_c
 
     struct us_socket_t* prev = ls->s.prev;
     struct us_socket_t* next = ls->s.next;
-    if (prev == next) {
+    if (!prev && !next) {
         context->head_listen_sockets = 0;
     } else {
         if (prev) {
@@ -107,6 +105,7 @@ void us_internal_socket_context_unlink_listen_socket(int ssl, struct us_socket_c
             next->prev = prev;
         }
     }
+    ls->s.next = ls->s.prev = 0;
     us_socket_context_unref(ssl, context);
 }
 
@@ -118,7 +117,7 @@ void us_internal_socket_context_unlink_socket(int ssl, struct us_socket_context_
 
     struct us_socket_t* prev = s->prev;
     struct us_socket_t* next = s->next;
-    if (prev == next) {
+    if (!prev && !next) {
         context->head_sockets = 0;
     } else {
         if (prev) {
@@ -130,13 +129,14 @@ void us_internal_socket_context_unlink_socket(int ssl, struct us_socket_context_
             next->prev = prev;
         }
     }
+    s->next = s->prev = 0;
     us_internal_disable_sweep_timer(context->loop);
     us_socket_context_unref(ssl, context);
 }
 void us_internal_socket_context_unlink_connecting_socket(int ssl, struct us_socket_context_t *context, struct us_connecting_socket_t *c) {
     struct us_connecting_socket_t* prev = c->prev_pending;
     struct us_connecting_socket_t* next = c->next_pending;
-    if (prev == next) {
+    if (!prev && !next) {
         context->head_connecting_sockets = 0;
     } else {
         if (prev) {
@@ -148,6 +148,7 @@ void us_internal_socket_context_unlink_connecting_socket(int ssl, struct us_sock
             next->prev_pending = prev;
         }
     }
+    c->next_pending = c->prev_pending = 0;
     us_internal_disable_sweep_timer(context->loop);
     us_socket_context_unref(ssl, context);
 }
@@ -385,6 +386,7 @@ struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_co
     s->long_timeout = 255;
     s->flags.low_prio_state = 0;
     s->flags.is_paused = 0;
+    s->flags.is_closed = 0;
     s->flags.is_ipc = 0;
     s->next = 0;
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
@@ -421,6 +423,7 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, struct us_sock
     s->flags.low_prio_state = 0;
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     s->flags.is_paused = 0;
+    s->flags.is_closed = 0;
     s->flags.is_ipc = 0;
     s->next = 0;
     us_internal_socket_context_link_listen_socket(ssl, context, ls);
@@ -452,6 +455,7 @@ struct us_socket_t* us_socket_context_connect_resolved_dns(struct us_socket_cont
     socket->flags.low_prio_state = 0;
     socket->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     socket->flags.is_paused = 0;
+    socket->flags.is_closed = 0;
     socket->flags.is_ipc = 0;
     socket->connect_state = NULL;
     socket->connect_next = NULL;
@@ -582,6 +586,7 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         flags->low_prio_state = 0;
         flags->allow_half_open = (c->options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
         flags->is_paused = 0;
+        flags->is_closed = 0;
         flags->is_ipc = 0;
         /* Link it into context so that timeout fires properly */
         us_internal_socket_context_link_socket(0, context, s);
@@ -759,6 +764,7 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_con
     connect_socket->flags.low_prio_state = 0;
     connect_socket->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     connect_socket->flags.is_paused = 0;
+    connect_socket->flags.is_closed = 0;
     connect_socket->flags.is_ipc = 0;
     connect_socket->connect_state = NULL;
     connect_socket->connect_next = NULL;
@@ -780,10 +786,10 @@ struct us_socket_context_t *us_create_child_socket_context(int ssl, struct us_so
 }
 
 /* Note: This will set timeout to 0 */
-struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_context_t *context, struct us_socket_t *s, int ext_size) {
+struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_context_t *context, struct us_socket_t *s, int ext_size, unsigned int old_ext_size) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
-        return (struct us_socket_t *) us_internal_ssl_socket_context_adopt_socket((struct us_internal_ssl_socket_context_t *) context, (struct us_internal_ssl_socket_t *) s, ext_size);
+        return (struct us_socket_t *) us_internal_ssl_socket_context_adopt_socket((struct us_internal_ssl_socket_context_t *) context, (struct us_internal_ssl_socket_t *) s, ext_size, old_ext_size);
     }
 #endif
 
@@ -807,7 +813,15 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
     struct us_socket_t *new_s = s;
     if (ext_size != -1) {
         struct us_poll_t *pool_ref = &s->p;
-        new_s = (struct us_socket_t *) us_poll_resize(pool_ref, loop, sizeof(struct us_socket_t) + ext_size);
+        new_s = (struct us_socket_t *) us_poll_resize(pool_ref, loop, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + ext_size,
+                                                        sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + old_ext_size);
+        // previous socket is no longer valid, so we need to mark it as closed
+        if(new_s != s) {
+            /* Link this socket to the close-list and let it be deleted after this iteration */
+            s->next = s->context->loop->data.closed_head;
+            s->context->loop->data.closed_head = s;
+            s->flags.is_closed = 1;
+        }
         if (c) {
             c->connecting_head = new_s;
             c->context = context;

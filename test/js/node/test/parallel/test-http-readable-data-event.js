@@ -42,7 +42,7 @@ const server = http.createServer((req, res) => {
         assert.strictEqual(data, expectedRead.shift());
         next();
       } while (data !== null);
-    }, 3));
+    }, 2));
 
     res.setEncoding('utf8');
     res.on('data', common.mustCall((data) => {

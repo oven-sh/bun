@@ -1,122 +1,61 @@
-const Readable = require("internal/streams/readable");
-
+// Hardcoded module "node:_http_incoming"
+const { Readable, finished } = require("node:stream");
 const {
+  bodyStreamSymbol,
+  emitEOFIncomingMessage,
+  kEmptyObject,
+  NodeHTTPBodyReadState,
+  NodeHTTPResponseAbortEvent,
   abortedSymbol,
   eofInProgress,
-  kHandle,
-  noBodySymbol,
-  typeSymbol,
-  NodeHTTPIncomingRequestType,
   fakeSocketSymbol,
-  isAbortError,
+  kBunServer,
+  kHandle,
+  NodeHTTPIncomingRequestType,
+  typeSymbol,
   emitErrorNextTickIfErrorListenerNT,
-  kEmptyObject,
-  getIsNextIncomingMessageHTTPS,
-  setIsNextIncomingMessageHTTPS,
-  NodeHTTPBodyReadState,
-  emitEOFIncomingMessage,
-  bodyStreamSymbol,
-  statusMessageSymbol,
-  statusCodeSymbol,
-  webRequestOrResponse,
-  NodeHTTPResponseAbortEvent,
-  STATUS_CODES,
-  assignHeadersFast,
-  setRequestTimeout,
-  headersTuple,
-  webRequestOrResponseHasBodyValue,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
+  isAbortError,
   kAbortController,
+  noBodySymbol,
+  setRequestTimeout,
+  webRequestOrResponse,
+  STATUS_CODES,
+  statusCodeSymbol,
+  statusMessageSymbol,
+  webRequestOrResponseHasBodyValue,
 } = require("internal/http");
-
 const { FakeSocket } = require("internal/http/FakeSocket");
 
-var defaultIncomingOpts = { type: "request" };
 const nop = () => {};
 
-function assignHeadersSlow(object, req) {
-  const headers = req.headers;
-  var outHeaders = Object.create(null);
-  const rawHeaders: string[] = [];
-  var i = 0;
-  for (let key in headers) {
-    var originalKey = key;
-    var value = headers[originalKey];
+const kHeaders = Symbol("kHeaders");
+const kHeadersDistinct = Symbol("kHeadersDistinct");
+const kHeadersCount = Symbol("kHeadersCount");
+const kTrailers = Symbol("kTrailers");
+const kTrailersDistinct = Symbol("kTrailersDistinct");
+const kTrailersCount = Symbol("kTrailersCount");
 
-    key = key.toLowerCase();
-
-    if (key !== "set-cookie") {
-      value = String(value);
-      $putByValDirect(rawHeaders, i++, originalKey);
-      $putByValDirect(rawHeaders, i++, value);
-      outHeaders[key] = value;
-    } else {
-      if ($isJSArray(value)) {
-        outHeaders[key] = value.slice();
-
-        for (let entry of value) {
-          $putByValDirect(rawHeaders, i++, originalKey);
-          $putByValDirect(rawHeaders, i++, entry);
-        }
-      } else {
-        value = String(value);
-        outHeaders[key] = [value];
-        $putByValDirect(rawHeaders, i++, originalKey);
-        $putByValDirect(rawHeaders, i++, value);
-      }
-    }
-  }
-  object.headers = outHeaders;
-  object.rawHeaders = rawHeaders;
+function readStart(socket) {
+  if (socket && !socket._paused && socket.readable) socket.resume();
 }
 
-function assignHeaders(object, req) {
-  // This fast path is an 8% speedup for a "hello world" node:http server, and a 7% speedup for a "hello world" express server
-  if (assignHeadersFast(req, object, headersTuple)) {
-    const headers = $getInternalField(headersTuple, 0);
-    const rawHeaders = $getInternalField(headersTuple, 1);
-    $putInternalField(headersTuple, 0, undefined);
-    $putInternalField(headersTuple, 1, undefined);
-    object.headers = headers;
-    object.rawHeaders = rawHeaders;
-    return true;
-  } else {
-    assignHeadersSlow(object, req);
-    return false;
-  }
+function readStop(socket) {
+  if (socket) socket.pause();
 }
 
-function onIncomingMessagePauseNodeHTTPResponse(this: IncomingMessage) {
-  const handle = this[kHandle];
-  if (handle && !this.destroyed) {
-    handle.pause();
-  }
-}
-
-function onIncomingMessageResumeNodeHTTPResponse(this: IncomingMessage) {
-  const handle = this[kHandle];
-  if (handle && !this.destroyed) {
-    const resumed = handle.resume();
-    if (resumed && resumed !== true) {
-      const bodyReadState = handle.hasBody;
-      if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
-        emitEOFIncomingMessage(this);
-      }
-      this.push(resumed);
-    }
-  }
-}
-
-function IncomingMessage(req, options = defaultIncomingOpts) {
-  this[abortedSymbol] = false;
-  this[eofInProgress] = false;
-  this._consuming = false;
-  this._dumped = false;
-  this.complete = false;
-  this._closed = false;
-
-  // (url, method, headers, rawHeaders, handle, hasBody)
-  if (req === kHandle) {
+/* Abstract base class for ServerRequest and ClientResponse. */
+function IncomingMessage(socket) {
+  // BUN: server
+  // (symbol, url, method, headers, rawHeaders, handle, hasBody)
+  if (socket === kHandle) {
+    this[kBunServer] = true;
+    this[abortedSymbol] = false;
+    this[eofInProgress] = false;
+    this._consuming = false;
+    this._dumped = false;
+    this.complete = false;
+    this._closed = false;
     this[typeSymbol] = NodeHTTPIncomingRequestType.NodeHTTPResponse;
     this.url = arguments[1];
     this.method = arguments[2];
@@ -127,99 +66,185 @@ function IncomingMessage(req, options = defaultIncomingOpts) {
     this[fakeSocketSymbol] = arguments[7];
     Readable.$call(this);
 
-    // If there's a body, pay attention to pause/resume events
     if (arguments[6]) {
       this.on("pause", onIncomingMessagePauseNodeHTTPResponse);
       this.on("resume", onIncomingMessageResumeNodeHTTPResponse);
     }
-  } else {
-    this[noBodySymbol] = false;
-    Readable.$call(this);
-    var { [typeSymbol]: type } = options || {};
 
-    this[webRequestOrResponse] = req;
-    this[typeSymbol] = type;
-    this[bodyStreamSymbol] = undefined;
-    const statusText = (req as Response)?.statusText;
-    this[statusMessageSymbol] = statusText !== "" ? statusText || null : "";
-    this[statusCodeSymbol] = (req as Response)?.status || 200;
+    this._readableState.readingMore = true;
 
-    if (type === NodeHTTPIncomingRequestType.FetchRequest || type === NodeHTTPIncomingRequestType.FetchResponse) {
-      if (!assignHeaders(this, req)) {
-        this[fakeSocketSymbol] = req;
-      }
-    } else {
-      // Node defaults url and method to null.
-      this.url = "";
-      this.method = null;
-      this.rawHeaders = [];
-    }
-
-    this[noBodySymbol] =
-      type === NodeHTTPIncomingRequestType.FetchRequest // TODO: Add logic for checking for body on response
-        ? requestHasNoBody(this.method, this)
-        : false;
-
-    if (getIsNextIncomingMessageHTTPS()) {
-      this.socket.encrypted = true;
-      setIsNextIncomingMessageHTTPS(false);
-    }
-  }
-
-  this._readableState.readingMore = true;
-}
-
-function onDataIncomingMessage(
-  this: import("node:http").IncomingMessage,
-  chunk,
-  isLast,
-  aborted: NodeHTTPResponseAbortEvent,
-) {
-  if (aborted === NodeHTTPResponseAbortEvent.abort) {
-    this.destroy();
+    this.httpVersion = "1.1";
+    this.httpVersionMajor = 1;
+    this.httpVersionMinor = 1;
     return;
   }
 
-  if (chunk && !this._dumped) this.push(chunk);
+  this[kBunServer] = false;
+  let streamOptions;
 
-  if (isLast) {
-    emitEOFIncomingMessage(this);
+  if (socket) {
+    streamOptions = {
+      highWaterMark: socket.readableHighWaterMark,
+    };
   }
+
+  Readable.$call(this, streamOptions);
+
+  this._readableState.readingMore = true;
+
+  this.socket = socket;
+
+  this.httpVersionMajor = null;
+  this.httpVersionMinor = null;
+  this.httpVersion = null;
+  this.complete = false;
+  this[kHeaders] = null;
+  this[kHeadersCount] = 0;
+  this.rawHeaders = [];
+  this[kTrailers] = null;
+  this[kTrailersCount] = 0;
+  this.rawTrailers = [];
+  this.joinDuplicateHeaders = false;
+  this.aborted = false;
+
+  this.upgrade = null;
+
+  // request (server) only
+  this.url = "";
+  this.method = null;
+
+  // response (client) only
+  this.statusCode = null;
+  this.statusMessage = null;
+  this.client = socket;
+
+  this._consuming = false;
+  // Flag for when we decide that this message cannot possibly be
+  // read by the user, so there's no point continuing to handle it.
+  this._dumped = false;
 }
+$toClass(IncomingMessage, "Readable", Readable);
 
-const IncomingMessagePrototype = {
-  constructor: IncomingMessage,
-  __proto__: Readable.prototype,
-  httpVersion: "1.1",
-  _construct(callback) {
-    // TODO: streaming
-    const type = this[typeSymbol];
+Object.defineProperty(IncomingMessage.prototype, "connection", {
+  __proto__: null,
+  get: function () {
+    if (this[kBunServer]) {
+      return (this[fakeSocketSymbol] ??= new FakeSocket(this));
+    }
+    return this.socket;
+  },
+  set: function (val) {
+    if (this[kBunServer]) {
+      this[fakeSocketSymbol] = val;
+      return;
+    }
+    this.socket = val;
+  },
+});
 
-    if (type === NodeHTTPIncomingRequestType.FetchResponse) {
-      if (!webRequestOrResponseHasBodyValue(this[webRequestOrResponse])) {
-        this.complete = true;
-        this.push(null);
+Object.defineProperty(IncomingMessage.prototype, "headers", {
+  __proto__: null,
+  get: function () {
+    if (!this[kHeaders]) {
+      this[kHeaders] = {};
+
+      const src = this.rawHeaders;
+      const dst = this[kHeaders];
+
+      for (let n = 0; n < this[kHeadersCount]; n += 2) {
+        this._addHeaderLine(src[n + 0], src[n + 1], dst);
       }
     }
+    return this[kHeaders];
+  },
+  set: function (val) {
+    this[kHeaders] = val;
+  },
+});
 
-    callback();
-  },
-  // Call this instead of resume() if we want to just
-  // dump all the data to /dev/null
-  _dump() {
-    if (!this._dumped) {
-      this._dumped = true;
-      // If there is buffered data, it may trigger 'data' events.
-      // Remove 'data' event listeners explicitly.
-      this.removeAllListeners("data");
-      const handle = this[kHandle];
-      if (handle) {
-        handle.ondata = undefined;
+Object.defineProperty(IncomingMessage.prototype, "headersDistinct", {
+  __proto__: null,
+  get: function () {
+    if (!this[kHeadersDistinct]) {
+      this[kHeadersDistinct] = {};
+
+      const src = this.rawHeaders;
+      const dst = this[kHeadersDistinct];
+
+      for (let n = 0; n < this[kHeadersCount]; n += 2) {
+        this._addHeaderLineDistinct(src[n + 0], src[n + 1], dst);
       }
-      this.resume();
     }
+    return this[kHeadersDistinct];
   },
-  _read(_size) {
+  set: function (val) {
+    this[kHeadersDistinct] = val;
+  },
+});
+
+Object.defineProperty(IncomingMessage.prototype, "trailers", {
+  __proto__: null,
+  get: function () {
+    if (this[kBunServer]) {
+      return kEmptyObject;
+    }
+    if (!this[kTrailers]) {
+      this[kTrailers] = {};
+
+      const src = this.rawTrailers;
+      const dst = this[kTrailers];
+
+      for (let n = 0; n < this[kTrailersCount]; n += 2) {
+        this._addHeaderLine(src[n + 0], src[n + 1], dst);
+      }
+    }
+    return this[kTrailers];
+  },
+  set: function (val) {
+    if (this[kBunServer]) {
+      return;
+    }
+    this[kTrailers] = val;
+  },
+});
+
+Object.defineProperty(IncomingMessage.prototype, "trailersDistinct", {
+  __proto__: null,
+  get: function () {
+    if (!this[kTrailersDistinct]) {
+      this[kTrailersDistinct] = {};
+
+      const src = this.rawTrailers;
+      const dst = this[kTrailersDistinct];
+
+      for (let n = 0; n < this[kTrailersCount]; n += 2) {
+        this._addHeaderLineDistinct(src[n + 0], src[n + 1], dst);
+      }
+    }
+    return this[kTrailersDistinct];
+  },
+  set: function (val) {
+    this[kTrailersDistinct] = val;
+  },
+});
+
+IncomingMessage.prototype.setTimeout = function setTimeout(msecs, callback) {
+  if (this[kBunServer]) {
+    const req = this[kHandle] || this[webRequestOrResponse];
+    if (req) {
+      setRequestTimeout(req, Math.ceil(msecs / 1000));
+      typeof callback === "function" && this.once("timeout", callback);
+    }
+    return this;
+  }
+
+  if (callback) this.on("timeout", callback);
+  this.socket.setTimeout(msecs);
+  return this;
+};
+
+IncomingMessage.prototype._read = function _read(_n) {
+  if (this[kBunServer]) {
     if (!this._consuming) {
       this._readableState.readingMore = false;
       this._consuming = true;
@@ -275,26 +300,28 @@ const IncomingMessagePrototype = {
         if (!this._dumped) {
           this.push(new Buffer(completeBody));
         }
-        emitEOFIncomingMessage(this);
-        return;
       }
-
-      const reader = this[webRequestOrResponse].body?.getReader?.() as ReadableStreamDefaultReader;
-      if (!reader) {
-        emitEOFIncomingMessage(this);
-        return;
-      }
-
-      this[bodyStreamSymbol] = reader;
-      consumeStream(this, reader);
+      emitEOFIncomingMessage(this);
     }
-
     return;
-  },
-  _finish() {
-    this.emit("prefinish");
-  },
-  _destroy: function IncomingMessage_destroy(err, cb) {
+  }
+
+  if (!this._consuming) {
+    this._readableState.readingMore = false;
+    this._consuming = true;
+  }
+
+  // We actually do almost nothing here, because the parserOnBody
+  // function fills up our internal buffer directly.  However, we
+  // do need to unpause the underlying socket so that it flows.
+  if (this.socket.readable) readStart(this.socket);
+};
+
+// It's possible that the socket will be destroyed, and removed from
+// any messages, before ever calling this.  In that case, just skip
+// it, since something else is destroying this connection anyway.
+IncomingMessage.prototype._destroy = function _destroy(err, cb) {
+  if (this[kBunServer]) {
     const shouldEmitAborted = !this.readableEnded || !this.complete;
 
     if (shouldEmitAborted) {
@@ -341,139 +368,367 @@ const IncomingMessagePrototype = {
     if ($isCallable(cb)) {
       emitErrorNextTickIfErrorListenerNT(this, err, cb);
     }
-  },
-  get aborted() {
-    return this[abortedSymbol];
-  },
-  set aborted(value) {
-    this[abortedSymbol] = value;
-  },
-  get connection() {
-    return (this[fakeSocketSymbol] ??= new FakeSocket(this));
-  },
-  get statusCode() {
-    return this[statusCodeSymbol];
-  },
-  set statusCode(value) {
-    if (!(value in STATUS_CODES)) return;
-    this[statusCodeSymbol] = value;
-  },
-  get statusMessage() {
-    return this[statusMessageSymbol];
-  },
-  set statusMessage(value) {
-    this[statusMessageSymbol] = value;
-  },
-  get httpVersionMajor() {
-    const version = this.httpVersion;
-    if (version.startsWith("1.")) {
-      return 1;
-    }
-    return 0;
-  },
-  set httpVersionMajor(value) {
-    // noop
-  },
-  get httpVersionMinor() {
-    const version = this.httpVersion;
-    if (version.endsWith(".1")) {
-      return 1;
-    }
-    return 0;
-  },
-  set httpVersionMinor(value) {
-    // noop
-  },
-  get rawTrailers() {
-    return [];
-  },
-  set rawTrailers(value) {
-    // noop
-  },
-  get trailers() {
-    return kEmptyObject;
-  },
-  set trailers(value) {
-    // noop
-  },
-  setTimeout(msecs, callback) {
-    void this.take;
-    const req = this[kHandle] || this[webRequestOrResponse];
-
-    if (req) {
-      setRequestTimeout(req, Math.ceil(msecs / 1000));
-      if (typeof callback === "function") this.once("timeout", callback);
-    }
-    return this;
-  },
-  get socket() {
-    return (this[fakeSocketSymbol] ??= new FakeSocket(this));
-  },
-  set socket(value) {
-    this[fakeSocketSymbol] = value;
-  },
-} satisfies typeof import("node:http").IncomingMessage.prototype;
-IncomingMessage.prototype = IncomingMessagePrototype;
-$setPrototypeDirect.$call(IncomingMessage, Readable);
-
-function requestHasNoBody(method, req) {
-  if ("GET" === method || "HEAD" === method || "TRACE" === method || "CONNECT" === method || "OPTIONS" === method)
-    return true;
-  const headers = req?.headers;
-  const contentLength = headers?.["content-length"];
-  if (!parseInt(contentLength, 10)) return true;
-
-  return false;
-}
-
-async function consumeStream(self, reader: ReadableStreamDefaultReader) {
-  var done = false,
-    value,
-    aborted = false;
-  try {
-    while (true) {
-      const result = reader.readMany();
-      if ($isPromise(result)) {
-        ({ done, value } = await result);
-      } else {
-        ({ done, value } = result);
-      }
-
-      if (self.destroyed || (aborted = self[abortedSymbol])) {
-        break;
-      }
-      if (!self._dumped) {
-        for (var v of value) {
-          self.push(v);
-        }
-      }
-
-      if (self.destroyed || (aborted = self[abortedSymbol]) || done) {
-        break;
-      }
-    }
-  } catch (err) {
-    if (aborted || self.destroyed) return;
-    self.destroy(err);
-  } finally {
-    reader?.cancel?.().catch?.(nop);
+    return;
   }
 
-  if (!self.complete) {
-    emitEOFIncomingMessage(self);
+  if (!this.readableEnded || !this.complete) {
+    this.aborted = true;
+    this.emit("aborted");
+  }
+
+  // If aborted and the underlying socket is not already destroyed, destroy it.
+  // We have to check if the socket is already destroyed because finished
+  // does not call the callback when this method is invoked from `_http_client`
+  // in `test/parallel/test-http-client-spurious-aborted.js`
+  if (this.socket && !this.socket.destroyed && this.aborted) {
+    this.socket.destroy(err);
+    const cleanup = finished(this.socket, e => {
+      if (e?.code === "ERR_STREAM_PREMATURE_CLOSE") {
+        e = null;
+      }
+      cleanup();
+      process.nextTick(onError, this, e || err, cb);
+    });
+  } else {
+    process.nextTick(onError, this, err, cb);
+  }
+};
+
+IncomingMessage.prototype._addHeaderLines = _addHeaderLines;
+function _addHeaderLines(headers, n) {
+  $assert(!this[kBunServer]);
+
+  if (headers?.length) {
+    let dest;
+    if (this.complete) {
+      this.rawTrailers = headers;
+      this[kTrailersCount] = n;
+      dest = this[kTrailers];
+    } else {
+      this.rawHeaders = headers;
+      this[kHeadersCount] = n;
+      dest = this[kHeaders];
+    }
+
+    if (dest) {
+      for (let i = 0; i < n; i += 2) {
+        this._addHeaderLine(headers[i], headers[i + 1], dest);
+      }
+    }
   }
 }
 
-function readStart(socket) {
-  if (socket && !socket._paused && socket.readable) {
-    socket.resume();
+// This function is used to help avoid the lowercasing of a field name if it
+// matches a 'traditional cased' version of a field name. It then returns the
+// lowercased name to both avoid calling toLowerCase() a second time and to
+// indicate whether the field was a 'no duplicates' field. If a field is not a
+// 'no duplicates' field, a `0` byte is prepended as a flag. The one exception
+// to this is the Set-Cookie header which is indicated by a `1` byte flag, since
+// it is an 'array' field and thus is treated differently in _addHeaderLines().
+function matchKnownFields(field, lowercased?) {
+  switch (field.length) {
+    case 3:
+      if (field === "Age" || field === "age") return "age";
+      break;
+    case 4:
+      if (field === "Host" || field === "host") return "host";
+      if (field === "From" || field === "from") return "from";
+      if (field === "ETag" || field === "etag") return "etag";
+      if (field === "Date" || field === "date") return "\u0000date";
+      if (field === "Vary" || field === "vary") return "\u0000vary";
+      break;
+    case 6:
+      if (field === "Server" || field === "server") return "server";
+      if (field === "Cookie" || field === "cookie") return "\u0002cookie";
+      if (field === "Origin" || field === "origin") return "\u0000origin";
+      if (field === "Expect" || field === "expect") return "\u0000expect";
+      if (field === "Accept" || field === "accept") return "\u0000accept";
+      break;
+    case 7:
+      if (field === "Referer" || field === "referer") return "referer";
+      if (field === "Expires" || field === "expires") return "expires";
+      if (field === "Upgrade" || field === "upgrade") return "\u0000upgrade";
+      break;
+    case 8:
+      if (field === "Location" || field === "location") return "location";
+      if (field === "If-Match" || field === "if-match") return "\u0000if-match";
+      break;
+    case 10:
+      if (field === "User-Agent" || field === "user-agent") return "user-agent";
+      if (field === "Set-Cookie" || field === "set-cookie") return "\u0001";
+      if (field === "Connection" || field === "connection") return "\u0000connection";
+      break;
+    case 11:
+      if (field === "Retry-After" || field === "retry-after") return "retry-after";
+      break;
+    case 12:
+      if (field === "Content-Type" || field === "content-type") return "content-type";
+      if (field === "Max-Forwards" || field === "max-forwards") return "max-forwards";
+      break;
+    case 13:
+      if (field === "Authorization" || field === "authorization") return "authorization";
+      if (field === "Last-Modified" || field === "last-modified") return "last-modified";
+      if (field === "Cache-Control" || field === "cache-control") return "\u0000cache-control";
+      if (field === "If-None-Match" || field === "if-none-match") return "\u0000if-none-match";
+      break;
+    case 14:
+      if (field === "Content-Length" || field === "content-length") return "content-length";
+      break;
+    case 15:
+      if (field === "Accept-Encoding" || field === "accept-encoding") return "\u0000accept-encoding";
+      if (field === "Accept-Language" || field === "accept-language") return "\u0000accept-language";
+      if (field === "X-Forwarded-For" || field === "x-forwarded-for") return "\u0000x-forwarded-for";
+      break;
+    case 16:
+      if (field === "Content-Encoding" || field === "content-encoding") return "\u0000content-encoding";
+      if (field === "X-Forwarded-Host" || field === "x-forwarded-host") return "\u0000x-forwarded-host";
+      break;
+    case 17:
+      if (field === "If-Modified-Since" || field === "if-modified-since") return "if-modified-since";
+      if (field === "Transfer-Encoding" || field === "transfer-encoding") return "\u0000transfer-encoding";
+      if (field === "X-Forwarded-Proto" || field === "x-forwarded-proto") return "\u0000x-forwarded-proto";
+      break;
+    case 19:
+      if (field === "Proxy-Authorization" || field === "proxy-authorization") return "proxy-authorization";
+      if (field === "If-Unmodified-Since" || field === "if-unmodified-since") return "if-unmodified-since";
+      break;
+  }
+  if (lowercased) {
+    return "\u0000" + field;
+  }
+  return matchKnownFields(field.toLowerCase(), true);
+}
+// Add the given (field, value) pair to the message
+//
+// Per RFC2616, section 4.2 it is acceptable to join multiple instances of the
+// same header with a ', ' if the header in question supports specification of
+// multiple values this way. The one exception to this is the Cookie header,
+// which has multiple values joined with a '; ' instead. If a header's values
+// cannot be joined in either of these ways, we declare the first instance the
+// winner and drop the second. Extended header fields (those beginning with
+// 'x-') are always joined.
+IncomingMessage.prototype._addHeaderLine = _addHeaderLine;
+function _addHeaderLine(field, value, dest) {
+  $assert(!this[kBunServer]);
+
+  field = matchKnownFields(field);
+  const flag = field.charCodeAt(0);
+  if (flag === 0 || flag === 2) {
+    field = field.slice(1);
+    // Make a delimited list
+    if (typeof dest[field] === "string") {
+      dest[field] += (flag === 0 ? ", " : "; ") + value;
+    } else {
+      dest[field] = value;
+    }
+  } else if (flag === 1) {
+    // Array header -- only Set-Cookie at the moment
+    if (dest["set-cookie"] !== undefined) {
+      dest["set-cookie"].push(value);
+    } else {
+      dest["set-cookie"] = [value];
+    }
+  } else if (this.joinDuplicateHeaders) {
+    // RFC 9110 https://www.rfc-editor.org/rfc/rfc9110#section-5.2
+    // https://github.com/nodejs/node/issues/45699
+    // allow authorization multiple fields
+    // Make a delimited list
+    if (dest[field] === undefined) {
+      dest[field] = value;
+    } else {
+      dest[field] += ", " + value;
+    }
+  } else if (dest[field] === undefined) {
+    // Drop duplicates
+    dest[field] = value;
   }
 }
 
-function readStop(socket) {
-  if (socket) {
-    socket.pause();
+IncomingMessage.prototype._addHeaderLineDistinct = _addHeaderLineDistinct;
+function _addHeaderLineDistinct(field, value, dest) {
+  $assert(!this[kBunServer]);
+
+  field = field.toLowerCase();
+  if (!dest[field]) {
+    dest[field] = [value];
+  } else {
+    dest[field].push(value);
   }
 }
 
-export { IncomingMessage, readStart, readStop };
+// Call this instead of resume() if we want to just dump all the data to /dev/null
+IncomingMessage.prototype._dump = function _dump() {
+  if (this[kBunServer]) {
+    if (!this._dumped) {
+      this._dumped = true;
+      // If there is buffered data, it may trigger 'data' events.
+      // Remove 'data' event listeners explicitly.
+      this.removeAllListeners("data");
+      const handle = this[kHandle];
+      if (handle) {
+        handle.ondata = undefined;
+      }
+      this.resume();
+    }
+    return;
+  }
+
+  if (!this._dumped) {
+    this._dumped = true;
+    // If there is buffered data, it may trigger 'data' events.
+    // Remove 'data' event listeners explicitly.
+    this.removeAllListeners("data");
+    this.resume();
+  }
+};
+
+function onError(self, error, cb) {
+  // This is to keep backward compatible behavior.
+  // An error is emitted only if there are listeners attached to the event.
+  if (self.listenerCount("error") === 0) {
+    cb();
+  } else {
+    cb(error);
+  }
+}
+
+//
+// BUN: server extras
+//
+
+Object.defineProperty(IncomingMessage.prototype, "socket", {
+  get() {
+    if (this[kBunServer]) {
+      return (this[fakeSocketSymbol] ??= new FakeSocket(this));
+    }
+    return this.__socket;
+  },
+  set(value) {
+    if (this[kBunServer]) {
+      this[fakeSocketSymbol] = value;
+      return;
+    }
+    this.__socket = value;
+    return;
+  },
+});
+
+Object.defineProperty(IncomingMessage.prototype, "rawTrailers", {
+  get() {
+    if (this[kBunServer]) {
+      return [];
+    }
+    return this.__rawTrailers;
+  },
+  set(value) {
+    if (this[kBunServer]) {
+      return;
+    }
+    this.__rawTrailers = value;
+    return;
+  },
+});
+
+Object.defineProperty(IncomingMessage.prototype, "aborted", {
+  get() {
+    if (this[kBunServer]) {
+      return this[abortedSymbol];
+    }
+    return this.__aborted;
+  },
+  set(value) {
+    if (this[kBunServer]) {
+      this[abortedSymbol] = value;
+      return;
+    }
+    this.__aborted = value;
+    return;
+  },
+});
+
+Object.defineProperty(IncomingMessage.prototype, "statusCode", {
+  get() {
+    if (this[kBunServer]) {
+      return this[statusCodeSymbol];
+    }
+    return this.__statusCode;
+  },
+  set(value) {
+    if (this[kBunServer]) {
+      if (!(value in STATUS_CODES)) return;
+      this[statusCodeSymbol] = value;
+      return;
+    }
+    this.__statusCode = value;
+    return;
+  },
+});
+
+Object.defineProperty(IncomingMessage.prototype, "statusMessage", {
+  get() {
+    if (this[kBunServer]) {
+      return this[statusMessageSymbol];
+    }
+    return this.__statusMessage;
+  },
+  set(value) {
+    if (this[kBunServer]) {
+      this[statusMessageSymbol] = value;
+      return;
+    }
+    this.__statusMessage = value;
+    return;
+  },
+});
+
+IncomingMessage.prototype._construct = function (callback) {
+  if (this[kBunServer]) {
+    // TODO: streaming
+    const type = this[typeSymbol];
+    if (type === NodeHTTPIncomingRequestType.FetchResponse) {
+      if (!webRequestOrResponseHasBodyValue(this[webRequestOrResponse])) {
+        this.complete = true;
+        this.push(null);
+      }
+    }
+    callback();
+    return;
+  }
+  callback();
+};
+
+function onIncomingMessagePauseNodeHTTPResponse(this: import("node:http").IncomingMessage) {
+  const handle = this[kHandle];
+  if (handle && !this.destroyed) {
+    handle.pause();
+  }
+}
+
+function onIncomingMessageResumeNodeHTTPResponse(this: import("node:http").IncomingMessage) {
+  const handle = this[kHandle];
+  if (handle && !this.destroyed) {
+    const resumed = handle.resume();
+    if (resumed && resumed !== true) {
+      const bodyReadState = handle.hasBody;
+      if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
+        emitEOFIncomingMessage(this);
+      }
+      this.push(resumed);
+    }
+  }
+}
+
+function onDataIncomingMessage(this: import("node:http").IncomingMessage, chunk, isLast, aborted) {
+  if (aborted === NodeHTTPResponseAbortEvent.abort) {
+    this.destroy();
+    return;
+  }
+  if (chunk && !this._dumped) this.push(chunk);
+  if (isLast) emitEOFIncomingMessage(this);
+}
+
+export default {
+  IncomingMessage,
+  readStart,
+  readStop,
+};

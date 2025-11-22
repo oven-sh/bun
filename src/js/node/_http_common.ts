@@ -1,47 +1,15 @@
-const { checkIsHttpToken } = require("internal/validators");
-const FreeList = require("internal/freelist");
+// Hardcoded module "node:_http_common"
 const { methods, allMethods, HTTPParser } = process.binding("http_parser");
-const incoming = require("node:_http_incoming");
-
-const { IncomingMessage, readStart, readStop } = incoming;
-
-const RegExpPrototypeExec = RegExp.prototype.exec;
-
-let headerCharRegex;
-
-/**
- * True if val contains an invalid field-vchar
- *  field-value    = *( field-content / obs-fold )
- *  field-content  = field-vchar [ 1*( SP / HTAB ) field-vchar ]
- *  field-vchar    = VCHAR / obs-text
- */
-function checkInvalidHeaderChar(val: string) {
-  if (!headerCharRegex) {
-    headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
-  }
-  return RegExpPrototypeExec.$call(headerCharRegex, val) !== null;
-}
-
-const validateHeaderName = (name, label?) => {
-  if (typeof name !== "string" || !name || !checkIsHttpToken(name)) {
-    throw $ERR_INVALID_HTTP_TOKEN(label || "Header name", name);
-  }
-};
-
-const validateHeaderValue = (name, value) => {
-  if (value === undefined) {
-    throw $ERR_HTTP_INVALID_HEADER_VALUE(value, name);
-  }
-  if (checkInvalidHeaderChar(value)) {
-    throw $ERR_INVALID_CHAR("header content", name);
-  }
-};
-
-// TODO: TODO!
-// const insecureHTTPParser = getOptionValue('--insecure-http-parser');
+// const { getOptionValue } = require("internal/options");
+// const insecureHTTPParser = getOptionValue("--insecure-http-parser");
 const insecureHTTPParser = false;
 
+const FreeList = require("internal/freelist");
+const incoming = require("node:_http_incoming");
+const { IncomingMessage, readStart, readStop } = incoming;
+
 const kIncomingMessage = Symbol("IncomingMessage");
+const kSkipPendingData = Symbol("SkipPendingData");
 const kOnMessageBegin = HTTPParser.kOnMessageBegin | 0;
 const kOnHeaders = HTTPParser.kOnHeaders | 0;
 const kOnHeadersComplete = HTTPParser.kOnHeadersComplete | 0;
@@ -64,6 +32,8 @@ function parserOnHeaders(headers, url) {
   }
   this._url += url;
 }
+
+const HTTP_VERSION_1_1 = "1.1";
 
 // `headers` and `url` are set only if .onHeaders() has not been called for
 // this request.
@@ -99,7 +69,8 @@ function parserOnHeadersComplete(
   const incoming = (parser.incoming = new ParserIncomingMessage(socket));
   incoming.httpVersionMajor = versionMajor;
   incoming.httpVersionMinor = versionMinor;
-  incoming.httpVersion = `${versionMajor}.${versionMinor}`;
+  incoming.httpVersion =
+    versionMajor === 1 && versionMinor === 1 ? HTTP_VERSION_1_1 : `${versionMajor}.${versionMinor}`;
   incoming.joinDuplicateHeaders = socket?.server?.joinDuplicateHeaders || parser.joinDuplicateHeaders;
   incoming.url = url;
   incoming.upgrade = upgrade;
@@ -127,7 +98,7 @@ function parserOnBody(b) {
   const stream = this.incoming;
 
   // If the stream has already been removed, then drop it.
-  if (stream === null) return;
+  if (stream === null || stream[kSkipPendingData]) return;
 
   // Pretend this was the result of a stream._read call.
   if (!stream._dumped) {
@@ -140,7 +111,7 @@ function parserOnMessageComplete() {
   const parser = this;
   const stream = parser.incoming;
 
-  if (stream !== null) {
+  if (stream !== null && !stream[kSkipPendingData]) {
     stream.complete = true;
     // Emit any trailing headers.
     const headers = parser._headers;
@@ -205,6 +176,67 @@ function freeParser(parser, req, socket) {
   }
 }
 
+// Character code ranges for valid HTTP tokens
+// Valid chars: ^_`a-zA-Z-0-9!#$%&'*+.|~
+// Based on RFC 7230 Section 3.2.6 token definition
+// See https://tools.ietf.org/html/rfc7230#section-3.2.6
+const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
+// prettier-ignore
+const validTokenChars = new Uint8Array([
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0-15
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 16-31
+  0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0, // 32-47 (!"#$%&'()*+,-./)
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, // 48-63 (0-9:;<=>?)
+  0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 64-79 (@A-O)
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, // 80-95 (P-Z[\]^_)
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 96-111 (`a-o)
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, // 112-127 (p-z{|}~)
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 128-143
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 144-159
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 160-175
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 176-191
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 192-207
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 208-223
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 224-239
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // 240-255
+]);
+
+/**
+ * Verifies that the given val is a valid HTTP token
+ * per the rules defined in RFC 7230
+ * See https://tools.ietf.org/html/rfc7230#section-3.2.6
+ * @param {string} val
+ * @returns {boolean}
+ */
+function checkIsHttpToken(val) {
+  if (val.length >= 10) {
+    return tokenRegExp.test(val);
+  }
+
+  if (val.length === 0) return false;
+
+  // Use lookup table for short strings, regex for longer ones
+  for (let i = 0; i < val.length; i++) {
+    if (!validTokenChars[val.charCodeAt(i)]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
+/**
+ * True if val contains an invalid field-vchar
+ *  field-value    = *( field-content / obs-fold )
+ *  field-content  = field-vchar [ 1*( SP / HTAB ) field-vchar ]
+ *  field-vchar    = VCHAR / obs-text
+ * @param {string} val
+ * @returns {boolean}
+ */
+function checkInvalidHeaderChar(val) {
+  return headerCharRegex.test(val);
+}
+
 function cleanParser(parser) {
   parser._headers = [];
   parser._url = "";
@@ -236,13 +268,11 @@ function isLenient() {
 }
 
 export default {
-  validateHeaderName,
-  validateHeaderValue,
-  _checkIsHttpToken: checkIsHttpToken,
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
+  _checkIsHttpToken: checkIsHttpToken,
   chunkExpression: /(?:^|\W)chunked(?:$|\W)/i,
   continueExpression: /(?:^|\W)100-continue(?:$|\W)/i,
-  CRLF: "\r\n",
+  CRLF: "\r\n", // TODO: Deprecate this.
   freeParser,
   methods,
   parsers,
@@ -250,4 +280,5 @@ export default {
   HTTPParser,
   isLenient,
   prepareError,
+  kSkipPendingData,
 };

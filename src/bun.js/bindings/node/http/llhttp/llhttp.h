@@ -328,6 +328,7 @@ typedef enum llhttp_status llhttp_status_t;
     XX(31, CB_RESET, CB_RESET)                                                   \
     XX(38, CB_PROTOCOL_COMPLETE, CB_PROTOCOL_COMPLETE)
 
+// clang-format off
 #define HTTP_METHOD_MAP(XX)          \
     XX(0, DELETE, DELETE)            \
     XX(1, GET, GET)                  \
@@ -353,7 +354,7 @@ typedef enum llhttp_status llhttp_status_t;
     XX(21, MKACTIVITY, MKACTIVITY)   \
     XX(22, CHECKOUT, CHECKOUT)       \
     XX(23, MERGE, MERGE)             \
-    XX(24, MSEARCH, M - SEARCH)      \
+    XX(24, MSEARCH, M-SEARCH)        \
     XX(25, NOTIFY, NOTIFY)           \
     XX(26, SUBSCRIBE, SUBSCRIBE)     \
     XX(27, UNSUBSCRIBE, UNSUBSCRIBE) \
@@ -364,6 +365,7 @@ typedef enum llhttp_status llhttp_status_t;
     XX(32, UNLINK, UNLINK)           \
     XX(33, SOURCE, SOURCE)           \
     XX(46, QUERY, QUERY)
+// clang-format on
 
 #define RTSP_METHOD_MAP(XX)              \
     XX(1, GET, GET)                      \
@@ -381,6 +383,7 @@ typedef enum llhttp_status llhttp_status_t;
     XX(44, RECORD, RECORD)               \
     XX(45, FLUSH, FLUSH)
 
+// clang-format off
 #define HTTP_ALL_METHOD_MAP(XX)          \
     XX(0, DELETE, DELETE)                \
     XX(1, GET, GET)                      \
@@ -406,7 +409,7 @@ typedef enum llhttp_status llhttp_status_t;
     XX(21, MKACTIVITY, MKACTIVITY)       \
     XX(22, CHECKOUT, CHECKOUT)           \
     XX(23, MERGE, MERGE)                 \
-    XX(24, MSEARCH, M - SEARCH)          \
+    XX(24, MSEARCH, M-SEARCH)            \
     XX(25, NOTIFY, NOTIFY)               \
     XX(26, SUBSCRIBE, SUBSCRIBE)         \
     XX(27, UNSUBSCRIBE, UNSUBSCRIBE)     \
@@ -429,6 +432,7 @@ typedef enum llhttp_status llhttp_status_t;
     XX(44, RECORD, RECORD)               \
     XX(45, FLUSH, FLUSH)                 \
     XX(46, QUERY, QUERY)
+// clang-format on
 
 #define HTTP_STATUS_MAP(XX)                                                                         \
     XX(100, CONTINUE, CONTINUE)                                                                     \

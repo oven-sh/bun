@@ -125,6 +125,11 @@ public:
             }
         }
 
+        // Needed for test/js/node/test/parallel/test-http-head-request.js
+        if (httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER) {
+            allowContentLength = false;
+        }
+
         /* if write was called and there was previously no Content-Length header set */
         if (httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER) && !httpResponseData->fromAncientRequest) {
 
@@ -318,17 +323,17 @@ public:
         /* Move any backpressure out of HttpResponse */
         auto* responseData = getHttpResponseData();
         BackPressure backpressure(std::move(((AsyncSocketData<SSL> *) responseData)->buffer));
-        
+
         auto* socketData = responseData->socketData;
         HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
-        
+
         /* Destroy HttpResponseData */
         responseData->~HttpResponseData();
 
         /* Before we adopt and potentially change socket, check if we are corked */
         bool wasCorked = Super::isCorked();
 
-        
+
 
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         us_socket_t *usSocket = us_socket_context_adopt_socket(SSL, (us_socket_context_t *) webSocketContext, (us_socket_t *) this, sizeof(WebSocketData) + sizeof(UserData));

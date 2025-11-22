@@ -1197,21 +1197,21 @@ Object.defineProperty(Socket.prototype, "pending", {
 
 Socket.prototype.resume = function resume() {
   if (!this.connecting) {
-    this._handle?.resume();
+    this._handle?.resume?.();
   }
   return Duplex.prototype.resume.$call(this);
 };
 
 Socket.prototype.pause = function pause() {
   if (!this.destroyed) {
-    this._handle?.pause();
+    this._handle?.pause?.();
   }
   return Duplex.prototype.pause.$call(this);
 };
 
 Socket.prototype.read = function read(size) {
   if (!this.connecting) {
-    this._handle?.resume();
+    this._handle?.resume?.();
   }
   return Duplex.prototype.read.$call(this, size);
 };
@@ -1221,7 +1221,7 @@ Socket.prototype._read = function _read(size) {
   if (this.connecting || !socket) {
     this.once("connect", () => this._read(size));
   } else {
-    socket?.resume();
+    socket?.resume?.();
   }
 };
 

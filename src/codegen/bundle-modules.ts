@@ -511,6 +511,7 @@ declare module "module" {
     dts += `        (id: "bun"): typeof import("bun");\n`;
     dts += `        (id: "bun:test"): typeof import("bun:test");\n`;
     dts += `        (id: "bun:jsc"): typeof import("bun:jsc");\n`;
+    dts += `        (id: "node:util/types"): typeof import("node:util/types");\n`;
 
     for (let i = 0; i < nativeStartIndex; i++) {
       const id = moduleList[i];

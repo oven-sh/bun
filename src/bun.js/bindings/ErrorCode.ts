@@ -209,6 +209,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE", TypeError, "PostgresError"],
   ["ERR_POSTGRES_UNSUPPORTED_NUMERIC_FORMAT", TypeError, "PostgresError"],
   ["ERR_PROXY_INVALID_CONFIG", Error],
+  ["ERR_PROXY_TUNNEL", Error],
   ["ERR_MYSQL_CONNECTION_CLOSED", Error, "MySQLError"],
   ["ERR_MYSQL_CONNECTION_TIMEOUT", Error, "MySQLError"],
   ["ERR_MYSQL_IDLE_TIMEOUT", Error, "MySQLError"],

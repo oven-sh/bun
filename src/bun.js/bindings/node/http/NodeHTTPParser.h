@@ -71,7 +71,8 @@ struct StringPtr {
     {
         auto& vm = globalObject->vm();
         if (m_size != 0) {
-            return JSC::jsString(vm, WTF::String::fromUTF8({ m_str, m_size }));
+            // was previously WTF::String::fromUTF8. fixes test/js/node/test/parallel/test-http-server-non-utf8-header.js
+            return JSC::jsString(vm, WTF::String({ m_str, m_size }));
         }
         return jsEmptyString(vm);
     }

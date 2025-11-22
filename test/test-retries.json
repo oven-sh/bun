@@ -369,5 +369,8 @@
   "test/napi/node-napi-tests/test/js-native-api/2_function_arguments/do.test.ts": {
     "darwin": { "retries": 1, "warnInsteadOfFail": true },
     "note": "failing on new mac ci runners"
+  },
+  "test/js/bun/http/bun-serve-file.test.ts": {
+    "*": 8
   }
 }

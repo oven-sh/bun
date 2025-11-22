@@ -355,7 +355,6 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.is_ipc = 0;
                         s->flags.is_closed = 0;
                         s->flags.is_ssl = listen_socket->s.flags.is_ssl;
-                        s->flags.last_write_failed = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -384,7 +383,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             if (events & LIBUS_SOCKET_WRITABLE && !error) {
                 /* Note: if we failed a write as a socket of one loop then adopted
                  * to another loop, this will be wrong. Absurd case though */
-                s->flags.last_write_failed = 0;
+                 loop->data.last_write_failed = 0;
 
                 s = s->context->on_writable(s);
 
@@ -393,7 +392,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
 
                 /* If we have no failed write or if we shut down, then stop polling for more writable */
-                if (!s->flags.last_write_failed || us_socket_is_shut_down(0, s)) {
+                if (!loop->data.last_write_failed || us_socket_is_shut_down(0, s)) {
                     us_poll_change(&s->p, loop, (s->flags.is_paused ? 0 : LIBUS_SOCKET_READABLE));
                 }
             }

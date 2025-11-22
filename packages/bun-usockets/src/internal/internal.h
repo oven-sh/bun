@@ -172,7 +172,6 @@ struct us_socket_flags {
     bool is_ipc: 1;
     bool is_closed: 1;
     bool is_ssl: 1;
-    bool last_write_failed: 1;
 
 } __attribute__((packed));
 

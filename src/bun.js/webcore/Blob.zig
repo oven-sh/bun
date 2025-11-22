@@ -3859,7 +3859,8 @@ fn fromJSWithoutDeferGC(
                         } else {
                             return build.blob.dupe();
                         }
-                    } else if (current.toSliceClone(global)) |sliced| {
+                    } else {
+                        const sliced = try current.toSliceClone(global);
                         if (sliced.allocator.get()) |allocator| {
                             return Blob.initWithAllASCII(@constCast(sliced.slice()), allocator, global, false);
                         }
@@ -3955,7 +3956,8 @@ fn fromJSWithoutDeferGC(
                                     could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
                                     joiner.pushStatic(blob.sharedView());
                                     continue;
-                                } else if (current.toSliceClone(global)) |sliced| {
+                                } else {
+                                    const sliced = try current.toSliceClone(global);
                                     const allocator = sliced.allocator.get();
                                     could_have_non_ascii = could_have_non_ascii or allocator != null;
                                     joiner.push(sliced.slice(), allocator);
@@ -3973,7 +3975,8 @@ fn fromJSWithoutDeferGC(
                 if (current.as(Blob)) |blob| {
                     could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
                     joiner.pushStatic(blob.sharedView());
-                } else if (current.toSliceClone(global)) |sliced| {
+                } else {
+                    const sliced = try current.toSliceClone(global);
                     const allocator = sliced.allocator.get();
                     could_have_non_ascii = could_have_non_ascii or allocator != null;
                     joiner.push(sliced.slice(), allocator);

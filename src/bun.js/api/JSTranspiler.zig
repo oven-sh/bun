@@ -388,7 +388,7 @@ pub const Config = struct {
                             const replacementValue = try value.getIndex(globalThis, 1);
                             if (try exportReplacementValue(replacementValue, globalThis, allocator)) |to_replace| {
                                 const replacementKey = try value.getIndex(globalThis, 0);
-                                var slice = replacementKey.toSliceCloneWithAllocator(globalThis, allocator) orelse return error.JSError;
+                                var slice = try replacementKey.toSliceCloneWithAllocator(globalThis, allocator);
                                 errdefer slice.deinit();
                                 const replacement_name = slice.slice();
 

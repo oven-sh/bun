@@ -490,9 +490,7 @@ pub fn Bun__fetch_(
             if (objects_to_try[i] != .zero) {
                 if (try objects_to_try[i].get(globalThis, "unix")) |socket_path| {
                     if (socket_path.isString() and try socket_path.getLength(ctx) > 0) {
-                        if (socket_path.toSliceCloneWithAllocator(globalThis, allocator)) |slice| {
-                            break :extract_unix_socket_path slice;
-                        }
+                        break :extract_unix_socket_path try socket_path.toSliceCloneWithAllocator(globalThis, allocator);
                     }
                 }
 

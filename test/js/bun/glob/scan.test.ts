@@ -691,11 +691,13 @@ describe("glob scan should not escape cwd boundary", () => {
     // All entries should be within the cwd - none should start with ../
     for (const entry of entries) {
       expect(entry.startsWith("../")).toBe(false);
+      expect(entry.startsWith("..\\")).toBe(false);
       expect(entry.includes("/../")).toBe(false);
+      expect(entry.includes("\\..\\")).toBe(false);
     }
 
     // Should match .hidden/file.txt but not escape to parent
-    expect(entries.sort()).toEqual([".hidden/file.txt"].sort());
+    expect(entries.sort()).toEqual([`.hidden${path.sep}file.txt`].sort());
   });
 
   test("pattern .*/**/*.ts should not escape cwd", async () => {
@@ -723,11 +725,15 @@ describe("glob scan should not escape cwd boundary", () => {
     // All entries should be within the cwd
     for (const entry of entries) {
       expect(entry.startsWith("../")).toBe(false);
+      expect(entry.startsWith("..\\")).toBe(false);
       expect(entry.includes("/../")).toBe(false);
+      expect(entry.includes("\\..\\")).toBe(false);
     }
 
     // Should match files in .config but not escape to parent
-    expect(entries.sort()).toEqual([".config/settings.ts", ".config/nested/deep.ts"].sort());
+    expect(entries.sort()).toEqual(
+      [`.config${path.sep}settings.ts`, `.config${path.sep}nested${path.sep}deep.ts`].sort(),
+    );
   });
 });
 

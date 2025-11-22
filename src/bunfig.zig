@@ -532,6 +532,21 @@ pub const Bunfig = struct {
                         }
                     }
 
+                    if (install_obj.get("insecure")) |insecure| {
+                        if (insecure.asBool()) |value| {
+                            install.insecure = value;
+                            
+                            // Warn if CA/cafile settings are present but will be ignored due to insecure mode
+                            if (value) {
+                                if (install_obj.get("ca")) |_| {
+                                    this.log.addWarning(this.source, insecure.loc, "CA settings will be ignored when insecure mode is enabled") catch {};
+                                } else if (install_obj.get("cafile")) |_| {
+                                    this.log.addWarning(this.source, insecure.loc, "cafile settings will be ignored when insecure mode is enabled") catch {};
+                                }
+                            }
+                        }
+                    }
+
                     if (install_obj.get("exact")) |exact| {
                         if (exact.asBool()) |value| {
                             install.exact = value;

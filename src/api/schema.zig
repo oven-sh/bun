@@ -3057,6 +3057,9 @@ pub const api = struct {
             list: []const []const u8,
         } = null,
 
+        /// insecure
+        insecure: ?bool = null,
+
         ignore_scripts: ?bool = null,
 
         link_workspace_packages: ?bool = null,

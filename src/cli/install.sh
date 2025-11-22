@@ -169,11 +169,16 @@ tildify() {
 
 success "bun was installed successfully to $Bold_Green$(tildify "$exe")"
 
-no_shell_config="${NO_SHELL_CONFIG:-false}"
+skip_shell_config="${BUN_SKIP_SHELL_CONFIG:-false}"
+if [[ "$skip_shell_config" == "1" ]]; then
+    skip_shell_config=true
+elif [[ "$skip_shell_config" == "0" ]]; then
+    skip_shell_config=false
+fi
 
 if command -v bun >/dev/null; then
-    if [[ "$no_shell_config" == "true" ]]; then
-        info "Skipping shell configuration as requested."
+    if [[ "$skip_shell_config" == "true" ]]; then
+        info "Skipping shell completions installation as requested."
     else
         # Install completions, but we don't care if it fails
         IS_BUN_AUTO_UPDATE=true $exe completions &>/dev/null || :
@@ -194,8 +199,8 @@ fi
 
 echo
 
-if [[ "$no_shell_config" == "true" ]]; then
-    info "Skipping shell configuration as requested."
+if [[ "$skip_shell_config" == "true" ]]; then
+    info "Skipping shell completions installation as requested."
 else
     case $(basename "$SHELL") in
     fish)

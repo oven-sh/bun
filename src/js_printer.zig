@@ -1651,13 +1651,28 @@ fn NewPrinter(
                 }
 
                 // Internal "require()" or "import()"
-                if (record.kind == .dynamic) {
+                // For dynamic imports, check if there's actually something to import
+                const needs_dynamic_wrapper = record.kind == .dynamic;
+                const wrap_with_to_esm = record.wrap_with_to_esm;
+                const will_print_something = meta.wrapper_ref.isValid() or
+                    meta.exports_ref.isValid() or
+                    p.options.input_files_for_dev_server != null;
+
+                if (needs_dynamic_wrapper) {
+                    if (!will_print_something) {
+                        // Nothing to import - emit void 0 and return early
+                        // Add source mapping so debuggers map to the original import location
+                        p.addSourceMapping(record.range.loc);
+                        p.printSpaceBeforeIdentifier();
+                        p.print("void 0");
+                        return;
+                    }
                     p.printSpaceBeforeIdentifier();
                     p.print("Promise.resolve()");
 
                     level = p.printDotThenPrefix();
                 }
-                defer if (record.kind == .dynamic) p.printDotThenSuffix();
+                defer if (needs_dynamic_wrapper) p.printDotThenSuffix();
 
                 // Make sure the comma operator is properly wrapped
                 const wrap_comma_operator = meta.exports_ref.isValid() and
@@ -1667,7 +1682,6 @@ fn NewPrinter(
                 defer if (wrap_comma_operator) p.print(")");
 
                 // Wrap this with a call to "__toESM()" if this is a CommonJS file
-                const wrap_with_to_esm = record.wrap_with_to_esm;
                 if (wrap_with_to_esm) {
                     p.printSpaceBeforeIdentifier();
                     p.printSymbol(p.options.to_esm_ref);

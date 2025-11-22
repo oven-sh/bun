@@ -501,10 +501,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     } else if (!length) {
                         eof = 1; // lets handle EOF in the same place
                         break;
-                    } else if (length == LIBUS_SOCKET_ERROR) {
-                        if(bsd_would_block()) {
-                            break;
-                        }
+                    } else if (length == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
                         /* Todo: decide also here what kind of reason we should give */
                         s = us_socket_close(0, s, LIBUS_ERR, NULL);
                         return;

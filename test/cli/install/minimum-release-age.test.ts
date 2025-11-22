@@ -2307,18 +2307,21 @@ linker = "${linker}"
 
   describe("security scanner integration", () => {
     // Helper to create common scanner configuration files
-    const createScannerConfig = (extraConfig = "", scannerImpl?: string) => ({
-      "bunfig.toml": `
+    const createScannerConfig = (extraConfig = "", scannerImpl?: string) => {
+      // Normalize extraConfig to ensure proper newline separation
+      const normalizedExtra = extraConfig ? (extraConfig.endsWith("\n") ? extraConfig : extraConfig + "\n") : "";
+      return {
+        "bunfig.toml": `
 [install]
 cache = false
 registry = "${mockRegistryUrl}"
-${extraConfig}
+${normalizedExtra}
 [install.security]
 scanner = "./scanner.ts"
 `,
-      "scanner.ts":
-        scannerImpl ??
-        `
+        "scanner.ts":
+          scannerImpl ??
+          `
 export const scanner = {
   version: "1",
   scan: async ({ packages }) => {
@@ -2327,7 +2330,8 @@ export const scanner = {
   },
 };
 `,
-    });
+      };
+    };
 
     test("only passes age-filtered packages to security scanner", async () => {
       // This test verifies that when minimum-release-age filters a package,
@@ -2432,13 +2436,14 @@ export const scanner = {
         stderr: "pipe",
       });
 
-      const [exitCode, stdout] = await Promise.all([proc.exited, proc.stdout.text()]);
+      const [exitCode, stdout, stderr] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
+      const output = stdout + stderr;
 
+      // The advisory message should be in the output
+      expect(output).toContain("Known vulnerability in version 2.1.0");
+      expect(output).toContain("Installation aborted due to fatal security advisories");
       // Should fail due to fatal advisory
       expect(exitCode).toBe(1);
-      // The advisory message should be in the output
-      expect(stdout).toContain("Known vulnerability in version 2.1.0");
-      expect(stdout).toContain("Installation aborted due to fatal security advisories");
     });
 
     test("excludes filter bypasses age check but scanner still sees package", async () => {

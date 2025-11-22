@@ -203,16 +203,16 @@ const FullSettingsPayload = packed struct(u288) {
     pub const byteSize: usize = 36;
     pub fn toJS(this: *FullSettingsPayload, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         var result = JSValue.createEmptyObject(globalObject, 8);
-        result.put(globalObject, jsc.ZigString.static("headerTableSize"), jsc.JSValue.jsNumber(this.headerTableSize));
-        result.put(globalObject, jsc.ZigString.static("enablePush"), jsc.JSValue.jsBoolean(this.enablePush > 0));
-        result.put(globalObject, jsc.ZigString.static("maxConcurrentStreams"), jsc.JSValue.jsNumber(this.maxConcurrentStreams));
-        result.put(globalObject, jsc.ZigString.static("initialWindowSize"), jsc.JSValue.jsNumber(this.initialWindowSize));
-        result.put(globalObject, jsc.ZigString.static("maxFrameSize"), jsc.JSValue.jsNumber(this.maxFrameSize));
-        result.put(globalObject, jsc.ZigString.static("maxHeaderListSize"), jsc.JSValue.jsNumber(this.maxHeaderListSize));
-        result.put(globalObject, jsc.ZigString.static("maxHeaderSize"), jsc.JSValue.jsNumber(this.maxHeaderListSize));
+        result.putDirect(globalObject, jsc.ZigString.static("headerTableSize"), jsc.JSValue.jsNumber(this.headerTableSize));
+        result.putDirect(globalObject, jsc.ZigString.static("enablePush"), jsc.JSValue.jsBoolean(this.enablePush > 0));
+        result.putDirect(globalObject, jsc.ZigString.static("maxConcurrentStreams"), jsc.JSValue.jsNumber(this.maxConcurrentStreams));
+        result.putDirect(globalObject, jsc.ZigString.static("initialWindowSize"), jsc.JSValue.jsNumber(this.initialWindowSize));
+        result.putDirect(globalObject, jsc.ZigString.static("maxFrameSize"), jsc.JSValue.jsNumber(this.maxFrameSize));
+        result.putDirect(globalObject, jsc.ZigString.static("maxHeaderListSize"), jsc.JSValue.jsNumber(this.maxHeaderListSize));
+        result.putDirect(globalObject, jsc.ZigString.static("maxHeaderSize"), jsc.JSValue.jsNumber(this.maxHeaderListSize));
         // TODO: we dont support this setting yet see https://nodejs.org/api/http2.html#settings-object
         // we should also support customSettings
-        result.put(globalObject, jsc.ZigString.static("enableConnectProtocol"), .false);
+        result.putDirect(globalObject, jsc.ZigString.static("enableConnectProtocol"), .false);
         return result;
     }
 
@@ -2736,17 +2736,17 @@ pub const H2FrameParser = struct {
     pub fn getCurrentState(this: *H2FrameParser, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!JSValue {
         jsc.markBinding(@src());
         var result = JSValue.createEmptyObject(globalObject, 9);
-        result.put(globalObject, jsc.ZigString.static("effectiveLocalWindowSize"), jsc.JSValue.jsNumber(this.windowSize));
-        result.put(globalObject, jsc.ZigString.static("effectiveRecvDataLength"), jsc.JSValue.jsNumber(this.windowSize - this.usedWindowSize));
-        result.put(globalObject, jsc.ZigString.static("nextStreamID"), jsc.JSValue.jsNumber(this.getNextStreamID()));
-        result.put(globalObject, jsc.ZigString.static("lastProcStreamID"), jsc.JSValue.jsNumber(this.lastStreamID));
+        result.putDirect(globalObject, jsc.ZigString.static("effectiveLocalWindowSize"), jsc.JSValue.jsNumber(this.windowSize));
+        result.putDirect(globalObject, jsc.ZigString.static("effectiveRecvDataLength"), jsc.JSValue.jsNumber(this.windowSize - this.usedWindowSize));
+        result.putDirect(globalObject, jsc.ZigString.static("nextStreamID"), jsc.JSValue.jsNumber(this.getNextStreamID()));
+        result.putDirect(globalObject, jsc.ZigString.static("lastProcStreamID"), jsc.JSValue.jsNumber(this.lastStreamID));
 
         const settings: FullSettingsPayload = this.remoteSettings orelse .{};
-        result.put(globalObject, jsc.ZigString.static("remoteWindowSize"), jsc.JSValue.jsNumber(settings.initialWindowSize));
-        result.put(globalObject, jsc.ZigString.static("localWindowSize"), jsc.JSValue.jsNumber(this.localSettings.initialWindowSize));
-        result.put(globalObject, jsc.ZigString.static("deflateDynamicTableSize"), jsc.JSValue.jsNumber(this.localSettings.headerTableSize));
-        result.put(globalObject, jsc.ZigString.static("inflateDynamicTableSize"), jsc.JSValue.jsNumber(this.localSettings.headerTableSize));
-        result.put(globalObject, jsc.ZigString.static("outboundQueueSize"), jsc.JSValue.jsNumber(this.outboundQueueSize));
+        result.putDirect(globalObject, jsc.ZigString.static("remoteWindowSize"), jsc.JSValue.jsNumber(settings.initialWindowSize));
+        result.putDirect(globalObject, jsc.ZigString.static("localWindowSize"), jsc.JSValue.jsNumber(this.localSettings.initialWindowSize));
+        result.putDirect(globalObject, jsc.ZigString.static("deflateDynamicTableSize"), jsc.JSValue.jsNumber(this.localSettings.headerTableSize));
+        result.putDirect(globalObject, jsc.ZigString.static("inflateDynamicTableSize"), jsc.JSValue.jsNumber(this.localSettings.headerTableSize));
+        result.putDirect(globalObject, jsc.ZigString.static("outboundQueueSize"), jsc.JSValue.jsNumber(this.outboundQueueSize));
         return result;
     }
 
@@ -3030,13 +3030,13 @@ pub const H2FrameParser = struct {
         };
         var state = jsc.JSValue.createEmptyObject(globalObject, 6);
 
-        state.put(globalObject, jsc.ZigString.static("localWindowSize"), jsc.JSValue.jsNumber(stream.windowSize));
-        state.put(globalObject, jsc.ZigString.static("state"), jsc.JSValue.jsNumber(@intFromEnum(stream.state)));
-        state.put(globalObject, jsc.ZigString.static("localClose"), jsc.JSValue.jsNumber(@as(i32, if (stream.canSendData()) 0 else 1)));
-        state.put(globalObject, jsc.ZigString.static("remoteClose"), jsc.JSValue.jsNumber(@as(i32, if (stream.canReceiveData()) 0 else 1)));
+        state.putDirect(globalObject, jsc.ZigString.static("localWindowSize"), jsc.JSValue.jsNumber(stream.windowSize));
+        state.putDirect(globalObject, jsc.ZigString.static("state"), jsc.JSValue.jsNumber(@intFromEnum(stream.state)));
+        state.putDirect(globalObject, jsc.ZigString.static("localClose"), jsc.JSValue.jsNumber(@as(i32, if (stream.canSendData()) 0 else 1)));
+        state.putDirect(globalObject, jsc.ZigString.static("remoteClose"), jsc.JSValue.jsNumber(@as(i32, if (stream.canReceiveData()) 0 else 1)));
         // TODO: sumDependencyWeight
-        state.put(globalObject, jsc.ZigString.static("sumDependencyWeight"), jsc.JSValue.jsNumber(0));
-        state.put(globalObject, jsc.ZigString.static("weight"), jsc.JSValue.jsNumber(stream.weight));
+        state.putDirect(globalObject, jsc.ZigString.static("sumDependencyWeight"), jsc.JSValue.jsNumber(0));
+        state.putDirect(globalObject, jsc.ZigString.static("weight"), jsc.JSValue.jsNumber(stream.weight));
 
         return state;
     }

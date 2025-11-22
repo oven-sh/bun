@@ -1000,7 +1000,7 @@ pub fn doSend(ipc: ?*SendQueue, globalObject: *jsc.JSGlobalObject, callFrame: *j
 
     if (status == .failure) {
         const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
-        ex.put(globalObject, jsc.ZigString.static("syscall"), bun.String.static("write").toJS(globalObject));
+        ex.putDirect(globalObject, jsc.ZigString.static("syscall"), bun.String.static("write").toJS(globalObject));
         return doSendErr(globalObject, callback, ex, from);
     }
 

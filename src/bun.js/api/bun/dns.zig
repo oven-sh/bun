@@ -1654,12 +1654,12 @@ pub const internal = struct {
 
     pub fn getDNSCacheStats(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const object = jsc.JSValue.createEmptyObject(globalObject, 6);
-        object.put(globalObject, jsc.ZigString.static("cacheHitsCompleted"), jsc.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_completed, .monotonic)));
-        object.put(globalObject, jsc.ZigString.static("cacheHitsInflight"), jsc.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_inflight, .monotonic)));
-        object.put(globalObject, jsc.ZigString.static("cacheMisses"), jsc.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_misses, .monotonic)));
-        object.put(globalObject, jsc.ZigString.static("size"), jsc.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_size, .monotonic)));
-        object.put(globalObject, jsc.ZigString.static("errors"), jsc.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_errors, .monotonic)));
-        object.put(globalObject, jsc.ZigString.static("totalCount"), jsc.JSValue.jsNumber(@atomicLoad(usize, &getaddrinfo_calls, .monotonic)));
+        object.putDirect(globalObject, jsc.ZigString.static("cacheHitsCompleted"), jsc.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_completed, .monotonic)));
+        object.putDirect(globalObject, jsc.ZigString.static("cacheHitsInflight"), jsc.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_inflight, .monotonic)));
+        object.putDirect(globalObject, jsc.ZigString.static("cacheMisses"), jsc.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_misses, .monotonic)));
+        object.putDirect(globalObject, jsc.ZigString.static("size"), jsc.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_size, .monotonic)));
+        object.putDirect(globalObject, jsc.ZigString.static("errors"), jsc.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_errors, .monotonic)));
+        object.putDirect(globalObject, jsc.ZigString.static("totalCount"), jsc.JSValue.jsNumber(@atomicLoad(usize, &getaddrinfo_calls, .monotonic)));
         return object;
     }
 

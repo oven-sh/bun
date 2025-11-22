@@ -39,7 +39,7 @@ pub fn sendHelperChild(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFram
     }
 
     // sequence number for InternalMsgHolder
-    message.put(globalThis, ZigString.static("seq"), jsc.JSValue.jsNumber(child_singleton.seq));
+    message.putDirect(globalThis, ZigString.static("seq"), jsc.JSValue.jsNumber(child_singleton.seq));
     child_singleton.seq +%= 1;
 
     // similar code as Bun__Process__send
@@ -62,7 +62,7 @@ pub fn sendHelperChild(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFram
 
     if (good == .failure) {
         const ex = globalThis.createTypeErrorInstance("sendInternal() failed", .{});
-        ex.put(globalThis, ZigString.static("syscall"), bun.String.static("write").toJS(globalThis));
+        ex.putDirect(globalThis, ZigString.static("syscall"), bun.String.static("write").toJS(globalThis));
         const fnvalue = jsc.JSFunction.create(globalThis, "", S.impl, 1, .{});
         try fnvalue.callNextTick(globalThis, .{ex});
         return .false;
@@ -194,7 +194,7 @@ pub fn sendHelperPrimary(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFr
     }
 
     // sequence number for InternalMsgHolder
-    message.put(globalThis, ZigString.static("seq"), jsc.JSValue.jsNumber(ipc_data.internal_msg_queue.seq));
+    message.putDirect(globalThis, ZigString.static("seq"), jsc.JSValue.jsNumber(ipc_data.internal_msg_queue.seq));
     ipc_data.internal_msg_queue.seq +%= 1;
 
     // similar code as bun.jsc.Subprocess.doSend

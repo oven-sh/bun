@@ -6,7 +6,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
         .mimallocDump = dump_mimalloc,
     };
     inline for (comptime std.meta.fieldNames(@TypeOf(fields))) |name| {
-        object.put(
+        object.putDirect(
             globalThis,
             comptime ZigString.static(name),
             jsc.JSFunction.create(globalThis, name, @field(fields, name), 1, .{}),

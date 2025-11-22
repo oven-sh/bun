@@ -324,16 +324,16 @@ pub const JSValue = enum(i64) {
     pub fn putRecord(value: JSValue, global: *JSGlobalObject, key: *ZigString, values_array: [*]ZigString, values_len: usize) void {
         return JSC__JSValue__putRecord(value, global, key, values_array, values_len);
     }
-    extern fn JSC__JSValue__put(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: jsc.JSValue) void;
-    pub fn putZigString(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: jsc.JSValue) void {
-        JSC__JSValue__put(value, global, key, result);
+    extern fn JSC__JSValue__putDirect(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: jsc.JSValue) void;
+    fn putDirectZigString(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: jsc.JSValue) void {
+        JSC__JSValue__putDirect(value, global, key, result);
     }
 
-    extern "c" fn JSC__JSValue__putBunString(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: jsc.JSValue) void;
-    fn putBunString(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: jsc.JSValue) void {
+    extern "c" fn JSC__JSValue__putDirectBunString(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: jsc.JSValue) void;
+    fn putDirectBunString(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: jsc.JSValue) void {
         if (comptime bun.Environment.isDebug)
             jsc.markBinding(@src());
-        JSC__JSValue__putBunString(value, global, key, result);
+        JSC__JSValue__putDirectBunString(value, global, key, result);
     }
 
     extern "c" fn JSC__JSValue__upsertBunStringArray(value: JSValue, global: *JSGlobalObject, key: *const bun.String, result: jsc.JSValue) JSValue;
@@ -343,32 +343,33 @@ pub const JSValue = enum(i64) {
         return fromJSHostCall(global, @src(), JSC__JSValue__upsertBunStringArray, .{ obj, global, key, value });
     }
 
-    pub fn put(value: JSValue, global: *JSGlobalObject, key: anytype, result: jsc.JSValue) void {
+    /// Note: key can't be numeric (if so, use putMayBeIndex instead)
+    pub fn putDirect(value: JSValue, global: *JSGlobalObject, key: anytype, result: jsc.JSValue) void {
         const Key = @TypeOf(key);
         if (comptime @typeInfo(Key) == .pointer) {
             const Elem = @typeInfo(Key).pointer.child;
             if (Elem == ZigString) {
-                putZigString(value, global, key, result);
+                putDirectZigString(value, global, key, result);
             } else if (Elem == bun.String) {
-                putBunString(value, global, key, result);
+                putDirectBunString(value, global, key, result);
             } else if (std.meta.Elem(Key) == u8) {
-                putZigString(value, global, &ZigString.init(key), result);
+                putDirectZigString(value, global, &ZigString.init(key), result);
             } else {
-                @compileError("Unsupported key type in put(). Expected ZigString or bun.String, got " ++ @typeName(Elem));
+                @compileError("Unsupported key type in putDirect(). Expected ZigString or bun.String, got " ++ @typeName(Elem));
             }
         } else if (comptime Key == ZigString) {
-            putZigString(value, global, &key, result);
+            putDirectZigString(value, global, &key, result);
         } else if (comptime Key == bun.String) {
-            putBunString(value, global, &key, result);
+            putDirectBunString(value, global, &key, result);
         } else {
-            @compileError("Unsupported key type in put(). Expected ZigString or bun.String, got " ++ @typeName(Key));
+            @compileError("Unsupported key type in putDirect(). Expected ZigString or bun.String, got " ++ @typeName(Key));
         }
     }
-    /// Note: key can't be numeric (if so, use putMayBeIndex instead)
-    /// Same as `.put` but accepts both non-numeric and numeric keys.
-    /// Prefer to use `.put` if the key is guaranteed to be non-numeric (e.g. known at comptime)
-    pub fn putMayBeIndex(this: JSValue, globalObject: *JSGlobalObject, key: *const String, value: JSValue) bun.JSError!void {
-        return bun.cpp.JSC__JSValue__putMayBeIndex(this, globalObject, key, value);
+
+    /// Same as `.putDirect` but accepts both non-numeric and numeric keys.
+    /// Prefer to use `.putDirect` if the key is guaranteed to be non-numeric (e.g. known at comptime)
+    pub fn putDirectMayBeIndex(this: JSValue, globalObject: *JSGlobalObject, key: *const String, value: JSValue) bun.JSError!void {
+        return bun.cpp.JSC__JSValue__putDirectMayBeIndex(this, globalObject, key, value);
     }
 
     extern fn JSC__JSValue__putToPropertyKey(target: JSValue, globalObject: *JSGlobalObject, key: jsc.JSValue, value: jsc.JSValue) void;

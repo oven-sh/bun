@@ -1247,7 +1247,7 @@ pub const JSFrameworkRouter = struct {
                     for (params_out.params.slice()) |param| {
                         const value = bun.String.cloneUTF8(param.value);
                         defer value.deref();
-                        obj.put(global, param.key, value.toJS(global));
+                        obj.putDirect(global, param.key, value.toJS(global));
                     }
                     break :params obj;
                 } else .null,
@@ -1341,8 +1341,8 @@ pub const JSFrameworkRouter = struct {
 
         var out = bun.String.init(rendered.items);
         const obj = JSValue.createEmptyObject(global, 2);
-        obj.put(global, "kind", bun.String.static(@tagName(parsed.kind)).toJS(global));
-        obj.put(global, "pattern", out.transferToJS(global));
+        obj.putDirect(global, "kind", bun.String.static(@tagName(parsed.kind)).toJS(global));
+        obj.putDirect(global, "pattern", out.transferToJS(global));
         return obj;
     }
 

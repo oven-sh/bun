@@ -153,13 +153,13 @@ pub const ResolveMessage = struct {
         _: *jsc.CallFrame,
     ) bun.JSError!jsc.JSValue {
         var object = jsc.JSValue.createEmptyObject(globalThis, 7);
-        object.put(globalThis, ZigString.static("name"), bun.String.static("ResolveMessage").toJS(globalThis));
-        object.put(globalThis, ZigString.static("position"), this.getPosition(globalThis));
-        object.put(globalThis, ZigString.static("message"), this.getMessage(globalThis));
-        object.put(globalThis, ZigString.static("level"), this.getLevel(globalThis));
-        object.put(globalThis, ZigString.static("specifier"), this.getSpecifier(globalThis));
-        object.put(globalThis, ZigString.static("importKind"), this.getImportKind(globalThis));
-        object.put(globalThis, ZigString.static("referrer"), this.getReferrer(globalThis));
+        object.putDirect(globalThis, ZigString.static("name"), bun.String.static("ResolveMessage").toJS(globalThis));
+        object.putDirect(globalThis, ZigString.static("position"), this.getPosition(globalThis));
+        object.putDirect(globalThis, ZigString.static("message"), this.getMessage(globalThis));
+        object.putDirect(globalThis, ZigString.static("level"), this.getLevel(globalThis));
+        object.putDirect(globalThis, ZigString.static("specifier"), this.getSpecifier(globalThis));
+        object.putDirect(globalThis, ZigString.static("importKind"), this.getImportKind(globalThis));
+        object.putDirect(globalThis, ZigString.static("referrer"), this.getReferrer(globalThis));
         return object;
     }
 

@@ -324,10 +324,10 @@ pub const JSPasswordObject = struct {
 
     pub export fn JSPasswordObject__create(globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         var object = JSValue.createEmptyObject(globalObject, 4);
-        object.put(globalObject, ZigString.static("hash"), jsc.JSFunction.create(globalObject, "hash", JSPasswordObject__hash, 2, .{}));
-        object.put(globalObject, ZigString.static("hashSync"), jsc.JSFunction.create(globalObject, "hashSync", JSPasswordObject__hashSync, 2, .{}));
-        object.put(globalObject, ZigString.static("verify"), jsc.JSFunction.create(globalObject, "verify", JSPasswordObject__verify, 2, .{}));
-        object.put(globalObject, ZigString.static("verifySync"), jsc.JSFunction.create(globalObject, "verifySync", JSPasswordObject__verifySync, 2, .{}));
+        object.putDirect(globalObject, ZigString.static("hash"), jsc.JSFunction.create(globalObject, "hash", JSPasswordObject__hash, 2, .{}));
+        object.putDirect(globalObject, ZigString.static("hashSync"), jsc.JSFunction.create(globalObject, "hashSync", JSPasswordObject__hashSync, 2, .{}));
+        object.putDirect(globalObject, ZigString.static("verify"), jsc.JSFunction.create(globalObject, "verify", JSPasswordObject__verify, 2, .{}));
+        object.putDirect(globalObject, ZigString.static("verifySync"), jsc.JSFunction.create(globalObject, "verifySync", JSPasswordObject__verifySync, 2, .{}));
         return object;
     }
 
@@ -360,7 +360,7 @@ pub const JSPasswordObject = struct {
                     const error_code = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "PASSWORD{f}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}));
                     defer bun.default_allocator.free(error_code);
                     const instance = globalObject.createErrorInstance("Password hashing failed with error \"{s}\"", .{@errorName(this.err)});
-                    instance.put(globalObject, ZigString.static("code"), jsc.ZigString.init(error_code).toJS(globalObject));
+                    instance.putDirect(globalObject, ZigString.static("code"), jsc.ZigString.init(error_code).toJS(globalObject));
                     return instance;
                 }
             };
@@ -572,7 +572,7 @@ pub const JSPasswordObject = struct {
                     const error_code = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "PASSWORD{f}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}));
                     defer bun.default_allocator.free(error_code);
                     const instance = globalObject.createErrorInstance("Password verification failed with error \"{s}\"", .{@errorName(this.err)});
-                    instance.put(globalObject, ZigString.static("code"), jsc.ZigString.init(error_code).toJS(globalObject));
+                    instance.putDirect(globalObject, ZigString.static("code"), jsc.ZigString.init(error_code).toJS(globalObject));
                     return instance;
                 }
             };

@@ -76,42 +76,42 @@ pub const S3ListObjectsV2Result = struct {
         const jsResult = JSValue.createEmptyObject(globalObject, 0);
 
         if (this.name) |name| {
-            jsResult.put(globalObject, jsc.ZigString.static("name"), try bun.String.createUTF8ForJS(globalObject, name));
+            jsResult.putDirect(globalObject, jsc.ZigString.static("name"), try bun.String.createUTF8ForJS(globalObject, name));
         }
 
         if (this.prefix) |prefix| {
-            jsResult.put(globalObject, jsc.ZigString.static("prefix"), try bun.String.createUTF8ForJS(globalObject, prefix));
+            jsResult.putDirect(globalObject, jsc.ZigString.static("prefix"), try bun.String.createUTF8ForJS(globalObject, prefix));
         }
 
         if (this.delimiter) |delimiter| {
-            jsResult.put(globalObject, jsc.ZigString.static("delimiter"), try bun.String.createUTF8ForJS(globalObject, delimiter));
+            jsResult.putDirect(globalObject, jsc.ZigString.static("delimiter"), try bun.String.createUTF8ForJS(globalObject, delimiter));
         }
 
         if (this.start_after) |start_after| {
-            jsResult.put(globalObject, jsc.ZigString.static("startAfter"), try bun.String.createUTF8ForJS(globalObject, start_after));
+            jsResult.putDirect(globalObject, jsc.ZigString.static("startAfter"), try bun.String.createUTF8ForJS(globalObject, start_after));
         }
         if (this.encoding_type) |encoding_type| {
-            jsResult.put(globalObject, jsc.ZigString.static("encodingType"), try bun.String.createUTF8ForJS(globalObject, encoding_type));
+            jsResult.putDirect(globalObject, jsc.ZigString.static("encodingType"), try bun.String.createUTF8ForJS(globalObject, encoding_type));
         }
 
         if (this.continuation_token) |continuation_token| {
-            jsResult.put(globalObject, jsc.ZigString.static("continuationToken"), try bun.String.createUTF8ForJS(globalObject, continuation_token));
+            jsResult.putDirect(globalObject, jsc.ZigString.static("continuationToken"), try bun.String.createUTF8ForJS(globalObject, continuation_token));
         }
 
         if (this.next_continuation_token) |next_continuation_token| {
-            jsResult.put(globalObject, jsc.ZigString.static("nextContinuationToken"), try bun.String.createUTF8ForJS(globalObject, next_continuation_token));
+            jsResult.putDirect(globalObject, jsc.ZigString.static("nextContinuationToken"), try bun.String.createUTF8ForJS(globalObject, next_continuation_token));
         }
 
         if (this.is_truncated) |is_truncated| {
-            jsResult.put(globalObject, jsc.ZigString.static("isTruncated"), JSValue.jsBoolean(is_truncated));
+            jsResult.putDirect(globalObject, jsc.ZigString.static("isTruncated"), JSValue.jsBoolean(is_truncated));
         }
 
         if (this.key_count) |key_count| {
-            jsResult.put(globalObject, jsc.ZigString.static("keyCount"), JSValue.jsNumber(key_count));
+            jsResult.putDirect(globalObject, jsc.ZigString.static("keyCount"), JSValue.jsNumber(key_count));
         }
 
         if (this.max_keys) |max_keys| {
-            jsResult.put(globalObject, jsc.ZigString.static("maxKeys"), JSValue.jsNumber(max_keys));
+            jsResult.putDirect(globalObject, jsc.ZigString.static("maxKeys"), JSValue.jsNumber(max_keys));
         }
 
         if (this.contents) |contents| {
@@ -119,49 +119,49 @@ pub const S3ListObjectsV2Result = struct {
 
             for (contents.items, 0..) |item, i| {
                 const objectInfo = JSValue.createEmptyObject(globalObject, 0);
-                objectInfo.put(globalObject, jsc.ZigString.static("key"), try bun.String.createUTF8ForJS(globalObject, item.key));
+                objectInfo.putDirect(globalObject, jsc.ZigString.static("key"), try bun.String.createUTF8ForJS(globalObject, item.key));
 
                 if (item.etag) |etag| {
-                    objectInfo.put(globalObject, jsc.ZigString.static("eTag"), try bun.String.createUTF8ForJS(globalObject, etag.get()));
+                    objectInfo.putDirect(globalObject, jsc.ZigString.static("eTag"), try bun.String.createUTF8ForJS(globalObject, etag.get()));
                 }
 
                 if (item.checksum_algorithme) |checksum_algorithme| {
-                    objectInfo.put(globalObject, jsc.ZigString.static("checksumAlgorithme"), try bun.String.createUTF8ForJS(globalObject, checksum_algorithme));
+                    objectInfo.putDirect(globalObject, jsc.ZigString.static("checksumAlgorithme"), try bun.String.createUTF8ForJS(globalObject, checksum_algorithme));
                 }
 
                 if (item.checksum_type) |checksum_type| {
-                    objectInfo.put(globalObject, jsc.ZigString.static("checksumType"), try bun.String.createUTF8ForJS(globalObject, checksum_type));
+                    objectInfo.putDirect(globalObject, jsc.ZigString.static("checksumType"), try bun.String.createUTF8ForJS(globalObject, checksum_type));
                 }
 
                 if (item.last_modified) |last_modified| {
-                    objectInfo.put(globalObject, jsc.ZigString.static("lastModified"), try bun.String.createUTF8ForJS(globalObject, last_modified));
+                    objectInfo.putDirect(globalObject, jsc.ZigString.static("lastModified"), try bun.String.createUTF8ForJS(globalObject, last_modified));
                 }
 
                 if (item.object_size) |object_size| {
-                    objectInfo.put(globalObject, jsc.ZigString.static("size"), JSValue.jsNumber(object_size));
+                    objectInfo.putDirect(globalObject, jsc.ZigString.static("size"), JSValue.jsNumber(object_size));
                 }
 
                 if (item.storage_class) |storage_class| {
-                    objectInfo.put(globalObject, jsc.ZigString.static("storageClass"), try bun.String.createUTF8ForJS(globalObject, storage_class));
+                    objectInfo.putDirect(globalObject, jsc.ZigString.static("storageClass"), try bun.String.createUTF8ForJS(globalObject, storage_class));
                 }
 
                 if (item.owner) |owner| {
                     const jsOwner = JSValue.createEmptyObject(globalObject, 0);
                     if (owner.id) |id| {
-                        jsOwner.put(globalObject, jsc.ZigString.static("id"), try bun.String.createUTF8ForJS(globalObject, id));
+                        jsOwner.putDirect(globalObject, jsc.ZigString.static("id"), try bun.String.createUTF8ForJS(globalObject, id));
                     }
 
                     if (owner.display_name) |display_name| {
-                        jsOwner.put(globalObject, jsc.ZigString.static("displayName"), try bun.String.createUTF8ForJS(globalObject, display_name));
+                        jsOwner.putDirect(globalObject, jsc.ZigString.static("displayName"), try bun.String.createUTF8ForJS(globalObject, display_name));
                     }
 
-                    objectInfo.put(globalObject, jsc.ZigString.static("owner"), jsOwner);
+                    objectInfo.putDirect(globalObject, jsc.ZigString.static("owner"), jsOwner);
                 }
 
                 try jsContents.putIndex(globalObject, @intCast(i), objectInfo);
             }
 
-            jsResult.put(globalObject, jsc.ZigString.static("contents"), jsContents);
+            jsResult.putDirect(globalObject, jsc.ZigString.static("contents"), jsContents);
         }
 
         if (this.common_prefixes) |common_prefixes| {
@@ -169,11 +169,11 @@ pub const S3ListObjectsV2Result = struct {
 
             for (common_prefixes.items, 0..) |prefix, i| {
                 const jsPrefix = JSValue.createEmptyObject(globalObject, 0);
-                jsPrefix.put(globalObject, jsc.ZigString.static("prefix"), try bun.String.createUTF8ForJS(globalObject, prefix));
+                jsPrefix.putDirect(globalObject, jsc.ZigString.static("prefix"), try bun.String.createUTF8ForJS(globalObject, prefix));
                 try jsCommonPrefixes.putIndex(globalObject, @intCast(i), jsPrefix);
             }
 
-            jsResult.put(globalObject, jsc.ZigString.static("commonPrefixes"), jsCommonPrefixes);
+            jsResult.putDirect(globalObject, jsc.ZigString.static("commonPrefixes"), jsCommonPrefixes);
         }
 
         return jsResult;

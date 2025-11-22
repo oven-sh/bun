@@ -2306,6 +2306,29 @@ linker = "${linker}"
   });
 
   describe("security scanner integration", () => {
+    // Helper to create common scanner configuration files
+    const createScannerConfig = (extraConfig = "", scannerImpl?: string) => ({
+      "bunfig.toml": `
+[install]
+cache = false
+registry = "${mockRegistryUrl}"
+${extraConfig}
+[install.security]
+scanner = "./scanner.ts"
+`,
+      "scanner.ts":
+        scannerImpl ??
+        `
+export const scanner = {
+  version: "1",
+  scan: async ({ packages }) => {
+    await Bun.write("./received-packages.json", JSON.stringify(packages, null, 2));
+    return [];
+  },
+};
+`,
+    });
+
     test("only passes age-filtered packages to security scanner", async () => {
       // This test verifies that when minimum-release-age filters a package,
       // the security scanner receives only the filtered version (not the blocked newer versions)
@@ -2314,25 +2337,7 @@ linker = "${linker}"
           dependencies: { "regular-package": "*" },
         }),
         ".npmrc": `registry=${mockRegistryUrl}`,
-        "bunfig.toml": `
-[install]
-cache = false
-registry = "${mockRegistryUrl}"
-
-[install.security]
-scanner = "./scanner.ts"
-`,
-        // Scanner that logs all packages it receives and returns no advisories
-        "scanner.ts": `
-export const scanner = {
-  version: "1",
-  scan: async ({ packages }) => {
-    // Write received packages to a file so we can verify them
-    await Bun.write("./received-packages.json", JSON.stringify(packages, null, 2));
-    return [];
-  },
-};
-`,
+        ...createScannerConfig(),
       });
 
       await using proc = Bun.spawn({
@@ -2356,7 +2361,6 @@ export const scanner = {
       const regularPkg = receivedPackages.find((p: { name: string }) => p.name === "regular-package");
       expect(regularPkg).toBeDefined();
       expect(regularPkg.version).toBe("2.1.0");
-      expect(regularPkg.version).not.toBe("3.0.0");
     });
 
     test("scanner receives correct version when stability check downgrades", async () => {
@@ -2366,23 +2370,7 @@ export const scanner = {
           dependencies: { "bugfix-package": "*" },
         }),
         ".npmrc": `registry=${mockRegistryUrl}`,
-        "bunfig.toml": `
-[install]
-cache = false
-registry = "${mockRegistryUrl}"
-
-[install.security]
-scanner = "./scanner.ts"
-`,
-        "scanner.ts": `
-export const scanner = {
-  version: "1",
-  scan: async ({ packages }) => {
-    await Bun.write("./received-packages.json", JSON.stringify(packages, null, 2));
-    return [];
-  },
-};
-`,
+        ...createScannerConfig(),
       });
 
       await using proc = Bun.spawn({
@@ -2410,20 +2398,7 @@ export const scanner = {
 
     test("scanner can report advisory on age-filtered package", async () => {
       // Test that the scanner can properly report security issues on the filtered package
-      using dir = tempDir("scanner-advisory", {
-        "package.json": JSON.stringify({
-          dependencies: { "regular-package": "*" },
-        }),
-        ".npmrc": `registry=${mockRegistryUrl}`,
-        "bunfig.toml": `
-[install]
-cache = false
-registry = "${mockRegistryUrl}"
-
-[install.security]
-scanner = "./scanner.ts"
-`,
-        "scanner.ts": `
+      const advisoryScannerImpl = `
 export const scanner = {
   version: "1",
   scan: async ({ packages }) => {
@@ -2440,7 +2415,13 @@ export const scanner = {
     return [];
   },
 };
-`,
+`;
+      using dir = tempDir("scanner-advisory", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+        ...createScannerConfig("", advisoryScannerImpl),
       });
 
       await using proc = Bun.spawn({
@@ -2467,25 +2448,9 @@ export const scanner = {
           dependencies: { "regular-package": "*" },
         }),
         ".npmrc": `registry=${mockRegistryUrl}`,
-        "bunfig.toml": `
-[install]
-cache = false
-registry = "${mockRegistryUrl}"
-minimumReleaseAge = ${5 * SECONDS_PER_DAY}
+        ...createScannerConfig(`minimumReleaseAge = ${5 * SECONDS_PER_DAY}
 minimumReleaseAgeExcludes = ["regular-package"]
-
-[install.security]
-scanner = "./scanner.ts"
-`,
-        "scanner.ts": `
-export const scanner = {
-  version: "1",
-  scan: async ({ packages }) => {
-    await Bun.write("./received-packages.json", JSON.stringify(packages, null, 2));
-    return [];
-  },
-};
-`,
+`),
       });
 
       await using proc = Bun.spawn({

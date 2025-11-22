@@ -427,12 +427,12 @@ const PackageCollector = struct {
 
                 if ((try this.dedupe.getOrPut(dep_pkg_id)).found_existing) continue;
 
-                var pkg_path_buf = std.array_list.Managed(PackageID).init(this.manager.allocator);
-                try pkg_path_buf.append(pkg_id);
-                try pkg_path_buf.append(dep_pkg_id);
+                var pkg_path_buf: std.ArrayList(PackageID) = .{};
+                try pkg_path_buf.append(this.manager.allocator, pkg_id);
+                try pkg_path_buf.append(this.manager.allocator, dep_pkg_id);
 
-                var dep_path_buf = std.array_list.Managed(DependencyID).init(this.manager.allocator);
-                try dep_path_buf.append(dep_id);
+                var dep_path_buf: std.ArrayList(DependencyID) = .{};
+                try dep_path_buf.append(this.manager.allocator, dep_id);
 
                 try this.queue.writeItem(.{
                     .pkg_id = dep_pkg_id,

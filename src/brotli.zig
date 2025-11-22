@@ -9,7 +9,7 @@ pub const BrotliAllocator = struct {
             return zone.malloc_zone_malloc(len) orelse bun.outOfMemory();
         }
 
-        return mimalloc.mi_malloc(len) orelse bun.outOfMemory();
+        return bun.allocators.malloc(len) orelse bun.outOfMemory();
     }
 
     pub fn free(_: ?*anyopaque, data: ?*anyopaque) callconv(.c) void {
@@ -19,7 +19,7 @@ pub const BrotliAllocator = struct {
             return;
         }
 
-        mimalloc.mi_free(data);
+        bun.allocators.free(data);
     }
 };
 
@@ -281,7 +281,5 @@ pub const BrotliCompressionStream = struct {
     }
 };
 
-const std = @import("std");
-
 const bun = @import("bun");
-const mimalloc = bun.mimalloc;
+const std = @import("std");

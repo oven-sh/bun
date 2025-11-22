@@ -113,7 +113,7 @@ pub const StatFS = union(enum) {
     big: StatFSBig,
     small: StatFSSmall,
 
-    pub inline fn init(stat_: *const bun.StatFS, big: bool) StatFS {
+    pub fn init(stat_: *const bun.StatFS, big: bool) StatFS {
         if (big) {
             return .{ .big = StatFSBig.init(stat_) };
         } else {
@@ -128,10 +128,9 @@ pub const StatFS = union(enum) {
         };
     }
 
-    pub inline fn toJS(this: *StatFS, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
+    fn toJS(this: *StatFS, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         _ = this;
         _ = globalObject;
-
         @compileError("Only use Stats.toJSNewlyCreated() or Stats.toJS() directly on a StatsBig or StatsSmall");
     }
 };

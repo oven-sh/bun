@@ -7,22 +7,22 @@ ptr: *anyopaque = undefined,
 // the regular `ptr` because `ptr` may be undefined.
 vtable: ?*const std.mem.Allocator.VTable = null,
 
-pub inline fn init(allocator: ?std.mem.Allocator) NullableAllocator {
+pub fn init(allocator: ?std.mem.Allocator) NullableAllocator {
     return if (allocator) |a| .{
         .ptr = a.ptr,
         .vtable = a.vtable,
     } else .{};
 }
 
-pub inline fn isNull(this: NullableAllocator) bool {
+pub fn isNull(this: NullableAllocator) bool {
     return this.vtable == null;
 }
 
-pub inline fn isWTFAllocator(this: NullableAllocator) bool {
+pub fn isWTFAllocator(this: NullableAllocator) bool {
     return bun.String.isWTFAllocator(this.get() orelse return false);
 }
 
-pub inline fn get(this: NullableAllocator) ?std.mem.Allocator {
+pub fn get(this: NullableAllocator) ?std.mem.Allocator {
     return if (this.vtable) |vt| std.mem.Allocator{ .ptr = this.ptr, .vtable = vt } else null;
 }
 

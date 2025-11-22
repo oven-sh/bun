@@ -5,8 +5,6 @@ pub const toJS = js.toJS;
 pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 
-garbage: i32 = 0,
-
 comptime {
     _ = CryptoObject__create;
 }
@@ -269,11 +267,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.JSErr
 
 pub export fn CryptoObject__create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     jsc.markBinding(@src());
-
-    var ptr = bun.default_allocator.create(Crypto) catch {
-        return globalThis.throwOutOfMemoryValue();
-    };
-
+    const ptr = bun.new(Crypto, .{});
     return ptr.toJS(globalThis);
 }
 

@@ -293,6 +293,7 @@ int us_socket_write2(int ssl, struct us_socket_t *s, const char *header, int hea
 
     int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
     if (written != header_length + payload_length) {
+        s->context->loop->data.last_write_failed = 1;
         us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     }
 
@@ -583,6 +584,7 @@ void us_socket_pause(int ssl, struct us_socket_t *s) {
     if(s->flags.is_paused) return;
     // closed cannot be paused because it is already closed
     if(us_socket_is_closed(ssl, s)) return;
+    s->context->loop->data.last_write_failed = 1;
     // we are readable and writable so we can just pause readable side
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_WRITABLE);
     s->flags.is_paused = 1;
@@ -599,6 +601,7 @@ void us_socket_resume(int ssl, struct us_socket_t *s) {
       us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE);
       return;
     }
+    s->context->loop->data.last_write_failed = 1;
     // we are readable and writable so we resume everything
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }

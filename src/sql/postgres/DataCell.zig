@@ -418,7 +418,7 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
                                     else => {
                                         const value = std.fmt.parseInt(i32, element, 0) catch return error.UnsupportedArrayFormat;
 
-                                        try array.append(bun.default_allocator, SQLDataCell{ .tag = .int4, .value = .{ .int4 = @intCast(value) } });
+                                        try array.append(bun.default_allocator, SQLDataCell{ .tag = .int4, .value = .{ .int4 = value } });
                                         slice = trySlice(slice, current_idx);
                                         continue;
                                     },
@@ -717,7 +717,7 @@ fn pg_ntoT(comptime IntSize: usize, i: anytype) std.meta.Int(.unsigned, IntSize)
         return pg_ntoT(IntSize, @as(std.meta.Int(.unsigned, IntSize), @bitCast(i)));
     }
 
-    const casted: std.meta.Int(.unsigned, IntSize) = @intCast(i);
+    const casted: std.meta.Int(.unsigned, IntSize) = @truncate(i);
     return @byteSwap(casted);
 }
 fn pg_ntoh16(x: anytype) u16 {
@@ -780,7 +780,7 @@ fn parseBinaryNumeric(input: []const u8, result: *std.array_list.Managed(u8)) !P
     var scale_start: i32 = 0;
     if (weight < 0) {
         try result.append('0');
-        scale_start = @as(i32, @intCast(weight)) + 1;
+        scale_start = @as(i32, weight) + 1;
     } else {
         var idx: usize = 0;
         var first_non_zero = false;
@@ -810,7 +810,7 @@ fn parseBinaryNumeric(input: []const u8, result: *std.array_list.Managed(u8)) !P
         // negative scale means we need to add zeros before the decimal point
         // greater than ndigits means we need to add zeros after the decimal point
         var idx: isize = scale_start;
-        const end: usize = result.items.len + @as(usize, @intCast(dscale));
+        const end: usize = result.items.len + @as(usize, @max(dscale, 0));
         while (idx < dscale) : (idx += 4) {
             if (idx >= 0 and idx < dscale) {
                 const digit = reader.readInt(u16, .big) catch 0;
@@ -963,7 +963,7 @@ pub const Putter = struct {
             // The indexed columns can be out of order.
             .index => |i| i,
 
-            else => @intCast(index),
+            else => index,
         };
 
         // TODO: when duplicate and we know the result will be an object

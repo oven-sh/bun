@@ -978,7 +978,11 @@ fn printInstallSummary(
                 }
             }
 
-            Output.pretty("<r><b>{d}<r> package{s} removed ", .{ this.summary.remove, if (this.summary.remove == 1) "" else "s" });
+            if (this.options.dry_run) {
+                Output.pretty("<r><b>{d}<r> package{s} would be removed ", .{ this.summary.remove, if (this.summary.remove == 1) "" else "s" });
+            } else {
+                Output.pretty("<r><b>{d}<r> package{s} removed ", .{ this.summary.remove, if (this.summary.remove == 1) "" else "s" });
+            }
             Output.printStartEndStdout(ctx.start_time, std.time.nanoTimestamp());
             printed_timestamp = true;
             printBlockedPackagesInfo(install_summary, this.options.global);

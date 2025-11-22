@@ -869,6 +869,40 @@ pub const JestPrettyFormat = struct {
         ) bun.JSError!void {
             if (this.failed)
                 return;
+
+            // Try snapshot serializers first
+            if (expect.Jest.runner) |runner| {
+                if (runner.snapshots.serializers.get()) |serializers| {
+                    const result = try bun.cpp.SnapshotSerializers__serialize(this.globalThis, serializers, value);
+                    if (!result.isUndefinedOrNull()) {
+                        // Serializer matched but returned non-string value
+                        if (bun.Environment.ci_assert) bun.assert(result.isString());
+
+                        var writer = WrappedWriter(Writer){ .ctx = writer_, .estimated_line_length = &this.estimated_line_length };
+                        defer {
+                            if (writer.failed) {
+                                this.failed = true;
+                            }
+                        }
+
+                        var str = ZigString.Empty;
+                        try result.toZigString(&str, this.globalThis);
+
+                        if (str.is16Bit()) {
+                            writer.print("{f}", .{str});
+                        } else if (strings.isAllASCII(str.slice())) {
+                            writer.writeAll(str.slice());
+                        } else if (str.len > 0) {
+                            const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, str.slice()) catch return error.JSError;
+                            defer bun.default_allocator.free(buf);
+                            writer.writeAll(buf);
+                        }
+
+                        return;
+                    }
+                }
+            }
+
             var writer = WrappedWriter(Writer){ .ctx = writer_, .estimated_line_length = &this.estimated_line_length };
             defer {
                 if (writer.failed) {

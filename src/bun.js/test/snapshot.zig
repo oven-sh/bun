@@ -17,6 +17,7 @@ pub const Snapshots = struct {
     snapshot_dir_path: ?string = null,
     inline_snapshots_to_write: *std.AutoArrayHashMap(TestRunner.File.ID, std.array_list.Managed(InlineSnapshotToWrite)),
     last_error_snapshot_name: ?[]const u8 = null,
+    serializers: jsc.Strong.Optional = .empty,
 
     pub const InlineSnapshotToWrite = struct {
         line: c_ulong,

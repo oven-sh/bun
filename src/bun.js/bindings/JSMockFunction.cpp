@@ -1439,13 +1439,18 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
     JSValue argument0 = callframe->argument(0);
 
     if (auto* dateInstance = jsDynamicCast<DateInstance*>(argument0)) {
-        if (std::isnormal(dateInstance->internalNumber())) {
-            globalObject->overridenDateNow = dateInstance->internalNumber();
+        double internalNumber = dateInstance->internalNumber();
+        // Use isfinite() instead of isnormal() to accept 0 (Unix epoch) and all finite values.
+        // isnormal(0) returns false, which caused setSystemTime(new Date(0)) to silently fail.
+        // isfinite() rejects NaN and Infinity while accepting 0, negative values, and subnormal numbers.
+        if (std::isfinite(internalNumber)) {
+            globalObject->overridenDateNow = internalNumber;
         }
         return JSValue::encode(callframe->thisValue());
     }
-    // number > 0 is a valid date otherwise it's invalid and we should reset the time (set to -1)
-    globalObject->overridenDateNow = (argument0.isNumber() && argument0.asNumber() >= 0) ? argument0.asNumber() : -1;
+    // Accept any finite number (including negative timestamps for dates before 1970).
+    // If the argument is not a finite number, reset to real time (-1 sentinel).
+    globalObject->overridenDateNow = (argument0.isNumber() && std::isfinite(argument0.asNumber())) ? argument0.asNumber() : -1;
 
     return JSValue::encode(callframe->thisValue());
 }

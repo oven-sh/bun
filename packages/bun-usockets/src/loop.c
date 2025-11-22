@@ -383,7 +383,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             if (events & LIBUS_SOCKET_WRITABLE && !error) {
                 /* Note: if we failed a write as a socket of one loop then adopted
                  * to another loop, this will be wrong. Absurd case though */
-                 loop->data.last_write_failed = 0;
+                loop->data.last_write_failed = 0;
 
                 s = s->context->on_writable(s);
 

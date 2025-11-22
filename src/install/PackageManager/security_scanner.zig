@@ -350,8 +350,8 @@ const PackageCollector = struct {
     const QueueItem = struct {
         pkg_id: PackageID,
         dep_id: DependencyID,
-        pkg_path: std.array_list.Managed(PackageID),
-        dep_path: std.array_list.Managed(DependencyID),
+        pkg_path: std.ArrayList(PackageID),
+        dep_path: std.ArrayList(DependencyID),
     };
 
     pub fn init(manager: *PackageManager) PackageCollector {
@@ -395,12 +395,12 @@ const PackageCollector = struct {
 
             if ((try this.dedupe.getOrPut(dep_pkg_id)).found_existing) continue;
 
-            var pkg_path_buf = std.array_list.Managed(PackageID).init(this.manager.allocator);
-            try pkg_path_buf.append(root_pkg_id);
-            try pkg_path_buf.append(dep_pkg_id);
+            var pkg_path_buf: std.ArrayList(PackageID) = .{};
+            try pkg_path_buf.append(this.manager.allocator, root_pkg_id);
+            try pkg_path_buf.append(this.manager.allocator, dep_pkg_id);
 
-            var dep_path_buf = std.array_list.Managed(DependencyID).init(this.manager.allocator);
-            try dep_path_buf.append(dep_id);
+            var dep_path_buf: std.ArrayList(DependencyID) = .{};
+            try dep_path_buf.append(this.manager.allocator, dep_id);
 
             try this.queue.writeItem(.{
                 .pkg_id = dep_pkg_id,
@@ -427,12 +427,12 @@ const PackageCollector = struct {
 
                 if ((try this.dedupe.getOrPut(dep_pkg_id)).found_existing) continue;
 
-                var pkg_path_buf = std.array_list.Managed(PackageID).init(this.manager.allocator);
-                try pkg_path_buf.append(pkg_id);
-                try pkg_path_buf.append(dep_pkg_id);
+                var pkg_path_buf: std.ArrayList(PackageID) = .{};
+                try pkg_path_buf.append(this.manager.allocator, pkg_id);
+                try pkg_path_buf.append(this.manager.allocator, dep_pkg_id);
 
-                var dep_path_buf = std.array_list.Managed(DependencyID).init(this.manager.allocator);
-                try dep_path_buf.append(dep_id);
+                var dep_path_buf: std.ArrayList(DependencyID) = .{};
+                try dep_path_buf.append(this.manager.allocator, dep_id);
 
                 try this.queue.writeItem(.{
                     .pkg_id = dep_pkg_id,
@@ -479,14 +479,14 @@ const PackageCollector = struct {
                 if (update_dep_id == invalid_dependency_id) continue;
                 if ((try this.dedupe.getOrPut(update_pkg_id)).found_existing) continue;
 
-                var initial_pkg_path = std.array_list.Managed(PackageID).init(this.manager.allocator);
+                var initial_pkg_path: std.ArrayList(PackageID) = .{};
                 if (parent_pkg_id != invalid_package_id) {
-                    try initial_pkg_path.append(parent_pkg_id);
+                    try initial_pkg_path.append(this.manager.allocator, parent_pkg_id);
                 }
-                try initial_pkg_path.append(update_pkg_id);
+                try initial_pkg_path.append(this.manager.allocator, update_pkg_id);
 
-                var initial_dep_path = std.array_list.Managed(DependencyID).init(this.manager.allocator);
-                try initial_dep_path.append(update_dep_id);
+                var initial_dep_path: std.ArrayList(DependencyID) = .{};
+                try initial_dep_path.append(this.manager.allocator, update_dep_id);
 
                 try this.queue.writeItem(.{
                     .pkg_id = update_pkg_id,
@@ -504,17 +504,18 @@ const PackageCollector = struct {
         const pkg_dependencies = pkgs.items(.dependencies);
 
         while (this.queue.readItem()) |item| {
-            defer item.pkg_path.deinit();
-            defer item.dep_path.deinit();
+            var mutable_item = item;
+            defer mutable_item.pkg_path.deinit(this.manager.allocator);
+            defer mutable_item.dep_path.deinit(this.manager.allocator);
 
-            const pkg_id = item.pkg_id;
-            _ = item.dep_id; // Could be useful in the future for dependency-specific processing
+            const pkg_id = mutable_item.pkg_id;
+            _ = mutable_item.dep_id; // Could be useful in the future for dependency-specific processing
 
-            const pkg_path_copy = try this.manager.allocator.alloc(PackageID, item.pkg_path.items.len);
-            @memcpy(pkg_path_copy, item.pkg_path.items);
+            const pkg_path_copy = try this.manager.allocator.alloc(PackageID, mutable_item.pkg_path.items.len);
+            @memcpy(pkg_path_copy, mutable_item.pkg_path.items);
 
-            const dep_path_copy = try this.manager.allocator.alloc(DependencyID, item.dep_path.items.len);
-            @memcpy(dep_path_copy, item.dep_path.items);
+            const dep_path_copy = try this.manager.allocator.alloc(DependencyID, mutable_item.dep_path.items.len);
+            @memcpy(dep_path_copy, mutable_item.dep_path.items);
 
             try this.package_paths.put(pkg_id, .{
                 .pkg_path = pkg_path_copy,
@@ -533,13 +534,13 @@ const PackageCollector = struct {
 
                 if ((try this.dedupe.getOrPut(next_pkg_id)).found_existing) continue;
 
-                var extended_pkg_path = std.array_list.Managed(PackageID).init(this.manager.allocator);
-                try extended_pkg_path.appendSlice(item.pkg_path.items);
-                try extended_pkg_path.append(next_pkg_id);
+                var extended_pkg_path: std.ArrayList(PackageID) = .{};
+                try extended_pkg_path.appendSlice(this.manager.allocator, mutable_item.pkg_path.items);
+                try extended_pkg_path.append(this.manager.allocator, next_pkg_id);
 
-                var extended_dep_path = std.array_list.Managed(DependencyID).init(this.manager.allocator);
-                try extended_dep_path.appendSlice(item.dep_path.items);
-                try extended_dep_path.append(next_dep_id);
+                var extended_dep_path: std.ArrayList(DependencyID) = .{};
+                try extended_dep_path.appendSlice(this.manager.allocator, mutable_item.dep_path.items);
+                try extended_dep_path.append(this.manager.allocator, next_dep_id);
 
                 try this.queue.writeItem(.{
                     .pkg_id = next_pkg_id,
@@ -557,8 +558,8 @@ const JSONBuilder = struct {
     collector: *PackageCollector,
 
     pub fn buildPackageJSON(this: JSONBuilder) ![]const u8 {
-        var json_buf = std.array_list.Managed(u8).init(this.manager.allocator);
-        var writer = json_buf.writer();
+        var json_buf: std.ArrayList(u8) = .{};
+        var writer = json_buf.writer(this.manager.allocator);
 
         const pkgs = this.manager.lockfile.packages.slice();
         const pkg_names = pkgs.items(.name);
@@ -615,7 +616,7 @@ const JSONBuilder = struct {
         }
 
         try writer.writeAll("\n]");
-        return json_buf.toOwnedSlice();
+        return json_buf.toOwnedSlice(this.manager.allocator);
     }
 };
 
@@ -660,37 +661,26 @@ fn attemptSecurityScanWithRetry(manager: *PackageManager, security_scanner: []co
     const json_data = try json_builder.buildPackageJSON();
     defer manager.allocator.free(json_data);
 
-    var code = std.array_list.Managed(u8).init(manager.allocator);
-    defer code.deinit();
+    var code: std.ArrayList(u8) = .{};
+    defer code.deinit(manager.allocator);
 
     var temp_source: []const u8 = scanner_entry_source;
 
     const scanner_placeholder = "__SCANNER_MODULE__";
     if (std.mem.indexOf(u8, temp_source, scanner_placeholder)) |index| {
-        try code.appendSlice(temp_source[0..index]);
-        try code.appendSlice(security_scanner);
-        try code.appendSlice(temp_source[index + scanner_placeholder.len ..]);
-        temp_source = code.items;
-    }
-
-    const packages_placeholder = "__PACKAGES_JSON__";
-    if (std.mem.indexOf(u8, temp_source, packages_placeholder)) |index| {
-        var new_code = std.array_list.Managed(u8).init(manager.allocator);
-        try new_code.appendSlice(temp_source[0..index]);
-        try new_code.appendSlice(json_data);
-        try new_code.appendSlice(temp_source[index + packages_placeholder.len ..]);
-        code.deinit();
-        code = new_code;
+        try code.appendSlice(manager.allocator, temp_source[0..index]);
+        try code.appendSlice(manager.allocator, security_scanner);
+        try code.appendSlice(manager.allocator, temp_source[index + scanner_placeholder.len ..]);
         temp_source = code.items;
     }
 
     const suppress_placeholder = "__SUPPRESS_ERROR__";
     if (std.mem.indexOf(u8, temp_source, suppress_placeholder)) |index| {
-        var new_code = std.array_list.Managed(u8).init(manager.allocator);
-        try new_code.appendSlice(temp_source[0..index]);
-        try new_code.appendSlice(if (suppress_error_output) "true" else "false");
-        try new_code.appendSlice(temp_source[index + suppress_placeholder.len ..]);
-        code.deinit();
+        var new_code: std.ArrayList(u8) = .{};
+        try new_code.appendSlice(manager.allocator, temp_source[0..index]);
+        try new_code.appendSlice(manager.allocator, if (suppress_error_output) "true" else "false");
+        try new_code.appendSlice(manager.allocator, temp_source[index + suppress_placeholder.len ..]);
+        code.deinit(manager.allocator);
         code = new_code;
     }
 
@@ -730,22 +720,24 @@ pub const SecurityScanSubprocess = struct {
     json_data: []const u8,
     process: ?*bun.spawn.Process = null,
     ipc_reader: bun.io.BufferedReader = bun.io.BufferedReader.init(@This()),
-    ipc_data: std.array_list.Managed(u8),
-    stderr_data: std.array_list.Managed(u8),
+    ipc_data: std.ArrayList(u8),
+    stderr_data: std.ArrayList(u8),
     has_process_exited: bool = false,
     has_received_ipc: bool = false,
     exit_status: ?bun.spawn.Status = null,
     remaining_fds: i8 = 0,
+    stdin_writer: ?*StaticPipeWriter = null,
 
     pub const new = bun.TrivialNew(@This());
+    pub const StaticPipeWriter = jsc.Subprocess.NewStaticPipeWriter(@This());
 
     pub fn spawn(this: *SecurityScanSubprocess) !void {
-        this.ipc_data = std.array_list.Managed(u8).init(this.manager.allocator);
-        this.stderr_data = std.array_list.Managed(u8).init(this.manager.allocator);
+        this.ipc_data = .{};
+        this.stderr_data = .{};
         this.ipc_reader.setParent(this);
 
-        const pipe_result = bun.sys.pipe();
-        const pipe_fds = switch (pipe_result) {
+        const ipc_pipe_result = bun.sys.pipe();
+        const ipc_pipe_fds = switch (ipc_pipe_result) {
             .err => {
                 return error.IPCPipeFailed;
             },
@@ -768,34 +760,78 @@ pub const SecurityScanSubprocess = struct {
 
         const spawn_cwd = FileSystem.instance.top_level_dir;
 
-        const spawn_options = bun.spawn.SpawnOptions{
-            .stdout = .inherit,
-            .stderr = .inherit,
-            .stdin = .inherit,
-            .cwd = spawn_cwd,
-            .extra_fds = &.{.{ .pipe = pipe_fds[1] }},
-            .windows = if (Environment.isWindows) .{
-                .loop = jsc.EventLoopHandle.init(&this.manager.event_loop),
-            },
-        };
+        // On Windows, we need to pre-allocate uv.Pipe for .buffer/.ipc
+        // The spawn code will initialize it and return it in extra_pipes
+        const json_pipe_windows = if (comptime Environment.isWindows)
+            bun.default_allocator.create(bun.windows.libuv.Pipe) catch bun.outOfMemory()
+        else
+            undefined;
+
+        // We need to keep extra_fds array alive since it's passed by reference
+        const extra_fds_windows = if (comptime Environment.isWindows)
+            [_]bun.spawn.SpawnOptions.Stdio{ .{ .pipe = ipc_pipe_fds[1] }, .{ .buffer = json_pipe_windows } }
+        else
+            undefined;
+
+        const extra_fds_posix = if (comptime Environment.isPosix)
+            [_]bun.spawn.SpawnOptions.Stdio{ .{ .pipe = ipc_pipe_fds[1] }, .ipc }
+        else
+            undefined;
+
+        const spawn_options = if (comptime Environment.isWindows)
+            bun.spawn.SpawnOptions{
+                .stdout = .inherit,
+                .stderr = .inherit,
+                .stdin = .inherit,
+                .cwd = spawn_cwd,
+                .extra_fds = &extra_fds_windows,
+                .windows = .{
+                    .loop = jsc.EventLoopHandle.init(&this.manager.event_loop),
+                },
+            }
+        else
+            bun.spawn.SpawnOptions{
+                .stdout = .inherit,
+                .stderr = .inherit,
+                .stdin = .inherit,
+                .cwd = spawn_cwd,
+                .extra_fds = &extra_fds_posix,
+            };
 
         var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), @ptrCast(std.os.environ.ptr))).unwrap();
 
-        pipe_fds[1].close();
+        ipc_pipe_fds[1].close();
+
+        const json_write_result = spawned.extra_pipes.items[1];
 
         if (comptime bun.Environment.isPosix) {
-            _ = bun.sys.setNonblocking(pipe_fds[0]);
+            _ = bun.sys.setNonblocking(ipc_pipe_fds[0]);
         }
         this.remaining_fds = 1;
         this.ipc_reader.flags.nonblocking = true;
         if (comptime bun.Environment.isPosix) {
             this.ipc_reader.flags.socket = false;
         }
-        try this.ipc_reader.start(pipe_fds[0], true).unwrap();
+        try this.ipc_reader.start(ipc_pipe_fds[0], true).unwrap();
 
         var process = spawned.toProcess(&this.manager.event_loop, false);
         this.process = process;
         process.setExitHandler(this);
+
+        const json_data_copy = try this.manager.allocator.dupe(u8, this.json_data);
+        const json_source = jsc.Subprocess.Source{
+            .blob = jsc.WebCore.Blob.Any.fromOwnedSlice(this.manager.allocator, json_data_copy),
+        };
+
+        this.stdin_writer = StaticPipeWriter.create(&this.manager.event_loop, this, json_write_result, json_source);
+
+        switch (this.stdin_writer.?.start()) {
+            .err => |err| {
+                Output.errGeneric("Failed to start JSON pipe writer: {f}", .{err});
+                return error.JSONPipeWriterFailed;
+            },
+            .result => {},
+        }
 
         switch (process.watchOrReap()) {
             .err => {
@@ -807,6 +843,14 @@ pub const SecurityScanSubprocess = struct {
 
     pub fn isDone(this: *SecurityScanSubprocess) bool {
         return this.has_process_exited and this.remaining_fds == 0;
+    }
+
+    pub fn onCloseIO(this: *SecurityScanSubprocess, _: jsc.Subprocess.StdioKind) void {
+        if (this.stdin_writer) |writer| {
+            writer.source.detach();
+            writer.deref();
+            this.stdin_writer = null;
+        }
     }
 
     pub fn eventLoop(this: *const SecurityScanSubprocess) *jsc.AnyEventLoop {
@@ -833,7 +877,7 @@ pub const SecurityScanSubprocess = struct {
     }
 
     pub fn onStderrChunk(this: *SecurityScanSubprocess, chunk: []const u8) void {
-        bun.handleOom(this.stderr_data.appendSlice(chunk));
+        bun.handleOom(this.stderr_data.appendSlice(this.manager.allocator, chunk));
     }
 
     pub fn getReadBuffer(this: *SecurityScanSubprocess) []u8 {
@@ -847,7 +891,7 @@ pub const SecurityScanSubprocess = struct {
 
     pub fn onReadChunk(this: *SecurityScanSubprocess, chunk: []const u8, hasMore: bun.io.ReadState) bool {
         _ = hasMore;
-        bun.handleOom(this.ipc_data.appendSlice(chunk));
+        bun.handleOom(this.ipc_data.appendSlice(this.manager.allocator, chunk));
         return true;
     }
 
@@ -865,8 +909,8 @@ pub const SecurityScanSubprocess = struct {
         _ = command_ctx; // Reserved for future use
         _ = original_cwd; // Reserved for future use
         defer {
-            this.ipc_data.deinit();
-            this.stderr_data.deinit();
+            this.ipc_data.deinit(this.manager.allocator);
+            this.stderr_data.deinit(this.manager.allocator);
         }
 
         if (this.exit_status == null) {
@@ -1076,8 +1120,8 @@ pub const SecurityScanSubprocess = struct {
 };
 
 fn parseSecurityAdvisoriesFromExpr(manager: *PackageManager, advisories_expr: bun.js_parser.Expr, package_paths: *std.AutoArrayHashMap(PackageID, PackagePath)) ![]SecurityAdvisory {
-    var advisories_list = std.array_list.Managed(SecurityAdvisory).init(manager.allocator);
-    defer advisories_list.deinit();
+    var advisories_list: std.ArrayList(SecurityAdvisory) = .{};
+    defer advisories_list.deinit(manager.allocator);
 
     if (advisories_expr.data != .e_array) {
         Output.errGeneric("Security scanner 'advisories' field must be an array, got: {s}", .{@tagName(advisories_expr.data)});
@@ -1170,10 +1214,10 @@ fn parseSecurityAdvisoriesFromExpr(manager: *PackageManager, advisories_expr: bu
             .pkg_path = pkg_path,
         };
 
-        try advisories_list.append(advisory);
+        try advisories_list.append(manager.allocator, advisory);
     }
 
-    return try advisories_list.toOwnedSlice();
+    return try advisories_list.toOwnedSlice(manager.allocator);
 }
 
 const HoistedInstall = @import("../hoisted_install.zig");

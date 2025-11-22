@@ -87,7 +87,6 @@ scanner = "./scanner.js"`,
     const output = (await stdout.text()) + (await stderr.text());
 
     // The scanner should receive packages from all workspace dependencies
-    // We expect at least: left-pad, is-even, is-odd and their transitive dependencies
     expect(output).toContain("SCANNER_RAN:");
 
     // Extract the number of packages from the output
@@ -95,12 +94,8 @@ scanner = "./scanner.js"`,
     expect(match).toBeTruthy();
 
     const packagesScanned = parseInt(match![1], 10);
-    // We should have at least 3 packages (left-pad, is-even, is-odd)
-    // Note: transitive dependencies will increase this count
-    expect(packagesScanned).toBeGreaterThanOrEqual(3);
-
-    // Verify that the scanner is not receiving 0 packages (the bug we're fixing)
-    expect(packagesScanned).toBeGreaterThan(0);
+    // Exact package count: left-pad, is-even, is-odd (is-even <-> is-odd have circular deps)
+    expect(packagesScanned).toBe(3);
   } finally {
     stopRegistry();
   }
@@ -186,8 +181,8 @@ scanner = "./scanner.js"`,
     expect(match).toBeTruthy();
 
     const packagesScanned = parseInt(match![1], 10);
-    expect(packagesScanned).toBeGreaterThanOrEqual(2);
-    expect(packagesScanned).toBeGreaterThan(0);
+    // Exact package count: left-pad, is-even, is-odd (is-even <-> is-odd have circular deps)
+    expect(packagesScanned).toBe(3);
   } finally {
     stopRegistry();
   }
@@ -273,8 +268,8 @@ scanner = "./scanner.js"`,
     expect(match).toBeTruthy();
 
     const packagesScanned = parseInt(match![1], 10);
-    expect(packagesScanned).toBeGreaterThanOrEqual(2);
-    expect(packagesScanned).toBeGreaterThan(0);
+    // Exact package count: left-pad, is-even, is-odd (is-even <-> is-odd have circular deps)
+    expect(packagesScanned).toBe(3);
   } finally {
     stopRegistry();
   }

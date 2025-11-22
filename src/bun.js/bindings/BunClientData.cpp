@@ -64,12 +64,8 @@ JSHeapData* JSHeapData::ensureHeapData(Heap& heap)
     if (!Options::useGlobalGC())
         return new JSHeapData(heap);
 
-    static JSHeapData* singleton = nullptr;
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [&] {
-        singleton = new JSHeapData(heap);
-    });
-    return singleton;
+    static JSHeapData singleton { heap };
+    return &singleton;
 }
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);

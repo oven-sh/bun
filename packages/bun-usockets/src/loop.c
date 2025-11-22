@@ -194,9 +194,9 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
         if (s->next) s->next->prev = 0;
         s->next = 0;
 
+        
         us_internal_socket_context_link_socket(0, s->context, s);
         us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
-
         s->flags.low_prio_state = 2;
     }
 }
@@ -240,9 +240,11 @@ int us_internal_handle_dns_results(struct us_loop_t *loop) {
 
 /* Note: Properly takes the linked list and timeout sweep into account */
 void us_internal_free_closed_sockets(struct us_loop_t *loop) {
+    
     /* Free all closed sockets (maybe it is better to reverse order?) */
     for (struct us_socket_t *s = loop->data.closed_head; s; ) {
         struct us_socket_t *next = s->next;
+
         us_poll_free((struct us_poll_t *) s, loop);
         s = next;
     }
@@ -301,7 +303,60 @@ void us_internal_loop_post(struct us_loop_t *loop) {
 #define us_ioctl ioctl
 #endif
 
-void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
+
+void us_internal_update_ready_poll_state(struct us_poll_t *p, int error, int eof, int events) {
+
+    switch (us_internal_poll_type(p)) {
+        case POLL_TYPE_CALLBACK: {
+            // not relevant update here to coalesce
+            break;
+        }
+        case POLL_TYPE_SEMI_SOCKET: 
+        case POLL_TYPE_SOCKET_SHUT_DOWN:
+        case POLL_TYPE_SOCKET: {
+            
+            struct us_socket_t* s = (struct us_socket_t*)p;
+            if ((events & LIBUS_SOCKET_READABLE) != 0) {
+                s->flags.is_readable = true;
+            }
+            if ((events & LIBUS_SOCKET_WRITABLE) != 0 && !s->flags.is_writable) {
+                s->flags.is_writable = true;
+                s->flags.writable_emitted = false;
+            }
+            if (error != 0) {
+                s->flags.has_error = true;
+            }
+            if (eof != 0) {
+                s->flags.has_received_eof = true;
+            }
+            #ifdef LIBUS_USE_KQUEUE
+            s->flags.needs_update = true;
+            #endif
+            break;
+        }
+        case POLL_TYPE_UDP: {
+            struct us_udp_socket_t *u = (struct us_udp_socket_t *) p;
+            if((events & LIBUS_SOCKET_READABLE) != 0) {
+                u->is_readable = true;
+            }
+            if ((events & LIBUS_SOCKET_WRITABLE) != 0 && !u->is_writable) {
+                u->is_writable = true;
+                u->writable_emitted = false;
+            }
+            if(error != 0) {
+                u->has_error = true;
+            }
+            if (eof != 0) {
+                u->has_received_eof = true;
+            }
+            #ifdef LIBUS_USE_KQUEUE
+            u->needs_update = true;
+            #endif
+            break;
+        }
+    }
+}
+void us_internal_dispatch_ready_poll(struct us_poll_t *p) {
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK: {
             struct us_internal_callback_t *cb = (struct us_internal_callback_t *) p;
@@ -316,12 +371,20 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             break;
         }
     case POLL_TYPE_SEMI_SOCKET: {
+        
             /* Both connect and listen sockets are semi-sockets
              * but they poll for different events */
             if (us_poll_events(p) == LIBUS_SOCKET_WRITABLE) {
-                us_internal_socket_after_open((struct us_socket_t *) p, error || eof);
+                struct us_socket_t* s = (struct us_socket_t *) p;
+                #ifdef LIBUS_USE_KQUEUE
+                s->flags.needs_update = false;
+                #endif
+                us_internal_socket_after_open(s, s->flags.has_error || s->flags.has_received_eof);
             } else {
                 struct us_listen_socket_t *listen_socket = (struct us_listen_socket_t *) p;
+                #ifdef LIBUS_USE_KQUEUE
+                listen_socket->s.flags.needs_update = false;
+                #endif
                 struct bsd_addr_t addr;
 
                 LIBUS_SOCKET_DESCRIPTOR client_fd = bsd_accept_socket(us_poll_fd(p), &addr);
@@ -341,12 +404,21 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                         s->context = listen_socket->s.context;
                         s->connect_state = NULL;
+                        s->connect_next = NULL;
                         s->timeout = 255;
                         s->long_timeout = 255;
                         s->flags.low_prio_state = 0;
                         s->flags.allow_half_open = listen_socket->s.flags.allow_half_open;
                         s->flags.is_paused = 0;
                         s->flags.is_ipc = 0;
+                        s->flags.is_readable = true;
+                        s->flags.is_writable = true;
+                        s->flags.writable_emitted = true;
+                        s->flags.has_error = false;
+                        s->flags.has_received_eof = false;
+                        #ifdef LIBUS_USE_KQUEUE
+                        s->flags.needs_update = false;
+                        #endif
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -369,31 +441,51 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
     case POLL_TYPE_SOCKET: {
             /* We should only use s, no p after this point */
             struct us_socket_t *s = (struct us_socket_t *) p;
+            #ifdef LIBUS_USE_KQUEUE
+            s->flags.needs_update = false;
+            #endif
             /* The context can change after calling a callback but the loop is always the same */
             struct us_loop_t* loop = s->context->loop;
-            if (events & LIBUS_SOCKET_WRITABLE && !error) {
+            struct us_socket_flags* flags = &s->flags;
+            bool has_error = flags->has_error;
+            bool is_readable = flags->is_readable;
+            bool has_received_eof = flags->has_received_eof;
+            if (flags->is_writable && !has_error) {
                 /* Note: if we failed a write as a socket of one loop then adopted
                  * to another loop, this will be wrong. Absurd case though */
                 loop->data.last_write_failed = 0;
 
-                s = s->context->on_writable(s);
 
+                if (!flags->writable_emitted) {
+                    flags->writable_emitted = true;
+                    #ifdef LIBUS_USE_KQUEUE
+                    // In KQUEUE will be oneshot so we need to reset the flag here
+                    // p->state.poll_type = (is_readable ? POLL_TYPE_POLLING_IN : 0);
+                    #endif
+                    s = s->context->on_writable(s);
+                }
                 if (!s || us_socket_is_closed(0, s)) {
                     return;
                 }
 
+                // #ifndef LIBUS_USE_KQUEUE
                 /* If we have no failed write or if we shut down, then stop polling for more writable */
-                if (!loop->data.last_write_failed || us_socket_is_shut_down(0, s)) {
-                    us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
+                if (flags->is_writable || us_socket_is_shut_down(0, s)) {
+                    
+                    #ifdef LIBUS_USE_EPOLL 
+                    us_poll_change(&s->p, loop, is_readable ? LIBUS_SOCKET_READABLE : 0);
+                    #else
+                    us_poll_change(&s->p, loop, LIBUS_SOCKET_READABLE);
+                    #endif
                 }
+                // #endif
             }
-
-            if (events & LIBUS_SOCKET_READABLE) {
+            
+            if (is_readable && !s->flags.is_paused) {
                 /* Contexts may prioritize down sockets that are currently readable, e.g. when SSL handshake has to be done.
                  * SSL handshakes are CPU intensive, so we limit the number of handshakes per loop iteration, and move the rest
                  * to the low-priority queue */
                 struct us_socket_context_t *context = s->context;
-                struct us_socket_flags* flags = &s->flags;
                 if (context->is_low_prio(s)) {
                     if (flags->low_prio_state == 2) {
                         flags->low_prio_state = 0; /* Socket has been delayed and now it's time to process incoming data for one iteration */
@@ -476,10 +568,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         #define LOOP_ISNT_VERY_BUSY_THRESHOLD 25
                         if (
                             s && length >= (LIBUS_RECV_BUFFER_LENGTH - 24 * 1024) && length <= LIBUS_RECV_BUFFER_LENGTH &&
-                            (error || loop->num_ready_polls < LOOP_ISNT_VERY_BUSY_THRESHOLD) &&
+                            (has_error || loop->num_ready_polls < LOOP_ISNT_VERY_BUSY_THRESHOLD) &&
                             !us_socket_is_closed(0, s)
                         ) {
-                            repeat_recv_count += error == 0;
+                            repeat_recv_count += !has_error;
 
                             // When not hung up, read a maximum of 10 times to avoid starving other sockets
                             // We don't bother with ioctl(FIONREAD) because we've set MSG_DONTWAIT
@@ -490,19 +582,23 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         #undef LOOP_ISNT_VERY_BUSY_THRESHOLD
                         #endif
                     } else if (!length) {
-                        eof = 1; // lets handle EOF in the same place
+                        // lets handle EOF in the same place
+                        has_received_eof = true;
+                        
                         break;
-                    } else if (length == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
+                    } else if (length == LIBUS_SOCKET_ERROR) {
+                        if(bsd_would_block()) {
+                            break;
+                        }
                         /* Todo: decide also here what kind of reason we should give */
                         s = us_socket_close(0, s, LIBUS_ERR, NULL);
                         return;
                     }
-
                     break;
                 } while (s);
             }
 
-            if(eof && s) {
+            if(has_received_eof && s) {
                 if (UNLIKELY(us_socket_is_closed(0, s))) {
                     // Do not call on_end after the socket has been closed
                     return;
@@ -512,6 +608,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     s = us_socket_close(0, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }
+                s->flags.has_received_eof = true;
                 if(s->flags.allow_half_open) {
                     /* We got a Error but is EOF and we allow half open so stop polling for readable and keep going*/
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
@@ -524,20 +621,24 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
             }
             /* Such as epollerr or EV_ERROR */
-            if (error && s) {
+            if (has_error && s) {
                 /* Todo: decide what code we give here */
-                s = us_socket_close(0, s, error, NULL);
+                s = us_socket_close(0, s, has_error, NULL);
                 return;
             }
             break;
         }
         case POLL_TYPE_UDP: {
             struct us_udp_socket_t *u = (struct us_udp_socket_t *) p;
+            #ifdef LIBUS_USE_KQUEUE
+            u->needs_update = false;
+            #endif
+            bool has_error = u->has_error;
             if (u->closed) {
                 break;
             }
 
-            if (events & LIBUS_SOCKET_READABLE) {
+            if (u->is_readable) {
                 do {
                     struct udp_recvbuf recvbuf;
                     bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
@@ -548,7 +649,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         if (npackets == LIBUS_SOCKET_ERROR) {
                             // If the error was not EAGAIN, mark the error
                             if (!bsd_would_block()) {
-                                error = 1;
+                                has_error = true;                                
                             }
                         } else {
                             // 0 messages received, we are done
@@ -562,7 +663,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 } while (!u->closed);
             }
 
-            if (events & LIBUS_SOCKET_WRITABLE && !error && !u->closed) {
+            if (u->is_writable && !has_error && !u->closed && !u->writable_emitted) {
+                u->writable_emitted = true;
+                // In KQUEUE will be oneshot so we need to reset the flag here
+                // #ifdef LIBUS_USE_KQUEUE
+                // p->state.poll_type = (u->is_readable ? POLL_TYPE_POLLING_IN : 0);
+                // #endif
                 u->on_drain(u);
                 if (u->closed) {
                     break;
@@ -572,7 +678,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 us_poll_change(&u->p, u->loop, us_poll_events(&u->p) & LIBUS_SOCKET_READABLE);
             }
 
-            if (error && !u->closed) {
+            if (has_error && !u->closed) {
                 us_udp_socket_close(u);
             }
             break;

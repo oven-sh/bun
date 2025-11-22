@@ -393,7 +393,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                 /* If we have no failed write or if we shut down, then stop polling for more writable */
                 if (!loop->data.last_write_failed || us_socket_is_shut_down(0, s)) {
-                    us_poll_change(&s->p, loop, (s->flags.is_paused ? 0 : LIBUS_SOCKET_READABLE));
+                    us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
                 }
             }
 

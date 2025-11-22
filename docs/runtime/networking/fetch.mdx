@@ -342,7 +342,7 @@ This will print the request and response headers to your terminal:
 ```sh
 [fetch] > HTTP/1.1 GET http://example.com/
 [fetch] > Connection: keep-alive
-[fetch] > User-Agent: Bun/1.3.2
+[fetch] > User-Agent: Bun/1.3.3
 [fetch] > Accept: */*
 [fetch] > Host: example.com
 [fetch] > Accept-Encoding: gzip, deflate, br, zstd
@@ -430,7 +430,7 @@ When the limit is exceeded, the requests are queued and sent as soon as the next
 You can increase the maximum number of simultaneous connections via the `BUN_CONFIG_MAX_HTTP_REQUESTS` environment variable:
 
 ```sh
-bun_CONFIG_MAX_HTTP_REQUESTS=512 bun ./my-script.ts
+BUN_CONFIG_MAX_HTTP_REQUESTS=512 bun ./my-script.ts
 ```
 
 The max value for this limit is currently set to 65,336. The maximum port number is 65,535, so it's quite difficult for any one computer to exceed this limit.

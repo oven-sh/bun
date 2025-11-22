@@ -1103,15 +1103,9 @@ async function getPipeline(options = {}) {
     }
   }
 
-  const includeASAN = !isMainBranch();
-
   if (!buildId) {
-    const relevantBuildPlatforms = includeASAN
-      ? buildPlatforms
-      : buildPlatforms.filter(({ profile }) => profile !== "asan");
-
     steps.push(
-      ...relevantBuildPlatforms.map(target => {
+      ...buildPlatforms.map(target => {
         const imageKey = getImageKey(target);
         const zigImageKey = getImageKey(getZigPlatform());
         const dependsOn = imagePlatforms.has(zigImageKey) ? [`${zigImageKey}-build-image`] : [];

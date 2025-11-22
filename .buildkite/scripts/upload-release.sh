@@ -182,7 +182,7 @@ function send_discord_announcement() {
 }
 EOF
 )
-    
+
     curl -H "Content-Type: application/json" \
          -d "$json_payload" \
          -sf \
@@ -209,6 +209,7 @@ function create_release() {
     bun-linux-x64-profile.zip
     bun-linux-x64-baseline.zip
     bun-linux-x64-baseline-profile.zip
+    bun-linux-x64-asan.zip
     bun-linux-aarch64-musl.zip
     bun-linux-aarch64-musl-profile.zip
     bun-linux-x64-musl.zip

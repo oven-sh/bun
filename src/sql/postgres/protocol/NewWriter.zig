@@ -23,11 +23,23 @@ pub fn NewWriterWrap(
             context: WrappedWriter,
 
             pub fn write(this: LengthWriter) AnyPostgresError!void {
-                try this.context.pwrite(&Int32(this.context.offset() - this.index), this.index);
+                const message_length = this.context.offset() - this.index;
+                // PostgreSQL protocol uses 32-bit signed integers for message lengths
+                // Maximum value is 2,147,483,647 bytes (~2GB)
+                if (message_length > std.math.maxInt(i32)) {
+                    return error.MessageTooLarge;
+                }
+                try this.context.pwrite(&Int32(message_length), this.index);
             }
 
             pub fn writeExcludingSelf(this: LengthWriter) AnyPostgresError!void {
-                try this.context.pwrite(&Int32(this.context.offset() -| (this.index + 4)), this.index);
+                const message_length = this.context.offset() -| (this.index + 4);
+                // PostgreSQL protocol uses 32-bit signed integers for message lengths
+                // Maximum value is 2,147,483,647 bytes (~2GB)
+                if (message_length > std.math.maxInt(i32)) {
+                    return error.MessageTooLarge;
+                }
+                try this.context.pwrite(&Int32(message_length), this.index);
             }
         };
 

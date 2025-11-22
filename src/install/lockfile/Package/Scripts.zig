@@ -5,6 +5,7 @@ pub const Scripts = extern struct {
     preprepare: String = .{},
     prepare: String = .{},
     postprepare: String = .{},
+    dependencies: String = .{},
     filled: bool = false,
 
     pub fn eql(l: *const Package.Scripts, r: *const Package.Scripts, l_buf: string, r_buf: string) bool {
@@ -13,7 +14,8 @@ pub const Scripts = extern struct {
             l.postinstall.eql(r.postinstall, l_buf, r_buf) and
             l.preprepare.eql(r.preprepare, l_buf, r_buf) and
             l.prepare.eql(r.prepare, l_buf, r_buf) and
-            l.postprepare.eql(r.postprepare, l_buf, r_buf);
+            l.postprepare.eql(r.postprepare, l_buf, r_buf) and
+            l.dependencies.eql(r.dependencies, l_buf, r_buf);
     }
 
     pub const List = struct {
@@ -114,12 +116,13 @@ pub const Scripts = extern struct {
         lockfile_buf: string,
         resolution_tag: Resolution.Tag,
         add_node_gyp_rebuild_script: bool,
+        include_dependencies_script: bool,
         // return: first_index, total, entries
     ) struct { i8, u8, [Lockfile.Scripts.names.len]?string } {
         const allocator = lockfile.allocator;
         var script_index: u8 = 0;
         var first_script_index: i8 = -1;
-        var scripts: [6]?string = .{null} ** 6;
+        var scripts: [7]?string = .{null} ** 7;
         var counter: u8 = 0;
 
         if (add_node_gyp_rebuild_script) {
@@ -173,6 +176,16 @@ pub const Scripts = extern struct {
                     }
                     script_index += 1;
                 }
+
+                // dependencies script only runs for root packages and when dependencies changed
+                if (resolution_tag == .root) {
+                    if (include_dependencies_script and !this.dependencies.isEmpty()) {
+                        if (first_script_index == -1) first_script_index = @intCast(script_index);
+                        scripts[script_index] = allocator.dupe(u8, this.dependencies.slice(lockfile_buf)) catch unreachable;
+                        counter += 1;
+                    }
+                    script_index += 1;
+                }
             },
             .workspace => {
                 script_index += 1;
@@ -182,8 +195,19 @@ pub const Scripts = extern struct {
                     counter += 1;
                 }
                 script_index += 2;
+
+                // dependencies script also runs for root package in workspaces when dependencies changed
+                if (include_dependencies_script and !this.dependencies.isEmpty()) {
+                    if (first_script_index == -1) first_script_index = @intCast(script_index);
+                    scripts[script_index] = allocator.dupe(u8, this.dependencies.slice(lockfile_buf)) catch unreachable;
+                    counter += 1;
+                }
+                script_index += 1;
             },
-            else => {},
+            else => {
+                // Skip dependencies script index for non-root packages
+                script_index += 1;
+            },
         }
 
         return .{ first_script_index, counter, scripts };
@@ -197,9 +221,10 @@ pub const Scripts = extern struct {
         package_name: string,
         resolution_tag: Resolution.Tag,
         add_node_gyp_rebuild_script: bool,
+        include_dependencies_script: bool,
     ) ?Package.Scripts.List {
         const allocator = lockfile.allocator;
-        const first_index, const total, const scripts = getScriptEntries(this, lockfile, lockfile_buf, resolution_tag, add_node_gyp_rebuild_script);
+        const first_index, const total, const scripts = getScriptEntries(this, lockfile, lockfile_buf, resolution_tag, add_node_gyp_rebuild_script, include_dependencies_script);
         if (first_index != -1) {
             var cwd_buf: if (Environment.isWindows) bun.PathBuffer else void = undefined;
 
@@ -277,6 +302,7 @@ pub const Scripts = extern struct {
                 folder_name,
                 resolution.tag,
                 add_node_gyp_rebuild_script,
+                false, // dependencies script not for npm packages in node_modules
             );
         } else if (!this.filled) {
             return this.createFromPackageJSON(
@@ -351,6 +377,7 @@ pub const Scripts = extern struct {
             folder_name,
             resolution_tag,
             add_node_gyp_rebuild_script,
+            false, // dependencies script not for npm packages in node_modules
         );
     }
 };

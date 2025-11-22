@@ -687,12 +687,6 @@ public:
 
         httpResponseData->userData = userData;
         httpResponseData->onWritable = handler;
-        if(this->isWritable() && httpResponseData->onWritable) {
-            this->cork([&]() {
-                httpResponseData->callOnWritable(this, httpResponseData->offset);
-                this->flush();
-            });
-        }
         return this;
     }
 

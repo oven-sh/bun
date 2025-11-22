@@ -39,6 +39,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("--no-summary                          Don't print a summary") catch unreachable,
     clap.parseParam("--no-verify                           Skip verifying integrity of newly downloaded packages") catch unreachable,
     clap.parseParam("--ignore-scripts                      Skip lifecycle scripts in the project's package.json (dependency scripts are never run)") catch unreachable,
+    clap.parseParam("--no-bin-links                        Don't create symlinks in node_modules/.bin") catch unreachable,
     clap.parseParam("--trust                               Add to trustedDependencies in the project's package.json and install the package(s)") catch unreachable,
     clap.parseParam("-g, --global                          Install globally") catch unreachable,
     clap.parseParam("--cwd <STR>                           Set a specific cwd") catch unreachable,
@@ -194,6 +195,7 @@ verbose: bool = false,
 no_progress: bool = false,
 no_verify: bool = false,
 ignore_scripts: bool = false,
+no_bin_links: bool = false,
 trusted: bool = false,
 no_summary: bool = false,
 latest: bool = false,
@@ -805,6 +807,7 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     cli.quiet = args.flag("--quiet");
     cli.verbose = args.flag("--verbose") or Output.is_verbose;
     cli.ignore_scripts = args.flag("--ignore-scripts");
+    cli.no_bin_links = args.flag("--no-bin-links");
     cli.trusted = args.flag("--trust");
     cli.no_summary = args.flag("--no-summary");
     cli.ca = args.options("--ca");

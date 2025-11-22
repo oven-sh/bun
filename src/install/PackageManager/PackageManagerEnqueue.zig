@@ -1809,6 +1809,16 @@ fn getOrPutResolvedPackage(
                 break :blk Path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &buf2, &[_]string{workspace_path}, .auto);
             };
 
+            if (this.lockfile.rootPackage()) |root_pkg| {
+                const string_buf = this.lockfile.buffers.string_bytes.items;
+                if (name.eql(root_pkg.name, string_buf, string_buf) or
+                    strings.eqlLong(FileSystem.instance.top_level_dir, workspace_path_u8, true))
+                {
+                    successFn(this, dependency_id, 0);
+                    return .{ .package = root_pkg };
+                }
+            }
+
             const res = FolderResolution.getOrPut(.{ .relative = .workspace }, version, workspace_path_u8, this);
 
             switch (res) {

@@ -4235,6 +4235,95 @@ pub const Resolver = struct {
                         }
                         // todo deinit these parent configs somehow?
                     }
+
+                    // Handle project references
+                    // Load all referenced tsconfig files and merge their paths
+                    if (merged_config.references.len > 0) {
+                        const ts_dir_name = Dirname.dirname(merged_config.abs_path);
+                        for (merged_config.references) |reference_path| {
+                            // Resolve the reference path relative to the tsconfig directory
+                            var reference_abs_path = ResolvePath.joinAbsStringBuf(
+                                ts_dir_name,
+                                bufs(.tsconfig_path_abs),
+                                &[_]string{ ts_dir_name, reference_path },
+                                .auto,
+                            );
+
+                            // Try the path as-is first, then try with /tsconfig.json appended if it fails
+                            const referenced_config = r.parseTSConfig(reference_abs_path, bun.invalid_fd) catch |err| try_with_dir: {
+                                // If the first attempt failed, try appending /tsconfig.json
+                                if (err == error.EISDIR or err == error.IsDir) {
+                                    reference_abs_path = ResolvePath.joinAbsStringBuf(
+                                        reference_abs_path,
+                                        bufs(.tsconfig_path_abs),
+                                        &[_]string{ reference_abs_path, "tsconfig.json" },
+                                        .auto,
+                                    );
+                                    break :try_with_dir r.parseTSConfig(reference_abs_path, bun.invalid_fd) catch |inner_err| {
+                                        r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json reference {}", .{
+                                            @errorName(inner_err),
+                                            bun.fmt.QuotedFormatter{
+                                                .text = reference_abs_path,
+                                            },
+                                        }) catch {};
+                                        continue;
+                                    };
+                                }
+                                r.log.addDebugFmt(null, logger.Loc.Empty, r.allocator, "{s} loading tsconfig.json reference {}", .{
+                                    @errorName(err),
+                                    bun.fmt.QuotedFormatter{
+                                        .text = reference_abs_path,
+                                    },
+                                }) catch {};
+                                continue;
+                            };
+
+                            if (referenced_config) |ref_config| {
+                                // Merge paths from the referenced config
+                                // The referenced config's paths take lower priority than the main config
+                                var iter = ref_config.paths.iterator();
+                                while (iter.next()) |entry| {
+                                    // Only add if the key doesn't already exist
+                                    const gop_result = merged_config.paths.getOrPut(entry.key_ptr.*) catch unreachable;
+                                    if (!gop_result.found_existing) {
+                                        gop_result.value_ptr.* = entry.value_ptr.*;
+                                    }
+                                }
+
+                                // Also merge other settings from referenced configs
+                                // Referenced configs have lower priority than the main config
+                                if (ref_config.base_url.len > 0 and merged_config.base_url.len == 0) {
+                                    merged_config.base_url = ref_config.base_url;
+                                    merged_config.base_url_for_paths = ref_config.base_url_for_paths;
+                                }
+
+                                // Merge JSX settings from referenced config
+                                // Only apply ref_config settings if not already set in merged_config
+                                if (!merged_config.jsx_flags.contains(.factory) and ref_config.jsx_flags.contains(.factory)) {
+                                    merged_config.jsx.factory = ref_config.jsx.factory;
+                                    merged_config.jsx_flags.insert(.factory);
+                                }
+                                if (!merged_config.jsx_flags.contains(.fragment) and ref_config.jsx_flags.contains(.fragment)) {
+                                    merged_config.jsx.fragment = ref_config.jsx.fragment;
+                                    merged_config.jsx_flags.insert(.fragment);
+                                }
+                                if (!merged_config.jsx_flags.contains(.import_source) and ref_config.jsx_flags.contains(.import_source)) {
+                                    merged_config.jsx.import_source = ref_config.jsx.import_source;
+                                    merged_config.jsx.package_name = ref_config.jsx.package_name;
+                                    merged_config.jsx_flags.insert(.import_source);
+                                }
+                                if (!merged_config.jsx_flags.contains(.runtime) and ref_config.jsx_flags.contains(.runtime)) {
+                                    merged_config.jsx.runtime = ref_config.jsx.runtime;
+                                    merged_config.jsx_flags.insert(.runtime);
+                                }
+                                if (!merged_config.jsx_flags.contains(.development) and ref_config.jsx_flags.contains(.development)) {
+                                    merged_config.jsx.development = ref_config.jsx.development;
+                                    merged_config.jsx_flags.insert(.development);
+                                }
+                            }
+                        }
+                    }
+
                     info.tsconfig_json = merged_config;
                 }
                 info.enclosing_tsconfig_json = info.tsconfig_json;

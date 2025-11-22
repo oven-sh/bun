@@ -2,7 +2,13 @@
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { Duplex, Stream } = require("node:stream");
 const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
-const { validateObject, validateLinkHeaderValue, validateBoolean, validateInteger } = require("internal/validators");
+const {
+  validateObject,
+  validateLinkHeaderValue,
+  validateBoolean,
+  validateInteger,
+  validateFunction,
+} = require("internal/validators");
 const { ConnResetException } = require("internal/shared");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
@@ -200,6 +206,7 @@ function Server(options, callback): void {
 
   this.listening = false;
   this._unref = false;
+  this._connections = 0;
   this.maxRequestsPerSocket = 0;
   this[kInternalSocketData] = undefined;
   this[tlsSymbol] = null;
@@ -283,6 +290,15 @@ Server.prototype.ref = function () {
 Server.prototype.unref = function () {
   this._unref = true;
   this[serverSymbol]?.unref?.();
+  return this;
+};
+
+Server.prototype.getConnections = function (callback) {
+  validateFunction(callback, "callback");
+  // In Node.js, this is async because it needs to poll worker processes in cluster mode.
+  // In Bun, we don't use workers (yet), so we just read _connections directly.
+  // We still use process.nextTick to match Node.js's async behavior.
+  process.nextTick(callback, null, this[serverSymbol] ? this._connections : 0);
   return this;
 };
 
@@ -574,6 +590,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         if (isSocketNew && !reachedRequestsLimit) {
+          server._connections++;
           server.emit("connection", socket);
         }
 
@@ -599,6 +616,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_res.end();
           socket.destroy();
         } else if (is_upgrade) {
+          // Enable streaming for WebSocket/upgrade connections
+          socket[kEnableStreaming](true);
           server.emit("upgrade", http_req, socket, kEmptyBuffer);
           if (!socket._httpMessage) {
             if (canUseInternalAssignSocket) {
@@ -798,6 +817,7 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
   }
   err.rawPacket = rawPacket;
   const nodeSocket = new NodeHTTPServerSocket(self, socket, ssl);
+  self._connections++;
   self.emit("connection", nodeSocket);
   self.emit("clientError", err, nodeSocket);
   if (nodeSocket.listenerCount("error") > 0) {
@@ -900,6 +920,11 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
       } else {
         req.destroy();
       }
+    }
+
+    // Decrement connection count when socket closes
+    if (this.server && this.server._connections > 0) {
+      this.server._connections--;
     }
   }
   #onCloseForDestroy(closeCallback) {

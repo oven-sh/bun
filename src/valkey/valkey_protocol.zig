@@ -289,7 +289,7 @@ pub const RESPValue = union(RESPType) {
                     defer key_str.deref();
                     const js_value = try entry.value.toJSWithOptions(globalObject, options);
 
-                    try js_obj.putMayBeIndex(globalObject, &key_str, js_value);
+                    try js_obj.putDirectMayBeIndex(globalObject, &key_str, js_value);
                 }
                 return js_obj;
             },
@@ -311,7 +311,7 @@ pub const RESPValue = union(RESPType) {
 
                 // Add the push type
                 const kind_str = try bun.String.createUTF8ForJS(globalObject, push.kind);
-                js_obj.put(globalObject, "type", kind_str);
+                js_obj.putDirect(globalObject, "type", kind_str);
 
                 // Add the data as an array
                 var data_array = try jsc.JSValue.createEmptyArray(globalObject, push.data.len);
@@ -319,7 +319,7 @@ pub const RESPValue = union(RESPType) {
                     const js_item = try item.toJSWithOptions(globalObject, options);
                     try data_array.putIndex(globalObject, @intCast(i), js_item);
                 }
-                js_obj.put(globalObject, "data", data_array);
+                js_obj.putDirect(globalObject, "data", data_array);
 
                 return js_obj;
             },

@@ -72,11 +72,11 @@ fn PathParsed(comptime T: type) type {
 
         pub fn toJSObject(this: @This(), globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
             var jsObject = jsc.JSValue.createEmptyObject(globalObject, 5);
-            jsObject.put(globalObject, jsc.ZigString.static("root"), try bun.String.createUTF8ForJS(globalObject, this.root));
-            jsObject.put(globalObject, jsc.ZigString.static("dir"), try bun.String.createUTF8ForJS(globalObject, this.dir));
-            jsObject.put(globalObject, jsc.ZigString.static("base"), try bun.String.createUTF8ForJS(globalObject, this.base));
-            jsObject.put(globalObject, jsc.ZigString.static("ext"), try bun.String.createUTF8ForJS(globalObject, this.ext));
-            jsObject.put(globalObject, jsc.ZigString.static("name"), try bun.String.createUTF8ForJS(globalObject, this.name));
+            jsObject.putDirect(globalObject, jsc.ZigString.static("root"), try bun.String.createUTF8ForJS(globalObject, this.root));
+            jsObject.putDirect(globalObject, jsc.ZigString.static("dir"), try bun.String.createUTF8ForJS(globalObject, this.dir));
+            jsObject.putDirect(globalObject, jsc.ZigString.static("base"), try bun.String.createUTF8ForJS(globalObject, this.base));
+            jsObject.putDirect(globalObject, jsc.ZigString.static("ext"), try bun.String.createUTF8ForJS(globalObject, this.ext));
+            jsObject.putDirect(globalObject, jsc.ZigString.static("name"), try bun.String.createUTF8ForJS(globalObject, this.name));
             return jsObject;
         }
     };

@@ -1096,7 +1096,7 @@ fn createLOLHTMLError(global: *JSGlobalObject) JSValue {
 
     var err = createLOLHTMLStringError();
     const value = err.toErrorInstance(global);
-    value.put(global, "name", ZigString.init("HTMLRewriterError").toJS(global));
+    value.putDirect(global, "name", ZigString.init("HTMLRewriterError").toJS(global));
     return value;
 }
 fn createLOLHTMLStringError() bun.String {

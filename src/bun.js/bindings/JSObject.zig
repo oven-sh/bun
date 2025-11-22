@@ -64,7 +64,7 @@ pub const JSObject = opaque {
         const cell = toJS(obj);
         inline for (info.fields) |field| {
             const property = @field(pojo, field.name);
-            cell.put(
+            cell.putDirect(
                 global,
                 field.name,
                 try .fromAny(global, @TypeOf(property), property),
@@ -78,13 +78,13 @@ pub const JSObject = opaque {
         return obj.toJS().get(global, prop);
     }
 
-    pub inline fn put(obj: *JSObject, global: *JSGlobalObject, key: anytype, value: JSValue) !void {
-        obj.toJS().put(global, key, value);
+    pub inline fn putDirect(obj: *JSObject, global: *JSGlobalObject, key: anytype, value: JSValue) !void {
+        obj.toJS().putDirect(global, key, value);
     }
 
-    pub inline fn putAllFromStruct(obj: *JSObject, global: *JSGlobalObject, properties: anytype) !void {
+    pub inline fn putDirectAllFromStruct(obj: *JSObject, global: *JSGlobalObject, properties: anytype) !void {
         inline for (comptime std.meta.fieldNames(@TypeOf(properties))) |field| {
-            try obj.put(global, field, @field(properties, field));
+            try obj.putDirect(global, field, @field(properties, field));
         }
     }
 

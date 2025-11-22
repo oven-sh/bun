@@ -784,7 +784,7 @@ pub const FFI = struct {
                         function.symbol_from_dynamic_library,
                     );
                     compiled.js_function = cb;
-                    obj.put(globalThis, &str, cb);
+                    obj.putDirect(globalThis, &str, cb);
                 },
             }
         }
@@ -1137,7 +1137,7 @@ pub const FFI = struct {
                         function.symbol_from_dynamic_library,
                     );
                     compiled.js_function = cb;
-                    obj.put(global, &str, cb);
+                    obj.putDirect(global, &str, cb);
                 },
             }
         }
@@ -1240,7 +1240,7 @@ pub const FFI = struct {
                     );
                     compiled.js_function = cb;
 
-                    obj.put(global, name, cb);
+                    obj.putDirect(global, name, cb);
                 },
             }
         }

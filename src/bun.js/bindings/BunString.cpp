@@ -906,7 +906,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__upsertBunStringArray(
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-extern "C" void JSC__JSValue__putBunString(
+extern "C" void JSC__JSValue__putDirectBunString(
     JSC::EncodedJSValue encodedTarget,
     JSC::JSGlobalObject* global,
     const BunString* key,

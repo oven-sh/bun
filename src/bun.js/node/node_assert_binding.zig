@@ -55,8 +55,8 @@ fn diffListToJS(global: *jsc.JSGlobalObject, diff_list: StrDiffList) bun.JSError
     for (diff_list.items, 0..) |*line, i| {
         var obj = jsc.JSValue.createEmptyObjectWithNullPrototype(global);
         if (obj == .zero) return global.throwOutOfMemory();
-        obj.put(global, bun.String.static("kind"), jsc.JSValue.jsNumber(@as(u32, @intFromEnum(line.kind))));
-        obj.put(global, bun.String.static("value"), .fromAny(global, []const u8, line.value));
+        obj.putDirect(global, bun.String.static("kind"), jsc.JSValue.jsNumber(@as(u32, @intFromEnum(line.kind))));
+        obj.putDirect(global, bun.String.static("value"), .fromAny(global, []const u8, line.value));
         array.putIndex(global, @truncate(i), obj);
     }
     return array;
@@ -67,7 +67,7 @@ fn diffListToJS(global: *jsc.JSGlobalObject, diff_list: StrDiffList) bun.JSError
 pub fn generate(global: *jsc.JSGlobalObject) jsc.JSValue {
     const exports = jsc.JSValue.createEmptyObject(global, 1);
 
-    exports.put(
+    exports.putDirect(
         global,
         bun.String.static("myersDiff"),
         jsc.JSFunction.create(global, "myersDiff", myersDiff, 2, .{}),

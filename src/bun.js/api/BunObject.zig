@@ -510,8 +510,8 @@ export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) b
 pub fn getInspect(globalObject: *jsc.JSGlobalObject, _: *jsc.JSObject) jsc.JSValue {
     const fun = jsc.JSFunction.create(globalObject, "inspect", inspect, 2, .{});
     var str = ZigString.init("nodejs.util.inspect.custom");
-    fun.put(globalObject, ZigString.static("custom"), jsc.JSValue.symbolFor(globalObject, &str));
-    fun.put(globalObject, ZigString.static("table"), jsc.JSFunction.create(globalObject, "table", inspectTable, 3, .{}));
+    fun.putDirect(globalObject, ZigString.static("custom"), jsc.JSValue.symbolFor(globalObject, &str));
+    fun.putDirect(globalObject, ZigString.static("table"), jsc.JSFunction.create(globalObject, "table", inspectTable, 3, .{}));
     return fun;
 }
 
@@ -1372,13 +1372,13 @@ const CSRFObject = struct {
     pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
         const object = JSValue.createEmptyObject(globalThis, 2);
 
-        object.put(
+        object.putDirect(
             globalThis,
             ZigString.static("generate"),
             jsc.JSFunction.create(globalThis, "generate", @import("../../csrf.zig").csrf__generate, 1, .{}),
         );
 
-        object.put(
+        object.putDirect(
             globalThis,
             ZigString.static("verify"),
             jsc.JSFunction.create(globalThis, "verify", @import("../../csrf.zig").csrf__verify, 1, .{}),

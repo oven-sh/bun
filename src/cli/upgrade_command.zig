@@ -903,9 +903,9 @@ pub const upgrade_js_bindings = struct {
     pub fn generate(global: *jsc.JSGlobalObject) jsc.JSValue {
         const obj = JSValue.createEmptyObject(global, 2);
         const open = ZigString.static("openTempDirWithoutSharingDelete");
-        obj.put(global, open, jsc.JSFunction.create(global, "openTempDirWithoutSharingDelete", jsOpenTempDirWithoutSharingDelete, 1, .{}));
+        obj.putDirect(global, open, jsc.JSFunction.create(global, "openTempDirWithoutSharingDelete", jsOpenTempDirWithoutSharingDelete, 1, .{}));
         const close = ZigString.static("closeTempDirHandle");
-        obj.put(global, close, jsc.JSFunction.create(global, "closeTempDirHandle", jsCloseTempDirHandle, 1, .{}));
+        obj.putDirect(global, close, jsc.JSFunction.create(global, "closeTempDirHandle", jsCloseTempDirHandle, 1, .{}));
         return obj;
     }
 

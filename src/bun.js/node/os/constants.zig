@@ -36,26 +36,26 @@ fn __defineConstant(globalObject: *jsc.JSGlobalObject, object: jsc.JSValue, comp
     switch (ctype) {
         .ERRNO => {
             if (comptime getErrnoConstant(name)) |constant| {
-                object.put(globalObject, jsc.ZigString.static("E" ++ name), jsc.JSValue.jsNumber(constant));
+                object.putDirect(globalObject, jsc.ZigString.static("E" ++ name), jsc.JSValue.jsNumber(constant));
             }
         },
         .ERRNO_WIN => {
             if (comptime getWindowsErrnoConstant(name)) |constant| {
-                object.put(globalObject, jsc.ZigString.static(name), jsc.JSValue.jsNumber(constant));
+                object.putDirect(globalObject, jsc.ZigString.static(name), jsc.JSValue.jsNumber(constant));
             }
         },
         .SIG => {
             if (comptime getSignalsConstant(name)) |constant| {
-                object.put(globalObject, jsc.ZigString.static("SIG" ++ name), jsc.JSValue.jsNumber(constant));
+                object.putDirect(globalObject, jsc.ZigString.static("SIG" ++ name), jsc.JSValue.jsNumber(constant));
             }
         },
         .DLOPEN => {
             if (comptime getDlopenConstant(name)) |constant| {
-                object.put(globalObject, jsc.ZigString.static("RTLD_" ++ name), jsc.JSValue.jsNumber(constant));
+                object.putDirect(globalObject, jsc.ZigString.static("RTLD_" ++ name), jsc.JSValue.jsNumber(constant));
             }
         },
         .OTHER => {
-            object.put(globalObject, jsc.ZigString.static(name), jsc.JSValue.jsNumberFromInt32(value.?));
+            object.putDirect(globalObject, jsc.ZigString.static(name), jsc.JSValue.jsNumberFromInt32(value.?));
         },
     }
 }
@@ -63,10 +63,10 @@ fn __defineConstant(globalObject: *jsc.JSGlobalObject, object: jsc.JSValue, comp
 pub fn create(globalObject: *jsc.JSGlobalObject) jsc.JSValue {
     const object = jsc.JSValue.createEmptyObject(globalObject, 0);
 
-    object.put(globalObject, jsc.ZigString.static("errno"), createErrno(globalObject));
-    object.put(globalObject, jsc.ZigString.static("signals"), createSignals(globalObject));
-    object.put(globalObject, jsc.ZigString.static("priority"), createPriority(globalObject));
-    object.put(globalObject, jsc.ZigString.static("dlopen"), createDlopen(globalObject));
+    object.putDirect(globalObject, jsc.ZigString.static("errno"), createErrno(globalObject));
+    object.putDirect(globalObject, jsc.ZigString.static("signals"), createSignals(globalObject));
+    object.putDirect(globalObject, jsc.ZigString.static("priority"), createPriority(globalObject));
+    object.putDirect(globalObject, jsc.ZigString.static("dlopen"), createDlopen(globalObject));
     __defineConstant(globalObject, object, .OTHER, "UV_UDP_REUSEADDR", 4);
 
     return object;

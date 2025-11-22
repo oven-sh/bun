@@ -286,46 +286,46 @@ pub const Version = struct {
 
     pub fn toJS(dep: *const Version, buf: []const u8, globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         const object = jsc.JSValue.createEmptyObject(globalThis, 0);
-        object.put(globalThis, "type", bun.String.static(@tagName(dep.tag)).toJS(globalThis));
+        object.putDirect(globalThis, "type", bun.String.static(@tagName(dep.tag)).toJS(globalThis));
 
         switch (dep.tag) {
             .dist_tag => {
-                object.put(globalThis, "name", try dep.value.dist_tag.name.toJS(buf, globalThis));
-                object.put(globalThis, "tag", try dep.value.dist_tag.tag.toJS(buf, globalThis));
+                object.putDirect(globalThis, "name", try dep.value.dist_tag.name.toJS(buf, globalThis));
+                object.putDirect(globalThis, "tag", try dep.value.dist_tag.tag.toJS(buf, globalThis));
             },
             .folder => {
-                object.put(globalThis, "folder", try dep.value.folder.toJS(buf, globalThis));
+                object.putDirect(globalThis, "folder", try dep.value.folder.toJS(buf, globalThis));
             },
             .git => {
-                object.put(globalThis, "owner", try dep.value.git.owner.toJS(buf, globalThis));
-                object.put(globalThis, "repo", try dep.value.git.repo.toJS(buf, globalThis));
-                object.put(globalThis, "ref", try dep.value.git.committish.toJS(buf, globalThis));
+                object.putDirect(globalThis, "owner", try dep.value.git.owner.toJS(buf, globalThis));
+                object.putDirect(globalThis, "repo", try dep.value.git.repo.toJS(buf, globalThis));
+                object.putDirect(globalThis, "ref", try dep.value.git.committish.toJS(buf, globalThis));
             },
             .github => {
-                object.put(globalThis, "owner", try dep.value.github.owner.toJS(buf, globalThis));
-                object.put(globalThis, "repo", try dep.value.github.repo.toJS(buf, globalThis));
-                object.put(globalThis, "ref", try dep.value.github.committish.toJS(buf, globalThis));
+                object.putDirect(globalThis, "owner", try dep.value.github.owner.toJS(buf, globalThis));
+                object.putDirect(globalThis, "repo", try dep.value.github.repo.toJS(buf, globalThis));
+                object.putDirect(globalThis, "ref", try dep.value.github.committish.toJS(buf, globalThis));
             },
             .npm => {
-                object.put(globalThis, "name", try dep.value.npm.name.toJS(buf, globalThis));
+                object.putDirect(globalThis, "name", try dep.value.npm.name.toJS(buf, globalThis));
                 var version_str = try bun.String.createFormat("{f}", .{dep.value.npm.version.fmt(buf)});
-                object.put(globalThis, "version", version_str.transferToJS(globalThis));
-                object.put(globalThis, "alias", jsc.JSValue.jsBoolean(dep.value.npm.is_alias));
+                object.putDirect(globalThis, "version", version_str.transferToJS(globalThis));
+                object.putDirect(globalThis, "alias", jsc.JSValue.jsBoolean(dep.value.npm.is_alias));
             },
             .symlink => {
-                object.put(globalThis, "path", try dep.value.symlink.toJS(buf, globalThis));
+                object.putDirect(globalThis, "path", try dep.value.symlink.toJS(buf, globalThis));
             },
             .workspace => {
-                object.put(globalThis, "name", try dep.value.workspace.toJS(buf, globalThis));
+                object.putDirect(globalThis, "name", try dep.value.workspace.toJS(buf, globalThis));
             },
             .tarball => {
-                object.put(globalThis, "name", try dep.value.tarball.package_name.toJS(buf, globalThis));
+                object.putDirect(globalThis, "name", try dep.value.tarball.package_name.toJS(buf, globalThis));
                 switch (dep.value.tarball.uri) {
                     .local => |*local| {
-                        object.put(globalThis, "path", try local.toJS(buf, globalThis));
+                        object.putDirect(globalThis, "path", try local.toJS(buf, globalThis));
                     },
                     .remote => |*remote| {
-                        object.put(globalThis, "url", try remote.toJS(buf, globalThis));
+                        object.putDirect(globalThis, "url", try remote.toJS(buf, globalThis));
                     },
                 }
             },

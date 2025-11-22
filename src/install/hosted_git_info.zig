@@ -170,27 +170,27 @@ pub const HostedGitInfo = struct {
     /// Convert this HostedGitInfo to a JavaScript object
     pub fn toJS(self: *const Self, go: *jsc.JSGlobalObject) jsc.JSValue {
         const obj = jsc.JSValue.createEmptyObject(go, 6);
-        obj.put(
+        obj.putDirect(
             go,
             jsc.ZigString.static("type"),
             bun.String.fromBytes(self.host_provider.typeStr()).toJS(go),
         );
-        obj.put(
+        obj.putDirect(
             go,
             jsc.ZigString.static("domain"),
             bun.String.fromBytes(self.host_provider.domain()).toJS(go),
         );
-        obj.put(
+        obj.putDirect(
             go,
             jsc.ZigString.static("project"),
             bun.String.fromBytes(self.project).toJS(go),
         );
-        obj.put(
+        obj.putDirect(
             go,
             jsc.ZigString.static("user"),
             if (self.user) |user| bun.String.fromBytes(user).toJS(go) else .null,
         );
-        obj.put(
+        obj.putDirect(
             go,
             jsc.ZigString.static("committish"),
             if (self.committish) |committish|
@@ -198,7 +198,7 @@ pub const HostedGitInfo = struct {
             else
                 .null,
         );
-        obj.put(
+        obj.putDirect(
             go,
             jsc.ZigString.static("default"),
             bun.String.fromBytes(@tagName(self.default_representation)).toJS(go),

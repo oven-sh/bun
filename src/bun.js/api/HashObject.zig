@@ -49,7 +49,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     };
     inline for (fns) |name| {
         const value = jsc.JSFunction.create(globalThis, name, @field(HashObject, name), 1, .{});
-        function.put(globalThis, comptime ZigString.static(name), value);
+        function.putDirect(globalThis, comptime ZigString.static(name), value);
     }
 
     return function;

@@ -648,15 +648,15 @@ pub fn getActiveTasks(globalObject: *jsc.JSGlobalObject, _: *jsc.CallFrame) bun.
     const event_loop = vm.event_loop;
 
     const result = jsc.JSValue.createEmptyObject(globalObject, 3);
-    result.put(globalObject, jsc.ZigString.static("activeTasks"), jsc.JSValue.jsNumber(vm.active_tasks));
-    result.put(globalObject, jsc.ZigString.static("concurrentRef"), jsc.JSValue.jsNumber(event_loop.concurrent_ref.load(.seq_cst)));
+    result.putDirect(globalObject, jsc.ZigString.static("activeTasks"), jsc.JSValue.jsNumber(vm.active_tasks));
+    result.putDirect(globalObject, jsc.ZigString.static("concurrentRef"), jsc.JSValue.jsNumber(event_loop.concurrent_ref.load(.seq_cst)));
 
     // Get num_polls from uws loop (POSIX) or active_handles from libuv (Windows)
     const num_polls: i32 = if (Environment.isWindows)
         @intCast(bun.windows.libuv.Loop.get().active_handles)
     else
         uws.Loop.get().num_polls;
-    result.put(globalObject, jsc.ZigString.static("numPolls"), jsc.JSValue.jsNumber(num_polls));
+    result.putDirect(globalObject, jsc.ZigString.static("numPolls"), jsc.JSValue.jsNumber(num_polls));
 
     return result;
 }

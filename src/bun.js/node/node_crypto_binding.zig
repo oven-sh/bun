@@ -739,24 +739,24 @@ fn scryptSync(global: *JSGlobalObject, callFrame: *jsc.CallFrame) JSError!JSValu
 pub fn createNodeCryptoBindingZig(global: *jsc.JSGlobalObject) jsc.JSValue {
     const crypto = jsc.JSValue.createEmptyObject(global, 15);
 
-    crypto.put(global, String.init("pbkdf2"), jsc.JSFunction.create(global, "pbkdf2", pbkdf2, 5, .{}));
-    crypto.put(global, String.init("pbkdf2Sync"), jsc.JSFunction.create(global, "pbkdf2Sync", pbkdf2Sync, 5, .{}));
-    crypto.put(global, String.init("randomInt"), jsc.JSFunction.create(global, "randomInt", random.randomInt, 2, .{}));
-    crypto.put(global, String.init("randomFill"), jsc.JSFunction.create(global, "randomFill", random.randomFill, 4, .{}));
-    crypto.put(global, String.init("randomFillSync"), jsc.JSFunction.create(global, "randomFillSync", random.randomFillSync, 3, .{}));
-    crypto.put(global, String.init("randomUUID"), jsc.JSFunction.create(global, "randomUUID", random.randomUUID, 1, .{}));
-    crypto.put(global, String.init("randomBytes"), jsc.JSFunction.create(global, "randomBytes", random.randomBytes, 2, .{}));
-    crypto.put(global, String.init("timingSafeEqual"), jsc.JSFunction.create(global, "timingSafeEqual", timingSafeEqual, 2, .{}));
+    crypto.putDirect(global, String.init("pbkdf2"), jsc.JSFunction.create(global, "pbkdf2", pbkdf2, 5, .{}));
+    crypto.putDirect(global, String.init("pbkdf2Sync"), jsc.JSFunction.create(global, "pbkdf2Sync", pbkdf2Sync, 5, .{}));
+    crypto.putDirect(global, String.init("randomInt"), jsc.JSFunction.create(global, "randomInt", random.randomInt, 2, .{}));
+    crypto.putDirect(global, String.init("randomFill"), jsc.JSFunction.create(global, "randomFill", random.randomFill, 4, .{}));
+    crypto.putDirect(global, String.init("randomFillSync"), jsc.JSFunction.create(global, "randomFillSync", random.randomFillSync, 3, .{}));
+    crypto.putDirect(global, String.init("randomUUID"), jsc.JSFunction.create(global, "randomUUID", random.randomUUID, 1, .{}));
+    crypto.putDirect(global, String.init("randomBytes"), jsc.JSFunction.create(global, "randomBytes", random.randomBytes, 2, .{}));
+    crypto.putDirect(global, String.init("timingSafeEqual"), jsc.JSFunction.create(global, "timingSafeEqual", timingSafeEqual, 2, .{}));
 
-    crypto.put(global, String.init("secureHeapUsed"), jsc.JSFunction.create(global, "secureHeapUsed", secureHeapUsed, 0, .{}));
-    crypto.put(global, String.init("getFips"), jsc.JSFunction.create(global, "getFips", getFips, 0, .{}));
-    crypto.put(global, String.init("setFips"), jsc.JSFunction.create(global, "setFips", setFips, 1, .{}));
-    crypto.put(global, String.init("setEngine"), jsc.JSFunction.create(global, "setEngine", setEngine, 2, .{}));
+    crypto.putDirect(global, String.init("secureHeapUsed"), jsc.JSFunction.create(global, "secureHeapUsed", secureHeapUsed, 0, .{}));
+    crypto.putDirect(global, String.init("getFips"), jsc.JSFunction.create(global, "getFips", getFips, 0, .{}));
+    crypto.putDirect(global, String.init("setFips"), jsc.JSFunction.create(global, "setFips", setFips, 1, .{}));
+    crypto.putDirect(global, String.init("setEngine"), jsc.JSFunction.create(global, "setEngine", setEngine, 2, .{}));
 
-    crypto.put(global, String.init("getHashes"), jsc.JSFunction.create(global, "getHashes", getHashes, 0, .{}));
+    crypto.putDirect(global, String.init("getHashes"), jsc.JSFunction.create(global, "getHashes", getHashes, 0, .{}));
 
-    crypto.put(global, String.init("scrypt"), jsc.JSFunction.create(global, "scrypt", scrypt, 5, .{}));
-    crypto.put(global, String.init("scryptSync"), jsc.JSFunction.create(global, "scryptSync", scryptSync, 4, .{}));
+    crypto.putDirect(global, String.init("scrypt"), jsc.JSFunction.create(global, "scrypt", scrypt, 5, .{}));
+    crypto.putDirect(global, String.init("scryptSync"), jsc.JSFunction.create(global, "scryptSync", scryptSync, 4, .{}));
 
     return crypto;
 }

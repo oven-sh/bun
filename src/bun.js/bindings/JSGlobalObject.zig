@@ -29,7 +29,7 @@ pub const JSGlobalObject = opaque {
 
     pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) bun.JSError {
         const err = this.createErrorInstance("{s}", .{msg});
-        err.put(this, ZigString.static("name"), bun.String.static("TODOError").toJS(this));
+        err.putDirect(this, ZigString.static("name"), bun.String.static("TODOError").toJS(this));
         return this.throwValue(err);
     }
 
@@ -359,9 +359,9 @@ pub const JSGlobalObject = opaque {
         args: anytype,
     ) JSError {
         const err = createErrorInstance(this, message, args);
-        err.put(this, ZigString.static("code"), ZigString.init(@tagName(opts.code)).toJS(this));
-        if (opts.name) |name| err.put(this, ZigString.static("name"), ZigString.init(name).toJS(this));
-        if (opts.errno) |errno| err.put(this, ZigString.static("errno"), try .fromAny(this, i32, errno));
+        err.putDirect(this, ZigString.static("code"), ZigString.init(@tagName(opts.code)).toJS(this));
+        if (opts.name) |name| err.putDirect(this, ZigString.static("name"), ZigString.init(name).toJS(this));
+        if (opts.errno) |errno| err.putDirect(this, ZigString.static("errno"), try .fromAny(this, i32, errno));
         return this.throwValue(err);
     }
 

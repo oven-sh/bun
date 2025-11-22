@@ -1,6 +1,6 @@
 pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     const object = JSValue.createEmptyObject(globalThis, 1);
-    object.put(
+    object.putDirect(
         globalThis,
         ZigString.static("parse"),
         jsc.JSFunction.create(

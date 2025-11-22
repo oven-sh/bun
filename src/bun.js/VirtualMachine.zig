@@ -52,6 +52,7 @@ cpu_profiler_config: ?CPUProfilerConfig = null,
 counters: Counters = .{},
 
 hot_reload: bun.cli.Command.HotReload = .none,
+watch_excludes: []const []const u8 = &.{},
 jsc_vm: *VM = undefined,
 
 /// hide bun:wrap from stack traces

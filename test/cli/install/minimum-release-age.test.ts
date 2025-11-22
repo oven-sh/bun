@@ -2390,14 +2390,10 @@ export const scanner = {
 
       const receivedPackages = await Bun.file(`${dir}/received-packages.json`).json();
 
-      // With stability checks, should select 1.0.0 (stable) instead of 1.0.1 (unstable)
+      // With stability checks, should select 1.0.0 (stable) instead of unstable versions
       const bugfixPkg = receivedPackages.find((p: { name: string }) => p.name === "bugfix-package");
       expect(bugfixPkg).toBeDefined();
       expect(bugfixPkg.version).toBe("1.0.0");
-      // Should NOT have received any of the newer unstable versions
-      expect(bugfixPkg.version).not.toBe("1.0.1");
-      expect(bugfixPkg.version).not.toBe("1.0.2");
-      expect(bugfixPkg.version).not.toBe("1.0.3");
     });
 
     test("scanner can report advisory on age-filtered package", async () => {

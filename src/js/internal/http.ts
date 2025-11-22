@@ -1,3 +1,5 @@
+const { isIPv4 } = require("internal/net/isIP");
+
 const {
   getHeader,
   setHeader,
@@ -199,14 +201,6 @@ function validateMsecs(numberlike: any, field: string) {
   return numberlike;
 }
 
-class ConnResetException extends Error {
-  constructor(msg) {
-    super(msg);
-    this.code = "ECONNRESET";
-    this.name = "ConnResetException";
-  }
-}
-
 const METHODS = [
   "ACL",
   "BIND",
@@ -360,8 +354,131 @@ const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTT
 const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
 const kOutHeaders = Symbol("kOutHeaders");
 
+function ipToInt(ip) {
+  const octets = ip.split(".");
+  let result = 0;
+  for (let i = 0; i < octets.length; i++) result = (result << 8) + Number.parseInt(octets[i]);
+  return result >>> 0;
+}
+
+class ProxyConfig {
+  href;
+  protocol;
+  auth;
+  bypassList;
+  proxyConnectionOptions;
+
+  constructor(proxyUrl, keepAlive, noProxyList) {
+    let parsedURL;
+    try {
+      parsedURL = new URL(proxyUrl);
+    } catch {
+      throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${proxyUrl}`);
+    }
+    const { hostname, port, protocol, username, password } = parsedURL;
+
+    this.href = proxyUrl;
+    this.protocol = protocol;
+
+    if (username || password) {
+      // If username or password is provided, prepare the proxy-authorization header.
+      const auth = `${decodeURIComponent(username)}:${decodeURIComponent(password)}`;
+      this.auth = `Basic ${Buffer.from(auth).toString("base64")}`;
+    }
+    if (noProxyList) {
+      this.bypassList = noProxyList.split(",").map(entry => entry.trim().toLowerCase());
+    } else {
+      this.bypassList = [];
+    }
+
+    this.proxyConnectionOptions = {
+      // The host name comes from parsed URL so if it starts with '[' it must be an IPv6 address ending with ']'. Remove the brackets for net.connect().
+      host: hostname[0] === "[" ? hostname.slice(1, -1) : hostname,
+      // The port comes from parsed URL so it is either '' or a valid number string.
+      port: port ? Number(port) : protocol === "https:" ? 443 : 80,
+    };
+  }
+
+  // See: https://about.gitlab.com/blog/we-need-to-talk-no-proxy
+  shouldUseProxy(hostname, port) {
+    const bypassList = this.bypassList;
+    if (this.bypassList.length === 0) return true; // No bypass list, always use the proxy.
+    const host = hostname.toLowerCase();
+    const hostWithPort = port ? `${host}:${port}` : host;
+
+    for (let i = 0; i < bypassList.length; i++) {
+      const entry = bypassList[i];
+
+      if (entry === "*") return false; // * bypasses all hosts.
+      if (entry === host || entry === hostWithPort) return false; // Matching host and host:port
+
+      // Follow curl's behavior: strip leading dot before matching suffixes.
+      if (entry.startsWith(".")) {
+        const suffix = entry.substring(1);
+        if (host.endsWith(suffix)) return false;
+      }
+
+      // Handle wildcards like *.example.com
+      if (entry.startsWith("*.") && host.endsWith(entry.substring(1))) return false;
+
+      // Handle IP ranges (simple format like 192.168.1.0-192.168.1.255)
+      // TODO: support IPv6.
+      if (entry.includes("-") && isIPv4(host)) {
+        let { 0: startIP, 1: endIP } = entry.split("-");
+        startIP = startIP.trim();
+        endIP = endIP.trim();
+        if (startIP && endIP && isIPv4(startIP) && isIPv4(endIP)) {
+          const hostInt = ipToInt(host);
+          const startInt = ipToInt(startIP);
+          const endInt = ipToInt(endIP);
+          if (hostInt >= startInt && hostInt <= endInt) return false;
+        }
+      }
+
+      // It might be useful to support CIDR notation, but it's not so widely supported
+      // in other tools as a de-facto standard to follow, so we don't implement it for now.
+    }
+
+    return true;
+  }
+}
+
+function parseProxyConfigFromEnv(env, protocol, keepAlive) {
+  // We only support proxying for HTTP and HTTPS requests.
+  if (protocol !== "http:" && protocol !== "https:") return null;
+  // Get the proxy url - following the most popular convention, lower case takes precedence.
+  // See https://about.gitlab.com/blog/we-need-to-talk-no-proxy/#http_proxy-and-https_proxy
+  const proxyUrl = protocol === "https:" ? env.https_proxy || env.HTTPS_PROXY : env.http_proxy || env.HTTP_PROXY;
+  // No proxy settings from the environment, ignore.
+  if (!proxyUrl) return null;
+
+  if (proxyUrl.includes("\r") || proxyUrl.includes("\n")) {
+    throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${proxyUrl}`);
+  }
+
+  // Only http:// and https:// proxies are supported. Ignore instead of throw, in case other protocols are supposed to be handled by the user land.
+  if (!proxyUrl.startsWith("http://") && !proxyUrl.startsWith("https://")) return null;
+  return new ProxyConfig(proxyUrl, keepAlive, env.no_proxy || env.NO_PROXY);
+}
+
+function checkShouldUseProxy(proxyConfig: ProxyConfig, reqOptions: any) {
+  if (!proxyConfig) return false;
+  if (reqOptions.socketPath) return false; // If socketPath is set, the endpoint is a Unix domain socket, which can't be proxied.
+  return proxyConfig.shouldUseProxy(reqOptions.host || "localhost", reqOptions.port);
+}
+
+function filterEnvForProxies(env) {
+  return {
+    http_proxy: env.http_proxy,
+    HTTP_PROXY: env.HTTP_PROXY,
+    https_proxy: env.https_proxy,
+    HTTPS_PROXY: env.HTTPS_PROXY,
+    no_proxy: env.no_proxy,
+    NO_PROXY: env.NO_PROXY,
+  };
+}
+
 export {
-  ConnResetException,
   Headers,
   METHODS,
   STATUS_CODES,
@@ -369,6 +486,7 @@ export {
   assignHeadersFast,
   bodyStreamSymbol,
   callCloseCallback,
+  checkShouldUseProxy,
   controllerSymbol,
   deferredSymbol,
   drainMicrotasks,
@@ -378,6 +496,7 @@ export {
   emitErrorNextTickIfErrorListenerNT,
   eofInProgress,
   fakeSocketSymbol,
+  filterEnvForProxies,
   firstWriteSymbol,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   getHeader,
@@ -425,6 +544,7 @@ export {
   kUseDefaultPort,
   noBodySymbol,
   optionsSymbol,
+  parseProxyConfigFromEnv,
   reqSymbol,
   runSymbol,
   serverSymbol,

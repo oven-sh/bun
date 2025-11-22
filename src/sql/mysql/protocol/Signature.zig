@@ -31,8 +31,8 @@ pub fn hash(this: *const Signature) u64 {
 }
 
 pub fn generate(globalObject: *jsc.JSGlobalObject, query: []const u8, array_value: JSValue, columns: JSValue) !Signature {
-    var fields = std.ArrayList(Param).init(bun.default_allocator);
-    var name = try std.ArrayList(u8).initCapacity(bun.default_allocator, query.len);
+    var fields = std.array_list.Managed(Param).init(bun.default_allocator);
+    var name = try std.array_list.Managed(u8).initCapacity(bun.default_allocator, query.len);
 
     name.appendSliceAssumeCapacity(query);
 

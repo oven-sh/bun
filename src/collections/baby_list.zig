@@ -53,19 +53,21 @@ pub fn BabyList(comptime Type: type) type {
             const unsupported_arg_msg = "unsupported argument to `moveFromList`: *" ++
                 @typeName(ListType);
 
-            const items = if (comptime @hasField(ListType, "items"))
-                list_ptr.items
-            else if (comptime std.meta.hasFn(ListType, "slice"))
-                list_ptr.slice()
-            else
-                @compileError(unsupported_arg_msg);
-
             const capacity = if (comptime @hasField(ListType, "capacity"))
                 list_ptr.capacity
             else if (comptime @hasField(ListType, "cap"))
                 list_ptr.cap
             else if (comptime std.meta.hasFn(ListType, "capacity"))
                 list_ptr.capacity()
+            else
+                @compileError(unsupported_arg_msg);
+
+            const items = if (comptime std.meta.hasFn(ListType, "moveToUnmanaged"))
+                list_ptr.moveToUnmanaged().items
+            else if (comptime @hasField(ListType, "items"))
+                list_ptr.items
+            else if (comptime std.meta.hasFn(ListType, "slice"))
+                list_ptr.slice()
             else
                 @compileError(unsupported_arg_msg);
 
@@ -88,7 +90,10 @@ pub fn BabyList(comptime Type: type) type {
                 list_ptr.* = .empty;
             } else {
                 this.#allocator.set(bun.allocators.asStd(allocator));
-                list_ptr.* = .init(allocator);
+                // `moveToUnmanaged` already cleared the old list.
+                if (comptime !std.meta.hasFn(ListType, "moveToUnmanaged")) {
+                    list_ptr.* = .init(allocator);
+                }
             }
             return this;
         }
@@ -190,7 +195,7 @@ pub fn BabyList(comptime Type: type) type {
             return this.list();
         }
 
-        pub fn moveToListManaged(this: *Self, allocator: std.mem.Allocator) std.ArrayList(Type) {
+        pub fn moveToListManaged(this: *Self, allocator: std.mem.Allocator) std.array_list.Managed(Type) {
             this.assertOwned();
             defer this.* = .empty;
             return this.listManaged(allocator);
@@ -364,7 +369,7 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn memoryCost(this: Self) usize {
-            return this.cap;
+            return this.cap * @sizeOf(Type);
         }
 
         /// This method is available only for `BabyList(u8)`.
@@ -455,8 +460,8 @@ pub fn BabyList(comptime Type: type) type {
             };
         }
 
-        pub fn toCss(this: *const Self, comptime W: type, dest: *bun.css.Printer(W)) bun.css.PrintErr!void {
-            return bun.css.to_css.fromBabyList(Type, this, W, dest);
+        pub fn toCss(this: *const Self, dest: *bun.css.Printer) bun.css.PrintErr!void {
+            return bun.css.to_css.fromBabyList(Type, this, dest);
         }
 
         pub fn eql(lhs: *const Self, rhs: *const Self) bool {
@@ -533,14 +538,10 @@ pub fn BabyList(comptime Type: type) type {
 
         pub fn format(
             this: Self,
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
+            writer: *std.Io.Writer,
         ) !void {
-            _ = .{ fmt, options };
-            return std.fmt.format(
-                writer,
-                "BabyList({s}){{{any}}}",
+            return writer.print(
+                "BabyList({s}){{{f}}}",
                 .{ @typeName(Type), this.list() },
             );
         }
@@ -567,7 +568,7 @@ pub fn BabyList(comptime Type: type) type {
             };
         }
 
-        fn listManaged(this: *Self, allocator: std.mem.Allocator) std.ArrayList(Type) {
+        fn listManaged(this: *Self, allocator: std.mem.Allocator) std.array_list.Managed(Type) {
             this.#allocator.set(allocator);
             var list_ = this.list();
             return list_.toManaged(allocator);
@@ -581,6 +582,8 @@ pub fn BabyList(comptime Type: type) type {
                 bun.assert(this.len <= this.cap);
             }
         }
+
+        pub const looksLikeContainerTypeBabyList = Type;
     };
 }
 

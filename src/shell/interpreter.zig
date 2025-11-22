@@ -123,7 +123,7 @@ pub const StateKind = enum(u8) {
     expansion,
     if_clause,
     condexpr,
-    @"async",
+    async,
     subshell,
 };
 
@@ -147,7 +147,7 @@ pub const CowFd = struct {
         this.* = .{
             .__fd = fd,
         };
-        debug("init(0x{x}, fd={})", .{ @intFromPtr(this), fd });
+        debug("init(0x{x}, fd={f})", .{ @intFromPtr(this), fd });
         return this;
     }
 
@@ -156,7 +156,7 @@ pub const CowFd = struct {
             .fd = bun.sys.dup(this.fd),
             .writercount = 1,
         });
-        debug("dup(0x{x}, fd={}) = (0x{x}, fd={})", .{ @intFromPtr(this), this.fd, new, new.fd });
+        debug("dup(0x{x}, fd={f}) = (0x{x}, fd={f})", .{ @intFromPtr(this), this.fd, new, new.fd });
         return new;
     }
 
@@ -232,6 +232,10 @@ pub const ShellArgs = struct {
             .script_ast = undefined,
         });
     }
+
+    pub fn memoryCost(this: *const ShellArgs) usize {
+        return @sizeOf(ShellArgs) + this.script_ast.memoryCost();
+    }
 };
 
 pub const AssignCtx = Interpreter.Assigns.AssignCtx;
@@ -263,7 +267,7 @@ pub const Interpreter = struct {
     // Necessary for builtin commands.
     keep_alive: bun.Async.KeepAlive = .{},
 
-    vm_args_utf8: std.ArrayList(jsc.ZigString.Slice),
+    vm_args_utf8: std.array_list.Managed(jsc.ZigString.Slice),
     async_commands_executing: u32 = 0,
 
     globalThis: *jsc.JSGlobalObject,
@@ -277,6 +281,7 @@ pub const Interpreter = struct {
     this_jsvalue: JSValue = .zero,
 
     __alloc_scope: if (bun.Environment.enableAllocScopes) bun.AllocationScope else void,
+    estimated_size_for_gc: usize = 0,
 
     // Here are all the state nodes:
     pub const State = @import("./states/Base.zig");
@@ -345,8 +350,8 @@ pub const Interpreter = struct {
         /// The current working directory of the shell.
         /// Use an array list so we don't have to keep reallocating
         /// Always has zero-sentinel
-        __prev_cwd: std.ArrayList(u8),
-        __cwd: std.ArrayList(u8),
+        __prev_cwd: std.array_list.Managed(u8),
+        __cwd: std.array_list.Managed(u8),
         cwd_fd: bun.FileDescriptor,
 
         async_pids: SmolList(pid_t, 4) = SmolList(pid_t, 4).zeroes,
@@ -355,7 +360,16 @@ pub const Interpreter = struct {
 
         const pid_t = if (bun.Environment.isPosix) std.posix.pid_t else uv.uv_pid_t;
 
-        const Bufio = union(enum) { owned: bun.ByteList, borrowed: *bun.ByteList };
+        const Bufio = union(enum) {
+            owned: bun.ByteList,
+            borrowed: *bun.ByteList,
+            pub fn memoryCost(this: *const @This()) usize {
+                return switch (this.*) {
+                    .owned => |*owned| owned.memoryCost(),
+                    .borrowed => |borrowed| borrowed.memoryCost(),
+                };
+            }
+        };
 
         const Kind = enum {
             normal,
@@ -367,6 +381,19 @@ pub const Interpreter = struct {
         pub fn allocator(this: *ShellExecEnv) std.mem.Allocator {
             if (comptime bun.Environment.enableAllocScopes) return this.__alloc_scope.allocator();
             return bun.default_allocator;
+        }
+
+        pub fn memoryCost(this: *const ShellExecEnv) usize {
+            var size: usize = @sizeOf(ShellExecEnv);
+            size += this.shell_env.memoryCost();
+            size += this.cmd_local_env.memoryCost();
+            size += this.export_env.memoryCost();
+            size += this.__cwd.allocatedSlice().len;
+            size += this.__prev_cwd.allocatedSlice().len;
+            size += this._buffered_stderr.memoryCost();
+            size += this._buffered_stdout.memoryCost();
+            size += this.async_pids.memoryCost();
+            return size;
         }
 
         pub fn buffered_stdout(this: *ShellExecEnv) *bun.ByteList {
@@ -567,7 +594,7 @@ pub const Interpreter = struct {
             this.__cwd.clearRetainingCapacity();
             bun.handleOom(this.__cwd.appendSlice(new_cwd[0 .. new_cwd.len + 1]));
 
-            if (comptime bun.Environment.allow_assert) {
+            if (comptime bun.Environment.isDebug) {
                 assert(this.__cwd.items[this.__cwd.items.len -| 1] == 0);
                 assert(this.__prev_cwd.items[this.__prev_cwd.items.len -| 1] == 0);
             }
@@ -642,6 +669,27 @@ pub const Interpreter = struct {
         }
     };
 
+    fn #computeEstimatedSizeForGC(this: *const ThisInterpreter) usize {
+        var size: usize = @sizeOf(ThisInterpreter);
+        size += this.args.memoryCost();
+        size += this.root_shell.memoryCost();
+        size += this.root_io.memoryCost();
+        size += this.jsobjs.len * @sizeOf(JSValue);
+        for (this.vm_args_utf8.items) |arg| {
+            size += arg.byteSlice().len;
+        }
+        size += this.vm_args_utf8.allocatedSlice().len * @sizeOf(jsc.ZigString.Slice);
+        return size;
+    }
+
+    pub fn memoryCost(this: *const ThisInterpreter) usize {
+        return this.#computeEstimatedSizeForGC();
+    }
+
+    pub fn estimatedSize(this: *const ThisInterpreter) usize {
+        return this.estimated_size_for_gc;
+    }
+
     pub fn createShellInterpreter(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const allocator = bun.default_allocator;
         const arguments_ = callframe.arguments_old(3);
@@ -656,7 +704,7 @@ pub const Interpreter = struct {
         const parsed_shell_script = parsed_shell_script_js.as(ParsedShellScript) orelse return globalThis.throw("shell: expected a ParsedShellScript", .{});
 
         var shargs: *ShellArgs = undefined;
-        var jsobjs: std.ArrayList(JSValue) = std.ArrayList(JSValue).init(allocator);
+        var jsobjs: std.array_list.Managed(JSValue) = std.array_list.Managed(JSValue).init(allocator);
         var quiet: bool = false;
         var cwd: ?bun.String = null;
         var export_env: ?EnvMap = null;
@@ -707,6 +755,7 @@ pub const Interpreter = struct {
 
         interpreter.flags.quiet = quiet;
         interpreter.globalThis = globalThis;
+        interpreter.estimated_size_for_gc = interpreter.#computeEstimatedSizeForGC();
 
         const js_value = Bun__createShellInterpreter(
             globalThis,
@@ -716,7 +765,6 @@ pub const Interpreter = struct {
             reject,
         );
         interpreter.this_jsvalue = js_value;
-
         interpreter.keep_alive.ref(globalThis.bunVM());
         bun.analytics.Features.shell += 1;
         return js_value;
@@ -748,16 +796,16 @@ pub const Interpreter = struct {
             return shell.ParseError.Lex;
         }
 
-        if (comptime bun.Environment.allow_assert) {
+        if (comptime bun.Environment.isDebug) {
             const debug = bun.Output.scoped(.ShellTokens, .hidden);
-            var test_tokens = std.ArrayList(shell.Test.TestToken).initCapacity(arena_allocator, lex_result.tokens.len) catch @panic("OOPS");
+            var test_tokens = std.array_list.Managed(shell.Test.TestToken).initCapacity(arena_allocator, lex_result.tokens.len) catch @panic("OOPS");
             defer test_tokens.deinit();
             for (lex_result.tokens) |tok| {
                 const test_tok = shell.Test.TestToken.from_real(tok, lex_result.strpool);
                 test_tokens.append(test_tok) catch @panic("OOPS");
             }
 
-            const str = std.json.stringifyAlloc(bun.default_allocator, test_tokens.items[0..], .{}) catch @panic("OOPS");
+            const str = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{f}", .{std.json.fmt(test_tokens.items[0..], .{})}));
             defer bun.default_allocator.free(str);
             debug("Tokens: {s}", .{str});
         }
@@ -821,10 +869,10 @@ pub const Interpreter = struct {
             },
         };
 
-        var cwd_arr = bun.handleOom(std.ArrayList(u8).initCapacity(bun.default_allocator, cwd.len + 1));
+        var cwd_arr = bun.handleOom(std.array_list.Managed(u8).initCapacity(bun.default_allocator, cwd.len + 1));
         bun.handleOom(cwd_arr.appendSlice(cwd[0 .. cwd.len + 1]));
 
-        if (comptime bun.Environment.allow_assert) {
+        if (comptime bun.Environment.isDebug) {
             assert(cwd_arr.items[cwd_arr.items.len -| 1] == 0);
         }
 
@@ -869,7 +917,7 @@ pub const Interpreter = struct {
                 .stderr = .pipe,
             },
 
-            .vm_args_utf8 = std.ArrayList(jsc.ZigString.Slice).init(bun.default_allocator),
+            .vm_args_utf8 = std.array_list.Managed(jsc.ZigString.Slice).init(bun.default_allocator),
             .__alloc_scope = if (bun.Environment.enableAllocScopes) bun.AllocationScope.init(allocator) else {},
             .globalThis = undefined,
         };
@@ -885,11 +933,7 @@ pub const Interpreter = struct {
 
     pub fn initAndRunFromFile(ctx: bun.cli.Command.Context, mini: *jsc.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
         var shargs = ShellArgs.init();
-        const src = src: {
-            var file = try std.fs.cwd().openFile(path, .{});
-            defer file.close();
-            break :src try file.reader().readAllAlloc(shargs.arena_allocator(), std.math.maxInt(u32));
-        };
+        const src = try std.fs.cwd().readFileAlloc(shargs.arena_allocator(), path, std.math.maxInt(u32));
         defer shargs.deinit();
 
         const jsobjs: []JSValue = &[_]JSValue{};
@@ -1122,9 +1166,9 @@ pub const Interpreter = struct {
         return buffer.toNodeBuffer(globalThis);
     }
 
-    pub fn asyncCmdDone(this: *ThisInterpreter, @"async": *Async) void {
-        log("asyncCommandDone {}", .{@"async"});
-        @"async".actuallyDeinit();
+    pub fn asyncCmdDone(this: *ThisInterpreter, async: *Async) void {
+        log("asyncCommandDone {f}", .{async});
+        async.actuallyDeinit();
         this.async_commands_executing -= 1;
         if (this.async_commands_executing == 0 and this.exit_code != null) {
             this.finish(this.exit_code.?).run();
@@ -1191,6 +1235,7 @@ pub const Interpreter = struct {
             this.root_shell._buffered_stdout.owned.deinit(bun.default_allocator);
         }
         this.this_jsvalue = .zero;
+        this.args.deinit();
         this.allocator.destroy(this);
     }
 
@@ -1497,7 +1542,7 @@ pub fn MaybeChild(comptime T: type) type {
 
 pub fn closefd(fd: bun.FileDescriptor) void {
     if (fd.closeAllowingBadFileDescriptor(null)) |err| {
-        log("ERR closefd: {}\n", .{err});
+        log("ERR closefd: {f}\n", .{err});
     }
 }
 
@@ -1513,7 +1558,7 @@ const CmdEnvIter = struct {
     const Value = struct {
         val: [:0]const u8,
 
-        pub fn format(self: Value, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: Value, writer: *std.Io.Writer) !void {
             try writer.writeAll(self.val);
         }
     };
@@ -1521,7 +1566,7 @@ const CmdEnvIter = struct {
     const Key = struct {
         val: []const u8,
 
-        pub fn format(self: Key, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: Key, writer: *std.Io.Writer) !void {
             try writer.writeAll(self.val);
         }
 
@@ -1980,6 +2025,5 @@ const windows = bun.windows;
 const uv = windows.libuv;
 
 const std = @import("std");
-const ArrayList = std.ArrayList;
 const posix = std.posix;
 const Allocator = std.mem.Allocator;

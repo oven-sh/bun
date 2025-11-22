@@ -651,6 +651,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
             if (jsValue.isString() || jsValue.inherits<JSBlob>()) {
                 // Make sure this runs before the deferral scope is called.
                 JSValue resultValue = toJSValue(value);
+                RETURN_IF_EXCEPTION(throwScope, {});
                 ensureStillAliveHere(resultValue);
 
                 JSC::JSArray* array = nullptr;
@@ -672,7 +673,9 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
                 obj->putDirect(vm, ident, array, 0);
             } else if (jsValue.isObject() && jsValue.getObject()->inherits<JSC::JSArray>()) {
                 JSC::JSArray* array = jsCast<JSC::JSArray*>(jsValue.getObject());
-                array->push(lexicalGlobalObject, toJSValue(value));
+                JSValue jsValue = toJSValue(value);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                array->push(lexicalGlobalObject, jsValue);
                 RETURN_IF_EXCEPTION(throwScope, {});
 
             } else {
@@ -680,7 +683,10 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
             }
         } else {
             seenKeys.add(key);
-            obj->putDirect(vm, ident, toJSValue(value), 0);
+            JSValue jsValue = toJSValue(value);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            obj->putDirectMayBeIndex(lexicalGlobalObject, ident, jsValue);
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
     }
 

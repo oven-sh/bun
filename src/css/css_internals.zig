@@ -110,7 +110,12 @@ pub fn testingImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, c
             var stylesheet, var extra = ret;
             var minify_options: bun.css.MinifyOptions = bun.css.MinifyOptions.default();
             minify_options.targets.browsers = browsers;
-            _ = stylesheet.minify(alloc, minify_options, &extra).assert();
+            switch (stylesheet.minify(alloc, minify_options, &extra)) {
+                .result => |_| {},
+                .err => |*err| {
+                    return globalThis.throwValue(try err.toErrorInstance(globalThis));
+                },
+            }
 
             const symbols = bun.ast.Symbol.Map{};
             var local_names = bun.css.LocalsResultsMap{};
@@ -131,8 +136,8 @@ pub fn testingImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, c
                 &symbols,
             )) {
                 .result => |result| result,
-                .err => |err| {
-                    return err.toJSString(alloc, globalThis);
+                .err => |*err| {
+                    return globalThis.throwValue(try err.toErrorInstance(globalThis));
                 },
             };
 
@@ -142,7 +147,7 @@ pub fn testingImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame, c
             if (log.hasErrors()) {
                 return log.toJS(globalThis, bun.default_allocator, "parsing failed:");
             }
-            return globalThis.throw("parsing failed: {}", .{err.kind});
+            return globalThis.throw("parsing failed: {f}", .{err.kind});
         },
     }
 }
@@ -322,7 +327,7 @@ pub fn attrTest(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
             if (log.hasAny()) {
                 return log.toJS(globalThis, bun.default_allocator, "parsing failed:");
             }
-            return globalThis.throw("parsing failed: {}", .{err.kind});
+            return globalThis.throw("parsing failed: {f}", .{err.kind});
         },
     }
 }

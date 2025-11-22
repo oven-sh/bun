@@ -336,32 +336,55 @@ pub fn crashHandler(
                     writer.print("Crashed while {f}\n", .{action}) catch std.posix.abort();
                 }
 
-                var addr_buf: [20]usize = undefined;
-                var trace_buf: std.builtin.StackTrace = undefined;
+                var addrs: [20]usize = undefined;
+                var trace_buf: std.builtin.StackTrace = .{
+                    .index = 0,
+                    .instruction_addresses = &addrs,
+                };
 
                 // If a trace was not provided, compute one now
                 const trace = blk: {
                     if (error_return_trace) |ert| {
                         if (ert.index > 0) break :blk ert;
                     }
-                    trace_buf = std.builtin.StackTrace{
-                        .index = 0,
-                        .instruction_addresses = &addr_buf,
-                    };
                     const desired_begin_addr = begin_addr orelse @returnAddress();
                     std.debug.captureStackTrace(desired_begin_addr, &trace_buf);
+                    std.debug.print("old trace:", .{});
+                    for (0..trace_buf.index) |i| {
+                        std.debug.print(" {x}", .{addrs[i]});
+                    }
+                    std.debug.print("\n", .{});
+
+                    var new_addrs: [20]usize = undefined;
+                    const new_trace = bun.new_debug.captureCurrentStackTrace(.{
+                        .first_address = desired_begin_addr,
+                    }, &new_addrs);
+                    std.debug.print("new trace:", .{});
+                    for (0..new_trace.index) |i| {
+                        std.debug.print(" {x}", .{new_addrs[i]});
+                    }
+                    std.debug.print("\n", .{});
+                    if (new_trace.index > trace_buf.index) {
+                        addrs = new_addrs;
+                        trace_buf.index = new_trace.index;
+                    }
 
                     if (comptime bun.Environment.isLinux and !bun.Environment.isMusl) {
-                        var addr_buf_libc: [20]usize = undefined;
-                        var trace_buf_libc: std.builtin.StackTrace = .{
+                        var libc_addrs: [20]usize = undefined;
+                        var libc_trace: std.builtin.StackTrace = .{
                             .index = 0,
-                            .instruction_addresses = &addr_buf_libc,
+                            .instruction_addresses = &libc_addrs,
                         };
-                        captureLibcBacktrace(desired_begin_addr, &trace_buf_libc);
+                        captureLibcBacktrace(desired_begin_addr, &libc_trace);
+                        std.debug.print("libc trace:", .{});
+                        for (0..libc_trace.index) |i| {
+                            std.debug.print(" {x}", .{libc_addrs[i]});
+                        }
+                        std.debug.print("\n", .{});
                         // Use stack trace from glibc's backtrace() if it has more frames
-                        if (trace_buf_libc.index > trace_buf.index) {
-                            addr_buf = addr_buf_libc;
-                            trace_buf.index = trace_buf_libc.index;
+                        if (libc_trace.index > trace_buf.index) {
+                            addrs = libc_addrs;
+                            trace_buf.index = libc_trace.index;
                         }
                     }
                     break :blk &trace_buf;

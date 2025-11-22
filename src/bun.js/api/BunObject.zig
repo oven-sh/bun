@@ -730,6 +730,27 @@ pub fn getPublicPathWithAssetPrefix(
     }
 }
 
+pub noinline fn bad1(i: i32) void {
+    bad2(i);
+}
+pub noinline fn bad2(i: i32) void {
+    bad3(i);
+}
+pub noinline fn bad3(i: i32) void {
+    bad4(i);
+}
+pub noinline fn bad4(i: i32) void {
+    if (i == 1) {
+        const x: *volatile i32 = @ptrFromInt(0x1230);
+        std.debug.print("{d}\n", .{x.*});
+    } else if (i == 2) {
+        std.debug.panic("explicit panic\n", .{});
+    } else {
+        return;
+    }
+    std.debug.print("you should not see this\n", .{});
+}
+
 pub fn sleepSync(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     const arguments = callframe.arguments_old(1);
 
@@ -747,6 +768,7 @@ pub fn sleepSync(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 
     //NOTE: if argument is > max(i32) then it will be truncated
     const milliseconds = try arg.coerce(i32, globalObject);
+    bad1(milliseconds);
     if (milliseconds < 0) {
         return globalObject.throwInvalidArguments("argument to sleepSync must not be negative, got {d}", .{milliseconds});
     }

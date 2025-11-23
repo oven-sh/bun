@@ -31,7 +31,6 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
             var promise = jsc.JSPromise.create(globalThis);
             this.promise.strong.set(globalThis, promise.toJS());
             this.ref.ref(this.event_loop.virtual_machine);
-
             return this;
         }
 
@@ -41,13 +40,13 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
             this.onFinish();
         }
 
-        pub fn runFromJS(this: *This) void {
+        pub fn runFromJS(this: *This) bun.JSTerminated!void {
             const promise = this.promise.swap();
             this.ref.unref(this.event_loop.virtual_machine);
 
             var ctx = this.ctx;
 
-            ctx.then(promise);
+            return ctx.then(promise);
         }
 
         pub fn schedule(this: *This) void {

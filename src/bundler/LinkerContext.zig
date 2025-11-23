@@ -10,7 +10,7 @@ pub const LinkerContext = struct {
     log: *Logger.Log = undefined,
 
     resolver: *Resolver = undefined,
-    cycle_detector: std.ArrayList(ImportTracker) = undefined,
+    cycle_detector: std.array_list.Managed(ImportTracker) = undefined,
 
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
     cjs_runtime_ref: Ref = Ref.None,
@@ -18,6 +18,9 @@ pub const LinkerContext = struct {
 
     /// We may need to refer to the CommonJS "module" symbol for exports
     unbound_module_ref: Ref = Ref.None,
+
+    /// We may need to refer to the "__promiseAll" runtime symbol
+    promise_all_runtime_ref: Ref = Ref.None,
 
     options: LinkerOptions = .{},
 
@@ -126,7 +129,7 @@ pub const LinkerContext = struct {
 
         pub fn computeLineOffsets(this: *LinkerContext, alloc: std.mem.Allocator, source_index: Index.Int) void {
             debug("Computing LineOffsetTable: {d}", .{source_index});
-            const line_offset_table: *bun.sourcemap.LineOffsetTable.List = &this.graph.files.items(.line_offset_table)[source_index];
+            const line_offset_table: *bun.SourceMap.LineOffsetTable.List = &this.graph.files.items(.line_offset_table)[source_index];
 
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
             const loader: options.Loader = this.parse_graph.input_files.items(.loader)[source_index];
@@ -139,7 +142,7 @@ pub const LinkerContext = struct {
 
             const approximate_line_count = this.graph.ast.items(.approximate_newline_count)[source_index];
 
-            line_offset_table.* = bun.sourcemap.LineOffsetTable.generate(
+            line_offset_table.* = bun.SourceMap.LineOffsetTable.generate(
                 alloc,
                 source.contents,
 
@@ -204,7 +207,7 @@ pub const LinkerContext = struct {
         this.log = bundle.transpiler.log;
 
         this.resolver = &bundle.transpiler.resolver;
-        this.cycle_detector = std.ArrayList(ImportTracker).init(this.allocator());
+        this.cycle_detector = std.array_list.Managed(ImportTracker).init(this.allocator());
 
         this.graph.reachable_files = reachable;
 
@@ -217,6 +220,7 @@ pub const LinkerContext = struct {
 
         this.esm_runtime_ref = runtime_named_exports.get("__esm").?.ref;
         this.cjs_runtime_ref = runtime_named_exports.get("__commonJS").?.ref;
+        this.promise_all_runtime_ref = runtime_named_exports.get("__promiseAll").?.ref;
 
         if (this.options.output_format == .cjs) {
             this.unbound_module_ref = this.graph.generateNewSymbol(Index.runtime.get(), .unbound, "module");
@@ -336,13 +340,18 @@ pub const LinkerContext = struct {
         }
     }
 
+    const LinkError = OOM || error{
+        BuildFailed,
+        ImportResolutionFailed,
+    };
+
     pub noinline fn link(
         this: *LinkerContext,
         bundle: *BundleV2,
         entry_points: []Index,
         server_component_boundaries: ServerComponentBoundary.List,
         reachable: []Index,
-    ) ![]Chunk {
+    ) LinkError![]Chunk {
         try this.load(
             bundle,
             entry_points,
@@ -360,10 +369,8 @@ pub const LinkerContext = struct {
             this.checkForMemoryCorruption();
         }
 
-        // Validate top-level await for all files first, like esbuild does.
-        // This must be done before scanImportsAndExports to ensure async
-        // status is properly propagated through cyclic imports.
-        {
+        // Validate top-level await for all files first.
+        if (bundle.has_any_top_level_await_modules) {
             const import_records_list: []ImportRecord.List = this.graph.ast.items(.import_records);
             const tla_keywords = this.parse_graph.ast.items(.top_level_await_keyword);
             const tla_checks = this.parse_graph.ast.items(.tla_check);
@@ -388,9 +395,11 @@ pub const LinkerContext = struct {
 
                 _ = try this.validateTLA(source_index, tla_keywords, tla_checks, input_files, import_records, flags, import_records_list);
             }
+
+            // after validation propagate async through all importers.
+            try this.graph.propagateAsyncDependencies();
         }
 
-        try this.graph.propagateAsyncDependencies();
         try this.scanImportsAndExports();
 
         // Stop now if there were errors
@@ -409,6 +418,10 @@ pub const LinkerContext = struct {
         }
 
         const chunks = try this.computeChunks(bundle.unique_key);
+
+        if (this.log.hasErrors()) {
+            return error.BuildFailed;
+        }
 
         if (comptime FeatureFlags.help_catch_memory_issues) {
             this.checkForMemoryCorruption();
@@ -438,32 +451,32 @@ pub const LinkerContext = struct {
     pub const findImportedFilesInCSSOrder = @import("./linker_context/findImportedFilesInCSSOrder.zig").findImportedFilesInCSSOrder;
     pub const findImportedCSSFilesInJSOrder = @import("./linker_context/findImportedCSSFilesInJSOrder.zig").findImportedCSSFilesInJSOrder;
 
-    pub fn generateNamedExportInFile(this: *LinkerContext, source_index: Index.Int, module_ref: Ref, name: []const u8, alias: []const u8) !struct { Ref, u32 } {
+    pub fn generateNamedExportInFile(this: *LinkerContext, source_index: Index.Int, module_ref: Ref, name: []const u8, alias: []const u8) bun.OOM!struct { Ref, u32 } {
         const ref = this.graph.generateNewSymbol(source_index, .other, name);
-        const part_index = this.graph.addPartToFile(source_index, .{
-            .declared_symbols = js_ast.DeclaredSymbol.List.fromSlice(
+        const part_index = try this.graph.addPartToFile(source_index, .{
+            .declared_symbols = try js_ast.DeclaredSymbol.List.fromSlice(
                 this.allocator(),
                 &[_]js_ast.DeclaredSymbol{
                     .{ .ref = ref, .is_top_level = true },
                 },
-            ) catch unreachable,
+            ),
             .can_be_removed_if_unused = true,
-        }) catch unreachable;
+        });
 
         try this.graph.generateSymbolImportAndUse(source_index, part_index, module_ref, 1, Index.init(source_index));
         var top_level = &this.graph.meta.items(.top_level_symbol_to_parts_overlay)[source_index];
-        var parts_list = this.allocator().alloc(u32, 1) catch unreachable;
+        var parts_list = try this.allocator().alloc(u32, 1);
         parts_list[0] = part_index;
 
-        top_level.put(this.allocator(), ref, BabyList(u32).fromOwnedSlice(parts_list)) catch unreachable;
+        try top_level.put(this.allocator(), ref, BabyList(u32).fromOwnedSlice(parts_list));
 
         var resolved_exports = &this.graph.meta.items(.resolved_exports)[source_index];
-        resolved_exports.put(this.allocator(), alias, ExportData{
+        try resolved_exports.put(this.allocator(), alias, ExportData{
             .data = ImportTracker{
                 .source_index = Index.init(source_index),
                 .import_ref = ref,
             },
-        }) catch unreachable;
+        });
         return .{ ref, part_index };
     }
 
@@ -545,7 +558,7 @@ pub const LinkerContext = struct {
         return &c.parse_graph.input_files.items(.source)[index];
     }
 
-    pub fn treeShakingAndCodeSplitting(c: *LinkerContext) !void {
+    pub fn treeShakingAndCodeSplitting(c: *LinkerContext) OOM!void {
         const trace = bun.perf.trace("Bundler.treeShakingAndCodeSplitting");
         defer trace.end();
 
@@ -673,7 +686,7 @@ pub const LinkerContext = struct {
         results: std.MultiArrayList(CompileResultForSourceMap),
         chunk_abs_dir: string,
         can_have_shifts: bool,
-    ) !sourcemap.SourceMapPieces {
+    ) !SourceMap.SourceMapPieces {
         const trace = bun.perf.trace("Bundler.generateSourceMapForChunk");
         defer trace.end();
 
@@ -708,7 +721,7 @@ pub const LinkerContext = struct {
                 try source_id_map.putNoClobber(index, 0);
 
                 if (path.isFile()) {
-                    const rel_path = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
+                    const rel_path = try bun.path.relativeAlloc(worker.allocator, chunk_abs_dir, path.text);
                     path.pretty = rel_path;
                 }
 
@@ -728,7 +741,7 @@ pub const LinkerContext = struct {
                 var path = sources[index].path;
 
                 if (path.isFile()) {
-                    const rel_path = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
+                    const rel_path = try bun.path.relativeAlloc(worker.allocator, chunk_abs_dir, path.text);
                     path.pretty = rel_path;
                 }
 
@@ -763,7 +776,7 @@ pub const LinkerContext = struct {
         );
 
         const mapping_start = j.len;
-        var prev_end_state = sourcemap.SourceMapState{};
+        var prev_end_state = SourceMap.SourceMapState{};
         var prev_column_offset: i32 = 0;
         const source_map_chunks = results.items(.source_map_chunk);
         const offsets = results.items(.generated_offset);
@@ -771,7 +784,7 @@ pub const LinkerContext = struct {
             const mapping_source_index = source_id_map.get(current_source_index) orelse
                 unreachable; // the pass above during printing of "sources" must add the index
 
-            var start_state = sourcemap.SourceMapState{
+            var start_state = SourceMap.SourceMapState{
                 .source_index = mapping_source_index,
                 .generated_line = offset.lines.zeroBased(),
                 .generated_column = offset.columns.zeroBased(),
@@ -781,7 +794,7 @@ pub const LinkerContext = struct {
                 start_state.generated_column += prev_column_offset;
             }
 
-            try sourcemap.appendSourceMapChunk(&j, worker.allocator, prev_end_state, start_state, chunk.buffer.list.items);
+            try SourceMap.appendSourceMapChunk(&j, worker.allocator, prev_end_state, start_state, chunk.buffer.list.items);
 
             prev_end_state = chunk.end_state;
             prev_end_state.source_index = mapping_source_index;
@@ -797,7 +810,7 @@ pub const LinkerContext = struct {
         if (comptime FeatureFlags.source_map_debug_id) {
             j.pushStatic("\",\n  \"debugId\": \"");
             j.push(
-                try std.fmt.allocPrint(worker.allocator, "{}", .{bun.sourcemap.DebugIDFormatter{ .id = isolated_hash }}),
+                try std.fmt.allocPrint(worker.allocator, "{f}", .{bun.SourceMap.DebugIDFormatter{ .id = isolated_hash }}),
                 worker.allocator,
             );
             j.pushStatic("\",\n  \"names\": []\n}");
@@ -808,7 +821,7 @@ pub const LinkerContext = struct {
         const done = try j.done(worker.allocator);
         bun.assert(done[0] == '{');
 
-        var pieces = sourcemap.SourceMapPieces.init(worker.allocator);
+        var pieces = SourceMap.SourceMapPieces.init(worker.allocator);
         if (can_have_shifts) {
             try pieces.prefix.appendSlice(done[0..mapping_start]);
             try pieces.mappings.appendSlice(done[mapping_start..mapping_end]);
@@ -932,7 +945,7 @@ pub const LinkerContext = struct {
         import_records: []const ImportRecord,
         meta_flags: []JSMeta.Flags,
         ast_import_records: []const bun.BabyList(ImportRecord),
-    ) bun.OOM!js_ast.TlaCheck {
+    ) OOM!js_ast.TlaCheck {
         var result_tla_check: *js_ast.TlaCheck = &tla_checks[source_index];
 
         if (result_tla_check.depth == 0) {
@@ -966,7 +979,7 @@ pub const LinkerContext = struct {
 
                     // Require of a top-level await chain is forbidden
                     if (record.kind == .require) {
-                        var notes = std.ArrayList(Logger.Data).init(c.allocator());
+                        var notes = std.array_list.Managed(Logger.Data).init(c.allocator());
 
                         var tla_pretty_path: string = "";
                         var other_source_index = record.source_index.get();
@@ -1029,32 +1042,129 @@ pub const LinkerContext = struct {
     }
 
     pub const StmtList = struct {
-        inside_wrapper_prefix: std.ArrayList(Stmt),
-        outside_wrapper_prefix: std.ArrayList(Stmt),
-        inside_wrapper_suffix: std.ArrayList(Stmt),
+        const InsideWrapperPrefix = struct {
+            allocator: std.mem.Allocator,
+            stmts: std.ArrayListUnmanaged(Stmt),
 
-        all_stmts: std.ArrayList(Stmt),
+            sync_dependencies_end: usize,
+
+            // if true it will exist at `sync_dependencies_end`
+            has_async_dependency: bool,
+
+            pub fn init(alloc: std.mem.Allocator) InsideWrapperPrefix {
+                return .{ .stmts = .{}, .allocator = alloc, .sync_dependencies_end = 0, .has_async_dependency = false };
+            }
+
+            pub fn deinit(this: *InsideWrapperPrefix) void {
+                this.stmts.deinit(this.allocator);
+                this.sync_dependencies_end = 0;
+                this.has_async_dependency = false;
+            }
+
+            pub fn reset(this: *InsideWrapperPrefix) void {
+                this.stmts.clearRetainingCapacity();
+                this.sync_dependencies_end = 0;
+                this.has_async_dependency = false;
+            }
+
+            pub fn appendNonDependency(this: *InsideWrapperPrefix, stmt: Stmt) OOM!void {
+                try this.stmts.append(this.allocator, stmt);
+            }
+
+            pub fn appendNonDependencySlice(this: *InsideWrapperPrefix, stmts: []const Stmt) OOM!void {
+                try this.stmts.appendSlice(this.allocator, stmts);
+            }
+
+            pub fn appendSyncDependency(this: *InsideWrapperPrefix, call_expr: Expr) OOM!void {
+                try this.stmts.insert(this.allocator, this.sync_dependencies_end, Stmt.alloc(S.SExpr, .{ .value = call_expr }, call_expr.loc));
+                this.sync_dependencies_end += 1;
+            }
+
+            pub fn appendAsyncDependency(this: *InsideWrapperPrefix, call_expr: Expr, promise_all_ref: Ref) OOM!void {
+                if (!this.has_async_dependency) {
+                    this.has_async_dependency = true;
+                    try this.stmts.insert(
+                        this.allocator,
+                        this.sync_dependencies_end,
+                        Stmt.alloc(S.SExpr, .{ .value = Expr.init(E.Await, .{ .value = call_expr }, .Empty) }, .Empty),
+                    );
+                    return;
+                }
+
+                const first_dep_call_expr = this.stmts.items[this.sync_dependencies_end].data.s_expr.value.data.e_await.value;
+                const call = first_dep_call_expr.data.e_call;
+
+                if (call.target.data.e_identifier.ref.eql(promise_all_ref)) {
+                    // `await __promiseAll` already in place, append to the array argument
+                    try call.args.at(0).data.e_array.items.append(this.allocator, call_expr);
+                } else {
+                    // convert single `await init_` to `await __promiseAll([init_1(), init_2()])`
+
+                    const promise_all = Expr.init(E.Identifier, .{ .ref = promise_all_ref }, .Empty);
+
+                    var items: BabyList(Expr) = try .initCapacity(this.allocator, 2);
+                    items.appendSliceAssumeCapacity(&.{ first_dep_call_expr, call_expr });
+
+                    var args: BabyList(Expr) = try .initCapacity(this.allocator, 1);
+                    args.appendAssumeCapacity(Expr.init(E.Array, .{ .items = items }, .Empty));
+
+                    const promise_all_call = Expr.init(E.Call, .{ .target = promise_all, .args = args }, .Empty);
+
+                    // replace the `await init_` expr with `await __promiseAll`
+                    this.stmts.items[this.sync_dependencies_end] = Stmt.alloc(S.SExpr, .{ .value = Expr.init(E.Await, .{ .value = promise_all_call }, .Empty) }, .Empty);
+                }
+            }
+        };
+
+        allocator: std.mem.Allocator,
+        inside_wrapper_prefix: InsideWrapperPrefix,
+        outside_wrapper_prefix: std.ArrayListUnmanaged(Stmt),
+        inside_wrapper_suffix: std.ArrayListUnmanaged(Stmt),
+        all_stmts: std.ArrayListUnmanaged(Stmt),
 
         pub fn reset(this: *StmtList) void {
-            this.inside_wrapper_prefix.clearRetainingCapacity();
+            this.inside_wrapper_prefix.reset();
             this.outside_wrapper_prefix.clearRetainingCapacity();
             this.inside_wrapper_suffix.clearRetainingCapacity();
             this.all_stmts.clearRetainingCapacity();
         }
 
         pub fn deinit(this: *StmtList) void {
-            this.inside_wrapper_prefix.deinit();
-            this.outside_wrapper_prefix.deinit();
-            this.inside_wrapper_suffix.deinit();
-            this.all_stmts.deinit();
+            this.inside_wrapper_prefix.deinit(this.allocator);
+            this.outside_wrapper_prefix.deinit(this.allocator);
+            this.inside_wrapper_suffix.deinit(this.allocator);
+            this.all_stmts.deinit(this.allocator);
         }
 
         pub fn init(alloc: std.mem.Allocator) StmtList {
             return .{
-                .inside_wrapper_prefix = std.ArrayList(Stmt).init(alloc),
-                .outside_wrapper_prefix = std.ArrayList(Stmt).init(alloc),
-                .inside_wrapper_suffix = std.ArrayList(Stmt).init(alloc),
-                .all_stmts = std.ArrayList(Stmt).init(alloc),
+                .allocator = alloc,
+                .inside_wrapper_prefix = .init(alloc),
+                .outside_wrapper_prefix = .{},
+                .inside_wrapper_suffix = .{},
+                .all_stmts = .{},
+            };
+        }
+
+        const List = enum {
+            outside_wrapper_prefix,
+            inside_wrapper_suffix,
+            all_stmts,
+        };
+
+        pub fn appendSlice(this: *StmtList, list: List, stmts: []const Stmt) OOM!void {
+            try switch (list) {
+                .outside_wrapper_prefix => this.outside_wrapper_prefix.appendSlice(this.allocator, stmts),
+                .inside_wrapper_suffix => this.inside_wrapper_suffix.appendSlice(this.allocator, stmts),
+                .all_stmts => this.all_stmts.appendSlice(this.allocator, stmts),
+            };
+        }
+
+        pub fn append(this: *StmtList, list: List, stmt: Stmt) OOM!void {
+            try switch (list) {
+                .outside_wrapper_prefix => this.outside_wrapper_prefix.append(this.allocator, stmt),
+                .inside_wrapper_suffix => this.inside_wrapper_suffix.append(this.allocator, stmt),
+                .all_stmts => this.all_stmts.append(this.allocator, stmt),
             };
         }
     };
@@ -1077,7 +1187,7 @@ pub const LinkerContext = struct {
             }
 
             // Otherwise, replace this statement with a call to "require()"
-            stmts.inside_wrapper_prefix.append(
+            stmts.inside_wrapper_prefix.appendNonDependency(
                 Stmt.alloc(
                     S.Local,
                     S.Local{
@@ -1120,7 +1230,7 @@ pub const LinkerContext = struct {
             .none => {},
             .cjs => {
                 // Replace the statement with a call to "require()" if this module is not wrapped
-                try stmts.inside_wrapper_prefix.append(
+                try stmts.inside_wrapper_prefix.appendNonDependency(
                     Stmt.alloc(S.Local, .{
                         .decls = try G.Decl.List.fromSlice(
                             alloc,
@@ -1152,31 +1262,18 @@ pub const LinkerContext = struct {
                 }
 
                 // Replace the statement with a call to "init()"
-                const value: Expr = brk: {
-                    const default = Expr.init(E.Call, .{
-                        .target = Expr.initIdentifier(
-                            wrapper_ref,
-                            loc,
-                        ),
-                    }, loc);
+                const init_call = Expr.init(E.Call, .{
+                    .target = Expr.initIdentifier(
+                        wrapper_ref,
+                        loc,
+                    ),
+                }, loc);
 
-                    if (other_flags.is_async_or_has_async_dependency) {
-                        // This currently evaluates sibling dependencies in serial instead of in
-                        // parallel, which is incorrect. This should be changed to store a promise
-                        // and await all stored promises after all imports but before any code.
-                        break :brk Expr.init(E.Await, .{
-                            .value = default,
-                        }, loc);
-                    }
-
-                    break :brk default;
-                };
-
-                try stmts.inside_wrapper_prefix.append(
-                    Stmt.alloc(S.SExpr, .{
-                        .value = value,
-                    }, loc),
-                );
+                if (other_flags.is_async_or_has_async_dependency) {
+                    try stmts.inside_wrapper_prefix.appendAsyncDependency(init_call, c.promise_all_runtime_ref);
+                } else {
+                    try stmts.inside_wrapper_prefix.appendSyncDependency(init_call);
+                }
             },
         }
 
@@ -1227,6 +1324,7 @@ pub const LinkerContext = struct {
 
             .minify_whitespace = c.options.minify_whitespace,
             .minify_syntax = c.options.minify_syntax,
+            .input_module_type = ast.exports_kind.toModuleType(),
             .module_type = c.options.output_format,
             .print_dce_annotations = c.options.emit_dce_annotations,
             .has_run_symbol_renamer = true,
@@ -1313,7 +1411,7 @@ pub const LinkerContext = struct {
 
     const SubstituteChunkFinalPathResult = struct {
         j: StringJoiner,
-        shifts: []sourcemap.SourceMapShifts,
+        shifts: []SourceMap.SourceMapShifts,
     };
 
     pub fn mangleLocalCss(c: *LinkerContext) void {
@@ -1428,7 +1526,7 @@ pub const LinkerContext = struct {
     pub fn sortedCrossChunkExportItems(
         c: *LinkerContext,
         export_refs: ChunkMeta.Map,
-        list: *std.ArrayList(StableRef),
+        list: *std.array_list.Managed(StableRef),
     ) void {
         var result = list.*;
         defer list.* = result;
@@ -1726,13 +1824,13 @@ pub const LinkerContext = struct {
     pub fn matchImportWithExport(
         c: *LinkerContext,
         init_tracker: ImportTracker,
-        re_exports: *std.ArrayList(js_ast.Dependency),
+        re_exports: *std.array_list.Managed(js_ast.Dependency),
     ) MatchImport {
         const cycle_detector_top = c.cycle_detector.items.len;
         defer c.cycle_detector.shrinkRetainingCapacity(cycle_detector_top);
 
         var tracker = init_tracker;
-        var ambiguous_results = std.ArrayList(MatchImport).init(c.allocator());
+        var ambiguous_results = std.array_list.Managed(MatchImport).init(c.allocator());
         defer ambiguous_results.clearAndFree();
 
         var result: MatchImport = MatchImport{};
@@ -1866,7 +1964,7 @@ pub const LinkerContext = struct {
                         // "undefined" instead of emitting an error.
                         symbol.import_item_status = .missing;
 
-                        if (c.resolver.opts.target == .browser and jsc.ModuleLoader.HardcodedModule.Alias.has(next_source.path.pretty, .bun)) {
+                        if (c.resolver.opts.target == .browser and jsc.ModuleLoader.HardcodedModule.Alias.has(next_source.path.pretty, .bun, .{})) {
                             c.log.addRangeWarningFmtWithNote(
                                 source,
                                 r,
@@ -2104,18 +2202,53 @@ pub const LinkerContext = struct {
                 //
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
+
+                // Count async dependencies to determine if we need __promiseAll
+                var async_import_count: usize = 0;
+                const import_records = c.graph.ast.items(.import_records)[source_index].slice();
+                const meta_flags = c.graph.meta.items(.flags);
+
+                for (import_records) |record| {
+                    if (!record.source_index.isValid()) {
+                        continue;
+                    }
+                    const other_flags = meta_flags[record.source_index.get()];
+                    if (other_flags.is_async_or_has_async_dependency) {
+                        async_import_count += 1;
+                        if (async_import_count >= 2) {
+                            break;
+                        }
+                    }
+                }
+
+                const needs_promise_all = async_import_count >= 2;
+
                 const esm_parts = if (wrapper_ref.isValid() and c.options.output_format != .internal_bake_dev)
                     c.topLevelSymbolsToPartsForRuntime(c.esm_runtime_ref)
                 else
                     &.{};
 
-                // generate a dummy part that depends on the "__esm" symbol
-                const dependencies = c.allocator().alloc(js_ast.Dependency, esm_parts.len) catch unreachable;
-                for (esm_parts, dependencies) |part, *esm| {
-                    esm.* = .{
+                const promise_all_parts = if (needs_promise_all and wrapper_ref.isValid() and c.options.output_format != .internal_bake_dev)
+                    c.topLevelSymbolsToPartsForRuntime(c.promise_all_runtime_ref)
+                else
+                    &.{};
+
+                // generate a dummy part that depends on the "__esm" and optionally "__promiseAll" symbols
+                const dependencies = c.allocator().alloc(js_ast.Dependency, esm_parts.len + promise_all_parts.len) catch unreachable;
+                var dep_index: usize = 0;
+                for (esm_parts) |part| {
+                    dependencies[dep_index] = .{
                         .part_index = part,
                         .source_index = Index.runtime,
                     };
+                    dep_index += 1;
+                }
+                for (promise_all_parts) |part| {
+                    dependencies[dep_index] = .{
+                        .part_index = part,
+                        .source_index = Index.runtime,
+                    };
+                    dep_index += 1;
                 }
 
                 var symbol_uses: Part.SymbolUseMap = .empty;
@@ -2140,6 +2273,17 @@ pub const LinkerContext = struct {
                         1,
                         Index.runtime,
                     ) catch |err| bun.handleOom(err);
+
+                    // Only mark __promiseAll as used if we have multiple async dependencies
+                    if (needs_promise_all) {
+                        c.graph.generateSymbolImportAndUse(
+                            source_index,
+                            part_index,
+                            c.promise_all_runtime_ref,
+                            1,
+                            Index.runtime,
+                        ) catch |err| bun.handleOom(err);
+                    }
                 }
             },
             else => {},
@@ -2304,7 +2448,7 @@ pub const LinkerContext = struct {
 
             const import_ref = ref;
 
-            var re_exports = std.ArrayList(js_ast.Dependency).init(c.allocator());
+            var re_exports = std.array_list.Managed(js_ast.Dependency).init(c.allocator());
             const result = c.matchImportWithExport(.{
                 .source_index = Index.source(source_index),
                 .import_ref = import_ref,
@@ -2425,7 +2569,7 @@ pub const LinkerContext = struct {
 
         var pieces = brk: {
             errdefer j.deinit();
-            break :brk try std.ArrayList(OutputPiece).initCapacity(alloc, count);
+            break :brk try std.array_list.Managed(OutputPiece).initCapacity(alloc, count);
         };
         errdefer pieces.deinit();
         const complete_output = try j.done(alloc);
@@ -2538,12 +2682,13 @@ const FeatureFlags = bun.FeatureFlags;
 const ImportRecord = bun.ImportRecord;
 const MultiArrayList = bun.MultiArrayList;
 const MutableString = bun.MutableString;
+const OOM = bun.OOM;
 const Output = bun.Output;
+const SourceMap = bun.SourceMap;
 const StringJoiner = bun.StringJoiner;
 const bake = bun.bake;
 const base64 = bun.base64;
 const renamer = bun.renamer;
-const sourcemap = bun.sourcemap;
 const strings = bun.strings;
 const sync = bun.threading;
 const AutoBitSet = bun.bit_set.AutoBitSet;

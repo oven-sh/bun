@@ -33,7 +33,7 @@ if (process.platform === "linux") {
       throw new Error(`Found glibc symbols > 2.26. This breaks Amazon Linux 2 and Vercel.
 
 ${Bun.inspect.table(errors, { colors: true })}
-To fix this, add it to -Wl,-wrap=symbol in the linker flags and update workaround-missing-symbols.cpp.`);
+To fix this, add it to -Wl,--wrap=symbol in the linker flags and update workaround-missing-symbols.cpp.`);
     }
   });
 

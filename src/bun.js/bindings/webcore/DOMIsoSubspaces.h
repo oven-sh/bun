@@ -266,6 +266,8 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForReadableStreamSource;
     std::unique_ptr<IsoSubspace> m_subspaceForTransformStream;
     std::unique_ptr<IsoSubspace> m_subspaceForTransformStreamDefaultController;
+    std::unique_ptr<IsoSubspace> m_subspaceForCompressionStream;
+    std::unique_ptr<IsoSubspace> m_subspaceForDecompressionStream;
     std::unique_ptr<IsoSubspace> m_subspaceForWritableStream;
     std::unique_ptr<IsoSubspace> m_subspaceForWritableStreamDefaultController;
     std::unique_ptr<IsoSubspace> m_subspaceForWritableStreamDefaultWriter;
@@ -942,6 +944,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSHash;
     std::unique_ptr<IsoSubspace> m_subspaceForServerRouteList;
     std::unique_ptr<IsoSubspace> m_subspaceForBunRequest;
+    std::unique_ptr<IsoSubspace> m_subspaceForBakeResponse;
     std::unique_ptr<IsoSubspace> m_subspaceForJSDiffieHellman;
     std::unique_ptr<IsoSubspace> m_subspaceForJSDiffieHellmanGroup;
     std::unique_ptr<IsoSubspace> m_subspaceForJSECDH;

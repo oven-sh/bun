@@ -67,6 +67,11 @@ pub const UntrustedCommand = struct {
                     const dep = pm.lockfile.buffers.dependencies.items[dep_id];
                     const alias = dep.name.slice(buf);
                     const package_id = pm.lockfile.buffers.resolutions.items[dep_id];
+
+                    if (package_id >= packages.len) {
+                        continue;
+                    }
+
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
 
@@ -230,9 +235,11 @@ pub const TrustCommand = struct {
                     const dep = pm.lockfile.buffers.dependencies.items[dep_id];
                     const alias = dep.name.slice(buf);
                     const package_id = pm.lockfile.buffers.resolutions.items[dep_id];
-                    if (comptime Environment.allow_assert) {
-                        bun.assertWithLocation(package_id != Install.invalid_package_id, @src());
+
+                    if (package_id >= packages.len) {
+                        continue;
                     }
+
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
 
@@ -343,7 +350,7 @@ pub const TrustCommand = struct {
         const package_json_contents = try pm.root_package_json_file.readToEndAlloc(ctx.allocator, try pm.root_package_json_file.getEndPos());
         defer ctx.allocator.free(package_json_contents);
 
-        const package_json_source = logger.Source.initPathString(PackageManager.package_json_cwd, package_json_contents);
+        const package_json_source = logger.Source.initPathString(PackageManager.root_package_json_path, package_json_contents);
 
         var package_json = bun.json.parseUTF8(&package_json_source, ctx.log, ctx.allocator) catch |err| {
             ctx.log.print(Output.errorWriter()) catch {};

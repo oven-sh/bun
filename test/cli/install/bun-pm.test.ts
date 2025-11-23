@@ -18,7 +18,9 @@ import {
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
-beforeEach(dummyBeforeEach);
+beforeEach(async () => {
+  await dummyBeforeEach();
+});
 afterEach(dummyAfterEach);
 
 it("should list top-level dependency", async () => {
@@ -441,4 +443,146 @@ test("bun pm whoami still works", async () => {
 
   // Exit code will be non-zero due to missing auth
   expect(exitCode).toBe(1);
+});
+
+test.each([
+  {
+    name: "bun list executes pm ls",
+    cmd: ["list"],
+    packageName: "test-list",
+    dependencies: { bar: "latest" },
+    expectedOutput: (dir: string) => `${dir} node_modules (1)\n└── bar@0.0.2\n`,
+    checkReservationMessage: true,
+  },
+  {
+    name: "bun pm list works as alias for bun pm ls",
+    cmd: ["pm", "list"],
+    packageName: "test-pm-list",
+    dependencies: { bar: "latest" },
+    expectedOutput: (dir: string) => `${dir} node_modules (1)\n└── bar@0.0.2\n`,
+    checkReservationMessage: false,
+  },
+  {
+    name: "bun pm ls still works",
+    cmd: ["pm", "ls"],
+    packageName: "test-pm-ls",
+    dependencies: { bar: "latest" },
+    expectedOutput: (dir: string) => `${dir} node_modules (1)\n└── bar@0.0.2\n`,
+    checkReservationMessage: false,
+  },
+])("$name", async ({ cmd, packageName, dependencies, expectedOutput, checkReservationMessage }) => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: packageName,
+      version: "1.0.0",
+      dependencies,
+    }),
+  );
+
+  // Install dependencies first
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+
+  // Test the command
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), ...cmd],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const [stderrText, stdoutText, exitCode] = await Promise.all([
+    new Response(stderr).text(),
+    new Response(stdout).text(),
+    exited,
+  ]);
+
+  expect(stderrText).toBe("");
+  if (checkReservationMessage) {
+    expect(stdoutText).not.toContain("reserved for future use");
+  }
+  expect(stdoutText).toBe(expectedOutput(package_dir));
+  expect(exitCode).toBe(0);
+});
+
+test("bun list --all shows full dependency tree", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "test-list-all",
+      version: "1.0.0",
+      dependencies: {
+        moo: "./moo",
+      },
+    }),
+  );
+  await mkdir(join(package_dir, "moo"));
+  await writeFile(
+    join(package_dir, "moo", "package.json"),
+    JSON.stringify({
+      name: "moo",
+      version: "0.1.0",
+      dependencies: {
+        bar: "latest",
+      },
+    }),
+  );
+
+  // Install dependencies first
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+
+  // Test "bun list --all"
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "list", "--all"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const [stderrText, stdoutText, exitCode] = await Promise.all([
+    new Response(stderr).text(),
+    new Response(stdout).text(),
+    exited,
+  ]);
+
+  expect(stderrText).toBe("");
+  expect(stdoutText).toBe(`${package_dir} node_modules
+├── bar@0.0.2
+└── moo@moo
+`);
+  expect(exitCode).toBe(0);
 });

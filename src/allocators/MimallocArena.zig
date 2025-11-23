@@ -94,6 +94,8 @@ const BorrowedHeap = if (safety_checks) *DebugHeap else *mimalloc.Heap;
 const DebugHeap = struct {
     inner: *mimalloc.Heap,
     thread_lock: bun.safety.ThreadLock,
+
+    pub const deinit = void;
 };
 
 threadlocal var thread_heap: if (safety_checks) ?DebugHeap else void = if (safety_checks) null;
@@ -134,7 +136,7 @@ pub fn backingAllocator(_: Self) std.mem.Allocator {
 
 pub fn dumpThreadStats(_: Self) void {
     const dump_fn = struct {
-        pub fn dump(textZ: [*:0]const u8, _: ?*anyopaque) callconv(.C) void {
+        pub fn dump(textZ: [*:0]const u8, _: ?*anyopaque) callconv(.c) void {
             const text = bun.span(textZ);
             bun.Output.errorWriter().writeAll(text) catch {};
         }
@@ -145,7 +147,7 @@ pub fn dumpThreadStats(_: Self) void {
 
 pub fn dumpStats(_: Self) void {
     const dump_fn = struct {
-        pub fn dump(textZ: [*:0]const u8, _: ?*anyopaque) callconv(.C) void {
+        pub fn dump(textZ: [*:0]const u8, _: ?*anyopaque) callconv(.c) void {
             const text = bun.span(textZ);
             bun.Output.errorWriter().writeAll(text) catch {};
         }

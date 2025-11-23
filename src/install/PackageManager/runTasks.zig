@@ -6,7 +6,7 @@ pub fn runTasks(
     comptime callbacks: anytype,
     install_peer: bool,
     log_level: Options.LogLevel,
-) anyerror!void {
+) !void {
     var has_updated_this_run = false;
     var has_network_error = false;
 
@@ -47,7 +47,7 @@ pub fn runTasks(
                         if (ptask.callback.apply.install_context) |*ctx| {
                             var installer: *PackageInstaller = extract_ctx;
                             const path = ctx.path;
-                            ctx.path = std.ArrayList(u8).init(bun.default_allocator);
+                            ctx.path = std.array_list.Managed(u8).init(bun.default_allocator);
                             installer.node_modules.path = path;
                             installer.current_tree_id = ctx.tree_id;
                             const pkg_id = ptask.callback.apply.pkg_id;
@@ -284,6 +284,9 @@ pub fn runTasks(
                 if (response.status_code == 304) {
                     // The HTTP request was cached
                     if (manifest_req.loaded_manifest) |manifest| {
+                        // If we requested extended manifest but we somehow got an abbreviated one, this is a bug
+                        bun.debugAssert(!manifest_req.is_extended_manifest or manifest.pkg.has_extended_manifest);
+
                         const entry = try manager.manifests.hash_map.getOrPut(manager.allocator, manifest.pkg.name.hash);
                         entry.value_ptr.* = .{ .manifest = manifest };
 
@@ -347,7 +350,7 @@ pub fn runTasks(
                                 null,
                                 logger.Loc.Empty,
                                 manager.allocator,
-                                "<r><yellow>warn:<r> {s} downloading tarball <b>{s}@{s}<r>. Retrying {d}/{d}...",
+                                "<r><yellow>warn:<r> {s} downloading tarball <b>{s}@{f}<r>. Retrying {d}/{d}...",
                                 .{
                                     bun.span(@errorName(err)),
                                     extract.name.slice(),
@@ -378,7 +381,7 @@ pub fn runTasks(
                         continue;
                     }
 
-                    const fmt = "{s} downloading tarball <b>{s}@{s}<r>";
+                    const fmt = "{s} downloading tarball <b>{s}@{f}<r>";
                     if (manager.isNetworkTaskRequired(task.task_id)) {
                         manager.log.addErrorFmt(
                             null,

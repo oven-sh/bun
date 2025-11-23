@@ -1,7 +1,7 @@
 pub fn installWithManager(
     manager: *PackageManager,
     ctx: Command.Context,
-    root_package_json_contents: []const u8,
+    root_package_json_path: [:0]const u8,
     original_cwd: []const u8,
 ) !void {
     const log_level = manager.options.log_level;
@@ -31,14 +31,18 @@ pub fn installWithManager(
 
     try manager.updateLockfileIfNeeded(load_result);
 
+    const config_version, const changed_config_version = load_result.chooseConfigVersion();
+    manager.options.config_version = config_version;
+
     var root = Lockfile.Package{};
     var needs_new_lockfile = load_result != .ok or
         (load_result.ok.lockfile.buffers.dependencies.items.len == 0 and manager.update_requests.len > 0);
 
     manager.options.enable.force_save_lockfile = manager.options.enable.force_save_lockfile or
+        changed_config_version or
         (load_result == .ok and
             // if migrated always save a new lockfile
-            (load_result.ok.was_migrated or
+            (load_result.ok.migrated != .none or
 
                 // if loaded from binary and save-text-lockfile is passed
                 (load_result.ok.format == .binary and
@@ -48,9 +52,6 @@ pub fn installWithManager(
     // but we force allowing updates to the lockfile when you do bun add
     var had_any_diffs = false;
     manager.progress = .{};
-
-    // Step 2. Parse the package.json file
-    const root_package_json_source = &logger.Source.initPathString(PackageManager.package_json_cwd, root_package_json_contents);
 
     switch (load_result) {
         .err => |cause| {
@@ -139,13 +140,38 @@ pub fn installWithManager(
                 lockfile.initEmpty(manager.allocator);
                 var maybe_root = Lockfile.Package{};
 
+                const root_package_json_entry = switch (manager.workspace_package_json_cache.getWithPath(
+                    manager.allocator,
+                    manager.log,
+                    root_package_json_path,
+                    .{},
+                )) {
+                    .entry => |entry| entry,
+                    .read_err => |err| {
+                        if (ctx.log.errors > 0) {
+                            try manager.log.print(Output.errorWriter());
+                        }
+                        Output.err(err, "failed to read '{s}'", .{root_package_json_path});
+                        Global.exit(1);
+                    },
+                    .parse_err => |err| {
+                        if (ctx.log.errors > 0) {
+                            try manager.log.print(Output.errorWriter());
+                        }
+                        Output.err(err, "failed to parse '{s}'", .{root_package_json_path});
+                        Global.exit(1);
+                    },
+                };
+
+                const source_copy = root_package_json_entry.source;
+
                 var resolver: void = {};
                 try maybe_root.parse(
                     &lockfile,
                     manager,
                     manager.allocator,
                     manager.log,
-                    root_package_json_source,
+                    &source_copy,
                     void,
                     &resolver,
                     Features.main,
@@ -403,13 +429,38 @@ pub fn installWithManager(
             Global.crash();
         }
 
+        const root_package_json_entry = switch (manager.workspace_package_json_cache.getWithPath(
+            manager.allocator,
+            manager.log,
+            root_package_json_path,
+            .{},
+        )) {
+            .entry => |entry| entry,
+            .read_err => |err| {
+                if (ctx.log.errors > 0) {
+                    try manager.log.print(Output.errorWriter());
+                }
+                Output.err(err, "failed to read '{s}'", .{root_package_json_path});
+                Global.exit(1);
+            },
+            .parse_err => |err| {
+                if (ctx.log.errors > 0) {
+                    try manager.log.print(Output.errorWriter());
+                }
+                Output.err(err, "failed to parse '{s}'", .{root_package_json_path});
+                Global.exit(1);
+            },
+        };
+
+        const source_copy = root_package_json_entry.source;
+
         var resolver: void = {};
         try root.parse(
             manager.lockfile,
             manager,
             manager.allocator,
             manager.log,
-            root_package_json_source,
+            &source_copy,
             void,
             &resolver,
             Features.main,
@@ -527,7 +578,14 @@ pub fn installWithManager(
             try waitForEverythingExceptPeers(manager);
         }
 
-        try waitForPeers(manager);
+        if (manager.peer_dependencies.readableLength() > 0) {
+            try manager.processPeerDependencyList();
+            manager.drainDependencyList();
+        }
+
+        if (manager.pendingTaskCount() > 0) {
+            try waitForPeers(manager);
+        }
 
         if (log_level.showProgress()) {
             manager.endProgressBar();
@@ -728,10 +786,20 @@ pub fn installWithManager(
             break :install_summary .{};
         }
 
-        switch (manager.options.node_linker) {
+        linker: switch (manager.options.node_linker) {
+            .auto => {
+                switch (config_version) {
+                    .v0 => continue :linker .hoisted,
+                    .v1 => {
+                        if (!load_result.migratedFromNpm() and manager.lockfile.workspace_paths.count() > 0) {
+                            continue :linker .isolated;
+                        }
+                        continue :linker .hoisted;
+                    },
+                }
+            },
+
             .hoisted,
-            // TODO
-            .auto,
             => break :install_summary try installHoistedPackages(
                 manager,
                 ctx,
@@ -741,15 +809,14 @@ pub fn installWithManager(
                 null,
             ),
 
-            .isolated => break :install_summary installIsolatedPackages(
+            .isolated,
+            => break :install_summary bun.handleOom(installIsolatedPackages(
                 manager,
                 ctx,
                 install_root_dependencies,
                 workspace_filters,
                 null,
-            ) catch |err| switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
-            },
+            )),
         }
     };
 
@@ -782,7 +849,7 @@ pub fn installWithManager(
             (did_meta_hash_change or
                 had_any_diffs or
                 manager.update_requests.len > 0 or
-                (load_result == .ok and load_result.ok.serializer_result.packages_need_update) or
+                (load_result == .ok and (load_result.ok.serializer_result.packages_need_update or load_result.ok.serializer_result.migrated_from_lockb_v2)) or
                 manager.lockfile.isEmpty() or
                 manager.options.enable.force_save_lockfile));
 
@@ -874,7 +941,7 @@ fn printInstallSummary(
             // We deliberately do not disable it after this.
             Output.enableBuffering();
             const writer = Output.writerBuffered();
-            switch (Output.enable_ansi_colors) {
+            switch (Output.enable_ansi_colors_stdout) {
                 inline else => |enable_ansi_colors| {
                     try Lockfile.Printer.Tree.print(&printer, this, @TypeOf(writer), writer, enable_ansi_colors, log_level);
                 },
@@ -1017,7 +1084,7 @@ pub fn getWorkspaceFilters(manager: *PackageManager, original_cwd: []const u8) !
                 },
             };
 
-            switch (bun.glob.walk.matchImpl(manager.allocator, pattern, path_or_name)) {
+            switch (bun.glob.match(pattern, path_or_name)) {
                 .match, .negate_match => install_root_dependencies = true,
 
                 .negate_no_match => {
@@ -1046,7 +1113,6 @@ const Output = bun.Output;
 const Path = bun.path;
 const Progress = bun.Progress;
 const default_allocator = bun.default_allocator;
-const logger = bun.logger;
 const strings = bun.strings;
 const Command = bun.cli.Command;
 

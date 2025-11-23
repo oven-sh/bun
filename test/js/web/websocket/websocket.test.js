@@ -1,14 +1,14 @@
 import { describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, gc, tls } from "harness";
+import { bunEnv, bunExe, gc, tempDir, tls } from "harness";
 import { createServer } from "net";
 import { join } from "path";
 import process from "process";
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
 const COMMON_CERT = { ...tls };
 
-describe("WebSocket", () => {
+describe.concurrent("WebSocket", () => {
   it("should connect", async () => {
     using server = Bun.serve({
       port: 0,
@@ -512,65 +512,6 @@ describe("WebSocket", () => {
     await Promise.all([promise, promise2]);
   });
 
-  it("instances should be finalized when GC'd", async () => {
-    let current_websocket_count = 0;
-    let initial_websocket_count = 0;
-    function getWebSocketCount() {
-      Bun.gc(true);
-      const objectTypeCounts = require("bun:jsc").heapStats().objectTypeCounts || {
-        WebSocket: 0,
-      };
-      return objectTypeCounts.WebSocket || 0;
-    }
-
-    async function run() {
-      using server = Bun.serve({
-        port: 0,
-        fetch(req, server) {
-          return server.upgrade(req);
-        },
-        websocket: {
-          open() {},
-          data() {},
-          message() {},
-          drain() {},
-        },
-      });
-
-      function onOpen(sock, resolve) {
-        sock.addEventListener("close", resolve, { once: true });
-        sock.close();
-      }
-
-      function openAndCloseWS() {
-        const { promise, resolve } = Promise.withResolvers();
-        const sock = new WebSocket(server.url.href.replace("http", "ws"));
-        sock.addEventListener("open", onOpen.bind(undefined, sock, resolve), {
-          once: true,
-        });
-
-        return promise;
-      }
-
-      for (let i = 0; i < 1000; i++) {
-        await openAndCloseWS();
-        if (i % 100 === 0) {
-          if (initial_websocket_count === 0) {
-            initial_websocket_count = getWebSocketCount();
-          }
-        }
-      }
-    }
-    await run();
-
-    // wait next tick to run the last time
-    await Bun.sleep(100);
-    current_websocket_count = getWebSocketCount();
-    console.log({ current_websocket_count, initial_websocket_count });
-    // expect that current and initial websocket be close to the same (normaly 1 or 2 difference)
-    expect(Math.abs(current_websocket_count - initial_websocket_count)).toBeLessThanOrEqual(50);
-  });
-
   it("should be able to send big messages", async () => {
     using serve = Bun.serve({
       port: 0,
@@ -696,8 +637,8 @@ describe("WebSocket", () => {
   });
 });
 
-describe("websocket in subprocess", () => {
-  it("should exit", async () => {
+describe.concurrent("websocket in subprocess", () => {
+  it.concurrent("should exit", async () => {
     let messageReceived = false;
     using server = Bun.serve({
       port: 0,
@@ -729,6 +670,33 @@ describe("websocket in subprocess", () => {
 
     expect(await subprocess.exited).toBe(0);
     expect(messageReceived).toBe(true);
+  });
+
+  it.concurrent("should work with process.nextTick override", async () => {
+    using dir = tempDir("websocket-nexttick", {
+      "test.js": `{
+  process.nextTick = function (arg) {
+    console.log(arg)
+  }
+  using server = Bun.serve({
+    port: 0,
+    fetch() { return new Response(); },
+    websocket: { message() {} },
+  });
+  const ws = new WebSocket(\`ws://\${server.hostname}:\${server.port}\`, {});
+  ws.addEventListener("open", null);
+}`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const exitCode = await proc.exited;
+    expect(exitCode).toBe(0);
   });
 
   it("should exit after killed", async () => {
@@ -831,10 +799,69 @@ describe("websocket in subprocess", () => {
   });
 });
 
-it("#16995", async () => {
+it.concurrent("#16995", async () => {
   const publicAddress = new URL("https://1.1.1.1:3000");
   for (let i = 0; i < 4096; i++) {
     const socket = new WebSocket(publicAddress.toString());
     socket.close();
   }
+});
+
+it.serial("instances should be finalized when GC'd", async () => {
+  let current_websocket_count = 0;
+  let initial_websocket_count = 0;
+  function getWebSocketCount() {
+    Bun.gc(true);
+    const objectTypeCounts = require("bun:jsc").heapStats().objectTypeCounts || {
+      WebSocket: 0,
+    };
+    return objectTypeCounts.WebSocket || 0;
+  }
+
+  async function run() {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        return server.upgrade(req);
+      },
+      websocket: {
+        open() {},
+        data() {},
+        message() {},
+        drain() {},
+      },
+    });
+
+    function onOpen(sock, resolve) {
+      sock.addEventListener("close", resolve, { once: true });
+      sock.close();
+    }
+
+    function openAndCloseWS() {
+      const { promise, resolve } = Promise.withResolvers();
+      const sock = new WebSocket(server.url.href.replace("http", "ws"));
+      sock.addEventListener("open", onOpen.bind(undefined, sock, resolve), {
+        once: true,
+      });
+
+      return promise;
+    }
+
+    for (let i = 0; i < 1000; i++) {
+      await openAndCloseWS();
+      if (i % 100 === 0) {
+        if (initial_websocket_count === 0) {
+          initial_websocket_count = getWebSocketCount();
+        }
+      }
+    }
+  }
+  await run();
+
+  // wait next tick to run the last time
+  await Bun.sleep(100);
+  current_websocket_count = getWebSocketCount();
+  console.log({ current_websocket_count, initial_websocket_count });
+  // expect that current and initial websocket be close to the same (normaly 1 or 2 difference)
+  expect(Math.abs(current_websocket_count - initial_websocket_count)).toBeLessThanOrEqual(50);
 });

@@ -72,6 +72,7 @@ const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
 
 const spawnTimeout = 5_000;
+const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
 
@@ -79,7 +80,9 @@ function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-dns")) {
     return 90_000;
   }
-  return 10_000;
+  if (!isCI) return 60_000; // everything slower in debug mode
+  if (options["step"]?.includes("-asan-")) return 60_000;
+  return 20_000;
 }
 
 process.on("SIGTRAP", () => {
@@ -182,32 +185,33 @@ if (options["quiet"]) {
   isQuiet = true;
 }
 
+/** @type {string[]} */
+let allFiles = [];
+/** @type {string[]} */
 let newFiles = [];
 let prFileCount = 0;
 if (isBuildkite) {
   try {
     console.log("on buildkite: collecting new files from PR");
     const per_page = 50;
-    for (let i = 1; i <= 5; i++) {
+    const { BUILDKITE_PULL_REQUEST } = process.env;
+    for (let i = 1; i <= 10; i++) {
       const res = await fetch(
-        `https://api.github.com/repos/oven-sh/bun/pulls/${process.env.BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
-        {
-          headers: {
-            Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}`,
-          },
-        },
+        `https://api.github.com/repos/oven-sh/bun/pulls/${BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
+        { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
       );
       const doc = await res.json();
       console.log(`-> page ${i}, found ${doc.length} items`);
       if (doc.length === 0) break;
-      if (doc.length < per_page) break;
       for (const { filename, status } of doc) {
         prFileCount += 1;
+        allFiles.push(filename);
         if (status !== "added") continue;
         newFiles.push(filename);
       }
+      if (doc.length < per_page) break;
     }
-    console.log(`- PR ${process.env.BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
+    console.log(`- PR ${BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
   } catch (e) {
     console.error(e);
   }
@@ -448,7 +452,7 @@ async function runTests() {
 
       if (parallelism > 1) {
         console.log(grouptitle);
-        result = await fn();
+        result = await fn(index);
       } else {
         result = await startGroup(grouptitle, fn);
       }
@@ -468,6 +472,7 @@ async function runTests() {
       const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
       startGroup(label, () => {
         if (parallelism > 1) return;
+        if (!isCI) return;
         process.stderr.write(stdoutPreview);
       });
 
@@ -489,7 +494,7 @@ async function runTests() {
     if (isBuildkite) {
       // Group flaky tests together, regardless of the title
       const context = flaky ? "flaky" : title;
-      const style = flaky || title.startsWith("vendor") ? "warning" : "error";
+      const style = flaky ? "warning" : "error";
       if (!flaky) attempt = 1; // no need to show the retries count on failures, we know it maxed out
 
       if (title.startsWith("vendor")) {
@@ -578,8 +583,11 @@ async function runTests() {
           const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
           if (isNodeTest(testPath)) {
             const testContent = readFileSync(absoluteTestPath, "utf-8");
-            const runWithBunTest =
-              title.includes("needs-test") || testContent.includes("bun:test") || testContent.includes("node:test");
+            let runWithBunTest = title.includes("needs-test") || testContent.includes("node:test");
+            // don't wanna have a filter for includes("bun:test") but these need our mocks
+            runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-append-file-flush.js";
+            runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-write-file-flush.js";
+            runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-write-stream-flush.js";
             const subcommand = runWithBunTest ? "test" : "run";
             const env = {
               FORCE_COLOR: "0",
@@ -592,7 +600,7 @@ async function runTests() {
             }
             if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
               env.BUN_DESTRUCT_VM_ON_EXIT = "1";
-              env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1";
+              env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
               // prettier-ignore
               env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
             }
@@ -657,6 +665,7 @@ async function runTests() {
       const buildResult = await spawnBun(execPath, {
         cwd: vendorPath,
         args: ["run", "build"],
+        timeout: 60_000,
       });
       if (!buildResult.ok) {
         throw new Error(`Failed to build vendor: ${buildResult.error}`);
@@ -666,7 +675,9 @@ async function runTests() {
         const title = join(relative(cwd, vendorPath), testPath).replace(/\\/g, "/");
 
         if (testRunner === "bun") {
-          await runTest(title, () => spawnBunTest(execPath, testPath, { cwd: vendorPath }));
+          await runTest(title, index =>
+            spawnBunTest(execPath, testPath, { cwd: vendorPath, env: { TEST_SERIAL_ID: index } }),
+          );
         } else {
           const testRunnerPath = join(cwd, "test", "runners", `${testRunner}.ts`);
           if (!existsSync(testRunnerPath)) {
@@ -682,6 +693,9 @@ async function runTests() {
       }
     }
   }
+
+  // tests are all over, close the group from the final test. any further output should print ungrouped.
+  startGroup("End");
 
   if (isGithubAction) {
     reportOutputToGitHubAction("failing_tests_count", failedResults.length);
@@ -1132,10 +1146,6 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       : { BUN_ENABLE_CRASH_REPORTING: "0" }),
   };
 
-  if (basename(execPath).includes("asan") && bunEnv.ASAN_OPTIONS === undefined) {
-    bunEnv.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0";
-  }
-
   if (isWindows && bunEnv.Path) {
     delete bunEnv.Path;
   }
@@ -1151,6 +1161,9 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
       delete bunEnv[tmpdir];
     }
     bunEnv["TEMP"] = tmpdirPath;
+  }
+  if (timeout === undefined) {
+    timeout = spawnBunTimeout;
   }
   try {
     const existingCores = options["coredump-upload"] ? readdirSync(coresDir) : [];
@@ -1291,6 +1304,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  * @param {object} [opts]
  * @param {string} [opts.cwd]
  * @param {string[]} [opts.args]
+ * @param {object} [opts.env]
  * @returns {Promise<TestResult>}
  */
 async function spawnBunTest(execPath, testPath, opts = { cwd }) {
@@ -1324,6 +1338,7 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
 
   const env = {
     GITHUB_ACTIONS: "true", // always true so annotations are parsed
+    ...opts["env"],
   };
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
     env.BUN_JSC_validateExceptionChecks = "1";
@@ -1331,7 +1346,7 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   }
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(relative(cwd, absPath))) {
     env.BUN_DESTRUCT_VM_ON_EXIT = "1";
-    env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1";
+    env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
     // prettier-ignore
     env.LSAN_OPTIONS = `malloc_context_size=100:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
   }
@@ -1566,8 +1581,7 @@ function isJavaScriptTest(path) {
  * @returns {boolean}
  */
 function isNodeTest(path) {
-  // Do not run node tests on macOS x64 in CI
-  // TODO: Unclear why we decided to do this?
+  // Do not run node tests on macOS x64 in CI, those machines are slow and expensive.
   if (isCI && isMacOS && isX64) {
     return false;
   }
@@ -1875,6 +1889,27 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
       );
   } else {
     filteredTests.push(...availableTests);
+  }
+
+  // Prioritize modified test files
+  if (allFiles.length > 0) {
+    const modifiedTests = new Set(
+      allFiles
+        .filter(filename => filename.startsWith("test/") && isTest(filename))
+        .map(filename => filename.slice("test/".length)),
+    );
+
+    if (modifiedTests.size > 0) {
+      return filteredTests
+        .map(testPath => testPath.replaceAll("\\", "/"))
+        .sort((a, b) => {
+          const aModified = modifiedTests.has(a);
+          const bModified = modifiedTests.has(b);
+          if (aModified && !bModified) return -1;
+          if (!aModified && bModified) return 1;
+          return 0;
+        });
+    }
   }
 
   return filteredTests;
@@ -2602,8 +2637,18 @@ export async function main() {
     ]);
   }
 
-  const results = await runTests();
-  const ok = results.every(({ ok }) => ok);
+  let doRunTests = true;
+  if (isCI) {
+    if (allFiles.every(filename => filename.startsWith("docs/"))) {
+      doRunTests = false;
+    }
+  }
+
+  let ok = true;
+  if (doRunTests) {
+    const results = await runTests();
+    ok = results.every(({ ok }) => ok);
+  }
 
   let waitForUser = false;
   while (isCI) {

@@ -79,6 +79,10 @@ describe("bun:test", () => {
   });
 });
 
+test.each([1, 2, 3])("test.each", a => {
+  expectType<1 | 2 | 3>(a);
+});
+
 // inference should work when data is passed directly in
 test.each([
   ["a", true, 5],
@@ -122,6 +126,7 @@ const data = [
   ["a", true, 5],
   ["b", false, "asdf"],
 ];
+
 test.each(data)("test.each", (a, b, c) => {
   expectType<string | number | boolean | ((err?: unknown) => void)>(a);
   expectType<string | number | boolean | ((err?: unknown) => void)>(b);

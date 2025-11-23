@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 
-test("concurrent order", async () => {
+test.concurrent("concurrent order", async () => {
   const result = await Bun.spawn({
     cmd: [bunExe(), "test", import.meta.dir + "/concurrent.fixture.ts"],
     stdout: "pipe",
@@ -56,4 +56,127 @@ test("concurrent order", async () => {
     ,
     }
   `);
+});
+
+test.concurrent("concurrent-and-serial --concurrent", async () => {
+  const result = await Bun.spawn({
+    cmd: [bunExe(), "test", import.meta.dir + "/concurrent-and-serial.fixture.ts", "--concurrent"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const exitCode = await result.exited;
+  const stdout = await result.stdout.text();
+  const stderr = await result.stderr.text();
+  expect(exitCode).toBe(0);
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "bun test <version> (<revision>)
+    [0] start test default-1
+    [0] start test default-2
+    [0] start test concurrent-1
+    [0] start test concurrent-2
+    [1] end test default-1
+    [1] end test default-2
+    [1] end test concurrent-1
+    [1] end test concurrent-2
+    [0] start test serial-1
+    [1] end test serial-1
+    [0] start test serial-2
+    [1] end test serial-2"
+  `);
+});
+
+test.concurrent("concurrent-and-serial, no flag", async () => {
+  const result = await Bun.spawn({
+    cmd: [bunExe(), "test", import.meta.dir + "/concurrent-and-serial.fixture.ts"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const exitCode = await result.exited;
+  const stdout = await result.stdout.text();
+  const stderr = await result.stderr.text();
+  expect(exitCode).toBe(0);
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "bun test <version> (<revision>)
+    [0] start test default-1
+    [1] end test default-1
+    [0] start test default-2
+    [1] end test default-2
+    [0] start test concurrent-1
+    [0] start test concurrent-2
+    [1] end test concurrent-1
+    [1] end test concurrent-2
+    [0] start test serial-1
+    [1] end test serial-1
+    [0] start test serial-2
+    [1] end test serial-2"
+  `);
+});
+
+test.concurrent("max-concurrency limits concurrent tests", async () => {
+  // Test with max-concurrency=3
+  const result = await Bun.spawn({
+    cmd: [bunExe(), "test", "--max-concurrency", "3", import.meta.dir + "/concurrent-max.fixture.ts"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const exitCode = await result.exited;
+  const stdout = await result.stdout.text();
+
+  expect(exitCode).toBe(0);
+
+  // Extract max concurrent value from output
+  const maxMatch = stdout.match(/Execution pattern: ([^\n]+)/);
+  expect(maxMatch).toBeTruthy();
+  const executionPattern = JSON.parse(maxMatch![1]);
+
+  // Should be 1,2,3,3,3,3,3,...
+  const expected = Array.from({ length: 100 }, (_, i) => Math.min(i + 1, 3));
+  expect(executionPattern).toEqual(expected);
+});
+
+test.concurrent("max-concurrency default is 20", async () => {
+  const result = await Bun.spawn({
+    cmd: [bunExe(), "test", import.meta.dir + "/concurrent-max.fixture.ts"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const exitCode = await result.exited;
+  const stdout = await result.stdout.text();
+
+  expect(exitCode).toBe(0);
+
+  // Extract max concurrent value from output
+  const maxMatch = stdout.match(/Execution pattern: ([^\n]+)/);
+  expect(maxMatch).toBeTruthy();
+  const executionPattern = JSON.parse(maxMatch![1]);
+
+  // Should be 1,2,3,...,18,19,20,20,20,20,20,20,...
+  const expected = Array.from({ length: 100 }, (_, i) => Math.min(i + 1, 20));
+  expect(executionPattern).toEqual(expected);
+});
+
+test.concurrent("zero removes max-concurrency", async () => {
+  const result = await Bun.spawn({
+    cmd: [bunExe(), "test", "--max-concurrency", "0", import.meta.dir + "/concurrent-max.fixture.ts"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const exitCode = await result.exited;
+  const stdout = await result.stdout.text();
+
+  expect(exitCode).toBe(0);
+
+  // Extract max concurrent value from output
+  const maxMatch = stdout.match(/Execution pattern: ([^\n]+)/);
+  expect(maxMatch).toBeTruthy();
+  const executionPattern = JSON.parse(maxMatch![1]);
+
+  // Should be 1,2,3,...,18,19,20,20,20,20,20,20,...
+  const expected = Array.from({ length: 100 }, (_, i) => i + 1);
+  expect(executionPattern).toEqual(expected);
 });

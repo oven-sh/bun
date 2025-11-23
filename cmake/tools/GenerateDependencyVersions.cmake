@@ -181,12 +181,23 @@ function(generate_dependency_versions_header)
   string(APPEND HEADER_CONTENT "}\n")
   string(APPEND HEADER_CONTENT "#endif\n\n")
   string(APPEND HEADER_CONTENT "#endif // BUN_DEPENDENCY_VERSIONS_H\n")
-  
-  # Write the header file
+
+  # Write the header file only if content has changed
   set(OUTPUT_FILE "${CMAKE_BINARY_DIR}/bun_dependency_versions.h")
-  file(WRITE "${OUTPUT_FILE}" "${HEADER_CONTENT}")
-  
-  message(STATUS "Generated dependency versions header: ${OUTPUT_FILE}")
+
+  # Read existing content if file exists
+  set(EXISTING_CONTENT "")
+  if(EXISTS "${OUTPUT_FILE}")
+    file(READ "${OUTPUT_FILE}" EXISTING_CONTENT)
+  endif()
+
+  # Only write if content is different
+  if(NOT "${EXISTING_CONTENT}" STREQUAL "${HEADER_CONTENT}")
+    file(WRITE "${OUTPUT_FILE}" "${HEADER_CONTENT}")
+    message(STATUS "Updated dependency versions header: ${OUTPUT_FILE}")
+  else()
+    message(STATUS "Dependency versions header unchanged: ${OUTPUT_FILE}")
+  endif()
   
   # Also create a more detailed version for debugging
   set(DEBUG_OUTPUT_FILE "${CMAKE_BINARY_DIR}/bun_dependency_versions_debug.txt")

@@ -86,49 +86,46 @@ extern fn JSCommonJSExtensions__swapRemove(global: *jsc.JSGlobalObject, index: u
 
 // Memory management is complicated because JSValues are stored in gc-visitable
 // WriteBarriers in C++ but the hash map for extensions is in Zig for flexibility.
-fn onRequireExtensionModify(global: *jsc.JSGlobalObject, str: []const u8, kind: i32, value: jsc.JSValue) !void {
-    bun.assert(kind >= -1 and kind <= 4);
+fn onRequireExtensionModify(global: *jsc.JSGlobalObject, str: []const u8, loader: bun.schema.api.Loader, value: jsc.JSValue) bun.OOM!void {
     const vm = global.bunVM();
     const list = &vm.commonjs_custom_extensions;
     defer vm.transpiler.resolver.opts.extra_cjs_extensions = list.keys();
     const is_built_in = bun.options.defaultLoaders.get(str) != null;
-    if (kind >= 0) {
-        const loader: CustomLoader = switch (kind) {
-            1 => .{ .loader = .js },
-            2 => .{ .loader = .json },
-            3 => .{ .loader = .napi },
-            4 => .{ .loader = .ts },
-            else => .{ .custom = undefined }, // to be filled in later
-        };
-        const gop = try list.getOrPut(bun.default_allocator, str);
-        if (!gop.found_existing) {
-            const dupe = try bun.default_allocator.dupe(u8, str);
-            gop.key_ptr.* = dupe;
-            if (is_built_in) {
-                vm.has_mutated_built_in_extensions += 1;
+
+    const gop = try list.getOrPut(bun.default_allocator, str);
+    if (!gop.found_existing) {
+        gop.key_ptr.* = try bun.default_allocator.dupe(u8, str);
+        if (is_built_in) {
+            vm.has_mutated_built_in_extensions += 1;
+        }
+
+        gop.value_ptr.* = if (loader != ._none)
+            .{ .loader = .fromAPI(loader) }
+        else
+            .{ .custom = .create(value, global) };
+    } else {
+        if (loader != ._none) {
+            switch (gop.value_ptr.*) {
+                .loader => {},
+                .custom => |*strong| strong.deinit(),
             }
-            gop.value_ptr.* = switch (loader) {
-                .loader => loader,
-                .custom => .{
-                    .custom = .create(value, global),
-                },
-            };
+            gop.value_ptr.* = .{ .loader = .fromAPI(loader) };
         } else {
-            switch (loader) {
-                .loader => {
-                    switch (gop.value_ptr.*) {
-                        .loader => {},
-                        .custom => |*strong| strong.deinit(),
-                    }
-                    gop.value_ptr.* = loader;
-                },
-                .custom => switch (gop.value_ptr.*) {
-                    .loader => gop.value_ptr.* = .{ .custom = .create(value, global) },
-                    .custom => |*strong| strong.set(global, value),
-                },
+            switch (gop.value_ptr.*) {
+                .loader => gop.value_ptr.* = .{ .custom = .create(value, global) },
+                .custom => |*strong| strong.set(global, value),
             }
         }
-    } else if (list.fetchSwapRemove(str)) |prev| {
+    }
+}
+
+fn onRequireExtensionModifyNonFunction(global: *JSGlobalObject, str: []const u8) bun.OOM!void {
+    const vm = global.bunVM();
+    const list = &vm.commonjs_custom_extensions;
+    defer vm.transpiler.resolver.opts.extra_cjs_extensions = list.keys();
+    const is_built_in = bun.options.defaultLoaders.get(str) != null;
+
+    if (list.fetchSwapRemove(str)) |prev| {
         bun.default_allocator.free(prev.key);
         if (is_built_in) {
             vm.has_mutated_built_in_extensions -= 1;
@@ -160,20 +157,34 @@ pub fn findLongestRegisteredExtension(vm: *jsc.VirtualMachine, filename: []const
 fn onRequireExtensionModifyBinding(
     global: *jsc.JSGlobalObject,
     str: *const bun.String,
-    kind: i32,
+    loader: bun.schema.api.Loader,
     value: jsc.JSValue,
 ) callconv(.c) void {
     var sfa_state = std.heap.stackFallback(8192, bun.default_allocator);
     const alloc = sfa_state.get();
     const str_slice = str.toUTF8(alloc);
     defer str_slice.deinit();
-    onRequireExtensionModify(global, str_slice.slice(), kind, value) catch |err| switch (err) {
+    onRequireExtensionModify(global, str_slice.slice(), loader, value) catch |err| switch (err) {
+        error.OutOfMemory => bun.outOfMemory(),
+    };
+}
+
+fn onRequireExtensionModifyNonFunctionBinding(
+    global: *jsc.JSGlobalObject,
+    str: *const bun.String,
+) callconv(.c) void {
+    var sfa_state = std.heap.stackFallback(8192, bun.default_allocator);
+    const alloc = sfa_state.get();
+    const str_slice = str.toUTF8(alloc);
+    defer str_slice.deinit();
+    onRequireExtensionModifyNonFunction(global, str_slice.slice()) catch |err| switch (err) {
         error.OutOfMemory => bun.outOfMemory(),
     };
 }
 
 comptime {
     @export(&onRequireExtensionModifyBinding, .{ .name = "NodeModuleModule__onRequireExtensionModify" });
+    @export(&onRequireExtensionModifyNonFunctionBinding, .{ .name = "NodeModuleModule__onRequireExtensionModifyNonFunction" });
 }
 
 const bun = @import("bun");

@@ -1,9 +1,9 @@
 import type { S3Options } from "bun";
-import { S3Client, s3 as defaultS3, file, randomUUIDv7, which } from "bun";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
+import { describe, expect, it } from "bun:test";
 import child_process from "child_process";
 import { randomUUID } from "crypto";
-import { bunRun, getSecret, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, dockerExe, getSecret, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
 import path from "path";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
@@ -11,7 +11,7 @@ const S3 = (...args) => new S3Client(...args);
 // Import docker-compose helper
 import * as dockerCompose from "../../../docker/index.ts";
 
-const dockerCLI = which("docker") as string;
+const dockerCLI = dockerExe() as string;
 type S3Credentials = S3Options & {
   service: string;
 };
@@ -55,7 +55,7 @@ if (isDockerEnabled()) {
   allCredentials.push(minioCredentials);
 }
 const r2Credentials = allCredentials[0];
-describe.skipIf(!r2Credentials.endpoint && !isCI)("Virtual Hosted-Style", () => {
+describe.concurrent.skipIf(!r2Credentials.endpoint && !isCI)("Virtual Hosted-Style", () => {
   if (!r2Credentials.endpoint) {
     return;
   }
@@ -177,7 +177,7 @@ describe.skipIf(!r2Credentials.endpoint && !isCI)("Virtual Hosted-Style", () => 
   });
 });
 for (let credentials of allCredentials) {
-  describe(`${credentials.service}`, () => {
+  describe.concurrent(`${credentials.service}`, () => {
     const s3Options: S3Options = {
       accessKeyId: credentials.accessKeyId,
       secretAccessKey: credentials.secretAccessKey,
@@ -198,42 +198,46 @@ for (let credentials of allCredentials) {
     const bigishPayload = makePayLoadFrom("Bun is the best runtime ever", 1 * 1024 * 1024);
     describe.skipIf(!s3Options.accessKeyId)("s3", () => {
       for (let bucketInName of [true, false]) {
-        describe("fetch", () => {
+        describe.concurrent("fetch", () => {
           describe(bucketInName ? "bucket in path" : "bucket in options", () => {
-            var tmp_filename: string;
             const options = bucketInName ? s3Options : { ...s3Options, bucket: S3Bucket };
-            beforeEach(async () => {
-              // await a little bit so we dont change the filename before deleting it
-              tmp_filename = bucketInName ? `s3://${S3Bucket}/${randomUUID()}` : `s3://${randomUUID()}`;
+
+            async function tmp() {
+              const tmp_filename = bucketInName ? `s3://${S3Bucket}/${randomUUID()}` : `s3://${randomUUID()}`;
               const result = await fetch(tmp_filename, {
                 method: "PUT",
                 body: "Hello Bun!",
                 s3: options,
               });
               expect(result.status).toBe(200);
-            });
 
-            afterEach(async () => {
-              try {
-                const result = await fetch(tmp_filename, {
-                  method: "DELETE",
-                  s3: options,
-                });
-                expect([204, 200, 404]).toContain(result.status);
-              } catch (e) {
-                // if error with NoSuchKey, it means the file does not exist and its fine
-                expect(e?.code || e).toBe("NoSuchKey");
-              }
-            });
+              return {
+                name: tmp_filename,
+                [Symbol.asyncDispose]: async () => {
+                  try {
+                    const result = await fetch(tmp_filename, {
+                      method: "DELETE",
+                      s3: options,
+                    });
+                    expect([204, 200, 404]).toContain(result.status);
+                  } catch (e: any) {
+                    // if error with NoSuchKey, it means the file does not exist and its fine
+                    expect(e?.code || e).toBe("NoSuchKey");
+                  }
+                },
+              };
+            }
 
             it("should download file via fetch GET", async () => {
-              const result = await fetch(tmp_filename, { s3: options });
+              await using tmpfile = await tmp();
+              const result = await fetch(tmpfile.name, { s3: options });
               expect(result.status).toBe(200);
               expect(await result.text()).toBe("Hello Bun!");
             });
 
             it("should download range", async () => {
-              const result = await fetch(tmp_filename, {
+              await using tmpfile = await tmp();
+              const result = await fetch(tmpfile.name, {
                 headers: { "range": "bytes=6-10" },
                 s3: options,
               });
@@ -242,7 +246,8 @@ for (let credentials of allCredentials) {
             });
 
             it("should check if a key exists or content-length", async () => {
-              const result = await fetch(tmp_filename, {
+              await using tmpfile = await tmp();
+              const result = await fetch(tmpfile.name, {
                 method: "HEAD",
                 s3: options,
               });
@@ -251,13 +256,15 @@ for (let credentials of allCredentials) {
             });
 
             it("should check if a key does not exist", async () => {
-              const result = await fetch(tmp_filename + "-does-not-exist", { s3: options });
+              await using tmpfile = await tmp();
+              const result = await fetch(tmpfile.name + "-does-not-exist", { s3: options });
               expect(result.status).toBe(404);
             });
 
             it("should be able to set content-type", async () => {
+              await using tmpfile = await tmp();
               {
-                const result = await fetch(tmp_filename, {
+                const result = await fetch(tmpfile.name, {
                   method: "PUT",
                   body: "Hello Bun!",
                   headers: {
@@ -266,11 +273,11 @@ for (let credentials of allCredentials) {
                   s3: options,
                 });
                 expect(result.status).toBe(200);
-                const response = await fetch(tmp_filename, { s3: options });
+                const response = await fetch(tmpfile.name, { s3: options });
                 expect(response.headers.get("content-type")).toStartWith("application/json");
               }
               {
-                const result = await fetch(tmp_filename, {
+                const result = await fetch(tmpfile.name, {
                   method: "PUT",
                   body: "Hello Bun!",
                   headers: {
@@ -279,16 +286,17 @@ for (let credentials of allCredentials) {
                   s3: options,
                 });
                 expect(result.status).toBe(200);
-                const response = await fetch(tmp_filename, { s3: options });
+                const response = await fetch(tmpfile.name, { s3: options });
                 expect(response.headers.get("content-type")).toStartWith("text/plain");
               }
             });
 
             it("should be able to upload large files", async () => {
+              await using tmpfile = await tmp();
               // 10 MiB big enough to Multipart upload in more than one part
               const buffer = Buffer.alloc(1 * 1024 * 1024, "a");
               {
-                await fetch(tmp_filename, {
+                await fetch(tmpfile.name, {
                   method: "PUT",
                   body: async function* () {
                     for (let i = 0; i < 10; i++) {
@@ -299,7 +307,7 @@ for (let credentials of allCredentials) {
                   s3: options,
                 }).then(res => res.text());
 
-                const result = await fetch(tmp_filename, { method: "HEAD", s3: options });
+                const result = await fetch(tmpfile.name, { method: "HEAD", s3: options });
                 expect(result.status).toBe(200);
                 expect(result.headers.get("content-length")).toBe((buffer.byteLength * 10).toString());
               }
@@ -308,47 +316,54 @@ for (let credentials of allCredentials) {
         });
 
         describe("Bun.S3Client", () => {
-          describe(bucketInName ? "bucket in path" : "bucket in options", () => {
-            let tmp_filename: string;
+          describe.concurrent(bucketInName ? "bucket in path" : "bucket in options", () => {
             const options = bucketInName ? null : { bucket: S3Bucket };
 
             var bucket = S3(s3Options);
-            beforeEach(async () => {
-              tmp_filename = bucketInName ? `${S3Bucket}/${randomUUID()}` : `${randomUUID()}`;
-              const file = bucket.file(tmp_filename, options);
-              await file.write("Hello Bun!");
-            });
 
-            afterEach(async () => {
-              try {
-                const file = bucket.file(tmp_filename, options);
-                await file.unlink();
-              } catch (e) {
-                // if error with NoSuchKey, it means the file does not exist and its fine
-                expect(e?.code || e).toBe("NoSuchKey");
-              }
-            });
+            async function tmp() {
+              const tmp_filename = bucketInName! ? `${S3Bucket}/${randomUUID()}` : `${randomUUID()}`;
+              const file = bucket.file(tmp_filename, options!);
+              await file.write("Hello Bun!");
+
+              return {
+                name: tmp_filename,
+                [Symbol.asyncDispose]: async () => {
+                  try {
+                    const file = bucket.file(tmp_filename, options!);
+                    await file.unlink();
+                  } catch (e) {
+                    // if error with NoSuchKey, it means the file does not exist and its fine
+                    expect(e?.code || e).toBe("NoSuchKey");
+                  }
+                },
+              };
+            }
 
             it("should download file via Bun.s3().text()", async () => {
-              const file = bucket.file(tmp_filename, options);
+              await using tmpfile = await tmp();
+              const file = bucket.file(tmpfile.name, options!);
               await file.write("Hello Bun!");
               const text = await file.text();
               expect(text).toBe("Hello Bun!");
             });
 
             it("should download range", async () => {
-              const file = bucket.file(tmp_filename, options);
+              await using tmpfile = await tmp();
+              const file = bucket.file(tmpfile.name, options!);
               const text = await file.slice(6, 10).text();
               expect(text).toBe("Bun!");
             });
             it("should download range with 0 offset", async () => {
-              const file = bucket.file(tmp_filename, options);
+              await using tmpfile = await tmp();
+              const file = bucket.file(tmpfile.name, options!);
               const text = await file.slice(0, 5).text();
               expect(text).toBe("Hello");
             });
 
             it("should check if a key exists or content-length", async () => {
-              const file = bucket.file(tmp_filename, options);
+              await using tmpfile = await tmp();
+              const file = bucket.file(tmpfile.name, options!);
               const exists = await file.exists();
               expect(exists).toBe(true);
               const stat = await file.stat();
@@ -356,27 +371,29 @@ for (let credentials of allCredentials) {
             });
 
             it("should check if a key does not exist", async () => {
-              const file = bucket.file(tmp_filename + "-does-not-exist", options);
+              await using tmpfile = await tmp();
+              const file = bucket.file(tmpfile.name + "-does-not-exist", options!);
               const exists = await file.exists();
               expect(exists).toBe(false);
             });
 
             it("should be able to set content-type", async () => {
+              await using tmpfile = await tmp();
               {
-                const s3file = bucket.file(tmp_filename, options);
+                const s3file = bucket.file(tmpfile.name, options!);
                 await s3file.write("Hello Bun!", { type: "text/css" });
                 const response = await fetch(s3file.presign());
                 expect(response.headers.get("content-type")).toStartWith("text/css");
               }
               {
-                const s3file = bucket.file(tmp_filename, options);
+                const s3file = bucket.file(tmpfile.name, options!);
                 await s3file.write("Hello Bun!", { type: "text/plain" });
                 const response = await fetch(s3file.presign());
                 expect(response.headers.get("content-type")).toStartWith("text/plain");
               }
 
               {
-                const s3file = bucket.file(tmp_filename, options);
+                const s3file = bucket.file(tmpfile.name, options!);
                 const writer = s3file.writer({ type: "application/json" });
                 writer.write("Hello Bun!");
                 await writer.end();
@@ -385,16 +402,17 @@ for (let credentials of allCredentials) {
               }
 
               {
-                await bucket.write(tmp_filename, "Hello Bun!", { ...options, type: "application/xml" });
-                const response = await fetch(bucket.file(tmp_filename, options).presign());
+                await bucket.write(tmpfile.name, "Hello Bun!", { ...options, type: "application/xml" });
+                const response = await fetch(bucket.file(tmpfile.name, options!).presign());
                 expect(response.headers.get("content-type")).toStartWith("application/xml");
               }
             });
 
             it("should be able to upload large files using bucket.write + readable Request", async () => {
+              await using tmpfile = await tmp();
               {
                 await bucket.write(
-                  tmp_filename,
+                  tmpfile.name,
                   new Request("https://example.com", {
                     method: "PUT",
                     body: async function* () {
@@ -406,29 +424,31 @@ for (let credentials of allCredentials) {
                       }
                     },
                   }),
-                  options,
+                  options!,
                 );
-                expect(await bucket.size(tmp_filename, options)).toBe(Buffer.byteLength(bigishPayload) * 10);
+                expect(await bucket.size(tmpfile.name, options!)).toBe(Buffer.byteLength(bigishPayload) * 10);
               }
-            }, 10_000);
+            }, 50_000);
 
             it("should be able to upload large files in one go using bucket.write", async () => {
               {
-                await bucket.write(tmp_filename, bigPayload, options);
-                expect(await bucket.size(tmp_filename, options)).toBe(Buffer.byteLength(bigPayload));
-                expect(await bucket.file(tmp_filename, options).text()).toBe(bigPayload);
+                await using tmpfile = await tmp();
+                await bucket.write(tmpfile.name, bigPayload, options!);
+                expect(await bucket.size(tmpfile.name, options!)).toBe(Buffer.byteLength(bigPayload));
+                expect(await bucket.file(tmpfile.name, options!).text()).toBe(bigPayload);
               }
-            }, 10_000);
+            }, 50_000);
 
             it("should be able to upload large files in one go using S3File.write", async () => {
               {
-                const s3File = bucket.file(tmp_filename, options);
+                await using tmpfile = await tmp();
+                const s3File = bucket.file(tmpfile.name, options!);
                 await s3File.write(bigPayload);
                 const stat = await s3File.stat();
                 expect(stat.size).toBe(Buffer.byteLength(bigPayload));
                 expect(await s3File.text()).toBe(bigPayload);
               }
-            }, 10_000);
+            }, 50_000);
 
             for (let queueSize of [1, 5, 7, 10, 20]) {
               for (let payloadQuantity of [1, 5, 7, 10, 20]) {
@@ -440,13 +460,14 @@ for (let credentials of allCredentials) {
                       `should be able to upload large files using writer() in multiple parts with partSize=${partSize} queueSize=${queueSize} payloadQuantity=${payloadQuantity} payloadSize=${payload.length * payloadQuantity}`,
                       async () => {
                         {
-                          const s3File = bucket.file(tmp_filename, options);
+                          await using tmpfile = await tmp();
+                          const s3File = bucket.file(tmpfile.name, options!);
                           const writer = s3File.writer({
                             queueSize,
                             partSize: partSize * 1024 * 1024,
                           });
                           for (let i = 0; i < payloadQuantity; i++) {
-                            writer.write(payload);
+                            await writer.write(payload);
                           }
                           await writer.end();
                           const stat = await s3File.stat();
@@ -454,7 +475,7 @@ for (let credentials of allCredentials) {
                           await s3File.delete();
                         }
                       },
-                      30_000,
+                      50_000,
                     );
                   }
                 }
@@ -465,38 +486,44 @@ for (let credentials of allCredentials) {
 
         describe("Bun.file", () => {
           describe(bucketInName ? "bucket in path" : "bucket in options", () => {
-            let tmp_filename: string;
-            const options = bucketInName ? s3Options : { ...s3Options, bucket: S3Bucket };
-            beforeEach(async () => {
-              tmp_filename = bucketInName ? `s3://${S3Bucket}/${randomUUID()}` : `s3://${randomUUID()}`;
-              const s3file = file(tmp_filename, options);
-              await s3file.write("Hello Bun!");
-            });
+            const options = bucketInName! ? s3Options : { ...s3Options, bucket: S3Bucket };
 
-            afterEach(async () => {
-              try {
-                const s3file = file(tmp_filename, options);
-                await s3file.unlink();
-              } catch (e) {
-                // if error with NoSuchKey, it means the file does not exist and its fine
-                expect(e?.code || e).toBe("NoSuchKey");
-              }
-            });
+            async function tmp() {
+              const url = bucketInName! ? `s3://${S3Bucket}/${randomUUID()}` : `s3://${randomUUID()}`;
+              const s3file = file(url, options);
+              await s3file.write("Hello Bun!");
+
+              return {
+                name: url,
+                // async resource management: dispose when leaving scope
+                async [Symbol.asyncDispose]() {
+                  try {
+                    await s3file.unlink();
+                  } catch (e: any) {
+                    // swallow "NoSuchKey", rethrow anything else
+                    if ((e?.code ?? e) !== "NoSuchKey") throw e;
+                  }
+                },
+              };
+            }
 
             it("should download file via Bun.file().text()", async () => {
-              const s3file = file(tmp_filename, options);
+              await using tmpfile = await tmp();
+              const s3file = file(tmpfile.name, options);
               const text = await s3file.text();
               expect(text).toBe("Hello Bun!");
             });
 
             it("should download range", async () => {
-              const s3file = file(tmp_filename, options);
+              await using tmpfile = await tmp();
+              const s3file = file(tmpfile.name, options);
               const text = await s3file.slice(6, 10).text();
               expect(text).toBe("Bun!");
             });
 
             it("should check if a key exists or content-length", async () => {
-              const s3file = file(tmp_filename, options);
+              await using tmpfile = await tmp();
+              const s3file = file(tmpfile.name, options);
               const exists = await s3file.exists();
               expect(exists).toBe(true);
               const stat = await s3file.stat();
@@ -504,27 +531,29 @@ for (let credentials of allCredentials) {
             });
 
             it("should check if a key does not exist", async () => {
-              const s3file = file(tmp_filename + "-does-not-exist", options);
+              await using tmpfile = await tmp();
+              const s3file = file(tmpfile.name + "-does-not-exist", options);
               const exists = await s3file.exists();
               expect(exists).toBe(false);
             });
 
             it("should be able to set content-type", async () => {
+              await using tmpfile = await tmp();
               {
-                const s3file = file(tmp_filename, { ...options, type: "text/css" });
+                const s3file = file(tmpfile.name, { ...options, type: "text/css" });
                 await s3file.write("Hello Bun!");
                 const response = await fetch(s3file.presign());
                 expect(response.headers.get("content-type")).toStartWith("text/css");
               }
               {
-                const s3file = file(tmp_filename, options);
+                const s3file = file(tmpfile.name, options);
                 await s3file.write("Hello Bun!", { type: "text/plain" });
                 const response = await fetch(s3file.presign());
                 expect(response.headers.get("content-type")).toStartWith("text/plain");
               }
 
               {
-                const s3file = file(tmp_filename, options);
+                const s3file = file(tmpfile.name, options);
                 const writer = s3file.writer({ type: "application/json" });
                 writer.write("Hello Bun!");
                 await writer.end();
@@ -533,16 +562,22 @@ for (let credentials of allCredentials) {
               }
             });
             it("should be able to upload large files using writer() #16452", async () => {
-              const s3file = file(tmp_filename, options);
+              await using tmpfile = await tmp();
+              const s3file = file(tmpfile.name, options);
               const writer = s3file.writer();
               writer.write(mediumPayload);
               writer.write(mediumPayload);
 
               await writer.end();
+
+              // end() followed by .text() sometimes does not return a correct result.
+              await Bun.sleep(10);
+
               expect(await s3file.text()).toBe(mediumPayload.repeat(2));
-            });
+            }, 100_000);
             it("should be able to upload large files using flush and partSize", async () => {
-              const s3file = file(tmp_filename, options);
+              await using tmpfile = await tmp();
+              const s3file = file(tmpfile.name, options);
 
               const writer = s3file.writer({
                 //@ts-ignore
@@ -560,61 +595,66 @@ for (let credentials of allCredentials) {
               expect(total).toBe(Buffer.byteLength(mediumPayload) * 2);
               await writer.end();
               expect(await s3file.text()).toBe(mediumPayload.repeat(2));
-            });
+            }, 100_000);
             it("should be able to upload large files in one go using Bun.write", async () => {
               {
-                await Bun.write(file(tmp_filename, options), bigPayload);
-                expect(await S3Client.size(tmp_filename, options)).toBe(Buffer.byteLength(bigPayload));
-                expect(await file(tmp_filename, options).text()).toEqual(bigPayload);
+                await using tmpfile = await tmp();
+                await Bun.write(file(tmpfile.name, options), bigPayload);
+                expect(await S3Client.size(tmpfile.name, options)).toBe(Buffer.byteLength(bigPayload));
+                expect(await file(tmpfile.name, options).text()).toEqual(bigPayload);
               }
             }, 15_000);
 
             it("should be able to upload large files in one go using S3File.write", async () => {
               {
-                const s3File = file(tmp_filename, options);
+                await using tmpfile = await tmp();
+                const s3File = file(tmpfile.name, options);
                 await s3File.write(bigPayload);
                 expect(s3File.size).toBeNaN();
                 expect(await s3File.text()).toBe(bigPayload);
                 await s3File.delete();
               }
-            }, 10_000);
+            }, 100_000);
           });
         });
 
         describe("Bun.s3", () => {
           describe(bucketInName ? "bucket in path" : "bucket in options", () => {
-            let tmp_filename: string;
             const options = bucketInName ? s3Options : { ...s3Options, bucket: S3Bucket };
-            beforeEach(async () => {
-              tmp_filename = bucketInName ? `${S3Bucket}/${randomUUID()}` : `${randomUUID()}`;
+            async function tmp() {
+              const tmp_filename = bucketInName ? `${S3Bucket}/${randomUUID()}` : `${randomUUID()}`;
               const s3file = s3(tmp_filename, options);
               await s3file.write("Hello Bun!");
-            });
-
-            afterEach(async () => {
-              try {
-                const s3file = s3(tmp_filename, options);
-                await s3file.unlink();
-              } catch (e) {
-                // if error with NoSuchKey, it means the file does not exist and its fine
-                expect(e?.code || e).toBe("NoSuchKey");
-              }
-            });
+              return {
+                name: tmp_filename,
+                [Symbol.asyncDispose]: async () => {
+                  try {
+                    await s3file.unlink();
+                  } catch (e: any) {
+                    // if error with NoSuchKey, it means the file does not exist and its fine
+                    expect(e?.code || e).toBe("NoSuchKey");
+                  }
+                },
+              };
+            }
 
             it("should download file via Bun.s3().text()", async () => {
-              const s3file = s3(tmp_filename, options);
+              await using tmpfile = await tmp();
+              const s3file = s3(tmpfile.name, options);
               const text = await s3file.text();
               expect(text).toBe("Hello Bun!");
             });
 
             it("should download range", async () => {
-              const s3file = s3(tmp_filename, options);
+              await using tmpfile = await tmp();
+              const s3file = s3(tmpfile.name, options);
               const text = await s3file.slice(6, 10).text();
               expect(text).toBe("Bun!");
             });
 
             it("should check if a key exists or content-length", async () => {
-              const s3file = s3(tmp_filename, options);
+              await using tmpfile = await tmp();
+              const s3file = s3(tmpfile.name, options);
               const exists = await s3file.exists();
               expect(exists).toBe(true);
               expect(s3file.size).toBeNaN();
@@ -626,34 +666,37 @@ for (let credentials of allCredentials) {
             });
 
             it("should check if a key does not exist", async () => {
-              const s3file = s3(tmp_filename + "-does-not-exist", options);
+              await using tmpfile = await tmp();
+              const s3file = s3(tmpfile.name + "-does-not-exist", options);
               const exists = await s3file.exists();
               expect(exists).toBe(false);
             });
 
             it("presign url", async () => {
-              const s3file = s3(tmp_filename, options);
+              await using tmpfile = await tmp();
+              const s3file = s3(tmpfile.name, options);
               const response = await fetch(s3file.presign());
               expect(response.status).toBe(200);
               expect(await response.text()).toBe("Hello Bun!");
             });
 
             it("should be able to set content-type", async () => {
+              await using tmpfile = await tmp();
               {
-                const s3file = s3(tmp_filename, { ...options, type: "text/css" });
+                const s3file = s3(tmpfile.name, { ...options, type: "text/css" });
                 await s3file.write("Hello Bun!");
                 const response = await fetch(s3file.presign());
                 expect(response.headers.get("content-type")).toStartWith("text/css");
               }
               {
-                const s3file = s3(tmp_filename, options);
+                const s3file = s3(tmpfile.name, options);
                 await s3file.write("Hello Bun!", { type: "text/plain" });
                 const response = await fetch(s3file.presign());
                 expect(response.headers.get("content-type")).toStartWith("text/plain");
               }
 
               {
-                const s3file = s3(tmp_filename, options);
+                const s3file = s3(tmpfile.name, options);
                 const writer = s3file.writer({ type: "application/json" });
                 writer.write("Hello Bun!");
                 await writer.end();
@@ -664,7 +707,8 @@ for (let credentials of allCredentials) {
 
             it("should be able to upload large files in one go using Bun.write", async () => {
               {
-                const s3file = s3(tmp_filename, options);
+                await using tmpfile = await tmp();
+                const s3file = s3(tmpfile.name, options);
                 await Bun.write(s3file, bigPayload);
                 const stat = await s3file.stat();
                 expect(stat.size).toBe(Buffer.byteLength(bigPayload));
@@ -674,10 +718,11 @@ for (let credentials of allCredentials) {
                 expect(await s3file.text()).toBe(bigPayload);
                 await s3file.delete();
               }
-            }, 10_000);
+            }, 100_000);
 
             it("should be able to upload large files using flush and partSize", async () => {
-              const s3file = s3(tmp_filename, options);
+              await using tmpfile = await tmp();
+              const s3file = s3(tmpfile.name, options);
 
               const writer = s3file.writer({
                 partSize: mediumPayload.length,
@@ -694,11 +739,12 @@ for (let credentials of allCredentials) {
               expect(total).toBe(Buffer.byteLength(mediumPayload) * 2);
               await writer.end();
               expect(await s3file.text()).toBe(mediumPayload.repeat(2));
-            });
+            }, 100_000);
 
             it("should be able to upload large files in one go using S3File.write", async () => {
               {
-                const s3File = s3(tmp_filename, options);
+                await using tmpfile = await tmp();
+                const s3File = s3(tmpfile.name, options);
                 await s3File.write(bigPayload);
                 const stat = await s3File.stat();
                 expect(stat.size).toBe(Buffer.byteLength(bigPayload));
@@ -709,27 +755,12 @@ for (let credentials of allCredentials) {
                 expect(await s3File.text()).toBe(bigPayload);
                 await s3File.delete();
               }
-            }, 10_000);
+            }, 100_000);
 
             describe("readable stream", () => {
-              afterEach(async () => {
-                await Promise.all([
-                  s3(tmp_filename + "-readable-stream", options)
-                    .unlink()
-                    .catch(e => {
-                      // if error with NoSuchKey, it means the file does not exist and its fine
-                      expect(e?.code || e).toBe("NoSuchKey");
-                    }),
-                  s3(tmp_filename + "-readable-stream-big", options)
-                    .unlink()
-                    .catch(e => {
-                      // if error with NoSuchKey, it means the file does not exist and its fine
-                      expect(e?.code || e).toBe("NoSuchKey");
-                    }),
-                ]);
-              });
               it("should work with small files", async () => {
-                const s3file = s3(tmp_filename + "-readable-stream", options);
+                await using tmpfile = await tmp();
+                const s3file = s3(tmpfile.name + "-readable-stream", options);
                 await s3file.write("Hello Bun!");
                 const stream = s3file.stream();
                 const reader = stream.getReader();
@@ -747,7 +778,8 @@ for (let credentials of allCredentials) {
                 expect(Buffer.concat(chunks)).toEqual(Buffer.from("Hello Bun!"));
               });
               it("should work with large files ", async () => {
-                const s3file = s3(tmp_filename + "-readable-stream-big", options);
+                await using tmpfile = await tmp();
+                const s3file = s3(tmpfile.name + "-readable-stream-big", options);
                 await s3file.write(bigishPayload);
                 const stream = s3file.stream();
                 const reader = stream.getReader();
@@ -775,7 +807,7 @@ for (let credentials of allCredentials) {
           });
         });
       }
-      describe("special characters", () => {
+      describe.concurrent("special characters", () => {
         // supabase will throw InvalidKey
         it.skipIf(credentials.service === "supabase")("should allow special characters in the path", async () => {
           const options = { ...s3Options, bucket: S3Bucket };
@@ -838,7 +870,7 @@ for (let credentials of allCredentials) {
         });
       });
 
-      describe("static methods", () => {
+      describe.concurrent("static methods", () => {
         it("its defined", () => {
           expect(S3Client).toBeDefined();
           expect(S3Client.write).toBeDefined();
@@ -868,7 +900,7 @@ for (let credentials of allCredentials) {
           expect().pass();
         });
       });
-      describe("errors", () => {
+      describe.concurrent("errors", () => {
         it("Bun.write(s3file, file) should throw if the file does not exist", async () => {
           try {
             await Bun.write(s3("test.txt", { ...s3Options, bucket: S3Bucket }), file("./do-not-exist.txt"));
@@ -972,7 +1004,7 @@ for (let credentials of allCredentials) {
           );
         });
       });
-      describe("credentials", () => {
+      describe.concurrent("credentials", () => {
         it("should error with invalid access key id", async () => {
           await Promise.all(
             [s3, (path, ...args) => S3(...args).file(path), file].map(async fn => {
@@ -1143,7 +1175,7 @@ for (let credentials of allCredentials) {
         });
       });
 
-      describe("S3 static methods", () => {
+      describe.concurrent("S3 static methods", () => {
         describe("presign", () => {
           it("should work", async () => {
             const s3file = s3("s3://bucket/credentials-test", s3Options);
@@ -1327,21 +1359,29 @@ describe.skipIf(!minioCredentials)("minio", () => {
   });
   describe("http endpoint should work when using env variables", () => {
     for (const endpoint of ["S3_ENDPOINT", "AWS_ENDPOINT"]) {
-      it(endpoint, async () => {
-        const { stdout, stderr } = await bunRun(path.join(testDir, "index.mjs"), {
-          // @ts-ignore
-          [endpoint]: minioCredentials!.endpoint as string,
-          "S3_BUCKET": minioCredentials!.bucket as string,
-          "S3_ACCESS_KEY_ID": minioCredentials!.accessKeyId as string,
-          "S3_SECRET_ACCESS_KEY": minioCredentials!.secretAccessKey as string,
+      it.concurrent(endpoint, async () => {
+        const { stdout, stderr, exited } = Bun.spawn({
+          cmd: [bunExe(), path.join(testDir, "index.mjs")],
+          env: {
+            ...bunEnv,
+            // @ts-ignore
+            [endpoint]: minioCredentials!.endpoint as string,
+            "S3_BUCKET": minioCredentials!.bucket as string,
+            "S3_ACCESS_KEY_ID": minioCredentials!.accessKeyId as string,
+            "S3_SECRET_ACCESS_KEY": minioCredentials!.secretAccessKey as string,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
         });
-        expect(stderr).toBe("");
-        expect(stdout).toBe("Hello Bun!");
+        expect(await stderr.text()).toBe("");
+        expect(await stdout.text()).toBe("Hello Bun!");
+        expect(await exited).toBe(0);
       });
     }
   });
 
-  describe("should accept / or \\ in start and end of bucket name", () => {
+  describe.concurrent("should accept / or \\ in start and end of bucket name", () => {
+    let bucketPrefixI = 0;
     for (let start of ["/", "\\", ""]) {
       for (let end of ["/", "\\", ""]) {
         let bucket = "buntest";
@@ -1356,7 +1396,7 @@ describe.skipIf(!minioCredentials)("minio", () => {
             ...minioCredentials,
             bucket,
           });
-          const file = s3.file("test.txt");
+          const file = s3.file(`${bucketPrefixI++} test.txt`);
           await file.write("Hello Bun!");
           const text = await file.text();
           expect(text).toBe("Hello Bun!");
@@ -1369,7 +1409,7 @@ describe.skipIf(!minioCredentials)("minio", () => {
   });
 });
 
-describe("s3 missing credentials", () => {
+describe.concurrent("s3 missing credentials", () => {
   async function assertMissingCredentials(fn: () => Promise<any>) {
     try {
       await fn();

@@ -316,6 +316,7 @@ const SQL: typeof Bun.SQL = function SQL(
     // reserve is allowed to be called inside reserved connection but will return a new reserved connection from the pool
     // this matchs the behavior of the postgres package
     reserved_sql.reserve = () => sql.reserve();
+    reserved_sql.array = sql.array;
     function onTransactionFinished(transaction_promise: Promise<any>) {
       reservedTransaction.delete(transaction_promise);
     }
@@ -590,6 +591,7 @@ const SQL: typeof Bun.SQL = function SQL(
     // reserve is allowed to be called inside transaction connection but will return a new reserved connection from the pool and will not be part of the transaction
     // this matchs the behavior of the postgres package
     transaction_sql.reserve = () => sql.reserve();
+    transaction_sql.array = sql.array;
 
     transaction_sql.connect = () => {
       if (state.connectionState & ReservedConnectionState.closed) {
@@ -829,6 +831,10 @@ const SQL: typeof Bun.SQL = function SQL(
     pool.connect(onReserveConnected.bind(promiseWithResolvers), true);
     return promiseWithResolvers.promise;
   };
+
+  sql.array = (values: any[], typeNameOrID: number | string | undefined = undefined) => {
+    return pool.array(values, typeNameOrID);
+  };
   sql.rollbackDistributed = async function (name: string) {
     if (pool.closed) {
       throw pool.connectionClosedError();
@@ -963,6 +969,10 @@ var defaultSQLObject: Bun.SQL = function sql(strings, ...values) {
 defaultSQLObject.reserve = (...args) => {
   ensureDefaultSQL();
   return lazyDefaultSQL.reserve(...args);
+};
+defaultSQLObject.array = (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.array(...args);
 };
 defaultSQLObject.commitDistributed = (...args) => {
   ensureDefaultSQL();

@@ -78,7 +78,7 @@ pub fn generateRuntimeSymbolImportAndUse(
     entry_point_part_index: Index,
     name: []const u8,
     count: u32,
-) !void {
+) bun.OOM!void {
     if (count == 0) return;
     debug("generateRuntimeSymbolImportAndUse({s}) for {d}", .{ name, source_index });
 
@@ -96,7 +96,7 @@ pub fn addPartToFile(
     graph: *LinkerGraph,
     id: u32,
     part: Part,
-) !u32 {
+) bun.OOM!u32 {
     var parts: *Part.List = &graph.ast.items(.parts)[id];
     const part_id = @as(u32, @truncate(parts.len));
     try parts.append(graph.allocator, part);
@@ -123,7 +123,7 @@ pub fn addPartToFile(
             var entry = overlay.getOrPut(self.graph.allocator, ref) catch unreachable;
             if (!entry.found_existing) {
                 if (self.graph.ast.items(.top_level_symbols_to_parts)[self.id].get(ref)) |original_parts| {
-                    var list = std.ArrayList(u32).init(self.graph.allocator);
+                    var list = std.array_list.Managed(u32).init(self.graph.allocator);
                     list.ensureTotalCapacityPrecise(original_parts.len + 1) catch unreachable;
                     list.appendSliceAssumeCapacity(original_parts.slice());
                     list.appendAssumeCapacity(self.part_id);
@@ -157,7 +157,7 @@ pub fn generateSymbolImportAndUse(
     ref: Ref,
     use_count: u32,
     source_index_to_import_from: Index,
-) !void {
+) bun.OOM!void {
     if (use_count == 0) return;
 
     var parts_list = g.ast.items(.parts)[source_index].slice();
@@ -166,7 +166,7 @@ pub fn generateSymbolImportAndUse(
     // Mark this symbol as used by this part
 
     var uses = &part.symbol_uses;
-    var uses_entry = uses.getOrPut(g.allocator, ref) catch unreachable;
+    var uses_entry = try uses.getOrPut(g.allocator, ref);
 
     if (!uses_entry.found_existing) {
         uses_entry.value_ptr.* = .{ .count_estimate = use_count };
@@ -458,7 +458,7 @@ pub const File = struct {
     /// a Source.Index to its output path inb reakOutputIntoPieces
     entry_point_chunk_index: u32 = std.math.maxInt(u32),
 
-    line_offset_table: bun.sourcemap.LineOffsetTable.List = .empty,
+    line_offset_table: bun.SourceMap.LineOffsetTable.List = .empty,
     quoted_source_contents: Owned(?[]u8) = .initNull(),
 
     pub fn isEntryPoint(this: *const File) bool {

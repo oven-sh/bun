@@ -8,7 +8,7 @@ pub const Row = struct {
     bigint: bool = false,
     globalObject: *jsc.JSGlobalObject,
 
-    pub fn toJS(this: *Row, globalObject: *jsc.JSGlobalObject, array: JSValue, structure: JSValue, flags: SQLDataCell.Flags, result_mode: SQLQueryResultMode, cached_structure: ?CachedStructure) JSValue {
+    pub fn toJS(this: *Row, globalObject: *jsc.JSGlobalObject, array: JSValue, structure: JSValue, flags: SQLDataCell.Flags, result_mode: SQLQueryResultMode, cached_structure: ?CachedStructure) !JSValue {
         var names: ?[*]jsc.JSObject.ExternColumnIdentifier = null;
         var names_count: u32 = 0;
         if (cached_structure) |c| {
@@ -18,7 +18,7 @@ pub const Row = struct {
             }
         }
 
-        return SQLDataCell.JSC__constructObjectFromDataCell(
+        return SQLDataCell.constructObjectFromDataCell(
             globalObject,
             array,
             structure,
@@ -113,7 +113,13 @@ pub const Row = struct {
                 cell.* = SQLDataCell{ .tag = .json, .value = .{ .json = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
             },
 
-            .MYSQL_TYPE_DATE, .MYSQL_TYPE_TIME, .MYSQL_TYPE_DATETIME, .MYSQL_TYPE_TIMESTAMP => {
+            .MYSQL_TYPE_TIME => {
+                // lets handle TIME special case as string
+                // -838:59:50 to 838:59:59 is valid
+                const slice = value.slice();
+                cell.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+            },
+            .MYSQL_TYPE_DATE, .MYSQL_TYPE_DATETIME, .MYSQL_TYPE_TIMESTAMP => {
                 var str = bun.String.init(value.slice());
                 defer str.deref();
                 const date = brk: {

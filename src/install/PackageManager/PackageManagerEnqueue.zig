@@ -65,7 +65,7 @@ pub fn enqueueDependencyList(
             false,
         ) catch |err| {
             const note = .{
-                .fmt = "error occurred while resolving {}",
+                .fmt = "error occurred while resolving {f}",
                 .args = .{bun.fmt.fmtPath(u8, lockfile.str(&dependency.realname()), .{
                     .path_sep = switch (dependency.version.tag) {
                         .folder => .auto,
@@ -571,12 +571,52 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                             null,
                                             logger.Loc.Empty,
                                             this.allocator,
-                                            "No version matching \"{s}\" found for specifier \"{s}\" (but package exists)",
+                                            "No version matching \"{s}\" found for specifier \"{s}\"<r> <d>(but package exists)<r>",
                                             .{
                                                 this.lockfile.str(&version.literal),
                                                 this.lockfile.str(&name),
                                             },
                                         ) catch unreachable;
+                                    }
+                                }
+                                return;
+                            },
+                            error.TooRecentVersion => {
+                                if (dependency.behavior.isRequired()) {
+                                    if (failFn) |fail| {
+                                        fail(
+                                            this,
+                                            dependency,
+                                            id,
+                                            err,
+                                        );
+                                    } else {
+                                        const age_gate_ms = this.options.minimum_release_age_ms orelse 0;
+                                        if (version.tag == .dist_tag) {
+                                            this.log.addErrorFmt(
+                                                null,
+                                                logger.Loc.Empty,
+                                                this.allocator,
+                                                "Package \"{s}\" with tag \"{s}\" not found<r> <d>(all versions blocked by minimum-release-age: {d} seconds)<r>",
+                                                .{
+                                                    this.lockfile.str(&name),
+                                                    this.lockfile.str(&version.value.dist_tag.tag),
+                                                    age_gate_ms / std.time.ms_per_s,
+                                                },
+                                            ) catch unreachable;
+                                        } else {
+                                            this.log.addErrorFmt(
+                                                null,
+                                                logger.Loc.Empty,
+                                                this.allocator,
+                                                "No version matching \"{s}\" found for specifier \"{s}\"<r> <d>(blocked by minimum-release-age: {d} seconds)<r>",
+                                                .{
+                                                    this.lockfile.str(&name),
+                                                    this.lockfile.str(&version.literal),
+                                                    age_gate_ms / std.time.ms_per_s,
+                                                },
+                                            ) catch unreachable;
+                                        }
                                     }
                                 }
                                 return;
@@ -603,7 +643,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                             if (PackageManager.verbose_install) {
                                 const label: string = this.lockfile.str(&version.literal);
 
-                                Output.prettyErrorln("   -> \"{s}\": \"{s}\" -> {s}@{}", .{
+                                Output.prettyErrorln("   -> \"{s}\": \"{s}\" -> {s}@{f}", .{
                                     this.lockfile.str(&result.package.name),
                                     label,
                                     this.lockfile.str(&result.package.name),
@@ -667,6 +707,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
 
                         if (!dependency.behavior.isPeer() or install_peer) {
                             if (!this.hasCreatedNetworkTask(task_id, dependency.behavior.isRequired())) {
+                                const needs_extended_manifest = this.options.minimum_release_age_ms != null;
                                 if (this.options.enable.manifest_cache) {
                                     var expired = false;
                                     if (this.manifests.byNameHashAllowExpired(
@@ -675,6 +716,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                         name_hash,
                                         &expired,
                                         .load_from_memory_fallback_to_disk,
+                                        needs_extended_manifest,
                                     )) |manifest| {
                                         loaded_manifest = manifest.*;
 
@@ -682,6 +724,14 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                         // We can skip the network request, even if it's beyond the caching period
                                         if (version.tag == .npm and version.value.npm.version.isExact()) {
                                             if (loaded_manifest.?.findByVersion(version.value.npm.version.head.head.range.left.version)) |find_result| {
+                                                if (this.options.minimum_release_age_ms) |min_age_ms| {
+                                                    if (!loaded_manifest.?.shouldExcludeFromAgeFilter(this.options.minimum_release_age_excludes) and Npm.PackageManifest.isPackageVersionTooRecent(find_result.package, min_age_ms)) {
+                                                        const package_name = this.lockfile.str(&name);
+                                                        const min_age_seconds = min_age_ms / std.time.ms_per_s;
+                                                        this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, "Version \"{s}@{f}\" was published within minimum release age of {d} seconds", .{ package_name, find_result.version.fmt(this.lockfile.buffers.string_bytes.items), min_age_seconds }) catch {};
+                                                        return;
+                                                    }
+                                                }
                                                 if (getOrPutResolvedPackageWithFindResult(
                                                     this,
                                                     name_hash,
@@ -721,12 +771,14 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                                     .task_id = task_id,
                                     .allocator = this.allocator,
                                 };
+
                                 try network_task.forManifest(
                                     name_str,
                                     this.allocator,
                                     this.scopeForPackageName(name_str),
                                     if (loaded_manifest) |*manifest| manifest else null,
                                     dependency.behavior.isOptional(),
+                                    needs_extended_manifest,
                                 );
                                 this.enqueueNetworkTask(network_task);
                             }
@@ -921,7 +973,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
             const workspace_not_found_fmt =
                 \\Workspace dependency "{[name]s}" not found
                 \\
-                \\Searched in <b>{[search_path]}<r>
+                \\Searched in <b>{[search_path]f}<r>
                 \\
                 \\Workspace documentation: https://bun.com/docs/install/workspaces
                 \\
@@ -941,7 +993,7 @@ pub fn enqueueDependencyWithMainAndSuccessFn(
                     if (PackageManager.verbose_install) {
                         const label: string = this.lockfile.str(&version.literal);
 
-                        Output.prettyErrorln("   -> \"{s}\": \"{s}\" -> {s}@{}", .{
+                        Output.prettyErrorln("   -> \"{s}\": \"{s}\" -> {s}@{f}", .{
                             this.lockfile.str(&result.package.name),
                             label,
                             this.lockfile.str(&result.package.name),
@@ -1359,7 +1411,6 @@ fn getOrPutResolvedPackageWithFindResult(
         manifest,
         find_result.version,
         find_result.package,
-        manifest.string_buf,
         Features.npm,
     ));
 
@@ -1472,7 +1523,7 @@ fn getOrPutResolvedPackage(
                                 null,
                                 logger.Loc.Empty,
                                 this.allocator,
-                                "incorrect peer dependency \"{}@{}\"",
+                                "incorrect peer dependency \"{f}@{f}\"",
                                 .{
                                     existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
                                     existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),
@@ -1509,7 +1560,7 @@ fn getOrPutResolvedPackage(
                                 null,
                                 logger.Loc.Empty,
                                 this.allocator,
-                                "incorrect peer dependency \"{}@{}\"",
+                                "incorrect peer dependency \"{f}@{f}\"",
                                 .{
                                     existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
                                     existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),
@@ -1565,16 +1616,60 @@ fn getOrPutResolvedPackage(
 
             // Resolve the version from the loaded NPM manifest
             const name_str = this.lockfile.str(&name);
+
             const manifest = this.manifests.byNameHash(
                 this,
                 this.scopeForPackageName(name_str),
                 name_hash,
                 .load_from_memory_fallback_to_disk,
+                this.options.minimum_release_age_ms != null,
             ) orelse return null; // manifest might still be downloading. This feels unreliable.
-            const find_result: Npm.PackageManifest.FindResult = switch (version.tag) {
-                .dist_tag => manifest.findByDistTag(this.lockfile.str(&version.value.dist_tag.tag)),
-                .npm => manifest.findBestVersion(version.value.npm.version, this.lockfile.buffers.string_bytes.items),
+
+            const version_result: Npm.PackageManifest.FindVersionResult = switch (version.tag) {
+                .dist_tag => manifest.findByDistTagWithFilter(this.lockfile.str(&version.value.dist_tag.tag), this.options.minimum_release_age_ms, this.options.minimum_release_age_excludes),
+                .npm => manifest.findBestVersionWithFilter(version.value.npm.version, this.lockfile.buffers.string_bytes.items, this.options.minimum_release_age_ms, this.options.minimum_release_age_excludes),
                 else => unreachable,
+            };
+
+            const find_result: Npm.PackageManifest.FindResult = switch (version_result) {
+                .found => |result| result,
+                .found_with_filter => |filtered| blk: {
+                    const package_name = this.lockfile.str(&name);
+                    if (this.options.log_level.isVerbose()) {
+                        if (filtered.newest_filtered) |newest| {
+                            const min_age_seconds = (this.options.minimum_release_age_ms orelse 0) / std.time.ms_per_s;
+                            switch (version.tag) {
+                                .dist_tag => {
+                                    const tag_str = this.lockfile.str(&version.value.dist_tag.tag);
+                                    Output.prettyErrorln("<d>[minimum-release-age]<r> <b>{s}@{s}<r> selected <green>{f}<r> instead of <yellow>{f}<r> due to {d}-second filter", .{
+                                        package_name,
+                                        tag_str,
+                                        filtered.result.version.fmt(manifest.string_buf),
+                                        newest.fmt(manifest.string_buf),
+                                        min_age_seconds,
+                                    });
+                                },
+                                .npm => {
+                                    const version_str = version.value.npm.version.fmt(manifest.string_buf);
+                                    Output.prettyErrorln("<d>[minimum-release-age]<r> <b>{s}<r>@{f}<r> selected <green>{f}<r> instead of <yellow>{f}<r> due to {d}-second filter", .{
+                                        package_name,
+                                        version_str,
+                                        filtered.result.version.fmt(manifest.string_buf),
+                                        newest.fmt(manifest.string_buf),
+                                        min_age_seconds,
+                                    });
+                                },
+                                else => unreachable,
+                            }
+                        }
+                    }
+
+                    break :blk filtered.result;
+                },
+                .err => |err_type| switch (err_type) {
+                    .too_recent, .all_versions_too_recent => return error.TooRecentVersion,
+                    .not_found => null, // Handle below with existing logic
+                },
             } orelse {
                 resolve_workspace_from_dist_tag: {
                     // choose a workspace for a dist_tag only if a version was not found

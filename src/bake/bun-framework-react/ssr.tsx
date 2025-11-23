@@ -56,6 +56,12 @@ export function renderToHtml(
       // with `use`, and then returning the parsed React component for the UI.
       const Root: any = () => React.use(promise);
 
+      // If the signal is already aborted, we should not proceed
+      if (signal.aborted) {
+        controller.close(signal.aborted);
+        return Promise.reject(signal.aborted);
+      }
+
       // `renderToPipeableStream` is what actually generates HTML.
       // Here is where React is told what script tags to inject.
       let pipe: (stream: any) => void;
@@ -63,7 +69,13 @@ export function renderToHtml(
         bootstrapModules,
         onError(error) {
           if (!signal.aborted) {
-            console.error(error);
+            // Abort the rendering and close the stream
+            signal.aborted = error;
+            abort();
+            if (signal.abort) signal.abort();
+            if (stream) {
+              stream.controller.close();
+            }
           }
         },
       }));
@@ -71,13 +83,14 @@ export function renderToHtml(
       stream = new RscInjectionStream(rscPayload, controller);
       pipe(stream);
 
-      // Promise resolved after all data is combined.
       return stream.finished;
     },
-    cancel() {
-      signal.aborted = true;
-      signal.abort();
-      abort?.();
+    cancel(err) {
+      if (!signal.aborted) {
+        signal.aborted = err;
+        signal.abort(err);
+      }
+      abort?.(err);
     },
   } as Bun.DirectUnderlyingSource as any);
 }
@@ -133,18 +146,27 @@ class RscInjectionStream extends EventEmitter {
   /** Resolved when all data is written */
   finished: Promise<void>;
   finalize: () => void;
+  reject: (err: any) => void;
 
   constructor(rscPayload: Readable, controller: ReadableStreamDirectController) {
     super();
     this.controller = controller;
 
-    const { resolve, promise } = Promise.withResolvers<void>();
+    const { resolve, promise, reject } = Promise.withResolvers<void>();
     this.finished = promise;
-    this.finalize = resolve;
+    this.finalize = x => (controller.close(), resolve(x));
+    this.reject = reject;
 
     rscPayload.on("data", this.writeRscData.bind(this));
     rscPayload.on("end", () => {
       this.rscHasEnded = true;
+    });
+    rscPayload.on("error", err => {
+      this.rscHasEnded = true;
+      // Close the controller
+      controller.close();
+      // Reject the promise instead of resolving it
+      this.reject(err);
     });
   }
 
@@ -232,9 +254,9 @@ class RscInjectionStream extends EventEmitter {
     // Ignore flush requests from React. Bun will automatically flush when reasonable.
   }
 
-  destroy() {}
+  destroy(e) {}
 
-  end() {}
+  end(e) {}
 }
 
 class StaticRscInjectionStream extends EventEmitter {
@@ -284,7 +306,6 @@ class StaticRscInjectionStream extends EventEmitter {
   }
 
   destroy(error) {
-    console.error(error);
     this.reject(error);
   }
 }

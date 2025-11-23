@@ -34,13 +34,12 @@ pub fn Dynamic(comptime Pointer: type) type {
 /// If `Allocator` is a zero-sized type, the owned pointer has no overhead compared to a raw
 /// pointer.
 pub fn OwnedIn(comptime Pointer: type, comptime Allocator: type) type {
-    const info = PointerInfo.parse(Pointer, .{});
-    const NonOptionalPointer = info.NonOptionalPointer;
-    const Child = info.Child;
-    const ConstPointer = AddConst(Pointer);
-
     return struct {
         const Self = @This();
+        const info = PointerInfo.parse(Pointer, .{});
+        const NonOptionalPointer = info.NonOptionalPointer;
+        const Child = info.Child;
+        const ConstPointer = AddConst(Pointer);
 
         #pointer: Pointer,
         #allocator: Allocator,
@@ -381,10 +380,9 @@ pub fn OwnedIn(comptime Pointer: type, comptime Allocator: type) type {
 ///
 /// This type is accessible as `OwnedIn(Pointer, Allocator).Unmanaged`.
 fn Unmanaged(comptime Pointer: type, comptime Allocator: type) type {
-    const info = PointerInfo.parse(Pointer, .{});
-
     return struct {
         const Self = @This();
+        const info = PointerInfo.parse(Pointer, .{});
 
         #pointer: Pointer,
 

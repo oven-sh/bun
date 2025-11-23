@@ -2,14 +2,14 @@
 #include "ZigGeneratedClasses.h"
 
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(JSC::JSGlobalObject* globalObject, void* impl);
-extern "C" void* Blob__setAsFile(void* impl, BunString* filename);
+extern "C" void Blob__setAsFile(void* impl, BunString* filename);
 
 namespace WebCore {
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, WebCore::Blob& impl)
 {
     BunString filename = Bun::toString(impl.fileName());
-    impl.m_impl = Blob__setAsFile(impl.impl(), &filename);
+    Blob__setAsFile(impl.impl(), &filename);
 
     return JSC::JSValue::decode(Blob__create(lexicalGlobalObject, Blob__dupe(impl.impl())));
 }
@@ -28,7 +28,7 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlo
 
 size_t Blob::memoryCost() const
 {
-    return sizeof(Blob) + JSBlob::memoryCost(m_impl);
+    return sizeof(Blob) + JSBlob::memoryCost(impl());
 }
 
 }

@@ -10,7 +10,6 @@ pub const AllocationScopeIn = allocation_scope.AllocationScopeIn;
 
 pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");
 pub const MaxHeapAllocator = @import("./allocators/MaxHeapAllocator.zig");
-pub const MemoryReportingAllocator = @import("./allocators/MemoryReportingAllocator.zig");
 pub const LinuxMemFdAllocator = @import("./allocators/LinuxMemFdAllocator.zig");
 pub const MaybeOwned = @import("./allocators/maybe_owned.zig").MaybeOwned;
 
@@ -361,7 +360,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             return instance;
         }
 
-        pub fn deinit(self: *const Self) void {
+        pub fn deinit(self: *Self) void {
             _ = self;
             bun.default_allocator.destroy(instance);
             loaded = false;
@@ -919,6 +918,8 @@ pub const Default = struct {
         _ = self;
         return c_allocator;
     }
+
+    pub const deinit = void;
 };
 
 const basic = if (bun.use_mimalloc)

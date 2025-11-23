@@ -169,6 +169,10 @@ fn resolveEntryPointSpecifier(
                 error_message.* = bun.String.static("unexpected exception");
                 return null;
             },
+            error.JSTerminated => {
+                error_message.* = bun.String.static("unexpected exception");
+                return null;
+            },
         };
         error_message.* = out;
         return null;
@@ -212,7 +216,7 @@ pub fn create(
 
     const preload_modules = if (preload_modules_ptr) |ptr| ptr[0..preload_modules_len] else &.{};
 
-    var preloads = bun.handleOom(std.ArrayList([]const u8).initCapacity(bun.default_allocator, preload_modules_len));
+    var preloads = bun.handleOom(std.array_list.Managed([]const u8).initCapacity(bun.default_allocator, preload_modules_len));
     for (preload_modules) |module| {
         const utf8_slice = module.toUTF8(bun.default_allocator);
         defer utf8_slice.deinit();
@@ -241,7 +245,7 @@ pub fn create(
         .store_fd = parent.transpiler.resolver.store_fd,
         .name = brk: {
             if (!name_str.isEmpty()) {
-                break :brk bun.handleOom(std.fmt.allocPrintZ(bun.default_allocator, "{}", .{name_str}));
+                break :brk bun.handleOom(std.fmt.allocPrintSentinel(bun.default_allocator, "{f}", .{name_str}, 0));
             }
             break :brk "";
         },
@@ -286,7 +290,7 @@ pub fn start(
     var transform_options = this.parent.transpiler.options.transform_options;
 
     if (this.execArgv) |exec_argv| parse_new_args: {
-        var new_args: std.ArrayList([]const u8) = try .initCapacity(bun.default_allocator, exec_argv.len);
+        var new_args: std.array_list.Managed([]const u8) = try .initCapacity(bun.default_allocator, exec_argv.len);
         defer {
             for (new_args.items) |arg| {
                 bun.default_allocator.free(arg);
@@ -382,8 +386,10 @@ fn flushLogs(this: *WebWorker) void {
         const str = err.toBunString(vm.global) catch |e| break :blk e;
         break :blk .{ err, str };
     } catch |err| switch (err) {
+        // TODO: properly handle exception
         error.JSError => @panic("unhandled exception"),
         error.OutOfMemory => bun.outOfMemory(),
+        error.JSTerminated => @panic("unhandled exception"),
     };
     defer str.deref();
     bun.jsc.fromJSHostCallGeneric(vm.global, @src(), WebWorker__dispatchError, .{ vm.global, this.cpp_worker, str, err }) catch |e| {
@@ -397,15 +403,12 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
 
     var error_instance = error_instance_or_exception.toError() orelse error_instance_or_exception;
 
-    var array = bun.MutableString.init(bun.default_allocator, 0) catch unreachable;
+    var array = std.Io.Writer.Allocating.init(bun.default_allocator);
     defer array.deinit();
 
-    var buffered_writer_ = bun.MutableString.BufferedWriter{ .context = &array };
-    var buffered_writer = &buffered_writer_;
     var worker = vm.worker orelse @panic("Assertion failure: no worker");
 
-    const writer = buffered_writer.writer();
-    const Writer = @TypeOf(writer);
+    const writer = &array.writer;
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
     jsc.ConsoleObject.format2(
@@ -413,8 +416,6 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         globalObject,
         &[_]jsc.JSValue{error_instance},
         1,
-        Writer,
-        Writer,
         writer,
         .{
             .enable_colors = false,
@@ -426,14 +427,15 @@ fn onUnhandledRejection(vm: *jsc.VirtualMachine, globalObject: *jsc.JSGlobalObje
         switch (err) {
             error.JSError => {},
             error.OutOfMemory => globalObject.throwOutOfMemory() catch {},
+            error.JSTerminated => {},
         }
         error_instance = globalObject.tryTakeException().?;
     };
-    buffered_writer.flush() catch {
+    writer.flush() catch {
         bun.outOfMemory();
     };
     jsc.markBinding(@src());
-    WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.slice()), error_instance);
+    WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.cloneUTF8(array.written()), error_instance);
     if (vm.worker) |worker_| {
         _ = worker.setRequestedTerminate();
         worker.parent_poll_ref.unrefConcurrently(worker.parent);
@@ -609,10 +611,19 @@ pub fn exitAndDeinit(this: *WebWorker) noreturn {
         loop_.internal_loop_data.jsc_vm = null;
     }
 
+    if (vm_to_deinit) |vm| {
+        // this deinit needs to happen before `Loop.shutdown`
+        // in order to not call uv_close on the gc timer twice.
+        vm.gc_controller.deinit();
+    }
+
+    if (comptime Environment.isWindows) {
+        bun.windows.libuv.Loop.shutdown();
+    }
+
     this.deinit();
 
     if (vm_to_deinit) |vm| {
-        vm.gc_controller.deinit();
         vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
     }
     bun.deleteAllPoolsForThreadExit();
@@ -635,6 +646,7 @@ const WTFStringImpl = @import("../string.zig").WTFStringImpl;
 
 const bun = @import("bun");
 const Async = bun.Async;
+const Environment = bun.Environment;
 const Output = bun.Output;
 const assert = bun.assert;
 

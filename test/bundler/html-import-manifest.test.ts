@@ -1,7 +1,7 @@
 import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
-describe("bundler", () => {
+describe.concurrent("bundler", () => {
   // Test HTML import manifest with enhanced metadata
   itBundled("html-import/manifest-with-metadata", {
     outdir: "out/",

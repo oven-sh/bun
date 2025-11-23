@@ -1,11 +1,11 @@
 import { beforeAll, it } from "bun:test";
 import { exec } from "child_process";
 import { rm } from "fs/promises";
-import { bunEnv, bunExe, isDockerEnabled, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, dockerExe, isDockerEnabled, tempDirWithFiles } from "harness";
 import { join } from "path";
 import { promisify } from "util";
 const execAsync = promisify(exec);
-const dockerCLI = Bun.which("docker") as string;
+const dockerCLI = dockerExe() as string;
 const SQUID_URL = "http://127.0.0.1:3128";
 if (isDockerEnabled()) {
   beforeAll(async () => {

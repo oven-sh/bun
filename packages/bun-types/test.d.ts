@@ -91,6 +91,7 @@ declare module "bun:test" {
   export namespace jest {
     function restoreAllMocks(): void;
     function clearAllMocks(): void;
+    function resetAllMocks(): void;
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     function setSystemTime(now?: number | Date): void;
     function setTimeout(milliseconds: number): void;
@@ -171,7 +172,7 @@ declare module "bun:test" {
     /**
      * Mock a module
      */
-    module: typeof mock.module;
+    mock: typeof mock.module;
     /**
      * Restore all mocks to their original implementation
      */
@@ -180,6 +181,9 @@ declare module "bun:test" {
      * Clear all mock state (calls, results, etc.) without restoring original implementation
      */
     clearAllMocks: typeof jest.clearAllMocks;
+    resetAllMocks: typeof jest.resetAllMocks;
+    useFakeTimers: typeof jest.useFakeTimers;
+    useRealTimers: typeof jest.useRealTimers;
   };
 
   interface FunctionLike {
@@ -227,6 +231,11 @@ declare module "bun:test" {
      */
     concurrent: Describe<T>;
     /**
+     * Marks this group of tests to be executed serially (one after another),
+     * even when the --concurrent flag is used.
+     */
+    serial: Describe<T>;
+    /**
      * Runs this group of tests, only if `condition` is true.
      *
      * This is the opposite of `describe.skipIf()`.
@@ -253,7 +262,7 @@ declare module "bun:test" {
      */
     each<T extends Readonly<[any, ...any[]]>>(table: readonly T[]): Describe<[...T]>;
     each<T extends any[]>(table: readonly T[]): Describe<[...T]>;
-    each<T>(table: T[]): Describe<[T]>;
+    each<const T>(table: T[]): Describe<[T]>;
   }
   /**
    * Describes a group of related tests.
@@ -350,6 +359,28 @@ declare module "bun:test" {
     options?: HookOptions,
   ): void;
   /**
+   * Runs a function after a test finishes, including after all afterEach hooks.
+   *
+   * This is useful for cleanup tasks that need to run at the very end of a test,
+   * after all other hooks have completed.
+   *
+   * Can only be called inside a test, not in describe blocks.
+   *
+   * @example
+   * test("my test", () => {
+   *   onTestFinished(() => {
+   *     // This runs after all afterEach hooks
+   *     console.log("Test finished!");
+   *   });
+   * });
+   *
+   * @param fn the function to run
+   */
+  export function onTestFinished(
+    fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    options?: HookOptions,
+  ): void;
+  /**
    * Sets the default timeout for all tests in the current file. If a test specifies a timeout, it will
    * override this value. The default timeout is 5000ms (5 seconds).
    *
@@ -381,11 +412,20 @@ declare module "bun:test" {
      */
     repeats?: number;
   }
-  type IsTuple<T> = T extends readonly unknown[]
-    ? number extends T["length"]
-      ? false // It's an array with unknown length, not a tuple
-      : true // It's an array with a fixed length (a tuple)
-    : false; // Not an array at all
+
+  namespace __internal {
+    type IsTuple<T> = T extends readonly unknown[]
+      ? number extends T["length"]
+        ? false // It's an array with unknown length, not a tuple
+        : true // It's an array with a fixed length (a tuple)
+      : false; // Not an array at all
+
+    /**
+     * Accepts `[1, 2, 3] | ["a", "b", "c"]` and returns `[1 | "a", 2 | "b", 3 | "c"]`
+     */
+    type Flatten<T, Copy extends T = T> = { [Key in keyof T]: Copy[Key] };
+  }
+
   /**
    * Runs a test.
    *
@@ -409,10 +449,16 @@ declare module "bun:test" {
    *
    * @category Testing
    */
-  export interface Test<T extends Readonly<any[]>> {
+  export interface Test<T extends ReadonlyArray<unknown>> {
     (
       label: string,
-      fn: (...args: IsTuple<T> extends true ? [...T, (err?: unknown) => void] : T) => void | Promise<unknown>,
+
+      fn: (
+        ...args: __internal.IsTuple<T> extends true
+          ? [...table: __internal.Flatten<T>, done: (err?: unknown) => void]
+          : T
+      ) => void | Promise<unknown>,
+
       /**
        * - If a `number`, sets the timeout for the test in milliseconds.
        * - If an `object`, sets the options for the test.
@@ -423,7 +469,7 @@ declare module "bun:test" {
       options?: number | TestOptions,
     ): void;
     /**
-     * Skips all other tests, except this test when run with the `--only` option.
+     * Skips all other tests, except this test.
      */
     only: Test<T>;
     /**
@@ -455,6 +501,11 @@ declare module "bun:test" {
      * Runs the test concurrently with other concurrent tests.
      */
     concurrent: Test<T>;
+    /**
+     * Forces the test to run serially (not in parallel),
+     * even when the --concurrent flag is used.
+     */
+    serial: Test<T>;
     /**
      * Runs this test, if `condition` is true.
      *
@@ -488,13 +539,20 @@ declare module "bun:test" {
      */
     concurrentIf(condition: boolean): Test<T>;
     /**
+     * Forces the test to run serially (not in parallel), if `condition` is true.
+     * This applies even when the --concurrent flag is used.
+     *
+     * @param condition if the test should run serially
+     */
+    serialIf(condition: boolean): Test<T>;
+    /**
      * Returns a function that runs for each item in `table`.
      *
      * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
      */
-    each<T extends Readonly<[any, ...any[]]>>(table: readonly T[]): Test<[...T]>;
-    each<T extends any[]>(table: readonly T[]): Test<[...T]>;
-    each<T>(table: T[]): Test<[T]>;
+    each<T extends Readonly<[unknown, ...unknown[]]>>(table: readonly T[]): Test<T>;
+    each<T extends unknown[]>(table: readonly T[]): Test<T>;
+    each<const T>(table: T[]): Test<[T]>;
   }
   /**
    * Runs a test.

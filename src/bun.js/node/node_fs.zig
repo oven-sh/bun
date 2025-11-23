@@ -3076,7 +3076,10 @@ pub const Arguments = struct {
 
             if (arguments.next()) |arg| {
                 arguments.eat();
-                force = arg.toBoolean();
+                // Keep default true if undefined is passed
+                if (!arg.isUndefinedOrNull()) {
+                    force = arg.toBoolean();
+                }
             }
 
             if (arguments.next()) |arg| {

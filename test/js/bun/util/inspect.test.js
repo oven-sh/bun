@@ -82,6 +82,30 @@ it("getter/setters", () => {
   expect(Bun.inspect(obj)).toBe("{\n" + "  foo: [Getter/Setter]," + "\n" + "}");
 });
 
+it("stack overflow exception checks", () => {
+  function probe(value) {
+    let originalPrototype, newPrototype;
+    let handler = {
+      set(target, key, value, receiver) {
+        return Reflect.set(target, key, value, receiver);
+      },
+    };
+    originalPrototype = Object.getPrototypeOf(value);
+    newPrototype = new Proxy(originalPrototype, handler);
+    Object.setPrototypeOf(value, newPrototype);
+  }
+  class Foo {
+    get bar() {
+      Bun.inspect(this);
+    }
+  }
+  const foo = new Foo();
+  probe(foo);
+  expect(() => {
+    foo.bar(Foo, foo);
+  }).toThrow("Maximum call stack size exceeded");
+});
+
 it("Timeout", () => {
   const id = setTimeout(() => {}, 0);
   expect(Bun.inspect(id)).toBe(`Timeout (#${+id})`);

@@ -493,6 +493,12 @@ pub const InstallCompletionsCommand = struct {
 
                 const contents = buf[0..read];
 
+                // Did they set BUN_SKIP_SHELL_CONFIG to skip this?
+                if (bun.env_var.BUN_SKIP_SHELL_CONFIG.get()) {
+                    Output.note("Skipping shell config as BUN_SKIP_SHELL_CONFIG is set", .{});
+                    Global.exit(0);
+                }
+
                 // Do they possibly have it in the file already?
                 if (strings.contains(contents, completions_path) or strings.contains(contents, "# bun completions\n")) {
                     break :brk false;

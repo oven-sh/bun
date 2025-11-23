@@ -62,6 +62,7 @@ pub const BUN_OPTIONS = New(kind.string, "BUN_OPTIONS", .{});
 pub const BUN_POSTGRES_SOCKET_MONITOR = New(kind.string, "BUN_POSTGRES_SOCKET_MONITOR", .{});
 pub const BUN_POSTGRES_SOCKET_MONITOR_READER = New(kind.string, "BUN_POSTGRES_SOCKET_MONITOR_READER", .{});
 pub const BUN_RUNTIME_TRANSPILER_CACHE_PATH = New(kind.string, "BUN_RUNTIME_TRANSPILER_CACHE_PATH", .{});
+pub const BUN_SKIP_SHELL_CONFIG = New(kind.boolean, "BUN_SKIP_SHELL_CONFIG", .{ .default = false });
 pub const BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR = New(kind.boolean, "BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR", .{ .default = false });
 pub const BUN_TCC_OPTIONS = New(kind.string, "BUN_TCC_OPTIONS", .{});
 pub const BUN_TMPDIR = New(kind.string, "BUN_TMPDIR", .{});

@@ -155,10 +155,12 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
         Identifier nameIdentifier;
         JSString* nameString = nullptr;
+        bool headerIsWellKnown = false;
 
         if (WebCore::findHTTPHeaderName(nameView, name)) {
             nameString = identifiers.stringFor(globalObject, name);
             nameIdentifier = identifiers.identifierFor(vm, name);
+            headerIsWellKnown = true;
         } else {
             WTF::String wtfString = nameView.toString();
             nameString = jsString(vm, wtfString);
@@ -177,13 +179,24 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
             arrayValues.append(jsValue);
             setCookiesHeaderArray->push(globalObject, jsValue);
             RETURN_IF_EXCEPTION(scope, void());
-
         } else {
+            if (headersObject->hasOwnProperty(globalObject, nameIdentifier)) {
+                if (headerIsWellKnown && name == HTTPHeaderName::Host) {
+                    continue;
+                }
+                auto prev = headersObject->get(globalObject, nameIdentifier);
+                RETURN_IF_EXCEPTION(scope, );
+                auto thenew = jsString(vm, makeString(prev.getString(globalObject), ", "_s, jsValue));
+                headersObject->putDirectMayBeIndex(globalObject, nameIdentifier, thenew);
+                RETURN_IF_EXCEPTION(scope, );
+                arrayValues.append(nameString);
+                arrayValues.append(jsValue);
+                continue;
+            }
             headersObject->putDirectMayBeIndex(globalObject, nameIdentifier, jsValue);
             RETURN_IF_EXCEPTION(scope, void());
             arrayValues.append(nameString);
             arrayValues.append(jsValue);
-            RETURN_IF_EXCEPTION(scope, void());
         }
     }
 

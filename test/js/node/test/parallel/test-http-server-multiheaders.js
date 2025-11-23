@@ -25,7 +25,6 @@
 // that support it, and dropping duplicates for other fields.
 
 require('../common');
-if ('Bun' in globalThis) return; // TODO: BUN
 const assert = require('assert');
 const http = require('http');
 

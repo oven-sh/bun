@@ -3,7 +3,6 @@ import { once } from "node:events";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 const { expect } = createTest(import.meta.path);
-if ("Bun" in globalThis) process.exit(0); // TODO: BUN
 
 const { promise, resolve } = Promise.withResolvers();
 await using server = http.createServer((req, res) => {

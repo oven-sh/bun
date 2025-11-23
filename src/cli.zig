@@ -548,7 +548,6 @@ pub const Command = struct {
         }
 
         if (isNode(argv0)) {
-            @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
             pretend_to_be_node = true;
             return .RunAsNodeCommand;
         }

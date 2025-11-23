@@ -1,6 +1,3 @@
-// Disabled because not all CLI arguments are parsed with Clap.
-pub var warn_on_unrecognized_flag = false;
-
 /// The result returned from StreamingClap.next
 pub fn Arg(comptime Id: type) type {
     return struct {
@@ -87,22 +84,7 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                     }
 
                     // unrecognized command
-                    // if flag else arg
-                    if (arg_info.kind == .long or arg_info.kind == .short) {
-                        if (warn_on_unrecognized_flag) {
-                            Output.warn("unrecognized flag: {s}{s}\n", .{ if (arg_info.kind == .long) "--" else "-", name });
-                            Output.flush();
-                        }
-
-                        // continue parsing after unrecognized flag
-                        return parser.next();
-                    }
-
-                    if (warn_on_unrecognized_flag) {
-                        Output.warn("unrecognized argument: {s}\n", .{name});
-                        Output.flush();
-                    }
-                    return null;
+                    return parser.err(arg, .{ .long = name }, error.InvalidArgument);
                 },
                 .short => return try parser.chainging(.{
                     .arg = arg,

@@ -482,3 +482,29 @@ it("should support --recursive flag", async () => {
   // Should recognize the flag (either process workspaces or show error about missing lockfile)
   expect(out + err).toMatch(/bun update|missing lockfile|nothing to update/);
 });
+
+it("should reject unknown long flags", async () => {
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "--exact"],
+    cwd: package_dir,
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await new Response(stderr).text();
+  expect(err).toContain("error");
+  expect(await exited).toBe(1);
+});
+
+it("should reject unknown short capital flags", async () => {
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "-E"],
+    cwd: package_dir,
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await new Response(stderr).text();
+  expect(err).toContain("error");
+  expect(await exited).toBe(1);
+});

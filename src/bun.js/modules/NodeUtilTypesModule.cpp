@@ -140,6 +140,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsError,
         }
 
         JSValue proto = object->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         if (proto.isCell() && (proto.inherits<JSC::ErrorInstance>() || proto.asCell()->type() == ErrorInstanceType || proto.inherits<JSC::ErrorPrototype>()))
             return JSValue::encode(jsBoolean(true));
     }

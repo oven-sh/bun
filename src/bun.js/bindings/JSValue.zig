@@ -1275,9 +1275,8 @@ pub const JSValue = enum(i64) {
     }
     extern fn JSC__JSValue__unwrapBoxedPrimitive(*JSGlobalObject, JSValue) JSValue;
 
-    extern fn JSC__JSValue__getPrototype(this: JSValue, globalObject: *JSGlobalObject) JSValue;
-    pub fn getPrototype(this: JSValue, globalObject: *JSGlobalObject) JSValue {
-        return JSC__JSValue__getPrototype(this, globalObject);
+    pub fn getPrototype(this: JSValue, globalObject: *JSGlobalObject) JSError!JSValue {
+        return bun.cpp.JSC__JSValue__getPrototype(this, globalObject);
     }
 
     extern fn JSC__JSValue__eqlValue(this: JSValue, other: JSValue) bool;

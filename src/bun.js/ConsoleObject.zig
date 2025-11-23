@@ -2037,7 +2037,7 @@ pub const Formatter = struct {
         try value.getClassName(globalThis, &name_str);
         if (!name_str.eqlComptime("Object")) {
             return name_str;
-        } else if (value.getPrototype(globalThis).eqlValue(JSValue.null)) {
+        } else if ((try value.getPrototype(globalThis)) == .null) {
             return ZigString.static("[Object: null prototype]").*;
         }
         return null;
@@ -2318,7 +2318,7 @@ pub const Formatter = struct {
                 try value.getClassName(this.globalThis, &printable);
                 this.addForNewLine(printable.len);
 
-                const proto = value.getPrototype(this.globalThis);
+                const proto = try value.getPrototype(this.globalThis);
                 var printable_proto = ZigString.init(&name_buf);
                 try proto.getClassName(this.globalThis, &printable_proto);
                 this.addForNewLine(printable_proto.len);
@@ -2341,7 +2341,7 @@ pub const Formatter = struct {
                 var printable = try value.getName(this.globalThis);
                 defer printable.deref();
 
-                const proto = value.getPrototype(this.globalThis);
+                const proto = try value.getPrototype(this.globalThis);
                 const func_name = try proto.getName(this.globalThis); // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
                 defer func_name.deref();
 

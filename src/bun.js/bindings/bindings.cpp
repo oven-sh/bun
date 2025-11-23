@@ -3691,7 +3691,7 @@ bool JSC__JSValue__eqlValue(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JS
 {
     return JSC::JSValue::decode(JSValue0) == JSC::JSValue::decode(JSValue1);
 };
-JSC::EncodedJSValue JSC__JSValue__getPrototype(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
+[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__getPrototype(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
 {
     auto value = JSC::JSValue::decode(JSValue0);
     return JSC::JSValue::encode(value.getPrototype(arg1));
@@ -4970,6 +4970,8 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
                     fast = canPerformFastPropertyEnumerationForIterationBun(structure);
                     prototypeCount = 1;
                 }
+            } else {
+                RETURN_IF_EXCEPTION(scope, void());
             }
         }
     }
@@ -5049,9 +5051,9 @@ restart:
                             goto restart;
                         }
                     }
+                } else {
+                    RETURN_IF_EXCEPTION(scope, void());
                 }
-                // Ignore exceptions from Proxy "getPrototype" trap.
-                CLEAR_IF_EXCEPTION(scope);
             }
             return;
         }
@@ -5164,7 +5166,11 @@ restart:
                 break;
             if (iterating == globalObject)
                 break;
-            iterating = iterating->getPrototype(globalObject).getObject();
+
+            JSValue proto = iterating->getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(scope, void());
+
+            iterating = proto.getObject();
         }
     }
 

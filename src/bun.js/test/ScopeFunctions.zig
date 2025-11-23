@@ -453,7 +453,7 @@ pub fn createUnbound(globalThis: *JSGlobalObject, mode: Mode, each: jsc.JSValue,
 pub fn bind(value: JSValue, globalThis: *JSGlobalObject, name: bun.String) bun.JSError!JSValue {
     const callFn = jsc.JSFunction.create(globalThis, name, callAsFunction, 1, .{});
     const bound = try callFn.bind(globalThis, value, &name, 1, &.{});
-    try bound.setPrototypeDirect(value.getPrototype(globalThis), globalThis);
+    try bound.setPrototypeDirect(try value.getPrototype(globalThis), globalThis);
     return bound;
 }
 

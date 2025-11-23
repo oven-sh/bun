@@ -1174,6 +1174,8 @@ pub const JSBundler = struct {
         pub fn runOnEndCallbacks(this: *Plugin, globalThis: *jsc.JSGlobalObject, build_promise: *jsc.JSPromise, build_result: jsc.JSValue, rejection: bun.JSError!jsc.JSValue) bun.JSError!jsc.JSValue {
             jsc.markBinding(@src());
 
+            const rejection_value = try rejection catch |err| globalThis.takeException(err);
+
             var scope: jsc.CatchScope = undefined;
             scope.init(globalThis, @src());
             defer scope.deinit();
@@ -1182,7 +1184,7 @@ pub const JSBundler = struct {
                 this,
                 build_promise.asValue(globalThis),
                 build_result,
-                rejection catch |err| globalThis.takeException(err),
+                rejection_value,
             );
 
             try scope.returnIfException();

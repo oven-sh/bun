@@ -211,7 +211,7 @@ pub const DirEntryAccessor = struct {
         pub inline fn next(self: *DirIter) Maybe(?IterResult) {
             if (self.value) |*value| {
                 const nextval = value.next() orelse return .{ .result = null };
-                const name = nextval.key_ptr.*;
+                const name = nextval.value_ptr.*.base();
                 const kind = nextval.value_ptr.*.kind(&FS.instance.fs, true);
                 const fskind = switch (kind) {
                     .file => std.fs.File.Kind.file,

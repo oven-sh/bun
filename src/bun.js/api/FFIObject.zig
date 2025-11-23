@@ -19,7 +19,7 @@ pub fn toJS(globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         object.put(
             globalObject,
             comptime ZigString.static(field),
-            jsc.createCallback(globalObject, comptime ZigString.static(field), 1, comptime @field(fields, field)),
+            jsc.JSFunction.create(globalObject, field, @field(fields, field), 1, .{}),
         );
     }
 

@@ -119,7 +119,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
             if (strings.hasPrefixComptime(line, key_processor)) {
                 if (!has_model_name) {
                     const cpu = try values.getIndex(globalThis, cpu_index);
-                    cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
+                    cpu.putDirect(globalThis, jsc.ZigString.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
                 }
                 // If this line starts a new processor, parse the index from the line
                 const digits = std.mem.trim(u8, line[key_processor.len..], " \t\n");
@@ -130,19 +130,19 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
                 // If this is the model name, extract it and store on the current cpu
                 const model_name = line[key_model_name.len..];
                 const cpu = try values.getIndex(globalThis, cpu_index);
-                cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.init(model_name).withEncoding().toJS(globalThis));
+                cpu.putDirect(globalThis, jsc.ZigString.static("model"), jsc.ZigString.init(model_name).withEncoding().toJS(globalThis));
                 has_model_name = true;
             }
         }
         if (!has_model_name) {
             const cpu = try values.getIndex(globalThis, cpu_index);
-            cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
+            cpu.putDirect(globalThis, jsc.ZigString.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
         }
     } else |_| {
         // Initialize model name to "unknown"
         var it = try values.arrayIterator(globalThis);
         while (try it.next()) |cpu| {
-            cpu.put(globalThis, jsc.ZigString.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
+            cpu.putDirect(globalThis, jsc.ZigString.static("model"), jsc.ZigString.static("unknown").withEncoding().toJS(globalThis));
         }
     }
 
@@ -162,10 +162,10 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
             const digits = std.mem.trim(u8, contents, " \n");
             const speed = (std.fmt.parseInt(u64, digits, 10) catch 0) / 1000;
 
-            cpu.put(globalThis, jsc.ZigString.static("speed"), jsc.JSValue.jsNumber(speed));
+            cpu.putDirect(globalThis, jsc.ZigString.static("speed"), jsc.JSValue.jsNumber(speed));
         } else |_| {
             // Initialize CPU speed to 0
-            cpu.put(globalThis, jsc.ZigString.static("speed"), jsc.JSValue.jsNumber(0));
+            cpu.putDirect(globalThis, jsc.ZigString.static("speed"), jsc.JSValue.jsNumber(0));
         }
     }
 

@@ -1,0 +1,10 @@
+#!/bin/sh
+
+if ! bun run --silent build:debug > /tmp/bun.debug.build.log 2>&1; then
+  cat /tmp/bun.debug.build.log
+  rm -f /tmp/bun.debug.build.log
+  exit 1
+fi
+
+rm -f /tmp/bun.debug.build.log
+exec ./build/debug/bun-debug "$@"

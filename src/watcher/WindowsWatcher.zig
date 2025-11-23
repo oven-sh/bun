@@ -7,6 +7,8 @@ iocp: w.HANDLE = undefined,
 watcher: DirWatcher = undefined,
 buf: bun.PathBuffer = undefined,
 base_idx: usize = 0,
+/// Track if handles have been closed to prevent double-close
+handles_closed: bool = false,
 
 pub const EventListIndex = c_int;
 
@@ -173,9 +175,9 @@ pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.sys.Maybe(?EventIterato
                 continue;
             }
             if (nbytes == 0) {
-                // shutdown notification
-                // TODO close handles?
+                // shutdown notification - close handles immediately to prevent resource leaks
                 log("shutdown notification in WindowsWatcher.next", .{});
+                this.closeHandles();
                 return .{ .err = .{
                     .errno = @intFromEnum(bun.sys.SystemErrno.ESHUTDOWN),
                     .syscall = .watch,
@@ -192,9 +194,35 @@ pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.sys.Maybe(?EventIterato
     }
 }
 
+/// Close handles if they haven't been closed already.
+/// This function is idempotent and safe to call multiple times.
+/// 
+/// When a shutdown notification is received from the IOCP, we need to close
+/// handles immediately to prevent resource leaks. This function ensures handles
+/// are properly closed and marked as invalid to prevent double-close errors.
+fn closeHandles(this: *WindowsWatcher) void {
+    if (this.handles_closed) {
+        return;
+    }
+    this.handles_closed = true;
+
+    // Close directory handle if it's still valid
+    if (this.watcher.dirHandle != w.INVALID_HANDLE_VALUE) {
+        _ = bun.windows.CloseHandle(this.watcher.dirHandle);
+        this.watcher.dirHandle = w.INVALID_HANDLE_VALUE;
+        log("closed directory handle", .{});
+    }
+
+    // Close IOCP handle if it's still valid
+    if (this.iocp != w.INVALID_HANDLE_VALUE) {
+        _ = bun.windows.CloseHandle(this.iocp);
+        this.iocp = w.INVALID_HANDLE_VALUE;
+        log("closed IOCP handle", .{});
+    }
+}
+
 pub fn stop(this: *WindowsWatcher) void {
-    w.CloseHandle(this.watcher.dirHandle);
-    w.CloseHandle(this.iocp);
+    this.closeHandles();
 }
 
 pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {

@@ -1,6 +1,6 @@
 #!/bin/sh
 
-LOG_FILE="${TMPDIR:-/tmp}/bun.debug.build.log"
+LOG_FILE="${TMPDIR:-/tmp}/bun.debug.build.log.$$"
 
 if bun run --silent build:debug > "$LOG_FILE" 2>&1; then
   rm -f "$LOG_FILE"

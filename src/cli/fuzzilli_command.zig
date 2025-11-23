@@ -28,7 +28,7 @@ pub const FuzzilliCommand = if (bun.Environment.enable_fuzzilli) struct {
                 Global.exit(1);
             },
         };
-        defer _ = bun.sys.close(temp_dir_fd);
+        defer temp_dir_fd.close();
 
         // Create temp file for the script
         const temp_file_name = "bun-fuzzilli-reprl.js";
@@ -39,7 +39,7 @@ pub const FuzzilliCommand = if (bun.Environment.enable_fuzzilli) struct {
                 Global.exit(1);
             },
         };
-        defer _ = bun.sys.close(temp_file_fd);
+        defer temp_file_fd.close();
 
         // Write the script to the temp file
         switch (bun.sys.write(temp_file_fd, reprl_script)) {

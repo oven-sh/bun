@@ -187,10 +187,89 @@ function onDataIncomingMessage(
   }
 }
 
+// Header handling helpers for parser compatibility
+// Based on Node.js lib/_http_incoming.js
+function matchKnownFields(field: string) {
+  const low = field.toLowerCase();
+  // Check for fields that should be unique (not joined with comma)
+  switch (low) {
+    case 'content-length':
+    case 'content-type':
+    case 'user-agent':
+    case 'referer':
+    case 'host':
+    case 'authorization':
+    case 'proxy-authorization':
+    case 'if-modified-since':
+    case 'if-unmodified-since':
+    case 'from':
+    case 'location':
+    case 'max-forwards':
+    case 'retry-after':
+    case 'etag':
+    case 'last-modified':
+    case 'server':
+    case 'age':
+    case 'expires':
+      return [low, false]; // Don't join duplicates
+    case 'set-cookie':
+      return [low, 'array']; // Store as array
+    default:
+      return [low, true]; // Join duplicates with comma
+  }
+}
+
+function _addHeaderLine(this: any, field: string, value: string, dest: any) {
+  const [key, joinDuplicates] = matchKnownFields(field);
+
+  if (joinDuplicates === 'array') {
+    // set-cookie is always an array
+    if (dest[key] !== undefined) {
+      dest[key].push(value);
+    } else {
+      dest[key] = [value];
+    }
+  } else if (joinDuplicates) {
+    // Join with comma
+    if (dest[key] !== undefined) {
+      dest[key] += ', ' + value;
+    } else {
+      dest[key] = value;
+    }
+  } else {
+    // Don't join - first value wins
+    if (dest[key] === undefined) {
+      dest[key] = value;
+    }
+  }
+}
+
+function _addHeaderLines(this: any, headers: string[], n: number) {
+  if (!headers || !headers.length) return;
+
+  // Initialize headers object if needed
+  if (!this.headers) {
+    this.headers = Object.create(null);
+  }
+  if (!this.rawHeaders) {
+    this.rawHeaders = [];
+  }
+
+  for (let i = 0; i < n; i += 2) {
+    const field = headers[i];
+    const value = headers[i + 1];
+    _addHeaderLine.$call(this, field, value, this.headers);
+    this.rawHeaders.push(field, value);
+  }
+}
+
 const IncomingMessagePrototype = {
   constructor: IncomingMessage,
   __proto__: Readable.prototype,
   httpVersion: "1.1",
+  // Parser compatibility methods
+  _addHeaderLine: _addHeaderLine,
+  _addHeaderLines: _addHeaderLines,
   _construct(callback) {
     // TODO: streaming
     const type = this[typeSymbol];

@@ -482,8 +482,9 @@ function ClientRequest(input, options, cb) {
       return this[kFetchRequest];
     };
 
-    if (isIP(host) || !options.lookup) {
-      // Don't need to bother with lookup if it's already an IP address or no lookup function is provided.
+    if (this[kSocketPath] || isIP(host) || !options.lookup) {
+      // Don't need to bother with lookup if it's already an IP address, no lookup function is provided,
+      // or if socketPath is specified (connecting via Unix domain socket / named pipe).
       const [url, proxy] = getURL(host);
       go(url, proxy, false);
       return true;

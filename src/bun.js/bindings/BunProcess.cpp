@@ -909,6 +909,16 @@ struct SignalHandleValue {
 };
 static HashMap<int, SignalHandleValue>* signalToContextIdsMap = nullptr;
 
+#if OS(WINDOWS)
+extern "C" bool Bun__hasSIGINTHandler()
+{
+    if (!signalToContextIdsMap) {
+        return false;
+    }
+    return signalToContextIdsMap->contains(SIGINT);
+}
+#endif
+
 static const NeverDestroyed<String>* getSignalNames()
 {
     static const NeverDestroyed<String> signalNames[] = {

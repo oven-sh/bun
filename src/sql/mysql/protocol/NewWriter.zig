@@ -29,6 +29,9 @@ pub fn NewWriterWrap(
             try writeFn(this.wrapped, data);
         }
 
+        /// Maximum payload size for a single MySQL packet (2^24 - 1 = 16,777,215 bytes)
+        pub const MAX_PACKET_PAYLOAD_SIZE: usize = 0xFFFFFF;
+
         const Packet = struct {
             header: PacketHeader,
             offset: usize,
@@ -36,11 +39,126 @@ pub fn NewWriterWrap(
 
             pub fn end(this: *@This()) AnyMySQLError.Error!void {
                 const new_offset = offsetFn(this.ctx.wrapped);
-                // fix position for packet header
+                // Calculate total payload length (excluding initial header)
                 const length = new_offset - this.offset - PacketHeader.size;
-                this.header.length = @intCast(length);
-                debug("writing packet header: {d}", .{this.header.length});
+
+                if (length <= MAX_PACKET_PAYLOAD_SIZE) {
+                    // Normal case: payload fits in a single packet
+                    this.header.length = @intCast(length);
+                    debug("writing packet header: {d}", .{this.header.length});
+                    try pwrite(this.ctx, &this.header.encode(), this.offset);
+                } else {
+                    // Large payload: needs to be split into multiple packets
+                    // MySQL protocol requires splitting payloads > 16MB into multiple packets
+                    // Each packet has a 4-byte header (3 bytes length + 1 byte sequence_id)
+                    try this.splitLargePacket(length);
+                }
+            }
+
+            fn splitLargePacket(this: *@This(), total_length: usize) AnyMySQLError.Error!void {
+                // For large packets, we need to:
+                // 1. Write the first chunk header at the original offset
+                // 2. Insert additional headers between subsequent chunks
+                //
+                // The data is already in the buffer starting at (this.offset + PacketHeader.size)
+                // We need to insert (num_extra_packets) additional headers
+                const payload_start = this.offset + PacketHeader.size;
+                const sequence_id = this.header.sequence_id;
+
+                // Calculate how many additional packets we need
+                const num_packets = (total_length + MAX_PACKET_PAYLOAD_SIZE - 1) / MAX_PACKET_PAYLOAD_SIZE;
+                const num_extra_headers = num_packets - 1;
+
+                debug("splitting large packet: total_length={d}, num_packets={d}", .{ total_length, num_packets });
+
+                if (num_extra_headers > 0) {
+                    // We need to expand the buffer to make room for additional headers
+                    // Each extra header is 4 bytes
+                    const extra_space = num_extra_headers * PacketHeader.size;
+                    var padding: [PacketHeader.size]u8 = undefined;
+                    for (0..num_extra_headers) |_| {
+                        try writeFn(this.ctx.wrapped, &padding);
+                    }
+
+                    // Now we need to shift the data to make room for the headers
+                    // We'll do this by reading the current buffer content and rewriting it
+                    // with headers inserted at the right places
+                    //
+                    // Strategy: Work backwards from the end to avoid overwriting data we still need
+                    var src_offset = payload_start + total_length; // End of original payload
+                    var dst_offset = payload_start + total_length + extra_space; // End of expanded buffer
+
+                    // Calculate chunk sizes for each packet
+                    // First (num_packets - 1) packets are MAX_PACKET_PAYLOAD_SIZE
+                    // Last packet is the remainder
+                    const last_chunk_size = total_length - (num_packets - 1) * MAX_PACKET_PAYLOAD_SIZE;
+
+                    // Process packets from last to first (reverse order to avoid overwriting)
+                    var packet_idx = num_packets;
+                    while (packet_idx > 0) {
+                        packet_idx -= 1;
+
+                        // Calculate chunk size: last packet gets the remainder, others get MAX
+                        const chunk_size = if (packet_idx == num_packets - 1)
+                            last_chunk_size
+                        else
+                            MAX_PACKET_PAYLOAD_SIZE;
+
+                        // Move this chunk's data to its new position
+                        src_offset -= chunk_size;
+                        dst_offset -= chunk_size;
+
+                        if (dst_offset != src_offset) {
+                            // Use memmove-style copy (copy via temp buffer to handle overlap)
+                            // Since we're working backwards, dst > src, so no overlap issues
+                            try this.copyWithinBuffer(src_offset, dst_offset, chunk_size);
+                        }
+
+                        // Write header for this packet (skip first packet, handled below)
+                        if (packet_idx > 0) {
+                            dst_offset -= PacketHeader.size;
+                            const header = PacketHeader{
+                                .length = @intCast(chunk_size),
+                                .sequence_id = sequence_id +% @as(u8, @intCast(packet_idx)),
+                            };
+                            try pwrite(this.ctx, &header.encode(), dst_offset);
+                        }
+                    }
+                }
+
+                // Write the first packet header at the original position
+                // First packet always has MAX_PACKET_PAYLOAD_SIZE bytes (when total > MAX)
+                const first_chunk_size: u24 = if (total_length > MAX_PACKET_PAYLOAD_SIZE)
+                    MAX_PACKET_PAYLOAD_SIZE
+                else
+                    @intCast(total_length);
+                this.header.length = first_chunk_size;
+                debug("writing first packet header: {d}", .{this.header.length});
                 try pwrite(this.ctx, &this.header.encode(), this.offset);
+            }
+
+            fn copyWithinBuffer(this: *@This(), src_offset: usize, dst_offset: usize, len: usize) AnyMySQLError.Error!void {
+                // Copy data within the buffer from src_offset to dst_offset
+                // We need to be careful about overlapping regions
+                if (src_offset == dst_offset or len == 0) return;
+
+                // Get access to the underlying buffer for copying
+                // Use the slice function if available on the context
+                if (@hasDecl(Context, "slice")) {
+                    const buf = this.ctx.wrapped.slice();
+                    // Use memmove-style copy for overlapping regions
+                    if (dst_offset > src_offset) {
+                        // Copy backwards to handle overlap (dst is after src)
+                        std.mem.copyBackwards(u8, buf[dst_offset..][0..len], buf[src_offset..][0..len]);
+                    } else {
+                        // Copy forwards
+                        std.mem.copyForwards(u8, buf[dst_offset..][0..len], buf[src_offset..][0..len]);
+                    }
+                } else {
+                    // Fallback: cannot copy without direct buffer access
+                    // This should not happen since Writer has slice()
+                    return error.Overflow;
+                }
             }
         };
 

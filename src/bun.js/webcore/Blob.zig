@@ -1244,84 +1244,94 @@ pub fn writeFileInternal(globalThis: *jsc.JSGlobalObject, path_or_blob_: *PathOr
     // If you're doing Bun.write(), try to go fast by writing short input on the main thread.
     // This is a heuristic, but it's a good one.
     //
-    // except if you're on Windows. Windows I/O is slower. Let's not even try.
-    if (comptime !Environment.isWindows) {
-        if (path_or_blob == .path or
+    // On Windows, we only use the fast path for file descriptor writes (like stdout/stderr)
+    // because path-based writes need async I/O for mkdirp support, and async writes to
+    // the same fd can complete out of order causing scrambled output (issue #11117).
+    // For file descriptors, we use synchronous WriteFile which maintains ordering.
+    const can_use_fast_path = if (comptime Environment.isWindows)
+        // On Windows, only use fast path for fd-based writes (not path-based)
+        (path_or_blob == .blob and
+            path_or_blob.blob.store != null and
+            path_or_blob.blob.store.?.data == .file and
+            path_or_blob.blob.store.?.data.file.pathlike == .fd and
+            path_or_blob.blob.offset == 0 and !path_or_blob.blob.isS3())
+    else
+        (path_or_blob == .path or
             // If they try to set an offset, its a little more complicated so let's avoid that
             (path_or_blob.blob.offset == 0 and !path_or_blob.blob.isS3() and
                 // Is this a file that is known to be a pipe? Let's avoid blocking the main thread on it.
                 !(path_or_blob.blob.store != null and
                     path_or_blob.blob.store.?.data == .file and
                     path_or_blob.blob.store.?.data.file.mode != 0 and
-                    bun.isRegularFile(path_or_blob.blob.store.?.data.file.mode))))
-        {
-            if (data.isString()) {
-                const len = try data.getLength(globalThis);
+                    bun.isRegularFile(path_or_blob.blob.store.?.data.file.mode))));
 
-                if (len < 256 * 1024) {
-                    const str = try data.toBunString(globalThis);
-                    defer str.deref();
+    if (can_use_fast_path) {
+        if (data.isString()) {
+            const len = try data.getLength(globalThis);
 
-                    const pathlike: jsc.Node.PathOrFileDescriptor = if (path_or_blob == .path)
-                        path_or_blob.path
-                    else
-                        path_or_blob.blob.store.?.data.file.pathlike;
+            if (len < 256 * 1024) {
+                const str = try data.toBunString(globalThis);
+                defer str.deref();
 
-                    if (pathlike == .path) {
-                        const result = writeStringToFileFast(
-                            globalThis,
-                            pathlike,
-                            str,
-                            &needs_async,
-                            true,
-                        );
-                        if (!needs_async) {
-                            return result;
-                        }
-                    } else {
-                        const result = writeStringToFileFast(
-                            globalThis,
-                            pathlike,
-                            str,
-                            &needs_async,
-                            false,
-                        );
-                        if (!needs_async) {
-                            return result;
-                        }
+                const pathlike: jsc.Node.PathOrFileDescriptor = if (path_or_blob == .path)
+                    path_or_blob.path
+                else
+                    path_or_blob.blob.store.?.data.file.pathlike;
+
+                if (pathlike == .path) {
+                    const result = writeStringToFileFast(
+                        globalThis,
+                        pathlike,
+                        str,
+                        &needs_async,
+                        true,
+                    );
+                    if (!needs_async) {
+                        return result;
+                    }
+                } else {
+                    const result = writeStringToFileFast(
+                        globalThis,
+                        pathlike,
+                        str,
+                        &needs_async,
+                        false,
+                    );
+                    if (!needs_async) {
+                        return result;
                     }
                 }
-            } else if (data.asArrayBuffer(globalThis)) |buffer_view| {
-                if (buffer_view.byte_len < 256 * 1024) {
-                    const pathlike: jsc.Node.PathOrFileDescriptor = if (path_or_blob == .path)
-                        path_or_blob.path
-                    else
-                        path_or_blob.blob.store.?.data.file.pathlike;
+            }
+        } else if (data.asArrayBuffer(globalThis)) |buffer_view| {
+            if (buffer_view.byte_len < 256 * 1024) {
+                const pathlike: jsc.Node.PathOrFileDescriptor = if (path_or_blob == .path)
+                    path_or_blob.path
+                else
+                    path_or_blob.blob.store.?.data.file.pathlike;
 
-                    if (pathlike == .path) {
-                        const result = writeBytesToFileFast(
-                            globalThis,
-                            pathlike,
-                            buffer_view.byteSlice(),
-                            &needs_async,
-                            true,
-                        );
+                if (pathlike == .path) {
+                    const result = writeBytesToFileFast(
+                        globalThis,
+                        pathlike,
+                        buffer_view.byteSlice(),
+                        &needs_async,
+                        true,
+                    );
 
-                        if (!needs_async) {
-                            return result;
-                        }
-                    } else {
-                        const result = writeBytesToFileFast(
-                            globalThis,
-                            pathlike,
-                            buffer_view.byteSlice(),
-                            &needs_async,
-                            false,
-                        );
+                    if (!needs_async) {
+                        return result;
+                    }
+                } else {
+                    const result = writeBytesToFileFast(
+                        globalThis,
+                        pathlike,
+                        buffer_view.byteSlice(),
+                        &needs_async,
+                        false,
+                    );
 
-                        if (!needs_async) {
-                            return result;
-                        }
+                    if (!needs_async) {
+                        return result;
                     }
                 }
             }
@@ -1705,7 +1715,7 @@ fn writeBytesToFileFast(
 
     if (truncate) {
         if (Environment.isWindows) {
-            _ = std.os.windows.kernel32.SetEndOfFile(fd.cast());
+            _ = bun.windows.SetEndOfFile(fd.cast());
         } else {
             _ = bun.sys.ftruncate(fd, @as(i64, @intCast(written)));
         }

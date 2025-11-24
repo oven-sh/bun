@@ -3986,8 +3986,22 @@ pub fn moveFileZSlowMaybe(from_dir: bun.FileDescriptor, filename: [:0]const u8, 
         .err => |e| return .{ .err = e },
     };
     defer in_handle.close();
-    _ = from_dir.unlinkat(filename);
-    return copyFileZSlowWithHandle(in_handle, to_dir, destination);
+    // On Windows, we must not delete the source file until after the copy completes.
+    // copyFileZSlowWithHandle on Windows uses GetFinalPathNameByHandleW to get the path
+    // from the handle, then uses CopyFileW which requires the source path to still exist.
+    // Additionally, Windows won't allow deleting a file with an open handle unless
+    // the handle was opened with FILE_SHARE_DELETE.
+    if (comptime !Environment.isWindows) {
+        _ = from_dir.unlinkat(filename);
+    }
+    const result = copyFileZSlowWithHandle(in_handle, to_dir, destination);
+    if (comptime Environment.isWindows) {
+        // Delete the source file after a successful copy
+        if (result == .result) {
+            _ = from_dir.unlinkat(filename);
+        }
+    }
+    return result;
 }
 
 pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDescriptor, destination: [:0]const u8) Maybe(void) {

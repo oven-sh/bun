@@ -744,6 +744,12 @@ pub const Writer = struct {
     pub fn offset(this: Writer) usize {
         return this.connection.#write_buffer.len();
     }
+
+    /// Returns a mutable slice of the write buffer for in-place manipulation.
+    /// Used for large packet splitting where we need to rearrange data.
+    pub fn slice(this: Writer) []u8 {
+        return this.connection.#write_buffer.byte_list.slice();
+    }
 };
 
 pub fn writer(this: *MySQLConnection) NewWriter(Writer) {

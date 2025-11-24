@@ -423,10 +423,17 @@ extern "C" void onExitSignal(int sig)
 
 #if OS(WINDOWS)
 extern "C" void Bun__restoreWindowsStdio();
+extern "C" bool Bun__hasSIGINTHandler();
+
 BOOL WINAPI Ctrlhandler(DWORD signal)
 {
-
     if (signal == CTRL_C_EVENT) {
+        // If there's a JavaScript SIGINT handler registered, let libuv handle it
+        // Return TRUE to prevent Windows from terminating the process
+        if (Bun__hasSIGINTHandler()) {
+            return TRUE;
+        }
+        // No handler registered, restore stdio and let Windows terminate
         Bun__restoreWindowsStdio();
         SetConsoleCtrlHandler(Ctrlhandler, FALSE);
     }

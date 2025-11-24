@@ -2182,14 +2182,18 @@ void GlobalObject::finishCreation(VM& vm)
             };
 
             JSMap* registry = nullptr;
-            auto loaderValue = global->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "Loader"_s));
+
+            // Use the pre-atomized Loader identifier from CommonIdentifiers to avoid potential
+            // issues with string atomization during property lookup.
+            // Note: vm.propertyNames->Loader is guaranteed to be atomized at VM construction time.
+            auto loaderValue = global->getIfPropertyExists(global, vm.propertyNames->Loader);
             scope.assertNoExceptionExceptTermination();
             RETURN_IF_EXCEPTION(scope, setEmpty());
-            if (loaderValue) {
+            if (loaderValue && loaderValue.isObject()) {
                 auto registryValue = loaderValue.getObject()->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "registry"_s));
                 scope.assertNoExceptionExceptTermination();
                 RETURN_IF_EXCEPTION(scope, setEmpty());
-                if (registryValue) {
+                if (registryValue && registryValue.inherits<JSC::JSMap>()) {
                     registry = jsCast<JSC::JSMap*>(registryValue);
                 }
             }

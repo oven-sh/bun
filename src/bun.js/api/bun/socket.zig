@@ -1381,8 +1381,7 @@ pub fn NewSocket(comptime ssl: bool) type {
                 return .js_undefined;
             }
             if (this.isServer()) {
-                globalObject.throw("Server-side sockets cannot be upgraded to TLS", .{});
-                return .zero;
+                return globalObject.throw("Server-side sockets cannot be upgraded to TLS", .{});
             }
             const args = callframe.arguments_old(1);
 

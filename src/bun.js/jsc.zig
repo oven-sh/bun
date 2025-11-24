@@ -37,7 +37,6 @@ pub const toJSHostFnWithContext = host_fn.toJSHostFnWithContext;
 pub const toJSHostCall = host_fn.toJSHostCall;
 pub const fromJSHostCall = host_fn.fromJSHostCall;
 pub const fromJSHostCallGeneric = host_fn.fromJSHostCallGeneric;
-pub const createCallback = host_fn.createCallback;
 
 // JSC Classes Bindings
 pub const AnyPromise = @import("./bindings/AnyPromise.zig").AnyPromise;

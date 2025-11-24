@@ -1,5 +1,8 @@
 #pragma once
 
+#include <type_traits>
+#include <utility>
+
 namespace Bun::Algo::Tuple {
 
 namespace detail {

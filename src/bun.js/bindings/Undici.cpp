@@ -1,4 +1,4 @@
-#include "algo/Tuple.h"
+#include "Algo/Tuple.h"
 #include "root.h"
 
 #include "JSDOMURL.h"
@@ -52,7 +52,7 @@ JSC::JSValue createUndiciInternalBinding(Zig::GlobalObject* globalObject)
                                      std::tuple_size_v<decltype(fields)>);
 
 
-    Bun::Algo::Tuple::forEachIndexed(fields, [&](std::size_t index, auto&& field) {
+    Bun::Algo::Tuple::forEachIndexed(std::move(fields), [&](std::size_t index, auto&& field) {
         obj->putDirectIndex(globalObject, index, field);
     });
 

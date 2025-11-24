@@ -229,12 +229,13 @@ static void* JSVALUE_TO_PTR(EncodedJSValue val) {
   }
 
   if (val.asInt64 & NumberTag == NumberTag) {
-    return (void*)(uintptr_t)(val.asInt64 & ~NumberTag);
+    // The JSValue is a signed 32-bit integer
+    return (void*)(uintptr_t)(int32_t)(val.asInt64 & ~NumberTag);
   }
 
+  // Assume the JSValue is a double
   val.asInt64 -= DoubleEncodeOffset;
-  uintptr_t ptr = (uintptr_t)val.asDouble;
-  return (void*)ptr;
+  return (void*)(uintptr_t)val.asDouble;
 }
 
 static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {

@@ -33,4 +33,10 @@ describe("example", () => {
     // if this test runs, it's a success.
     // a failure is if it's either skipped or fails the runner
   });
+
+  test("long running test", async () => {
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    await sleep(2000);
+    expect(true).toBe(true);
+  });
 });

@@ -870,6 +870,13 @@ pub const JestPrettyFormat = struct {
             if (this.failed)
                 return;
 
+            var writer = WrappedWriter(Writer){ .ctx = writer_, .estimated_line_length = &this.estimated_line_length };
+            defer {
+                if (writer.failed) {
+                    this.failed = true;
+                }
+            }
+
             // Try snapshot serializers first
             if (expect.Jest.runner) |runner| {
                 if (runner.snapshots.serializers.get()) |serializers| {
@@ -877,13 +884,6 @@ pub const JestPrettyFormat = struct {
                     if (!result.isUndefinedOrNull()) {
                         // Serializer matched but returned non-string value
                         if (bun.Environment.ci_assert) bun.assert(result.isString());
-
-                        var writer = WrappedWriter(Writer){ .ctx = writer_, .estimated_line_length = &this.estimated_line_length };
-                        defer {
-                            if (writer.failed) {
-                                this.failed = true;
-                            }
-                        }
 
                         var str = ZigString.Empty;
                         try result.toZigString(&str, this.globalThis);
@@ -903,12 +903,6 @@ pub const JestPrettyFormat = struct {
                 }
             }
 
-            var writer = WrappedWriter(Writer){ .ctx = writer_, .estimated_line_length = &this.estimated_line_length };
-            defer {
-                if (writer.failed) {
-                    this.failed = true;
-                }
-            }
             if (comptime Format.canHaveCircularReferences()) {
                 if (this.map_node == null) {
                     this.map_node = Visited.Pool.get(default_allocator);

@@ -45,12 +45,10 @@ JSC::JSValue createUndiciInternalBinding(Zig::GlobalObject* globalObject)
         JSWebSocket::getConstructor(vm, globalObject),
         JSCloseEvent::getConstructor(vm, globalObject),
         JSErrorEvent::getConstructor(vm, globalObject),
-        JSMessageEvent::getConstructor(vm, globalObject)
-    );
+        JSMessageEvent::getConstructor(vm, globalObject));
 
-    auto *obj = constructEmptyObject(globalObject, globalObject->objectPrototype(),
-                                     std::tuple_size_v<decltype(fields)>);
-
+    auto* obj = constructEmptyObject(globalObject, globalObject->objectPrototype(),
+        std::tuple_size_v<decltype(fields)>);
 
     Bun::Algo::Tuple::forEachIndexed(std::move(fields), [&](std::size_t index, auto&& field) {
         obj->putDirectIndex(globalObject, index, field);

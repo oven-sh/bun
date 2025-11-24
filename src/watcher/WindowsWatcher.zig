@@ -196,7 +196,7 @@ pub fn next(this: *WindowsWatcher, timeout: Timeout) bun.sys.Maybe(?EventIterato
 
 /// Close handles if they haven't been closed already.
 /// This function is idempotent and safe to call multiple times.
-/// 
+///
 /// When a shutdown notification is received from the IOCP, we need to close
 /// handles immediately to prevent resource leaks. This function ensures handles
 /// are properly closed and marked as invalid to prevent double-close errors.

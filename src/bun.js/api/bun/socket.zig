@@ -1380,6 +1380,10 @@ pub fn NewSocket(comptime ssl: bool) type {
             if (this.socket.isDetached() or this.socket.isNamedPipe()) {
                 return .js_undefined;
             }
+            if (this.handlers.is_server) {
+                globalObject.throw("Server-side sockets cannot be upgraded to TLS", .{});
+                return .zero;
+            }
             const args = callframe.arguments_old(1);
 
             if (args.len < 1) {

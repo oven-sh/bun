@@ -12,6 +12,9 @@ void forEachIndexedImpl(Tuple&& t, Func&& f, std::index_sequence<Is...>) {
 } // namespace detail
 
 
+/// @brief Iterates over tuple elements, invoking a callback with each element and its index.
+/// @tparam Tuple A tuple-like type (std::tuple, std::pair, std::array)
+/// @tparam Func Callable with signature void(auto&& element, std::size_t index)
 template <typename Tuple, typename Func>
 void forEachIndexed(Tuple&& t, Func&& f) {
     detail::forEachIndexedImpl(
@@ -21,4 +24,4 @@ void forEachIndexed(Tuple&& t, Func&& f) {
     );
 }
 
-}   // namespace Bun::Algo::Tuple
+} // namespace Bun::Algo::Tuple

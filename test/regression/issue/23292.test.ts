@@ -2,10 +2,10 @@
 // fs.access() and fs.accessSync() should work with Windows named pipes
 import { expect, test } from "bun:test";
 import { isWindows } from "harness";
-import fs from "node:fs";
-import net from "node:net";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
+import fs from "node:fs";
+import net from "node:net";
 
 test.if(isWindows)("fs.accessSync should work with named pipes", async () => {
   const pipeName = `\\\\.\\pipe\\bun-test-${randomUUID()}`;
@@ -35,7 +35,7 @@ test.if(isWindows)("fs.access should work with named pipes", async () => {
   try {
     // Test fs.access with callback
     const { promise, resolve, reject } = Promise.withResolvers<void>();
-    fs.access(pipeName, fs.constants.F_OK, (err) => {
+    fs.access(pipeName, fs.constants.F_OK, err => {
       if (err) {
         reject(err);
       } else {

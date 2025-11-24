@@ -736,14 +736,6 @@ pub const SecurityScanSubprocess = struct {
         this.stderr_data = .{};
         this.ipc_reader.setParent(this);
 
-        const ipc_pipe_result = bun.sys.pipe();
-        const ipc_pipe_fds = switch (ipc_pipe_result) {
-            .err => {
-                return error.IPCPipeFailed;
-            },
-            .result => |fds| fds,
-        };
-
         const exec_path = try bun.selfExePath();
 
         var argv = [_]?[*:0]const u8{
@@ -760,60 +752,91 @@ pub const SecurityScanSubprocess = struct {
 
         const spawn_cwd = FileSystem.instance.top_level_dir;
 
-        // On Windows, we need to pre-allocate uv.Pipe for .buffer/.ipc
-        // The spawn code will initialize it and return it in extra_pipes
-        const json_pipe_windows = if (comptime Environment.isWindows)
-            bun.default_allocator.create(bun.windows.libuv.Pipe) catch bun.outOfMemory()
-        else
-            undefined;
+        if (bun.Environment.isWindows) {
+            try this.spawnWindows(&argv, spawn_cwd);
+        } else {
+            try this.spawnPosix(&argv, spawn_cwd);
+        }
+    }
 
-        // We need to keep extra_fds array alive since it's passed by reference
-        const extra_fds_windows = if (comptime Environment.isWindows)
-            [_]bun.spawn.SpawnOptions.Stdio{ .{ .pipe = ipc_pipe_fds[1] }, .{ .buffer = json_pipe_windows } }
-        else
-            undefined;
+    fn spawnWindows(this: *SecurityScanSubprocess, argv: *[5]?[*:0]const u8, spawn_cwd: []const u8) !void {
+        // On Windows, we pre-allocate uv.Pipe handles for .buffer
+        // The spawn code will initialize them and return them in extra_pipes
+        // We use .buffer for both pipes:
+        //   - ipc_pipe: child writes IPC result to fd 3, parent reads
+        //   - json_pipe: parent writes JSON data, child reads from fd 4
+        const ipc_pipe = bun.default_allocator.create(bun.windows.libuv.Pipe) catch bun.outOfMemory();
+        const json_pipe = bun.default_allocator.create(bun.windows.libuv.Pipe) catch bun.outOfMemory();
 
-        const extra_fds_posix = if (comptime Environment.isPosix)
-            [_]bun.spawn.SpawnOptions.Stdio{ .{ .pipe = ipc_pipe_fds[1] }, .ipc }
-        else
-            undefined;
+        // extra_fds[0] -> fd 3 (IPC output: child writes, parent reads)
+        // extra_fds[1] -> fd 4 (JSON input: parent writes, child reads)
+        const extra_fds = [_]bun.spawn.SpawnOptions.Stdio{
+            .{ .buffer = ipc_pipe },
+            .{ .buffer = json_pipe },
+        };
 
-        const spawn_options = if (comptime Environment.isWindows)
-            bun.spawn.SpawnOptions{
-                .stdout = .inherit,
-                .stderr = .inherit,
-                .stdin = .inherit,
-                .cwd = spawn_cwd,
-                .extra_fds = &extra_fds_windows,
-                .windows = .{
-                    .loop = jsc.EventLoopHandle.init(&this.manager.event_loop),
-                },
-            }
-        else
-            bun.spawn.SpawnOptions{
-                .stdout = .inherit,
-                .stderr = .inherit,
-                .stdin = .inherit,
-                .cwd = spawn_cwd,
-                .extra_fds = &extra_fds_posix,
-            };
+        const spawn_options = bun.spawn.SpawnOptions{
+            .stdout = .inherit,
+            .stderr = .inherit,
+            .stdin = .inherit,
+            .cwd = spawn_cwd,
+            .extra_fds = &extra_fds,
+            .windows = .{
+                .loop = jsc.EventLoopHandle.init(&this.manager.event_loop),
+            },
+        };
 
-        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), @ptrCast(std.os.environ.ptr))).unwrap();
+        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(argv), @ptrCast(std.os.environ.ptr))).unwrap();
 
+        const json_write_result = spawned.extra_pipes.items[1];
+        const ipc_read_result = spawned.extra_pipes.items[0];
+
+        this.remaining_fds = 1;
+        try this.ipc_reader.startWithPipe(ipc_read_result.buffer).unwrap();
+
+        try this.finishSpawn(&spawned, json_write_result);
+    }
+
+    fn spawnPosix(this: *SecurityScanSubprocess, argv: *[5]?[*:0]const u8, spawn_cwd: []const u8) !void {
+        // On POSIX, we create a raw pipe for IPC output (child writes to fd 3, parent reads)
+        // and use .ipc for the JSON input pipe
+        const ipc_pipe_fds = switch (bun.sys.pipe()) {
+            .err => return error.IPCPipeFailed,
+            .result => |fds| fds,
+        };
+
+        // extra_fds[0] -> fd 3 (IPC output: child writes, parent reads)
+        // extra_fds[1] -> fd 4 (JSON input: parent writes, child reads)
+        const extra_fds = [_]bun.spawn.SpawnOptions.Stdio{
+            .{ .pipe = ipc_pipe_fds[1] },
+            .ipc,
+        };
+
+        const spawn_options = bun.spawn.SpawnOptions{
+            .stdout = .inherit,
+            .stderr = .inherit,
+            .stdin = .inherit,
+            .cwd = spawn_cwd,
+            .extra_fds = &extra_fds,
+        };
+
+        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(argv), @ptrCast(std.os.environ.ptr))).unwrap();
+
+        // Close the write end of the IPC pipe in the parent
         ipc_pipe_fds[1].close();
 
         const json_write_result = spawned.extra_pipes.items[1];
 
-        if (comptime bun.Environment.isPosix) {
-            _ = bun.sys.setNonblocking(ipc_pipe_fds[0]);
-        }
         this.remaining_fds = 1;
+        _ = bun.sys.setNonblocking(ipc_pipe_fds[0]);
         this.ipc_reader.flags.nonblocking = true;
-        if (comptime bun.Environment.isPosix) {
-            this.ipc_reader.flags.socket = false;
-        }
+        this.ipc_reader.flags.socket = false;
         try this.ipc_reader.start(ipc_pipe_fds[0], true).unwrap();
 
+        try this.finishSpawn(&spawned, json_write_result);
+    }
+
+    fn finishSpawn(this: *SecurityScanSubprocess, spawned: anytype, json_write_result: anytype) !void {
         var process = spawned.toProcess(&this.manager.event_loop, false);
         this.process = process;
         process.setExitHandler(this);

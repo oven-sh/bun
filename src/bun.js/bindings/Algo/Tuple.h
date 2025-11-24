@@ -1,6 +1,5 @@
 #pragma once
 
-#include "wtf/StdLibExtras.h"
 #include <concepts>
 #include <tuple>
 #include <type_traits>
@@ -29,7 +28,6 @@ void forEachIndexedImpl(Tuple&& t, Func&& f, std::index_sequence<Is...>)
 /// @tparam Tuple A tuple-like type (std::tuple, std::pair, std::array)
 /// @tparam Func Callable with signature `void(std::size_t index, ElementType element)`
 template <typename Tuple, typename Func>
-    requires(WTF::TupleLike<Tuple>)
 void forEachIndexed(Tuple&& t, Func&& f)
 {
     detail::forEachIndexedImpl(

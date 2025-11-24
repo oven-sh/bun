@@ -1712,8 +1712,59 @@ pub const BunXFastPath = struct {
         var i: usize = 0;
         for (passthrough) |str| {
             command_line[i] = ' ';
-            const result = bun.strings.convertUTF8toUTF16InBuffer(command_line[1 + i ..], str);
-            i += result.len + 1;
+            i += 1;
+            // Check if argument needs quoting (empty, contains spaces, quotes, or other special chars)
+            const needs_quote = str.len == 0 or for (str) |c| {
+                if (c == ' ' or c == '\t' or c == '"' or c == '\\') break true;
+            } else false;
+
+            if (needs_quote) {
+                command_line[i] = '"';
+                i += 1;
+                // Copy argument, escaping quotes and backslashes before quotes
+                var j: usize = 0;
+                while (j < str.len) {
+                    // Count backslashes
+                    var num_backslashes: usize = 0;
+                    while (j + num_backslashes < str.len and str[j + num_backslashes] == '\\') {
+                        num_backslashes += 1;
+                    }
+                    if (j + num_backslashes >= str.len) {
+                        // Backslashes at end: double them (they precede the closing quote)
+                        for (0..num_backslashes * 2) |_| {
+                            command_line[i] = '\\';
+                            i += 1;
+                        }
+                        j += num_backslashes;
+                    } else if (str[j + num_backslashes] == '"') {
+                        // Backslashes followed by quote: double backslashes + escape quote
+                        for (0..num_backslashes * 2 + 1) |_| {
+                            command_line[i] = '\\';
+                            i += 1;
+                        }
+                        command_line[i] = '"';
+                        i += 1;
+                        j += num_backslashes + 1;
+                    } else {
+                        // Backslashes not followed by quote: keep as-is
+                        for (0..num_backslashes) |_| {
+                            command_line[i] = '\\';
+                            i += 1;
+                        }
+                        j += num_backslashes;
+                        if (j < str.len) {
+                            const result = bun.strings.convertUTF8toUTF16InBuffer(command_line[i..], str[j .. j + 1]);
+                            i += result.len;
+                            j += 1;
+                        }
+                    }
+                }
+                command_line[i] = '"';
+                i += 1;
+            } else {
+                const result = bun.strings.convertUTF8toUTF16InBuffer(command_line[i..], str);
+                i += result.len;
+            }
         }
         ctx.passthrough = passthrough;
 

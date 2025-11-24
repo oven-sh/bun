@@ -1849,15 +1849,13 @@ void ${name}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     }
 
     Base::analyzeHeap(cell, analyzer);
-    ${allCachedValues(obj).length > 0 ? `auto& vm = thisObject->vm();` : ""}
 
     ${allCachedValues(obj)
       .map(
         ([name, cacheName]) => `
 if (JSValue ${cacheName}Value = thisObject->${cacheName}.get()) {
   if (${cacheName}Value.isCell()) {
-    const Identifier& id = Identifier::fromString(vm, "${name}"_s);
-    analyzer.analyzePropertyNameEdge(cell, ${cacheName}Value.asCell(), id.impl());
+    analyzer.analyzeEdge(cell, ${cacheName}Value.asCell(), RootMarkReason::None);
   }
 }`,
       )

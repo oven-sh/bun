@@ -774,21 +774,17 @@ void ${controller}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
         //     analyzer.setLabelForCell(cell, makeString("url ", thisObject->scriptExecutionContext()->url().string()));
     }
 
-    auto& vm = cell->vm();
-    
     if (thisObject->m_onPull) {
         JSValue onPull = thisObject->m_onPull.get();
         if (onPull.isCell()) {
-            const Identifier& id = Identifier::fromString(vm, "onPull"_s);
-            analyzer.analyzePropertyNameEdge(cell, onPull.asCell(), id.impl());
+            analyzer.analyzeEdge(cell, onPull.asCell(), RootMarkReason::None);
         }
     }
 
     if (thisObject->m_onClose) {
         JSValue onClose = thisObject->m_onClose.get();
         if (onClose.isCell()) {
-            const Identifier& id = Identifier::fromString(vm, "onClose"_s);
-            analyzer.analyzePropertyNameEdge(cell, onClose.asCell(), id.impl());
+            analyzer.analyzeEdge(cell, onClose.asCell(), RootMarkReason::None);
         }
     }
 }

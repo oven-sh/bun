@@ -1207,8 +1207,7 @@ void JSCommonJSModule::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     if (thisObject->m_overriddenParent) {
         JSValue overriddenParent = thisObject->m_overriddenParent.get();
         if (overriddenParent.isCell()) {
-            const Identifier overriddenParentIdentifier = Identifier::fromString(vm, "parent"_s);
-            analyzer.analyzePropertyNameEdge(cell, overriddenParent.asCell(), overriddenParentIdentifier.impl());
+            analyzer.analyzeEdge(cell, overriddenParent.asCell(), RootMarkReason::None);
         }
     }
 }

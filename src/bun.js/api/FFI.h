@@ -229,7 +229,7 @@ static void* JSVALUE_TO_PTR(EncodedJSValue val) {
   }
 
   if (JSVALUE_IS_INT32(val)) {
-    return (void*)(uintptr_t)(int32_t)(val.asInt64 & ~NumberTag);
+    return (void*)(uintptr_t)JSVALUE_TO_INT32(val);
   }
 
   // Assume the JSValue is a double

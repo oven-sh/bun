@@ -1,7 +1,7 @@
 // Test for GitHub issue #24682: node:http server cannot listen on Windows named pipes
 // https://github.com/oven-sh/bun/issues/24682
 
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
 describe.skipIf(!isWindows)("node:http Windows named pipe support", () => {
@@ -71,11 +71,7 @@ setTimeout(() => {
       stdout: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     if (exitCode !== 0) {
       console.log("stdout:", stdout);
@@ -127,11 +123,7 @@ setTimeout(() => {
       stdout: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     if (exitCode !== 0) {
       console.log("stdout:", stdout);
@@ -179,11 +171,7 @@ setTimeout(() => {
       stdout: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     if (exitCode !== 0) {
       console.log("stdout:", stdout);

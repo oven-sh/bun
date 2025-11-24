@@ -193,27 +193,27 @@ function matchKnownFields(field: string) {
   const low = field.toLowerCase();
   // Check for fields that should be unique (not joined with comma)
   switch (low) {
-    case 'content-length':
-    case 'content-type':
-    case 'user-agent':
-    case 'referer':
-    case 'host':
-    case 'authorization':
-    case 'proxy-authorization':
-    case 'if-modified-since':
-    case 'if-unmodified-since':
-    case 'from':
-    case 'location':
-    case 'max-forwards':
-    case 'retry-after':
-    case 'etag':
-    case 'last-modified':
-    case 'server':
-    case 'age':
-    case 'expires':
+    case "content-length":
+    case "content-type":
+    case "user-agent":
+    case "referer":
+    case "host":
+    case "authorization":
+    case "proxy-authorization":
+    case "if-modified-since":
+    case "if-unmodified-since":
+    case "from":
+    case "location":
+    case "max-forwards":
+    case "retry-after":
+    case "etag":
+    case "last-modified":
+    case "server":
+    case "age":
+    case "expires":
       return [low, false]; // Don't join duplicates
-    case 'set-cookie':
-      return [low, 'array']; // Store as array
+    case "set-cookie":
+      return [low, "array"]; // Store as array
     default:
       return [low, true]; // Join duplicates with comma
   }
@@ -222,7 +222,7 @@ function matchKnownFields(field: string) {
 function _addHeaderLine(this: any, field: string, value: string, dest: any) {
   const [key, joinDuplicates] = matchKnownFields(field);
 
-  if (joinDuplicates === 'array') {
+  if (joinDuplicates === "array") {
     // set-cookie is always an array
     if (dest[key] !== undefined) {
       dest[key].push(value);
@@ -232,7 +232,7 @@ function _addHeaderLine(this: any, field: string, value: string, dest: any) {
   } else if (joinDuplicates) {
     // Join with comma
     if (dest[key] !== undefined) {
-      dest[key] += ', ' + value;
+      dest[key] += ", " + value;
     } else {
       dest[key] = value;
     }

@@ -160,7 +160,12 @@ pub const VM = opaque {
         var scope: bun.jsc.ExceptionValidationScope = undefined;
         scope.init(global_object, @src());
         defer scope.deinit();
-        scope.assertNoException();
+        // If there's already an exception pending (e.g., from a caught stack overflow
+        // in JavaScript that wasn't fully cleared), just return the error without
+        // asserting or throwing a new exception. The existing exception will propagate.
+        if (scope.hasExceptionOrFalseWhenAssertionsAreDisabled()) {
+            return error.JSError;
+        }
         JSC__VM__throwError(vm, global_object, value);
         scope.assertExceptionPresenceMatches(true);
         return error.JSError;

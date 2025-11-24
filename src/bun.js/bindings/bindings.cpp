@@ -1716,6 +1716,12 @@ template<bool isStrict, bool enableAsymmetricMatchers>
 inline bool deepEqualsWrapperImpl(JSC::EncodedJSValue a, JSC::EncodedJSValue b, JSC::JSGlobalObject* global)
 {
     auto& vm = global->vm();
+    // If there's already an exception pending (e.g., from a caught stack overflow),
+    // return false immediately to avoid triggering assertion failures when creating
+    // a ThrowScope. The caller (fromJSHostCallGeneric in Zig) has a CatchScope that
+    // will handle propagating the exception.
+    if (vm.exceptionForInspection())
+        return false;
     auto scope = DECLARE_THROW_SCOPE(vm);
     Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16> stack;
     MarkedArgumentBuffer args;
@@ -2636,6 +2642,10 @@ size_t JSC__VM__heapSize(JSC::VM* arg0)
 bool JSC__JSValue__isStrictEqual(JSC::EncodedJSValue l, JSC::EncodedJSValue r, JSC::JSGlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
+    // If there's already an exception pending, return false immediately to avoid
+    // triggering assertion failures when creating a ThrowScope.
+    if (vm.exceptionForInspection())
+        return false;
     auto scope = DECLARE_THROW_SCOPE(vm);
     RELEASE_AND_RETURN(scope, JSC::JSValue::strictEqual(globalObject, JSC::JSValue::decode(l), JSC::JSValue::decode(r)));
 }
@@ -2672,10 +2682,16 @@ bool JSC__JSValue__jestStrictDeepEquals(JSC::EncodedJSValue JSValue0, JSC::Encod
 
 bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject, bool replacePropsWithAsymmetricMatchers)
 {
+    auto& vm = globalObject->vm();
+    // If there's already an exception pending, return false immediately to avoid
+    // triggering assertion failures when creating a ThrowScope.
+    if (vm.exceptionForInspection())
+        return false;
+
     JSValue obj = JSValue::decode(JSValue0);
     JSValue subset = JSValue::decode(JSValue1);
 
-    ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
     std::set<EncodedJSValue> objVisited;
     std::set<EncodedJSValue> subsetVisited;

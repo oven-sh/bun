@@ -58,12 +58,31 @@ const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild"
 
 const kServerResponse = Symbol("ServerResponse");
 const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
+const kRealListenNamedPipe = Symbol("kRealListenNamedPipe");
+const kNamedPipeServer = Symbol("kNamedPipeServer");
 const GlobalPromise = globalThis.Promise;
 const kEmptyBuffer = Buffer.alloc(0);
 const ObjectKeys = Object.keys;
 const MathMin = Math.min;
 
 let cluster;
+
+// Helper to detect Windows named pipes (\\.\pipe\name or \\?\pipe\name)
+function isWindowsNamedPipe(path: string): boolean {
+  if (process.platform !== "win32" || path.length <= 9) {
+    return false;
+  }
+  const isSep = (c: string) => c === "/" || c === "\\";
+  return (
+    isSep(path[0]) &&
+    isSep(path[1]) &&
+    (path[2] === "." || path[2] === "?") &&
+    isSep(path[3]) &&
+    path.slice(4, 8).toLowerCase() === "pipe" &&
+    isSep(path[8]) &&
+    !isSep(path[9])
+  );
+}
 
 function emitCloseServer(self: Server) {
   callCloseCallback(self);
@@ -465,6 +484,12 @@ Server.prototype.listen = function () {
 };
 
 Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, onListen) {
+  // On Windows, named pipes need special handling since Bun.serve() doesn't support them.
+  // We use node:net.Server which uses Bun.listen() internally and supports named pipes.
+  if (socketPath && isWindowsNamedPipe(socketPath)) {
+    return this[kRealListenNamedPipe](tls, socketPath, onListen);
+  }
+
   {
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
     const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
@@ -737,6 +762,268 @@ Server.prototype.setTimeout = function (msecs, callback) {
     (this[kDeferredTimeouts] ??= []).push({ msecs, callback });
   }
   return this;
+};
+
+// Simple ServerResponse for named pipes that writes directly to socket
+class NamedPipeServerResponse extends Stream.Writable {
+  statusCode = 200;
+  statusMessage = "OK";
+  headersSent = false;
+  finished = false;
+  socket: any;
+  _headers: Map<string, string[]> = new Map();
+  shouldKeepAlive = false;
+  sendDate = true;
+  req: any;
+
+  constructor(req: any, socket: any) {
+    super();
+    this.req = req;
+    this.socket = socket;
+  }
+
+  setHeader(name: string, value: string | string[]) {
+    const key = name.toLowerCase();
+    const values = Array.isArray(value) ? value : [value];
+    this._headers.set(key, values);
+  }
+
+  getHeader(name: string) {
+    const values = this._headers.get(name.toLowerCase());
+    return values ? (values.length === 1 ? values[0] : values) : undefined;
+  }
+
+  hasHeader(name: string) {
+    return this._headers.has(name.toLowerCase());
+  }
+
+  removeHeader(name: string) {
+    this._headers.delete(name.toLowerCase());
+  }
+
+  writeHead(statusCode: number, statusMessage?: string | Record<string, string>, headers?: Record<string, string>) {
+    if (this.headersSent) return this;
+
+    this.statusCode = statusCode;
+    if (typeof statusMessage === "string") {
+      this.statusMessage = statusMessage;
+    } else if (typeof statusMessage === "object") {
+      headers = statusMessage;
+    }
+
+    if (headers) {
+      for (const [key, value] of Object.entries(headers)) {
+        this.setHeader(key, value);
+      }
+    }
+    return this;
+  }
+
+  _flushHeaders() {
+    if (this.headersSent) return;
+    this.headersSent = true;
+
+    let header = `HTTP/1.1 ${this.statusCode} ${this.statusMessage || STATUS_CODES[this.statusCode] || "Unknown"}\r\n`;
+
+    if (this.sendDate && !this._headers.has("date")) {
+      header += `Date: ${new Date().toUTCString()}\r\n`;
+    }
+
+    for (const [name, values] of this._headers) {
+      for (const value of values) {
+        header += `${name}: ${value}\r\n`;
+      }
+    }
+
+    header += "\r\n";
+    this.socket.write(header);
+  }
+
+  _write(chunk: any, encoding: string, callback: () => void) {
+    this._flushHeaders();
+    this.socket.write(chunk, encoding, callback);
+  }
+
+  end(data?: any, encoding?: any, callback?: () => void) {
+    if (typeof data === "function") {
+      callback = data;
+      data = undefined;
+    } else if (typeof encoding === "function") {
+      callback = encoding;
+      encoding = undefined;
+    }
+
+    // Set Content-Length if not set and we have data
+    if (data && !this._headers.has("content-length") && !this._headers.has("transfer-encoding")) {
+      const len = typeof data === "string" ? Buffer.byteLength(data) : data.length;
+      this.setHeader("content-length", String(len));
+    }
+
+    this._flushHeaders();
+
+    if (data) {
+      this.socket.write(data, encoding);
+    }
+
+    this.finished = true;
+
+    if (!this.shouldKeepAlive) {
+      this.socket.end();
+    }
+
+    if (callback) callback();
+    this.emit("finish");
+    return this;
+  }
+
+  writeContinue() {
+    this.socket.write("HTTP/1.1 100 Continue\r\n\r\n");
+  }
+
+  assignSocket(socket: any) {
+    this.socket = socket;
+    socket._httpMessage = this;
+  }
+
+  detachSocket(socket: any) {
+    socket._httpMessage = null;
+  }
+}
+
+// Windows named pipe support using node:net.Server with HTTP parsing
+Server.prototype[kRealListenNamedPipe] = function (tls, socketPath, onListen) {
+  const net = require("node:net");
+  const { parsers, freeParser, kIncomingMessage } = require("node:_http_common");
+  const { HTTPParser, allMethods } = process.binding("http_parser");
+  const httpServer = this;
+
+  // TLS over named pipes is not currently supported
+  if (tls) {
+    throw new Error("TLS is not supported over Windows named pipes");
+  }
+
+  // Create a net.Server to listen on the named pipe
+  const netServer = net.createServer((socket: any) => {
+    // Get a parser from the pool
+    const parser = parsers.alloc();
+    parser.initialize(HTTPParser.REQUEST, {});
+    parser.socket = socket;
+    socket.parser = parser;
+    socket._server = httpServer;
+    socket.server = httpServer;
+
+    // Set up the parser's onIncoming callback - this is called from parserOnHeadersComplete
+    parser.onIncoming = function onIncoming(req: any, shouldKeepAlive: boolean) {
+      // Create a simple ServerResponse that writes directly to the socket
+      const res = new NamedPipeServerResponse(req, socket);
+      res.shouldKeepAlive = shouldKeepAlive;
+      socket._httpMessage = res;
+
+      // Check for upgrade
+      if (req.upgrade) {
+        httpServer.emit("upgrade", req, socket, kEmptyBuffer);
+        return 2; // Skip body
+      } else if (req.headers.expect === "100-continue") {
+        if (httpServer.listenerCount("checkContinue") > 0) {
+          httpServer.emit("checkContinue", req, res);
+        } else {
+          res.writeContinue();
+          httpServer.emit("request", req, res);
+        }
+      } else {
+        httpServer.emit("request", req, res);
+      }
+
+      return shouldKeepAlive ? 0 : 1;
+    };
+
+    socket.on("data", (data: Buffer) => {
+      const ret = parser.execute(data);
+      if (ret instanceof Error) {
+        socket.destroy(ret);
+      }
+    });
+
+    socket.on("end", () => {
+      parser.finish();
+    });
+
+    socket.on("close", () => {
+      freeParser(parser, null, socket);
+    });
+
+    socket.on("error", (err: Error) => {
+      if (socket._httpMessage) {
+        socket._httpMessage.destroy(err);
+      }
+    });
+
+    // Emit connection event after setting up the parser
+    httpServer.emit("connection", socket);
+  });
+
+  // Store the net server
+  this[kNamedPipeServer] = netServer;
+
+  // Store reference to netServer for the wrapper
+  const namedPipeNetServer = netServer;
+
+  // Create a wrapper object that mimics the Bun.serve() server interface
+  this[serverSymbol] = {
+    address: socketPath,
+    port: undefined,
+    hostname: undefined,
+    protocol: tls ? "https" : "http",
+    stop: (closeActiveConnections?: boolean) => {
+      // Use the stored reference to ensure it's correct
+      const ns = httpServer[kNamedPipeServer];
+      if (!ns) {
+        // Already closed
+        callCloseCallback(httpServer);
+        httpServer.emit("close");
+        return;
+      }
+      httpServer[kNamedPipeServer] = undefined;
+      ns.close(() => {
+        // Call the close callback and emit close event
+        callCloseCallback(httpServer);
+        httpServer.emit("close");
+      });
+      if (closeActiveConnections) {
+        // Force close all connections
+        // Note: node:net doesn't have a built-in way to do this
+      }
+    },
+    closeIdleConnections: () => {
+      // Not directly supported for named pipes
+    },
+    ref: () => {
+      netServer.ref();
+    },
+    unref: () => {
+      netServer.unref();
+    },
+  };
+
+  netServer.on("error", (err: Error) => {
+    httpServer.emit("error", err);
+  });
+
+  netServer.on("listening", () => {
+    this.listening = true;
+    httpServer.emit("listening");
+  });
+
+  // Listen on the named pipe
+  netServer.listen(socketPath);
+
+  if ($isCallable(onListen)) {
+    this.once("listening", onListen);
+  }
+
+  if (this._unref) {
+    netServer.unref();
+  }
 };
 
 function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPResponseAbortEvent) {

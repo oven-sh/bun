@@ -6,7 +6,7 @@ namespace detail {
 
 template <typename Tuple, typename Func, std::size_t... Is>
 void forEachIndexedImpl(Tuple&& t, Func&& f, std::index_sequence<Is...>) {
-    (f(std::integral_constant<std::size_t, Is>{}, std::get<Is>(t)), ...);
+    (f(std::integral_constant<std::size_t, Is>{}, std::get<Is>(std::forward<Tuple>(t))), ...);
 }
 
 } // namespace detail

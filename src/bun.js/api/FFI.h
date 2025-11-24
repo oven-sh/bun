@@ -225,23 +225,26 @@ static void* JSVALUE_TO_PTR(EncodedJSValue val) {
     return 0;
 
   if (JSCELL_IS_TYPED_ARRAY(val)) {
-      return JSVALUE_TO_TYPED_ARRAY_VECTOR(val);
+    return JSVALUE_TO_TYPED_ARRAY_VECTOR(val);
+  }
+
+  if (val.asInt64 & NumberTag == NumberTag) {
+    return (void*)(uintptr_t)(val.asInt64 & ~NumberTag);
   }
 
   val.asInt64 -= DoubleEncodeOffset;
-  size_t ptr = (size_t)val.asDouble;
+  uintptr_t ptr = (uintptr_t)val.asDouble;
   return (void*)ptr;
 }
 
 static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {
   EncodedJSValue val;
-  if (ptr == 0)
-  {
-      val.asInt64 = TagValueNull;
-      return val;
+  if (ptr == 0) {
+    val.asInt64 = TagValueNull;
+    return val;
   }
 
-  val.asDouble = (double)(size_t)ptr;
+  val.asDouble = (double)(uintptr_t)ptr;
   val.asInt64 += DoubleEncodeOffset;
   return val;
 }

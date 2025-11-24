@@ -164,7 +164,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
                 auto valueStr = value.toString(lexicalGlobalObject)->value(lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(throwScope, {});
 
-                record.set(propertyName.string(), valueStr);
+                auto keyStr = identifierToUSVString(*lexicalGlobalObject, propertyName);
+                RETURN_IF_EXCEPTION(throwScope, {});
+
+                record.set(keyStr, valueStr);
             }
             init = WTFMove(record);
         }

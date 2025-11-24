@@ -200,6 +200,7 @@ pub fn crashHandler(
     // TODO: if both of these are specified, what is supposed to happen?
     error_return_trace: ?*std.builtin.StackTrace,
     begin_addr: ?usize,
+    ucontext: ?*const anyopaque,
 ) noreturn {
     @branchHint(.cold);
 
@@ -356,8 +357,18 @@ pub fn crashHandler(
                     std.debug.print("\n", .{});
 
                     var new_addrs: [20]usize = undefined;
+                    std.debug.print("has ucontext? {any}\n", .{ucontext != null});
+                    const cpu_context = if (ucontext == null)
+                        null
+                    else
+                        bun.new_debug.cpu_context.fromPosixSignalContext(ucontext);
+                    std.debug.print("has cpu_context.Native? {any}\n", .{cpu_context != null});
+                    const bstd = bun.env_var.BUN_STACKTRACE_DEBUG.get();
+                    std.debug.print("bstd: {d}\n", .{bstd});
                     const new_trace = bun.new_debug.captureCurrentStackTrace(.{
                         .first_address = desired_begin_addr,
+                        .context = if (bstd & 1 == 1) if (cpu_context) |*c| c else null else null,
+                        .allow_unsafe_unwind = bstd & 2 == 1,
                     }, &new_addrs);
                     std.debug.print("new trace:", .{});
                     for (0..new_trace.index) |i| {
@@ -809,6 +820,7 @@ pub fn panicImpl(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, 
             .{ .panic = msg },
         error_return_trace,
         begin_addr orelse @returnAddress(),
+        null,
     );
 }
 
@@ -850,7 +862,7 @@ const metadata_version_line = std.fmt.comptimePrint(
     },
 );
 
-fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const anyopaque) callconv(.c) noreturn {
+fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, ucontext: ?*const anyopaque) callconv(.c) noreturn {
     const addr = switch (bun.Environment.os) {
         .linux => @intFromPtr(info.fields.sigfault.addr),
         .mac => @intFromPtr(info.addr),
@@ -869,6 +881,7 @@ fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const an
         },
         null,
         @returnAddress(),
+        ucontext,
     );
 }
 
@@ -962,6 +975,7 @@ pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(.winapi
         },
         null,
         @intFromPtr(info.ExceptionRecord.ExceptionAddress),
+        null,
     );
 }
 
@@ -2288,7 +2302,7 @@ export fn CrashHandler__unsupportedUVFunction(name: ?[*:0]const u8) callconv(.c)
 }
 
 export fn Bun__crashHandler(message_ptr: [*]u8, message_len: usize) noreturn {
-    crashHandler(.{ .panic = message_ptr[0..message_len] }, null, @returnAddress());
+    crashHandler(.{ .panic = message_ptr[0..message_len] }, null, @returnAddress(), null);
 }
 
 export fn CrashHandler__setDlOpenAction(action: ?[*:0]const u8) void {

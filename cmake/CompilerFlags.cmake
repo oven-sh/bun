@@ -164,9 +164,9 @@ if(UNIX)
   )
 
   register_compiler_flags(
-    DESCRIPTION "Disable unwind tables"
-    -fno-unwind-tables
-    -fno-asynchronous-unwind-tables
+    DESCRIPTION "ENABLE unwind tables"
+    -funwind-tables
+    -fasynchronous-unwind-tables
   )
 
   # needed for libuv stubs because they use

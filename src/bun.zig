@@ -2507,7 +2507,7 @@ pub const Dirname = struct {
 
 pub noinline fn outOfMemory() noreturn {
     @branchHint(.cold);
-    crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
+    crash_handler.crashHandler(.out_of_memory, null, @returnAddress(), null);
 }
 
 pub const handleOom = @import("./handle_oom.zig").handleOom;

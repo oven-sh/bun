@@ -36,7 +36,7 @@ pub fn fromPosixSignalContext(ctx_ptr: ?*const anyopaque) ?Native {
     const uc: *const signal_ucontext_t = @ptrCast(@alignCast(ctx_ptr));
 
     // Deal with some special cases first.
-    if (native_arch.isArc() and native_os == .linux) {
+    if (false and native_arch.isArc() and native_os == .linux) {
         var native: Native = .{
             .r = [_]u32{ uc.mcontext.r31, uc.mcontext.r30, 0, uc.mcontext.r28 } ++
                 uc.mcontext.r27_26 ++
@@ -112,7 +112,7 @@ pub fn fromPosixSignalContext(ctx_ptr: ?*const anyopaque) ?Native {
             .pc = uc.mcontext.pc,
             .lr = uc.mcontext.lr,
         },
-        .riscv32, .riscv32be, .riscv64, .riscv64be => .{
+        .riscv32, .riscv64 => .{
             // You can thank FreeBSD and OpenBSD for this silliness; they decided to be cute and
             // group the registers by ABI mnemonic rather than register number.
             .x = [_]Riscv.Gpr{0} ++
@@ -1734,20 +1734,20 @@ const X86_64 = struct {
 const signal_ucontext_t = switch (native_os) {
     .linux => switch (native_arch) {
         // https://github.com/torvalds/linux/blob/cd5a0afbdf8033dc83786315d63f8b325bdba2fd/arch/alpha/include/asm/ucontext.h
-        .alpha => extern struct {
-            _flags: u64,
-            _link: ?*signal_ucontext_t,
-            _osf_sigmask: u64,
-            _stack: std.os.linux.stack_t,
-            // https://github.com/torvalds/linux/blob/cd5a0afbdf8033dc83786315d63f8b325bdba2fd/arch/alpha/include/uapi/asm/sigcontext.h
-            mcontext: extern struct {
-                _onstack: i64,
-                _mask: i64,
-                pc: u64,
-                _ps: i64,
-                r: [32]u64,
-            },
-        },
+        //.alpha => extern struct {
+        //    _flags: u64,
+        //    _link: ?*signal_ucontext_t,
+        //    _osf_sigmask: u64,
+        //    _stack: std.os.linux.stack_t,
+        //    // https://github.com/torvalds/linux/blob/cd5a0afbdf8033dc83786315d63f8b325bdba2fd/arch/alpha/include/uapi/asm/sigcontext.h
+        //    mcontext: extern struct {
+        //        _onstack: i64,
+        //        _mask: i64,
+        //        pc: u64,
+        //        _ps: i64,
+        //        r: [32]u64,
+        //    },
+        //},
         // https://github.com/torvalds/linux/blob/cd5a0afbdf8033dc83786315d63f8b325bdba2fd/arch/arm64/include/uapi/asm/ucontext.h
         .aarch64,
         .aarch64_be,
@@ -1809,7 +1809,6 @@ const signal_ucontext_t = switch (native_os) {
         },
         // https://github.com/torvalds/linux/blob/cd5a0afbdf8033dc83786315d63f8b325bdba2fd/include/uapi/asm-generic/ucontext.h
         .arc,
-        .arceb,
         .arm,
         .armeb,
         .thumb,
@@ -1826,14 +1825,13 @@ const signal_ucontext_t = switch (native_os) {
         .x86,
         .x86_64,
         .xtensa,
-        .xtensaeb,
         => extern struct {
             _flags: usize,
             _link: ?*signal_ucontext_t,
             _stack: std.os.linux.stack_t,
             mcontext: switch (native_arch) {
                 // https://github.com/torvalds/linux/blob/cd5a0afbdf8033dc83786315d63f8b325bdba2fd/arch/arc/include/uapi/asm/sigcontext.h
-                .arc, .arceb => extern struct {
+                .arc => extern struct {
                     _pad1: u32,
                     _bta: u32,
                     _lp: extern struct {
@@ -1887,20 +1885,20 @@ const signal_ucontext_t = switch (native_os) {
                     pc: u32,
                 },
                 // https://github.com/torvalds/linux/blob/cd5a0afbdf8033dc83786315d63f8b325bdba2fd/arch/parisc/include/uapi/asm/sigcontext.h
-                .hppa => extern struct {
-                    _flags: u32,
-                    _psw: u32,
-                    r1_19: [19]u32,
-                    r20: u32,
-                    r21: u32,
-                    r22: u32,
-                    r23_29: [7]u32,
-                    r30: u32,
-                    r31: u32,
-                    _fr: [32]f64,
-                    _iasq: [2]u32,
-                    iaoq: [2]u32,
-                },
+                //.hppa => extern struct {
+                //    _flags: u32,
+                //    _psw: u32,
+                //    r1_19: [19]u32,
+                //    r20: u32,
+                //    r21: u32,
+                //    r22: u32,
+                //    r23_29: [7]u32,
+                //    r30: u32,
+                //    r31: u32,
+                //    _fr: [32]f64,
+                //    _iasq: [2]u32,
+                //    iaoq: [2]u32,
+                //},
                 // https://github.com/torvalds/linux/blob/cd5a0afbdf8033dc83786315d63f8b325bdba2fd/arch/m68k/include/asm/ucontext.h
                 .m68k => extern struct {
                     _version: i32,
@@ -1909,10 +1907,10 @@ const signal_ucontext_t = switch (native_os) {
                     pc: u32,
                 },
                 // https://github.com/torvalds/linux/blob/cd5a0afbdf8033dc83786315d63f8b325bdba2fd/arch/microblaze/include/uapi/asm/sigcontext.h
-                .microblaze, .microblazeel => extern struct {
-                    r: [32]u32,
-                    pc: u32,
-                },
+                //.microblaze, .microblazeel => extern struct {
+                //    r: [32]u32,
+                //    pc: u32,
+                //},
                 // https://github.com/torvalds/linux/blob/cd5a0afbdf8033dc83786315d63f8b325bdba2fd/arch/mips/include/uapi/asm/sigcontext.h
                 .mips, .mipsel => extern struct {
                     _regmask: u32,
@@ -1943,12 +1941,12 @@ const signal_ucontext_t = switch (native_os) {
                     r: [16]u64,
                 },
                 // https://github.com/torvalds/linux/blob/cd5a0afbdf8033dc83786315d63f8b325bdba2fd/arch/sh/include/uapi/asm/sigcontext.h
-                .sh, .sheb => extern struct {
-                    _oldmask: u32,
-                    r: [16]u32,
-                    pc: u32,
-                    pr: u32,
-                },
+                //.sh, .sheb => extern struct {
+                //    _oldmask: u32,
+                //    r: [16]u32,
+                //    pc: u32,
+                //    pr: u32,
+                //},
                 // https://github.com/torvalds/linux/blob/cd5a0afbdf8033dc83786315d63f8b325bdba2fd/arch/x86/include/uapi/asm/sigcontext.h
                 .x86 => extern struct {
                     _gs: u32,
@@ -1988,7 +1986,7 @@ const signal_ucontext_t = switch (native_os) {
                     rip: u64,
                 },
                 // https://github.com/torvalds/linux/blob/cd5a0afbdf8033dc83786315d63f8b325bdba2fd/arch/xtensa/include/uapi/asm/sigcontext.h
-                .xtensa, .xtensaeb => extern struct {
+                .xtensa => extern struct {
                     pc: u32,
                     _ps: u32,
                     _l: extern struct {
@@ -2129,7 +2127,7 @@ const signal_ucontext_t = switch (native_os) {
         },
     },
     // https://github.com/ziglang/zig/blob/60be67d3c0ba6ae15fa7115596734ab1e74fbcd3/lib/libc/include/any-macos-any/sys/_types/_ucontext.h
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .watchos, .visionos => extern struct {
+    .driverkit, .ios, .macos, .tvos, .watchos, .visionos => extern struct {
         _onstack: i32,
         _sigmask: std.c.sigset_t,
         _stack: std.c.stack_t,

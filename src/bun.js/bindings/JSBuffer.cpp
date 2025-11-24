@@ -2008,10 +2008,10 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& 
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    if (offset < 0 || offset > byteLength) {
+    if (std::isnan(offset) || offset < 0 || offset > byteLength) {
         return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset");
     }
-    if (length < 0 || length > byteLength - offset) {
+    if (std::isnan(length) || length < 0 || length > byteLength - offset) {
         return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "length");
     }
 

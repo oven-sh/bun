@@ -2913,6 +2913,26 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(str).toBe("\uFFFD\x13\x12\x11\x10\x09");
       });
 
+      it("should not crash with NaN offset in asciiWrite (ENG-21985)", () => {
+        // NaN offset should throw RangeError, not crash
+        expect(() => {
+          Buffer.from("1").asciiWrite(Uint16Array, "rgb", new Int16Array([-40000]));
+        }).toThrow(RangeError);
+
+        // Same for other *Write methods
+        expect(() => {
+          Buffer.from("1").utf8Write("x", "notanumber");
+        }).toThrow(RangeError);
+
+        expect(() => {
+          Buffer.from("1").hexWrite("x", NaN);
+        }).toThrow(RangeError);
+
+        expect(() => {
+          Buffer.from("1").latin1Write("x", undefined, NaN);
+        }).toThrow(RangeError);
+      });
+
       it("repro #2063", () => {
         const buf = Buffer.from(
           "eyJlbWFpbCI6Ijg3MTg4NDYxN0BxcS5jb20iLCJpZCI6OCwicm9sZSI6Im5vcm1hbCIsImlhdCI6MTY3NjI4NDQyMSwiZXhwIjoxNjc2ODg5MjIxfQ",

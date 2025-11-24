@@ -228,8 +228,7 @@ static void* JSVALUE_TO_PTR(EncodedJSValue val) {
     return JSVALUE_TO_TYPED_ARRAY_VECTOR(val);
   }
 
-  if (val.asInt64 & NumberTag == NumberTag) {
-    // The JSValue is a signed 32-bit integer
+  if (JSVALUE_IS_INT32(val)) {
     return (void*)(uintptr_t)(int32_t)(val.asInt64 & ~NumberTag);
   }
 

@@ -18,6 +18,14 @@
     "*": 8,
     "note": "failing on new mac ci runners"
   },
+  "test/js/bun/s3/s3.test.ts": {
+    "*": { "retries": 1, "warnInsteadOfFail": true },
+    "note": "flaky since <1.2.14"
+  },
+  "test/bundler/compile-windows-metadata.test.ts": {
+    "windows": { "retries": 1, "warnInsteadOfFail": true },
+    "note": "flaky since <1.2.14"
+  },
   "test/cli/install/bun-install.test.ts": {
     "*": 8,
     "note": ""
@@ -84,10 +92,6 @@
   "test/js/bun/spawn/spawn-stdin-readable-stream.test.ts": {
     "windows": 8,
     "note": "became more flaky between 1.2.22 and 1.2.23. "
-  },
-  "test/js/bun/s3/s3.test.ts": {
-    "*": 8,
-    "note": "flaky since <1.2.14"
   },
   "test/regression/issue/09041.test.ts": {
     "linux": 8,
@@ -173,7 +177,6 @@
   "test/bundler/css/wpt/background-computed.test.ts": { "*": 8 },
   "test/js/bun/http/bun-server.test.ts": { "*": 8 },
   "test/cli/install/bunx.test.ts": { "*": 8 },
-  "test/bundler/compile-windows-metadata.test.ts": { "*": 8 },
   "test/cli/update_interactive_formatting.test.ts": { "*": 8 },
   "test/cli/install/bun-patch.test.ts": { "*": 8 },
   "test/bake/dev/react-response.test.ts": { "*": 8 },

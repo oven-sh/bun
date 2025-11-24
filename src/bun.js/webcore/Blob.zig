@@ -1980,14 +1980,13 @@ pub fn getStream(
         return cached;
     }
     var recommended_chunk_size: SizeType = 0;
-    var arguments_ = callframe.arguments_old(2);
-    var arguments = arguments_.ptr[0..arguments_.len];
-    if (arguments.len > 0) {
-        if (!arguments[0].isNumber() and !arguments[0].isUndefinedOrNull()) {
+    const recommended_chunk_size_value = callframe.argument(0);
+    if (!recommended_chunk_size_value.isUndefinedOrNull()) {
+        if (!recommended_chunk_size_value.isNumber()) {
             return globalThis.throwInvalidArguments("chunkSize must be a number", .{});
         }
 
-        recommended_chunk_size = @as(SizeType, @intCast(@max(0, @as(i52, @truncate(arguments[0].toInt64())))));
+        recommended_chunk_size = @intCast(@max(0, @as(i52, @truncate(recommended_chunk_size_value.toInt64()))));
     }
     const stream = try jsc.WebCore.ReadableStream.fromBlobCopyRef(
         globalThis,
@@ -3860,7 +3859,8 @@ fn fromJSWithoutDeferGC(
                         } else {
                             return build.blob.dupe();
                         }
-                    } else if (current.toSliceClone(global)) |sliced| {
+                    } else {
+                        const sliced = try current.toSliceClone(global);
                         if (sliced.allocator.get()) |allocator| {
                             return Blob.initWithAllASCII(@constCast(sliced.slice()), allocator, global, false);
                         }
@@ -3956,7 +3956,8 @@ fn fromJSWithoutDeferGC(
                                     could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
                                     joiner.pushStatic(blob.sharedView());
                                     continue;
-                                } else if (current.toSliceClone(global)) |sliced| {
+                                } else {
+                                    const sliced = try current.toSliceClone(global);
                                     const allocator = sliced.allocator.get();
                                     could_have_non_ascii = could_have_non_ascii or allocator != null;
                                     joiner.push(sliced.slice(), allocator);
@@ -3974,7 +3975,8 @@ fn fromJSWithoutDeferGC(
                 if (current.as(Blob)) |blob| {
                     could_have_non_ascii = could_have_non_ascii or blob.charset != .all_ascii;
                     joiner.pushStatic(blob.sharedView());
-                } else if (current.toSliceClone(global)) |sliced| {
+                } else {
+                    const sliced = try current.toSliceClone(global);
                     const allocator = sliced.allocator.get();
                     could_have_non_ascii = could_have_non_ascii or allocator != null;
                     joiner.push(sliced.slice(), allocator);

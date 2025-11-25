@@ -847,6 +847,13 @@ pub const SecurityScanSubprocess = struct {
         };
 
         this.stdin_writer = StaticPipeWriter.create(&this.manager.event_loop, this, json_write_result, json_source);
+        errdefer {
+            if (this.stdin_writer) |writer| {
+                writer.source.detach();
+                writer.deref();
+                this.stdin_writer = null;
+            }
+        }
 
         switch (this.stdin_writer.?.start()) {
             .err => |err| {

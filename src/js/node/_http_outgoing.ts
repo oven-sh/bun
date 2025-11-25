@@ -381,7 +381,7 @@ OutgoingMessage.prototype.setTimeout = function setTimeout(msecs, callback) {
 
   if (!this.socket) {
     this.once("socket", function socketSetTimeoutOnConnect(socket) {
-      socket.setTimeout(msecs);
+      socket.setTimeout(msecs, callback);
     });
   } else {
     this.socket.setTimeout(msecs);

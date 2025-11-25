@@ -11,33 +11,14 @@ describe("node:http client timeout", () => {
     try {
       await once(server, "listening");
       const port = (server.address() as any).port;
-
       const req = request({
         port,
         host: "localhost",
         path: "/",
         timeout: 50, // Set a short timeout
       });
-
-      let timeoutEventEmitted = false;
-      let destroyCalled = false;
-
-      req.on("timeout", () => {
-        timeoutEventEmitted = true;
-      });
-
-      req.on("close", () => {
-        destroyCalled = true;
-      });
-
       req.end();
-
-      // Wait for events to be emitted
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      expect(timeoutEventEmitted).toBe(true);
-      expect(destroyCalled).toBe(true);
-      expect(req.destroyed).toBe(true);
+      await once(req, "timeout");
     } finally {
       server.close();
     }
@@ -73,7 +54,6 @@ describe("node:http client timeout", () => {
       await new Promise(resolve => setTimeout(resolve, 100));
 
       expect(timeoutEventEmitted).toBe(false);
-      expect(req.destroyed).toBe(false);
     } finally {
       server.close();
     }

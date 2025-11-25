@@ -519,8 +519,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         socket,
         isAncientHTTP: boolean,
       ) {
-        // console.log(headersObject);
-        // console.log(headersArray);
         const prevIsNextIncomingMessageHTTPS = getIsNextIncomingMessageHTTPS();
         setIsNextIncomingMessageHTTPS(isHTTPS);
         if (!socket) {

@@ -72,6 +72,7 @@ const getCommonFlags = () => {
     "-DUSE_BUN_JSC_ADDITIONS=ON",
     "-DUSE_BUN_EVENT_LOOP=ON",
     "-DENABLE_FTL_JIT=ON",
+    "-DENABLE_TAIL_CALLS=OFF",
     "-G",
     "Ninja",
     `-DCMAKE_C_COMPILER=${CC}`,

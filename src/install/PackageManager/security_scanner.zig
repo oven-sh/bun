@@ -766,7 +766,9 @@ pub const SecurityScanSubprocess = struct {
         //   - ipc_pipe: child writes IPC result to fd 3, parent reads
         //   - json_pipe: parent writes JSON data, child reads from fd 4
         const ipc_pipe = try bun.default_allocator.create(bun.windows.libuv.Pipe);
+        ipc_pipe.* = std.mem.zeroes(bun.windows.libuv.Pipe);
         const json_pipe = try bun.default_allocator.create(bun.windows.libuv.Pipe);
+        json_pipe.* = std.mem.zeroes(bun.windows.libuv.Pipe);
 
         // extra_fds[0] -> fd 3 (IPC output: child writes, parent reads)
         // extra_fds[1] -> fd 4 (JSON input: parent writes, child reads)

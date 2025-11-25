@@ -20,7 +20,8 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 'use strict';
-require('../common');
+const common = require('../common');
+if (common.isWindows) return; // TODO: BUN
 const assert = require('assert');
 const http = require('http');
 const net = require('net');

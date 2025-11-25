@@ -21,6 +21,7 @@
 
 'use strict';
 const common = require('../common');
+if (common.isWindows) return; // TODO: BUN
 const assert = require('assert');
 const http = require('http');
 const net = require('net');

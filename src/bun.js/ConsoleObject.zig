@@ -3731,6 +3731,7 @@ pub fn takeHeapSnapshot(
     _: usize,
 ) callconv(jsc.conv) void {
     // TODO: this does an extra JSONStringify and we don't need it to!
+    bun.analytics.Features.heap_snapshot += 1;
     var snapshot: [1]JSValue = .{globalThis.generateHeapSnapshot()};
     ConsoleObject.messageWithTypeAndLevel(undefined, MessageType.Log, MessageLevel.Debug, globalThis, &snapshot, 1);
 }

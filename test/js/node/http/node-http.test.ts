@@ -856,11 +856,10 @@ describe("node:http", () => {
     it("should emit a socket event when connecting", async done => {
       runTest(done, async (server, serverPort, done) => {
         const req = request(`http://localhost:${serverPort}`, {});
-        req.on("socket", function onRequestSocket(socket) {
-          req.destroy();
-          done();
-        });
+        const { promise, resolve } = Promise.withResolvers();
+        req.on("socket", resolve);
         req.end();
+        await promise;
       });
     });
   });
@@ -984,37 +983,23 @@ describe("node:http", () => {
 
   describe("ClientRequest.signal", () => {
     it("should attempt to make a standard GET request and abort", async () => {
-      let server_port;
-      let server_host;
-      const {
-        resolve: resolveClientAbort,
-        reject: rejectClientAbort,
-        promise: promiseClientAbort,
-      } = Promise.withResolvers();
-
-      const server = createServer((req, res) => {});
-
-      server.listen({ port: 0 }, (_err, host, port) => {
-        server_port = port;
-        server_host = host;
-
-        const signal = AbortSignal.timeout(5);
-
-        get(`http://${server_host}:${server_port}`, { signal }, res => {
+      const { promise, resolve } = Promise.withResolvers();
+      const server = createServer();
+      server.listen({ port: 0 }, () => {
+        const { address, port } = server.address();
+        const signal = AbortSignal.timeout(50);
+        const req = get(`http://[${address}]:${port}`, { signal }, res => {
           let data = "";
           res.setEncoding("utf8");
-          res.on("data", chunk => {
-            data += chunk;
-          });
-          res.on("end", () => {
-            server.close();
-          });
-        }).once("abort", () => {
-          resolveClientAbort();
+          res.on("data", chunk => (data += chunk));
+          res.on("end", () => server.close());
+        });
+        req.once("error", err => {
+          expect(err.code).toEqual("ABORT_ERR");
+          resolve();
         });
       });
-
-      await promiseClientAbort;
+      await promise;
       server.close();
     });
   });

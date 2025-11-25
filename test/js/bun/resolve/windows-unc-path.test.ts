@@ -22,6 +22,7 @@ if (isWindows) {
         cmd: [bunExe(), path.join(String(dir), "index.js")],
         env: bunEnv,
         cwd: String(dir),
+        stderr: "pipe",
       });
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -51,6 +52,7 @@ if (isWindows) {
         cmd: [bunExe(), path.join(String(dir), "index.js")],
         env: bunEnv,
         cwd: String(dir),
+        stderr: "pipe",
       });
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -80,6 +82,7 @@ if (isWindows) {
         cmd: [bunExe(), path.join(String(dir), "index.js")],
         env: bunEnv,
         cwd: String(dir),
+        stderr: "pipe",
       });
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -106,6 +109,7 @@ if (isWindows) {
         cmd: [bunExe(), "test", "test.test.js"],
         env: bunEnv,
         cwd: String(dir),
+        stderr: "pipe",
       });
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -129,6 +133,7 @@ if (isWindows) {
         cmd: [bunExe(), path.join(String(dir), "index.js")],
         env: bunEnv,
         cwd: String(dir),
+        stderr: "pipe",
       });
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

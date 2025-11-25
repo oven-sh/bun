@@ -760,19 +760,19 @@ pub const SecurityScanSubprocess = struct {
     }
 
     fn spawnWindows(this: *SecurityScanSubprocess, argv: *[5]?[*:0]const u8, spawn_cwd: []const u8) !void {
-        // On Windows, we pre-allocate uv.Pipe handles for .buffer
+        // On Windows, we pre-allocate uv.Pipe handles for .ipc
         // The spawn code will initialize them and return them in extra_pipes
-        // We use .buffer for both pipes:
+        // We use .ipc for both pipes (ipc=true in pipe init helps with Windows pipe handling):
         //   - ipc_pipe: child writes IPC result to fd 3, parent reads
         //   - json_pipe: parent writes JSON data, child reads from fd 4
-        const ipc_pipe = bun.default_allocator.create(bun.windows.libuv.Pipe) catch bun.outOfMemory();
-        const json_pipe = bun.default_allocator.create(bun.windows.libuv.Pipe) catch bun.outOfMemory();
+        const ipc_pipe = try bun.default_allocator.create(bun.windows.libuv.Pipe);
+        const json_pipe = try bun.default_allocator.create(bun.windows.libuv.Pipe);
 
         // extra_fds[0] -> fd 3 (IPC output: child writes, parent reads)
         // extra_fds[1] -> fd 4 (JSON input: parent writes, child reads)
         const extra_fds = [_]bun.spawn.SpawnOptions.Stdio{
-            .{ .buffer = ipc_pipe },
-            .{ .buffer = json_pipe },
+            .{ .ipc = ipc_pipe },
+            .{ .ipc = json_pipe },
         };
 
         const spawn_options = bun.spawn.SpawnOptions{

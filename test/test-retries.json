@@ -18,6 +18,11 @@
     "*": { "retries": 1, "warnInsteadOfFail": true },
     "note": "flaky since <1.2.14"
   },
+  "test/js/bun/s3/s3.leak.test.ts": {
+    "darwin": { "retries": 1, "warnInsteadOfFail": true },
+    "linux": { "retries": 1, "warnInsteadOfFail": true },
+    "note": "maybe became flaky between 1.2.14 and 1.2.16"
+  },
   "test/bundler/compile-windows-metadata.test.ts": {
     "windows": { "retries": 1, "warnInsteadOfFail": true },
     "note": "flaky since <1.2.14"
@@ -70,11 +75,6 @@
   "test/js/node/test/parallel/test-performance-measure.js": {
     "windows": 8,
     "note": "flaky since <1.2.14"
-  },
-  "test/js/bun/s3/s3.leak.test.ts": {
-    "darwin": 8,
-    "linux": 8,
-    "note": "maybe became flaky between 1.2.14 and 1.2.16"
   },
   "test/bundler/css/wpt/color-computed-rgb.test.ts": {
     "darwin": 8,

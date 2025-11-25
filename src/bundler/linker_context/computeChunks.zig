@@ -31,6 +31,11 @@ pub noinline fn computeChunks(
     const could_be_browser_target_from_server_build = this.options.target.isServerSide() and this.parse_graph.html_imports.html_source_indices.len > 0;
     const has_server_html_imports = this.parse_graph.html_imports.server_source_indices.len > 0;
 
+    // Map from entry point ID to JS chunk key. This is needed because not all
+    // entry points create JS chunks (e.g., CSS-only entry points).
+    var entry_point_to_js_chunk_key = std.AutoArrayHashMap(Chunk.EntryPoint.ID, []const u8).init(temp_allocator);
+    try entry_point_to_js_chunk_key.ensureUnusedCapacity(this.graph.entry_points.len);
+
     // Create chunks for entry points
     for (entry_source_indices, 0..) |source_index, entry_id_| {
         const entry_bit = @as(Chunk.EntryPoint.ID, @truncate(entry_id_));
@@ -106,6 +111,12 @@ pub noinline fn computeChunks(
             continue;
         }
 
+        // Skip chunk creation for non-JavaScript-like files (e.g., asset files like SVG, images, fonts)
+        // These files are handled as external assets and don't need chunks
+        if (!loaders[source_index].isJavaScriptLikeOrJSON()) {
+            continue;
+        }
+
         // Create a chunk for the entry point here to ensure that the chunk is
         // always generated even if the resulting file is empty
         const js_chunk_entry = try js_chunks.getOrPut(js_chunk_key);
@@ -123,6 +134,9 @@ pub noinline fn computeChunks(
             .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
             .is_browser_chunk_from_server_build = could_be_browser_target_from_server_build and ast_targets[source_index] == .browser,
         };
+
+        // Track which entry points create JS chunks
+        entry_point_to_js_chunk_key.putAssumeCapacity(entry_bit, js_chunk_key);
 
         {
             // If this JS entry point has an associated CSS entry point, generate it
@@ -184,12 +198,19 @@ pub noinline fn computeChunks(
     var file_entry_bits: []AutoBitSet = this.graph.files.items(.entry_bits);
 
     const Handler = struct {
-        chunks: []Chunk,
+        js_chunks: *bun.StringArrayHashMap(Chunk),
+        entry_point_to_js_chunk_key: *const std.AutoArrayHashMap(Chunk.EntryPoint.ID, []const u8),
         allocator: std.mem.Allocator,
         source_id: u32,
 
-        pub fn next(c: *@This(), chunk_id: usize) void {
-            _ = c.chunks[chunk_id].files_with_parts_in_chunk.getOrPut(c.allocator, @as(u32, @truncate(c.source_id))) catch unreachable;
+        pub fn next(c: *@This(), entry_point_id: usize) void {
+            const entry_id: Chunk.EntryPoint.ID = @truncate(entry_point_id);
+            // Only process if this entry point created a JS chunk
+            if (c.entry_point_to_js_chunk_key.get(entry_id)) |js_chunk_key| {
+                if (c.js_chunks.getPtr(js_chunk_key)) |chunk| {
+                    _ = chunk.files_with_parts_in_chunk.getOrPut(c.allocator, @as(u32, @truncate(c.source_id))) catch unreachable;
+                }
+            }
         }
     };
 
@@ -225,7 +246,8 @@ pub noinline fn computeChunks(
                         _ = js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator(), @as(u32, @truncate(source_index.get()))) catch unreachable;
                     } else {
                         var handler = Handler{
-                            .chunks = js_chunks.values(),
+                            .js_chunks = &js_chunks,
+                            .entry_point_to_js_chunk_key = &entry_point_to_js_chunk_key,
                             .allocator = this.allocator(),
                             .source_id = source_index.get(),
                         };

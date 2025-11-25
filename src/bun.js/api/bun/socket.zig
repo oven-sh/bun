@@ -1357,6 +1357,10 @@ pub fn NewSocket(comptime ssl: bool) type {
             return .js_undefined;
         }
 
+        pub fn getFD(this: *This, _: *jsc.JSGlobalObject) JSValue {
+            return this.socket.fd().toJSWithoutMakingLibUVOwned();
+        }
+
         pub fn getBytesWritten(this: *This, _: *jsc.JSGlobalObject) JSValue {
             return jsc.JSValue.jsNumber(this.bytes_written + this.buffered_data_for_node_net.len);
         }

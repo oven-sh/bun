@@ -39,6 +39,7 @@ pub const Features = struct {
     pub var bunfig: usize = 0;
     pub var define: usize = 0;
     pub var dotenv: usize = 0;
+    pub var debugger: usize = 0;
     pub var external: usize = 0;
     pub var extracted_packages: usize = 0;
     pub var fetch: usize = 0;

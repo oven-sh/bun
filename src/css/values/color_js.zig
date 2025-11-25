@@ -286,7 +286,7 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
                                     return object;
                                 },
                                 .@"{rgb}" => {
-                                    const object = jsc.JSValue.createEmptyObject(globalThis, 4);
+                                    const object = jsc.JSValue.createEmptyObject(globalThis, 3);
                                     object.put(globalThis, "r", jsc.JSValue.jsNumber(rgba.red));
                                     object.put(globalThis, "g", jsc.JSValue.jsNumber(rgba.green));
                                     object.put(globalThis, "b", jsc.JSValue.jsNumber(rgba.blue));
@@ -409,7 +409,7 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
             const writer = &dest.writer;
 
             const symbols = bun.ast.Symbol.Map{};
-            var printer = css.Printer(*std.Io.Writer).new(
+            var printer = css.Printer.new(
                 allocator,
                 std.array_list.Managed(u8).init(allocator),
                 writer,
@@ -419,7 +419,7 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
                 &symbols,
             );
 
-            result.toCss(@TypeOf(writer), &printer) catch |err| {
+            result.toCss(&printer) catch |err| {
                 return globalThis.throw("color() internal error: {s}", .{@errorName(err)});
             };
 

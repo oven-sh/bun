@@ -66,7 +66,7 @@ pub const SecretsJob = struct {
 
 // Helper function for C++ to call with opaque pointer
 export fn Bun__Secrets__scheduleJob(global: *jsc.JSGlobalObject, options: *SecretsJob.SecretsJobOptions, promise: jsc.JSValue) void {
-    const job = SecretsJob.create(global, options, promise.withAsyncContextIfNeeded(global));
+    const job = SecretsJob.create(global, options, promise);
     job.schedule();
 }
 

@@ -1166,7 +1166,7 @@ pub const JSFrameworkRouter = struct {
 
     pub fn getBindings(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         return (try jsc.JSObject.create(.{
-            .parseRoutePattern = global.createHostFunction("parseRoutePattern", parseRoutePattern, 1),
+            .parseRoutePattern = jsc.JSFunction.create(global, "parseRoutePattern", jsc.host_fn.toJSHostFn(parseRoutePattern), 1, .{}),
             .FrameworkRouter = js.getConstructor(global),
         }, global)).toJS();
     }
@@ -1313,7 +1313,7 @@ pub const JSFrameworkRouter = struct {
         bun.destroy(this);
     }
 
-    pub fn parseRoutePattern(global: *JSGlobalObject, frame: *CallFrame) !JSValue {
+    pub fn parseRoutePattern(global: *JSGlobalObject, frame: *CallFrame) bun.JSError!JSValue {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         const alloc = arena.allocator();

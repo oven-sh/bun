@@ -1688,6 +1688,9 @@ pub const api = struct {
         /// env_files
         env_files: []const []const u8,
 
+        /// disable_default_env_files
+        disable_default_env_files: bool = false,
+
         /// extension_order
         extension_order: []const []const u8,
 
@@ -1824,6 +1827,9 @@ pub const api = struct {
                     27 => {
                         this.packages = try reader.readValue(PackagesMode);
                     },
+                    28 => {
+                        this.disable_default_env_files = try reader.readValue(bool);
+                    },
                     else => {
                         return error.InvalidMessage;
                     },
@@ -1942,6 +1948,11 @@ pub const api = struct {
             if (this.packages) |packages| {
                 try writer.writeFieldID(27);
                 try writer.writeValue([]const u8, packages);
+            }
+
+            if (this.disable_default_env_files) {
+                try writer.writeFieldID(28);
+                try writer.writeInt(@as(u8, @intFromBool(this.disable_default_env_files)));
             }
 
             try writer.endMessage();

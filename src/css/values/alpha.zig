@@ -25,8 +25,8 @@ pub const AlphaValue = struct {
         return .{ .result = final };
     }
 
-    pub fn toCss(this: *const AlphaValue, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-        return CSSNumberFns.toCss(&this.v, W, dest);
+    pub fn toCss(this: *const AlphaValue, dest: *css.Printer) css.PrintErr!void {
+        return CSSNumberFns.toCss(&this.v, dest);
     }
 
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {

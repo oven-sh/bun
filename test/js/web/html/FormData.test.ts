@@ -269,6 +269,14 @@ describe("FormData", () => {
     });
   });
 
+  test("FormData.toJSON doesn't crash with numbers", () => {
+    const fd = new FormData();
+    // @ts-expect-error
+    fd.append(1, 1);
+    // @ts-expect-error
+    expect(fd.toJSON()).toEqual({ "1": "1" });
+  });
+
   it("should throw on bad boundary", async () => {
     const response = new Response('foo\r\nContent-Disposition: form-data; name="foo"\r\n\r\nbar\r\n', {
       headers: {

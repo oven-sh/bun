@@ -42,7 +42,21 @@ type PluginBuilder = {
   config: BuildConfig;
 };
 
-type Loader = "js" | "jsx" | "ts" | "tsx" | "css" | "json" | "toml";
+type Loader =
+  | "js"
+  | "jsx"
+  | "ts"
+  | "tsx"
+  | "json"
+  | "jsonc"
+  | "toml"
+  | "yaml"
+  | "file"
+  | "napi"
+  | "wasm"
+  | "text"
+  | "css"
+  | "html";
 ```
 
 ## Usage

@@ -5,8 +5,6 @@ import { basename, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect, parseArgs } from "node:util";
 import { docker } from "./docker.mjs";
-import { google } from "./google.mjs";
-import { orbstack } from "./orbstack.mjs";
 import { tart } from "./tart.mjs";
 import {
   $,
@@ -1064,14 +1062,10 @@ function getCloud(name) {
   switch (name) {
     case "docker":
       return docker;
-    case "orbstack":
-      return orbstack;
-    case "tart":
-      return tart;
     case "aws":
       return aws;
-    case "google":
-      return google;
+    case "tart":
+      return tart;
   }
   throw new Error(`Unsupported cloud: ${name}`);
 }

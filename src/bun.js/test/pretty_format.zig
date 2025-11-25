@@ -877,17 +877,17 @@ pub const JestPrettyFormat = struct {
                 }
             }
 
-            // Try snapshot serializers first
+            // Try user-defined snapshot serializers first
             if (expect.Jest.runner) |runner| {
                 if (runner.snapshots.serializers.get()) |serializers| {
                     const result = try bun.cpp.SnapshotSerializers__serialize(this.globalThis, serializers, value);
                     if (!result.isUndefinedOrNull()) {
-                        // Serializer matched but returned non-string value
-                        if (bun.Environment.ci_assert) bun.assert(result.isString());
+                        if (bun.Environment.ci_assert) bun.assert(result.isString()); // should have thrown in SnapshotSerializers__serialize()
 
                         var str = ZigString.Empty;
                         try result.toZigString(&str, this.globalThis);
 
+                        this.addForNewLine(str.len);
                         writer.writeString(str);
 
                         return;

@@ -5,7 +5,7 @@ import { Stripe } from "stripe";
 const stripeCredentials = getSecret("TEST_INFO_STRIPE");
 
 describe.skipIf(!stripeCredentials)("stripe", () => {
-  const [accessToken, chargeId, accountId] = process.env.TEST_INFO_STRIPE?.split(",") ?? [];
+  const [accessToken, chargeId, accountId] = stripeCredentials!.split(",") ?? [];
   const stripe = new Stripe(accessToken);
 
   test("should be able to query a charge", async () => {

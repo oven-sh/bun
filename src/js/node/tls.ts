@@ -200,6 +200,8 @@ function validateCiphers(ciphers: string, name: string = "options") {
     // we need to change that in the future and let BoringSSL do the validation
     const ciphersSet = getValidCiphersSet();
     ciphersSet.add("DEFAULT");
+    ciphersSet.add("!LOW");
+    ciphersSet.add("!SSLv2");
     const requested = ciphers.split(":");
     for (const r of requested) {
       if (r && !ciphersSet.has(r)) {

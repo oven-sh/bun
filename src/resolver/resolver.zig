@@ -2655,10 +2655,14 @@ pub const Resolver = struct {
 
             // Filter out \\hello\, a UNC server path but without a share.
             // When there isn't a share name, such path is not considered to exist.
+            // Valid UNC paths have the format: \\server\share\...
             if (bun.strings.hasPrefixComptime(input_path, "\\\\")) {
+                // Find the first slash after \\, which separates server from share
                 const first_slash = bun.strings.indexOfChar(input_path[2..], '\\') orelse
                     return null;
-                _ = bun.strings.indexOfChar(input_path[2 + first_slash ..], '\\') orelse
+                // Look for a second slash after the first one to ensure there's a share name
+                // We need +1 to skip past the first slash itself
+                _ = bun.strings.indexOfChar(input_path[2 + first_slash + 1 ..], '\\') orelse
                     return null;
             }
         }

@@ -519,6 +519,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         socket,
         isAncientHTTP: boolean,
       ) {
+        // console.log(headersObject);
+        // console.log(headersArray);
         const prevIsNextIncomingMessageHTTPS = getIsNextIncomingMessageHTTPS();
         setIsNextIncomingMessageHTTPS(isHTTPS);
         if (!socket) {
@@ -1582,6 +1584,7 @@ ServerResponse.prototype.writeHead = function (statusCode, statusMessage, header
   _writeHead(statusCode, statusMessage, headers, this);
 
   this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
+  this._header = " "; // unused in our _http_server right now but it needs to be a truthy string after this point
 
   return this;
 };

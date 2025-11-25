@@ -1646,8 +1646,7 @@ export class VerdaccioRegistry {
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
     this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
       silent,
-      // Prefer using a release build of Bun since it's faster
-      execPath: Bun.which("bun")!,
+      execPath: bunExe(),
       env: {
         ...(bunEnv as any),
         NODE_NO_WARNINGS: "1",

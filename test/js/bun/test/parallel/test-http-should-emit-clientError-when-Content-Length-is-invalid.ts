@@ -14,13 +14,14 @@ server.on("clientError", (err, socket) => {
 
 server.listen(0);
 await once(server, "listening");
+const { port } = server.address()!;
 
-const client = connect(server.address().port, () => {
+const client = connect(port, () => {
   // HTTP request with invalid Content-Length
   // The Content-Length says 10 but the actual body is 20 bytes
   // Send the request
   client.write(
-    `POST /test HTTP/1.1\r\nHost: localhost:${server.address().port}\r\nContent-Type: text/plain\r\nContent-Length: invalid\r\n\r\n`,
+    `POST /test HTTP/1.1\r\nHost: localhost:${port}\r\nContent-Type: text/plain\r\nContent-Length: invalid\r\n\r\n`,
   );
 });
 

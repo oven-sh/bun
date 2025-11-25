@@ -3028,7 +3028,7 @@ pub const H2FrameParser = struct {
         var stream = this.streams.getPtr(stream_id) orelse {
             return globalObject.throw("Invalid stream id", .{});
         };
-        var state = jsc.JSValue.createEmptyObject(globalObject, 7);
+        var state = jsc.JSValue.createEmptyObject(globalObject, 6);
 
         state.put(globalObject, jsc.ZigString.static("localWindowSize"), jsc.JSValue.jsNumber(stream.windowSize));
         state.put(globalObject, jsc.ZigString.static("state"), jsc.JSValue.jsNumber(@intFromEnum(stream.state)));

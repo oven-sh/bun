@@ -16,12 +16,12 @@ pub fn toBeDefined(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallF
     defer formatter.deinit();
     const value_fmt = value.toFmt(&formatter);
     if (not) {
-        const received_line = "Received: <red>{any}<r>\n";
+        const received_line = "Received: <red>{f}<r>\n";
         const signature = comptime getSignature("toBeDefined", "", true);
         return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
     }
 
-    const received_line = "Received: <red>{any}<r>\n";
+    const received_line = "Received: <red>{f}<r>\n";
     const signature = comptime getSignature("toBeDefined", "", false);
     return this.throw(globalThis, signature, "\n\n" ++ received_line, .{value_fmt});
 }

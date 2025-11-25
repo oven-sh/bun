@@ -5359,8 +5359,6 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
         JSValue::decode(JSValue4)
     };
 
-    ASSERT(microtaskArgs[0].isCallable());
-
     if (microtaskArgs[1].isEmpty()) {
         microtaskArgs[1] = jsUndefined();
     }
@@ -5472,6 +5470,15 @@ extern "C" JSC::EncodedJSValue WebCore__AbortSignal__abortReason(WebCore::AbortS
 {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     return JSC::JSValue::encode(abortSignal->reason().getValue(jsNull()));
+}
+
+extern "C" WebCore::AbortSignalTimeout WebCore__AbortSignal__getTimeout(WebCore::AbortSignal* arg0)
+{
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    if (!abortSignal->hasActiveTimeoutTimer()) {
+        return nullptr;
+    }
+    return abortSignal->getTimeout();
 }
 
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__ref(WebCore::AbortSignal* abortSignal)

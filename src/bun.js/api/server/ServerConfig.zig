@@ -57,9 +57,9 @@ ipv6_only: bool = false,
 is_node_http: bool = false,
 had_routes_object: bool = false,
 
-static_routes: std.ArrayList(StaticRouteEntry) = std.ArrayList(StaticRouteEntry).init(bun.default_allocator),
-negative_routes: std.ArrayList([:0]const u8) = std.ArrayList([:0]const u8).init(bun.default_allocator),
-user_routes_to_build: std.ArrayList(UserRouteBuilder) = std.ArrayList(UserRouteBuilder).init(bun.default_allocator),
+static_routes: std.array_list.Managed(StaticRouteEntry) = std.array_list.Managed(StaticRouteEntry).init(bun.default_allocator),
+negative_routes: std.array_list.Managed([:0]const u8) = std.array_list.Managed([:0]const u8).init(bun.default_allocator),
+user_routes_to_build: std.array_list.Managed(UserRouteBuilder) = std.array_list.Managed(UserRouteBuilder).init(bun.default_allocator),
 
 bake: ?bun.bake.UserOptions = null,
 
@@ -164,7 +164,7 @@ fn normalizeStaticRoutesList(this: *ServerConfig) !void {
         }
     };
 
-    var static_routes_dedupe_list = std.ArrayList(u64).init(bun.default_allocator);
+    var static_routes_dedupe_list = std.array_list.Managed(u64).init(bun.default_allocator);
     try static_routes_dedupe_list.ensureTotalCapacity(@truncate(this.static_routes.items.len));
     defer static_routes_dedupe_list.deinit();
 
@@ -284,7 +284,7 @@ pub fn deinit(this: *ServerConfig) void {
 }
 
 pub fn computeID(this: *const ServerConfig, allocator: std.mem.Allocator) []const u8 {
-    var arraylist = std.ArrayList(u8).init(allocator);
+    var arraylist = std.array_list.Managed(u8).init(allocator);
     var writer = arraylist.writer();
 
     writer.writeAll("[http]-") catch {};
@@ -522,7 +522,7 @@ pub fn fromJS(
             // This list is not used in the success case
             defer init_ctx.dedupe_html_bundle_map.deinit();
 
-            var framework_router_list = std.ArrayList(bun.bake.FrameworkRouter.Type).init(bun.default_allocator);
+            var framework_router_list = std.array_list.Managed(bun.bake.FrameworkRouter.Type).init(bun.default_allocator);
             errdefer framework_router_list.deinit();
 
             errdefer {
@@ -543,11 +543,11 @@ pub fn fromJS(
                 }
 
                 if (path.len == 0 or (path[0] != '/')) {
-                    return global.throwInvalidArguments("Invalid route {}. Path must start with '/'", .{bun.fmt.quote(path)});
+                    return global.throwInvalidArguments("Invalid route {f}. Path must start with '/'", .{bun.fmt.quote(path)});
                 }
 
                 if (!is_ascii) {
-                    return global.throwInvalidArguments("Invalid route {}. Please encode all non-ASCII characters in the path.", .{bun.fmt.quote(path)});
+                    return global.throwInvalidArguments("Invalid route {f}. Please encode all non-ASCII characters in the path.", .{bun.fmt.quote(path)});
                 }
 
                 if (value == .false) {

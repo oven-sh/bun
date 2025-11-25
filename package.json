@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "bun",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "workspaces": [
     "./packages/bun-types",
     "./packages/@types/bun"
@@ -30,8 +30,8 @@
     "ci": "bun scripts/buildkite-failures.ts ",
     "watch": "bun run zig build check --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib -freference-trace=30",
     "watch-windows": "bun run zig build check-windows --watch -fincremental --prominent-compile-errors --global-cache-dir build/debug/zig-check-cache --zig-lib-dir vendor/zig/lib",
-    "bd:v": "(bun run --silent build:debug &> /tmp/bun.debug.build.log || (cat /tmp/bun.debug.build.log && rm -rf /tmp/bun.debug.build.log && exit 1)) && rm -f /tmp/bun.debug.build.log && ./build/debug/bun-debug",
-    "bd": "BUN_DEBUG_QUIET_LOGS=1 bun --silent bd:v",
+    "bd:v": "./scripts/bd",
+    "bd": "BUN_DEBUG_QUIET_LOGS=1 ./scripts/bd",
     "build:debug": "export COMSPEC=\"C:\\Windows\\System32\\cmd.exe\" && bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -B build/debug --log-level=NOTICE",
     "build:debug:fuzzilli": "export COMSPEC=\"C:\\Windows\\System32\\cmd.exe\" && bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -B build/debug-fuzz  -DENABLE_FUZZILLI=ON --log-level=NOTICE",
     "build:debug:noasan": "export COMSPEC=\"C:\\Windows\\System32\\cmd.exe\" && bun ./scripts/build.mjs -GNinja -DCMAKE_BUILD_TYPE=Debug -DENABLE_ASAN=OFF -B build/debug --log-level=NOTICE",

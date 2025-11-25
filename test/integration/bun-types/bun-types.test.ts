@@ -435,7 +435,7 @@ describe("@types/bun integration test", () => {
         code: 2322,
         line: "24154.ts:11:3",
         message:
-          "Type 'Blob' is not assignable to type 'import(\"buffer\").Blob'.\nThe types returned by 'stream()' are incompatible between these types.\nType 'ReadableStream<Uint8Array<ArrayBuffer>>' is missing the following properties from type 'ReadableStream<any>': blob, text, bytes, json, and 2 more.",
+          "Type 'Blob' is not assignable to type 'import(\"buffer\").Blob'.\nThe types returned by 'stream()' are incompatible between these types.\nType 'ReadableStream<Uint8Array<ArrayBuffer>>' is missing the following properties from type 'ReadableStream<any>': blob, text, bytes, json",
       },
       {
         code: 2769,

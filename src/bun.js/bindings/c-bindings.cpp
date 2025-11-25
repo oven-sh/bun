@@ -31,13 +31,50 @@ extern "C" void bun_warn_avx_missing(const char* url)
     }
 
     static constexpr const char* str = "warn: CPU lacks AVX support, strange crashes may occur. Reinstall Bun or use *-baseline build:\n  ";
-    const size_t len = strlen(str);
+    static constexpr size_t prefix_len = 98; // Length of str above
+    static constexpr size_t suffix_len = 1; // "\n"
+    static constexpr size_t stack_buf_size = 512;
 
-    char buf[512];
-    strcpy(buf, str);
-    strcpy(buf + len, url);
-    strcpy(buf + len + strlen(url), "\n\0");
-    [[maybe_unused]] auto _ = write(STDERR_FILENO, buf, strlen(buf));
+    // Safety check: if url is null, use an empty string
+    if (!url) {
+        url = "";
+    }
+
+    const size_t url_len = strlen(url);
+    const size_t total_len = prefix_len + url_len + suffix_len;
+
+    char stack_buf[stack_buf_size];
+    char* buf = stack_buf;
+    bool allocated = false;
+
+    // If the total length exceeds our stack buffer, allocate on the heap
+    if (total_len >= stack_buf_size) {
+        buf = static_cast<char*>(malloc(total_len + 1));
+        if (!buf) {
+            // Allocation failed, fall back to truncated output using stack buffer
+            buf = stack_buf;
+            // Write what we can: prefix + as much of URL as fits + newline
+            memcpy(buf, str, prefix_len);
+            const size_t remaining = stack_buf_size - prefix_len - suffix_len - 1;
+            memcpy(buf + prefix_len, url, remaining);
+            buf[stack_buf_size - 2] = '\n';
+            buf[stack_buf_size - 1] = '\0';
+            [[maybe_unused]] auto _ = write(STDERR_FILENO, buf, stack_buf_size - 1);
+            return;
+        }
+        allocated = true;
+    }
+
+    memcpy(buf, str, prefix_len);
+    memcpy(buf + prefix_len, url, url_len);
+    buf[prefix_len + url_len] = '\n';
+    buf[total_len] = '\0';
+
+    [[maybe_unused]] auto _ = write(STDERR_FILENO, buf, total_len);
+
+    if (allocated) {
+        free(buf);
+    }
 }
 #endif
 

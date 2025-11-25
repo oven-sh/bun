@@ -60,8 +60,8 @@ pub fn memoryCost(this: *const FileSink) usize {
     return this.writer.memoryCost();
 }
 
-fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(_: *jsc.JSGlobalObject, jsvalue: jsc.JSValue) callconv(.C) void {
-    var this: *FileSink = @alignCast(@ptrCast(JSSink.fromJS(jsvalue) orelse return));
+fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(_: *jsc.JSGlobalObject, jsvalue: jsc.JSValue) callconv(.c) void {
+    var this: *FileSink = @ptrCast(@alignCast(JSSink.fromJS(jsvalue) orelse return));
 
     if (comptime !Environment.isWindows) {
         this.force_sync = true;
@@ -201,7 +201,7 @@ pub fn onWrite(this: *FileSink, amount: usize, status: bun.io.WriteStatus) void 
 }
 
 pub fn onError(this: *FileSink, err: bun.sys.Error) void {
-    log("onError({any})", .{err});
+    log("onError({f})", .{err});
     if (this.pending.state == .pending) {
         this.pending.result = .{ .err = err };
         if (this.eventLoop().bunVM()) |vm| {
@@ -357,7 +357,11 @@ pub fn setup(this: *FileSink, options: *const FileSink.Options) bun.sys.Maybe(vo
 }
 
 pub fn loop(this: *FileSink) *bun.Async.Loop {
-    return this.event_loop_handle.loop();
+    if (comptime bun.Environment.isWindows) {
+        return this.event_loop_handle.loop().uv_loop;
+    } else {
+        return this.event_loop_handle.loop();
+    }
 }
 
 pub fn eventLoop(this: *FileSink) jsc.EventLoopHandle {

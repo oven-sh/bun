@@ -120,18 +120,18 @@ function Refresh-Path {
 function Add-To-Path {
   $absolutePath = Resolve-Path $args[0]
   $currentPath = [Environment]::GetEnvironmentVariable("Path", "Machine")
-  if ($currentPath -like "*$absolutePath*") {  
+  if ($currentPath -like "*$absolutePath*") {
     return
   }
 
   $newPath = $currentPath.TrimEnd(";") + ";" + $absolutePath
   if ($newPath.Length -ge 2048) {
     Write-Warning "PATH is too long, removing duplicate and old entries..."
-    
-    $paths = $currentPath.Split(';', [StringSplitOptions]::RemoveEmptyEntries) | 
+
+    $paths = $currentPath.Split(';', [StringSplitOptions]::RemoveEmptyEntries) |
       Where-Object { $_ -and (Test-Path $_) } |
       Select-Object -Unique
-    
+
     $paths += $absolutePath
     $newPath = $paths -join ';'
     while ($newPath.Length -ge 2048 -and $paths.Count -gt 1) {
@@ -256,6 +256,30 @@ function Install-Tailscale {
   Install-Package tailscale
 }
 
+function Create-Buildkite-Environment-Hooks {
+  param (
+    [Parameter(Mandatory = $true)]
+    [string]$BuildkiteHome
+  )
+
+  Write-Output "Creating Buildkite environment hooks..."
+  $hooksDir = Join-Path $BuildkiteHome "hooks"
+
+  if (-not (Test-Path $hooksDir)) {
+    New-Item -Path $hooksDir -ItemType Directory -Force | Out-Null
+  }
+
+  $environmentHook = Join-Path $hooksDir "environment.ps1"
+  $buildPath = Join-Path $BuildkiteHome "build"
+
+  @"
+# Buildkite environment hook
+`$env:BUILDKITE_BUILD_CHECKOUT_PATH = "$buildPath"
+"@ | Set-Content -Path $environmentHook -Encoding UTF8
+
+  Write-Output "Environment hook created at $environmentHook"
+}
+
 function Install-Buildkite {
   if (Which buildkite-agent) {
     return
@@ -266,6 +290,14 @@ function Install-Buildkite {
   $installScript = Download-File "https://raw.githubusercontent.com/buildkite/agent/main/install.ps1"
   Execute-Script $installScript
   Refresh-Path
+
+  if ($CI) {
+    $buildkiteHome = "C:\buildkite-agent"
+    if (-not (Test-Path $buildkiteHome)) {
+      New-Item -Path $buildkiteHome -ItemType Directory -Force | Out-Null
+    }
+    Create-Buildkite-Environment-Hooks -BuildkiteHome $buildkiteHome
+  }
 }
 
 function Install-Build-Essentials {
@@ -274,7 +306,6 @@ function Install-Build-Essentials {
     cmake `
     make `
     ninja `
-    ccache `
     python `
     golang `
     nasm `
@@ -282,6 +313,7 @@ function Install-Build-Essentials {
     strawberryperl `
     mingw
   Install-Rust
+  Install-Sccache
   # Needed to remap stack traces
   Install-PdbAddr2line
   Install-Llvm
@@ -342,6 +374,10 @@ function Install-Rust {
   Set-Env "CARGO_HOME" "$rustPath\cargo"
   Set-Env "RUSTUP_HOME" "$rustPath\rustup"
   Add-To-Path "$rustPath\cargo\bin"
+}
+
+function Install-Sccache {
+  Install-Package sccache -Version "0.12.0"
 }
 
 function Install-PdbAddr2line {

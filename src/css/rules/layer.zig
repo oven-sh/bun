@@ -113,7 +113,7 @@ pub const LayerName = struct {
         }
     }
 
-    pub fn toCss(this: *const LayerName, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const LayerName, dest: *css.Printer) css.PrintErr!void {
         var first = true;
         for (this.v.slice()) |name| {
             if (first) {
@@ -126,7 +126,7 @@ pub const LayerName = struct {
         }
     }
 
-    pub fn format(this: *const LayerName, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: *const LayerName, writer: *std.Io.Writer) !void {
         var first = true;
         for (this.v.slice()) |name| {
             if (first) {
@@ -152,21 +152,21 @@ pub fn LayerBlockRule(comptime R: type) type {
 
         const This = @This();
 
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
             // #[cfg(feature = "sourcemap")]
             // dest.add_mapping(self.loc);
 
             try dest.writeStr("@layer");
             if (this.name) |*name| {
                 try dest.writeChar(' ');
-                try name.toCss(W, dest);
+                try name.toCss(dest);
             }
 
             try dest.whitespace();
             try dest.writeChar('{');
             dest.indent();
             try dest.newline();
-            try this.rules.toCss(W, dest);
+            try this.rules.toCss(dest);
             dest.dedent();
             try dest.newline();
             try dest.writeChar('}');
@@ -189,12 +189,12 @@ pub const LayerStatementRule = struct {
 
     const This = @This();
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
         if (this.names.len() > 0) {
             try dest.writeStr("@layer ");
-            try css.to_css.fromList(LayerName, this.names.slice(), W, dest);
+            try css.to_css.fromList(LayerName, this.names.slice(), dest);
             try dest.writeChar(';');
         } else {
             try dest.writeStr("@layer;");

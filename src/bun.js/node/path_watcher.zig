@@ -34,7 +34,7 @@ pub const PathWatcherManager = struct {
         return true;
     }
 
-    fn hasPendingTasks(this: *PathWatcherManager) callconv(.C) bool {
+    fn hasPendingTasks(this: *PathWatcherManager) callconv(.c) bool {
         return this.has_pending_tasks.load(.acquire);
     }
 
@@ -166,7 +166,7 @@ pub const PathWatcherManager = struct {
             const kind = kinds[event.index];
 
             if (comptime Environment.isDebug) {
-                log("[watch] {s} ({s}, {})", .{ file_path, @tagName(kind), event.op });
+                log("[watch] {s} ({s}, {f})", .{ file_path, @tagName(kind), event.op });
             }
 
             switch (kind) {
@@ -306,7 +306,7 @@ pub const PathWatcherManager = struct {
             // stop all watchers
             for (watchers) |w| {
                 if (w) |watcher| {
-                    log("[watch] error: {}", .{err});
+                    log("[watch] error: {f}", .{err});
                     watcher.emit(.{ .@"error" = err }, 0, timestamp, false);
                     watcher.flush();
                 }
@@ -419,7 +419,7 @@ pub const PathWatcherManager = struct {
                 return .{
                     .err = .{
                         .errno = @truncate(@intFromEnum(switch (err) {
-                            error.AccessDenied => bun.sys.E.ACCES,
+                            error.AccessDenied, error.PermissionDenied => bun.sys.E.ACCES,
                             error.SystemResources => bun.sys.E.NOMEM,
                             error.Unexpected,
                             error.InvalidUtf8,
@@ -497,7 +497,7 @@ pub const PathWatcherManager = struct {
                 defer watcher.unrefPendingDirectory();
                 switch (this.processWatcher(watcher, &buf)) {
                     .err => |err| {
-                        log("[watch] error registering directory: {s}", .{err});
+                        log("[watch] error registering directory: {f}", .{err});
                         watcher.emit(.{ .@"error" = err }, 0, std.time.milliTimestamp(), false);
                         watcher.flush();
                     },
@@ -807,7 +807,7 @@ pub const PathWatcher = struct {
         return true;
     }
 
-    pub fn hasPendingDirectories(this: *PathWatcher) callconv(.C) bool {
+    pub fn hasPendingDirectories(this: *PathWatcher) callconv(.c) bool {
         return this.has_pending_directories.load(.acquire);
     }
 

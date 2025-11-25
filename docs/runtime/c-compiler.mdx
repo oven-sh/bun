@@ -13,7 +13,7 @@ See the [introduction blog post](https://bun.com/blog/compile-and-run-c-in-js) f
 
 JavaScript:
 
-```ts hello.js icon="file-code"
+```ts hello.ts icon="file-code"
 import { cc } from "bun:ffi";
 import source from "./hello.c" with { type: "file" };
 
@@ -87,7 +87,7 @@ You can also pass a `napi_env` to receive the N-API environment used to call the
 
 For example, if you have a string in C, you can return it to JavaScript like this:
 
-```ts hello.js
+```ts hello.ts
 import { cc } from "bun:ffi";
 import source from "./hello.c" with { type: "file" };
 

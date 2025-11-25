@@ -285,7 +285,19 @@ pub const JSPromise = opaque {
             }
         }
 
-        const err = value catch |err| globalThis.takeException(err);
+        const err = value catch |err| switch (err) {
+            // We can't use globalThis.takeException() because it throws out of
+            // memory error when we instead need to take the exception.
+            error.OutOfMemory => globalThis.createOutOfMemoryError(),
+
+            error.JSTerminated => return,
+            else => err: {
+                const exception = globalThis.tryTakeException() orelse {
+                    @panic("A JavaScript exception was thrown, but it was cleared before it could be read.");
+                };
+                break :err exception.toError() orelse exception;
+            },
+        };
 
         bun.cpp.JSC__JSPromise__reject(this, globalThis, err) catch return error.JSTerminated;
     }

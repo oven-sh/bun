@@ -2376,9 +2376,11 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
     }
 
     case ErrorCode::ERR_SSL_NO_CIPHER_MATCH: {
+        auto arg0 = callFrame->argument(1);
         auto err = createError(globalObject, ErrorCode::ERR_SSL_NO_CIPHER_MATCH, "No cipher match"_s);
         err->putDirect(vm, Identifier::fromString(vm, "reason"_s), jsString(vm, WTF::String("no cipher match"_s)));
         err->putDirect(vm, Identifier::fromString(vm, "library"_s), jsString(vm, WTF::String("SSL routines"_s)));
+        err->putDirect(vm, Identifier::fromString(vm, "cipher"_s), arg0);
         return JSC::JSValue::encode(err);
     }
 

@@ -768,6 +768,7 @@ declare function $ERR_INVALID_FD_TYPE(type): TypeError;
 declare function $ERR_IP_BLOCKED(ip): Error;
 declare function $ERR_HTTP_CONTENT_LENGTH_MISMATCH(bodylen: number, headerlen: number): Error;
 declare function $ERR_PROXY_TUNNEL(msg: string): Error;
+declare function $ERR_SSL_NO_CIPHER_MATCH(cipher): Error;
 
 declare function $ERR_IPC_DISCONNECTED(): Error;
 declare function $ERR_SERVER_NOT_RUNNING(): Error;

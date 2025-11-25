@@ -239,7 +239,7 @@ namespace uWS
                     if (h->key.length() == lowerCasedHeader.length() && !strncmp(h->key.data(), lowerCasedHeader.data(), lowerCasedHeader.length()))
                     {
                         count += 1;
-                        if (found.begin() == nullptr) found = h->value;
+                        if (found.data() == nullptr) found = h->value;
                     }
                 }
             }

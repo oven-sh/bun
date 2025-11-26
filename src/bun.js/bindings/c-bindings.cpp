@@ -30,8 +30,8 @@ extern "C" void bun_warn_avx_missing(const char* url)
         return;
     }
 
-    static constexpr const char* str = "warn: CPU lacks AVX support, strange crashes may occur. Reinstall Bun or use *-baseline build:\n  ";
-    static constexpr size_t prefix_len = 98; // Length of str above
+    static constexpr char str[] = "warn: CPU lacks AVX support, strange crashes may occur. Reinstall Bun or use *-baseline build:\n  ";
+    static constexpr size_t prefix_len = sizeof(str) - 1; // Exclude null terminator
     static constexpr size_t suffix_len = 1; // "\n"
     static constexpr size_t stack_buf_size = 512;
 
@@ -56,10 +56,11 @@ extern "C" void bun_warn_avx_missing(const char* url)
             // Write what we can: prefix + as much of URL as fits + newline
             memcpy(buf, str, prefix_len);
             const size_t remaining = stack_buf_size - prefix_len - suffix_len - 1;
-            memcpy(buf + prefix_len, url, remaining);
-            buf[stack_buf_size - 2] = '\n';
-            buf[stack_buf_size - 1] = '\0';
-            [[maybe_unused]] auto _ = write(STDERR_FILENO, buf, stack_buf_size - 1);
+            const size_t url_bytes_to_copy = url_len < remaining ? url_len : remaining;
+            memcpy(buf + prefix_len, url, url_bytes_to_copy);
+            buf[prefix_len + url_bytes_to_copy] = '\n';
+            buf[prefix_len + url_bytes_to_copy + 1] = '\0';
+            [[maybe_unused]] auto _ = write(STDERR_FILENO, buf, prefix_len + url_bytes_to_copy + suffix_len);
             return;
         }
         allocated = true;

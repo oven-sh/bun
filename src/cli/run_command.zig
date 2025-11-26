@@ -1690,6 +1690,10 @@ pub const BunXFastPath = struct {
     ///
     /// Based on libuv's quote_cmd_arg function:
     /// https://github.com/libuv/libuv/blob/v1.x/src/win/process.c#L443-L518
+    ///
+    /// SAFETY: Caller must ensure `buffer` has sufficient space. Worst case requires
+    /// approximately `2 * arg.len + 3` UTF-16 code units (when every character needs escaping).
+    /// The command line buffer is sized to Windows' 32,767 character limit.
     fn appendWindowsArgument(buffer: []u16, arg: []const u8) usize {
         // Temporary buffer for UTF-16 conversion (max 2048 wide chars = 4KB)
         var temp_buf: [2048]u16 = undefined;

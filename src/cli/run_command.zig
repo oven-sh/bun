@@ -1687,82 +1687,84 @@ pub const BunXFastPath = struct {
 
     /// Append a single UTF-8 argument to a Windows command line (UTF-16), with proper quoting and escaping.
     /// Returns the number of UTF-16 code units written.
+    ///
+    /// Based on libuv's quote_cmd_arg function:
+    /// https://github.com/libuv/libuv/blob/v1.x/src/win/process.c#L443-L518
     fn appendWindowsArgument(buffer: []u16, arg: []const u8) usize {
-        var i: usize = 0;
+        // Temporary buffer for UTF-16 conversion (max 2048 wide chars = 4KB)
+        var temp_buf: [2048]u16 = undefined;
 
-        // Check if argument needs quoting (empty, contains spaces, tabs, or quotes)
-        const needs_quote = arg.len == 0 or for (arg) |c| {
+        // Convert UTF-8 to UTF-16
+        const utf16_result = bun.strings.convertUTF8toUTF16InBuffer(&temp_buf, arg);
+        const source = temp_buf[0..utf16_result.len];
+        const len = source.len;
+
+        if (len == 0) {
+            // Empty argument needs quotes
+            buffer[0] = '"';
+            buffer[1] = '"';
+            return 2;
+        }
+
+        // Check if we need quoting (contains space, tab, or quote)
+        const needs_quote = for (source) |c| {
             if (c == ' ' or c == '\t' or c == '"') break true;
         } else false;
 
         if (!needs_quote) {
-            // Simple case: no quoting needed, just convert UTF-8 to UTF-16
-            const result = bun.strings.convertUTF8toUTF16InBuffer(buffer, arg);
-            return result.len;
+            // No quoting needed, just copy to output
+            @memcpy(buffer[0..len], source);
+            return len;
         }
 
-        // Opening quote
-        buffer[i] = '"';
-        i += 1;
+        // Check if we have embedded quotes or backslashes
+        const has_quote_or_backslash = for (source) |c| {
+            if (c == '"' or c == '\\') break true;
+        } else false;
 
-        // Process each character, handling backslashes and quotes per Windows rules:
-        // - Backslashes are literal unless followed by a quote or at end of quoted string
-        // - Backslashes before quotes must be doubled, plus one more to escape the quote
-        // - Backslashes at end of quoted string must be doubled
-        var j: usize = 0;
-        while (j < arg.len) {
-            const c = arg[j];
+        if (!has_quote_or_backslash) {
+            // Simple case: just wrap in quotes
+            buffer[0] = '"';
+            @memcpy(buffer[1 .. 1 + len], source);
+            buffer[len + 1] = '"';
+            return len + 2;
+        }
 
-            if (c == '\\') {
-                // Count consecutive backslashes
-                const start = j;
-                while (j < arg.len and arg[j] == '\\') : (j += 1) {}
-                const num_backslashes = j - start;
+        // Complex case: need to handle backslash escaping
+        // Use libuv's algorithm: process backwards, then reverse
+        var pos: usize = 0;
+        buffer[pos] = '"';
+        pos += 1;
 
-                // Check what follows the backslashes
-                if (j >= arg.len) {
-                    // Backslashes at end: double them (they precede the closing quote)
-                    for (0..num_backslashes * 2) |_| {
-                        buffer[i] = '\\';
-                        i += 1;
-                    }
-                } else if (arg[j] == '"') {
-                    // Backslashes followed by quote: double them and add one more to escape the quote
-                    for (0..num_backslashes * 2 + 1) |_| {
-                        buffer[i] = '\\';
-                        i += 1;
-                    }
-                    buffer[i] = '"';
-                    i += 1;
-                    j += 1;
-                } else {
-                    // Backslashes followed by regular character: keep as-is
-                    for (0..num_backslashes) |_| {
-                        buffer[i] = '\\';
-                        i += 1;
-                    }
-                    // Character will be processed in next iteration
-                }
-            } else if (c == '"') {
-                // Escape standalone quote
-                buffer[i] = '\\';
-                i += 1;
-                buffer[i] = '"';
-                i += 1;
-                j += 1;
+        const start = pos;
+        var quote_hit: bool = true;
+
+        var i: usize = len;
+        while (i > 0) {
+            i -= 1;
+            buffer[pos] = source[i];
+            pos += 1;
+
+            if (quote_hit and source[i] == '\\') {
+                buffer[pos] = '\\';
+                pos += 1;
+            } else if (source[i] == '"') {
+                quote_hit = true;
+                buffer[pos] = '\\';
+                pos += 1;
             } else {
-                // Regular character: convert UTF-8 to UTF-16
-                const result = bun.strings.convertUTF8toUTF16InBuffer(buffer[i..], arg[j .. j + 1]);
-                i += result.len;
-                j += 1;
+                quote_hit = false;
             }
         }
 
-        // Closing quote
-        buffer[i] = '"';
-        i += 1;
+        // Reverse the content we just wrote (between opening quote and current position)
+        std.mem.reverse(u16, buffer[start..pos]);
 
-        return i;
+        // Add closing quote
+        buffer[pos] = '"';
+        pos += 1;
+
+        return pos;
     }
 
     /// If this returns, it implies the fast path cannot be taken

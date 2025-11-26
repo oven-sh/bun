@@ -89,10 +89,13 @@ pub const Features = struct {
     pub var yarn_migration: usize = 0;
     pub var pnpm_migration: usize = 0;
     pub var yaml_parse: usize = 0;
+    pub var cpu_profile: usize = 0;
+    pub var heap_snapshot: usize = 0;
 
     comptime {
         @export(&napi_module_register, .{ .name = "Bun__napi_module_register_count" });
         @export(&process_dlopen, .{ .name = "Bun__process_dlopen_count" });
+        @export(&heap_snapshot, .{ .name = "Bun__Feature__heap_snapshot" });
     }
 
     pub fn formatter() Formatter {

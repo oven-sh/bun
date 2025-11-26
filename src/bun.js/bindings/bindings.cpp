@@ -122,6 +122,7 @@
 #include "JavaScriptCore/TestRunnerUtils.h"
 #include "JavaScriptCore/DateInstance.h"
 #include "JavaScriptCore/RegExpObject.h"
+#include "JavaScriptCore/YarrFlags.h"
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "webcore/JSAbortSignal.h"
 #include "JSAbortAlgorithm.h"
@@ -6080,4 +6081,29 @@ extern "C" void JSC__ArrayBuffer__asBunArrayBuffer(JSC::ArrayBuffer* self, Bun__
     out->_value = 0;
     out->cell_type = JSC::JSType::ArrayBufferType;
     out->shared = self->isShared();
+}
+
+// Get RegExp pattern and flags as a formatted string like "/pattern/flags"
+// This does NOT invoke Symbol.toPrimitive, avoiding potential user code execution.
+extern "C" BunString JSC__JSValue__toRegExpStringNonThrowing(JSC::EncodedJSValue encodedValue)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (!value.isCell() || value.asCell()->type() != JSC::RegExpObjectType) {
+        return BunStringEmpty;
+    }
+
+    JSC::RegExpObject* regExpObject = JSC::jsCast<JSC::RegExpObject*>(value);
+    JSC::RegExp* regExp = regExpObject->regExp();
+
+    const WTF::String& pattern = regExp->pattern();
+    auto flagsString = JSC::Yarr::flagsString(regExp->flags());
+
+    // Build the string: "/" + pattern + "/" + flags
+    WTF::StringBuilder builder;
+    builder.append('/');
+    builder.append(pattern);
+    builder.append('/');
+    builder.append(std::span<const Latin1Character> { reinterpret_cast<const Latin1Character*>(flagsString.data()), strlen(flagsString.data()) });
+
+    return Bun::toStringRef(builder.toString());
 }

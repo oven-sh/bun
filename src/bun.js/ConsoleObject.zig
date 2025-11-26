@@ -1052,13 +1052,25 @@ pub const Formatter = struct {
                 self.formatter.remaining_values = &[_]JSValue{};
             }
             self.formatter.format(
-                Tag.get(self.value, self.formatter.globalThis) catch |e| return bun.deprecated.jsErrorToWriteError(e),
+                Tag.get(self.value, self.formatter.globalThis) catch |e| return self.jsErrorToWriteError(e),
                 @TypeOf(writer),
                 writer,
                 self.value,
                 self.formatter.globalThis,
                 false,
-            ) catch |e| return bun.deprecated.jsErrorToWriteError(e);
+            ) catch |e| return self.jsErrorToWriteError(e);
+        }
+
+        fn jsErrorToWriteError(self: ZigFormatter, e: bun.JSError) std.Io.Writer.Error {
+            // When converting JSError to WriteFailed, we must clear the pending exception
+            // from the VM. Otherwise, subsequent code may trigger assertion failures when
+            // it detects an unhandled exception (e.g., when Symbol.toPrimitive throws).
+            _ = self.formatter.globalThis.clearExceptionExceptTermination();
+            return switch (e) {
+                error.JSTerminated => error.WriteFailed,
+                error.JSError => error.WriteFailed,
+                error.OutOfMemory => bun.handleOom(error.OutOfMemory),
+            };
         }
     };
 
@@ -2120,7 +2132,24 @@ pub const Formatter = struct {
                 try this.writeWithFormatting(Writer, writer_, @TypeOf(slice), slice, this.globalThis, enable_ansi_colors);
             },
             .String => {
-                // This is called from the '%s' formatter, so it can actually be any value
+                // This is called from the '%s' formatter, so it can actually be any value.
+                // For RegExp, we use a non-throwing method that doesn't invoke Symbol.toPrimitive
+                // to avoid executing arbitrary user code that could throw.
+                if (jsType == .RegExpObject) {
+                    const regexp_str = value.toRegExpStringNonThrowing();
+                    defer regexp_str.deref();
+                    this.addForNewLine(regexp_str.length());
+
+                    if (comptime enable_ansi_colors) {
+                        writer.print(comptime Output.prettyFmt("<r><red>", enable_ansi_colors), .{});
+                    }
+                    writer.print("{f}", .{regexp_str});
+                    if (comptime enable_ansi_colors) {
+                        writer.print(comptime Output.prettyFmt("<r>", enable_ansi_colors), .{});
+                    }
+                    return;
+                }
+
                 const str: bun.String = try bun.String.fromJS(value, this.globalThis);
                 defer str.deref();
                 this.addForNewLine(str.length());
@@ -2167,10 +2196,6 @@ pub const Formatter = struct {
                     return;
                 }
 
-                if (jsType == .RegExpObject and enable_ansi_colors) {
-                    writer.print(comptime Output.prettyFmt("<r><red>", enable_ansi_colors), .{});
-                }
-
                 if (str.isUTF16()) {
                     // streaming print
                     writer.print("{f}", .{str});
@@ -2184,10 +2209,6 @@ pub const Formatter = struct {
                         defer bun.default_allocator.free(buf);
                         writer.writeAll(buf);
                     }
-                }
-
-                if (jsType == .RegExpObject and enable_ansi_colors) {
-                    writer.print(comptime Output.prettyFmt("<r>", enable_ansi_colors), .{});
                 }
             },
             .Integer => {

@@ -483,6 +483,15 @@ pub const JSValue = enum(i64) {
         return this.jsType() == .JSDate;
     }
 
+    extern fn JSC__JSValue__toRegExpStringNonThrowing(this: JSValue) bun.String;
+
+    /// Get the string representation of a RegExp without invoking Symbol.toPrimitive.
+    /// Returns the pattern and flags like "/pattern/flags".
+    /// Returns an empty string if the value is not a RegExp.
+    pub fn toRegExpStringNonThrowing(this: JSValue) bun.String {
+        return JSC__JSValue__toRegExpStringNonThrowing(this);
+    }
+
     extern "c" fn Bun__JSValue__protect(value: JSValue) void;
     extern "c" fn Bun__JSValue__unprotect(value: JSValue) void;
 

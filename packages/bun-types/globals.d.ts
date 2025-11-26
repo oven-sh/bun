@@ -1940,6 +1940,9 @@ interface BunFetchRequestInit extends RequestInit {
    *  }
    * });
    * ```
+   *
+   * If a `Proxy-Authorization` header is provided in `proxy.headers`, it takes
+   * precedence over credentials parsed from the proxy URL.
    */
   proxy?:
     | string

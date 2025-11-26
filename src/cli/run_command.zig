@@ -1685,6 +1685,86 @@ pub const BunXFastPath = struct {
     var direct_launch_buffer: bun.WPathBuffer = undefined;
     var environment_buffer: bun.WPathBuffer = undefined;
 
+    /// Append a single UTF-8 argument to a Windows command line (UTF-16), with proper quoting and escaping.
+    /// Returns the number of UTF-16 code units written.
+    fn appendWindowsArgument(buffer: []u16, arg: []const u8) usize {
+        var i: usize = 0;
+
+        // Check if argument needs quoting (empty, contains spaces, tabs, or quotes)
+        const needs_quote = arg.len == 0 or for (arg) |c| {
+            if (c == ' ' or c == '\t' or c == '"') break true;
+        } else false;
+
+        if (!needs_quote) {
+            // Simple case: no quoting needed, just convert UTF-8 to UTF-16
+            const result = bun.strings.convertUTF8toUTF16InBuffer(buffer, arg);
+            return result.len;
+        }
+
+        // Opening quote
+        buffer[i] = '"';
+        i += 1;
+
+        // Process each character, handling backslashes and quotes per Windows rules:
+        // - Backslashes are literal unless followed by a quote or at end of quoted string
+        // - Backslashes before quotes must be doubled, plus one more to escape the quote
+        // - Backslashes at end of quoted string must be doubled
+        var j: usize = 0;
+        while (j < arg.len) {
+            const c = arg[j];
+
+            if (c == '\\') {
+                // Count consecutive backslashes
+                const start = j;
+                while (j < arg.len and arg[j] == '\\') : (j += 1) {}
+                const num_backslashes = j - start;
+
+                // Check what follows the backslashes
+                if (j >= arg.len) {
+                    // Backslashes at end: double them (they precede the closing quote)
+                    for (0..num_backslashes * 2) |_| {
+                        buffer[i] = '\\';
+                        i += 1;
+                    }
+                } else if (arg[j] == '"') {
+                    // Backslashes followed by quote: double them and add one more to escape the quote
+                    for (0..num_backslashes * 2 + 1) |_| {
+                        buffer[i] = '\\';
+                        i += 1;
+                    }
+                    buffer[i] = '"';
+                    i += 1;
+                    j += 1;
+                } else {
+                    // Backslashes followed by regular character: keep as-is
+                    for (0..num_backslashes) |_| {
+                        buffer[i] = '\\';
+                        i += 1;
+                    }
+                    // Character will be processed in next iteration
+                }
+            } else if (c == '"') {
+                // Escape standalone quote
+                buffer[i] = '\\';
+                i += 1;
+                buffer[i] = '"';
+                i += 1;
+                j += 1;
+            } else {
+                // Regular character: convert UTF-8 to UTF-16
+                const result = bun.strings.convertUTF8toUTF16InBuffer(buffer[i..], arg[j .. j + 1]);
+                i += result.len;
+                j += 1;
+            }
+        }
+
+        // Closing quote
+        buffer[i] = '"';
+        i += 1;
+
+        return i;
+    }
+
     /// If this returns, it implies the fast path cannot be taken
     fn tryLaunch(ctx: Command.Context, path_to_use: [:0]u16, env: *DotEnv.Loader, passthrough: []const []const u8) void {
         if (!bun.FeatureFlags.windows_bunx_fast_path) return;
@@ -1710,60 +1790,16 @@ pub const BunXFastPath = struct {
         }).cast();
 
         var i: usize = 0;
-        for (passthrough) |str| {
+        for (passthrough) |arg| {
+            // Add space separator before each argument
             command_line[i] = ' ';
             i += 1;
-            // Check if argument needs quoting (empty, contains spaces, quotes, or other special chars)
-            const needs_quote = str.len == 0 or for (str) |c| {
-                if (c == ' ' or c == '\t' or c == '"' or c == '\\') break true;
-            } else false;
 
-            if (needs_quote) {
-                command_line[i] = '"';
-                i += 1;
-                // Copy argument, escaping quotes and backslashes before quotes
-                var j: usize = 0;
-                while (j < str.len) {
-                    // Count backslashes
-                    var num_backslashes: usize = 0;
-                    while (j + num_backslashes < str.len and str[j + num_backslashes] == '\\') {
-                        num_backslashes += 1;
-                    }
-                    if (j + num_backslashes >= str.len) {
-                        // Backslashes at end: double them (they precede the closing quote)
-                        for (0..num_backslashes * 2) |_| {
-                            command_line[i] = '\\';
-                            i += 1;
-                        }
-                        j += num_backslashes;
-                    } else if (str[j + num_backslashes] == '"') {
-                        // Backslashes followed by quote: double backslashes + escape quote
-                        for (0..num_backslashes * 2 + 1) |_| {
-                            command_line[i] = '\\';
-                            i += 1;
-                        }
-                        command_line[i] = '"';
-                        i += 1;
-                        j += num_backslashes + 1;
-                    } else {
-                        // Backslashes not followed by quote: keep as-is
-                        for (0..num_backslashes) |_| {
-                            command_line[i] = '\\';
-                            i += 1;
-                        }
-                        j += num_backslashes;
-                        if (j < str.len) {
-                            const result = bun.strings.convertUTF8toUTF16InBuffer(command_line[i..], str[j .. j + 1]);
-                            i += result.len;
-                            j += 1;
-                        }
-                    }
-                }
-                command_line[i] = '"';
-                i += 1;
+            // Append the argument with proper quoting/escaping
+            if (comptime Environment.isWindows) {
+                i += appendWindowsArgument(command_line[i..], arg);
             } else {
-                const result = bun.strings.convertUTF8toUTF16InBuffer(command_line[i..], str);
-                i += result.len;
+                unreachable;
             }
         }
         ctx.passthrough = passthrough;

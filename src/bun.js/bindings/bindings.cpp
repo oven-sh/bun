@@ -3691,10 +3691,14 @@ bool JSC__JSValue__eqlValue(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JS
 {
     return JSC::JSValue::decode(JSValue0) == JSC::JSValue::decode(JSValue1);
 };
-[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__getPrototype(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1)
+[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__getPrototype(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto value = JSC::JSValue::decode(JSValue0);
-    return JSC::JSValue::encode(value.getPrototype(arg1));
+    JSValue result = value.getPrototype(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(result);
 }
 bool JSC__JSValue__isException(JSC::EncodedJSValue JSValue0, JSC::VM* arg1)
 {
@@ -4964,14 +4968,14 @@ static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC:
         if (structure->outOfLineSize() == 0 && structure->inlineSize() == 0) {
             fast = false;
 
-            if (JSValue proto = object->getPrototype(globalObject)) {
+            JSValue proto = object->getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (proto) {
                 if ((structure = proto.structureOrNull())) {
                     prototypeObject = proto;
                     fast = canPerformFastPropertyEnumerationForIterationBun(structure);
                     prototypeCount = 1;
                 }
-            } else {
-                RETURN_IF_EXCEPTION(scope, void());
             }
         }
     }
@@ -5043,7 +5047,9 @@ restart:
         if (anyHits) {
             if (prototypeCount++ < 5) {
 
-                if (JSValue proto = prototypeObject.getPrototype(globalObject)) {
+                JSValue proto = prototypeObject.getPrototype(globalObject);
+                RETURN_IF_EXCEPTION(scope, void());
+                if (proto) {
                     if (!(proto == globalObject->objectPrototype() || proto == globalObject->functionPrototype() || (proto.inherits<JSGlobalProxy>() && jsCast<JSGlobalProxy*>(proto)->target() != globalObject))) {
                         if ((structure = proto.structureOrNull())) {
                             prototypeObject = proto;
@@ -5051,8 +5057,6 @@ restart:
                             goto restart;
                         }
                     }
-                } else {
-                    RETURN_IF_EXCEPTION(scope, void());
                 }
             }
             return;

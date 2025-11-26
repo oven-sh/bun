@@ -142,8 +142,8 @@ pub const max_eviction_count = 8096;
 // ideally, the constants above can be inlined
 const Platform = switch (Environment.os) {
     .linux => @import("./watcher/INotifyWatcher.zig"),
-    .mac => @import("./watcher/KEventWatcher.zig"),
-    .windows => WindowsWatcher,
+    .mac, .freebsd => @import("./watcher/KEventWatcher.zig"),
+    .windows => @import("./watcher/WindowsWatcher.zig"),
     .wasm => @compileError("Unsupported platform"),
 };
 
@@ -774,7 +774,6 @@ pub fn onMaybeWatchDirectory(watch: *Watcher, file_path: string, dir_fd: bun.Sto
 const string = []const u8;
 
 const WatcherTrace = @import("./watcher/WatcherTrace.zig");
-const WindowsWatcher = @import("./watcher/WindowsWatcher.zig");
 const options = @import("./options.zig");
 const std = @import("std");
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;

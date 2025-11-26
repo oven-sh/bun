@@ -17,6 +17,7 @@ pub const isPosix = !isWindows and !isWasm;
 pub const isDebug = builtin.mode == .Debug;
 pub const isTest = builtin.is_test;
 pub const isLinux = builtin.target.os.tag == .linux;
+pub const isFreeBsd = builtin.target.os.tag == .freebsd;
 pub const isAarch64 = builtin.target.cpu.arch.isAARCH64();
 pub const isX86 = builtin.target.cpu.arch.isX86();
 pub const isX64 = builtin.target.cpu.arch == .x86_64;
@@ -70,6 +71,7 @@ pub const OperatingSystem = enum {
     windows,
     // wAsM is nOt aN oPeRaTiNg SyStEm
     wasm,
+    freebsd,
 
     pub const names = bun.ComptimeStringMap(OperatingSystem, &.{
         .{ "windows", .windows },
@@ -87,6 +89,7 @@ pub const OperatingSystem = enum {
         .{ "linux-gnu", .linux },
         .{ "gnu/linux", .linux },
         .{ "wasm", .wasm },
+        .{ "freebsd", .freebsd },
     });
 
     /// user-facing name with capitalization
@@ -96,6 +99,7 @@ pub const OperatingSystem = enum {
             .linux => "Linux",
             .windows => "Windows",
             .wasm => "WASM",
+            .freebsd => "FreeBSD",
         };
     }
 
@@ -106,6 +110,7 @@ pub const OperatingSystem = enum {
             .linux => "linux",
             .windows => "win32",
             .wasm => "wasm",
+            .freebsd => "freebsd",
         };
     }
 
@@ -115,6 +120,7 @@ pub const OperatingSystem = enum {
             .linux => .linux,
             .windows => .windows,
             .wasm => unreachable,
+            .freebsd => .freebsd,
         };
     }
 
@@ -125,6 +131,7 @@ pub const OperatingSystem = enum {
             .linux => "linux",
             .windows => "windows",
             .wasm => "wasm",
+            .freebsd => "freebsd",
         };
     }
 };
@@ -137,6 +144,8 @@ else if (isWindows)
     .windows
 else if (isWasm)
     .wasm
+else if (isFreeBsd)
+    .freebsd
 else
     @compileError("Please add your OS to the OperatingSystem enum");
 

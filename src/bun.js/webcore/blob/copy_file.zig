@@ -560,9 +560,14 @@ pub const CopyFile = struct {
             }
 
             this.doClose();
-        } else {
-            @compileError("TODO: implement copyfile");
+            return;
         }
+
+        if (Environment.isFreeBsd) {
+            @panic("TODO");
+        }
+
+        @compileError("TODO: implement copyfile");
     }
 };
 

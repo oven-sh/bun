@@ -1985,6 +1985,7 @@ pub fn isPollable(fd: bun.FileDescriptor, mode: bun.Mode) bool {
         // macos DOES allow regular files to be pollable, but we don't want that because
         // our IOWriter code has a separate and better codepath for writing to files.
         .mac => if (posix.S.ISREG(mode)) false else posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.native()),
+        .freebsd => @panic("TODO"),
     };
 }
 
@@ -1995,6 +1996,7 @@ pub fn isPollableFromMode(mode: bun.Mode) bool {
         // macos DOES allow regular files to be pollable, but we don't want that because
         // our IOWriter code has a separate and better codepath for writing to files.
         .mac => if (posix.S.ISREG(mode)) false else posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode),
+        .freebsd => @panic("TODO"),
     };
 }
 

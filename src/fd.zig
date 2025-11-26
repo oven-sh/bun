@@ -252,7 +252,7 @@ pub const FD = packed struct(backing_int) {
         const fd_fmt = if (Environment.isDebug) std.fmt.bufPrint(&buf, "{f}", .{fd}) catch buf[0..];
 
         const result: ?bun.sys.Error = switch (os) {
-            .linux => result: {
+            .linux, .freebsd => result: {
                 bun.assert(fd.native() >= 0);
                 break :result switch (bun.sys.getErrno(bun.sys.syscall.close(fd.native()))) {
                     .BADF => .{ .errno = @intFromEnum(E.BADF), .syscall = .close, .fd = fd },

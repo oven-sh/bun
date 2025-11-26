@@ -299,6 +299,7 @@ pub fn isSupported(this: *const CompileTarget) bool {
         .mac => true,
         .linux => true,
 
+        .freebsd => false,
         .wasm => false,
     };
 }

@@ -35,7 +35,7 @@ pub const IteratorW = NewIterator(true);
 
 pub fn NewIterator(comptime use_windows_ospath: bool) type {
     return switch (bun.Environment.os) {
-        .mac => struct {
+        .mac, .freebsd => struct {
             dir: FD,
             seek: i64,
             buf: [8192]u8 align(@alignOf(std.posix.system.dirent)),
@@ -51,7 +51,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
             pub const next = switch (builtin.os.tag) {
                 .macos, .ios => nextDarwin,
-                // .freebsd, .netbsd, .dragonfly, .openbsd => nextBsd,
+                .freebsd, .netbsd, .dragonfly, .openbsd => nextBsd,
                 // .solaris => nextSolaris,
                 else => @compileError("unimplemented"),
             };
@@ -125,6 +125,11 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         },
                     };
                 }
+            }
+
+            fn nextBsd(self: *Self) Result {
+                _ = self;
+                @panic("TODO");
             }
         },
         .linux => struct {
@@ -414,8 +419,7 @@ pub fn NewWrappedIterator(comptime path_type: PathType) type {
         pub fn init(dir: FD) Self {
             return Self{
                 .iter = switch (bun.Environment.os) {
-                    .mac,
-                    => IteratorType{
+                    .mac, .freebsd => IteratorType{
                         .dir = dir,
                         .seek = 0,
                         .index = 0,

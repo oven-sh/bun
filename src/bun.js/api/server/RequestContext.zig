@@ -813,7 +813,7 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     this.cleanupAndFinalizeAfterSendfile();
                     return errcode != .SUCCESS;
                 }
-            } else {
+            } else if (Environment.isMac) {
                 var sbytes: std.posix.off_t = adjusted_count;
                 const signed_offset = @as(i64, @bitCast(@as(u64, this.sendfile.offset)));
                 const errcode = bun.sys.getErrno(std.c.sendfile(
@@ -835,6 +835,31 @@ pub fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, 
                     this.cleanupAndFinalizeAfterSendfile();
                     return errcode == .SUCCESS;
                 }
+            } else if (Environment.isFreeBsd) {
+                var sbytes: std.posix.off_t = adjusted_count;
+                const signed_offset = @as(i64, @bitCast(@as(u64, this.sendfile.offset)));
+                const errcode = bun.sys.getErrno(std.c.sendfile(
+                    this.sendfile.fd.cast(),
+                    this.sendfile.socket_fd.cast(),
+                    signed_offset,
+                    this.sendfile.remain,
+                    null,
+                    &sbytes,
+                    0,
+                ));
+                const wrote = @as(Blob.SizeType, @intCast(sbytes));
+                this.sendfile.offset +|= wrote;
+                this.sendfile.remain -|= wrote;
+                if (errcode != .AGAIN or this.isAbortedOrEnded() or this.sendfile.remain == 0 or sbytes == 0) {
+                    if (errcode != .AGAIN and errcode != .SUCCESS and errcode != .PIPE and errcode != .NOTCONN) {
+                        Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
+                        Output.flush();
+                    }
+                    this.cleanupAndFinalizeAfterSendfile();
+                    return errcode == .SUCCESS;
+                }
+            } else {
+                @compileError("TODO");
             }
 
             if (!this.sendfile.has_set_on_writable) {

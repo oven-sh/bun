@@ -1253,7 +1253,7 @@ pub fn spawnProcessPosix(
         }
     }
 
-    if (options.detached) {
+    if (options.detached and !(Environment.os == .freebsd)) {
         flags |= bun.c.POSIX_SPAWN_SETSID;
     }
 

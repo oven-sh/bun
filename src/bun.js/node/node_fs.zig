@@ -3733,6 +3733,10 @@ pub const NodeFS = struct {
             return ret.success;
         }
 
+        if (Environment.isFreeBsd) {
+            @panic("TODO");
+        }
+
         @compileError("unreachable");
     }
 

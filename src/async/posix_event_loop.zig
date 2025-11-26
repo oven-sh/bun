@@ -920,6 +920,8 @@ pub const FilePoll = struct {
                 this.deactivate(loop);
                 return .initErr(bun.sys.Error.fromCode(errno, .kqueue));
             }
+        } else if (Environment.isFreeBsd) {
+            @panic("TODO");
         } else {
             @compileError("unsupported platform");
         }
@@ -1069,6 +1071,8 @@ pub const FilePoll = struct {
                 std.math.minInt(@TypeOf(rc))...-1 => return bun.sys.Maybe(void).errnoSys(@intFromEnum(errno), .kevent).?,
                 else => {},
             }
+        } else if (Environment.isFreeBsd) {
+            @panic("TODO");
         } else {
             @compileError("unsupported platform");
         }
@@ -1087,8 +1091,8 @@ pub const FilePoll = struct {
 };
 
 pub const Waker = switch (Environment.os) {
-    .mac => KEventWaker,
-    .linux => LinuxWaker,
+    .mac => DarwinWaker,
+    .linux, .freebsd => LinuxWaker,
     .windows, .wasm => @compileError("unreachable"),
 };
 
@@ -1121,7 +1125,7 @@ pub const LinuxWaker = struct {
     }
 };
 
-pub const KEventWaker = struct {
+pub const DarwinWaker = struct {
     kq: std.posix.fd_t,
     machport: bun.mach_port = undefined,
     machport_buf: []u8 = &.{},

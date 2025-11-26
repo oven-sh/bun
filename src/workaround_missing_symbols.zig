@@ -113,12 +113,37 @@ pub const windows = struct {
         break :blk @extern(T, .{ .name = "stat64" });
     };
 };
+pub const freebsd = struct {
+    pub const memmem = bun.c.memmem;
+    // int lstat(const char * restrict path, struct stat * restrict sb);
+    // pub const lstat = @extern(*const fn (noalias [*]const u8, noalias *std.c.Stat) callconv(.c) c_int, .{ .name = "lstat" });
+    pub fn lstat(path: [*:0]const u8, sb: *std.c.Stat) callconv(.c) c_int {
+        _ = path;
+        _ = sb;
+        @panic("TODO");
+    }
+    // int fstat(int fd, struct stat *sb);
+    // pub const fstat = @extern(*const fn (c_int, *std.c.Stat) callconv(.c) c_int, .{ .name = "fstat" });
+    pub fn fstat(fd: c_int, sb: *std.c.Stat) callconv(.c) c_int {
+        _ = fd;
+        _ = sb;
+        @panic("TODO");
+    }
+    // int stat(const char * restrict path, struct stat * restrict sb);
+    // pub const stat = @extern(*const fn (noalias [*]const u8, noalias *std.c.Stat) callconv(.c) c_int, .{ .name = "stat" });
+    pub fn stat(path: [*:0]const u8, sb: *std.c.Stat) callconv(.c) c_int {
+        _ = path;
+        _ = sb;
+        @panic("TODO");
+    }
+};
 
 pub const current = switch (bun.Environment.os) {
     .linux => linux,
     .windows => windows,
     .mac => darwin,
-    else => struct {},
+    .freebsd => freebsd,
+    .wasm => struct {},
 };
 
 const bun = @import("bun");

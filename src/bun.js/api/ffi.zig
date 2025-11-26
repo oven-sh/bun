@@ -1007,7 +1007,7 @@ pub const FFI = struct {
                 vm,
                 name_slice.slice(),
                 switch (Environment.os) {
-                    .linux => "so",
+                    .linux, .freebsd => "so",
                     .mac => "dylib",
                     .windows => "dll",
                     .wasm => @compileError("TODO"),

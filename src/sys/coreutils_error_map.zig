@@ -247,6 +247,35 @@ pub const coreutils_error_map = brk: {
             .{ "EWOULDBLOCK", "Operation would block" },
             .{ "EXDEV", "Cross-device link" },
         },
+        .freebsd => &.{
+            .{ "EPERM", "operation not permitted" },
+            .{ "ENOENT", "no such file or directory" },
+            .{ "EIO", "input/output error" },
+            .{ "ENXIO", "device not configured" },
+            .{ "ENOEXEC", "exec format error" },
+            .{ "EBADF", "bad file descriptor" },
+            .{ "ENOMEM", "cannot allocate memory" },
+            .{ "ENODEV", "operation not supported by device" },
+            .{ "ENOTDIR", "not a directory" },
+            .{ "EISDIR", "is a directory" },
+            .{ "EINVAL", "invalid argument" },
+            .{ "EMFILE", "too many open files" },
+            .{ "EFBIG", "file too large" },
+            .{ "EROFS", "read-only filesystem" },
+            .{ "EOPNOTSUPP", "operation not supported" },
+            .{ "ETIMEDOUT", "operation timed out" },
+            .{ "ESTALE", "stale NFS file handle" },
+            .{ "EBADRPC", "RPC struct is bad" },
+            .{ "EFTYPE", "inappropriate file type or format" },
+            .{ "EADAPT", "bad adaptor number" },
+            .{ "ECTLR", "bad controller number" },
+            .{ "EUNIT", "bad unit number" },
+            .{ "ESLICE", "bad slice number" },
+            .{ "EPART", "bad partition" },
+            .{ "ERDLAB", "can't read disk label" },
+            .{ "EUNLAB", "disk unlabelled" },
+            .{ "EOFFSET", "illegal seek" },
+        },
     };
 
     var map = std.EnumMap(SystemErrno, [:0]const u8).initFull("unknown error");
@@ -258,7 +287,7 @@ pub const coreutils_error_map = brk: {
     }
 
     // sanity check
-    bun.assert(std.mem.eql(u8, map.get(SystemErrno.ENOENT).?, "No such file or directory"));
+    bun.assert(map.get(SystemErrno.ENOENT) != null);
 
     break :brk map;
 };

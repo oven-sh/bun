@@ -1347,7 +1347,7 @@ pub const StandaloneModuleGraph = struct {
                     return error.FileNotFound;
                 }
             },
-            .mac => {
+            .mac, .freebsd => {
                 // Use of MAX_PATH_BYTES here is valid as the resulting path is immediately
                 // opened with no modification.
                 const self_exe_path = try bun.selfExePath();

@@ -321,7 +321,7 @@ pub fn crashHandler(
                                 writer.print("(thread {d})", .{bun.c.GetCurrentThreadId()}) catch std.posix.abort();
                             }
                         },
-                        .mac, .linux => {},
+                        .mac, .linux, .freebsd => {},
                         .wasm => @compileError("TODO"),
                     }
 
@@ -832,6 +832,7 @@ fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const an
         .linux => @intFromPtr(info.fields.sigfault.addr),
         .mac => @intFromPtr(info.addr),
         .windows, .wasm => @compileError("unreachable"),
+        .freebsd => @intFromPtr(info.addr),
     };
 
     crashHandler(
@@ -892,7 +893,7 @@ pub fn init() void {
         .windows => {
             windows_segfault_handle = windows.kernel32.AddVectoredExceptionHandler(0, handleSegfaultWindows);
         },
-        .mac, .linux => {
+        .mac, .linux, .freebsd => {
             resetOnPosix();
         },
         .wasm => @compileError("TODO"),
@@ -1103,6 +1104,9 @@ const Platform = enum(u8) {
 
     windows_x86_64 = 'w',
     windows_x86_64_baseline = 'e',
+
+    freebsd_x86_64 = 'f',
+    freebsd_x86_64_baseline = 'g',
 
     const current = @field(Platform, @tagName(bun.Environment.os) ++
         "_" ++ @tagName(builtin.target.cpu.arch) ++
@@ -1499,7 +1503,7 @@ fn report(url: []const u8) void {
             // we don't care what happens with the process
             _ = spawn_result;
         },
-        .mac, .linux => {
+        .mac, .linux, .freebsd => {
             var buf: bun.PathBuffer = undefined;
             var buf2: bun.PathBuffer = undefined;
             const curl = bun.which(

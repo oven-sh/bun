@@ -38,6 +38,7 @@ pub fn cpus(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         .linux => cpusImplLinux,
         .mac => cpusImplDarwin,
         .windows => cpusImplWindows,
+        .freebsd => cpusImplFreebsd,
         .wasm => @compileError("Unsupported OS"),
     };
 
@@ -276,6 +277,11 @@ pub fn cpusImplWindows(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
     return values;
 }
 
+pub fn cpusImplFreebsd(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
+    _ = globalThis;
+    @panic("TODO");
+}
+
 pub fn freemem() u64 {
     // OsBinding.cpp
     return @extern(*const fn () callconv(.c) u64, .{
@@ -440,6 +446,9 @@ pub fn loadavg(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         },
         .windows => .{ 0, 0, 0 },
         .wasm => @compileError("TODO"),
+        .freebsd => {
+            @panic("TODO");
+        },
     };
 
     return jsc.JSArray.create(global, &.{
@@ -452,6 +461,7 @@ pub fn loadavg(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
 pub const networkInterfaces = switch (Environment.os) {
     .linux, .mac => networkInterfacesPosix,
     .windows => networkInterfacesWindows,
+    .freebsd => networkInterfacesFreebsd,
     .wasm => @compileError("Unsupported OS"),
 };
 
@@ -586,6 +596,8 @@ fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSVal
                     break @as(?*std.posix.sockaddr.ll, @ptrCast(@alignCast(ll_iface.ifa_addr)));
                 } else if (comptime Environment.isMac) {
                     break @as(?*c.sockaddr_dl, @ptrCast(@alignCast(ll_iface.ifa_addr)));
+                } else if (comptime Environment.isFreeBsd) {
+                    @panic("TODO");
                 } else {
                     @compileError("unreachable");
                 }
@@ -751,6 +763,11 @@ fn networkInterfacesWindows(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSV
     return ret;
 }
 
+fn networkInterfacesFreebsd(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
+    _ = globalThis;
+    @panic("TODO");
+}
+
 pub fn release() bun.String {
     var name_buffer: [bun.HOST_NAME_MAX]u8 = undefined;
 
@@ -786,6 +803,9 @@ pub fn release() bun.String {
             const value = bun.sliceTo(&info.release, 0);
             @memcpy(name_buffer[0..value.len], value);
             break :slice name_buffer[0..value.len];
+        },
+        .freebsd => {
+            @panic("TODO");
         },
         .wasm => @compileError("unsupported os"),
     };
@@ -881,6 +901,9 @@ pub fn totalmem() u64 {
         .windows => {
             return libuv.uv_get_total_memory();
         },
+        .freebsd => {
+            @panic("TODO");
+        },
         .wasm => @compileError("unsupported os"),
     }
 }
@@ -922,6 +945,9 @@ pub fn uptime(global: *jsc.JSGlobalObject) bun.JSError!f64 {
             if (c.sysinfo(&info) == 0)
                 return @floatFromInt(info.uptime);
             return 0;
+        },
+        .freebsd => {
+            @panic("TODO");
         },
         .wasm => @compileError("unsupported os"),
     }
@@ -989,6 +1015,9 @@ pub fn version() bun.JSError!bun.String {
             const slice = bun.sliceTo(&info.version, 0);
             @memcpy(name_buffer[0..slice.len], slice);
             break :slice name_buffer[0..slice.len];
+        },
+        .freebsd => {
+            @panic("TODO");
         },
         .wasm => @compileError("unsupported os"),
     };

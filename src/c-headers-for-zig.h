@@ -13,6 +13,7 @@
 // - DARWIN
 // - LINUX
 // - POSIX
+// - FREEBSD
 
 // For `POSIX_SPAWN_SETSID` and some other non-POSIX extensions in glibc
 #if LINUX
@@ -29,31 +30,33 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <net/if.h>
+#include <spawn.h>
+#include <fcntl.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
 #endif
 
 #if DARWIN
 #include <copyfile.h>
 #include <mach/mach_host.h>
 #include <mach/processor_info.h>
-#include <net/if.h>
 #include <net/if_dl.h>
 #include <sys/clonefile.h>
-#include <sys/fcntl.h>
 #include <sys/mount.h>
-#include <sys/socket.h>
-#include <sys/spawn.h>
-#include <sys/stat.h>
 #include <sys/stdio.h>
 #include <sys/sysctl.h>
-#elif LINUX
-#include <fcntl.h>
+#endif
+
+#if LINUX
 #include <linux/fs.h>
-#include <net/if.h>
-#include <spawn.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
 #include <sys/statfs.h>
 #include <sys/sysinfo.h>
+#endif
+
+#if FREEBSD
+#include <arpa/inet.h>
+#include <sys/mount.h>
 #endif
 
 #if WINDOWS

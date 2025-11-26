@@ -14,6 +14,7 @@ const platform_defs = switch (Environment.os) {
     .windows => @import("./errno/windows_errno.zig"),
     .linux => @import("./errno/linux_errno.zig"),
     .mac => @import("./errno/darwin_errno.zig"),
+    .freebsd => @import("./errno/freebsd_errno.zig"),
     .wasm => {},
 };
 pub const workaround_symbols = @import("./workaround_missing_symbols.zig").current;
@@ -54,6 +55,7 @@ pub const syscall = switch (Environment.os) {
     // macOS requires using libc
     .mac => std.c,
     .windows, .wasm => @compileError("not implemented"),
+    .freebsd => std.c,
 };
 
 fn toPackedO(number: anytype) std.posix.O {
@@ -178,6 +180,40 @@ pub const O = switch (Environment.os) {
         pub const PATH = 0o10000000;
         pub const TMPFILE = 0o20200000;
         pub const NDELAY = NONBLOCK;
+
+        pub const toPacked = toPackedO;
+    },
+    .freebsd => struct {
+        pub const RDONLY = 0x0000;
+        pub const WRONLY = 0x0001;
+        pub const RDWR = 0x0002;
+        pub const ACCMODE = 0x0003;
+        pub const NONBLOCK = 0x0004;
+        pub const APPEND = 0x0008;
+        pub const SHLOCK = 0x0010;
+        pub const EXLOCK = 0x0020;
+        pub const ASYNC = 0x0040;
+        pub const FSYNC = 0x0080;
+        pub const SYNC = 0x0080;
+        pub const NOFOLLOW = 0x0100;
+        pub const CREAT = 0x0200;
+        pub const TRUNC = 0x0400;
+        pub const EXCL = 0x0800;
+        pub const NOCTTY = 0x8000;
+        pub const DIRECT = 0x00010000;
+        pub const DIRECTORY = 0x00020000;
+        pub const EXEC = 0x00040000;
+        pub const SEARCH = EXEC;
+        pub const TTY_INIT = 0x00080000;
+        pub const CLOEXEC = 0x00100000;
+        pub const VERIFY = 0x00200000;
+        pub const PATH = 0x00400000;
+        pub const RESOLVE_BENEATH = 0x00800000;
+        pub const DSYNC = 0x01000000;
+        pub const EMPTY_PATH = 0x02000000;
+        pub const NAMEDATTR = 0x04000000;
+        pub const XATTR = NAMEDATTR;
+        pub const CLOFORK = 0x08000000;
 
         pub const toPacked = toPackedO;
     },
@@ -516,6 +552,8 @@ pub fn statfs(path: [:0]const u8) Maybe(bun.StatFS) {
             c.statfs(path, &statfs_)
         else if (Environment.isMac)
             c.statfs(path, &statfs_)
+        else if (Environment.isFreeBsd)
+            c.statfs(path, &statfs_)
         else
             @compileError("Unsupported platform");
 
@@ -695,11 +733,7 @@ pub fn mkdiratA(dir_fd: bun.FileDescriptor, file_path: []const u8) Maybe(void) {
 }
 
 pub fn mkdiratZ(dir_fd: bun.FileDescriptor, file_path: [*:0]const u8, mode: mode_t) Maybe(void) {
-    return switch (Environment.os) {
-        .mac => Maybe(void).errnoSysP(syscall.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse .success,
-        .linux => Maybe(void).errnoSysP(linux.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse .success,
-        .windows, .wasm => @compileError("mkdir is not implemented on this platform"),
-    };
+    return Maybe(void).errnoSysP(syscall.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse .success;
 }
 
 fn mkdiratPosix(dir_fd: bun.FileDescriptor, file_path: []const u8, mode: mode_t) Maybe(void) {
@@ -749,6 +783,8 @@ pub fn mkdir(file_path: [:0]const u8, flags: mode_t) Maybe(void) {
         .mac => Maybe(void).errnoSysP(syscall.mkdir(file_path, flags), .mkdir, file_path) orelse .success,
 
         .linux => Maybe(void).errnoSysP(syscall.mkdir(file_path, flags), .mkdir, file_path) orelse .success,
+
+        .freebsd => Maybe(void).errnoSysP(syscall.mkdir(file_path, flags), .mkdir, file_path) orelse .success,
 
         .windows => {
             const wbuf = bun.w_path_buffer_pool.get();
@@ -1669,7 +1705,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
 
             return Maybe(usize){ .result = @intCast(rc) };
         },
-        .linux => {
+        .linux, .freebsd => {
             while (true) {
                 const rc = syscall.write(fd.cast(), bytes.ptr, adjusted_len);
                 log("write({f}, {d}) = {d} {f}", .{ fd, adjusted_len, rc, debug_timer });
@@ -1743,7 +1779,7 @@ pub fn writev(fd: bun.FileDescriptor, buffers: []std.posix.iovec) Maybe(usize) {
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = writev_sym(fd.cast(), @as([*]std.posix.iovec_const, @ptrCast(buffers.ptr)), buffers.len);
+            const rc = writev_sym(fd.cast(), @ptrCast(buffers.ptr), @intCast(buffers.len));
             if (comptime Environment.allow_assert)
                 log("writev({f}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -1774,7 +1810,7 @@ pub fn pwritev(fd: bun.FileDescriptor, buffers: []const bun.PlatformIOVecConst, 
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = pwritev_sym(fd.cast(), buffers.ptr, buffers.len, position);
+            const rc = pwritev_sym(fd.cast(), buffers.ptr, @intCast(buffers.len), position);
             if (comptime Environment.allow_assert)
                 log("pwritev({f}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -1808,7 +1844,7 @@ pub fn readv(fd: bun.FileDescriptor, buffers: []std.posix.iovec) Maybe(usize) {
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = readv_sym(fd.cast(), buffers.ptr, buffers.len);
+            const rc = readv_sym(fd.cast(), buffers.ptr, @intCast(buffers.len));
             if (comptime Environment.allow_assert)
                 log("readv({f}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -1842,7 +1878,7 @@ pub fn preadv(fd: bun.FileDescriptor, buffers: []std.posix.iovec, position: isiz
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
         while (true) {
-            const rc = preadv_sym(fd.cast(), buffers.ptr, buffers.len, position);
+            const rc = preadv_sym(fd.cast(), buffers.ptr, @intCast(buffers.len), position);
             if (comptime Environment.allow_assert)
                 log("preadv({f}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
@@ -1956,7 +1992,7 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
 
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         },
-        .linux => {
+        .linux, .freebsd => {
             while (true) {
                 const rc = syscall.read(fd.cast(), buf.ptr, adjusted_len);
                 log("read({f}, {d}) = {d} ({f})", .{ fd, adjusted_len, rc, debug_timer });
@@ -2023,7 +2059,8 @@ pub fn poll(fds: []std.posix.pollfd, timeout: i32) Maybe(usize) {
         const rc = switch (Environment.os) {
             .mac => darwin_nocancel.@"poll$NOCANCEL"(fds.ptr, fds.len, timeout),
             .linux => linux.poll(fds.ptr, fds.len, timeout),
-            .wasm => @compileError("poll is not implemented on this platform"),
+            .windows, .wasm => @compileError("poll is not implemented on this platform"),
+            .freebsd => @panic("TODO"),
         };
         if (Maybe(usize).errnoSys(rc, .poll)) |err| {
             if (err.getErrno() == .INTR) continue;
@@ -2038,7 +2075,8 @@ pub fn ppoll(fds: []std.posix.pollfd, timeout: ?*std.posix.timespec, sigmask: ?*
         const rc = switch (Environment.os) {
             .mac => darwin_nocancel.@"ppoll$NOCANCEL"(fds.ptr, fds.len, timeout, sigmask),
             .linux => linux.ppoll(fds.ptr, fds.len, timeout, sigmask),
-            .wasm => @compileError("ppoll is not implemented on this platform"),
+            .windows, .wasm => @compileError("ppoll is not implemented on this platform"),
+            .freebsd => @panic("TODO"),
         };
         if (Maybe(usize).errnoSys(rc, .ppoll)) |err| {
             if (err.getErrno() == .INTR) continue;
@@ -2331,6 +2369,7 @@ pub fn renameat2(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.F
             .linux => std.os.linux.renameat2(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
             .mac => bun.c.renameatx_np(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
             .windows, .wasm => @compileError("renameat2() is not implemented on this platform"),
+            .freebsd => @panic("TODO"),
         };
 
         if (Maybe(void).errnoSys(rc, .rename)) |err| {
@@ -2723,6 +2762,10 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8
             }
 
             return .{ .result = bun.sliceTo(out_buffer, 0) };
+        },
+        .freebsd => {
+            // https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=198570
+            @panic("TODO");
         },
         .linux => {
             // TODO: alpine linux may not have /proc/self
@@ -3504,6 +3547,10 @@ pub fn setFileOffset(fd: bun.FileDescriptor, offset: usize) Maybe(void) {
             return Maybe(void).errnoSysFd(0, .lseek, fd) orelse .success;
         }
         return .success;
+    }
+
+    if (Environment.isFreeBsd) {
+        @panic("TODO");
     }
 }
 

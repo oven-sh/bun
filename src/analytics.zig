@@ -265,7 +265,7 @@ pub const GenerateHeader = struct {
             fn run() void {
                 if (comptime Environment.isMac) {
                     platform_ = forMac();
-                } else if (comptime Environment.isPosix) {
+                } else if (comptime Environment.isLinux) {
                     platform_ = forLinux();
 
                     const release = bun.sliceTo(&linux_os_name.release, 0);
@@ -278,6 +278,8 @@ pub const GenerateHeader = struct {
                         .version = &[_]u8{},
                         .arch = platform_arch,
                     };
+                } else if (Environment.isFreeBsd) {
+                    @panic("TODO");
                 }
             }
         }.run);

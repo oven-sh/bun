@@ -646,6 +646,7 @@ pub const OperatingSystem = enum(u16) {
         .linux => @enumFromInt(linux),
         .mac => @enumFromInt(darwin),
         .windows => @enumFromInt(win32),
+        .freebsd => @enumFromInt(freebsd),
         .wasm => @compileError("Unsupported operating system: " ++ @tagName(Environment.os)),
     };
 
@@ -672,6 +673,7 @@ pub const OperatingSystem = enum(u16) {
         .linux => "linux",
         .mac => "darwin",
         .windows => "win32",
+        .freebsd => "freebsd",
         .wasm => @compileError("Unsupported operating system: " ++ @tagName(current)),
     };
 

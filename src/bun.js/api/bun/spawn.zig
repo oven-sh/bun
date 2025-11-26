@@ -110,6 +110,7 @@ pub const BunSpawn = struct {
         }
 
         pub fn set(self: *Attr, flags: u16) !void {
+            if (Environment.os == .freebsd) return; // no POSIX_SPAWN_SETSID
             self.detached = (flags & bun.c.POSIX_SPAWN_SETSID) != 0;
         }
 
@@ -259,8 +260,17 @@ pub const PosixSpawn = struct {
         }
     };
 
-    pub const Actions = if (Environment.isLinux) BunSpawn.Actions else PosixSpawnActions;
-    pub const Attr = if (Environment.isLinux) BunSpawn.Attr else PosixSpawnAttr;
+    pub const Actions = switch (Environment.os) {
+        .linux, .freebsd => BunSpawn.Actions,
+        .mac => PosixSpawnActions,
+        .windows, .wasm => unreachable,
+    };
+
+    pub const Attr = switch (Environment.os) {
+        .linux, .freebsd => BunSpawn.Attr,
+        .mac => PosixSpawnAttr,
+        .windows, .wasm => unreachable,
+    };
 
     const BunSpawnRequest = extern struct {
         chdir_buf: ?[*:0]u8 = null,
@@ -318,7 +328,7 @@ pub const PosixSpawn = struct {
         argv: [*:null]?[*:0]const u8,
         envp: [*:null]?[*:0]const u8,
     ) Maybe(pid_t) {
-        if (comptime Environment.isLinux) {
+        if (comptime Environment.isLinux or Environment.isFreeBsd) {
             return BunSpawnRequest.spawn(
                 path,
                 .{

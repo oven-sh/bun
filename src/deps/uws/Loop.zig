@@ -24,6 +24,7 @@ pub const PosixLoop = extern struct {
         .mac => std.posix.system.kevent64_s,
         // TODO:
         .windows => *anyopaque,
+        .freebsd => std.posix.system.Kevent,
         .wasm => @compileError("Unsupported OS"),
     };
 

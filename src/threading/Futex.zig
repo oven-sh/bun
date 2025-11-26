@@ -59,32 +59,12 @@ pub fn wake(ptr: *const atomic.Value(u32), max_waiters: u32) void {
     Impl.wake(ptr, max_waiters);
 }
 
-const Impl = if (builtin.os.tag == .windows)
-    WindowsImpl
-else if (builtin.os.tag.isDarwin())
-    DarwinImpl
-else if (builtin.os.tag == .linux)
-    LinuxImpl
-else if (builtin.target.isWasm())
-    WasmImpl
-else
-    UnsupportedImpl;
-
-/// We can't do @compileError() in the `Impl` switch statement above as its eagerly evaluated.
-/// So instead, we @compileError() on the methods themselves for platforms which don't support futex.
-const UnsupportedImpl = struct {
-    fn wait(ptr: *const atomic.Value(u32), expect: u32, timeout: ?u64) error{Timeout}!void {
-        return unsupported(.{ ptr, expect, timeout });
-    }
-
-    fn wake(ptr: *const atomic.Value(u32), max_waiters: u32) void {
-        return unsupported(.{ ptr, max_waiters });
-    }
-
-    fn unsupported(unused: anytype) noreturn {
-        _ = unused;
-        @compileError("Unsupported operating system " ++ @tagName(builtin.target.os.tag));
-    }
+const Impl = switch (bun.Environment.os) {
+    .windows => WindowsImpl,
+    .mac => DarwinImpl,
+    .linux => LinuxImpl,
+    .wasm => WasmImpl,
+    .freebsd => FreebsdImpl,
 };
 
 // We use WaitOnAddress through NtDll instead of API-MS-Win-Core-Synch-l1-2-0.dll
@@ -295,6 +275,21 @@ const WasmImpl = struct {
               [waiters] "r" (max_waiters),
         );
         _ = woken_count; // can be 0 when linker flag 'shared-memory' is not enabled
+    }
+};
+
+const FreebsdImpl = struct {
+    fn wait(ptr: *const atomic.Value(u32), expect: u32, timeout: ?u64) error{Timeout}!void {
+        return unsupported(.{ ptr, expect, timeout });
+    }
+
+    fn wake(ptr: *const atomic.Value(u32), max_waiters: u32) void {
+        return unsupported(.{ ptr, max_waiters });
+    }
+
+    fn unsupported(unused: anytype) noreturn {
+        _ = unused;
+        @panic("TODO");
     }
 };
 

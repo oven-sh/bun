@@ -882,25 +882,22 @@ pub const SecurityScanSubprocess = struct {
         this.process = process;
         process.setExitHandler(this);
 
-        // For NODE_CHANNEL_FD IPC, messages are JSON followed by newline
+        // For NODE_CHANNEL_FD IPC, messages are JSON followed by newline.
+        // We write directly to the libuv pipe WITHOUT closing it, because we need
+        // the bidirectional pipe to stay open for the child to send a response.
         const json_with_newline = try std.fmt.allocPrint(this.manager.allocator, "{s}\n", .{this.json_data});
-        const json_source = jsc.Subprocess.Source{
-            .blob = jsc.WebCore.Blob.Any.fromOwnedSlice(this.manager.allocator, json_with_newline),
-        };
+        defer this.manager.allocator.free(json_with_newline);
 
-        this.stdin_writer = StaticPipeWriter.create(&this.manager.event_loop, this, ipc_result, json_source);
-        errdefer {
-            if (this.stdin_writer) |writer| {
-                writer.source.detach();
-                writer.deref();
-                this.stdin_writer = null;
-            }
-        }
+        // Get the libuv stream from the pipe
+        const pipe: *bun.windows.libuv.Pipe = ipc_result.buffer;
+        const stream = pipe.asStream();
 
-        switch (this.stdin_writer.?.start()) {
+        // Write the JSON data to the IPC pipe
+        var buf = bun.windows.libuv.uv_buf_t{ .base = json_with_newline.ptr, .len = @intCast(json_with_newline.len) };
+        switch (stream.write(&buf, this, onIPCWriteComplete)) {
             .err => |err| {
-                Output.errGeneric("Failed to start IPC writer: {f}", .{err});
-                return error.IPCWriterFailed;
+                Output.errGeneric("Failed to write to IPC pipe: {f}", .{err});
+                return error.IPCWriteFailed;
             },
             .result => {},
         }
@@ -913,15 +910,26 @@ pub const SecurityScanSubprocess = struct {
         }
     }
 
+    fn onIPCWriteComplete(_: *SecurityScanSubprocess, status: bun.windows.libuv.ReturnCode) void {
+        if (status.toError(.write)) |err| {
+            Output.errGeneric("IPC write failed: {f}", .{err});
+        }
+        // Don't close the pipe - keep it open for bidirectional communication
+    }
+
     pub fn isDone(this: *SecurityScanSubprocess) bool {
         return this.has_process_exited and this.remaining_fds == 0;
     }
 
     pub fn onCloseIO(this: *SecurityScanSubprocess, _: jsc.Subprocess.StdioKind) void {
-        if (this.stdin_writer) |writer| {
-            writer.source.detach();
-            writer.deref();
-            this.stdin_writer = null;
+        // On POSIX, we use stdin_writer for the JSON pipe
+        // On Windows, we write directly to the IPC pipe, so stdin_writer is null
+        if (comptime !bun.Environment.isWindows) {
+            if (this.stdin_writer) |writer| {
+                writer.source.detach();
+                writer.deref();
+                this.stdin_writer = null;
+            }
         }
     }
 

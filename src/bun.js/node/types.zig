@@ -623,6 +623,11 @@ pub const PathLike = union(enum) {
             const s = this.slice();
             const b = bun.path_buffer_pool.get();
             defer bun.path_buffer_pool.put(b);
+            // Device paths (\\.\, \\?\) and NT object paths (\??\) should not be normalized
+            // because the "." in \\.\pipe\name would be incorrectly stripped as a "current directory" component.
+            if (s.len >= 4 and bun.path.isSepAny(s[0]) and bun.path.isSepAny(s[1]) and (s[2] == '.' or s[2] == '?') and bun.path.isSepAny(s[3])) {
+                return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), s);
+            }
             if (s.len > 0 and bun.path.isSepAny(s[0])) {
                 const resolve = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBuf(buf, s) catch @panic("Error while resolving path.");
                 const normal = path_handler.normalizeBuf(resolve, b, .windows);

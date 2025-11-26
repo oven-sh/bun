@@ -105,4 +105,52 @@ console.log(JSON.stringify(process.argv.slice(2)));
     expect(exitCode).toBe(0);
     expect(JSON.parse(stdout.trim())).toEqual(["hello", "", "world"]);
   });
+
+  // Related to #18275 - bunx concurrently "command with spaces"
+  // Arguments containing spaces must be preserved as single arguments
+  test("bunx preserves arguments with spaces", async () => {
+    using dir = tempDir("issue-13316-spaces", {
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: {
+          "echo-args-test": "file:./echo-args-test",
+        },
+      }),
+      "echo-args-test/package.json": JSON.stringify({
+        name: "echo-args-test",
+        version: "1.0.0",
+        bin: {
+          "echo-args-test": "./index.js",
+        },
+      }),
+      "echo-args-test/index.js": `#!/usr/bin/env node
+console.log(JSON.stringify(process.argv.slice(2)));
+`,
+    });
+
+    await using installProc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    await installProc.exited;
+
+    // This simulates: bunx concurrently "bun --version"
+    // The shell strips the outer quotes, so bunx receives ["concurrently", "bun --version"]
+    // This must be preserved as a single argument with spaces
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "echo-args-test", "bun --version", "echo hello world"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(exitCode).toBe(0);
+    // Each argument with spaces should be preserved as a single argument
+    expect(JSON.parse(stdout.trim())).toEqual(["bun --version", "echo hello world"]);
+  });
 });

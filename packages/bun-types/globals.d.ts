@@ -1953,7 +1953,7 @@ interface BunFetchRequestInit extends RequestInit {
          * These headers are sent in the CONNECT request (for HTTPS targets)
          * or in the proxy request (for HTTP targets).
          */
-        headers?: HeadersInit;
+        headers?: Bun.HeadersInit;
       };
 
   /**

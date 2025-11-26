@@ -1171,8 +1171,14 @@ pub const JSBundler = struct {
         extern fn JSBundlerPlugin__tombstone(*Plugin) void;
         extern fn JSBundlerPlugin__runOnEndCallbacks(*Plugin, jsc.JSValue, jsc.JSValue, jsc.JSValue) jsc.JSValue;
 
-        pub fn runOnEndCallbacks(this: *Plugin, globalThis: *jsc.JSGlobalObject, build_promise: *jsc.JSPromise, build_result: jsc.JSValue, rejection: jsc.JSValue) JSError!jsc.JSValue {
+        pub fn runOnEndCallbacks(this: *Plugin, globalThis: *jsc.JSGlobalObject, build_promise: *jsc.JSPromise, build_result: jsc.JSValue, rejection: bun.JSError!jsc.JSValue) bun.JSError!jsc.JSValue {
             jsc.markBinding(@src());
+
+            const rejection_value = rejection catch |err| switch (err) {
+                error.OutOfMemory => globalThis.createOutOfMemoryError(),
+                error.JSError => globalThis.takeError(err),
+                error.JSTerminated => return error.JSTerminated,
+            };
 
             var scope: jsc.CatchScope = undefined;
             scope.init(globalThis, @src());
@@ -1182,7 +1188,7 @@ pub const JSBundler = struct {
                 this,
                 build_promise.asValue(globalThis),
                 build_result,
-                rejection,
+                rejection_value,
             );
 
             try scope.returnIfException();

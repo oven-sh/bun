@@ -946,13 +946,8 @@ pub fn indexOfLine(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 
     var offset: usize = 0;
     if (arguments.len > 1) {
-        offset = @as(
-            usize,
-            @intCast(@max(
-                arguments[1].to(u32),
-                0,
-            )),
-        );
+        const offset_value = try arguments[1].coerce(i64, globalThis);
+        offset = @intCast(@max(offset_value, 0));
     }
 
     const bytes = buffer.byteSlice();

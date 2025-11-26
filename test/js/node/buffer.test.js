@@ -3127,3 +3127,50 @@ describe("ERR_BUFFER_OUT_OF_BOUNDS", () => {
     }
   }
 });
+
+describe("*Write methods with NaN/invalid offset and length", () => {
+  // Regression test: NaN offset/length values must be handled safely.
+  // NaN offset should be treated as 0, and length should be clamped to buffer size.
+  // This matches Node.js behavior where V8's IntegerValue converts NaN to 0.
+  const writeMethods = [
+    "utf8Write",
+    "utf16leWrite",
+    "latin1Write",
+    "asciiWrite",
+    "base64Write",
+    "base64urlWrite",
+    "hexWrite",
+  ];
+
+  for (const method of writeMethods) {
+    it(`${method} should handle NaN offset and custom length via ToNumber coercion`, () => {
+      // F1 is a function - ToNumber(F1) returns NaN, which should be treated as 0
+      function F1() {
+        if (!new.target) {
+          throw "must be called with new";
+        }
+      }
+      // C3 is a class constructor with Symbol.toPrimitive - ToNumber(C3) returns 215
+      class C3 {}
+      C3[Symbol.toPrimitive] = function () {
+        return 215;
+      };
+      const buf = Buffer.from("string");
+      // F1 as offset -> NaN -> 0, C3 as length -> 215 -> clamped to buf.length
+      // This should NOT crash, and should write to the buffer starting at offset 0
+      const result = buf[method]("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", F1, C3);
+      // Result should be clamped to buffer size
+      expect(result).toBeLessThanOrEqual(buf.length);
+    });
+
+    it(`${method} should throw on length larger than available buffer space`, () => {
+      const buf = Buffer.from("string");
+      // Length 1000 with valid offset 0 should throw ERR_BUFFER_OUT_OF_BOUNDS
+      expect(() => buf[method]("test".repeat(100), 0, 1000)).toThrow(
+        expect.objectContaining({
+          code: "ERR_BUFFER_OUT_OF_BOUNDS",
+        }),
+      );
+    });
+  }
+});

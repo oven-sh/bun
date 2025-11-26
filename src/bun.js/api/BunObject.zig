@@ -1212,11 +1212,19 @@ pub fn mmapFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
         }
 
         if (try opts.get(globalThis, "size")) |value| {
-            map_size = @as(usize, @intCast(value.toInt64()));
+            const size_value = try value.coerceToInt64(globalThis);
+            if (size_value < 0) {
+                return globalThis.throwInvalidArguments("size must be a non-negative integer", .{});
+            }
+            map_size = @intCast(size_value);
         }
 
         if (try opts.get(globalThis, "offset")) |value| {
-            offset = @as(usize, @intCast(value.toInt64()));
+            const offset_value = try value.coerceToInt64(globalThis);
+            if (offset_value < 0) {
+                return globalThis.throwInvalidArguments("offset must be a non-negative integer", .{});
+            }
+            offset = @intCast(offset_value);
             offset = std.mem.alignBackwardAnyAlign(usize, offset, std.heap.pageSize());
         }
     }

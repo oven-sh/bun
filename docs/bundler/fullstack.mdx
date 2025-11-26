@@ -505,7 +505,9 @@ env = "PUBLIC_*"  # only inline env vars starting with PUBLIC_ (recommended)
 
 <Note>
   This only works with literal `process.env.FOO` references, not `import.meta.env` or indirect access like `const env =
-  process.env; env.FOO`. If an environment variable is not set, you may see runtime errors like `ReferenceError: process
+  process.env; env.FOO`.
+
+  If an environment variable is not set, you may see runtime errors like `ReferenceError: process
   is not defined` in the browser.
 </Note>
 

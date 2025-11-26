@@ -380,6 +380,9 @@ public:
                 if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target)) {
                     moduleNamespaceObject->overrideExportValue(moduleNamespaceObject->globalObject(), this->spyIdentifier, implValue);
                 }
+            } else if (auto index = parseIndex(this->spyIdentifier)) {
+                // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
+                target->putDirectIndex(globalObject(), *index, implValue, this->spyAttributes, PutDirectIndexLikePutDirect);
             } else {
                 target->putDirect(this->vm(), this->spyIdentifier, implValue, this->spyAttributes);
             }
@@ -1528,6 +1531,9 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
+            } else if (auto index = parseIndex(propertyKey)) {
+                // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
+                object->putDirectIndex(globalObject, *index, mock, attributes, PutDirectIndexLikePutDirect);
             } else {
                 object->putDirect(vm, propertyKey, mock, attributes);
             }
@@ -1544,6 +1550,9 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
+            } else if (auto index = parseIndex(propertyKey)) {
+                // For indexed properties, set the mock directly instead of wrapping in GetterSetter
+                object->putDirectIndex(globalObject, *index, mock, attributes, PutDirectIndexLikePutDirect);
             } else {
                 object->putDirectAccessor(globalObject, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes);
             }

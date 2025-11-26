@@ -535,7 +535,7 @@ describe("proxy object format with headers", () => {
         } as any,
         keepalive: false,
       }),
-    ).rejects.toThrow("fetch() proxy object requires a 'url' property");
+    ).rejects.toThrow("fetch() proxy.url must be a non-empty string");
   });
 
   test("proxy object with empty headers object works", async () => {

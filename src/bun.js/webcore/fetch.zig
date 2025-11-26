@@ -709,7 +709,7 @@ pub fn Bun__fetch_(
 
                             break :extract_proxy url_proxy_buffer;
                         } else {
-                            const err = ctx.toTypeError(.INVALID_ARG_VALUE, "fetch() proxy object requires a 'url' property", .{});
+                            const err = ctx.toTypeError(.INVALID_ARG_VALUE, "fetch() proxy.url must be a non-empty string", .{});
                             is_error = true;
                             return JSPromise.dangerouslyCreateRejectedPromiseValueWithoutNotifyingVM(globalThis, err);
                         }

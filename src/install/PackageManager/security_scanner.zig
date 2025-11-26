@@ -760,22 +760,27 @@ pub const SecurityScanSubprocess = struct {
     }
 
     fn spawnWindows(this: *SecurityScanSubprocess, argv: *[5]?[*:0]const u8, spawn_cwd: []const u8) !void {
-        // On Windows, we pre-allocate uv.Pipe handles for .ipc
-        // The spawn code will initialize them and return them in extra_pipes
-        // We use .ipc for both pipes (ipc=true in pipe init helps with Windows pipe handling):
-        //   - ipc_pipe: child writes IPC result to fd 3, parent reads
-        //   - json_pipe: parent writes JSON data, child reads from fd 4
+        // On Windows, the child can't access extra fds via Bun.file(4) because libuv's
+        // fd table isn't inherited. We use NODE_CHANNEL_FD with a single bidirectional
+        // IPC pipe. The child uses process.on('message') to receive JSON and
+        // process.send() to send results.
         const ipc_pipe = try bun.default_allocator.create(bun.windows.libuv.Pipe);
         ipc_pipe.* = std.mem.zeroes(bun.windows.libuv.Pipe);
-        const json_pipe = try bun.default_allocator.create(bun.windows.libuv.Pipe);
-        json_pipe.* = std.mem.zeroes(bun.windows.libuv.Pipe);
 
-        // extra_fds[0] -> fd 3 (IPC output: child writes, parent reads)
-        // extra_fds[1] -> fd 4 (JSON input: parent writes, child reads)
         const extra_fds = [_]bun.spawn.SpawnOptions.Stdio{
-            .{ .ipc = ipc_pipe },
-            .{ .ipc = json_pipe },
+            .{ .ipc = ipc_pipe }, // fd 3 - bidirectional IPC
         };
+
+        // Build environment with NODE_CHANNEL_FD=3
+        const env_count = std.os.environ.len;
+        const new_envp = try this.manager.allocator.alloc(?[*:0]const u8, env_count + 3);
+        defer this.manager.allocator.free(new_envp);
+        for (std.os.environ, 0..) |env_var, i| {
+            new_envp[i] = env_var;
+        }
+        new_envp[env_count] = "NODE_CHANNEL_FD=3";
+        new_envp[env_count + 1] = "NODE_CHANNEL_SERIALIZATION_MODE=json";
+        new_envp[env_count + 2] = null;
 
         const spawn_options = bun.spawn.SpawnOptions{
             .stdout = .inherit,
@@ -788,15 +793,14 @@ pub const SecurityScanSubprocess = struct {
             },
         };
 
-        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(argv), @ptrCast(std.os.environ.ptr))).unwrap();
+        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(argv), @ptrCast(new_envp.ptr))).unwrap();
 
-        const json_write_result = spawned.extra_pipes.items[1];
-        const ipc_read_result = spawned.extra_pipes.items[0];
+        const ipc_result = spawned.extra_pipes.items[0];
 
         this.remaining_fds = 1;
-        try this.ipc_reader.startWithPipe(ipc_read_result.buffer).unwrap();
+        try this.ipc_reader.startWithPipe(ipc_result.buffer).unwrap();
 
-        try this.finishSpawn(&spawned, json_write_result);
+        try this.finishSpawnWindows(&spawned, ipc_result);
     }
 
     fn spawnPosix(this: *SecurityScanSubprocess, argv: *[5]?[*:0]const u8, spawn_cwd: []const u8) !void {
@@ -861,6 +865,42 @@ pub const SecurityScanSubprocess = struct {
             .err => |err| {
                 Output.errGeneric("Failed to start JSON pipe writer: {f}", .{err});
                 return error.JSONPipeWriterFailed;
+            },
+            .result => {},
+        }
+
+        switch (process.watchOrReap()) {
+            .err => {
+                return error.ProcessWatchFailed;
+            },
+            .result => {},
+        }
+    }
+
+    fn finishSpawnWindows(this: *SecurityScanSubprocess, spawned: anytype, ipc_result: anytype) !void {
+        var process = spawned.toProcess(&this.manager.event_loop, false);
+        this.process = process;
+        process.setExitHandler(this);
+
+        // For NODE_CHANNEL_FD IPC, messages are JSON followed by newline
+        const json_with_newline = try std.fmt.allocPrint(this.manager.allocator, "{s}\n", .{this.json_data});
+        const json_source = jsc.Subprocess.Source{
+            .blob = jsc.WebCore.Blob.Any.fromOwnedSlice(this.manager.allocator, json_with_newline),
+        };
+
+        this.stdin_writer = StaticPipeWriter.create(&this.manager.event_loop, this, ipc_result, json_source);
+        errdefer {
+            if (this.stdin_writer) |writer| {
+                writer.source.detach();
+                writer.deref();
+                this.stdin_writer = null;
+            }
+        }
+
+        switch (this.stdin_writer.?.start()) {
+            .err => |err| {
+                Output.errGeneric("Failed to start IPC writer: {f}", .{err});
+                return error.IPCWriterFailed;
             },
             .result => {},
         }

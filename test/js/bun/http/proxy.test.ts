@@ -418,8 +418,8 @@ describe("proxy object format with headers", () => {
       expect(response.ok).toBe(true);
       expect(response.status).toBe(200);
       // Verify the custom headers were sent to the proxy (case-insensitive check)
-      expect(capturedHeaders.some(h => h.includes("x-proxy-custom-header: custom-value"))).toBe(true);
-      expect(capturedHeaders.some(h => h.includes("x-proxy-another: another-value"))).toBe(true);
+      expect(capturedHeaders).toContainEqual(expect.stringContaining("x-proxy-custom-header: custom-value"));
+      expect(capturedHeaders).toContainEqual(expect.stringContaining("x-proxy-another: another-value"));
     } finally {
       proxyServerWithCapture.close();
       await once(proxyServerWithCapture, "close");
@@ -493,7 +493,7 @@ describe("proxy object format with headers", () => {
       expect(response.ok).toBe(true);
       expect(response.status).toBe(200);
       // Verify the custom headers were sent in the CONNECT request (case-insensitive check)
-      expect(capturedHeaders.some(h => h.includes("x-proxy-auth-token: secret-token-123"))).toBe(true);
+      expect(capturedHeaders).toContainEqual(expect.stringContaining("x-proxy-auth-token: secret-token-123"));
     } finally {
       proxyServerWithCapture.close();
       await once(proxyServerWithCapture, "close");
@@ -624,8 +624,8 @@ describe("proxy object format with headers", () => {
       expect(response.ok).toBe(true);
       expect(response.status).toBe(200);
       // Case-insensitive check
-      expect(capturedHeaders.some(h => h.includes("x-custom-header-1: value1"))).toBe(true);
-      expect(capturedHeaders.some(h => h.includes("x-custom-header-2: value2"))).toBe(true);
+      expect(capturedHeaders).toContainEqual(expect.stringContaining("x-custom-header-1: value1"));
+      expect(capturedHeaders).toContainEqual(expect.stringContaining("x-custom-header-2: value2"));
     } finally {
       proxyServerWithCapture.close();
       await once(proxyServerWithCapture, "close");

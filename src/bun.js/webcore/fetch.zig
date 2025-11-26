@@ -693,6 +693,7 @@ pub fn Bun__fetch_(
 
                             proxy = ZigURL.parse(buffer[url.href.len..]);
                             allocator.free(url_proxy_buffer);
+                            url_proxy_buffer = buffer;
 
                             // Get the headers from the proxy object (optional)
                             if (try proxy_arg.get(globalThis, "headers")) |headers_value| {
@@ -711,7 +712,7 @@ pub fn Bun__fetch_(
                                 return .zero;
                             }
 
-                            break :extract_proxy buffer;
+                            break :extract_proxy url_proxy_buffer;
                         } else {
                             const err = ctx.toTypeError(.INVALID_ARG_VALUE, "fetch() proxy object requires a 'url' property", .{});
                             is_error = true;

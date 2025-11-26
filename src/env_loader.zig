@@ -349,7 +349,7 @@ pub const Loader = struct {
             }
         }
 
-        // We have to copy all the keys to prepend "process.env" :/
+        // We have to copy all the keys to prepend "process.env" and "import.meta.env" :/
         var key_buf_len: usize = 0;
         var e_strings_to_allocate: usize = 0;
 
@@ -379,11 +379,15 @@ pub const Loader = struct {
 
             if (key_buf_len > 0) {
                 iter.reset();
-                key_buf = try allocator.alloc(u8, key_buf_len + key_count * "process.env.".len);
+                // Allocate space for both "process.env." and "import.meta.env." prefixes
+                // We double key_buf_len for the env var names, and add space for both prefixes per key
+                key_buf = try allocator.alloc(u8, key_buf_len * 2 + key_count * ("process.env.".len + "import.meta.env.".len));
                 var key_writer = std.Io.Writer.fixed(key_buf);
                 const js_ast = bun.ast;
 
-                var e_strings = try allocator.alloc(js_ast.E.String, e_strings_to_allocate * 2);
+                // Allocate e_strings for both process.env and import.meta.env defines
+                // Each env var needs 2 e_strings (one for process.env, one for import.meta.env)
+                var e_strings = try allocator.alloc(js_ast.E.String, e_strings_to_allocate * 4);
                 errdefer allocator.free(e_strings);
                 errdefer allocator.free(key_buf);
 
@@ -392,29 +396,32 @@ pub const Loader = struct {
                         const value: string = entry.value_ptr.value;
 
                         if (strings.startsWith(entry.key_ptr.*, prefix)) {
-                            key_writer.print("process.env.{s}", .{entry.key_ptr.*}) catch |err| switch (err) {
-                                error.WriteFailed => unreachable, // miscalculated length of key_buf above
-                            };
-                            const key_str = key_writer.buffered();
-                            key_writer = std.Io.Writer.fixed(key_writer.unusedCapacitySlice());
+                            // Add defines for both process.env.* and import.meta.env.* (Vite compat)
+                            inline for (.{ "process.env.", "import.meta.env." }) |env_prefix| {
+                                key_writer.print(env_prefix ++ "{s}", .{entry.key_ptr.*}) catch |err| switch (err) {
+                                    error.WriteFailed => unreachable, // miscalculated length of key_buf above
+                                };
+                                const key_str = key_writer.buffered();
+                                key_writer = std.Io.Writer.fixed(key_writer.unusedCapacitySlice());
 
-                            e_strings[0] = js_ast.E.String{
-                                .data = if (value.len > 0)
-                                    @as([*]u8, @ptrFromInt(@intFromPtr(value.ptr)))[0..value.len]
-                                else
-                                    &[_]u8{},
-                            };
-                            const expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
+                                e_strings[0] = js_ast.E.String{
+                                    .data = if (value.len > 0)
+                                        @as([*]u8, @ptrFromInt(@intFromPtr(value.ptr)))[0..value.len]
+                                    else
+                                        &[_]u8{},
+                                };
+                                const expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
 
-                            _ = try to_string.getOrPutValue(
-                                key_str,
-                                .init(.{
-                                    .can_be_removed_if_unused = true,
-                                    .call_can_be_unwrapped_if_unused = .if_unused,
-                                    .value = expr_data,
-                                }),
-                            );
-                            e_strings = e_strings[1..];
+                                _ = try to_string.getOrPutValue(
+                                    key_str,
+                                    .init(.{
+                                        .can_be_removed_if_unused = true,
+                                        .call_can_be_unwrapped_if_unused = .if_unused,
+                                        .value = expr_data,
+                                    }),
+                                );
+                                e_strings = e_strings[1..];
+                            }
                         } else {
                             const hash = bun.hash(entry.key_ptr.*);
 
@@ -446,30 +453,33 @@ pub const Loader = struct {
                     while (iter.next()) |entry| {
                         const value: string = entry.value_ptr.value;
 
-                        key_writer.print("process.env.{s}", .{entry.key_ptr.*}) catch |err| switch (err) {
-                            error.WriteFailed => unreachable, // miscalculated length of key_buf above
-                        };
-                        const key_str = key_writer.buffered();
-                        key_writer = std.Io.Writer.fixed(key_writer.unusedCapacitySlice());
+                        // Add defines for both process.env.* and import.meta.env.* (Vite compat)
+                        inline for (.{ "process.env.", "import.meta.env." }) |env_prefix| {
+                            key_writer.print(env_prefix ++ "{s}", .{entry.key_ptr.*}) catch |err| switch (err) {
+                                error.WriteFailed => unreachable, // miscalculated length of key_buf above
+                            };
+                            const key_str = key_writer.buffered();
+                            key_writer = std.Io.Writer.fixed(key_writer.unusedCapacitySlice());
 
-                        e_strings[0] = js_ast.E.String{
-                            .data = if (entry.value_ptr.value.len > 0)
-                                @as([*]u8, @ptrFromInt(@intFromPtr(entry.value_ptr.value.ptr)))[0..value.len]
-                            else
-                                &[_]u8{},
-                        };
+                            e_strings[0] = js_ast.E.String{
+                                .data = if (value.len > 0)
+                                    @as([*]u8, @ptrFromInt(@intFromPtr(value.ptr)))[0..value.len]
+                                else
+                                    &[_]u8{},
+                            };
 
-                        const expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
+                            const expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
 
-                        _ = try to_string.getOrPutValue(
-                            key_str,
-                            .init(.{
-                                .can_be_removed_if_unused = true,
-                                .call_can_be_unwrapped_if_unused = .if_unused,
-                                .value = expr_data,
-                            }),
-                        );
-                        e_strings = e_strings[1..];
+                            _ = try to_string.getOrPutValue(
+                                key_str,
+                                .init(.{
+                                    .can_be_removed_if_unused = true,
+                                    .call_can_be_unwrapped_if_unused = .if_unused,
+                                    .value = expr_data,
+                                }),
+                            );
+                            e_strings = e_strings[1..];
+                        }
                     }
                 }
             }

@@ -1,7 +1,7 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import path from "node:path";
 import fs from "node:fs";
+import path from "node:path";
 
 // https://github.com/oven-sh/bun/issues/13316
 // bunx cowsay "" panicked on Windows due to improper handling of empty string arguments
@@ -15,19 +15,19 @@ describe.if(isWindows)("#13316 - bunx with empty string arguments", () => {
         name: "test-project",
         version: "1.0.0",
         dependencies: {
-          "echo-args-test": "file:./echo-args-test"
-        }
+          "echo-args-test": "file:./echo-args-test",
+        },
       }),
       "echo-args-test/package.json": JSON.stringify({
         name: "echo-args-test",
         version: "1.0.0",
         bin: {
-          "echo-args-test": "./index.js"
-        }
+          "echo-args-test": "./index.js",
+        },
       }),
       "echo-args-test/index.js": `#!/usr/bin/env node
 console.log(JSON.stringify(process.argv.slice(2)));
-`
+`,
     });
 
     // Install to create the .bunx shim in node_modules/.bin
@@ -52,11 +52,7 @@ console.log(JSON.stringify(process.argv.slice(2)));
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // The main assertion is that the process doesn't panic (exit code 3)
     // If the bug is present, this would crash with "reached unreachable code"
@@ -73,19 +69,19 @@ console.log(JSON.stringify(process.argv.slice(2)));
         name: "test-project",
         version: "1.0.0",
         dependencies: {
-          "echo-args-test": "file:./echo-args-test"
-        }
+          "echo-args-test": "file:./echo-args-test",
+        },
       }),
       "echo-args-test/package.json": JSON.stringify({
         name: "echo-args-test",
         version: "1.0.0",
         bin: {
-          "echo-args-test": "./index.js"
-        }
+          "echo-args-test": "./index.js",
+        },
       }),
       "echo-args-test/index.js": `#!/usr/bin/env node
 console.log(JSON.stringify(process.argv.slice(2)));
-`
+`,
     });
 
     await using installProc = Bun.spawn({
@@ -103,11 +99,7 @@ console.log(JSON.stringify(process.argv.slice(2)));
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(exitCode).not.toBe(3); // panic exit code
     expect(exitCode).toBe(0);

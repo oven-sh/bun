@@ -32,6 +32,10 @@ is_scb_bitset: BitSet = .{},
 has_client_components: bool = false,
 has_server_components: bool = false,
 
+/// Tracks which CSS files are imported with `{ type: 'css' }` (CSS Module Scripts)
+/// These files need to export a CSSStyleSheet instead of the normal CSS module exports
+css_module_script_files: BitSet = .{},
+
 /// This is for cross-module inlining of detected inlinable constants
 // const_values: js_ast.Ast.ConstValuesMap = .{},
 /// This is for cross-module inlining of TypeScript enum constants
@@ -41,6 +45,7 @@ pub fn init(allocator: std.mem.Allocator, file_count: usize) !LinkerGraph {
     return LinkerGraph{
         .allocator = allocator,
         .files_live = try BitSet.initEmpty(allocator, file_count),
+        .css_module_script_files = try BitSet.initEmpty(allocator, file_count),
     };
 }
 
@@ -234,6 +239,10 @@ pub fn load(
     try this.files.setCapacity(this.allocator, sources.len);
     this.files.zero();
     this.files_live = try BitSet.initEmpty(
+        this.allocator,
+        sources.len,
+    );
+    this.css_module_script_files = try BitSet.initEmpty(
         this.allocator,
         sources.len,
     );

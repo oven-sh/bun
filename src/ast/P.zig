@@ -511,6 +511,10 @@ pub fn NewParser_(
                     p.import_records.items[import_record_index].tag = tag;
                 }
 
+                if (state.import_loader) |loader| {
+                    p.import_records.items[import_record_index].loader = loader;
+                }
+
                 p.import_records.items[import_record_index].handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
                 p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
 

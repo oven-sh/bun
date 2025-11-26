@@ -318,6 +318,7 @@ pub const Runtime = struct {
         __callDispose: ?Ref = null,
         __jsonParse: ?Ref = null,
         __promiseAll: ?Ref = null,
+        __cssModuleScript: ?Ref = null,
 
         pub const all = [_][]const u8{
             "__name",
@@ -335,6 +336,7 @@ pub const Runtime = struct {
             "__callDispose",
             "__jsonParse",
             "__promiseAll",
+            "__cssModuleScript",
         };
         const all_sorted: [all.len]string = brk: {
             @setEvalBranchQuota(1000000);

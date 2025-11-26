@@ -87,6 +87,11 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
 
                 const other_file = record.source_index.get();
                 const other_flags = ast_flags_list[other_file];
+
+                // Track CSS Module Script imports (import ... with { type: 'css' })
+                if (record.is_css_module_script and css_asts[other_file] != null) {
+                    this.graph.css_module_script_files.set(other_file);
+                }
                 // other file is empty
                 if (other_file >= exports_kind.len) continue;
                 const other_kind = exports_kind[other_file];
@@ -141,9 +146,14 @@ pub fn scanImportsAndExports(this: *LinkerContext) ScanImportsAndExportsError!vo
                     },
                     .dynamic => {
                         if (!this.graph.code_splitting) {
-                            // If we're not splitting, then import() is just a require() that
-                            // returns a promise, so the imported file must be a CommonJS module
-                            if (exports_kind[other_file] == .esm) {
+                            // CSS Module Script imports should not be wrapped as CommonJS
+                            // They need to remain ESM to use __cssModuleScript
+                            if (record.is_css_module_script) {
+                                // Keep as ESM - will be handled by generateCodeForLazyExport
+                                flags[other_file].wrap = .esm;
+                            } else if (exports_kind[other_file] == .esm) {
+                                // If we're not splitting, then import() is just a require() that
+                                // returns a promise, so the imported file must be a CommonJS module
                                 flags[other_file].wrap = .esm;
                             } else {
                                 // TODO: introduce a NamedRequire for require("./foo").Bar AST nodes to support tree-shaking those.

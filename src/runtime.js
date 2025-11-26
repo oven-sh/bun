@@ -177,3 +177,11 @@ export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");
 export var __jsonParse = /* @__PURE__ */ a => JSON.parse(a);
 
 export var __promiseAll = args => Promise.all(args);
+
+// CSS Module Scripts helper - creates a CSSStyleSheet from CSS text
+// See: https://web.dev/articles/css-module-scripts
+export var __cssModuleScript = /* @__PURE__ */ cssText => {
+  var sheet = new CSSStyleSheet();
+  sheet.replaceSync(cssText);
+  return sheet;
+};

@@ -3423,8 +3423,20 @@ pub const BundleV2 = struct {
                 }
             }
 
-            const import_record_loader = import_record.loader orelse path.loader(&transpiler.options.loaders) orelse .file;
+            // Check if the import has an explicit loader from import attributes (e.g., { type: 'css' })
+            // before falling back to the path-based loader
+            const explicit_loader = import_record.loader;
+            const import_record_loader = explicit_loader orelse path.loader(&transpiler.options.loaders) orelse .file;
             import_record.loader = import_record_loader;
+
+            // Check if this is a CSS Module Script import (import ... with { type: 'css' })
+            // The import should have type: 'css' assertion AND target a CSS file
+            // IMPORTANT: Only set this if the loader was EXPLICITLY set via import attributes,
+            // not just because the file has a .css extension
+            const path_loader = path.loader(&transpiler.options.loaders) orelse .file;
+            if (explicit_loader != null and explicit_loader.? == .css and path_loader == .css) {
+                import_record.is_css_module_script = true;
+            }
 
             const is_html_entrypoint = import_record_loader == .html and target.isServerSide() and this.transpiler.options.dev_server == null;
 

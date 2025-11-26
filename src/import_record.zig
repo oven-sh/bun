@@ -166,6 +166,9 @@ pub const ImportRecord = struct {
     wrap_with_to_esm: bool = false,
     wrap_with_to_commonjs: bool = false,
 
+    /// True if this import has `with { type: 'css' }` and should return a CSSStyleSheet
+    is_css_module_script: bool = false,
+
     pub const List = bun.BabyList(ImportRecord);
 
     pub const Tag = enum {

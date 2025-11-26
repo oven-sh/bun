@@ -51,6 +51,7 @@ pub const Features = struct {
     pub var tls_server: usize = 0;
     pub var http_server: usize = 0;
     pub var https_server: usize = 0;
+    pub var http_client_proxy: usize = 0;
     /// Set right before JSC::initialize is called
     pub var jsc: usize = 0;
     /// Set when bake.DevServer is initialized

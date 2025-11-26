@@ -402,11 +402,11 @@ void us_internal_ssl_socket_context_on_socket_connect_error(
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen(
     us_internal_ssl_socket_context_r context, const char *host,
-    int port, int options, int socket_ext_size, int* error);
+    int port, int options, int socket_ext_size, int backlog, int* error);
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
     us_internal_ssl_socket_context_r context, const char *path,
-    size_t pathlen, int options, int socket_ext_size, int* error);
+    size_t pathlen, int options, int socket_ext_size, int backlog, int* error);
 
 struct us_socket_t *us_internal_ssl_socket_context_connect(
     us_internal_ssl_socket_context_r context, const char *host,

@@ -5104,6 +5104,14 @@ declare module "bun" {
      * @default false
      */
     allowHalfOpen?: boolean;
+    /**
+     * Specifies the maximum length of the queue of pending connections. The actual length
+     * will be determined by the OS through sysctl settings such as `tcp_max_syn_backlog`
+     * and `somaxconn` on Linux.
+     *
+     * @default 511
+     */
+    backlog?: number;
   }
 
   interface TCPSocketListenOptions<Data = undefined> extends SocketOptions<Data> {

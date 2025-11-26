@@ -857,7 +857,7 @@ create_ssl_context_from_options(struct us_socket_context_options_t options) {
 
   if (options.ssl_ciphers) {
     if (!SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers)) {
-      unsigned long ssl_err = ERR_get_error(); 
+      unsigned long ssl_err = ERR_get_error();
       if (!(strlen(options.ssl_ciphers) == 0 && ERR_GET_REASON(ssl_err) == SSL_R_NO_CIPHER_MATCH)) {
         // TLS1.2 ciphers were deliberately cleared, so don't consider
         // SSL_R_NO_CIPHER_MATCH to be an error (this is how _set_cipher_suites()
@@ -1300,7 +1300,7 @@ SSL_CTX *create_ssl_context_from_bun_options(
 
   if (options.ssl_ciphers) {
     if (!SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers)) {
-      unsigned long ssl_err = ERR_get_error(); 
+      unsigned long ssl_err = ERR_get_error();
       if (!(strlen(options.ssl_ciphers) == 0 && ERR_GET_REASON(ssl_err) == SSL_R_NO_CIPHER_MATCH)) {
         char error_msg[256];
         ERR_error_string_n(ERR_peek_last_error(), error_msg, sizeof(error_msg));
@@ -1308,7 +1308,7 @@ SSL_CTX *create_ssl_context_from_bun_options(
         // SSL_R_NO_CIPHER_MATCH to be an error (this is how _set_cipher_suites()
         // works). If the user actually sets a value (like "no-such-cipher"), then
         // that's actually an error.
-        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS;  
+        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS;
         free_ssl_context(ssl_context);
         return NULL;
       }
@@ -1579,21 +1579,27 @@ void us_internal_ssl_socket_context_free(
 }
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen(
-    struct us_internal_ssl_socket_context_t *context, const char *host,
-    int port, int options, int socket_ext_size, int* error) {
-  return us_socket_context_listen(0, &context->sc, host, port, options,
-                                  sizeof(struct us_internal_ssl_socket_t) -
-                                      sizeof(struct us_socket_t) +
-                                      socket_ext_size, error);
+  struct us_internal_ssl_socket_context_t *context,
+  const char *host,
+  int port,
+  int options,
+  int socket_ext_size,
+  int backlog,
+  int* error
+) {
+  return us_socket_context_listen(0, &context->sc, host, port, options, sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + socket_ext_size, backlog, error);
 }
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
-    struct us_internal_ssl_socket_context_t *context, const char *path,
-    size_t pathlen, int options, int socket_ext_size, int* error) {
-  return us_socket_context_listen_unix(0, &context->sc, path, pathlen, options,
-                                       sizeof(struct us_internal_ssl_socket_t) -
-                                           sizeof(struct us_socket_t) +
-                                           socket_ext_size, error);
+  struct us_internal_ssl_socket_context_t *context,
+  const char *path,
+  size_t pathlen,
+  int options,
+  int socket_ext_size,
+  int backlog,
+  int* error
+) {
+  return us_socket_context_listen_unix(0, &context->sc, path, pathlen, options, sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + socket_ext_size, backlog, error);
 }
 
 // https://github.com/oven-sh/bun/issues/16995

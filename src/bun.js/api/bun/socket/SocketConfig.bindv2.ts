@@ -79,5 +79,6 @@ export const SocketConfig = b.dictionary(
       internalName: "unix_", // `unix` is a predefined C macro...
     },
     fd: b.i32.optional,
+    backlog: b.i32.nullable,
   },
 );

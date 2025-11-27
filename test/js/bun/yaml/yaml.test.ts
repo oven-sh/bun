@@ -2520,7 +2520,6 @@ refs:
           "42": "answer",
         });
       });
-
       test("issue 25108", () => {
         const data = { description: "hello :world:" };
         const pretty = YAML.stringify(data, null, 2);

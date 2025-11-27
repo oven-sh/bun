@@ -751,7 +751,14 @@ pub const Loader = struct {
                 break :brk pos;
             }
 
-            const stat = try file.stat();
+            const stat = file.stat() catch |err| {
+                // On WSL1, fstat() can fail on certain files. Handle gracefully.
+                if (!this.quiet) {
+                    Output.prettyErrorln("<r><yellow>warn<r>: {s} when loading {s} file", .{ @errorName(err), base });
+                }
+                @field(this, base) = logger.Source.initPathString(base, "");
+                return;
+            };
 
             if (stat.size == 0 or stat.kind != .file) {
                 @field(this, base) = logger.Source.initPathString(base, "");
@@ -824,7 +831,14 @@ pub const Loader = struct {
                 break :brk pos;
             }
 
-            const stat = try file.stat();
+            const stat = file.stat() catch |err| {
+                // On WSL1, fstat() can fail on certain files. Handle gracefully.
+                if (!this.quiet) {
+                    Output.prettyErrorln("<r><yellow>warn<r>: {s} when loading {s} file", .{ @errorName(err), file_path });
+                }
+                try this.custom_files_loaded.put(file_path, logger.Source.initPathString(file_path, ""));
+                return;
+            };
 
             if (stat.size == 0 or stat.kind != .file) {
                 try this.custom_files_loaded.put(file_path, logger.Source.initPathString(file_path, ""));

@@ -820,6 +820,36 @@ test("NODE_ENV=test loads .env.test even when .env.production exists", () => {
   expect(stdout).toBe("test");
 });
 
+test("empty .env file does not cause errors", () => {
+  // Regression test: On WSL1, an empty .env file could cause fstat() to fail,
+  // which would propagate as an unhandled error and cause the script to fail silently.
+  const dir = tempDirWithFiles("dotenv-empty", {
+    ".env": "", // Empty .env file
+    "index.ts": "console.log('success');",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe("success");
+});
+
+test("empty .env.local file does not cause errors", () => {
+  const dir = tempDirWithFiles("dotenv-empty-local", {
+    ".env.local": "", // Empty .env.local file
+    "index.ts": "console.log('success');",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe("success");
+});
+
+test("empty .env alongside non-empty .env.local works", () => {
+  const dir = tempDirWithFiles("dotenv-empty-mixed", {
+    ".env": "", // Empty
+    ".env.local": "FOO=bar", // Non-empty
+    "index.ts": "console.log(process.env.FOO);",
+  });
+  const { stdout } = bunRun(`${dir}/index.ts`);
+  expect(stdout).toBe("bar");
+});
+
 describe("env loader buffer handling", () => {
   test("handles large quoted values with escape sequences", () => {
     // This test ensures the env loader properly handles large values that exceed the initial buffer size

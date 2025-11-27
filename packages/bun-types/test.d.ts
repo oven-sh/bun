@@ -2372,4 +2372,21 @@ declare module "bun:test" {
   }
 
   export const expectTypeOf: typeof import("./vendor/expect-type").expectTypeOf;
+
+  /**
+   * Re-export of `node:assert` for vitest compatibility.
+   *
+   * @example
+   * ```ts
+   * import { assert } from "bun:test";
+   *
+   * const value: string | null = getValue();
+   * assert(value !== null); // Type narrows to string
+   * console.log(value.toUpperCase()); // OK
+   *
+   * assert.deepEqual(obj1, obj2);
+   * assert.throws(() => dangerousCode());
+   * ```
+   */
+  export import assert = require("node:assert");
 }

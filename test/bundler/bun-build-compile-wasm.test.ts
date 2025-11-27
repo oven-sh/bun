@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, tempDirWithFiles } from "harness";
 import { join } from "path";
 
+console.log(process.env);
+
 describe("Bun.build compile with wasm", () => {
   // prettier-ignore
   test.todoIf(process.env.BUILDKITE_STEP_KEY?.includes("-debian-13-"))("compile with wasm module imports", async () => {

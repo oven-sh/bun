@@ -1338,7 +1338,6 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
 
   const env = {
     GITHUB_ACTIONS: "true", // always true so annotations are parsed
-    BUILDKITE_STEP_KEY: process.env.BUILDKITE_STEP_KEY,
     ...opts["env"],
   };
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {

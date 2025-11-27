@@ -2,6 +2,7 @@
 
 #include "root.h"
 #include "wtf/text/ASCIILiteral.h"
+#include "wtf/SIMDUTF.h"
 
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/Exception.h>
@@ -79,12 +80,24 @@ static const WTF::String toString(ZigString str)
     }
     if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
         ASSERT_WITH_MESSAGE(!isTaggedExternalPtr(str.ptr), "UTF8 and external ptr are mutually exclusive. The external will never be freed.");
+        // Check if the resulting UTF-16 string could possibly exceed the maximum length.
+        // For valid UTF-8, the number of UTF-16 code units is <= the number of UTF-8 bytes
+        // (ASCII is 1:1; other code points use multiple UTF-8 bytes per UTF-16 code unit).
+        // We only need to compute the actual UTF-16 length when the byte length exceeds the limit.
+        size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength));
+        if (str.len > maxLength) [[unlikely]] {
+            // UTF-8 byte length != UTF-16 length, so use simdutf to calculate the actual UTF-16 length.
+            size_t utf16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(untag(str.ptr)), str.len);
+            if (utf16Length > maxLength) {
+                return {};
+            }
+        }
         return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { untag(str.ptr), str.len });
     }
 
     if (isTaggedExternalPtr(str.ptr)) [[unlikely]] {
         // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
-        if (str.len > Bun__stringSyntheticAllocationLimit) [[unlikely]] {
+        if (str.len > Bun__stringSyntheticAllocationLimit || str.len > WTF::String::MaxLength) [[unlikely]] {
             free_global_string(nullptr, reinterpret_cast<void*>(const_cast<unsigned char*>(untag(str.ptr))), static_cast<unsigned>(str.len));
             return {};
         }
@@ -95,7 +108,7 @@ static const WTF::String toString(ZigString str)
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
-    if (str.len > Bun__stringSyntheticAllocationLimit) [[unlikely]] {
+    if (str.len > Bun__stringSyntheticAllocationLimit || str.len > WTF::String::MaxLength) [[unlikely]] {
         return {};
     }
 
@@ -121,11 +134,19 @@ static const WTF::String toString(ZigString str, StringPointer ptr)
         return WTF::String();
     }
     if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
+        // Check if the resulting UTF-16 string could possibly exceed the maximum length.
+        size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength));
+        if (ptr.len > maxLength) [[unlikely]] {
+            size_t utf16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(&untag(str.ptr)[ptr.off]), ptr.len);
+            if (utf16Length > maxLength) {
+                return {};
+            }
+        }
         return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { &untag(str.ptr)[ptr.off], ptr.len });
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
-    if (str.len > Bun__stringSyntheticAllocationLimit) [[unlikely]] {
+    if (ptr.len > Bun__stringSyntheticAllocationLimit || ptr.len > WTF::String::MaxLength) [[unlikely]] {
         return {};
     }
 
@@ -141,11 +162,19 @@ static const WTF::String toStringCopy(ZigString str, StringPointer ptr)
         return WTF::String();
     }
     if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
+        // Check if the resulting UTF-16 string could possibly exceed the maximum length.
+        size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength));
+        if (ptr.len > maxLength) [[unlikely]] {
+            size_t utf16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(&untag(str.ptr)[ptr.off]), ptr.len);
+            if (utf16Length > maxLength) {
+                return {};
+            }
+        }
         return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { &untag(str.ptr)[ptr.off], ptr.len });
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
-    if (str.len > Bun__stringSyntheticAllocationLimit) [[unlikely]] {
+    if (ptr.len > Bun__stringSyntheticAllocationLimit || ptr.len > WTF::String::MaxLength) [[unlikely]] {
         return {};
     }
 
@@ -161,6 +190,14 @@ static const WTF::String toStringCopy(ZigString str)
         return WTF::String();
     }
     if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
+        // Check if the resulting UTF-16 string could possibly exceed the maximum length.
+        size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength));
+        if (str.len > maxLength) [[unlikely]] {
+            size_t utf16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(untag(str.ptr)), str.len);
+            if (utf16Length > maxLength) {
+                return {};
+            }
+        }
         return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { untag(str.ptr), str.len });
     }
 
@@ -188,6 +225,14 @@ static void appendToBuilder(ZigString str, WTF::StringBuilder& builder)
         return;
     }
     if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
+        // Check if the resulting UTF-16 string could possibly exceed the maximum length.
+        size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength));
+        if (str.len > maxLength) [[unlikely]] {
+            size_t utf16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(untag(str.ptr)), str.len);
+            if (utf16Length > maxLength) {
+                return;
+            }
+        }
         WTF::String converted = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { untag(str.ptr), str.len });
         builder.append(converted);
         return;

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 20
+# Version: 21
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -22,15 +22,14 @@ error() {
 	if ! [ "$$" = "$pid" ]; then
 		kill -s TERM "$pid"
 	fi
-	exit 1
+	# Kill the shell. This used to be 'exit 1' but if the command is running inside a
+	# subshell, then only the subshell dies and the script keeps running uninterrupted.
+	kill $$
 }
 
 execute() {
-	local opts=$-
-	set -x
-	"$@"
-	{ local status=$?; set +x "$opts"; } 2> /dev/null
-	if [ "$status" -ne 0 ]; then
+	print "$ $@" >&2
+	if ! "$@"; then
 		error "Command failed: $@"
 	fi
 }
@@ -62,7 +61,7 @@ execute_as_user() {
 }
 
 grant_to_user() {
-	path="$1"
+	local path="$1"
 	if ! [ -f "$path" ] && ! [ -d "$path" ]; then
 		error "Could not find file or directory: \"$path\""
 	fi
@@ -77,7 +76,7 @@ which() {
 }
 
 require() {
-	path="$(which "$1")"
+	local path="$(which "$1")"
 	if ! [ -f "$path" ]; then
 		error "Command \"$1\" is required, but is not installed."
 	fi
@@ -109,7 +108,7 @@ compare_version() {
 }
 
 create_directory() {
-	path="$1"
+	local path="$1"
 	path_dir="$path"
 	while ! [ -d "$path_dir" ]; do
 		path_dir="$(dirname "$path_dir")"
@@ -132,13 +131,13 @@ create_directory() {
 
 create_tmp_directory() {
 	mktemp="$(require mktemp)"
-	path="$(execute "$mktemp" -d)"
+	local path="$(execute "$mktemp" -d)"
 	grant_to_user "$path"
 	print "$path"
 }
 
 create_file() {
-	path="$1"
+	local path="$1"
 	path_dir="$(dirname "$path")"
 	if ! [ -d "$path_dir" ]; then
 		create_directory "$path_dir"
@@ -164,7 +163,7 @@ create_file() {
 }
 
 append_file() {
-	path="$1"
+	local path="$1"
 	if ! [ -f "$path" ]; then
 		create_file "$path"
 	fi
@@ -203,7 +202,7 @@ download_and_verify_file() {
 	file_url="$1"
 	hash="$2"
 
-	path=$(download_file "$file_url")
+	local path=$(download_file "$file_url")
 	execute sh -c 'echo "'"$hash  $path"'" | sha256sum -c -' >/dev/null 2>&1
 
 	print "$path"
@@ -222,7 +221,7 @@ append_to_profile() {
 }
 
 append_to_path() {
-	path="$1"
+	local path="$1"
 	if ! [ -d "$path" ]; then
 		error "Could not find directory: \"$path\""
 	fi
@@ -331,7 +330,7 @@ check_operating_system() {
 	darwin)
 		sw_vers="$(which sw_vers)"
 		if [ -f "$sw_vers" ]; then
-			distro="$("$sw_vers" -productName)"
+			distro="$("$sw_vers" -productName | tr '[:upper:]' '[:lower:]')"
 			release="$("$sw_vers" -productVersion)"
 		fi
 
@@ -372,12 +371,12 @@ check_operating_system() {
 				;;
 			esac
 		fi
-
-		if [ -n "$abi" ]; then
-			print "ABI: $abi $abi_version"
-		fi
 		;;
 	esac
+
+	if [ -n "$abi" ]; then
+		print "ABI: $abi $abi_version"
+	fi
 }
 
 check_inside_docker() {
@@ -455,6 +454,9 @@ check_package_manager() {
 		# echo 'FreeBSD: { url: "pkg+http://pkg.FreeBSD.org/${ABI}/quarterly" }' > /usr/local/etc/pkg/repos/FreeBSD.conf
 		export ASSUME_ALWAYS_YES=yes
 		package_manager update -f
+		;;
+	brew)
+		package_manager upgrade
 		;;
 	esac
 }
@@ -655,11 +657,6 @@ install_packages() {
 	brew)
 		package_manager install \
 			--force \
-			--formula \
-			"$@"
-		package_manager link \
-			--force \
-			--overwrite \
 			"$@"
 		;;
 	apk)
@@ -682,7 +679,7 @@ install_brew() {
 	print "Installing Homebrew..."
 
 	bash="$(require bash)"
-	script=$(download_file "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh")
+	script=$(download_file "https://github.com/Homebrew/install/raw/main/install.sh")
 	execute_as_user "$bash" -lc "NONINTERACTIVE=1 $script"
 
 	case "$arch" in
@@ -765,6 +762,12 @@ install_common_software() {
 			ftp/wget \
 			editors/vim \
 			sysutils/neofetch \
+		;;
+	brew)
+		# https://brew.sh
+		install_packages \
+			coreutils \
+			neofetch \
 		;;
 	esac
 
@@ -1163,7 +1166,8 @@ install_llvm() {
 		install_packages "llvm-$(llvm_version)-tools"
 		;;
 	brew)
-		install_packages "llvm@$(llvm_version)"
+		install_packages "llvm@$(llvm_version)" "lld@$(llvm_version)"
+		package_manager link "llvm@$(llvm_version)" "lld@$(llvm_version)"
 		;;
 	apk)
 		install_packages \
@@ -1184,7 +1188,13 @@ install_llvm() {
 }
 
 install_gcc() {
-	if ! [ "$os" = "linux" ] || ! [ "$distro" = "ubuntu" ] || [ -z "$gcc_version" ]; then
+	if ! [ "$os" = "linux" ]; then
+		return
+	fi
+	if ! [ "$distro" = "ubuntu" ]; then
+		return
+	fi
+	if [ -z "$gcc_version" ]; then
 		return
 	fi
 
@@ -1260,7 +1270,7 @@ install_sccache() {
 	case "$os" in
 		linux)
 			;;
-		freebsd)
+		freebsd | darwin)
 			cargo install sccache --locked --version 0.12.0
 			return
 			;;
@@ -1307,6 +1317,9 @@ install_rust() {
 		create_directory "$HOME/.cargo/bin"
 		append_to_path "$HOME/.cargo/bin"
 		;;
+	macos)
+		install_packages rust
+		;;
 	*)
 		rust_home="/opt/rust"
 		create_directory "$rust_home"
@@ -1333,7 +1346,7 @@ install_docker() {
 	case "$pm" in
 	brew)
 		if ! [ -d "/Applications/Docker.app" ]; then
-			package_manager install docker --cask
+			install_packages docker docker-compose
 		fi
 		;;
 	pkg)
@@ -1357,6 +1370,10 @@ install_docker() {
 		esac
 		;;
 	esac
+
+	if [ "$os" = "darwin" ]; then
+		return
+	fi
 
 	systemctl="$(which systemctl)"
 	if [ -f "$systemctl" ]; then
@@ -1385,7 +1402,10 @@ macos_sdk_version() {
 }
 
 install_osxcross() {
-	if ! [ "$os" = "linux" ] || ! [ "$osxcross" = "1" ]; then
+	if ! [ "$os" = "linux" ]; then
+		return
+	fi
+	if ! [ "$osxcross" = "1" ]; then
 		return
 	fi
 
@@ -1431,9 +1451,7 @@ install_tailscale() {
 		execute "$sh" "$tailscale_script"
 		;;
 	darwin)
-		install_packages go
-		execute_as_user go install tailscale.com/cmd/tailscale{,d}@latest
-		append_to_path "$home/go/bin"
+		install_packages tailscale
 		;;
 	freebsd)
 		install_packages security/tailscale
@@ -1666,6 +1684,9 @@ install_chromium() {
 		install_packages \
 			www/chromium \
 		;;
+	brew)
+		install_packages --cask google-chrome
+		;;
 	esac
 
 	case "$distro" in
@@ -1699,6 +1720,17 @@ install_age() {
 		x64)
 			age_arch="amd64"
 			age_hash="943a7510a9973a1e589b913a70228aa1361a63cde39e3ed581435a4d4802df29"
+			;;
+		*)
+			error "Unsupported platform: $os-$arch"
+			;;
+		esac
+		;;
+	darwin)
+		case "$arch" in
+		aarch64)
+			age_arch="arm64"
+			age_hash="cf79875bd5970dc2dac60c87fa50cee1ff1f9a41b0eb273f65e174aff37c367a"
 			;;
 		*)
 			error "Unsupported platform: $os-$arch"
@@ -1751,6 +1783,9 @@ configure_core_dumps() {
 
 clean_system() {
 	if ! [ "$ci" = "1" ]; then
+		return
+	fi
+	if [ "$os" = "darwin" ]; then
 		return
 	fi
 

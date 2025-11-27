@@ -103,7 +103,10 @@ function getTargetLabel(target) {
  * @type {Platform[]}
  */
 const buildPlatforms = [
-  { os: "darwin", arch: "aarch64", release: "14" },
+  { os: "darwin", arch: "aarch64", distro: "macos", release: "13" },
+  { os: "darwin", arch: "aarch64", distro: "macos", release: "14" },
+  { os: "darwin", arch: "aarch64", distro: "macos", release: "15" },
+  { os: "darwin", arch: "aarch64", distro: "macos", release: "26" },
   { os: "darwin", arch: "x64", release: "14" },
   { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
@@ -612,6 +615,7 @@ function getBuildImageStep(platform, options) {
   const { os, arch, distro, release, features } = platform;
   const { publishImages } = options;
   const action = publishImages ? "publish-image" : "create-image";
+  const cloud = os == "darwin" ? "tart" : "aws";
 
   const command = [
     "node",
@@ -621,7 +625,7 @@ function getBuildImageStep(platform, options) {
     `--arch=${arch}`,
     distro && `--distro=${distro}`,
     `--release=${release}`,
-    "--cloud=aws",
+    `--cloud=${cloud}`,
     "--ci",
     "--authorized-org=oven-sh",
   ];

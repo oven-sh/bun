@@ -2069,7 +2069,7 @@ pub const BundleV2 = struct {
         }
 
         /// Returns true if the promises were handled and resolved from BundlePlugin.ts, returns false if the caller should imediately resolve
-        fn runOnEndCallbacks(globalThis: *jsc.JSGlobalObject, plugin: *bun.jsc.API.JSBundler.Plugin, promise: *jsc.JSPromise, build_result: jsc.JSValue, rejection: jsc.JSValue) bun.JSError!bool {
+        fn runOnEndCallbacks(globalThis: *jsc.JSGlobalObject, plugin: *bun.jsc.API.JSBundler.Plugin, promise: *jsc.JSPromise, build_result: jsc.JSValue, rejection: bun.JSError!jsc.JSValue) bun.JSError!bool {
             const value = try plugin.runOnEndCallbacks(globalThis, promise, build_result, rejection);
             return value != .js_undefined;
         }
@@ -2094,22 +2094,20 @@ pub const BundleV2 = struct {
 
             const didHandleCallbacks = if (this.plugins) |plugin| blk: {
                 if (throw_on_error) {
-                    const aggregate_error = this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed")) catch |e| globalThis.takeException(e);
+                    const aggregate_error = this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed"));
                     break :blk runOnEndCallbacks(globalThis, plugin, promise, build_result, aggregate_error) catch |err| {
-                        const exception = globalThis.takeException(err);
-                        return promise.reject(globalThis, exception);
+                        return promise.reject(globalThis, err);
                     };
                 } else {
                     break :blk runOnEndCallbacks(globalThis, plugin, promise, build_result, .js_undefined) catch |err| {
-                        const exception = globalThis.takeException(err);
-                        return promise.reject(globalThis, exception);
+                        return promise.reject(globalThis, err);
                     };
                 }
             } else false;
 
             if (!didHandleCallbacks) {
                 if (throw_on_error) {
-                    const aggregate_error = this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed")) catch |e| globalThis.takeException(e);
+                    const aggregate_error = this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed"));
                     return promise.reject(globalThis, aggregate_error);
                 } else {
                     return promise.resolve(globalThis, build_result);
@@ -2214,8 +2212,7 @@ pub const BundleV2 = struct {
                     );
 
                     const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(globalThis, plugin, promise, build_output, .js_undefined) catch |err| {
-                        const exception = globalThis.takeException(err);
-                        return promise.reject(globalThis, exception);
+                        return promise.reject(globalThis, err);
                     } else false;
 
                     if (!didHandleCallbacks) {

@@ -452,8 +452,8 @@ To configure the directory where Bun installs globally installed binaries and CL
 Environment variable: `BUN_INSTALL_BIN`
 
 ```toml title="bunfig.toml" icon="settings"
-# where globally-installed package bins are linked
 [install]
+# where globally-installed package bins are linked
 globalBinDir = "~/.bun/bin"
 ```
 
@@ -584,6 +584,32 @@ editor = "code"
 # - "vim","vi"
 # - "emacs"
 ```
+
+### `install.security.scanner`
+
+Configure a security scanner to scan packages for vulnerabilities before installation.
+
+First, install a security scanner from npm:
+
+```bash terminal icon="terminal"
+bun add -d @acme/bun-security-scanner
+```
+
+Then configure it in your `bunfig.toml`:
+
+```toml bunfig.toml icon="settings"
+[install.security]
+scanner = "@acme/bun-security-scanner"
+```
+
+When a security scanner is configured:
+
+- Auto-install is automatically disabled for security
+- Packages are scanned before installation
+- Installation is cancelled if fatal issues are found
+- Security warnings are displayed during installation
+
+Learn more about [using and writing security scanners](/pm/security-scanner-api).
 
 ### `install.minimumReleaseAge`
 

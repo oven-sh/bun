@@ -275,7 +275,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         return globalThis.throw("Glob.constructor: first argument is not a string", .{});
     }
 
-    const pat_str: []u8 = @constCast((pat_arg.toSliceClone(globalThis) orelse return error.JSError).slice());
+    const pat_str: []u8 = @constCast((try pat_arg.toSliceClone(globalThis)).slice());
 
     const glob = bun.handleOom(alloc.create(Glob));
     glob.* = .{ .pattern = pat_str };

@@ -31,7 +31,7 @@ import {
 } from "../scripts/utils.mjs";
 
 /**
- * @typedef {"linux" | "darwin" | "windows"} Os
+ * @typedef {"linux" | "darwin" | "windows" | "freebsd"} Os
  * @typedef {"aarch64" | "x64"} Arch
  * @typedef {"musl"} Abi
  * @typedef {"debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
@@ -114,6 +114,7 @@ const buildPlatforms = [
   { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.22" },
   { os: "windows", arch: "x64", release: "2019" },
   { os: "windows", arch: "x64", baseline: true, release: "2019" },
+  { os: "freebsd", arch: "x64", release: "14.3" },
 ];
 
 /**
@@ -658,7 +659,7 @@ function getReleaseStep(buildPlatforms, options) {
     agents: {
       queue: "test-darwin",
     },
-    depends_on: buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`),
+    depends_on: buildPlatforms.filter(p => p.os !== "freebsd").map(platform => `${getTargetKey(platform)}-build-bun`),
     env: {
       CANARY: revision,
     },
@@ -1071,7 +1072,7 @@ async function getPipeline(options = {}) {
   const imagePlatforms = new Map(
     buildImages || publishImages
       ? [...buildPlatforms, ...testPlatforms]
-          .filter(({ os }) => os === "linux" || os === "windows")
+          .filter(({ os }) => os !== "darwin")
           .map(platform => [getImageKey(platform), platform])
       : [],
   );
@@ -1105,9 +1106,12 @@ async function getPipeline(options = {}) {
   const includeASAN = !isMainBranch();
 
   if (!buildId) {
-    const relevantBuildPlatforms = includeASAN
+    let relevantBuildPlatforms = includeASAN
       ? buildPlatforms
       : buildPlatforms.filter(({ profile }) => profile !== "asan");
+
+    // run build-image but no build-bun yet
+    relevantBuildPlatforms = relevantBuildPlatforms.filter(({ os }) => os !== "freebsd");
 
     steps.push(
       ...relevantBuildPlatforms.map(target => {

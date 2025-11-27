@@ -420,7 +420,7 @@ pub const String = extern struct {
         comptime if (@typeInfo(Ctx) != .pointer) @compileError("context must be a pointer");
         bun.assert(bytes.len > 0);
         jsc.markBinding(@src());
-        if (bytes.len > max_length()) {
+        if (bytes.len >= max_length()) {
             if (callback) |cb| {
                 cb(ctx, @ptrCast(@constCast(bytes.ptr)), @truncate(bytes.len));
             }
@@ -460,7 +460,7 @@ pub const String = extern struct {
         jsc.markBinding(@src());
         bun.assert(bytes.len > 0);
 
-        if (bytes.len > max_length()) {
+        if (bytes.len >= max_length()) {
             bun.default_allocator.free(bytes);
             return dead;
         }

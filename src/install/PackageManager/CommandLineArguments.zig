@@ -27,6 +27,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("--save                                Save to package.json (true by default)") catch unreachable,
     clap.parseParam("--ca <STR>...                         Provide a Certificate Authority signing certificate") catch unreachable,
     clap.parseParam("--cafile <STR>                        The same as `--ca`, but is a file path to the certificate") catch unreachable,
+    clap.parseParam("--insecure                            Skip TLS/SSL certificate verification (dangerous, use only for debugging)") catch unreachable,
     clap.parseParam("--dry-run                             Don't install anything") catch unreachable,
     clap.parseParam("--frozen-lockfile                     Disallow changes to lockfile") catch unreachable,
     clap.parseParam("-f, --force                           Always request the latest versions from the registry & reinstall all dependencies") catch unreachable,
@@ -226,6 +227,7 @@ tolerate_republish: bool = false,
 
 ca: []const string = &.{},
 ca_file_name: string = "",
+insecure: bool = false,
 
 save_text_lockfile: ?bool = null,
 
@@ -824,6 +826,8 @@ pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !Com
     if (args.option("--cafile")) |ca_file_name| {
         cli.ca_file_name = ca_file_name;
     }
+
+    cli.insecure = args.flag("--insecure");
 
     if (args.option("--network-concurrency")) |network_concurrency| {
         cli.network_concurrency = std.fmt.parseInt(u16, network_concurrency, 10) catch {

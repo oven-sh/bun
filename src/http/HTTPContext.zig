@@ -49,6 +49,8 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
         pending_sockets: PooledSocketHiveAllocator,
         us_socket_context: *uws.SocketContext,
+        /// When true, TLS certificate verification is disabled (--insecure flag)
+        insecure: bool = false,
 
         const Context = @This();
         pub const HTTPSocket = uws.NewSocketHandler(ssl);
@@ -87,6 +89,8 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             if (!comptime ssl) {
                 @compileError("ssl only");
             }
+            // Custom contexts don't use the global insecure flag; client controls reject_unauthorized
+            this.insecure = false;
             var opts = client.tls_props.?.asUSockets();
             opts.request_cert = 1;
             opts.reject_unauthorized = 0;
@@ -123,11 +127,29 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             if (!comptime ssl) {
                 @compileError("ssl only");
             }
+            
+            // Store insecure flag for later use when creating HTTPClient instances
+            this.insecure = init_opts.insecure;
+            
+            // When insecure mode is enabled, disable all certificate verification
+            const reject_unauthorized: i32 = if (init_opts.insecure) 0 else 1;
+            
+            // Guard against overflow when casting ca.len to ca_count field type
+            const CaCountT = @TypeOf(@as(uws.SocketContext.BunSocketContextOptions, undefined).ca_count);
+            const ca_count_max = std.math.maxInt(CaCountT);
+            const ca_count_value: CaCountT = if (!init_opts.insecure) value: {
+                if (bun.Environment.isDebug) {
+                    bun.assert(init_opts.ca.len <= ca_count_max);
+                }
+                break :value @as(CaCountT, @intCast(@min(init_opts.ca.len, ca_count_max)));
+            } else 0;
+            
             var opts: uws.SocketContext.BunSocketContextOptions = .{
-                .ca = if (init_opts.ca.len > 0) @ptrCast(init_opts.ca) else null,
-                .ca_count = @intCast(init_opts.ca.len),
-                .ca_file_name = if (init_opts.abs_ca_file_name.len > 0) init_opts.abs_ca_file_name else null,
+                .ca = if (init_opts.ca.len > 0 and !init_opts.insecure) @ptrCast(init_opts.ca) else null,
+                .ca_count = ca_count_value,
+                .ca_file_name = if (init_opts.abs_ca_file_name.len > 0 and !init_opts.insecure) init_opts.abs_ca_file_name else null,
                 .request_cert = 1,
+                .reject_unauthorized = reject_unauthorized,
             };
 
             try this.initWithOpts(&opts);
@@ -452,6 +474,13 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
 
             client.connected_url = if (client.http_proxy) |proxy| proxy else client.url;
             client.connected_url.hostname = hostname;
+            
+            // Apply insecure flag from context to client
+            if (comptime ssl) {
+                if (this.insecure) {
+                    client.flags.reject_unauthorized = false;
+                }
+            }
 
             if (client.isKeepAlivePossible()) {
                 if (this.existingSocket(client.flags.reject_unauthorized, hostname, port)) |sock| {
@@ -493,6 +522,7 @@ const HTTPThread = @import("./HTTPThread.zig");
 const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
 
 const bun = @import("bun");
+const std = @import("std");
 const Environment = bun.Environment;
 const FeatureFlags = bun.FeatureFlags;
 const assert = bun.assert;

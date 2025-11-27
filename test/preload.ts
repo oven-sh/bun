@@ -5,14 +5,13 @@ import * as harness from "./harness";
 for (let key in process.env) {
   if (key === "TZ") continue;
   if (key in harness.bunEnv) continue;
+  if (key === "BUILDKITE_STEP_KEY") continue;
   delete process.env[key];
 }
 
 for (let key in harness.bunEnv) {
   if (key === "TZ") continue;
-  if (harness.bunEnv[key] === undefined) {
-    continue;
-  }
+  if (harness.bunEnv[key] === undefined) continue;
   process.env[key] = harness.bunEnv[key] + "";
 }
 

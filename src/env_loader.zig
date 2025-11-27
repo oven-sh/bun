@@ -751,7 +751,24 @@ pub const Loader = struct {
                 break :brk pos;
             }
 
-            const stat = try file.stat();
+            const stat = file.stat() catch |err| {
+                // On some systems (WSL1, certain Docker configurations), stat() may fail
+                // for valid empty files. Try to get the file size using getEndPos() as fallback.
+                const pos = file.getEndPos() catch {
+                    if (!this.quiet) {
+                        Output.prettyErrorln("<r><red>{s}<r> error getting file size for {s}", .{ @errorName(err), base });
+                    }
+                    @field(this, base) = logger.Source.initPathString(base, "");
+                    return;
+                };
+
+                if (pos == 0) {
+                    @field(this, base) = logger.Source.initPathString(base, "");
+                    return;
+                }
+
+                break :brk pos;
+            };
 
             if (stat.size == 0 or stat.kind != .file) {
                 @field(this, base) = logger.Source.initPathString(base, "");
@@ -824,7 +841,24 @@ pub const Loader = struct {
                 break :brk pos;
             }
 
-            const stat = try file.stat();
+            const stat = file.stat() catch |err| {
+                // On some systems (WSL1, certain Docker configurations), stat() may fail
+                // for valid empty files. Try to get the file size using getEndPos() as fallback.
+                const pos = file.getEndPos() catch {
+                    if (!this.quiet) {
+                        Output.prettyErrorln("<r><red>{s}<r> error getting file size for {s}", .{ @errorName(err), file_path });
+                    }
+                    try this.custom_files_loaded.put(file_path, logger.Source.initPathString(file_path, ""));
+                    return;
+                };
+
+                if (pos == 0) {
+                    try this.custom_files_loaded.put(file_path, logger.Source.initPathString(file_path, ""));
+                    return;
+                }
+
+                break :brk pos;
+            };
 
             if (stat.size == 0 or stat.kind != .file) {
                 try this.custom_files_loaded.put(file_path, logger.Source.initPathString(file_path, ""));

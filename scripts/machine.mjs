@@ -37,7 +37,6 @@ import {
   spawnSyncSafe,
   startGroup,
   tmpdir,
-  waitForPort,
   which,
   writeFile,
 } from "./utils.mjs";

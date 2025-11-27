@@ -1076,9 +1076,7 @@ async function getPipeline(options = {}) {
   const { buildPlatforms = [], testPlatforms = [], buildImages, publishImages } = options;
   const imagePlatforms = new Map(
     buildImages || publishImages
-      ? [...buildPlatforms, ...testPlatforms]
-          .filter(({ os }) => os !== "darwin")
-          .map(platform => [getImageKey(platform), platform])
+      ? [...buildPlatforms, ...testPlatforms].map(platform => [getImageKey(platform), platform])
       : [],
   );
 

@@ -591,10 +591,25 @@ pub const Resolver = struct {
         r.dir_cache.deinit();
     }
 
-    pub fn isExternalPattern(r: *ThisResolver, import_path: string) bool {
+    pub fn isExternalPattern(r: *ThisResolver, import_path: string, source_dir: string) bool {
         if (r.opts.packages == .external and isPackagePath(import_path)) {
             return true;
         }
+
+        if (r.opts.external.abs_paths.count() > 0) {
+            if (r.opts.external.abs_paths.contains(import_path)) {
+                return true;
+            }
+
+            if (import_path.len > 0 and import_path[0] == '.') {
+                const buf = bufs(.relative_abs_path);
+                const resolved = r.fs.absBuf(.{ source_dir, import_path }, buf);
+                if (r.opts.external.abs_paths.contains(resolved)) {
+                    return true;
+                }
+            }
+        }
+
         for (r.opts.external.patterns) |pattern| {
             if (import_path.len >= pattern.prefix.len + pattern.suffix.len and (strings.startsWith(
                 import_path,
@@ -699,7 +714,7 @@ pub const Resolver = struct {
         // Certain types of URLs default to being external for convenience,
         // while these rules should not be applied to the entrypoint as it is never external (#12734)
         if (kind != .entry_point_build and kind != .entry_point_run and
-            (r.isExternalPattern(import_path) or
+            (r.isExternalPattern(import_path, source_dir) or
                 // "fill: url(#filter);"
                 (kind.isFromCSS() and strings.startsWith(import_path, "#")) or
 

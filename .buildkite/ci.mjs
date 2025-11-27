@@ -664,7 +664,9 @@ function getReleaseStep(buildPlatforms, options) {
     agents: {
       queue: "test-darwin",
     },
-    depends_on: buildPlatforms.filter(p => p.os !== "freebsd").map(platform => `${getTargetKey(platform)}-build-bun`),
+    depends_on: buildPlatforms
+      .filter(p => !(p.os === "freebsd" || p.os === "darwin"))
+      .map(platform => `${getTargetKey(platform)}-build-bun`),
     env: {
       CANARY: revision,
     },

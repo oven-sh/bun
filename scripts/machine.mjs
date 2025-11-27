@@ -18,6 +18,7 @@ import {
   getSecret,
   getUsernameForDistro,
   homedir,
+  isBuildkite,
   isCI,
   isMacOS,
   isWindows,
@@ -1216,6 +1217,11 @@ async function main() {
         throw new Error(`Dockerfile not found: ${dockerfilePath}`);
       }
     }
+  }
+
+  if (isBuildkite && os === "darwin") {
+    // they don't have it preinstalled in the hosted image
+    await spawnSafe($`apt install tart sshpass`);
   }
 
   /** @type {Machine} */

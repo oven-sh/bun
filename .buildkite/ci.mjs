@@ -103,10 +103,10 @@ function getTargetLabel(target) {
  * @type {Platform[]}
  */
 const buildPlatforms = [
-  { os: "darwin", arch: "aarch64", distro: "macos", release: "13" },
-  { os: "darwin", arch: "aarch64", distro: "macos", release: "14" },
-  { os: "darwin", arch: "aarch64", distro: "macos", release: "15" },
-  { os: "darwin", arch: "aarch64", distro: "macos", release: "26" },
+  { os: "darwin", arch: "aarch64", release: "13" },
+  { os: "darwin", arch: "aarch64", release: "14" },
+  { os: "darwin", arch: "aarch64", release: "15" },
+  { os: "darwin", arch: "aarch64", release: "26" },
   { os: "darwin", arch: "x64", release: "14" },
   { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
@@ -1076,7 +1076,9 @@ async function getPipeline(options = {}) {
   const { buildPlatforms = [], testPlatforms = [], buildImages, publishImages } = options;
   const imagePlatforms = new Map(
     buildImages || publishImages
-      ? [...buildPlatforms, ...testPlatforms].map(platform => [getImageKey(platform), platform])
+      ? [...buildPlatforms, ...testPlatforms]
+          .filter(({ os, arch }) => !(os === "darwin" && arch === "x64"))
+          .map(platform => [getImageKey(platform), platform])
       : [],
   );
 

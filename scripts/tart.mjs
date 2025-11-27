@@ -84,14 +84,14 @@ export const tart = {
    * @returns {Promise<TartVm | undefined>}
    */
   async getVm(name) {
-    const { promise, resolve } = Promise.withResolvers();
-    const result = await this.spawn(["get", name], {
-      json: true,
-      throwOnError: error => !/does not exist/i.test(inspect(error)),
+    return new Promise(async resolve => {
+      const result = await this.spawn(["get", name], {
+        json: true,
+        throwOnError: error => !/does not exist/i.test(inspect(error)),
+      });
+      if (!result) resolve(undefined);
+      else resolve({ Name: name, ...result });
     });
-    if (!result) resolve(undefined);
-    else resolve({ Name: name, ...result });
-    return promise;
   },
 
   /**

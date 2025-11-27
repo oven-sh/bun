@@ -174,6 +174,7 @@ startGroup("CLI Options", () => {
 
 const cliOptions = options;
 const isASAN = options["step"]?.includes("-asan-");
+const isLSAN = options["step"]?.includes("-lsan-");
 
 if (cliOptions.junit) {
   try {

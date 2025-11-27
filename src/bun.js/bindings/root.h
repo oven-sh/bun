@@ -86,6 +86,10 @@
 #include <wtf/ThreadSafeRefCounted.h>
 #endif
 
+#if USE(MIMALLOC)
+#include <mimalloc.h>
+#endif
+
 #define ENABLE_WEB_CRYPTO 1
 #define USE_OPENSSL 1
 #define HAVE_RSA_PSS 1

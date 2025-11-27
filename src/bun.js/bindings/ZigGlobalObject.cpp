@@ -1812,10 +1812,19 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_lazyTestModuleObject.initLater(
         [](const Initializer<JSObject>& init) {
-            JSC::JSGlobalObject* globalObject = init.owner;
+            auto* globalObject = jsCast<Zig::GlobalObject*>(init.owner);
+            auto& vm = init.vm;
 
             JSValue result = JSValue::decode(Bun__Jest__createTestModuleObject(globalObject));
-            init.set(result.toObject(globalObject));
+            JSObject* testModule = result.toObject(globalObject);
+
+            // Add node:assert as "assert" export for vitest compatibility
+            JSValue assertModule = globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::Field::NodeAssert);
+            if (assertModule && !assertModule.isUndefinedOrNull()) {
+                testModule->putDirect(vm, Identifier::fromString(vm, "assert"_s), assertModule);
+            }
+
+            init.set(testModule);
         });
 
     m_testMatcherUtilsObject.initLater(

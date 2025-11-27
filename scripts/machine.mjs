@@ -18,7 +18,6 @@ import {
   getSecret,
   getUsernameForDistro,
   homedir,
-  isBuildkite,
   isCI,
   isMacOS,
   isWindows,

@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { mkdir, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -73,7 +73,7 @@ it("should list only linked packages with --link", async () => {
       stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
-      env,
+      env: bunEnv,
     });
     expect(await exited).toBe(0);
   }
@@ -86,17 +86,17 @@ it("should list only linked packages with --link", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: bunEnv,
   });
 
   expect(await stderr.text()).toBe("");
   const output = await stdout.text();
-  expect(await exited).toBe(0);
 
   // Should contain 'b'
   expect(output).toContain("b@workspace:");
   // Should NOT contain 'lodash'
   expect(output).not.toContain("lodash");
+  expect(await exited).toBe(0);
 });
 
 it("should list only linked packages with --link --all", async () => {
@@ -152,7 +152,7 @@ it("should list only linked packages with --link --all", async () => {
       stdout: "pipe",
       stdin: "pipe",
       stderr: "pipe",
-      env,
+      env: bunEnv,
     });
     expect(await exited).toBe(0);
   }
@@ -165,16 +165,16 @@ it("should list only linked packages with --link --all", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: bunEnv,
   });
 
   expect(await stderr.text()).toBe("");
   const output = await stdout.text();
-  expect(await exited).toBe(0);
 
   // Should contain 'b' and 'a'
   expect(output).toContain("b@workspace:");
   expect(output).toContain("a@workspace:");
   // Should NOT contain 'lodash'
   expect(output).not.toContain("lodash");
+  expect(await exited).toBe(0);
 });

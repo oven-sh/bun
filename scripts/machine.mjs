@@ -1219,11 +1219,6 @@ async function main() {
     }
   }
 
-  if (isBuildkite && os === "darwin") {
-    // they don't have it preinstalled in the hosted image
-    await spawnSafe($`apt install tart sshpass`);
-  }
-
   /** @type {Machine} */
   const machine = await startGroup("Creating machine...", async () => {
     console.log("Creating machine:");

@@ -106,11 +106,12 @@
 #define ZIG_EXPORT(...)
 #define ZIG_NONNULL
 
-inline void bun_free(void* ptr) {
+inline void bun_free(void* ptr)
+{
 #if USE(MIMALLOC)
-   mi_free(ptr);
+    mi_free(ptr);
 #else
-   free(ptr);
+    free(ptr);
 #endif
 }
 

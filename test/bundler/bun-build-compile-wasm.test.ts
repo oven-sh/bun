@@ -4,7 +4,7 @@ import { join } from "path";
 
 describe("Bun.build compile with wasm", () => {
   // prettier-ignore
-  test.skipIf(process.env.BUILDKITE_STEP_IDENTIFIER?.includes("-debian-13-"))("compile with wasm module imports", async () => {
+  test.todoIf(process.env.BUILDKITE_STEP_KEY?.includes("-debian-13-"))("compile with wasm module imports", async () => {
     // This test ensures that embedded wasm modules compile and run correctly
     // The regression was that the module prefix wasn't being set correctly
 

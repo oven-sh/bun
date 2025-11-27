@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // prettier-ignore
-test.skipIf(process.env.BUILDKITE_STEP_IDENTIFIER?.includes("-asan-debian-13-"))("sleep should saturate timeout values", async () => {
+test.todoIf(process.env.BUILDKITE_STEP_KEY?.includes("-asan-debian-13-"))("sleep should saturate timeout values", async () => {
   const fixturesThatShouldTimeout = [
     "Infinity",
     "999999999999999",

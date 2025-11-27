@@ -247,8 +247,8 @@ pub const PathWatcherManager = struct {
 
                         const hash = Watcher.getHash(path_slice);
 
-                        // skip consecutive duplicates
-                        const event_type: PathWatcher.EventType = .rename; // renaming folders, creating folder or files will be always be rename
+                        // Renaming folders and creating folder/files will all be rename events. Otherwise, we have a change event on a watched subfile.
+                        const event_type: PathWatcher.EventType = if (event.op.delete or event.op.rename or event.op.move_to) .rename else .change;
                         for (watchers) |w| {
                             if (w) |watcher| {
                                 if (comptime Environment.isMac) {
@@ -275,6 +275,7 @@ pub const PathWatcherManager = struct {
                                     continue;
                                 }
 
+                                // emit() filters consecutive duplicates out before flushing.
                                 watcher.emit(event_type.toEvent(path), hash, timestamp, false);
                             }
                         }
@@ -840,9 +841,9 @@ pub const PathWatcher = struct {
                 };
 
                 const time_diff = time_stamp - this.last_change_event.time_stamp;
-                if (!((this.last_change_event.time_stamp == 0 or time_diff > 1) or
-                    this.last_change_event.event_type != event_type and
-                        this.last_change_event.hash != hash))
+                if (!(this.last_change_event.time_stamp == 0 or time_diff > 1) or
+                    (this.last_change_event.event_type == event_type and
+                    this.last_change_event.hash == hash))
                 {
                     // skip consecutive duplicates
                     return;
@@ -850,6 +851,7 @@ pub const PathWatcher = struct {
 
                 this.last_change_event.time_stamp = time_stamp;
                 this.last_change_event.event_type = event_type;
+                this.last_change_event.hash = hash;
             },
             else => {},
         }

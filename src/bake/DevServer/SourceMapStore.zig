@@ -91,7 +91,7 @@ pub const Entry = struct {
         );
 
         // This buffer is temporary, holding the quoted source paths, joined with commas.
-        var source_map_strings = std.ArrayList(u8).init(arena);
+        var source_map_strings = std.array_list.Managed(u8).init(arena);
         defer source_map_strings.deinit();
 
         const buf = bun.path_buffer_pool.get();
@@ -203,7 +203,7 @@ pub const Entry = struct {
     fn encodeSourceMapPath(
         side: bake.Side,
         utf8_input: []const u8,
-        array_list: *std.ArrayList(u8),
+        array_list: *std.array_list.Managed(u8),
     ) error{ OutOfMemory, IncompleteUTF8 }!void {
         // On the client, percent encode everything so it works in the browser
         if (side == .client) {
@@ -273,7 +273,11 @@ pub const Entry = struct {
             .none => {
                 // NOTE: It is too late to compute the line count since the bundled text may
                 // have been freed already. For example, a HMR chunk is never persisted.
-                @panic("Missing internal precomputed line count.");
+                // We could return an error here but what would be a better behavior for renderJSON and renderMappings?
+                // This is a dev server, crashing is not a good DX, we could fail the request but that's not a good DX either.
+                if (bun.Environment.enable_logs) {
+                    mapLog("Skipping source map entry with missing line count at index {d}", .{i});
+                }
             },
         };
     }
@@ -544,7 +548,7 @@ pub fn getParsedSourceMap(store: *Self, script_id: Key, arena: Allocator, gpa: A
 const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
-const SourceMap = bun.sourcemap;
+const SourceMap = bun.SourceMap;
 const StringJoiner = bun.StringJoiner;
 const assert = bun.assert;
 const bake = bun.bake;

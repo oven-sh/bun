@@ -3,7 +3,7 @@ import https from "node:https";
 const { expect } = createTest(import.meta.path);
 
 // TODO: today we use a workaround to continue event, we need to fix it in the future.
-using server = exampleSite();
+const server = exampleSite();
 let receivedContinue = false;
 const req = https.request(
   server.url,

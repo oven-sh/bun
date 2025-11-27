@@ -84,18 +84,17 @@ pub fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, t
     } else {
         // in non-file namespaces, standard filesystem rules do not apply.
         var path_clone = path;
-        path_clone.pretty = std.fmt.bufPrint(buf, "{s}{}:{s}", .{
+        path_clone.pretty = std.fmt.bufPrint(buf, "{s}{f}:{s}", .{
             if (target == .bake_server_components_ssr) "ssr:" else "",
             // make sure that a namespace including a colon wont collide with anything
-            std.fmt.Formatter(fmtEscapedNamespace){ .data = path.namespace },
+            std.fmt.Alt([]const u8, fmtEscapedNamespace){ .data = path.namespace },
             path.text,
         }) catch buf[0..];
         return path_clone.dupeAllocFixPretty(allocator);
     }
 }
 
-fn fmtEscapedNamespace(slice: []const u8, comptime fmt: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
-    comptime bun.assert(fmt.len == 0);
+fn fmtEscapedNamespace(slice: []const u8, w: *std.Io.Writer) !void {
     var rest = slice;
     while (bun.strings.indexOfChar(rest, ':')) |i| {
         try w.writeAll(rest[0..i]);
@@ -125,7 +124,7 @@ pub const BundleV2 = struct {
     resolve_tasks_waiting_for_import_source_index: std.AutoArrayHashMapUnmanaged(Index.Int, BabyList(struct { to_source_index: Index, import_record_index: u32 })) = .{},
 
     /// Allocations not tracked by a threadlocal heap
-    free_list: std.ArrayList([]const u8) = std.ArrayList([]const u8).init(bun.default_allocator),
+    free_list: std.array_list.Managed([]const u8) = std.array_list.Managed([]const u8).init(bun.default_allocator),
 
     /// See the comment in `Chunk.OutputPiece`
     unique_key: u64 = 0,
@@ -265,7 +264,7 @@ pub const BundleV2 = struct {
     }
 
     const ReachableFileVisitor = struct {
-        reachable: std.ArrayList(Index),
+        reachable: std.array_list.Managed(Index),
         visited: bun.bit_set.DynamicBitSet,
         all_import_records: []ImportRecord.List,
         all_loaders: []const Loader,
@@ -395,7 +394,7 @@ pub const BundleV2 = struct {
         const all_urls_for_css = this.graph.ast.items(.url_for_css);
 
         var visitor = ReachableFileVisitor{
-            .reachable = try std.ArrayList(Index).initCapacity(this.allocator(), this.graph.entry_points.items.len + 1),
+            .reachable = try std.array_list.Managed(Index).initCapacity(this.allocator(), this.graph.entry_points.items.len + 1),
             .visited = try bun.bit_set.DynamicBitSet.initEmpty(this.allocator(), this.graph.input_files.len),
             .redirects = this.graph.ast.items(.redirect_import_record_index),
             .all_import_records = this.graph.ast.items(.import_records),
@@ -432,7 +431,7 @@ pub const BundleV2 = struct {
             const targets: []options.Target = this.graph.ast.items(.target);
             for (visitor.reachable.items) |idx| {
                 const source = sources[idx.get()];
-                DebugLog.log("reachable file: #{d} {} ({s}) target=.{s}", .{
+                DebugLog.log("reachable file: #{d} {f} ({s}) target=.{s}", .{
                     source.index.get(),
                     bun.fmt.quote(source.path.pretty),
                     source.path.text,
@@ -1215,20 +1214,20 @@ pub const BundleV2 = struct {
                 if (!sc.separate_ssr_graph) bun.todoPanic(@src(), "separate_ssr_graph=false", .{});
 
                 const client_path = server.newExpr(E.String{
-                    .data = try std.fmt.allocPrint(alloc, "{}S{d:0>8}", .{
+                    .data = try std.fmt.allocPrint(alloc, "{f}S{d:0>8}", .{
                         bun.fmt.hexIntLower(this.unique_key),
                         source_id,
                     }),
                 });
                 const ssr_path = server.newExpr(E.String{
-                    .data = try std.fmt.allocPrint(alloc, "{}S{d:0>8}", .{
+                    .data = try std.fmt.allocPrint(alloc, "{f}S{d:0>8}", .{
                         bun.fmt.hexIntLower(this.unique_key),
                         ssr_index,
                     }),
                 });
 
                 for (keys, client_manifest_items) |export_name_string, *client_item| {
-                    const server_key_string = try std.fmt.allocPrint(alloc, "{}S{d:0>8}#{s}", .{
+                    const server_key_string = try std.fmt.allocPrint(alloc, "{f}S{d:0>8}#{s}", .{
                         bun.fmt.hexIntLower(this.unique_key),
                         source_id,
                         export_name_string,
@@ -1482,7 +1481,7 @@ pub const BundleV2 = struct {
         minify_duration: *u64,
         source_code_size: *u64,
         fetcher: ?*DependenciesScanner,
-    ) !std.ArrayList(options.OutputFile) {
+    ) !std.array_list.Managed(options.OutputFile) {
         var this = try BundleV2.init(
             transpiler,
             null,
@@ -1536,7 +1535,7 @@ pub const BundleV2 = struct {
         // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
         if (fetcher) |fetch| {
             try this.getAllDependencies(reachable_files, fetch);
-            return std.ArrayList(options.OutputFile).init(alloc);
+            return std.array_list.Managed(options.OutputFile).init(alloc);
         }
 
         return try this.linker.generateChunksInParallel(chunks, false);
@@ -1548,7 +1547,7 @@ pub const BundleV2 = struct {
         bake_options: BakeOptions,
         alloc: std.mem.Allocator,
         event_loop: EventLoop,
-    ) !std.ArrayList(options.OutputFile) {
+    ) !std.array_list.Managed(options.OutputFile) {
         var this = try BundleV2.init(
             server_transpiler,
             bake_options,
@@ -1596,7 +1595,7 @@ pub const BundleV2 = struct {
         );
 
         if (chunks.len == 0) {
-            return std.ArrayList(options.OutputFile).init(bun.default_allocator);
+            return std.array_list.Managed(options.OutputFile).init(bun.default_allocator);
         }
 
         return try this.linker.generateChunksInParallel(chunks, false);
@@ -1627,7 +1626,7 @@ pub const BundleV2 = struct {
             const content_hashes_for_additional_files = this.graph.input_files.items(.content_hash_for_additional_file);
             const sources: []const Logger.Source = this.graph.input_files.items(.source);
             const targets: []const options.Target = this.graph.ast.items(.target);
-            var additional_output_files = std.ArrayList(options.OutputFile).init(this.transpiler.allocator);
+            var additional_output_files = std.array_list.Managed(options.OutputFile).init(this.transpiler.allocator);
 
             const additional_files: []BabyList(AdditionalFile) = this.graph.input_files.items(.additional_files);
             const loaders = this.graph.input_files.items(.loader);
@@ -1668,7 +1667,7 @@ pub const BundleV2 = struct {
                         if (template.needs(.target)) {
                             template.placeholder.target = @tagName(target);
                         }
-                        break :brk bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{}", .{template}));
+                        break :brk bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{f}", .{template}));
                     };
 
                     const loader = loaders[index];
@@ -1750,7 +1749,7 @@ pub const BundleV2 = struct {
     }
 
     pub const BuildResult = struct {
-        output_files: std.ArrayList(options.OutputFile),
+        output_files: std.array_list.Managed(options.OutputFile),
 
         pub fn deinit(this: *BuildResult) void {
             for (this.output_files.items) |*output_file| {
@@ -1937,7 +1936,7 @@ pub const BundleV2 = struct {
             bun.destroy(this);
         }
 
-        fn doCompilation(this: *JSBundleCompletionTask, output_files: *std.ArrayList(options.OutputFile)) bun.StandaloneModuleGraph.CompileResult {
+        fn doCompilation(this: *JSBundleCompletionTask, output_files: *std.array_list.Managed(options.OutputFile)) bun.StandaloneModuleGraph.CompileResult {
             const compile_options = &(this.config.compile orelse @panic("Unexpected: No compile options provided"));
 
             const entry_point_index: usize = brk: {
@@ -2043,6 +2042,10 @@ pub const BundleV2 = struct {
                     compile_options.executable_path.slice()
                 else
                     null,
+                .{
+                    .disable_default_env_files = !compile_options.autoload_dotenv,
+                    .disable_autoload_bunfig = !compile_options.autoload_bunfig,
+                },
             ) catch |err| {
                 return bun.StandaloneModuleGraph.CompileResult.failFmt("{s}", .{@errorName(err)});
             };
@@ -2066,7 +2069,7 @@ pub const BundleV2 = struct {
         }
 
         /// Returns true if the promises were handled and resolved from BundlePlugin.ts, returns false if the caller should imediately resolve
-        fn runOnEndCallbacks(globalThis: *jsc.JSGlobalObject, plugin: *bun.jsc.API.JSBundler.Plugin, promise: *jsc.JSPromise, build_result: jsc.JSValue, rejection: jsc.JSValue) bun.JSError!bool {
+        fn runOnEndCallbacks(globalThis: *jsc.JSGlobalObject, plugin: *bun.jsc.API.JSBundler.Plugin, promise: *jsc.JSPromise, build_result: jsc.JSValue, rejection: bun.JSError!jsc.JSValue) bun.JSError!bool {
             const value = try plugin.runOnEndCallbacks(globalThis, promise, build_result, rejection);
             return value != .js_undefined;
         }
@@ -2091,22 +2094,20 @@ pub const BundleV2 = struct {
 
             const didHandleCallbacks = if (this.plugins) |plugin| blk: {
                 if (throw_on_error) {
-                    const aggregate_error = this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed")) catch |e| globalThis.takeException(e);
+                    const aggregate_error = this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed"));
                     break :blk runOnEndCallbacks(globalThis, plugin, promise, build_result, aggregate_error) catch |err| {
-                        const exception = globalThis.takeException(err);
-                        return promise.reject(globalThis, exception);
+                        return promise.reject(globalThis, err);
                     };
                 } else {
                     break :blk runOnEndCallbacks(globalThis, plugin, promise, build_result, .js_undefined) catch |err| {
-                        const exception = globalThis.takeException(err);
-                        return promise.reject(globalThis, exception);
+                        return promise.reject(globalThis, err);
                     };
                 }
             } else false;
 
             if (!didHandleCallbacks) {
                 if (throw_on_error) {
-                    const aggregate_error = this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed")) catch |e| globalThis.takeException(e);
+                    const aggregate_error = this.log.toJSAggregateError(globalThis, bun.String.static("Bundle failed"));
                     return promise.reject(globalThis, aggregate_error);
                 } else {
                     return promise.resolve(globalThis, build_result);
@@ -2148,7 +2149,6 @@ pub const BundleV2 = struct {
                 .pending => unreachable,
                 .err => try this.toJSError(promise, globalThis),
                 .value => |*build| {
-                    const build_output = jsc.JSValue.createEmptyObject(globalThis, 3);
                     const output_files = build.output_files.items;
                     const output_files_js = jsc.JSValue.createEmptyArray(globalThis, output_files.len) catch return promise.reject(globalThis, error.JSError);
                     if (output_files_js == .zero) {
@@ -2200,7 +2200,7 @@ pub const BundleV2 = struct {
                             return promise.reject(globalThis, err);
                         };
                     }
-
+                    const build_output = jsc.JSValue.createEmptyObject(globalThis, 3);
                     build_output.put(globalThis, jsc.ZigString.static("outputs"), output_files_js);
                     build_output.put(globalThis, jsc.ZigString.static("success"), .true);
                     build_output.put(
@@ -2212,8 +2212,7 @@ pub const BundleV2 = struct {
                     );
 
                     const didHandleCallbacks = if (this.plugins) |plugin| runOnEndCallbacks(globalThis, plugin, promise, build_output, .js_undefined) catch |err| {
-                        const exception = globalThis.takeException(err);
-                        return promise.reject(globalThis, exception);
+                        return promise.reject(globalThis, err);
                     } else false;
 
                     if (!didHandleCallbacks) {
@@ -2286,7 +2285,7 @@ pub const BundleV2 = struct {
 
                 // When it's not a file, this is a build error and we should report it.
                 // we have no way of loading non-files.
-                log.addErrorFmt(source, Logger.Loc.Empty, bun.default_allocator, "Module not found {} in namespace {}", .{
+                log.addErrorFmt(source, Logger.Loc.Empty, bun.default_allocator, "Module not found {f} in namespace {f}", .{
                     bun.fmt.quote(source.path.pretty),
                     bun.fmt.quote(source.path.namespace),
                 }) catch {};
@@ -2353,7 +2352,7 @@ pub const BundleV2 = struct {
                         .clone_line_text = false,
                         .errors = @intFromBool(msg.kind == .err),
                         .warnings = @intFromBool(msg.kind == .warn),
-                        .msgs = std.ArrayList(Logger.Msg).fromOwnedSlice(this.allocator(), (&msg_mut)[0..1]),
+                        .msgs = std.array_list.Managed(Logger.Msg).fromOwnedSlice(this.allocator(), (&msg_mut)[0..1]),
                     };
                     dev.handleParseTaskFailure(
                         error.Plugin,
@@ -2422,7 +2421,7 @@ pub const BundleV2 = struct {
                 //
                 // We have no way of loading non-files.
                 if (resolve.import_record.kind == .entry_point_build) {
-                    log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Module not found {} in namespace {}", .{
+                    log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Module not found {f} in namespace {f}", .{
                         bun.fmt.quote(resolve.import_record.specifier),
                         bun.fmt.quote(resolve.import_record.namespace),
                     }) catch {};
@@ -2432,7 +2431,7 @@ pub const BundleV2 = struct {
                         source,
                         resolve.import_record.range,
                         bun.default_allocator,
-                        "Module not found {} in namespace {}",
+                        "Module not found {f} in namespace {f}",
                         .{
                             bun.fmt.quote(resolve.import_record.specifier),
                             bun.fmt.quote(resolve.import_record.namespace),
@@ -2599,7 +2598,7 @@ pub const BundleV2 = struct {
     pub fn runFromJSInNewThread(
         this: *BundleV2,
         entry_points: []const []const u8,
-    ) !std.ArrayList(options.OutputFile) {
+    ) !std.array_list.Managed(options.OutputFile) {
         this.unique_key = generateUniqueKey();
 
         if (this.transpiler.log.errors > 0) {
@@ -2868,7 +2867,7 @@ pub const BundleV2 = struct {
                     .parts_in_chunk_in_order = js_part_ranges,
                 },
             },
-            .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
+            .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
         };
 
         // Then all the distinct CSS bundles (these are JS->CSS, not CSS->CSS)
@@ -2886,7 +2885,7 @@ pub const BundleV2 = struct {
                         .asts = try this.allocator().alloc(bun.css.BundlerStyleSheet, order.len),
                     },
                 },
-                .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
+                .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
             };
         }
 
@@ -2899,7 +2898,7 @@ pub const BundleV2 = struct {
                     .is_entry_point = false,
                 },
                 .content = .html,
-                .output_source_map = sourcemap.SourceMapPieces.init(this.allocator()),
+                .output_source_map = SourceMap.SourceMapPieces.init(this.allocator()),
             };
         }
 
@@ -3515,7 +3514,7 @@ pub const BundleV2 = struct {
         var js_parser_options = bun.js_parser.Parser.Options.init(this.transpilerForTarget(target).options.jsx, .html);
         js_parser_options.bundle = true;
 
-        const unique_key = try std.fmt.allocPrint(this.allocator(), "{any}H{d:0>8}", .{
+        const unique_key = try std.fmt.allocPrint(this.allocator(), "{f}H{d:0>8}", .{
             bun.fmt.hexIntLower(this.unique_key),
             graph.html_imports.server_source_indices.len,
         });
@@ -4210,7 +4209,7 @@ pub const CrossChunkImport = struct {
         return std.math.order(a.chunk_index, b.chunk_index) == .lt;
     }
 
-    pub const List = std.ArrayList(CrossChunkImport);
+    pub const List = std.array_list.Managed(CrossChunkImport);
 
     pub fn sortedCrossChunkImports(
         list: *List,
@@ -4264,7 +4263,7 @@ pub const CompileResult = union(enum) {
     css: struct {
         result: bun.Maybe([]const u8, anyerror),
         source_index: Index.Int,
-        source_map: ?bun.sourcemap.Chunk = null,
+        source_map: ?bun.SourceMap.Chunk = null,
     },
     html: struct {
         source_index: Index.Int,
@@ -4295,7 +4294,7 @@ pub const CompileResult = union(enum) {
         };
     }
 
-    pub fn sourceMapChunk(this: *const CompileResult) ?sourcemap.Chunk {
+    pub fn sourceMapChunk(this: *const CompileResult) ?SourceMap.Chunk {
         return switch (this.*) {
             .javascript => |r| switch (r.result) {
                 .result => |r2| r2.source_map,
@@ -4314,8 +4313,8 @@ pub const CompileResult = union(enum) {
 };
 
 pub const CompileResultForSourceMap = struct {
-    source_map_chunk: sourcemap.Chunk,
-    generated_offset: sourcemap.LineColumnOffset,
+    source_map_chunk: SourceMap.Chunk,
+    generated_offset: SourceMap.LineColumnOffset,
     source_index: u32,
 };
 
@@ -4444,7 +4443,7 @@ pub fn generateUniqueKey() u64 {
     // with a number forces that optimization off.
     if (Environment.isDebug) {
         var buf: [16]u8 = undefined;
-        const hex = std.fmt.bufPrint(&buf, "{}", .{bun.fmt.hexIntLower(key)}) catch
+        const hex = std.fmt.bufPrint(&buf, "{f}", .{bun.fmt.hexIntLower(key)}) catch
             unreachable;
         switch (hex[0]) {
             '0'...'9' => {},
@@ -4455,7 +4454,7 @@ pub fn generateUniqueKey() u64 {
 }
 
 const ExternalFreeFunctionAllocator = struct {
-    free_callback: *const fn (ctx: *anyopaque) callconv(.C) void,
+    free_callback: *const fn (ctx: *anyopaque) callconv(.c) void,
     context: *anyopaque,
 
     const vtable: std.mem.Allocator.VTable = .{
@@ -4465,7 +4464,7 @@ const ExternalFreeFunctionAllocator = struct {
         .remap = &std.mem.Allocator.noRemap,
     };
 
-    pub fn create(free_callback: *const fn (ctx: *anyopaque) callconv(.C) void, context: *anyopaque) std.mem.Allocator {
+    pub fn create(free_callback: *const fn (ctx: *anyopaque) callconv(.c) void, context: *anyopaque) std.mem.Allocator {
         return .{
             .ptr = bun.create(bun.default_allocator, ExternalFreeFunctionAllocator, .{
                 .free_callback = free_callback,
@@ -4480,7 +4479,7 @@ const ExternalFreeFunctionAllocator = struct {
     }
 
     fn free(ext_free_function: *anyopaque, _: []u8, _: std.mem.Alignment, _: usize) void {
-        const info: *ExternalFreeFunctionAllocator = @alignCast(@ptrCast(ext_free_function));
+        const info: *ExternalFreeFunctionAllocator = @ptrCast(@alignCast(ext_free_function));
         info.free_callback(info.context);
         bun.default_allocator.destroy(info);
     }
@@ -4503,7 +4502,7 @@ pub const Part = js_ast.Part;
 pub const js_printer = @import("../js_printer.zig");
 pub const js_ast = bun.ast;
 pub const linker = @import("../linker.zig");
-pub const sourcemap = bun.sourcemap;
+pub const SourceMap = bun.SourceMap;
 pub const StringJoiner = bun.StringJoiner;
 pub const base64 = bun.base64;
 pub const Ref = bun.ast.Ref;

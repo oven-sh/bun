@@ -55,7 +55,12 @@ RUN apt-get update -qq \
     && which bun \
     && bun --version
 
-FROM gcr.io/distroless/base-nossl-debian11
+# Create symlinks in build stage (where shell is available)
+RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx \
+    && mkdir -p /usr/local/bun-node-fallback-bin \
+    && ln -s /usr/local/bin/bun /usr/local/bun-node-fallback-bin/node
+
+FROM gcr.io/distroless/base-debian12
 
 # Disable the runtime transpiler cache by default inside Docker containers.
 # On ephemeral containers, the cache is not useful
@@ -67,18 +72,8 @@ ARG BUN_INSTALL_BIN=/usr/local/bin
 ENV BUN_INSTALL_BIN=${BUN_INSTALL_BIN}
 
 COPY --from=build /usr/local/bin/bun /usr/local/bin/
-ENV PATH "${PATH}:/usr/local/bun-node-fallback-bin"
-
-# Temporarily use the `build`-stage image binaries to create a symlink:
-RUN --mount=type=bind,from=build,source=/usr/bin,target=/usr/bin \
-    --mount=type=bind,from=build,source=/bin,target=/bin \
-    --mount=type=bind,from=build,source=/usr/lib,target=/usr/lib \
-    --mount=type=bind,from=build,source=/lib,target=/lib \
-    <<EOF
-  ln -s /usr/local/bin/bun /usr/local/bin/bunx
-  which bunx
-  mkdir -p /usr/local/bun-node-fallback-bin
-  ln -s /usr/local/bin/bun /usr/local/bun-node-fallback-bin/nodebun
-EOF
+COPY --from=build /usr/local/bin/bunx /usr/local/bin/
+COPY --from=build /usr/local/bun-node-fallback-bin /usr/local/bun-node-fallback-bin/
+ENV PATH="${PATH}:/usr/local/bun-node-fallback-bin"
 
 ENTRYPOINT ["/usr/local/bin/bun"]

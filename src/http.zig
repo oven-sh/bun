@@ -328,10 +328,29 @@ fn writeProxyConnect(
 
     _ = writer.write("\r\nProxy-Connection: Keep-Alive\r\n") catch 0;
 
+    // Check if user provided Proxy-Authorization in custom headers
+    const user_provided_proxy_auth = if (client.proxy_headers) |hdrs| hdrs.get("proxy-authorization") != null else false;
+
+    // Only write auto-generated proxy_authorization if user didn't provide one
     if (client.proxy_authorization) |auth| {
-        _ = writer.write("Proxy-Authorization: ") catch 0;
-        _ = writer.write(auth) catch 0;
-        _ = writer.write("\r\n") catch 0;
+        if (!user_provided_proxy_auth) {
+            _ = writer.write("Proxy-Authorization: ") catch 0;
+            _ = writer.write(auth) catch 0;
+            _ = writer.write("\r\n") catch 0;
+        }
+    }
+
+    // Write custom proxy headers
+    if (client.proxy_headers) |hdrs| {
+        const slice = hdrs.entries.slice();
+        const names = slice.items(.name);
+        const values = slice.items(.value);
+        for (names, 0..) |name_ptr, idx| {
+            _ = writer.write(hdrs.asStr(name_ptr)) catch 0;
+            _ = writer.write(": ") catch 0;
+            _ = writer.write(hdrs.asStr(values[idx])) catch 0;
+            _ = writer.write("\r\n") catch 0;
+        }
     }
 
     _ = writer.write("\r\n") catch 0;
@@ -359,11 +378,31 @@ fn writeProxyRequest(
     _ = writer.write(request.path) catch 0;
     _ = writer.write(" HTTP/1.1\r\nProxy-Connection: Keep-Alive\r\n") catch 0;
 
+    // Check if user provided Proxy-Authorization in custom headers
+    const user_provided_proxy_auth = if (client.proxy_headers) |hdrs| hdrs.get("proxy-authorization") != null else false;
+
+    // Only write auto-generated proxy_authorization if user didn't provide one
     if (client.proxy_authorization) |auth| {
-        _ = writer.write("Proxy-Authorization: ") catch 0;
-        _ = writer.write(auth) catch 0;
-        _ = writer.write("\r\n") catch 0;
+        if (!user_provided_proxy_auth) {
+            _ = writer.write("Proxy-Authorization: ") catch 0;
+            _ = writer.write(auth) catch 0;
+            _ = writer.write("\r\n") catch 0;
+        }
     }
+
+    // Write custom proxy headers
+    if (client.proxy_headers) |hdrs| {
+        const slice = hdrs.entries.slice();
+        const names = slice.items(.name);
+        const values = slice.items(.value);
+        for (names, 0..) |name_ptr, idx| {
+            _ = writer.write(hdrs.asStr(name_ptr)) catch 0;
+            _ = writer.write(": ") catch 0;
+            _ = writer.write(hdrs.asStr(values[idx])) catch 0;
+            _ = writer.write("\r\n") catch 0;
+        }
+    }
+
     for (request.headers) |header| {
         _ = writer.write(header.name) catch 0;
         _ = writer.write(": ") catch 0;
@@ -450,6 +489,7 @@ if_modified_since: string = "",
 request_content_len_buf: ["-4294967295".len]u8 = undefined,
 
 http_proxy: ?URL = null,
+proxy_headers: ?Headers = null,
 proxy_authorization: ?[]u8 = null,
 proxy_tunnel: ?*ProxyTunnel = null,
 signals: Signals = .{},
@@ -465,6 +505,10 @@ pub fn deinit(this: *HTTPClient) void {
     if (this.proxy_authorization) |auth| {
         this.allocator.free(auth);
         this.proxy_authorization = null;
+    }
+    if (this.proxy_headers) |*hdrs| {
+        hdrs.deinit();
+        this.proxy_headers = null;
     }
     if (this.proxy_tunnel) |tunnel| {
         this.proxy_tunnel = null;

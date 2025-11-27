@@ -295,4 +295,82 @@ import path from "path";
     expect(fs.existsSync(path.join(temp, "src/components"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "src/components/ui"))).toBe(true);
   }, 30_000);
+
+  test("bun init creates .claude/skills structure", async () => {
+    const temp = tempDirWithFiles("bun-init-claude-skills", {});
+
+    // Mock Claude Code installation by setting environment variable
+    const { exited } = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: temp,
+      stdio: ["ignore", "inherit", "inherit"],
+      env: { ...bunEnv, PATH: bunEnv.PATH + ":/tmp/fake-claude" },
+    });
+
+    expect(await exited).toBe(0);
+
+    // Check skill file exists
+    const skillPath = path.join(temp, ".claude/skills/use-bun-instead-of-node-vite-npm-pnpm/SKILL.md");
+    expect(fs.existsSync(skillPath)).toBe(true);
+
+    // Check skill content
+    const skillContent = fs.readFileSync(skillPath, "utf8");
+    expect(skillContent).toInclude("name: use-bun-instead-of-node-vite-npm-pnpm");
+    expect(skillContent).toInclude("Use Bun instead of Node.js");
+    expect(skillContent).not.toInclude("{{SKILL_NAME}}");
+  }, 30_000);
+
+  test("bun init creates CLAUDE.md with skill reference", async () => {
+    const temp = tempDirWithFiles("bun-init-claude-md", {});
+
+    // Mock Claude Code installation
+    const { exited } = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: temp,
+      stdio: ["ignore", "inherit", "inherit"],
+      env: { ...bunEnv, PATH: bunEnv.PATH + ":/tmp/fake-claude" },
+    });
+
+    expect(await exited).toBe(0);
+
+    // Check CLAUDE.md exists
+    const claudeMdPath = path.join(temp, "CLAUDE.md");
+    expect(fs.existsSync(claudeMdPath)).toBe(true);
+
+    // Check CLAUDE.md content
+    const claudeMdContent = fs.readFileSync(claudeMdPath, "utf8");
+    expect(claudeMdContent).toInclude("use-bun-instead-of-node-vite-npm-pnpm");
+    expect(claudeMdContent).toInclude("invoke the");
+    expect(claudeMdContent).not.toInclude("{{SKILL_NAME}}");
+  }, 30_000);
+
+  test("bun init creates .cursor/rules symlink", async () => {
+    const temp = tempDirWithFiles("bun-init-cursor-rules", {});
+
+    // Mock Cursor installation by creating dummy .cursor directory
+    fs.mkdirSync(path.join(temp, ".cursor"), { recursive: true });
+
+    const { exited } = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: temp,
+      stdio: ["ignore", "inherit", "inherit"],
+      env: { ...bunEnv, CURSOR_TRACE_ID: "test" },
+    });
+
+    expect(await exited).toBe(0);
+
+    const cursorRulePath = path.join(temp, ".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc");
+    expect(fs.existsSync(cursorRulePath)).toBe(true);
+
+    // Check if it's a symlink or file (symlink on Unix, file on Windows)
+    if (!isWindows) {
+      const stats = fs.lstatSync(cursorRulePath);
+      expect(stats.isSymbolicLink()).toBe(true);
+    }
+
+    // Check content regardless of symlink or copy
+    const content = fs.readFileSync(cursorRulePath, "utf8");
+    expect(content).toInclude("name: use-bun-instead-of-node-vite-npm-pnpm");
+    expect(content).toInclude("Use Bun instead of Node.js");
+  }, 30_000);
 });

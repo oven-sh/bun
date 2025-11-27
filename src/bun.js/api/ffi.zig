@@ -81,6 +81,8 @@ pub const FFI = struct {
         // Flags to replace the default flags
         flags: [:0]const u8 = "",
         deferred_errors: std.ArrayListUnmanaged([]const u8) = .{},
+        // Track extracted temp files from $bunfs for cleanup
+        extracted_temp_files: std.ArrayListUnmanaged([:0]const u8) = .{},
 
         const Source = union(enum) {
             file: [:0]const u8,
@@ -107,23 +109,88 @@ pub const FFI = struct {
                 this.* = .{ .file = "" };
             }
 
-            pub fn add(this: *Source, state: *TCC.State, current_file_for_errors: *[:0]const u8) !void {
+            pub fn add(this: *Source, state: *TCC.State, current_file_for_errors: *[:0]const u8, extracted_files: *std.ArrayListUnmanaged([:0]const u8)) !void {
                 switch (this.*) {
                     .file => {
                         current_file_for_errors.* = this.file;
-                        state.addFile(this.file) catch return error.CompilationError;
+                        const actual_path = extractEmbeddedSourceFile(this.file) orelse this.file;
+                        if (actual_path.ptr != this.file.ptr) {
+                            // Track extracted file for cleanup
+                            extracted_files.append(bun.default_allocator, actual_path) catch {};
+                        }
+                        state.addFile(actual_path) catch return error.CompilationError;
                         current_file_for_errors.* = "";
                     },
                     .files => {
                         for (this.files.items) |file| {
                             current_file_for_errors.* = file;
-                            state.addFile(file) catch return error.CompilationError;
+                            const actual_path = extractEmbeddedSourceFile(file) orelse file;
+                            if (actual_path.ptr != file.ptr) {
+                                extracted_files.append(bun.default_allocator, actual_path) catch {};
+                            }
+                            state.addFile(actual_path) catch return error.CompilationError;
                             current_file_for_errors.* = "";
                         }
                     },
                 }
             }
         };
+
+        /// Extracts an embedded file from $bunfs to a temporary file.
+        /// Returns the path to the temp file, or null if not a $bunfs path or extraction failed.
+        fn extractEmbeddedSourceFile(path: [:0]const u8) ?[:0]const u8 {
+            // Check if this is a $bunfs path
+            if (!bun.StandaloneModuleGraph.isBunStandaloneFilePath(path)) {
+                return null;
+            }
+
+            // Get the standalone module graph
+            const graph = bun.StandaloneModuleGraph.get() orelse return null;
+
+            // Find the file in the graph
+            const file = graph.find(path) orelse return null;
+
+            // Get file extension for temp file naming (without leading dot for tmpname format)
+            const extname_with_dot = std.fs.path.extension(path);
+            const extname = if (extname_with_dot.len > 1 and extname_with_dot[0] == '.')
+                extname_with_dot[1..]
+            else if (extname_with_dot.len > 0)
+                extname_with_dot
+            else
+                "c";
+
+            // Create temp file path
+            var tmpname_buf: bun.PathBuffer = undefined;
+            const tmpfilename = bun.fs.FileSystem.tmpname(
+                extname,
+                &tmpname_buf,
+                bun.hash(file.name),
+            ) catch return null;
+
+            const tmpdir: bun.FD = .fromStdDir(bun.fs.FileSystem.instance.tmpdir() catch return null);
+
+            // Create and write to temp file
+            const tmpfile = bun.Tmpfile.create(tmpdir, tmpfilename).unwrap() catch return null;
+            defer tmpfile.fd.close();
+
+            switch (bun.api.node.fs.NodeFS.writeFileWithPathBuffer(
+                &tmpname_buf,
+                .{
+                    .data = .{ .encoded_slice = bun.jsc.ZigString.Slice.fromUTF8NeverFree(file.contents) },
+                    .dirfd = tmpdir,
+                    .file = .{ .fd = tmpfile.fd },
+                    .encoding = .buffer,
+                },
+            )) {
+                .err => return null,
+                else => {},
+            }
+
+            // Return the full path to the temp file
+            const tmpdirPath = bun.fs.FileSystem.instance.fs.tmpdirPath();
+            const full_path = bun.path.joinAbsStringBufZ(tmpdirPath, &tmpname_buf, &.{tmpfilename}, .auto);
+            return bun.default_allocator.dupeZ(u8, full_path) catch return null;
+        }
 
         const stdarg = struct {
             extern "c" fn ffi_vfprintf(*anyopaque, [*:0]const u8, ...) callconv(.c) c_int;
@@ -434,7 +501,7 @@ pub const FFI = struct {
                 try this.errorCheck();
             }
 
-            this.source.add(state, &this.current_file_for_errors) catch {
+            this.source.add(state, &this.current_file_for_errors, &this.extracted_temp_files) catch {
                 if (this.deferred_errors.items.len > 0) {
                     return error.DeferredErrors;
                 } else {
@@ -509,6 +576,13 @@ pub const FFI = struct {
                 if (define[1].len > 0) bun.default_allocator.free(define[1]);
             }
             this.define.clearAndFree(bun.default_allocator);
+
+            // Clean up extracted temp files from $bunfs
+            for (this.extracted_temp_files.items) |temp_path| {
+                _ = bun.sys.unlink(temp_path);
+                bun.default_allocator.free(temp_path);
+            }
+            this.extracted_temp_files.deinit(bun.default_allocator);
 
             this.source.deinit(bun.default_allocator);
             if (this.flags.len > 0) bun.default_allocator.free(this.flags);

@@ -2986,6 +2986,9 @@ const emojiMap = {
   gear: ["⚙️", "gear"],
   clipboard: ["📋", "clipboard"],
   rocket: ["🚀", "rocket"],
+  freebsd: ["😈", "freebsd"],
+  openbsd: ["🐡", "openbsd"],
+  netbsd: ["🚩", "netbsd"],
 };
 
 /**

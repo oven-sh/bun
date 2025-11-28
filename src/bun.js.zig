@@ -280,6 +280,7 @@ pub const Run = struct {
                 .dir = cpu_prof_opts.dir,
             };
             CPUProfiler.startCPUProfiler(vm.jsc_vm);
+            bun.analytics.Features.cpu_profile += 1;
         }
 
         this.addConditionalGlobals();

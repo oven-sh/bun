@@ -1,4 +1,4 @@
-// Bun Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`toMatchSnapshot errors should throw if arguments are in the wrong order: right spot 1`] = `
 {

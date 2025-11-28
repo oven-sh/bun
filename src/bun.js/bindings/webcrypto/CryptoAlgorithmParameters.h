@@ -34,7 +34,7 @@
 namespace WebCore {
 
 class CryptoAlgorithmParameters {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(CryptoAlgorithmParameters);
 
 public:
     enum class Class {

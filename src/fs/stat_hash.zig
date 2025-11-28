@@ -25,7 +25,7 @@ pub fn hash(this: *@This(), stat: bun.Stat, path: []const u8) void {
             .sec = @intCast(@max(mtime_timespec.sec, 0)),
         };
         if (mtime.ms() > 0) {
-            this.last_modified_buffer_len = @intCast(bun.JSC.wtf.writeHTTPDate(&this.last_modified_buffer, mtime.msUnsigned()).len);
+            this.last_modified_buffer_len = @intCast(bun.jsc.wtf.writeHTTPDate(&this.last_modified_buffer, mtime.msUnsigned()).len);
             this.last_modified_u64 = mtime.msUnsigned();
         } else {
             this.last_modified_buffer_len = 0;

@@ -1,7 +1,6 @@
 const ProcessAutoKiller = @This();
-const log = bun.Output.scoped(.AutoKiller, true);
-const bun = @import("bun");
-const std = @import("std");
+
+const log = bun.Output.scoped(.AutoKiller, .hidden);
 
 processes: std.AutoArrayHashMapUnmanaged(*bun.spawn.Process, void) = .{},
 enabled: bool = false,
@@ -18,18 +17,6 @@ pub fn disable(this: *ProcessAutoKiller) void {
 
 pub const Result = struct {
     processes: u32 = 0,
-
-    pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
-        switch (self.processes) {
-            0 => {},
-            1 => {
-                try writer.writeAll("killed 1 dangling process");
-            },
-            else => {
-                try std.fmt.format(writer, "killed {d} dangling processes", .{self.processes});
-            },
-        }
-    }
 };
 
 pub fn kill(this: *ProcessAutoKiller) Result {
@@ -83,3 +70,6 @@ pub fn deinit(this: *ProcessAutoKiller) void {
     }
     this.processes.deinit(bun.default_allocator);
 }
+
+const bun = @import("bun");
+const std = @import("std");

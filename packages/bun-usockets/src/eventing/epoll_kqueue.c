@@ -19,7 +19,6 @@
 #include "internal/internal.h"
 #include <stdlib.h>
 #include <time.h>
-
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 
 void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
@@ -247,8 +246,7 @@ void us_loop_run(struct us_loop_t *loop) {
     }
 }
 
-extern void Bun__JSC_onBeforeWait(void*);
-extern void Bun__JSC_onAfterWait(void*);
+extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm);
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
     if (loop->num_polls == 0)
@@ -265,8 +263,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* Emit pre callback */
     us_internal_loop_pre(loop);
 
-    /* Safe if jsc_vm is NULL */
-    Bun__JSC_onBeforeWait(loop->data.jsc_vm);
+
+    if (loop->data.jsc_vm) 
+        Bun__JSC_onBeforeWait(loop->data.jsc_vm);
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
@@ -277,7 +276,6 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     } while (IS_EINTR(loop->num_ready_polls));
 #endif
 
-    Bun__JSC_onAfterWait(loop->data.jsc_vm);
 
     /* Iterate ready polls, dispatching them by type */
     for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {
@@ -338,7 +336,7 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop, struct 
 
             // if new events does not contain the ready events of this poll then remove (no we filter that out later on)
             SET_READY_POLL(loop, i, new_poll);
-
+            
             num_entries_possibly_remaining--;
         }
     }
@@ -381,19 +379,18 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
 
 struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, unsigned int ext_size) {
     int events = us_poll_events(p);
+    
 
     struct us_poll_t *new_p = us_realloc(p, sizeof(struct us_poll_t) + ext_size);
-    if (p != new_p && events) {
+    if (p != new_p) {
 #ifdef LIBUS_USE_EPOLL
         /* Hack: forcefully update poll by stripping away already set events */
         new_p->state.poll_type = us_internal_poll_type(new_p);
         us_poll_change(new_p, loop, events);
 #else
         /* Forcefully update poll by resetting them with new_p as user data */
-        kqueue_change(loop->fd, new_p->state.fd, 0, events, new_p);
-#endif
-
-        /* This is needed for epoll also (us_change_poll doesn't update the old poll) */
+        kqueue_change(loop->fd, new_p->state.fd, 0, LIBUS_SOCKET_WRITABLE | LIBUS_SOCKET_READABLE, new_p);
+#endif      /* This is needed for epoll also (us_change_poll doesn't update the old poll) */
         us_internal_loop_update_pending_ready_polls(loop, p, new_p, events, events);
     }
 
@@ -447,7 +444,7 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
         kqueue_change(loop->fd, p->state.fd, old_events, events, p);
 #endif
         /* Set all removed events to null-polls in pending ready poll list */
-        //us_internal_loop_update_pending_ready_polls(loop, p, p, old_events, events);
+        // us_internal_loop_update_pending_ready_polls(loop, p, p, old_events, events);
     }
 }
 

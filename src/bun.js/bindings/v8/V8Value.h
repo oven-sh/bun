@@ -16,6 +16,9 @@ public:
     BUN_EXPORT bool IsFunction() const;
     BUN_EXPORT Maybe<uint32_t> Uint32Value(Local<Context> context) const;
 
+    // Comparison methods
+    BUN_EXPORT bool StrictEquals(Local<Value> that) const;
+
     // usually inlined:
     BUN_EXPORT bool IsUndefined() const;
     BUN_EXPORT bool IsNull() const;

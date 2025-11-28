@@ -34,7 +34,7 @@ namespace WebCore {
 class PerformanceEntry;
 
 class PerformanceObserverEntryList : public RefCounted<PerformanceObserverEntryList> {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(PerformanceObserverEntryList);
 
 public:
     static Ref<PerformanceObserverEntryList> create(Vector<RefPtr<PerformanceEntry>>&& entries);

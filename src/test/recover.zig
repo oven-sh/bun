@@ -4,9 +4,6 @@
 //! Regains control of the calling thread when the function panics or behaves
 //! undefined.
 
-const std = @import("std");
-const builtin = @import("builtin");
-
 const Context = if (builtin.os.tag == .windows)
     std.os.windows.CONTEXT
 else if (builtin.os.tag == .linux and builtin.abi == .musl)
@@ -77,13 +74,10 @@ pub fn call(
 }
 
 // windows
-const CONTEXT = std.os.windows.CONTEXT;
-const EXCEPTION_RECORD = std.os.windows.EXCEPTION_RECORD;
-const WINAPI = std.os.windows.WINAPI;
 extern "ntdll" fn RtlRestoreContext(
     ContextRecord: *const CONTEXT,
     ExceptionRecord: ?*const EXCEPTION_RECORD,
-) callconv(WINAPI) noreturn;
+) callconv(.winapi) noreturn;
 
 // darwin, bsd, gnu linux
 extern "c" fn setcontext(ucp: *const std.c.ucontext_t) noreturn;
@@ -129,3 +123,9 @@ pub const panic: type = std.debug.FullPanic(
         }
     }.panic,
 );
+
+const builtin = @import("builtin");
+const std = @import("std");
+
+const CONTEXT = std.os.windows.CONTEXT;
+const EXCEPTION_RECORD = std.os.windows.EXCEPTION_RECORD;

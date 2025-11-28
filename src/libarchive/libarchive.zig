@@ -1,16 +1,6 @@
 // @link "../deps/libarchive.a"
 
 pub const lib = @import("./libarchive-bindings.zig");
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const FileDescriptorType = bun.FileDescriptor;
-const default_allocator = bun.default_allocator;
-const c = bun.c;
-const std = @import("std");
 const Archive = lib.Archive;
 pub const Seek = enum(c_int) {
     set = std.posix.SEEK_SET,
@@ -86,7 +76,7 @@ pub const BufferReadStream = struct {
     pub fn archive_close_callback(
         _: *Archive,
         _: *anyopaque,
-    ) callconv(.C) c_int {
+    ) callconv(.c) c_int {
         return 0;
     }
 
@@ -94,7 +84,7 @@ pub const BufferReadStream = struct {
         _: *Archive,
         ctx_: *anyopaque,
         buffer: [*c]*const anyopaque,
-    ) callconv(.C) lib.la_ssize_t {
+    ) callconv(.c) lib.la_ssize_t {
         var this = fromCtx(ctx_);
         const remaining = this.bufLeft();
         if (remaining.len == 0) return 0;
@@ -109,7 +99,7 @@ pub const BufferReadStream = struct {
         _: *Archive,
         ctx_: *anyopaque,
         offset: lib.la_int64_t,
-    ) callconv(.C) lib.la_int64_t {
+    ) callconv(.c) lib.la_int64_t {
         var this = fromCtx(ctx_);
 
         const buflen = @as(isize, @intCast(this.buf.len));
@@ -126,7 +116,7 @@ pub const BufferReadStream = struct {
         ctx_: *anyopaque,
         offset: lib.la_int64_t,
         whence: c_int,
-    ) callconv(.C) lib.la_int64_t {
+    ) callconv(.c) lib.la_int64_t {
         var this = fromCtx(ctx_);
 
         const buflen = @as(isize, @intCast(this.buf.len));
@@ -156,20 +146,20 @@ pub const BufferReadStream = struct {
     //     ctx_: *anyopaque,
     //     buffer: *const anyopaque,
     //     len: usize,
-    // ) callconv(.C) lib.la_ssize_t {
+    // ) callconv(.c) lib.la_ssize_t {
     //     var this = fromCtx(ctx_);
     // }
 
     // pub fn archive_close_callback(
     //     archive: *Archive,
     //     ctx_: *anyopaque,
-    // ) callconv(.C) c_int {
+    // ) callconv(.c) c_int {
     //     var this = fromCtx(ctx_);
     // }
     // pub fn archive_free_callback(
     //     archive: *Archive,
     //     ctx_: *anyopaque,
-    // ) callconv(.C) c_int {
+    // ) callconv(.c) c_int {
     //     var this = fromCtx(ctx_);
     // }
 
@@ -177,7 +167,7 @@ pub const BufferReadStream = struct {
     //     archive: *Archive,
     //     ctx1: *anyopaque,
     //     ctx2: *anyopaque,
-    // ) callconv(.C) c_int {
+    // ) callconv(.c) c_int {
     //     var this = fromCtx(ctx1);
     //     var that = fromCtx(ctx2);
     // }
@@ -354,8 +344,8 @@ pub const Archiver = struct {
                     if (comptime ContextType != void and @hasDecl(std.meta.Child(ContextType), "onFirstDirectoryName")) {
                         if (appender.needs_first_dirname) {
                             if (comptime Environment.isWindows) {
-                                const list = std.ArrayList(u8).init(default_allocator);
-                                var result = try strings.toUTF8ListWithType(list, []const u16, pathname[0..pathname.len]);
+                                const list = std.array_list.Managed(u8).init(default_allocator);
+                                var result = try strings.toUTF8ListWithType(list, pathname[0..pathname.len]);
                                 // onFirstDirectoryName copies the contents of pathname to another buffer, safe to free
                                 defer result.deinit();
                                 appender.onFirstDirectoryName(strings.withoutTrailingSlash(result.items));
@@ -412,7 +402,7 @@ pub const Archiver = struct {
                     const path_slice: bun.OSPathSlice = path.ptr[0..path.len];
 
                     if (options.log) {
-                        Output.prettyln(" {}", .{bun.fmt.fmtOSPath(path_slice, .{})});
+                        Output.prettyln(" {f}", .{bun.fmt.fmtOSPath(path_slice, .{})});
                     }
 
                     count += 1;
@@ -566,7 +556,7 @@ pub const Archiver = struct {
                                         .ok => break :possibly_retry,
                                         .retry => {
                                             if (options.log) {
-                                                Output.err("libarchive error", "extracting {}, retry {d} / {d}", .{
+                                                Output.err("libarchive error", "extracting {f}, retry {d} / {d}", .{
                                                     bun.fmt.fmtOSPath(path_slice, .{}),
                                                     retries_remaining,
                                                     5,
@@ -576,7 +566,7 @@ pub const Archiver = struct {
                                         else => {
                                             if (options.log) {
                                                 const archive_error = bun.sliceTo(lib.Archive.errorString(@ptrCast(archive)), 0);
-                                                Output.err("libarchive error", "extracting {}: {s}", .{
+                                                Output.err("libarchive error", "extracting {f}: {s}", .{
                                                     bun.fmt.fmtOSPath(path_slice, .{}),
                                                     archive_error,
                                                 });
@@ -621,3 +611,16 @@ pub const Archiver = struct {
         return try extractToDir(file_buffer, dir, ctx, FilePathAppender, appender, options);
     }
 };
+
+const string = []const u8;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const FileDescriptorType = bun.FileDescriptor;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const c = bun.c;
+const default_allocator = bun.default_allocator;
+const strings = bun.strings;

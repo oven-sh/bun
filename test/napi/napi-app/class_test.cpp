@@ -164,8 +164,53 @@ static napi_value get_class_with_constructor(const Napi::CallbackInfo &info) {
   return napi_class;
 }
 
+static napi_value test_constructor_with_no_prototype(const Napi::CallbackInfo &info) {
+  // This test verifies that Reflect.construct with a newTarget that has no prototype
+  // property doesn't crash. This was a bug where jsDynamicCast was called on a JSValue
+  // of 0 when the prototype property didn't exist.
+  
+  napi_env env = info.Env();
+  
+  // Get the NapiClass constructor
+  napi_value napi_class = get_class_with_constructor(info);
+  
+  // Create a newTarget object with no prototype property
+  napi_value new_target;
+  NODE_API_CALL(env, napi_create_object(env, &new_target));
+  
+  // Call Reflect.construct(NapiClass, [], newTarget)
+  napi_value global;
+  NODE_API_CALL(env, napi_get_global(env, &global));
+  
+  napi_value reflect;
+  NODE_API_CALL(env, napi_get_named_property(env, global, "Reflect", &reflect));
+  
+  napi_value construct_fn;
+  NODE_API_CALL(env, napi_get_named_property(env, reflect, "construct", &construct_fn));
+  
+  napi_value empty_array;
+  NODE_API_CALL(env, napi_create_array_with_length(env, 0, &empty_array));
+  
+  napi_value args[3] = { napi_class, empty_array, new_target };
+  napi_value result;
+  
+  // This should not crash - previously it would crash when trying to access
+  // the prototype property of newTarget
+  napi_status status = napi_call_function(env, reflect, construct_fn, 3, args, &result);
+  
+  if (status == napi_ok) {
+    return Napi::String::New(env, "success - no crash");
+  } else {
+    // If there was an error, return it
+    const napi_extended_error_info* error_info;
+    napi_get_last_error_info(env, &error_info);
+    return Napi::String::New(env, error_info->error_message ? error_info->error_message : "error");
+  }
+}
+
 void register_class_test(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, get_class_with_constructor);
+  REGISTER_FUNCTION(env, exports, test_constructor_with_no_prototype);
 }
 
 } // namespace napitests

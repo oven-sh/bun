@@ -1,8 +1,8 @@
-// Bun Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`dependency on workspace without version in package.json: version: * 1`] = `
 "{
-  "format": "v2",
+  "format": "v3",
   "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": 2,
@@ -53,8 +53,7 @@ exports[`dependency on workspace without version in package.json: version: * 1`]
       "workspace": "packages/mono",
       "package_id": 2,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }
@@ -126,7 +125,7 @@ exports[`dependency on workspace without version in package.json: version: * 1`]
 
 exports[`dependency on workspace without version in package.json: version: *.*.* 1`] = `
 "{
-  "format": "v2",
+  "format": "v3",
   "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": 2,
@@ -177,8 +176,7 @@ exports[`dependency on workspace without version in package.json: version: *.*.*
       "workspace": "packages/mono",
       "package_id": 2,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }
@@ -250,7 +248,7 @@ exports[`dependency on workspace without version in package.json: version: *.*.*
 
 exports[`dependency on workspace without version in package.json: version: =* 1`] = `
 "{
-  "format": "v2",
+  "format": "v3",
   "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": 2,
@@ -301,8 +299,7 @@ exports[`dependency on workspace without version in package.json: version: =* 1`
       "workspace": "packages/mono",
       "package_id": 2,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }
@@ -374,7 +371,7 @@ exports[`dependency on workspace without version in package.json: version: =* 1`
 
 exports[`dependency on workspace without version in package.json: version: kjwoehcojrgjoj 1`] = `
 "{
-  "format": "v2",
+  "format": "v3",
   "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": 2,
@@ -425,8 +422,7 @@ exports[`dependency on workspace without version in package.json: version: kjwoe
       "workspace": "packages/mono",
       "package_id": 2,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }
@@ -498,7 +494,7 @@ exports[`dependency on workspace without version in package.json: version: kjwoe
 
 exports[`dependency on workspace without version in package.json: version: *.1.* 1`] = `
 "{
-  "format": "v2",
+  "format": "v3",
   "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": 2,
@@ -549,8 +545,7 @@ exports[`dependency on workspace without version in package.json: version: *.1.*
       "workspace": "packages/mono",
       "package_id": 2,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }
@@ -622,7 +617,7 @@ exports[`dependency on workspace without version in package.json: version: *.1.*
 
 exports[`dependency on workspace without version in package.json: version: *-pre 1`] = `
 "{
-  "format": "v2",
+  "format": "v3",
   "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": 2,
@@ -673,8 +668,7 @@ exports[`dependency on workspace without version in package.json: version: *-pre
       "workspace": "packages/mono",
       "package_id": 2,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }
@@ -746,7 +740,7 @@ exports[`dependency on workspace without version in package.json: version: *-pre
 
 exports[`dependency on workspace without version in package.json: version: 1 1`] = `
 "{
-  "format": "v2",
+  "format": "v3",
   "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": [
@@ -902,7 +896,7 @@ exports[`dependency on workspace without version in package.json: version: 1 1`]
 
 exports[`dependency on workspace without version in package.json: version: 1.* 1`] = `
 "{
-  "format": "v2",
+  "format": "v3",
   "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": [
@@ -1058,7 +1052,7 @@ exports[`dependency on workspace without version in package.json: version: 1.* 1
 
 exports[`dependency on workspace without version in package.json: version: 1.1.* 1`] = `
 "{
-  "format": "v2",
+  "format": "v3",
   "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": [
@@ -1214,7 +1208,7 @@ exports[`dependency on workspace without version in package.json: version: 1.1.*
 
 exports[`dependency on workspace without version in package.json: version: 1.1.0 1`] = `
 "{
-  "format": "v2",
+  "format": "v3",
   "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": [
@@ -1370,7 +1364,7 @@ exports[`dependency on workspace without version in package.json: version: 1.1.0
 
 exports[`dependency on workspace without version in package.json: version: *-pre+build 1`] = `
 "{
-  "format": "v2",
+  "format": "v3",
   "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": [
@@ -1526,7 +1520,7 @@ exports[`dependency on workspace without version in package.json: version: *-pre
 
 exports[`dependency on workspace without version in package.json: version: *+build 1`] = `
 "{
-  "format": "v2",
+  "format": "v3",
   "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": [
@@ -1682,7 +1676,7 @@ exports[`dependency on workspace without version in package.json: version: *+bui
 
 exports[`dependency on workspace without version in package.json: version: latest 1`] = `
 "{
-  "format": "v2",
+  "format": "v3",
   "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": [
@@ -1838,7 +1832,7 @@ exports[`dependency on workspace without version in package.json: version: lates
 
 exports[`dependency on workspace without version in package.json: version:  1`] = `
 "{
-  "format": "v2",
+  "format": "v3",
   "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": [
@@ -1994,7 +1988,7 @@ exports[`dependency on workspace without version in package.json: version:  1`] 
 
 exports[`dependency on same name as workspace and dist-tag: with version 1`] = `
 "{
-  "format": "v2",
+  "format": "v3",
   "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": [

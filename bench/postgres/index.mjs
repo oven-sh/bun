@@ -1,6 +1,6 @@
 const isBun = typeof globalThis?.Bun?.sql !== "undefined";
 import postgres from "postgres";
-const sql = isBun ? Bun.sql : postgres;
+const sql = isBun ? Bun.sql : postgres();
 
 // Create the table if it doesn't exist
 await sql`
@@ -28,9 +28,7 @@ if (+(existingUsers?.[0]?.count ?? existingUsers?.count) < 100) {
   }));
 
   // Insert all users
-  await sql`
-      INSERT INTO users_bun_bench (first_name, last_name, email, dob) ${sql(users)}
-    `;
+  await sql`INSERT INTO users_bun_bench ${sql(users)}`;
 }
 
 const type = isBun ? "Bun.sql" : "postgres";

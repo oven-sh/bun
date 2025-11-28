@@ -269,6 +269,31 @@ describe("FormData", () => {
     });
   });
 
+  test("FormData.toJSON doesn't crash with numbers", () => {
+    const fd = new FormData();
+    // @ts-expect-error
+    fd.append(1, 1);
+    // @ts-expect-error
+    expect(fd.toJSON()).toEqual({ "1": "1" });
+  });
+
+  test("FormData.from throws on very large input instead of crashing", () => {
+    // This test verifies that FormData.from throws an exception instead of crashing
+    // when given input larger than WebKit's String::MaxLength (INT32_MAX ~= 2GB).
+    // We use a smaller test case with the synthetic limit to avoid actually allocating 2GB+.
+    const { setSyntheticAllocationLimitForTesting } = require("bun:internal-for-testing");
+    // Set a small limit so we can test the boundary without allocating gigabytes
+    const originalLimit = setSyntheticAllocationLimitForTesting(1024 * 1024); // 1MB limit
+    try {
+      // Create a buffer larger than the limit
+      const largeBuffer = new Uint8Array(2 * 1024 * 1024); // 2MB
+      // @ts-expect-error - FormData.from is a Bun extension
+      expect(() => FormData.from(largeBuffer)).toThrow("Cannot create a string longer than");
+    } finally {
+      setSyntheticAllocationLimitForTesting(originalLimit);
+    }
+  });
+
   it("should throw on bad boundary", async () => {
     const response = new Response('foo\r\nContent-Disposition: form-data; name="foo"\r\n\r\nbar\r\n', {
       headers: {
@@ -644,5 +669,117 @@ describe("FormData", () => {
         Bun.gc();
       }
     }
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/14988
+describe("Content-Type header propagation", () => {
+  describe("https://github.com/oven-sh/bun/issues/21011", () => {
+    function createRequest() {
+      const formData = new FormData();
+      formData.append("key", "value");
+
+      return new Request("https://example.com/api/endpoint", {
+        method: "POST",
+        body: formData,
+      });
+    }
+
+    test("without checking body", async () => {
+      const request = createRequest();
+      expect(request.headers.get("Content-Type")).toStartWith("multipart/form-data");
+    });
+
+    test("check body", async () => {
+      const request = createRequest();
+      if (!request.body) {
+        expect.unreachable();
+      }
+      expect(request.headers.get("Content-Type")).toStartWith("multipart/form-data");
+    });
+  });
+
+  // Shared test server that validates multipart/form-data content-type
+  function createTestServer() {
+    return Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (!req.headers.get("content-type")?.includes("multipart/form-data")) {
+          return new Response("Missing multipart/form-data content-type", { status: 400 });
+        }
+        const body = await req.formData();
+        expect(body.get("foo")!.size).toBe(3);
+        return new Response("Success", { status: 200 });
+      },
+    });
+  }
+
+  // Custom Request subclass for testing inheritance
+  class CustomRequest extends Request {
+    constructor(input: string | URL | Request, init?: RequestInit) {
+      super(input, init);
+    }
+  }
+
+  const testCases = [
+    {
+      name: "new Request({body: FormData}) (subclass) -> fetch(request)",
+      async testFn(server: ReturnType<typeof createTestServer>) {
+        const fd = new FormData();
+        fd.append("foo", new Blob(["bar"]));
+        const request = new CustomRequest(server.url.toString(), {
+          method: "POST",
+          body: fd,
+        });
+        return fetch(request);
+      },
+    },
+    {
+      name: "FormData -> Request (subclass) -> ReadableStream -> fetch(request)",
+      async testFn(server: ReturnType<typeof createTestServer>) {
+        const fd = new FormData();
+        fd.append("foo", new Blob(["bar"]));
+        const request = new CustomRequest(server.url.toString(), {
+          method: "POST",
+          body: fd,
+        });
+        return fetch(request);
+      },
+    },
+    {
+      name: "FormData -> Request (subclass) -> fetch(url, {body: request.blob()})",
+      async testFn(server: ReturnType<typeof createTestServer>) {
+        const fd = new FormData();
+        fd.append("foo", new Blob(["bar"]));
+        const request = new CustomRequest(server.url.toString(), {
+          method: "POST",
+          body: fd,
+        });
+        return fetch(server.url.toString(), {
+          method: "POST",
+          body: await request.blob(),
+        });
+      },
+    },
+    {
+      name: "FormData -> Request -> fetch(request)",
+      async testFn(server: ReturnType<typeof createTestServer>) {
+        const fd = new FormData();
+        fd.append("foo", new Blob(["bar"]));
+        const request = new Request(server.url.toString(), {
+          method: "POST",
+          body: fd,
+        });
+        return fetch(request);
+      },
+    },
+  ];
+
+  testCases.forEach(({ name, testFn }) => {
+    it(name, async () => {
+      using server = createTestServer();
+      const res = await testFn(server);
+      expect(res.status).toBe(200);
+    });
   });
 });

@@ -10,12 +10,6 @@
 //! - args always ends with a trailing space
 //!
 //! See 'bun_shim_impl.zig' for more details on how this file is consumed.
-const std = @import("std");
-
-const bun = @import("bun");
-const simdutf = bun.simdutf;
-
-const lastIndexOfScalar = std.mem.lastIndexOfScalar;
 
 fn eqlComptime(a: []const u8, comptime b: []const u8) bool {
     return std.mem.eql(u8, a, b);
@@ -229,7 +223,7 @@ pub fn encodeInto(options: @This(), buf: []u8) !void {
     std.debug.assert(buf.len == options.encodedLength());
     std.debug.assert(options.bin_path[0] != '/');
 
-    var wbuf = @as([*]u16, @alignCast(@ptrCast(&buf[0])))[0 .. buf.len / 2];
+    var wbuf = @as([*]u16, @ptrCast(@alignCast(&buf[0])))[0 .. buf.len / 2];
 
     @memcpy(wbuf[0..options.bin_path.len], options.bin_path);
     wbuf = wbuf[options.bin_path.len..];
@@ -309,3 +303,9 @@ pub fn looseDecode(input: []const u8) ?Decoded {
         .flags = flags,
     };
 }
+
+const std = @import("std");
+const lastIndexOfScalar = std.mem.lastIndexOfScalar;
+
+const bun = @import("bun");
+const simdutf = bun.simdutf;

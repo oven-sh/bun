@@ -57,8 +57,9 @@ private:
     RefPtr<CachedBytecode> m_bytecode;
     SourceCode m_sourceCode;
 
-    NodeVMSourceTextModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, SourceCode sourceCode, JSValue moduleWrapper)
+    NodeVMSourceTextModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, SourceCode sourceCode, JSValue moduleWrapper, JSValue initializeImportMeta)
         : Base(vm, structure, WTFMove(identifier), context, moduleWrapper)
+        , m_initializeImportMeta(initializeImportMeta && !initializeImportMeta.isUndefined() ? initializeImportMeta : JSValue(), JSC::WriteBarrierEarlyInit)
         , m_sourceCode(WTFMove(sourceCode))
     {
     }

@@ -1,16 +1,10 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const Encoder = JSC.WebCore.encoding;
-const Environment = bun.Environment;
-
 pub const BufferVectorized = struct {
     pub fn fill(
-        str: *JSC.ZigString,
+        str: *jsc.ZigString,
         buf_ptr: [*]u8,
         fill_length: usize,
-        encoding: JSC.Node.Encoding,
-    ) callconv(.C) bool {
+        encoding: jsc.Node.Encoding,
+    ) callconv(.c) bool {
         if (str.len == 0) return true;
 
         var buf = buf_ptr[0..fill_length];
@@ -87,3 +81,10 @@ pub const BufferVectorized = struct {
 comptime {
     @export(&BufferVectorized.fill, .{ .name = "Bun__Buffer_fill" });
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const jsc = bun.jsc;
+const Encoder = jsc.WebCore.encoding;

@@ -15,7 +15,7 @@ const server = http.createServer(function(req, res) {
   }, TypeError);
   res.end('');
 });
-server.listen(0, "127.0.0.1", function() {
+server.listen(0, function() {
 
   http.get({ port: this.address().port }, function() {
     ee.emit('done');

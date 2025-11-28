@@ -1,7 +1,4 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("bun");
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const Maybe = css.Maybe;
 const PrintErr = css.PrintErr;
@@ -45,10 +42,10 @@ pub const FontFaceProperty = union(enum) {
 
     const This = @This();
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
         const Helpers = struct {
             pub fn writeProperty(
-                d: *Printer(W),
+                d: *Printer,
                 comptime prop: []const u8,
                 value: anytype,
                 comptime multi: bool,
@@ -58,13 +55,13 @@ pub const FontFaceProperty = union(enum) {
                 if (comptime multi) {
                     const len = value.items.len;
                     for (value.items, 0..) |*val, idx| {
-                        try val.toCss(W, d);
+                        try val.toCss(d);
                         if (idx < len - 1) {
                             try d.delim(',', false);
                         }
                     }
                 } else {
-                    try value.toCss(W, d);
+                    try value.toCss(d);
                 }
             }
         };
@@ -78,7 +75,7 @@ pub const FontFaceProperty = union(enum) {
             .custom => |custom| {
                 try dest.writeStr(this.custom.name.asStr());
                 try dest.delim(':', false);
-                return custom.value.toCss(W, dest, true);
+                return custom.value.toCss(dest, true);
             },
         };
     }
@@ -98,7 +95,7 @@ pub const UnicodeRange = struct {
     /// Inclusive end of the range. In [0, 0x10FFFF].
     end: u32,
 
-    pub fn toCss(this: *const UnicodeRange, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const UnicodeRange, dest: *Printer) PrintErr!void {
         // Attempt to optimize the range to use question mark syntax.
         if (this.start != this.end) {
             // Find the first hex digit that differs between the start and end values.
@@ -189,13 +186,13 @@ pub const UnicodeRange = struct {
                     .result => |vv| vv,
                     .err => {
                         input.reset(&after_number);
-                        return .{ .result = {} };
+                        return .success;
                     },
                 };
 
                 if (token.* == .delim and token.delim == '?') return parseQuestionMarks(input);
-                if (token.* == .delim or token.* == .number) return .{ .result = {} };
-                return .{ .result = {} };
+                if (token.* == .delim or token.* == .number) return .success;
+                return .success;
             },
             .delim => |c| {
                 if (c == '+') {
@@ -220,7 +217,7 @@ pub const UnicodeRange = struct {
             const start = input.state();
             if (input.nextIncludingWhitespace().asValue()) |tok| if (tok.* == .delim and tok.delim == '?') continue;
             input.reset(&start);
-            return .{ .result = {} };
+            return .success;
         }
     }
 
@@ -324,7 +321,7 @@ pub const FontStyle = union(enum) {
         };
     }
 
-    pub fn toCss(this: *const FontStyle, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const FontStyle, dest: *Printer) PrintErr!void {
         switch (this.*) {
             .normal => try dest.writeStr("normal"),
             .italic => try dest.writeStr("italic"),
@@ -332,7 +329,7 @@ pub const FontStyle = union(enum) {
                 try dest.writeStr("oblique");
                 if (!angle.eql(&FontStyle.defaultObliqueAngle())) {
                     try dest.writeChar(' ');
-                    try angle.toCss(W, dest);
+                    try angle.toCss(dest);
                 }
             },
         }
@@ -399,7 +396,7 @@ pub const FontFormat = union(enum) {
         }
     }
 
-    pub fn toCss(this: *const FontFormat, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const FontFormat, dest: *Printer) PrintErr!void {
         // Browser support for keywords rather than strings is very limited.
         // https://developer.mozilla.org/en-US/docs/Web/CSS/@font-face/src
         switch (this.*) {
@@ -452,12 +449,12 @@ pub const Source = union(enum) {
         return .{ .result = .{ .local = local } };
     }
 
-    pub fn toCss(this: *const Source, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const Source, dest: *Printer) PrintErr!void {
         switch (this.*) {
-            .url => try this.url.toCss(W, dest),
+            .url => try this.url.toCss(dest),
             .local => {
                 try dest.writeStr("local(");
-                try this.local.toCss(W, dest);
+                try this.local.toCss(dest);
                 try dest.writeChar(')');
             },
         }
@@ -525,8 +522,8 @@ pub const FontTechnology = enum {
         return css.enum_property_util.parse(@This(), input);
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return css.enum_property_util.toCss(@This(), this, W, dest);
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, dest);
     }
 };
 
@@ -572,19 +569,19 @@ pub const UrlSource = struct {
         };
     }
 
-    pub fn toCss(this: *const UrlSource, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        try this.url.toCss(W, dest);
+    pub fn toCss(this: *const UrlSource, dest: *Printer) PrintErr!void {
+        try this.url.toCss(dest);
         if (this.format) |*format| {
             try dest.whitespace();
             try dest.writeStr("format(");
-            try format.toCss(W, dest);
+            try format.toCss(dest);
             try dest.writeChar(')');
         }
 
         if (this.tech.items.len != 0) {
             try dest.whitespace();
             try dest.writeStr("tech(");
-            try css.to_css.fromList(FontTechnology, this.tech.items, W, dest);
+            try css.to_css.fromList(FontTechnology, this.tech.items, dest);
             try dest.writeChar(')');
         }
     }
@@ -603,7 +600,7 @@ pub const FontFaceRule = struct {
 
     const This = @This();
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -614,7 +611,7 @@ pub const FontFaceRule = struct {
         const len = this.properties.items.len;
         for (this.properties.items, 0..) |*prop, i| {
             try dest.newline();
-            try prop.toCss(W, dest);
+            try prop.toCss(dest);
             if (i != len - 1 or !dest.minify) {
                 try dest.writeChar(';');
             }
@@ -734,3 +731,8 @@ pub const FontFaceDeclarationParser = struct {
         }
     };
 };
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

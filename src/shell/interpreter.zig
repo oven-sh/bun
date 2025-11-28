@@ -1,52 +1,73 @@
 //! The interpreter for the shell language
 //!
-//! Normally, the implementation would be a very simple tree-walk of the AST,
-//! but it needs to be non-blocking, and Zig does not have coroutines yet, so
-//! this implementation is half tree-walk half one big state machine. The state
-//! machine part manually keeps track of execution state (which coroutines would
-//! do for us), but makes the code very confusing because control flow is less obvious.
+//! There are several constraints on the Bun shell language that make this
+//! interpreter implementation unique:
 //!
-//! Things to note:
-//! - If you want to do something analogous to yielding execution, you must
-//!    `return` from the function. For example in the code we start an async
-//!    BufferedWriter and "yield" execution by calling =.start()= on the writer and
-//!    then `return`ing form the function
-//! - Sometimes a state machine will immediately finish and deinit itself so
-//!     that might cause some unintuitive things to happen. For example if you
-//!     `defer` some code, then try to yield execution to some state machine struct,
-//!     and it immediately finishes, it will deinit itself and the defer code might
-//!     use undefined memory.
-const std = @import("std");
-const builtin = @import("builtin");
+//! 1. We try to keep everything in the Bun process as much as possible for
+//!    performance reasons and also to leverage Bun's existing IO/FS code
+//! 2. We try to use non-blocking IO operations as much as possible so the
+//!    shell does not block the main JS thread
+//! 3. Zig does not have coroutines (yet)
+//!
+//! The idea is that this is a tree-walking interpreter. Except it's not.
+//!
+//! Why not? Because 99% of operations in the shell are IO, and we need to do
+//! non-blocking IO because Bun is a JS runtime.
+//!
+//! So what do we do? Instead of iteratively walking the AST like in a traditional
+//! tree-walking interpreter, we're also going to build up a tree of state-machines
+//! (an AST node becomes a state-machine node), so we can suspend and resume
+//! execution without blocking the main thread.
+//!
+//! We'll also need to do things in continuation-passing style, see `Yield.zig` for
+//! more on that.
+//!
+//! Once all these pieces come together, this ends up being a:
+//! "state-machine based [tree-walking], [trampoline]-driven [continuation-passing style] interpreter"
+//!
+//! [tree-walking]: https://en.wikipedia.org/wiki/Interpreter_(computing)#Abstract_syntax_tree_interpreters
+//! [trampoline]:   https://en.wikipedia.org/wiki/Trampoline_(computing)
+//! [continuation-passing style]: https://en.wikipedia.org/wiki/Continuation-passing_style
+//!
+//! # Memory management
+//!
+//! Almost all allocations go through the `AllocationScope` allocator. This
+//! trackd memory allocations and frees in debug builds (or builds with asan
+//! enabled) and helps us catch memory leaks.
+//!
+//! The underlying parent allocator that every `AllocationScope` uses in the
+//! shell is `bun.default_allocator`. This means in builds of Bun which do not
+//! have `AllocationScope` enabled, every allocation just goes straight through
+//! to `bun.default_allocator`.
+//!
+//! Usually every state machine node ends up creating a new allocation scope,
+//! so an `AllocationScope` is stored in the base header struct (see `Base.zig`)
+//! that all state-machine nodes include in their layout.
+//!
+//! You will often see `Base.initWithNewAllocScope` to create a new state machine node
+//! and allocation scope.
+//!
+//! Sometimes it is necessary to "leak" an allocation from its scope. For
+//! example, argument expansion happens in an allocation scope inside
+//! `Expansion.zig`.
+//!
+//! But the string that is expanded may end up becoming the key/value of an
+//! environment variable, which we internally use the reference counted `EnvStr`
+//! for. When we turn it into an `EnvStr`, the reference counting scheme is
+//! responsible for managing the memory so we can call
+//! `allocScope.leakSlice(str)` to tell it not to track the allocation anymore
+//! and let `EnvStr` handle it.
 const string = []const u8;
-const bun = @import("bun");
-const posix = std.posix;
 pub const Arena = std.heap.ArenaAllocator;
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
-const JSC = bun.JSC;
-const JSValue = bun.JSC.JSValue;
-const JSGlobalObject = bun.JSC.JSGlobalObject;
-const which = bun.which;
 pub const Braces = @import("./braces.zig");
 pub const Syscall = bun.sys;
-const Glob = @import("../glob.zig");
-const ResolvePath = bun.path;
-const TaggedPointerUnion = bun.TaggedPointerUnion;
-pub const WorkPoolTask = JSC.WorkPoolTask;
-pub const WorkPool = JSC.WorkPool;
-const windows = bun.windows;
-const uv = windows.libuv;
-const Maybe = JSC.Maybe;
-const WTFStringImplStruct = @import("../string.zig").WTFStringImplStruct;
+pub const WorkPoolTask = jsc.WorkPoolTask;
+pub const WorkPool = jsc.WorkPool;
 
 pub const Pipe = [2]bun.FileDescriptor;
-const shell = bun.shell;
-const ShellError = shell.ShellError;
-const ast = shell.AST;
 pub const SmolList = shell.SmolList;
 
-pub const GlobWalker = Glob.BunGlobWalkerZ;
+pub const GlobWalker = bun.glob.BunGlobWalkerZ;
 
 pub const stdin_no = 0;
 pub const stdout_no = 1;
@@ -59,9 +80,7 @@ pub fn OOM(e: anyerror) noreturn {
     bun.outOfMemory();
 }
 
-pub const log = bun.Output.scoped(.SHELL, false);
-
-const assert = bun.assert;
+pub const log = bun.Output.scoped(.SHELL, .visible);
 
 /// This is a zero-sized type returned by `.needsIO()`, designed to ensure
 /// functions which rely on IO are not called when they do don't need it.
@@ -87,6 +106,11 @@ const assert = bun.assert;
 /// safely assume the stdout/stderr they are working with require IO.
 pub const OutputNeedsIOSafeGuard = enum(u0) { output_needs_io };
 
+/// Similar to `OutputNeedsIOSafeGuard` but to ensure a function is
+/// called at the "top" of the call-stack relative to the interpreter's
+/// execution.
+pub const CallstackGuard = enum(u0) { __i_know_what_i_am_doing };
+
 pub const ExitCode = u16;
 
 pub const StateKind = enum(u8) {
@@ -99,7 +123,7 @@ pub const StateKind = enum(u8) {
     expansion,
     if_clause,
     condexpr,
-    @"async",
+    async,
     subshell,
 };
 
@@ -116,14 +140,14 @@ pub const CowFd = struct {
     refcount: u32 = 1,
     being_used: bool = false,
 
-    const debug = bun.Output.scoped(.CowFd, true);
+    const debug = bun.Output.scoped(.CowFd, .hidden);
 
     pub fn init(fd: bun.FileDescriptor) *CowFd {
-        const this = bun.default_allocator.create(CowFd) catch bun.outOfMemory();
+        const this = bun.handleOom(bun.default_allocator.create(CowFd));
         this.* = .{
             .__fd = fd,
         };
-        debug("init(0x{x}, fd={})", .{ @intFromPtr(this), fd });
+        debug("init(0x{x}, fd={f})", .{ @intFromPtr(this), fd });
         return this;
     }
 
@@ -132,7 +156,7 @@ pub const CowFd = struct {
             .fd = bun.sys.dup(this.fd),
             .writercount = 1,
         });
-        debug("dup(0x{x}, fd={}) = (0x{x}, fd={})", .{ @intFromPtr(this), this.fd, new, new.fd });
+        debug("dup(0x{x}, fd={f}) = (0x{x}, fd={f})", .{ @intFromPtr(this), this.fd, new, new.fd });
         return new;
     }
 
@@ -208,6 +232,10 @@ pub const ShellArgs = struct {
             .script_ast = undefined,
         });
     }
+
+    pub fn memoryCost(this: *const ShellArgs) usize {
+        return @sizeOf(ShellArgs) + this.script_ast.memoryCost();
+    }
 };
 
 pub const AssignCtx = Interpreter.Assigns.AssignCtx;
@@ -215,13 +243,13 @@ pub const AssignCtx = Interpreter.Assigns.AssignCtx;
 /// This interpreter works by basically turning the AST into a state machine so
 /// that execution can be suspended and resumed to support async.
 pub const Interpreter = struct {
-    pub const js = JSC.Codegen.JSShellInterpreter;
+    pub const js = jsc.Codegen.JSShellInterpreter;
     pub const toJS = js.toJS;
     pub const fromJS = js.fromJS;
     pub const fromJSDirect = js.fromJSDirect;
 
-    command_ctx: bun.CLI.Command.Context,
-    event_loop: JSC.EventLoopHandle,
+    command_ctx: bun.cli.Command.Context,
+    event_loop: jsc.EventLoopHandle,
     /// This is the allocator used to allocate interpreter state
     allocator: Allocator,
 
@@ -231,7 +259,7 @@ pub const Interpreter = struct {
     /// This should be allocated using the arena
     jsobjs: []JSValue,
 
-    root_shell: ShellState,
+    root_shell: ShellExecEnv,
     root_io: IO,
 
     has_pending_activity: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
@@ -239,10 +267,10 @@ pub const Interpreter = struct {
     // Necessary for builtin commands.
     keep_alive: bun.Async.KeepAlive = .{},
 
-    vm_args_utf8: std.ArrayList(JSC.ZigString.Slice),
+    vm_args_utf8: std.array_list.Managed(jsc.ZigString.Slice),
     async_commands_executing: u32 = 0,
 
-    globalThis: *JSC.JSGlobalObject,
+    globalThis: *jsc.JSGlobalObject,
 
     flags: packed struct(u8) {
         done: bool = false,
@@ -251,6 +279,9 @@ pub const Interpreter = struct {
     } = .{},
     exit_code: ?ExitCode = 0,
     this_jsvalue: JSValue = .zero,
+
+    __alloc_scope: if (bun.Environment.enableAllocScopes) bun.AllocationScope else void,
+    estimated_size_for_gc: usize = 0,
 
     // Here are all the state nodes:
     pub const State = @import("./states/Base.zig");
@@ -272,12 +303,12 @@ pub const Interpreter = struct {
 
     /// During execution, the shell has an "environment" or "context". This
     /// contains important details like environment variables, cwd, etc. Every
-    /// state node is given a `*ShellState` which is stored in its header (see
+    /// state node is given a `*ShellExecEnv` which is stored in its header (see
     /// `states/Base.zig`).
     ///
     /// Certain state nodes like subshells, pipelines, and cmd substitutions
-    /// will duplicate their `*ShellState` so that they can make modifications
-    /// without affecting their parent `ShellState`. This is done in the
+    /// will duplicate their `*ShellExecEnv` so that they can make modifications
+    /// without affecting their parent `ShellExecEnv`. This is done in the
     /// `.dupeForSubshell` function.
     ///
     /// For example:
@@ -291,8 +322,10 @@ pub const Interpreter = struct {
     /// Note that stdin/stdout/stderr is also considered to be part of the
     /// environment/context, but we keep that in a separate struct called `IO`. We do
     /// this because stdin/stdout/stderr changes a lot and we don't want to copy
-    /// this `ShellState` struct too much.
-    pub const ShellState = struct {
+    /// this `ShellExecEnv` struct too much.
+    ///
+    /// More info here: https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_12
+    pub const ShellExecEnv = struct {
         kind: Kind = .normal,
 
         /// This is the buffered stdout/stderr that captures the entire
@@ -317,15 +350,26 @@ pub const Interpreter = struct {
         /// The current working directory of the shell.
         /// Use an array list so we don't have to keep reallocating
         /// Always has zero-sentinel
-        __prev_cwd: std.ArrayList(u8),
-        __cwd: std.ArrayList(u8),
+        __prev_cwd: std.array_list.Managed(u8),
+        __cwd: std.array_list.Managed(u8),
         cwd_fd: bun.FileDescriptor,
 
         async_pids: SmolList(pid_t, 4) = SmolList(pid_t, 4).zeroes,
 
+        __alloc_scope: if (bun.Environment.enableAllocScopes) *bun.AllocationScope else void,
+
         const pid_t = if (bun.Environment.isPosix) std.posix.pid_t else uv.uv_pid_t;
 
-        const Bufio = union(enum) { owned: bun.ByteList, borrowed: *bun.ByteList };
+        const Bufio = union(enum) {
+            owned: bun.ByteList,
+            borrowed: *bun.ByteList,
+            pub fn memoryCost(this: *const @This()) usize {
+                return switch (this.*) {
+                    .owned => |*owned| owned.memoryCost(),
+                    .borrowed => |borrowed| borrowed.memoryCost(),
+                };
+            }
+        };
 
         const Kind = enum {
             normal,
@@ -334,58 +378,76 @@ pub const Interpreter = struct {
             pipeline,
         };
 
-        pub fn buffered_stdout(this: *ShellState) *bun.ByteList {
+        pub fn allocator(this: *ShellExecEnv) std.mem.Allocator {
+            if (comptime bun.Environment.enableAllocScopes) return this.__alloc_scope.allocator();
+            return bun.default_allocator;
+        }
+
+        pub fn memoryCost(this: *const ShellExecEnv) usize {
+            var size: usize = @sizeOf(ShellExecEnv);
+            size += this.shell_env.memoryCost();
+            size += this.cmd_local_env.memoryCost();
+            size += this.export_env.memoryCost();
+            size += this.__cwd.allocatedSlice().len;
+            size += this.__prev_cwd.allocatedSlice().len;
+            size += this._buffered_stderr.memoryCost();
+            size += this._buffered_stdout.memoryCost();
+            size += this.async_pids.memoryCost();
+            return size;
+        }
+
+        pub fn buffered_stdout(this: *ShellExecEnv) *bun.ByteList {
             return switch (this._buffered_stdout) {
                 .owned => &this._buffered_stdout.owned,
                 .borrowed => this._buffered_stdout.borrowed,
             };
         }
 
-        pub fn buffered_stderr(this: *ShellState) *bun.ByteList {
+        pub fn buffered_stderr(this: *ShellExecEnv) *bun.ByteList {
             return switch (this._buffered_stderr) {
                 .owned => &this._buffered_stderr.owned,
                 .borrowed => this._buffered_stderr.borrowed,
             };
         }
 
-        pub inline fn cwdZ(this: *ShellState) [:0]const u8 {
+        pub inline fn cwdZ(this: *ShellExecEnv) [:0]const u8 {
             if (this.__cwd.items.len == 0) return "";
             return this.__cwd.items[0..this.__cwd.items.len -| 1 :0];
         }
 
-        pub inline fn prevCwdZ(this: *ShellState) [:0]const u8 {
+        pub inline fn prevCwdZ(this: *ShellExecEnv) [:0]const u8 {
             if (this.__prev_cwd.items.len == 0) return "";
             return this.__prev_cwd.items[0..this.__prev_cwd.items.len -| 1 :0];
         }
 
-        pub inline fn prevCwd(this: *ShellState) []const u8 {
+        pub inline fn prevCwd(this: *ShellExecEnv) []const u8 {
             const prevcwdz = this.prevCwdZ();
             return prevcwdz[0..prevcwdz.len];
         }
 
-        pub inline fn cwd(this: *ShellState) []const u8 {
+        pub inline fn cwd(this: *ShellExecEnv) []const u8 {
             const cwdz = this.cwdZ();
             return cwdz[0..cwdz.len];
         }
 
-        pub fn deinit(this: *ShellState) void {
+        pub fn deinit(this: *ShellExecEnv) void {
             this.deinitImpl(true, true);
         }
 
         /// Doesn't deref `this.io`
         ///
         /// If called by interpreter we have to:
-        /// 1. not free this *ShellState, because its on a field on the interpreter
+        /// 1. not free this *ShellExecEnv, because its on a field on the interpreter
         /// 2. don't free buffered_stdout and buffered_stderr, because that is used for output
-        fn deinitImpl(this: *ShellState, comptime destroy_this: bool, comptime free_buffered_io: bool) void {
-            log("[ShellState] deinit {x}", .{@intFromPtr(this)});
+        fn deinitImpl(this: *ShellExecEnv, comptime destroy_this: bool, comptime free_buffered_io: bool) void {
+            log("[ShellExecEnv] deinit {x}", .{@intFromPtr(this)});
 
             if (comptime free_buffered_io) {
                 if (this._buffered_stdout == .owned) {
-                    this._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
+                    this._buffered_stdout.owned.deinit(bun.default_allocator);
                 }
                 if (this._buffered_stderr == .owned) {
-                    this._buffered_stderr.owned.deinitWithAllocator(bun.default_allocator);
+                    this._buffered_stderr.owned.deinit(bun.default_allocator);
                 }
             }
 
@@ -396,11 +458,17 @@ pub const Interpreter = struct {
             this.__prev_cwd.deinit();
             closefd(this.cwd_fd);
 
-            if (comptime destroy_this) bun.default_allocator.destroy(this);
+            if (comptime destroy_this) this.allocator().destroy(this);
         }
 
-        pub fn dupeForSubshell(this: *ShellState, allocator: Allocator, io: IO, kind: Kind) Maybe(*ShellState) {
-            const duped = allocator.create(ShellState) catch bun.outOfMemory();
+        pub fn dupeForSubshell(
+            this: *ShellExecEnv,
+            alloc_scope: if (bun.Environment.enableAllocScopes) *bun.AllocationScope else void,
+            alloc: Allocator,
+            io: IO,
+            kind: Kind,
+        ) Maybe(*ShellExecEnv) {
+            const duped = bun.handleOom(alloc.create(ShellExecEnv));
 
             const dupedfd = switch (Syscall.dup(this.cwd_fd)) {
                 .err => |err| return .{ .err = err },
@@ -436,19 +504,21 @@ pub const Interpreter = struct {
                 ._buffered_stdout = stdout,
                 ._buffered_stderr = stderr,
                 .shell_env = this.shell_env.clone(),
-                .cmd_local_env = EnvMap.init(allocator),
+                .cmd_local_env = EnvMap.init(alloc),
                 .export_env = this.export_env.clone(),
 
-                .__prev_cwd = this.__prev_cwd.clone() catch bun.outOfMemory(),
-                .__cwd = this.__cwd.clone() catch bun.outOfMemory(),
+                .__prev_cwd = bun.handleOom(this.__prev_cwd.clone()),
+                .__cwd = bun.handleOom(this.__cwd.clone()),
                 // TODO probably need to use os.dup here
                 .cwd_fd = dupedfd,
+                .__alloc_scope = alloc_scope,
             };
 
             return .{ .result = duped };
         }
 
-        pub fn assignVar(this: *ShellState, interp: *ThisInterpreter, label: EnvStr, value: EnvStr, assign_ctx: AssignCtx) void {
+        /// NOTE: This will `.ref()` value, so you should `defer value.deref()` it before handing it to this function.
+        pub fn assignVar(this: *ShellExecEnv, interp: *ThisInterpreter, label: EnvStr, value: EnvStr, assign_ctx: AssignCtx) void {
             _ = interp; // autofix
             switch (assign_ctx) {
                 .cmd => this.cmd_local_env.insert(label, value),
@@ -457,15 +527,15 @@ pub const Interpreter = struct {
             }
         }
 
-        pub fn changePrevCwd(self: *ShellState, interp: *ThisInterpreter) Maybe(void) {
+        pub fn changePrevCwd(self: *ShellExecEnv, interp: *ThisInterpreter) Maybe(void) {
             return self.changeCwd(interp, self.prevCwdZ());
         }
 
-        pub fn changeCwd(this: *ShellState, interp: *ThisInterpreter, new_cwd_: anytype) Maybe(void) {
+        pub fn changeCwd(this: *ShellExecEnv, interp: *ThisInterpreter, new_cwd_: anytype) Maybe(void) {
             return this.changeCwdImpl(interp, new_cwd_, false);
         }
 
-        pub fn changeCwdImpl(this: *ShellState, _: *ThisInterpreter, new_cwd_: anytype, comptime in_init: bool) Maybe(void) {
+        pub fn changeCwdImpl(this: *ShellExecEnv, _: *ThisInterpreter, new_cwd_: anytype, comptime in_init: bool) Maybe(void) {
             if (comptime @TypeOf(new_cwd_) != [:0]const u8 and @TypeOf(new_cwd_) != []const u8) {
                 @compileError("Bad type for new_cwd " ++ @typeName(@TypeOf(new_cwd_)));
             }
@@ -519,12 +589,12 @@ pub const Interpreter = struct {
             _ = this.cwd_fd.closeAllowingBadFileDescriptor(null);
 
             this.__prev_cwd.clearRetainingCapacity();
-            this.__prev_cwd.appendSlice(this.__cwd.items[0..]) catch bun.outOfMemory();
+            bun.handleOom(this.__prev_cwd.appendSlice(this.__cwd.items[0..]));
 
             this.__cwd.clearRetainingCapacity();
-            this.__cwd.appendSlice(new_cwd[0 .. new_cwd.len + 1]) catch bun.outOfMemory();
+            bun.handleOom(this.__cwd.appendSlice(new_cwd[0 .. new_cwd.len + 1]));
 
-            if (comptime bun.Environment.allow_assert) {
+            if (comptime bun.Environment.isDebug) {
                 assert(this.__cwd.items[this.__cwd.items.len -| 1] == 0);
                 assert(this.__prev_cwd.items[this.__prev_cwd.items.len -| 1] == 0);
             }
@@ -536,10 +606,10 @@ pub const Interpreter = struct {
             }
             this.export_env.insert(EnvStr.initSlice("PWD"), EnvStr.initSlice(this.cwd()));
 
-            return Maybe(void).success;
+            return .success;
         }
 
-        pub fn getHomedir(self: *ShellState) EnvStr {
+        pub fn getHomedir(self: *ShellExecEnv) EnvStr {
             const env_var: ?EnvStr = brk: {
                 const static_str = if (comptime bun.Environment.isWindows) EnvStr.initSlice("USERPROFILE") else EnvStr.initSlice("HOME");
                 break :brk self.shell_env.get(static_str) orelse self.export_env.get(static_str);
@@ -548,24 +618,34 @@ pub const Interpreter = struct {
         }
 
         pub fn writeFailingErrorFmt(
-            this: *ShellState,
+            this: *ShellExecEnv,
             ctx: anytype,
             enqueueCb: fn (c: @TypeOf(ctx)) void,
             comptime fmt: []const u8,
             args: anytype,
-        ) void {
+        ) Yield {
             const io: *IO.OutKind = &@field(ctx.io, "stderr");
             switch (io.*) {
                 .fd => |x| {
                     enqueueCb(ctx);
-                    x.writer.enqueueFmt(ctx, x.captured, fmt, args);
+                    return x.writer.enqueueFmt(ctx, x.captured, fmt, args);
                 },
                 .pipe => {
                     const bufio: *bun.ByteList = this.buffered_stderr();
-                    bufio.appendFmt(bun.default_allocator, fmt, args) catch bun.outOfMemory();
-                    ctx.parent.childDone(ctx, 1);
+                    bun.handleOom(bufio.appendFmt(bun.default_allocator, fmt, args));
+                    return ctx.parent.childDone(ctx, 1);
                 },
-                .ignore => {},
+                // FIXME: This is not correct? This would just make the entire shell hang I think?
+                .ignore => {
+                    const childptr = IOWriterChildPtr.init(ctx);
+                    // TODO: is this necessary
+                    const count = std.fmt.count(fmt, args);
+                    return .{ .on_io_writer_chunk = .{
+                        .child = childptr.asAnyOpaque(),
+                        .err = null,
+                        .written = count,
+                    } };
+                },
             }
         }
     };
@@ -581,18 +661,39 @@ pub const Interpreter = struct {
         syscall: Syscall.Error,
         other: ShellErrorKind,
 
-        fn toJSC(this: ShellErrorCtx, globalThis: *JSGlobalObject) JSValue {
+        fn toJS(this: ShellErrorCtx, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
-                .syscall => |err| err.toJSC(globalThis),
-                .other => |err| bun.JSC.ZigString.fromBytes(@errorName(err)).toJS(globalThis),
+                .syscall => |err| err.toJS(globalThis),
+                .other => |err| bun.jsc.ZigString.fromBytes(@errorName(err)).toJS(globalThis),
             };
         }
     };
 
-    pub fn createShellInterpreter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    fn #computeEstimatedSizeForGC(this: *const ThisInterpreter) usize {
+        var size: usize = @sizeOf(ThisInterpreter);
+        size += this.args.memoryCost();
+        size += this.root_shell.memoryCost();
+        size += this.root_io.memoryCost();
+        size += this.jsobjs.len * @sizeOf(JSValue);
+        for (this.vm_args_utf8.items) |arg| {
+            size += arg.byteSlice().len;
+        }
+        size += this.vm_args_utf8.allocatedSlice().len * @sizeOf(jsc.ZigString.Slice);
+        return size;
+    }
+
+    pub fn memoryCost(this: *const ThisInterpreter) usize {
+        return this.#computeEstimatedSizeForGC();
+    }
+
+    pub fn estimatedSize(this: *const ThisInterpreter) usize {
+        return this.estimated_size_for_gc;
+    }
+
+    pub fn createShellInterpreter(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
         const allocator = bun.default_allocator;
         const arguments_ = callframe.arguments_old(3);
-        var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
         const resolve = arguments.nextEat() orelse return globalThis.throw("shell: expected 3 arguments, got 0", .{});
 
@@ -603,7 +704,7 @@ pub const Interpreter = struct {
         const parsed_shell_script = parsed_shell_script_js.as(ParsedShellScript) orelse return globalThis.throw("shell: expected a ParsedShellScript", .{});
 
         var shargs: *ShellArgs = undefined;
-        var jsobjs: std.ArrayList(JSValue) = std.ArrayList(JSValue).init(allocator);
+        var jsobjs: std.array_list.Managed(JSValue) = std.array_list.Managed(JSValue).init(allocator);
         var quiet: bool = false;
         var cwd: ?bun.String = null;
         var export_env: ?EnvMap = null;
@@ -619,7 +720,7 @@ pub const Interpreter = struct {
             &export_env,
         );
 
-        const cwd_string: ?bun.JSC.ZigString.Slice = if (cwd) |c| brk: {
+        const cwd_string: ?bun.jsc.ZigString.Slice = if (cwd) |c| brk: {
             break :brk c.toUTF8(bun.default_allocator);
         } else null;
         defer if (cwd_string) |c| c.deinit();
@@ -654,15 +755,22 @@ pub const Interpreter = struct {
 
         interpreter.flags.quiet = quiet;
         interpreter.globalThis = globalThis;
-        const js_value = JSC.Codegen.JSShellInterpreter.toJS(interpreter, globalThis);
+        interpreter.estimated_size_for_gc = interpreter.#computeEstimatedSizeForGC();
 
+        const js_value = Bun__createShellInterpreter(
+            globalThis,
+            interpreter,
+            parsed_shell_script_js,
+            resolve,
+            reject,
+        );
         interpreter.this_jsvalue = js_value;
-        JSC.Codegen.JSShellInterpreter.resolveSetCached(js_value, globalThis, resolve);
-        JSC.Codegen.JSShellInterpreter.rejectSetCached(js_value, globalThis, reject);
         interpreter.keep_alive.ref(globalThis.bunVM());
-        bun.Analytics.Features.shell += 1;
+        bun.analytics.Features.shell += 1;
         return js_value;
     }
+
+    extern fn Bun__createShellInterpreter(globalThis: *jsc.JSGlobalObject, ptr: *Interpreter, parsed_shell_script: JSValue, resolve: JSValue, reject: JSValue) callconv(jsc.conv) JSValue;
 
     pub fn parse(
         arena_allocator: std.mem.Allocator,
@@ -688,16 +796,16 @@ pub const Interpreter = struct {
             return shell.ParseError.Lex;
         }
 
-        if (comptime bun.Environment.allow_assert) {
-            const debug = bun.Output.scoped(.ShellTokens, true);
-            var test_tokens = std.ArrayList(shell.Test.TestToken).initCapacity(arena_allocator, lex_result.tokens.len) catch @panic("OOPS");
+        if (comptime bun.Environment.isDebug) {
+            const debug = bun.Output.scoped(.ShellTokens, .hidden);
+            var test_tokens = std.array_list.Managed(shell.Test.TestToken).initCapacity(arena_allocator, lex_result.tokens.len) catch @panic("OOPS");
             defer test_tokens.deinit();
             for (lex_result.tokens) |tok| {
                 const test_tok = shell.Test.TestToken.from_real(tok, lex_result.strpool);
                 test_tokens.append(test_tok) catch @panic("OOPS");
             }
 
-            const str = std.json.stringifyAlloc(bun.default_allocator, test_tokens.items[0..], .{}) catch @panic("OOPS");
+            const str = bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "{f}", .{std.json.fmt(test_tokens.items[0..], .{})}));
             defer bun.default_allocator.free(str);
             debug("Tokens: {s}", .{str});
         }
@@ -711,8 +819,8 @@ pub const Interpreter = struct {
     /// If all initialization allocations succeed, the arena will be copied
     /// into the interpreter struct, so it is not a stale reference and safe to call `arena.deinit()` on error.
     pub fn init(
-        ctx: bun.CLI.Command.Context,
-        event_loop: JSC.EventLoopHandle,
+        ctx: bun.cli.Command.Context,
+        event_loop: jsc.EventLoopHandle,
         allocator: Allocator,
         shargs: *ShellArgs,
         jsobjs: []JSValue,
@@ -745,8 +853,8 @@ pub const Interpreter = struct {
         };
 
         // Avoid the large stack allocation on Windows.
-        const pathbuf = bun.default_allocator.create(bun.PathBuffer) catch bun.outOfMemory();
-        defer bun.default_allocator.destroy(pathbuf);
+        const pathbuf = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(pathbuf);
         const cwd: [:0]const u8 = switch (Syscall.getcwdZ(pathbuf)) {
             .result => |cwd| cwd,
             .err => |err| {
@@ -761,10 +869,10 @@ pub const Interpreter = struct {
             },
         };
 
-        var cwd_arr = std.ArrayList(u8).initCapacity(bun.default_allocator, cwd.len + 1) catch bun.outOfMemory();
-        cwd_arr.appendSlice(cwd[0 .. cwd.len + 1]) catch bun.outOfMemory();
+        var cwd_arr = bun.handleOom(std.array_list.Managed(u8).initCapacity(bun.default_allocator, cwd.len + 1));
+        bun.handleOom(cwd_arr.appendSlice(cwd[0 .. cwd.len + 1]));
 
-        if (comptime bun.Environment.allow_assert) {
+        if (comptime bun.Environment.isDebug) {
             assert(cwd_arr.items[cwd_arr.items.len -| 1] == 0);
         }
 
@@ -776,7 +884,7 @@ pub const Interpreter = struct {
 
         const stdin_reader = IOReader.init(stdin_fd, event_loop);
 
-        const interpreter = allocator.create(ThisInterpreter) catch bun.outOfMemory();
+        const interpreter = bun.handleOom(allocator.create(ThisInterpreter));
         interpreter.* = .{
             .command_ctx = ctx,
             .event_loop = event_loop,
@@ -785,14 +893,16 @@ pub const Interpreter = struct {
             .allocator = allocator,
             .jsobjs = jsobjs,
 
-            .root_shell = ShellState{
+            .root_shell = ShellExecEnv{
                 .shell_env = EnvMap.init(allocator),
                 .cmd_local_env = EnvMap.init(allocator),
                 .export_env = export_env,
 
                 .__cwd = cwd_arr,
-                .__prev_cwd = cwd_arr.clone() catch bun.outOfMemory(),
+                .__prev_cwd = bun.handleOom(cwd_arr.clone()),
                 .cwd_fd = cwd_fd,
+
+                .__alloc_scope = undefined,
             },
 
             .root_io = .{
@@ -807,7 +917,8 @@ pub const Interpreter = struct {
                 .stderr = .pipe,
             },
 
-            .vm_args_utf8 = std.ArrayList(JSC.ZigString.Slice).init(bun.default_allocator),
+            .vm_args_utf8 = std.array_list.Managed(jsc.ZigString.Slice).init(bun.default_allocator),
+            .__alloc_scope = if (bun.Environment.enableAllocScopes) bun.AllocationScope.init(allocator) else {},
             .globalThis = undefined,
         };
 
@@ -815,16 +926,14 @@ pub const Interpreter = struct {
             if (interpreter.root_shell.changeCwdImpl(interpreter, c, true).asErr()) |e| return .{ .err = .{ .sys = e.toShellSystemError() } };
         }
 
+        interpreter.root_shell.__alloc_scope = if (bun.Environment.enableAllocScopes) &interpreter.__alloc_scope else {};
+
         return .{ .result = interpreter };
     }
 
-    pub fn initAndRunFromFile(ctx: bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
+    pub fn initAndRunFromFile(ctx: bun.cli.Command.Context, mini: *jsc.MiniEventLoop, path: []const u8) !bun.shell.ExitCode {
         var shargs = ShellArgs.init();
-        const src = src: {
-            var file = try std.fs.cwd().openFile(path, .{});
-            defer file.close();
-            break :src try file.reader().readAllAlloc(shargs.arena_allocator(), std.math.maxInt(u32));
-        };
+        const src = try std.fs.cwd().readFileAlloc(shargs.arena_allocator(), path, std.math.maxInt(u32));
         defer shargs.deinit();
 
         const jsobjs: []JSValue = &[_]JSValue{};
@@ -898,8 +1007,8 @@ pub const Interpreter = struct {
         return code;
     }
 
-    pub fn initAndRunFromSource(ctx: bun.CLI.Command.Context, mini: *JSC.MiniEventLoop, path_for_errors: []const u8, src: []const u8, cwd: ?[]const u8) !ExitCode {
-        bun.Analytics.Features.standalone_shell += 1;
+    pub fn initAndRunFromSource(ctx: bun.cli.Command.Context, mini: *jsc.MiniEventLoop, path_for_errors: []const u8, src: []const u8, cwd: ?[]const u8) !ExitCode {
+        bun.analytics.Features.standalone_shell += 1;
         var shargs = ShellArgs.init();
         defer shargs.deinit();
 
@@ -1012,22 +1121,24 @@ pub const Interpreter = struct {
             }
         }
 
-        return Maybe(void).success;
+        return .success;
     }
 
     pub fn run(this: *ThisInterpreter) !Maybe(void) {
+        log("Interpreter(0x{x}) run", .{@intFromPtr(this)});
         if (this.setupIOBeforeRun().asErr()) |e| {
             return .{ .err = e };
         }
 
         var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .seq_cst);
-        root.start();
+        root.start().run();
 
-        return Maybe(void).success;
+        return .success;
     }
 
-    pub fn runFromJS(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    pub fn runFromJS(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {
+        log("Interpreter(0x{x}) runFromJS", .{@intFromPtr(this)});
         _ = callframe; // autofix
 
         if (this.setupIOBeforeRun().asErr()) |e| {
@@ -1039,7 +1150,7 @@ pub const Interpreter = struct {
 
         var root = Script.init(this, &this.root_shell, &this.args.script_ast, Script.ParentPtr.init(this), this.root_io.copy());
         this.started.store(true, .seq_cst);
-        root.start();
+        root.start().run();
         if (globalThis.hasException()) return error.JSError;
 
         return .js_undefined;
@@ -1048,46 +1159,46 @@ pub const Interpreter = struct {
     fn ioToJSValue(globalThis: *JSGlobalObject, buf: *bun.ByteList) JSValue {
         const bytelist = buf.*;
         buf.* = .{};
-        const buffer: JSC.Node.Buffer = .{
+        const buffer: jsc.Node.Buffer = .{
             .allocator = bun.default_allocator,
-            .buffer = JSC.ArrayBuffer.fromBytes(@constCast(bytelist.slice()), .Uint8Array),
+            .buffer = jsc.ArrayBuffer.fromBytes(@constCast(bytelist.slice()), .Uint8Array),
         };
         return buffer.toNodeBuffer(globalThis);
     }
 
-    pub fn asyncCmdDone(this: *ThisInterpreter, @"async": *Async) void {
-        log("asyncCommandDone {}", .{@"async"});
-        @"async".actuallyDeinit();
+    pub fn asyncCmdDone(this: *ThisInterpreter, async: *Async) void {
+        log("asyncCommandDone {f}", .{async});
+        async.actuallyDeinit();
         this.async_commands_executing -= 1;
         if (this.async_commands_executing == 0 and this.exit_code != null) {
-            this.finish(this.exit_code.?);
+            this.finish(this.exit_code.?).run();
         }
     }
 
-    pub fn childDone(this: *ThisInterpreter, child: InterpreterChildPtr, exit_code: ExitCode) void {
+    pub fn childDone(this: *ThisInterpreter, child: InterpreterChildPtr, exit_code: ExitCode) Yield {
         if (child.ptr.is(Script)) {
             const script = child.as(Script);
             script.deinitFromInterpreter();
             this.exit_code = exit_code;
-            if (this.async_commands_executing == 0) this.finish(exit_code);
-            return;
+            if (this.async_commands_executing == 0) return this.finish(exit_code);
+            return .suspended;
         }
         @panic("Bad child");
     }
 
-    pub fn finish(this: *ThisInterpreter, exit_code: ExitCode) void {
-        log("finish {d}", .{exit_code});
+    pub fn finish(this: *ThisInterpreter, exit_code: ExitCode) Yield {
+        log("Interpreter(0x{x}) finish {d}", .{ @intFromPtr(this), exit_code });
         defer decrPendingActivityFlag(&this.has_pending_activity);
 
         if (this.event_loop == .js) {
             defer this.deinitAfterJSRun();
             this.exit_code = exit_code;
-            if (this.this_jsvalue != .zero) {
-                const this_jsvalue = this.this_jsvalue;
-                if (JSC.Codegen.JSShellInterpreter.resolveGetCached(this_jsvalue)) |resolve| {
-                    this.this_jsvalue = .zero;
-                    const globalThis = this.globalThis;
+            const this_jsvalue = this.this_jsvalue;
+            if (this_jsvalue != .zero) {
+                if (jsc.Codegen.JSShellInterpreter.resolveGetCached(this_jsvalue)) |resolve| {
                     const loop = this.event_loop.js;
+                    const globalThis = this.globalThis;
+                    this.this_jsvalue = .zero;
                     this.keep_alive.disable();
                     loop.enter();
                     _ = resolve.call(globalThis, .js_undefined, &.{
@@ -1095,8 +1206,8 @@ pub const Interpreter = struct {
                         this.getBufferedStdout(globalThis),
                         this.getBufferedStderr(globalThis),
                     }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
-                    JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
-                    JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
+                    jsc.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
+                    jsc.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
                     loop.exit();
                 }
             }
@@ -1104,41 +1215,12 @@ pub const Interpreter = struct {
             this.flags.done = true;
             this.exit_code = exit_code;
         }
-    }
 
-    fn errored(this: *ThisInterpreter, the_error: ShellError) void {
-        _ = the_error; // autofix
-        defer decrPendingActivityFlag(&this.has_pending_activity);
-
-        if (this.event_loop == .js) {
-            const this_jsvalue = this.this_jsvalue;
-            if (this_jsvalue != .zero) {
-                if (JSC.Codegen.JSShellInterpreter.rejectGetCached(this_jsvalue)) |reject| {
-                    const loop = this.event_loop.js;
-                    const globalThis = this.globalThis;
-                    this.this_jsvalue = .zero;
-                    this.keep_alive.disable();
-
-                    loop.enter();
-                    _ = reject.call(globalThis, &[_]JSValue{
-                        JSValue.jsNumberFromChar(1),
-                        this.getBufferedStdout(globalThis),
-                        this.getBufferedStderr(globalThis),
-                    }) catch |err| globalThis.reportActiveExceptionAsUnhandled(err);
-                    JSC.Codegen.JSShellInterpreter.resolveSetCached(this_jsvalue, globalThis, .js_undefined);
-                    JSC.Codegen.JSShellInterpreter.rejectSetCached(this_jsvalue, globalThis, .js_undefined);
-
-                    loop.exit();
-                }
-            }
-        }
+        return .done;
     }
 
     fn deinitAfterJSRun(this: *ThisInterpreter) void {
-        log("deinit interpreter", .{});
-        for (this.jsobjs) |jsobj| {
-            jsobj.unprotect();
-        }
+        log("Interpreter(0x{x}) deinitAfterJSRun", .{@intFromPtr(this)});
         this.root_io.deref();
         this.keep_alive.disable();
         this.root_shell.deinitImpl(false, false);
@@ -1147,20 +1229,18 @@ pub const Interpreter = struct {
 
     fn deinitFromFinalizer(this: *ThisInterpreter) void {
         if (this.root_shell._buffered_stderr == .owned) {
-            this.root_shell._buffered_stderr.owned.deinitWithAllocator(bun.default_allocator);
+            this.root_shell._buffered_stderr.owned.deinit(bun.default_allocator);
         }
         if (this.root_shell._buffered_stdout == .owned) {
-            this.root_shell._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
+            this.root_shell._buffered_stdout.owned.deinit(bun.default_allocator);
         }
         this.this_jsvalue = .zero;
+        this.args.deinit();
         this.allocator.destroy(this);
     }
 
     fn deinitEverything(this: *ThisInterpreter) void {
         log("deinit interpreter", .{});
-        for (this.jsobjs) |jsobj| {
-            jsobj.unprotect();
-        }
         this.root_io.deref();
         this.root_shell.deinitImpl(false, true);
         for (this.vm_args_utf8.items[0..]) |str| {
@@ -1171,13 +1251,13 @@ pub const Interpreter = struct {
         this.allocator.destroy(this);
     }
 
-    pub fn setQuiet(this: *ThisInterpreter, _: *JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn setQuiet(this: *ThisInterpreter, _: *JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         log("Interpreter(0x{x}) setQuiet()", .{@intFromPtr(this)});
         this.flags.quiet = true;
         return .js_undefined;
     }
 
-    pub fn setCwd(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn setCwd(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const value = callframe.argument(0);
         const str = try bun.String.fromJS(value, globalThis);
 
@@ -1185,20 +1265,20 @@ pub const Interpreter = struct {
         defer slice.deinit();
         switch (this.root_shell.changeCwd(this, slice.slice())) {
             .err => |e| {
-                return globalThis.throwValue(e.toJSC(globalThis));
+                return globalThis.throwValue(e.toJS(globalThis));
             },
             .result => {},
         }
         return .js_undefined;
     }
 
-    pub fn setEnv(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    pub fn setEnv(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         const value1 = callframe.argument(0);
         if (!value1.isObject()) {
             return globalThis.throwInvalidArguments("env must be an object", .{});
         }
 
-        var object_iter = JSC.JSPropertyIterator(.{
+        var object_iter = jsc.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
         }).init(globalThis, value1);
@@ -1211,12 +1291,12 @@ pub const Interpreter = struct {
         // PATH = "";
 
         while (object_iter.next()) |key| {
-            const keyslice = key.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+            const keyslice = bun.handleOom(key.toOwnedSlice(bun.default_allocator));
             var value = object_iter.value;
             if (value.isUndefined()) continue;
 
             const value_str = value.getZigString(globalThis);
-            const slice = value_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+            const slice = bun.handleOom(value_str.toOwnedSlice(bun.default_allocator));
             const keyref = EnvStr.initRefCounted(keyslice);
             defer keyref.deref();
             const valueref = EnvStr.initRefCounted(slice);
@@ -1228,42 +1308,26 @@ pub const Interpreter = struct {
         return .js_undefined;
     }
 
-    pub fn isRunning(
-        this: *ThisInterpreter,
-        _: *JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.hasPendingActivity());
+    pub fn isRunning(this: *ThisInterpreter, _: *JSGlobalObject, _: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        return jsc.JSValue.jsBoolean(this.hasPendingActivity());
     }
 
-    pub fn getStarted(
-        this: *ThisInterpreter,
-        globalThis: *JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
+    pub fn getStarted(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
         _ = globalThis; // autofix
         _ = callframe; // autofix
 
-        return JSC.JSValue.jsBoolean(this.started.load(.seq_cst));
+        return jsc.JSValue.jsBoolean(this.started.load(.seq_cst));
     }
 
-    pub fn getBufferedStdout(
-        this: *ThisInterpreter,
-        globalThis: *JSGlobalObject,
-    ) JSC.JSValue {
+    pub fn getBufferedStdout(this: *ThisInterpreter, globalThis: *JSGlobalObject) jsc.JSValue {
         return ioToJSValue(globalThis, this.root_shell.buffered_stdout());
     }
 
-    pub fn getBufferedStderr(
-        this: *ThisInterpreter,
-        globalThis: *JSGlobalObject,
-    ) JSC.JSValue {
+    pub fn getBufferedStderr(this: *ThisInterpreter, globalThis: *JSGlobalObject) jsc.JSValue {
         return ioToJSValue(globalThis, this.root_shell.buffered_stderr());
     }
 
-    pub fn finalize(
-        this: *ThisInterpreter,
-    ) void {
+    pub fn finalize(this: *ThisInterpreter) void {
         log("Interpreter(0x{x}) finalize", .{@intFromPtr(this)});
         this.deinitFromFinalizer();
     }
@@ -1288,9 +1352,9 @@ pub const Interpreter = struct {
 
     pub fn getVmArgsUtf8(this: *Interpreter, argv: []const *WTFStringImplStruct, idx: u8) []const u8 {
         if (this.vm_args_utf8.items.len != argv.len) {
-            this.vm_args_utf8.ensureTotalCapacity(argv.len) catch bun.outOfMemory();
+            bun.handleOom(this.vm_args_utf8.ensureTotalCapacity(argv.len));
             for (argv) |arg| {
-                this.vm_args_utf8.append(arg.toUTF8(bun.default_allocator)) catch bun.outOfMemory();
+                bun.handleOom(this.vm_args_utf8.append(arg.toUTF8(bun.default_allocator)));
             }
         }
         return this.vm_args_utf8.items[idx].slice();
@@ -1303,6 +1367,8 @@ pub const Interpreter = struct {
 
     pub const Builtin = @import("./Builtin.zig");
 
+    /// TODO: Investigate whether or not this can be removed now that we have
+    /// removed recursion
     pub const AsyncDeinitReader = IOReader.AsyncDeinitReader;
 
     pub const IO = @import("./IO.zig");
@@ -1310,34 +1376,7 @@ pub const Interpreter = struct {
     pub const IOReaderChildPtr = IOReader.ChildPtr;
     pub const IOWriter = @import("./IOWriter.zig");
 
-    pub const AsyncDeinitWriter = struct {
-        ran: bool = false,
-
-        pub fn enqueue(this: *@This()) void {
-            if (this.ran) return;
-            this.ran = true;
-
-            var iowriter = this.writer();
-
-            if (iowriter.evtloop == .js) {
-                iowriter.evtloop.js.enqueueTaskConcurrent(iowriter.concurrent_task.js.from(this, .manual_deinit));
-            } else {
-                iowriter.evtloop.mini.enqueueTaskConcurrent(iowriter.concurrent_task.mini.from(this, "runFromMainThreadMini"));
-            }
-        }
-
-        pub fn writer(this: *@This()) *IOWriter {
-            return @alignCast(@fieldParentPtr("async_deinit", this));
-        }
-
-        pub fn runFromMainThread(this: *@This()) void {
-            this.writer().deinitOnMainThread();
-        }
-
-        pub fn runFromMainThreadMini(this: *@This(), _: *void) void {
-            this.runFromMainThread();
-        }
-    };
+    pub const AsyncDeinitWriter = IOWriter.AsyncDeinitWriter;
 };
 
 /// Construct a tagged union of the state nodes provided in `TypesValue`.
@@ -1365,16 +1404,65 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
             return Type.ChildPtr;
         }
 
-        /// Starts the state node.
-        pub fn start(this: @This()) void {
+        pub fn scopedAllocator(this: @This()) if (bun.Environment.enableAllocScopes) *bun.AllocationScope else void {
+            if (comptime !bun.Environment.enableAllocScopes) return;
+
             const tags = comptime std.meta.fields(Ptr.Tag);
             inline for (tags) |tag| {
                 if (this.tagInt() == tag.value) {
                     const Ty = comptime Ptr.typeFromTag(tag.value);
                     Ptr.assert_type(Ty);
                     var casted = this.as(Ty);
-                    casted.start();
-                    return;
+                    if (comptime Ty == Interpreter) {
+                        return &casted.__alloc_scope;
+                    }
+                    return casted.base.__alloc_scope.scopedAllocator();
+                }
+            }
+            unknownTag(this.tagInt());
+        }
+
+        pub fn allocator(this: @This()) std.mem.Allocator {
+            const tags = comptime std.meta.fields(Ptr.Tag);
+            inline for (tags) |tag| {
+                if (this.tagInt() == tag.value) {
+                    const Ty = comptime Ptr.typeFromTag(tag.value);
+                    Ptr.assert_type(Ty);
+                    var casted = this.as(Ty);
+                    if (comptime Ty == Interpreter) {
+                        if (bun.Environment.enableAllocScopes) return casted.__alloc_scope.allocator();
+                        return bun.default_allocator;
+                    }
+                    return casted.base.allocator();
+                }
+            }
+            unknownTag(this.tagInt());
+        }
+
+        pub fn create(this: @This(), comptime Ty: type) *Ty {
+            if (comptime bun.Environment.enableAllocScopes) {
+                return bun.handleOom(this.allocator().create(Ty));
+            }
+            return bun.handleOom(bun.default_allocator.create(Ty));
+        }
+
+        pub fn destroy(this: @This(), ptr: anytype) void {
+            if (comptime bun.Environment.enableAllocScopes) {
+                this.allocator().destroy(ptr);
+            } else {
+                bun.default_allocator.destroy(ptr);
+            }
+        }
+
+        /// Starts the state node.
+        pub fn start(this: @This()) Yield {
+            const tags = comptime std.meta.fields(Ptr.Tag);
+            inline for (tags) |tag| {
+                if (this.tagInt() == tag.value) {
+                    const Ty = comptime Ptr.typeFromTag(tag.value);
+                    Ptr.assert_type(Ty);
+                    var casted = this.as(Ty);
+                    return casted.start();
                 }
             }
             unknownTag(this.tagInt());
@@ -1398,7 +1486,7 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
 
         /// Signals to the state node that one of its children completed with the
         /// given exit code
-        pub fn childDone(this: @This(), child: anytype, exit_code: ExitCode) void {
+        pub fn childDone(this: @This(), child: anytype, exit_code: ExitCode) Yield {
             const tags = comptime std.meta.fields(Ptr.Tag);
             inline for (tags) |tag| {
                 if (this.tagInt() == tag.value) {
@@ -1409,15 +1497,14 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
                         break :brk ChildPtr.init(child);
                     };
                     var casted = this.as(Ty);
-                    casted.childDone(child_ptr, exit_code);
-                    return;
+                    return casted.childDone(child_ptr, exit_code);
                 }
             }
             unknownTag(this.tagInt());
         }
 
-        pub fn unknownTag(tag: Ptr.TagInt) void {
-            if (bun.Environment.allow_assert) std.debug.panic("Bad tag: {d}\n", .{tag});
+        pub fn unknownTag(tag: Ptr.TagInt) noreturn {
+            return bun.Output.panic("Unknown tag for shell state node: {d}\n", .{tag});
         }
 
         pub fn tagInt(this: @This()) Ptr.TagInt {
@@ -1455,7 +1542,7 @@ pub fn MaybeChild(comptime T: type) type {
 
 pub fn closefd(fd: bun.FileDescriptor) void {
     if (fd.closeAllowingBadFileDescriptor(null)) |err| {
-        log("ERR closefd: {}\n", .{err});
+        log("ERR closefd: {f}\n", .{err});
     }
 }
 
@@ -1471,7 +1558,7 @@ const CmdEnvIter = struct {
     const Value = struct {
         val: [:0]const u8,
 
-        pub fn format(self: Value, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: Value, writer: *std.Io.Writer) !void {
             try writer.writeAll(self.val);
         }
     };
@@ -1479,7 +1566,7 @@ const CmdEnvIter = struct {
     const Key = struct {
         val: []const u8,
 
-        pub fn format(self: Key, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: Key, writer: *std.Io.Writer) !void {
             try writer.writeAll(self.val);
         }
 
@@ -1525,10 +1612,10 @@ pub fn ShellTask(
 ) type {
     return struct {
         task: WorkPoolTask = .{ .callback = &runFromThreadPool },
-        event_loop: JSC.EventLoopHandle,
+        event_loop: jsc.EventLoopHandle,
         // This is a poll because we want it to enter the uSockets loop
         ref: bun.Async.KeepAlive = .{},
-        concurrent_task: JSC.EventLoopTask,
+        concurrent_task: jsc.EventLoopTask,
 
         pub const InnerShellTask = @This();
 
@@ -1577,7 +1664,7 @@ inline fn errnocast(errno: anytype) u16 {
 
 /// 'js' event loop will always return JSError
 /// 'mini' event loop will always return noreturn and exit 1
-pub fn throwShellErr(e: *const bun.shell.ShellErr, event_loop: JSC.EventLoopHandle) bun.JSError!noreturn {
+pub fn throwShellErr(e: *const bun.shell.ShellErr, event_loop: jsc.EventLoopHandle) bun.JSError!noreturn {
     return switch (event_loop) {
         .mini => e.throwMini(),
         .js => e.throwJS(event_loop.js.global),
@@ -1638,14 +1725,15 @@ pub const ShellSyscall = struct {
 
     pub fn statat(dir: bun.FileDescriptor, path_: [:0]const u8) Maybe(bun.Stat) {
         if (bun.Environment.isWindows) {
-            var buf: bun.PathBuffer = undefined;
-            const path = switch (getPath(dir, path_, &buf)) {
+            const buf: *bun.PathBuffer = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
+            const path = switch (getPath(dir, path_, buf)) {
                 .err => |e| return .{ .err = e },
                 .result => |p| p,
             };
 
             return switch (Syscall.stat(path)) {
-                .err => |e| .{ .err = e.clone(bun.default_allocator) catch bun.outOfMemory() },
+                .err => |e| .{ .err = e.clone(bun.default_allocator) },
                 .result => |s| .{ .result = s },
             };
         }
@@ -1653,12 +1741,15 @@ pub const ShellSyscall = struct {
         return Syscall.fstatat(dir, path_);
     }
 
+    /// Same thing as bun.sys.openat on posix
+    /// On windows it will convert paths for us
     pub fn openat(dir: bun.FileDescriptor, path: [:0]const u8, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
         if (bun.Environment.isWindows) {
             if (flags & bun.O.DIRECTORY != 0) {
                 if (ResolvePath.Platform.posix.isAbsolute(path[0..path.len])) {
-                    var buf: bun.PathBuffer = undefined;
-                    const p = switch (getPath(dir, path, &buf)) {
+                    const buf: *bun.PathBuffer = bun.path_buffer_pool.get();
+                    defer bun.path_buffer_pool.put(buf);
+                    const p = switch (getPath(dir, path, buf)) {
                         .result => |p| p,
                         .err => |e| return .{ .err = e },
                     };
@@ -1673,8 +1764,9 @@ pub const ShellSyscall = struct {
                 };
             }
 
-            var buf: bun.PathBuffer = undefined;
-            const p = switch (getPath(dir, path, &buf)) {
+            const buf: *bun.PathBuffer = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(buf);
+            const p = switch (getPath(dir, path, buf)) {
                 .result => |p| p,
                 .err => |e| return .{ .err = e },
             };
@@ -1717,11 +1809,11 @@ pub const ShellSyscall = struct {
 pub fn OutputTask(
     comptime Parent: type,
     comptime vtable: struct {
-        writeErr: *const fn (*Parent, childptr: anytype, []const u8) CoroutineResult,
+        writeErr: *const fn (*Parent, childptr: anytype, []const u8) ?Yield,
         onWriteErr: *const fn (*Parent) void,
-        writeOut: *const fn (*Parent, childptr: anytype, *OutputSrc) CoroutineResult,
+        writeOut: *const fn (*Parent, childptr: anytype, *OutputSrc) ?Yield,
         onWriteOut: *const fn (*Parent) void,
-        onDone: *const fn (*Parent) void,
+        onDone: *const fn (*Parent) Yield,
     },
 ) type {
     return struct {
@@ -1733,59 +1825,49 @@ pub fn OutputTask(
             done,
         },
 
-        pub fn deinit(this: *@This()) void {
+        pub fn deinit(this: *@This()) Yield {
             if (comptime bun.Environment.allow_assert) assert(this.state == .done);
-            vtable.onDone(this.parent);
-            this.output.deinit();
-            bun.destroy(this);
+            log("OutputTask({s}, 0x{x}) deinit", .{ @typeName(Parent), @intFromPtr(this) });
+            defer bun.destroy(this);
+            defer this.output.deinit();
+            return vtable.onDone(this.parent);
         }
 
-        pub fn start(this: *@This(), errbuf: ?[]const u8) void {
+        pub fn start(this: *@This(), errbuf: ?[]const u8) Yield {
+            log("OutputTask({s}, 0x{x}) start errbuf={s}", .{ @typeName(Parent), @intFromPtr(this), if (errbuf) |err| err[0..@min(128, err.len)] else "null" });
             this.state = .waiting_write_err;
             if (errbuf) |err| {
-                switch (vtable.writeErr(this.parent, this, err)) {
-                    .cont => {
-                        this.next();
-                    },
-                    .yield => return,
-                }
-                return;
+                if (vtable.writeErr(this.parent, this, err)) |yield| return yield;
+                return this.next();
             }
             this.state = .waiting_write_out;
-            switch (vtable.writeOut(this.parent, this, &this.output)) {
-                .cont => {
-                    vtable.onWriteOut(this.parent);
-                    this.state = .done;
-                    this.deinit();
-                },
-                .yield => return,
-            }
+            if (vtable.writeOut(this.parent, this, &this.output)) |yield| return yield;
+            vtable.onWriteOut(this.parent);
+            this.state = .done;
+            return this.deinit();
         }
 
-        pub fn next(this: *@This()) void {
+        pub fn next(this: *@This()) Yield {
             switch (this.state) {
                 .waiting_write_err => {
                     vtable.onWriteErr(this.parent);
                     this.state = .waiting_write_out;
-                    switch (vtable.writeOut(this.parent, this, &this.output)) {
-                        .cont => {
-                            vtable.onWriteOut(this.parent);
-                            this.state = .done;
-                            this.deinit();
-                        },
-                        .yield => return,
-                    }
+                    if (vtable.writeOut(this.parent, this, &this.output)) |yield| return yield;
+                    vtable.onWriteOut(this.parent);
+                    this.state = .done;
+                    return this.deinit();
                 },
                 .waiting_write_out => {
                     vtable.onWriteOut(this.parent);
                     this.state = .done;
-                    this.deinit();
+                    return this.deinit();
                 },
                 .done => @panic("Invalid state"),
             }
         }
 
-        pub fn onIOWriterChunk(this: *@This(), _: usize, err: ?JSC.SystemError) void {
+        pub fn onIOWriterChunk(this: *@This(), _: usize, err: ?jsc.SystemError) Yield {
+            log("OutputTask({s}, 0x{x}) onIOWriterChunk", .{ @typeName(Parent), @intFromPtr(this) });
             if (err) |e| {
                 e.deref();
             }
@@ -1794,19 +1876,15 @@ pub fn OutputTask(
                 .waiting_write_err => {
                     vtable.onWriteErr(this.parent);
                     this.state = .waiting_write_out;
-                    switch (vtable.writeOut(this.parent, this, &this.output)) {
-                        .cont => {
-                            vtable.onWriteOut(this.parent);
-                            this.state = .done;
-                            this.deinit();
-                        },
-                        .yield => return,
-                    }
+                    if (vtable.writeOut(this.parent, this, &this.output)) |yield| return yield;
+                    vtable.onWriteOut(this.parent);
+                    this.state = .done;
+                    return this.deinit();
                 },
                 .waiting_write_out => {
                     vtable.onWriteOut(this.parent);
                     this.state = .done;
-                    this.deinit();
+                    return this.deinit();
                 },
                 .done => @panic("Invalid state"),
             }
@@ -1904,7 +1982,48 @@ pub fn isPollable(fd: bun.FileDescriptor, mode: bun.Mode) bool {
     return switch (bun.Environment.os) {
         .windows, .wasm => false,
         .linux => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.native()),
-        // macos allows regular files to be pollable: ISREG(mode) == true
-        .mac => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.S.ISREG(mode) or posix.isatty(fd.native()),
+        // macos DOES allow regular files to be pollable, but we don't want that because
+        // our IOWriter code has a separate and better codepath for writing to files.
+        .mac => if (posix.S.ISREG(mode)) false else posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.native()),
     };
 }
+
+pub fn isPollableFromMode(mode: bun.Mode) bool {
+    return switch (bun.Environment.os) {
+        .windows, .wasm => false,
+        .linux => posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode),
+        // macos DOES allow regular files to be pollable, but we don't want that because
+        // our IOWriter code has a separate and better codepath for writing to files.
+        .mac => if (posix.S.ISREG(mode)) false else posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode),
+    };
+}
+
+pub fn unreachableState(context: []const u8, state: []const u8) noreturn {
+    @branchHint(.cold);
+    return bun.Output.panic("Bun shell has reached an unreachable state \"{s}\" in the {s} context. This indicates a bug, please open a GitHub issue.", .{ state, context });
+}
+
+const builtin = @import("builtin");
+const WTFStringImplStruct = @import("../string.zig").WTFStringImplStruct;
+
+const bun = @import("bun");
+const ResolvePath = bun.path;
+const TaggedPointerUnion = bun.TaggedPointerUnion;
+const assert = bun.assert;
+const which = bun.which;
+const Maybe = bun.sys.Maybe;
+
+const jsc = bun.jsc;
+const JSGlobalObject = bun.jsc.JSGlobalObject;
+const JSValue = bun.jsc.JSValue;
+
+const shell = bun.shell;
+const Yield = shell.Yield;
+const ast = shell.AST;
+
+const windows = bun.windows;
+const uv = windows.libuv;
+
+const std = @import("std");
+const posix = std.posix;
+const Allocator = std.mem.Allocator;

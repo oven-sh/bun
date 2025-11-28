@@ -1152,7 +1152,8 @@ pub const PackageInstaller = struct {
                     const truncated_dep_name_hash: TruncatedPackageNameHash = @truncate(dep.name_hash);
                     const is_trusted, const is_trusted_through_update_request = brk: {
                         if (this.trusted_dependencies_from_update_requests.contains(truncated_dep_name_hash)) break :brk .{ true, true };
-                        if (this.lockfile.hasTrustedDependency(alias.slice(this.lockfile.buffers.string_bytes.items))) break :brk .{ true, false };
+                        // Only allow default trusted dependencies for npm packages
+                        if (this.lockfile.hasTrustedDependency(alias.slice(this.lockfile.buffers.string_bytes.items), resolution.tag == .npm)) break :brk .{ true, false };
                         break :brk .{ false, false };
                     };
 

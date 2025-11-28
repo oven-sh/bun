@@ -2662,7 +2662,8 @@ pub const Resolver = struct {
                     return null;
                 // Look for a second slash after the first one to ensure there's a share name
                 // We need +1 to skip past the first slash itself
-                _ = bun.strings.indexOfChar(input_path[2 + first_slash + 1 ..], '\\') orelse
+                const offset = 2 + first_slash + 1;
+                if (offset >= input_path.len or !bun.strings.containsChar(input_path[offset..], '\\'))
                     return null;
             }
         }

@@ -62,7 +62,7 @@ private:
     void performParse(ScriptExecutionContext&);
     void rewind();
     const URLPatternUtilities::Token& getSafeToken(size_t index) const;
-    bool isNonSpecialPatternChararacter(size_t index, char value) const;
+    bool isNonSpecialPatternCharacter(size_t index, char value) const;
     bool isSearchPrefix() const;
     bool isAuthoritySlashesNext() const;
     String makeComponentString() const;

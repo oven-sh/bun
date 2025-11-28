@@ -116,6 +116,9 @@ ExceptionOr<void> URLPatternParser::performParse(const URLPatternStringOptions& 
 // https://urlpattern.spec.whatwg.org/#try-to-consume-a-token
 Token URLPatternParser::tryToConsumeToken(TokenType type)
 {
+    if (m_index >= m_tokenList.size())
+        return { };
+
     auto& nextToken = m_tokenList[m_index];
 
     if (nextToken.type != type)
@@ -458,13 +461,14 @@ String generatePatternString(const Vector<Part>& partList, const URLPatternStrin
         if (!needsGrouping && hasCustomName
             && part.type == PartType::SegmentWildcard && part.modifier == Modifier::None
             && nextPart && nextPart->prefix.isEmpty() && nextPart->suffix.isEmpty()) {
-            if (nextPart->type == PartType::FixedText)
-                needsGrouping = isValidNameCodepoint(*StringView(nextPart->value).codePoints().begin(), IsFirst::No);
-            else
+            if (nextPart->type == PartType::FixedText) {
+                if (!nextPart->value.isEmpty())
+                    needsGrouping = isValidNameCodepoint(*StringView(nextPart->value).codePoints().begin(), IsFirst::No);
+            } else
                 needsGrouping = !nextPart->name.isEmpty() && isASCIIDigit(nextPart->name[0]);
         }
 
-        if (!needsGrouping && part.prefix.isEmpty() && previousPart && previousPart->type == PartType::FixedText) {
+        if (!needsGrouping && part.prefix.isEmpty() && previousPart && previousPart->type == PartType::FixedText && !previousPart->value.isEmpty()) {
             if (options.prefixCodepoint.length() == 1
                 && options.prefixCodepoint.startsWith(*StringView(previousPart->value).codePoints().codePointAt(previousPart->value.length() - 1)))
                 needsGrouping = true;

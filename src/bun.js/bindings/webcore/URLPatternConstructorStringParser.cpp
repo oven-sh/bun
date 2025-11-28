@@ -59,7 +59,7 @@ const URLPatternUtilities::Token& URLPatternConstructorStringParser::getSafeToke
 }
 
 // https://urlpattern.spec.whatwg.org/#is-a-non-special-pattern-char
-bool URLPatternConstructorStringParser::isNonSpecialPatternChararacter(size_t index, char value) const
+bool URLPatternConstructorStringParser::isNonSpecialPatternCharacter(size_t index, char value) const
 {
     auto token = getSafeToken(index);
 
@@ -72,15 +72,15 @@ bool URLPatternConstructorStringParser::isNonSpecialPatternChararacter(size_t in
 // https://urlpattern.spec.whatwg.org/#is-a-search-prefix
 bool URLPatternConstructorStringParser::isSearchPrefix() const
 {
-    if (isNonSpecialPatternChararacter(m_tokenIndex, '?'))
+    if (isNonSpecialPatternCharacter(m_tokenIndex, '?'))
         return true;
     if (m_tokenList[m_tokenIndex].value != "?"_s)
         return false;
 
-    int previousIndex = m_tokenIndex - 1;
-    if (previousIndex < 0)
+    if (m_tokenIndex == 0)
         return true;
 
+    size_t previousIndex = m_tokenIndex - 1;
     auto previousToken = getSafeToken(previousIndex);
     if (previousToken.type == URLPatternUtilities::TokenType::Name
         || previousToken.type == URLPatternUtilities::TokenType::Regexp
@@ -94,9 +94,9 @@ bool URLPatternConstructorStringParser::isSearchPrefix() const
 // https://urlpattern.spec.whatwg.org/#next-is-authority-slashes
 bool URLPatternConstructorStringParser::isAuthoritySlashesNext() const
 {
-    if (!isNonSpecialPatternChararacter(m_tokenIndex + 1, '/'))
+    if (!isNonSpecialPatternCharacter(m_tokenIndex + 1, '/'))
         return false;
-    if (!isNonSpecialPatternChararacter(m_tokenIndex + 2, '/'))
+    if (!isNonSpecialPatternCharacter(m_tokenIndex + 2, '/'))
         return false;
     return true;
 }
@@ -205,14 +205,14 @@ void URLPatternConstructorStringParser::updateState(ScriptExecutionContext& cont
     switch (m_state) {
     case URLPatternConstructorStringParserState::Init:
         // Look for protocol prefix.
-        if (isNonSpecialPatternChararacter(m_tokenIndex, ':')) {
+        if (isNonSpecialPatternCharacter(m_tokenIndex, ':')) {
             rewind();
             m_state = URLPatternConstructorStringParserState::Protocol;
         }
         break;
     case URLPatternConstructorStringParserState::Protocol:
         // Look for protocol prefix.
-        if (isNonSpecialPatternChararacter(m_tokenIndex, ':')) {
+        if (isNonSpecialPatternCharacter(m_tokenIndex, ':')) {
             auto maybeMatchesSpecialSchemeProtocol = computeProtocolMatchSpecialSchemeFlag(context);
             if (maybeMatchesSpecialSchemeProtocol.hasException())
                 break; // FIXME: Return exceptions.
@@ -228,67 +228,67 @@ void URLPatternConstructorStringParser::updateState(ScriptExecutionContext& cont
         break;
     case URLPatternConstructorStringParserState::Authority:
         // Look for identity terminator.
-        if (isNonSpecialPatternChararacter(m_tokenIndex, '@')) {
+        if (isNonSpecialPatternCharacter(m_tokenIndex, '@')) {
             rewind();
             m_state = URLPatternConstructorStringParserState::Username;
-        } else if (isNonSpecialPatternChararacter(m_tokenIndex, '/') || isSearchPrefix() || isNonSpecialPatternChararacter(m_tokenIndex, '#')) { // Look for pathname start, search prefix or hash prefix.
+        } else if (isNonSpecialPatternCharacter(m_tokenIndex, '/') || isSearchPrefix() || isNonSpecialPatternCharacter(m_tokenIndex, '#')) { // Look for pathname start, search prefix or hash prefix.
             rewind();
             m_state = URLPatternConstructorStringParserState::Hostname;
         }
         break;
     case URLPatternConstructorStringParserState::Username:
         // Look for password prefix.
-        if (isNonSpecialPatternChararacter(m_tokenIndex, ':'))
+        if (isNonSpecialPatternCharacter(m_tokenIndex, ':'))
             changeState(URLPatternConstructorStringParserState::Password, 1);
         // Look for identity terminator.
-        else if (isNonSpecialPatternChararacter(m_tokenIndex, '@'))
+        else if (isNonSpecialPatternCharacter(m_tokenIndex, '@'))
             changeState(URLPatternConstructorStringParserState::Hostname, 1);
         break;
     case URLPatternConstructorStringParserState::Password:
         // Look for identity terminator.
-        if (isNonSpecialPatternChararacter(m_tokenIndex, '@'))
+        if (isNonSpecialPatternCharacter(m_tokenIndex, '@'))
             changeState(URLPatternConstructorStringParserState::Hostname, 1);
         break;
     case URLPatternConstructorStringParserState::Hostname:
         // Look for an IPv6 open.
-        if (isNonSpecialPatternChararacter(m_tokenIndex, '['))
+        if (isNonSpecialPatternCharacter(m_tokenIndex, '['))
             ++m_hostnameIPv6BracketDepth;
         // Look for an IPv6 close.
-        else if (isNonSpecialPatternChararacter(m_tokenIndex, ']'))
+        else if (isNonSpecialPatternCharacter(m_tokenIndex, ']') && m_hostnameIPv6BracketDepth > 0)
             --m_hostnameIPv6BracketDepth;
         // Look for port prefix.
-        else if (isNonSpecialPatternChararacter(m_tokenIndex, ':') && !m_hostnameIPv6BracketDepth)
+        else if (isNonSpecialPatternCharacter(m_tokenIndex, ':') && !m_hostnameIPv6BracketDepth)
             changeState(URLPatternConstructorStringParserState::Port, 1);
         // Look for pathname start.
-        else if (isNonSpecialPatternChararacter(m_tokenIndex, '/'))
+        else if (isNonSpecialPatternCharacter(m_tokenIndex, '/'))
             changeState(URLPatternConstructorStringParserState::Pathname, 0);
         // Look for search prefix.
         else if (isSearchPrefix())
             changeState(URLPatternConstructorStringParserState::Search, 1);
         // Look for hash prefix.
-        else if (isNonSpecialPatternChararacter(m_tokenIndex, '#'))
+        else if (isNonSpecialPatternCharacter(m_tokenIndex, '#'))
             changeState(URLPatternConstructorStringParserState::Hash, 1);
         break;
     case URLPatternConstructorStringParserState::Port:
         // Look for pathname start.
-        if (isNonSpecialPatternChararacter(m_tokenIndex, '/'))
+        if (isNonSpecialPatternCharacter(m_tokenIndex, '/'))
             changeState(URLPatternConstructorStringParserState::Pathname, 0);
         else if (isSearchPrefix())
             changeState(URLPatternConstructorStringParserState::Search, 1);
         // Look for hash prefix.
-        else if (isNonSpecialPatternChararacter(m_tokenIndex, '#'))
+        else if (isNonSpecialPatternCharacter(m_tokenIndex, '#'))
             changeState(URLPatternConstructorStringParserState::Hash, 1);
         break;
     case URLPatternConstructorStringParserState::Pathname:
         if (isSearchPrefix())
             changeState(URLPatternConstructorStringParserState::Search, 1);
         // Look for hash prefix.
-        else if (isNonSpecialPatternChararacter(m_tokenIndex, '#'))
+        else if (isNonSpecialPatternCharacter(m_tokenIndex, '#'))
             changeState(URLPatternConstructorStringParserState::Hash, 1);
         break;
     case URLPatternConstructorStringParserState::Search:
         // Look for hash prefix.
-        if (isNonSpecialPatternChararacter(m_tokenIndex, '#'))
+        if (isNonSpecialPatternCharacter(m_tokenIndex, '#'))
             changeState(URLPatternConstructorStringParserState::Hash, 1);
         break;
     case URLPatternConstructorStringParserState::Hash:
@@ -309,7 +309,7 @@ void URLPatternConstructorStringParser::performParse(ScriptExecutionContext& con
         if (m_tokenList[m_tokenIndex].type == URLPatternUtilities::TokenType::End) {
             if (m_state == URLPatternConstructorStringParserState::Init) {
                 rewind();
-                if (isNonSpecialPatternChararacter(m_tokenIndex, '#'))
+                if (isNonSpecialPatternCharacter(m_tokenIndex, '#'))
                     changeState(URLPatternConstructorStringParserState::Hash, 1);
                 else if (isSearchPrefix())
                     changeState(URLPatternConstructorStringParserState::Search, 1);

@@ -99,10 +99,13 @@ JSC::JSValue URLPatternComponent::componentExec(ScriptExecutionContext& context,
 {
     Ref vm = context.vm();
     JSC::JSLockHolder lock(vm);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     auto contextObject = context.globalObject();
-    if (!contextObject)
-        return JSC::JSValue::JSFalse;
+    if (!contextObject) {
+        throwTypeError(contextObject, throwScope, "URLPattern execution requires a valid execution context"_s);
+        return { };
+    }
     auto regex = JSC::RegExpObject::create(vm, contextObject->regExpStructure(), m_regularExpression.get(), true);
     return regex->exec(contextObject, JSC::jsString(vm, comparedString));
 }
@@ -124,7 +127,9 @@ URLPatternComponentResult URLPatternComponent::createComponentMatchResult(JSC::J
         if (!match.isNull() && !match.isUndefined())
             value = match.toWTFString(globalObject);
 
-        groups.append(URLPatternComponentResult::NameMatchPair { m_groupNameList[index - 1], WTFMove(value) });
+        size_t groupIndex = index - 1;
+        String groupName = groupIndex < m_groupNameList.size() ? m_groupNameList[groupIndex] : emptyString();
+        groups.append(URLPatternComponentResult::NameMatchPair { WTFMove(groupName), WTFMove(value) });
     }
 
     return URLPatternComponentResult { !input.isEmpty() ? WTFMove(input) : emptyString(), WTFMove(groups) };

@@ -1106,20 +1106,76 @@ UV_EXTERN int uv_os_get_passwd(uv_passwd_t* pwd)
     uid_t uid = geteuid();
     struct passwd pw;
     struct passwd *result = NULL;
-    char buf[4096];
+    size_t buf_size = 4096;
+    char *buf = NULL;
+    int ret;
 
-    int ret = getpwuid_r(uid, &pw, buf, sizeof(buf), &result);
-    if (ret != 0 || result == NULL) {
+    // Retry with increasing buffer size on ERANGE
+    for (;;) {
+        buf = (char*)malloc(buf_size);
+        if (!buf) {
+            return UV_ENOMEM;
+        }
+
+        ret = getpwuid_r(uid, &pw, buf, buf_size, &result);
+        if (ret == 0) {
+            break; // Success
+        } else if (ret == ERANGE) {
+            // Buffer too small, try again with larger buffer
+            free(buf);
+            buf_size *= 2;
+            if (buf_size > 65536) { // Cap at 64KB to prevent infinite loop
+                return UV_ENOENT;
+            }
+        } else {
+            // Other error from getpwuid_r
+            free(buf);
+            return UV_ENOENT;
+        }
+    }
+
+    if (result == NULL) {
+        free(buf);
         return UV_ENOENT;
     }
 
-    // Copy data to uv_passwd_t structure
-    pwd->username = result->pw_name ? strdup(result->pw_name) : NULL;
+    // Initialize pwd fields to NULL
+    pwd->username = NULL;
+    pwd->shell = NULL;
+    pwd->homedir = NULL;
+
+    // Copy data to uv_passwd_t structure, checking for allocation failures
+    if (result->pw_name) {
+        pwd->username = strdup(result->pw_name);
+        if (!pwd->username) {
+            free(buf);
+            return UV_ENOMEM;
+        }
+    }
+
     pwd->uid = result->pw_uid;
     pwd->gid = result->pw_gid;
-    pwd->shell = result->pw_shell ? strdup(result->pw_shell) : NULL;
-    pwd->homedir = result->pw_dir ? strdup(result->pw_dir) : NULL;
 
+    if (result->pw_shell) {
+        pwd->shell = strdup(result->pw_shell);
+        if (!pwd->shell) {
+            if (pwd->username) free((void*)pwd->username);
+            free(buf);
+            return UV_ENOMEM;
+        }
+    }
+
+    if (result->pw_dir) {
+        pwd->homedir = strdup(result->pw_dir);
+        if (!pwd->homedir) {
+            if (pwd->username) free((void*)pwd->username);
+            if (pwd->shell) free((void*)pwd->shell);
+            free(buf);
+            return UV_ENOMEM;
+        }
+    }
+
+    free(buf);
     return 0;
 }
 

@@ -953,10 +953,16 @@ pub fn userInfo(globalThis: *jsc.JSGlobalObject, options: gen.UserInfoOptions) b
     result.put(globalThis, jsc.ZigString.static("uid"), jsc.JSValue.jsNumber(passwd.uid));
     result.put(globalThis, jsc.ZigString.static("gid"), jsc.JSValue.jsNumber(passwd.gid));
 
-    if (passwd.shell) |shell| {
-        result.put(globalThis, jsc.ZigString.static("shell"), jsc.ZigString.init(bun.span(shell)).withEncoding().toJS(globalThis));
+    if (Environment.isWindows) {
+        // On Windows, shell property should be null to match Node.js behavior
+        result.put(globalThis, jsc.ZigString.static("shell"), jsc.JSValue.null);
     } else {
-        result.put(globalThis, jsc.ZigString.static("shell"), jsc.ZigString.init("unknown").withEncoding().toJS(globalThis));
+        // On POSIX systems, use passwd entry when present, otherwise "unknown"
+        if (passwd.shell) |shell| {
+            result.put(globalThis, jsc.ZigString.static("shell"), jsc.ZigString.init(bun.span(shell)).withEncoding().toJS(globalThis));
+        } else {
+            result.put(globalThis, jsc.ZigString.static("shell"), jsc.ZigString.init("unknown").withEncoding().toJS(globalThis));
+        }
     }
 
     return result;

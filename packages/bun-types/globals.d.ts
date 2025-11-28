@@ -1920,14 +1920,44 @@ interface BunFetchRequestInit extends RequestInit {
    * Override http_proxy or HTTPS_PROXY
    * This is a custom property that is not part of the Fetch API specification.
    *
+   * Can be a string URL or an object with `url` and optional `headers`.
+   *
    * @example
    * ```js
+   * // String format
    * const response = await fetch("http://example.com", {
    *  proxy: "https://username:password@127.0.0.1:8080"
    * });
+   *
+   * // Object format with custom headers sent to the proxy
+   * const response = await fetch("http://example.com", {
+   *  proxy: {
+   *    url: "https://127.0.0.1:8080",
+   *    headers: {
+   *      "Proxy-Authorization": "Bearer token",
+   *      "X-Custom-Proxy-Header": "value"
+   *    }
+   *  }
+   * });
    * ```
+   *
+   * If a `Proxy-Authorization` header is provided in `proxy.headers`, it takes
+   * precedence over credentials parsed from the proxy URL.
    */
-  proxy?: string;
+  proxy?:
+    | string
+    | {
+        /**
+         * The proxy URL
+         */
+        url: string;
+        /**
+         * Custom headers to send to the proxy server.
+         * These headers are sent in the CONNECT request (for HTTPS targets)
+         * or in the proxy request (for HTTP targets).
+         */
+        headers?: Bun.HeadersInit;
+      };
 
   /**
    * Override the default S3 options

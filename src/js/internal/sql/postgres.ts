@@ -672,14 +672,11 @@ class PooledPostgresConnection {
   }
 }
 
-class PostgresAdapter
-  implements
-    DatabaseAdapter<
-      PooledPostgresConnection,
-      $ZigGeneratedClasses.PostgresSQLConnection,
-      $ZigGeneratedClasses.PostgresSQLQuery
-    >
-{
+class PostgresAdapter implements DatabaseAdapter<
+  PooledPostgresConnection,
+  $ZigGeneratedClasses.PostgresSQLConnection,
+  $ZigGeneratedClasses.PostgresSQLQuery
+> {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
 
   public readonly connections: PooledPostgresConnection[];

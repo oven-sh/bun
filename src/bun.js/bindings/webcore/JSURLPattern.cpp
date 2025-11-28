@@ -146,13 +146,13 @@ static inline EncodedJSValue constructJSURLPattern1(JSGlobalObject* lexicalGloba
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     auto object = URLPattern::create(*context, convertToWTFVariant(WTFMove(input)), WTFMove(baseURL), WTFMove(options));
     if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
     auto jsValue = toJSNewlyCreated<IDLInterface<URLPattern>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
     if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<URLPattern>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsValue);
 }
 
@@ -173,13 +173,13 @@ static inline EncodedJSValue constructJSURLPattern2(JSGlobalObject* lexicalGloba
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     auto object = URLPattern::create(*context, convertToOptionalWTFVariant(WTFMove(input)), WTFMove(options));
     if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
     auto jsValue = toJSNewlyCreated<IDLInterface<URLPattern>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
     if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<URLPattern>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsValue);
 }
 
@@ -285,7 +285,7 @@ void JSURLPattern::destroy(JSC::JSCell* cell)
     thisObject->JSURLPattern::~JSURLPattern();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsURLPatternConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsURLPatternConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -303,7 +303,7 @@ static inline JSValue jsURLPattern_protocolGetter(JSGlobalObject& lexicalGlobalO
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.protocol())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_protocol, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_protocol, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSURLPattern>::get<jsURLPattern_protocolGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -316,7 +316,7 @@ static inline JSValue jsURLPattern_usernameGetter(JSGlobalObject& lexicalGlobalO
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.username())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_username, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_username, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSURLPattern>::get<jsURLPattern_usernameGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -329,7 +329,7 @@ static inline JSValue jsURLPattern_passwordGetter(JSGlobalObject& lexicalGlobalO
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.password())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_password, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_password, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSURLPattern>::get<jsURLPattern_passwordGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -342,7 +342,7 @@ static inline JSValue jsURLPattern_hostnameGetter(JSGlobalObject& lexicalGlobalO
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.hostname())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_hostname, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_hostname, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSURLPattern>::get<jsURLPattern_hostnameGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -355,7 +355,7 @@ static inline JSValue jsURLPattern_portGetter(JSGlobalObject& lexicalGlobalObjec
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.port())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_port, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_port, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSURLPattern>::get<jsURLPattern_portGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -368,7 +368,7 @@ static inline JSValue jsURLPattern_pathnameGetter(JSGlobalObject& lexicalGlobalO
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.pathname())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_pathname, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_pathname, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSURLPattern>::get<jsURLPattern_pathnameGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -381,7 +381,7 @@ static inline JSValue jsURLPattern_searchGetter(JSGlobalObject& lexicalGlobalObj
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.search())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_search, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_search, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSURLPattern>::get<jsURLPattern_searchGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -394,7 +394,7 @@ static inline JSValue jsURLPattern_hashGetter(JSGlobalObject& lexicalGlobalObjec
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.hash())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_hash, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_hash, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSURLPattern>::get<jsURLPattern_hashGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -407,7 +407,7 @@ static inline JSValue jsURLPattern_hasRegExpGroupsGetter(JSGlobalObject& lexical
     RELEASE_AND_RETURN(throwScope, (toJS<IDLBoolean>(lexicalGlobalObject, throwScope, impl.hasRegExpGroups())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_hasRegExpGroups, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsURLPattern_hasRegExpGroups, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSURLPattern>::get<jsURLPattern_hasRegExpGroupsGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -431,7 +431,7 @@ static inline JSC::EncodedJSValue jsURLPatternPrototypeFunction_testBody(JSC::JS
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.test(*context, convertToOptionalWTFVariant(WTFMove(input)), WTFMove(baseURL)))));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsURLPatternPrototypeFunction_test, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsURLPatternPrototypeFunction_test, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSURLPattern>::call<jsURLPatternPrototypeFunction_testBody>(*lexicalGlobalObject, *callFrame, "test");
 }
@@ -455,18 +455,14 @@ static inline JSC::EncodedJSValue jsURLPatternPrototypeFunction_execBody(JSC::JS
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLDictionary<URLPatternResult>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.exec(*context, convertToOptionalWTFVariant(WTFMove(input)), WTFMove(baseURL)))));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsURLPatternPrototypeFunction_exec, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsURLPatternPrototypeFunction_exec, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSURLPattern>::call<jsURLPatternPrototypeFunction_execBody>(*lexicalGlobalObject, *callFrame, "exec");
 }
 
 JSC::GCClient::IsoSubspace* JSURLPattern::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSURLPattern, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForURLPattern.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForURLPattern = std::forward<decltype(space)>(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForURLPattern.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForURLPattern = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSURLPattern, UseCustomHeapCellType::No>(vm, [](auto& spaces) { return spaces.m_clientSubspaceForURLPattern.get(); }, [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForURLPattern = std::forward<decltype(space)>(space); }, [](auto& spaces) { return spaces.m_subspaceForURLPattern.get(); }, [](auto& spaces, auto&& space) { spaces.m_subspaceForURLPattern = std::forward<decltype(space)>(space); });
 }
 
 void JSURLPattern::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -496,13 +492,17 @@ void JSURLPatternOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
-#pragma warning(disable: 4483)
-extern "C" { extern void (*const __identifier("??_7URLPattern@WebCore@@6B@")[])(); }
+#pragma warning(disable : 4483)
+extern "C" {
+extern void (*const __identifier("??_7URLPattern@WebCore@@6B@")[])();
+}
 #else
-extern "C" { extern void* _ZTVN7WebCore10URLPatternE[]; }
+extern "C" {
+extern void* _ZTVN7WebCore10URLPatternE[];
+}
 #endif
 template<std::same_as<URLPattern> T>
-static inline void verifyVTable(URLPattern* ptr) 
+static inline void verifyVTable(URLPattern* ptr)
 {
     if constexpr (std::is_polymorphic_v<T>) {
         const void* actualVTablePointer = getVTablePointer<T>(ptr);

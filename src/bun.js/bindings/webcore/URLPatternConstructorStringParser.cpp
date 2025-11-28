@@ -65,8 +65,8 @@ bool URLPatternConstructorStringParser::isNonSpecialPatternChararacter(size_t in
 
     return token.value.length() == 1 && token.value[0] == value
         && (token.type == URLPatternUtilities::TokenType::Char
-        || token.type == URLPatternUtilities::TokenType::EscapedChar
-        || token.type == URLPatternUtilities::TokenType::InvalidChar);
+            || token.type == URLPatternUtilities::TokenType::EscapedChar
+            || token.type == URLPatternUtilities::TokenType::InvalidChar);
 }
 
 // https://urlpattern.spec.whatwg.org/#is-a-search-prefix
@@ -150,14 +150,14 @@ ExceptionOr<void> URLPatternConstructorStringParser::computeProtocolMatchSpecial
     Ref vm = context.vm();
     JSC::JSLockHolder lock(vm);
 
-    auto maybeProtocolComponent = URLPatternUtilities::URLPatternComponent::compile(vm, makeComponentString(), EncodingCallbackType::Protocol, URLPatternUtilities::URLPatternStringOptions { });
+    auto maybeProtocolComponent = URLPatternUtilities::URLPatternComponent::compile(vm, makeComponentString(), EncodingCallbackType::Protocol, URLPatternUtilities::URLPatternStringOptions {});
     if (maybeProtocolComponent.hasException())
         return maybeProtocolComponent.releaseException();
 
     auto protocolComponent = maybeProtocolComponent.releaseReturnValue();
     m_protocolMatchesSpecialSchemeFlag = protocolComponent.matchSpecialSchemeProtocol(context);
 
-    return { };
+    return {};
 }
 
 // https://urlpattern.spec.whatwg.org/#change-state

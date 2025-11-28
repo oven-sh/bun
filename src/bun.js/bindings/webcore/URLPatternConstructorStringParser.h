@@ -41,7 +41,17 @@ struct URLPatternStringOptions;
 struct URLPatternInit;
 }
 
-enum class URLPatternConstructorStringParserState : uint8_t { Init, Protocol, Authority, Username, Password, Hostname, Port, Pathname, Search, Hash, Done };
+enum class URLPatternConstructorStringParserState : uint8_t { Init,
+    Protocol,
+    Authority,
+    Username,
+    Password,
+    Hostname,
+    Port,
+    Pathname,
+    Search,
+    Hash,
+    Done };
 
 class URLPatternConstructorStringParser {
 public:
@@ -70,7 +80,6 @@ private:
     int m_hostnameIPv6BracketDepth { 0 };
     bool m_protocolMatchesSpecialSchemeFlag { false };
     URLPatternConstructorStringParserState m_state { URLPatternConstructorStringParserState::Init };
-
 };
 
 }

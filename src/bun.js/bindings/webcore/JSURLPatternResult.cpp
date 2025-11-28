@@ -63,14 +63,7 @@ static JSC::JSObject* convertGroupsToJS(JSC::JSGlobalObject& lexicalGlobalObject
     auto result = constructEmptyObject(&lexicalGlobalObject, globalObject.objectPrototype());
 
     for (const auto& pair : groups) {
-        JSValue jsValue = WTF::switchOn(pair.value,
-            [&](std::monostate) -> JSValue {
-                return jsUndefined();
-            },
-            [&](const String& str) -> JSValue {
-                return toJS<IDLUSVString>(lexicalGlobalObject, throwScope, str);
-            }
-        );
+        JSValue jsValue = WTF::switchOn(pair.value, [&](std::monostate) -> JSValue { return jsUndefined(); }, [&](const String& str) -> JSValue { return toJS<IDLUSVString>(lexicalGlobalObject, throwScope, str); });
         RETURN_IF_EXCEPTION(throwScope, nullptr);
 
         // Check if the key is an array index
@@ -93,14 +86,7 @@ static JSC::JSValue convertURLPatternInputToJS(JSC::JSGlobalObject& lexicalGloba
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(vm);
 
-    return WTF::switchOn(input,
-        [&](const String& str) -> JSValue {
-            return toJS<IDLUSVString>(lexicalGlobalObject, throwScope, str);
-        },
-        [&](const URLPatternInit& init) -> JSValue {
-            return convertDictionaryToJS(lexicalGlobalObject, globalObject, init);
-        }
-    );
+    return WTF::switchOn(input, [&](const String& str) -> JSValue { return toJS<IDLUSVString>(lexicalGlobalObject, throwScope, str); }, [&](const URLPatternInit& init) -> JSValue { return convertDictionaryToJS(lexicalGlobalObject, globalObject, init); });
 }
 
 JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const URLPatternComponentResult& dictionary)

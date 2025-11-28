@@ -151,47 +151,47 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
 
     if (!IDLUSVString::isNullValue(dictionary.baseURL)) {
         auto baseURLValue = toJS<IDLUSVString>(lexicalGlobalObject, throwScope, IDLUSVString::extractValueFromNullable(dictionary.baseURL));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
         result->putDirect(vm, JSC::Identifier::fromString(vm, "baseURL"_s), baseURLValue);
     }
     if (!IDLUSVString::isNullValue(dictionary.hash)) {
         auto hashValue = toJS<IDLUSVString>(lexicalGlobalObject, throwScope, IDLUSVString::extractValueFromNullable(dictionary.hash));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
         result->putDirect(vm, JSC::Identifier::fromString(vm, "hash"_s), hashValue);
     }
     if (!IDLUSVString::isNullValue(dictionary.hostname)) {
         auto hostnameValue = toJS<IDLUSVString>(lexicalGlobalObject, throwScope, IDLUSVString::extractValueFromNullable(dictionary.hostname));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
         result->putDirect(vm, JSC::Identifier::fromString(vm, "hostname"_s), hostnameValue);
     }
     if (!IDLUSVString::isNullValue(dictionary.password)) {
         auto passwordValue = toJS<IDLUSVString>(lexicalGlobalObject, throwScope, IDLUSVString::extractValueFromNullable(dictionary.password));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
         result->putDirect(vm, JSC::Identifier::fromString(vm, "password"_s), passwordValue);
     }
     if (!IDLUSVString::isNullValue(dictionary.pathname)) {
         auto pathnameValue = toJS<IDLUSVString>(lexicalGlobalObject, throwScope, IDLUSVString::extractValueFromNullable(dictionary.pathname));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
         result->putDirect(vm, JSC::Identifier::fromString(vm, "pathname"_s), pathnameValue);
     }
     if (!IDLUSVString::isNullValue(dictionary.port)) {
         auto portValue = toJS<IDLUSVString>(lexicalGlobalObject, throwScope, IDLUSVString::extractValueFromNullable(dictionary.port));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
         result->putDirect(vm, JSC::Identifier::fromString(vm, "port"_s), portValue);
     }
     if (!IDLUSVString::isNullValue(dictionary.protocol)) {
         auto protocolValue = toJS<IDLUSVString>(lexicalGlobalObject, throwScope, IDLUSVString::extractValueFromNullable(dictionary.protocol));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
         result->putDirect(vm, JSC::Identifier::fromString(vm, "protocol"_s), protocolValue);
     }
     if (!IDLUSVString::isNullValue(dictionary.search)) {
         auto searchValue = toJS<IDLUSVString>(lexicalGlobalObject, throwScope, IDLUSVString::extractValueFromNullable(dictionary.search));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
         result->putDirect(vm, JSC::Identifier::fromString(vm, "search"_s), searchValue);
     }
     if (!IDLUSVString::isNullValue(dictionary.username)) {
         auto usernameValue = toJS<IDLUSVString>(lexicalGlobalObject, throwScope, IDLUSVString::extractValueFromNullable(dictionary.username));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
         result->putDirect(vm, JSC::Identifier::fromString(vm, "username"_s), usernameValue);
     }
     return result;

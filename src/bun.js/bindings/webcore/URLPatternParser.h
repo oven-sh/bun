@@ -39,22 +39,29 @@ namespace URLPatternUtilities {
 struct Token;
 enum class TokenType : uint8_t;
 
-enum class PartType : uint8_t { FixedText, Regexp, SegmentWildcard, FullWildcard };
-enum class Modifier : uint8_t { None, Optional, ZeroOrMore, OneOrMore };
-enum class IsFirst : bool { No, Yes };
+enum class PartType : uint8_t { FixedText,
+    Regexp,
+    SegmentWildcard,
+    FullWildcard };
+enum class Modifier : uint8_t { None,
+    Optional,
+    ZeroOrMore,
+    OneOrMore };
+enum class IsFirst : bool { No,
+    Yes };
 
 struct Part {
     PartType type;
     String value;
     Modifier modifier;
-    String name { };
-    String prefix { };
-    String suffix { };
+    String name {};
+    String prefix {};
+    String suffix {};
 };
 
 struct URLPatternStringOptions {
-    String delimiterCodepoint { };
-    String prefixCodepoint { };
+    String delimiterCodepoint {};
+    String prefixCodepoint {};
     bool ignoreCase { false };
 };
 
@@ -79,7 +86,7 @@ private:
 
     bool isDuplicateName(StringView) const;
 
-    Vector<Part> takePartList() { return std::exchange(m_partList, { }); }
+    Vector<Part> takePartList() { return std::exchange(m_partList, {}); }
 
     Vector<Token> m_tokenList;
     Vector<Part> m_partList;
@@ -98,7 +105,6 @@ std::pair<String, Vector<String>> generateRegexAndNameList(const Vector<Part>& p
 String generatePatternString(const Vector<Part>& partList, const URLPatternStringOptions&);
 String escapePatternString(StringView input);
 bool isValidNameCodepoint(char16_t codepoint, URLPatternUtilities::IsFirst);
-
 
 } // namespace URLPatternUtilities
 } // namespace WebCore

@@ -271,7 +271,7 @@ ExceptionOr<String> callEncodingCallback(EncodingCallbackType type, StringView i
     case EncodingCallbackType::IPv6Host:
         return canonicalizeIPv6Hostname(input, BaseURLStringType::URL);
     case EncodingCallbackType::Port:
-        return canonicalizePort(input, { }, BaseURLStringType::URL);
+        return canonicalizePort(input, {}, BaseURLStringType::URL);
     case EncodingCallbackType::Path:
         return canonicalizePathname(input);
     case EncodingCallbackType::OpaquePath:

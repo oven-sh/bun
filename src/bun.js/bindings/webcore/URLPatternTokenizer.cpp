@@ -95,7 +95,7 @@ ExceptionOr<void> Tokenizer::processTokenizingError(size_t nextPosition, size_t 
 
     addToken(TokenType::InvalidChar, nextPosition, valuePosition);
 
-    return { };
+    return {};
 }
 
 Tokenizer::Tokenizer(StringView input, TokenizePolicy tokenizerPolicy)
@@ -148,7 +148,7 @@ ExceptionOr<Vector<Token>> Tokenizer::tokenize()
             continue;
         }
 
-        if (m_codepoint ==  ':') {
+        if (m_codepoint == ':') {
             auto namePosition = m_nextIndex;
             auto nameStart = namePosition;
 
@@ -164,7 +164,7 @@ ExceptionOr<Vector<Token>> Tokenizer::tokenize()
             }
 
             if (namePosition <= nameStart) {
-                maybeException = processTokenizingError(nameStart, m_index, makeString("Name position "_s, String::number(namePosition), " is less than name start "_s,  String::number(nameStart)));
+                maybeException = processTokenizingError(nameStart, m_index, makeString("Name position "_s, String::number(namePosition), " is less than name start "_s, String::number(nameStart)));
                 continue;
             }
 

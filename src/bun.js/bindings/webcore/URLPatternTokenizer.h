@@ -33,8 +33,18 @@ template<typename> class ExceptionOr;
 
 namespace URLPatternUtilities {
 
-enum class TokenType : uint8_t { Open, Close, Regexp, Name, Char, EscapedChar, OtherModifier, Asterisk, End, InvalidChar };
-enum class TokenizePolicy : bool { Strict, Lenient };
+enum class TokenType : uint8_t { Open,
+    Close,
+    Regexp,
+    Name,
+    Char,
+    EscapedChar,
+    OtherModifier,
+    Asterisk,
+    End,
+    InvalidChar };
+enum class TokenizePolicy : bool { Strict,
+    Lenient };
 
 struct Token {
     TokenType type;

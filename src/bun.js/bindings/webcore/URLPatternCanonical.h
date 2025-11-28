@@ -33,7 +33,16 @@ namespace WebCore {
 template<typename> class ExceptionOr;
 
 enum class BaseURLStringType : bool;
-enum class EncodingCallbackType : uint8_t { Protocol, Username, Password, Host, IPv6Host, Port, Path, OpaquePath, Search, Hash };
+enum class EncodingCallbackType : uint8_t { Protocol,
+    Username,
+    Password,
+    Host,
+    IPv6Host,
+    Port,
+    Path,
+    OpaquePath,
+    Search,
+    Hash };
 
 bool isAbsolutePathname(StringView input, BaseURLStringType inputType);
 ExceptionOr<String> canonicalizeProtocol(StringView, BaseURLStringType valueType);

@@ -57,7 +57,7 @@ ExceptionOr<void> URLPatternParser::performParse(const URLPatternStringOptions& 
                 prefix = charToken.value.toString();
 
             if (!prefix.isEmpty() && prefix != options.prefixCodepoint)
-                m_pendingFixedValue.append(std::exchange(prefix, { }));
+                m_pendingFixedValue.append(std::exchange(prefix, {}));
 
             maybeFunctionException = maybeAddPartFromPendingFixedValue();
             if (maybeFunctionException.hasException())
@@ -65,7 +65,7 @@ ExceptionOr<void> URLPatternParser::performParse(const URLPatternStringOptions& 
 
             auto modifierToken = tryToConsumeModifierToken();
 
-            maybeFunctionException = addPart(WTFMove(prefix), nameToken, regexOrWildcardToken, { }, modifierToken);
+            maybeFunctionException = addPart(WTFMove(prefix), nameToken, regexOrWildcardToken, {}, modifierToken);
             if (maybeFunctionException.hasException())
                 return maybeFunctionException.releaseException();
 
@@ -110,7 +110,7 @@ ExceptionOr<void> URLPatternParser::performParse(const URLPatternStringOptions& 
             return maybeSyntaxError.releaseException();
     }
 
-    return { };
+    return {};
 }
 
 // https://urlpattern.spec.whatwg.org/#try-to-consume-a-token
@@ -119,7 +119,7 @@ Token URLPatternParser::tryToConsumeToken(TokenType type)
     auto& nextToken = m_tokenList[m_index];
 
     if (nextToken.type != type)
-        return { };
+        return {};
 
     ++m_index;
 
@@ -182,7 +182,7 @@ ExceptionOr<Token> URLPatternParser::consumeRequiredToken(TokenType type)
 ExceptionOr<void> URLPatternParser::maybeAddPartFromPendingFixedValue()
 {
     if (m_pendingFixedValue.isEmpty())
-        return { };
+        return {};
 
     auto encodedValue = callEncodingCallback(m_callbackType, m_pendingFixedValue.toString());
     m_pendingFixedValue.clear();
@@ -192,7 +192,7 @@ ExceptionOr<void> URLPatternParser::maybeAddPartFromPendingFixedValue()
 
     m_partList.append(Part { .type = PartType::FixedText, .value = encodedValue.releaseReturnValue(), .modifier = Modifier::None });
 
-    return { };
+    return {};
 }
 
 // https://urlpattern.spec.whatwg.org/#add-a-part
@@ -212,7 +212,7 @@ ExceptionOr<void> URLPatternParser::addPart(String&& prefix, const Token& nameTo
     if (nameToken.isNull() && regexpOrWildcardToken.isNull() && modifier == Modifier::None) {
         m_pendingFixedValue.append(WTFMove(prefix));
 
-        return { };
+        return {};
     }
 
     auto maybeFunctionException = maybeAddPartFromPendingFixedValue();
@@ -223,7 +223,7 @@ ExceptionOr<void> URLPatternParser::addPart(String&& prefix, const Token& nameTo
         ASSERT(suffix.isEmpty());
 
         if (prefix.isEmpty())
-            return { };
+            return {};
 
         auto encodedValue = callEncodingCallback(m_callbackType, WTFMove(prefix));
         if (encodedValue.hasException())
@@ -231,7 +231,7 @@ ExceptionOr<void> URLPatternParser::addPart(String&& prefix, const Token& nameTo
 
         m_partList.append(Part { .type = PartType::FixedText, .value = encodedValue.releaseReturnValue(), .modifier = modifier });
 
-        return { };
+        return {};
     }
 
     String regexValue;
@@ -247,10 +247,10 @@ ExceptionOr<void> URLPatternParser::addPart(String&& prefix, const Token& nameTo
 
     if (regexValue == m_segmentWildcardRegexp) {
         type = PartType::SegmentWildcard;
-        regexValue = { };
+        regexValue = {};
     } else if (regexValue == ".*"_s) {
         type = PartType::FullWildcard;
-        regexValue = { };
+        regexValue = {};
     }
 
     String name;
@@ -275,7 +275,7 @@ ExceptionOr<void> URLPatternParser::addPart(String&& prefix, const Token& nameTo
 
     m_partList.append(Part { type, WTFMove(regexValue), modifier, WTFMove(name), encodedPrefix.releaseReturnValue(), encodedSuffix.releaseReturnValue() });
 
-    return { };
+    return {};
 }
 
 // https://urlpattern.spec.whatwg.org/#is-a-duplicate-name
@@ -349,7 +349,7 @@ ASCIILiteral convertModifierToString(Modifier modifier)
     case Modifier::OneOrMore:
         return "+"_s;
     default:
-        return { };
+        return {};
     }
 }
 
@@ -388,7 +388,7 @@ std::pair<String, Vector<String>> generateRegexAndNameList(const Vector<Part>& p
             if (part.modifier == Modifier::None || part.modifier == Modifier::Optional)
                 result.append('(', regexpValue, ')', convertModifierToString(part.modifier));
             else
-                result.append("((?:"_s, regexpValue, ')',  convertModifierToString(part.modifier), ')');
+                result.append("((?:"_s, regexpValue, ')', convertModifierToString(part.modifier), ')');
 
             continue;
         }

@@ -70,6 +70,7 @@ import {
 let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
+const { BUILDKITE_STEP_KEY } = process.env;
 
 const spawnTimeout = 5_000;
 const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
@@ -1141,6 +1142,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
     TEST_TMPDIR: tmpdirPath, // Used in Node.js tests.
+    BUILDKITE_STEP_KEY,
     ...(typeof remapPort == "number"
       ? { BUN_CRASH_REPORT_URL: `http://localhost:${remapPort}` }
       : { BUN_ENABLE_CRASH_REPORTING: "0" }),

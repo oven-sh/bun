@@ -7,7 +7,7 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -187,6 +187,43 @@ foo/
       expect(await fileExists(`${tempdir}/sub_dir`)).toBeFalse();
       expect(await fileExists(`${tempdir}/keep_dir`)).toBeTrue();
       expect(await fileExists(`${tempdir}/keep_dir/file.txt`)).toBeTrue();
+    }
+  });
+
+  test("hard links", async () => {
+    const files = {
+      "keep_file.txt": "original content",
+      "sub_dir": {},
+    };
+
+    const tempdir = tempDirWithFiles("rmhardlinks", files);
+
+    // Create file hardlink and remove it - original should still exist
+    {
+      linkSync(`${tempdir}/keep_file.txt`, `${tempdir}/file_hardlink.txt`);
+      expect(await fileExists(`${tempdir}/file_hardlink.txt`)).toBeTrue();
+      expect(await fileExists(`${tempdir}/keep_file.txt`)).toBeTrue();
+
+      await $`rm file_hardlink.txt`.cwd(tempdir);
+
+      expect(await fileExists(`${tempdir}/file_hardlink.txt`)).toBeFalse();
+      expect(await fileExists(`${tempdir}/keep_file.txt`)).toBeTrue();
+      // Verify content is still intact in the original file
+      expect(await Bun.file(`${tempdir}/keep_file.txt`).text()).toBe("original content");
+    }
+
+    // Create hardlinks in sub_dir and remove the directory
+    {
+      linkSync(`${tempdir}/keep_file.txt`, `${tempdir}/sub_dir/file_hardlink.txt`);
+      expect(await fileExists(`${tempdir}/sub_dir`)).toBeTrue();
+      expect(await fileExists(`${tempdir}/sub_dir/file_hardlink.txt`)).toBeTrue();
+
+      await $`rm -r sub_dir`.cwd(tempdir);
+
+      expect(await fileExists(`${tempdir}/sub_dir`)).toBeFalse();
+      expect(await fileExists(`${tempdir}/keep_file.txt`)).toBeTrue();
+      // Verify content is still intact in the original file
+      expect(await Bun.file(`${tempdir}/keep_file.txt`).text()).toBe("original content");
     }
   });
 });

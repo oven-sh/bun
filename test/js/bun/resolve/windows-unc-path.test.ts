@@ -22,6 +22,7 @@ if (isWindows) {
         cmd: [bunExe(), path.join(String(dir), "index.js")],
         env: bunEnv,
         cwd: String(dir),
+        stdout: "pipe",
         stderr: "pipe",
       });
 
@@ -53,6 +54,7 @@ if (isWindows) {
         cmd: [bunExe(), path.join(String(dir), "index.js")],
         env: bunEnv,
         cwd: String(dir),
+        stdout: "pipe",
         stderr: "pipe",
       });
 
@@ -83,6 +85,7 @@ if (isWindows) {
         cmd: [bunExe(), path.join(String(dir), "index.js")],
         env: bunEnv,
         cwd: String(dir),
+        stdout: "pipe",
         stderr: "pipe",
       });
 
@@ -110,6 +113,7 @@ if (isWindows) {
         cmd: [bunExe(), "test", "test.test.js"],
         env: bunEnv,
         cwd: String(dir),
+        stdout: "pipe",
         stderr: "pipe",
       });
 
@@ -135,6 +139,7 @@ if (isWindows) {
         cmd: [bunExe(), path.join(String(dir), "index.js")],
         env: bunEnv,
         cwd: String(dir),
+        stdout: "pipe",
         stderr: "pipe",
       });
 

@@ -130,6 +130,7 @@
 #include "JSTextDecoderStream.h"
 #include "JSTransformStream.h"
 #include "JSTransformStreamDefaultController.h"
+#include "JSURLPattern.h"
 #include "JSURLSearchParams.h"
 #include "JSWasmStreamingCompiler.h"
 #include "JSWebSocket.h"
@@ -1009,6 +1010,7 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TextEncoderStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TextDecoderStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TransformStream)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TransformStreamDefaultController)
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(URLPattern);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(URLSearchParams);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WebSocket);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(Worker);

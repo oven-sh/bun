@@ -34,8 +34,11 @@
 namespace WebCore {
 using namespace JSC;
 
-// URLPatternResult and URLPatternComponentResult are output-only dictionaries.
-// The convertDictionary functions are provided for completeness but are not used.
+// URLPatternResult and URLPatternComponentResult are output-only dictionaries that are
+// returned from exec() but never accepted as input from JavaScript. These convertDictionary
+// template specializations are required to satisfy template instantiation in the binding
+// infrastructure. They intentionally throw TypeErrors to catch any invalid JS→native
+// conversion attempts, as these types should never be constructed from JavaScript values.
 template<> URLPatternResult convertDictionary<URLPatternResult>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);

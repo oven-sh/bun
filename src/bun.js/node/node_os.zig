@@ -945,11 +945,21 @@ pub fn userInfo(globalThis: *jsc.JSGlobalObject, options: gen.UserInfoOptions) b
     }
     defer libuv.uv_os_free_passwd(&passwd);
 
-    const homedir_str = if (passwd.homedir) |h| bun.String.cloneUTF8(bun.span(h)) else bun.String.empty;
+    if (passwd.username == null or passwd.homedir == null) {
+        const sys_err = jsc.SystemError{
+            .message = bun.String.static("user has no username or homedir"),
+            .code = bun.String.static("ERR_SYSTEM_ERROR"),
+            .errno = libuv.UV_ENOENT,
+            .syscall = bun.String.static("uv_os_get_passwd"),
+        };
+        return globalThis.throwValue(sys_err.toErrorInstance(globalThis));
+    }
+
+    const homedir_str = bun.String.cloneUTF8(bun.span(passwd.homedir.?));
     defer homedir_str.deref();
     result.put(globalThis, jsc.ZigString.static("homedir"), homedir_str.toJS(globalThis));
 
-    result.put(globalThis, jsc.ZigString.static("username"), jsc.ZigString.init(bun.span(passwd.username orelse "unknown")).withEncoding().toJS(globalThis));
+    result.put(globalThis, jsc.ZigString.static("username"), jsc.ZigString.init(bun.span(passwd.username.?)).withEncoding().toJS(globalThis));
     result.put(globalThis, jsc.ZigString.static("uid"), jsc.JSValue.jsNumber(passwd.uid));
     result.put(globalThis, jsc.ZigString.static("gid"), jsc.JSValue.jsNumber(passwd.gid));
 
@@ -957,11 +967,11 @@ pub fn userInfo(globalThis: *jsc.JSGlobalObject, options: gen.UserInfoOptions) b
         // On Windows, shell property should be null to match Node.js behavior
         result.put(globalThis, jsc.ZigString.static("shell"), jsc.JSValue.null);
     } else {
-        // On POSIX systems, use passwd entry when present, otherwise "unknown"
+        // On POSIX systems, use passwd entry when present, otherwise "/bin/sh"
         if (passwd.shell) |shell| {
             result.put(globalThis, jsc.ZigString.static("shell"), jsc.ZigString.init(bun.span(shell)).withEncoding().toJS(globalThis));
         } else {
-            result.put(globalThis, jsc.ZigString.static("shell"), jsc.ZigString.init("unknown").withEncoding().toJS(globalThis));
+            result.put(globalThis, jsc.ZigString.static("shell"), jsc.ZigString.init("/bin/sh").withEncoding().toJS(globalThis));
         }
     }
 

@@ -25,9 +25,10 @@ if (isWindows) {
         stderr: "pipe",
       });
 
-      const [_, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      // Verify the process completed successfully without errors
+      // Verify the resolve succeeded
+      expect(stdout).toContain("SUCCESS: resolved");
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
@@ -55,9 +56,10 @@ if (isWindows) {
         stderr: "pipe",
       });
 
-      const [_, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      // Verify the process completed successfully
+      // Verify the error was caught (not a crash)
+      expect(stdout).toContain("Error (expected):");
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
@@ -84,9 +86,10 @@ if (isWindows) {
         stderr: "pipe",
       });
 
-      const [_, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      // Verify the process completed successfully
+      // Verify the error was caught (not a crash)
+      expect(stdout).toContain("Error (expected):");
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });

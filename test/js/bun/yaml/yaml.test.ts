@@ -1815,11 +1815,11 @@ config:
 
         const yaml1 = YAML.stringify(obj1, null, 2);
         expect(yaml1).toMatchInlineSnapshot(`
-"data:
+"data: 
   &data
   value: shared
-nested:
-  data:
+nested: 
+  data: 
     *data"
 `);
 
@@ -1849,25 +1849,25 @@ nested:
 
         const yaml2 = YAML.stringify(obj2, null, 2);
         expect(yaml2).toMatchInlineSnapshot(`
-"item:
+"item: 
   &item
   type: A
-nested1:
-  item:
+nested1: 
+  item: 
     *item
-  other:
-    item:
+  other: 
+    item: 
       &item1
       type: B
-nested2:
-  item:
+nested2: 
+  item: 
     *item1
-  sub:
-    item:
+  sub: 
+    item: 
       &item2
       type: C
-refs:
-  item:
+refs: 
+  item: 
     *item2"
 `);
 
@@ -1938,7 +1938,7 @@ refs:
 
         const yaml2 = YAML.stringify(complex, null, 2);
         expect(yaml2).toMatchInlineSnapshot(`
-"arrays:
+"arrays: 
   - &item0
     - 1
     - 2
@@ -1946,8 +1946,8 @@ refs:
     - 3
     - 4
   - *item0
-nested:
-  moreArrays:
+nested: 
+  moreArrays: 
     - &item2
       - 5
       - 6
@@ -1982,18 +1982,18 @@ nested:
 
         const yaml = YAML.stringify(mixed, null, 2);
         expect(yaml).toMatchInlineSnapshot(`
-"item:
+"item: 
   &item
   type: object
-items:
+items: 
   - &item0
     - array
   - &item1
     nested: obj
   - *item0
   - *item1
-refs:
-  item:
+refs: 
+  item: 
     *item"
 `);
 
@@ -2023,17 +2023,17 @@ refs:
 
         const yaml = YAML.stringify(obj, null, 2);
         expect(yaml).toMatchInlineSnapshot(`
-          """:
+          """: 
             &value0
             empty: key
-          nested:
-            "":
+          nested: 
+            "": 
               *value0
-          another:
-            "":
+          another: 
+            "": 
               &value1
               {}
-            what:
+            what: 
               *value1"
         `);
         // Since empty names can't be used as anchors, they get a counter
@@ -2078,38 +2078,38 @@ refs:
 
         const yaml = YAML.stringify(complex, null, 2);
         expect(yaml).toMatchInlineSnapshot(`
-"data:
+"data: 
   &data
   id: 0
-level1:
-  data:
+level1: 
+  data: 
     *data
-  sub1:
-    data:
+  sub1: 
+    data: 
       &data1
       id: 1
-  sub2:
-    data:
+  sub2: 
+    data: 
       *data1
-level2:
-  data:
+level2: 
+  data: 
     &data2
     id: 2
-  nested:
-    data:
+  nested: 
+    data: 
       &data3
       id: 3
-    deep:
-      data:
+    deep: 
+      data: 
         &data4
         id: 4
-refs:
-  data:
+refs: 
+  data: 
     *data2
-  all:
-    - data:
+  all: 
+    - data: 
         *data3
-    - data:
+    - data: 
         *data4"
 `);
 
@@ -2150,12 +2150,12 @@ refs:
         obj.root2 = root;
         expect(YAML.stringify(obj, null, 2)).toMatchInlineSnapshot(`
           "&root
-          cycle:
+          cycle: 
             *root
-          root:
+          root: 
             &root1
             {}
-          root2:
+          root2: 
             *root1"
         `);
       });
@@ -2414,21 +2414,21 @@ refs:
 
         const yaml = YAML.stringify(nested, null, 2);
         expect(yaml).toMatchInlineSnapshot(`
-          "emptyObj:
+          "emptyObj: 
             {}
-          emptyArr:
+          emptyArr: 
             []
-          nested:
-            deepEmpty:
+          nested: 
+            deepEmpty: 
               {}
-            deepArr:
+            deepArr: 
               []
-          mixed:
+          mixed: 
             - {}
             - []
-            - inner:
+            - inner: 
                 {}
-            - inner:
+            - inner: 
                 []"
         `);
       });
@@ -2520,7 +2520,9 @@ refs:
           "42": "answer",
         });
       });
-      test("issue 25108", () => {
+
+      // https://github.com/oven-sh/bun/issues/25108
+      test("block context strings containing colons", () => {
         const data = { description: "hello :world:" };
         const pretty = YAML.stringify(data, null, 2);
         expect(pretty).toContain('description: "hello :world:"');

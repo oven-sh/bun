@@ -119,19 +119,19 @@ URLPatternComponentResult URLPatternComponent::createComponentMatchResult(JSC::J
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     auto lengthValue = execResult.get(globalObject, vm->propertyNames->length);
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto length = lengthValue.toIntegerOrInfinity(globalObject);
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     ASSERT(length >= 0 && std::isfinite(length));
 
     for (unsigned index = 1; index < length; ++index) {
         auto match = execResult.get(globalObject, index);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
 
         Variant<std::monostate, String> value;
         if (!match.isNull() && !match.isUndefined()) {
             value = match.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(throwScope, { });
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
 
         size_t groupIndex = index - 1;

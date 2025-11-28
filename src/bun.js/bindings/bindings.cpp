@@ -1845,51 +1845,53 @@ bool WebCore__FetchHeaders__fastHas_(WebCore::FetchHeaders* arg0, unsigned char 
     return arg0->fastHas(static_cast<HTTPHeaderName>(HTTPHeaderName1));
 }
 
-void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer* names, StringPointer* values, unsigned char* buf)
+static void copyHeadersTo(WebCore::FetchHeaders* headers, std::span<StringPointer> names, std::span<StringPointer> values, std::span<unsigned char> buf)
 {
     auto iter = headers->createIterator();
-    unsigned int i = 0;
+    size_t i = 0;
+    uint32_t off = 0;
+
+    auto copyString = [&buf, &off](const WTF::String& str) -> StringPointer {
+        const uint32_t start = off;
+        if (str.is8Bit() && str.containsOnlyASCII()) {
+            const auto srcSpan = str.span8();
+            WTF::memcpySpan(buf.first(srcSpan.size()), srcSpan);
+            buf = buf.subspan(srcSpan.size());
+            off += str.length();
+            return { start, str.length() };
+        } else {
+            // Convert to UTF-8 for non-ASCII or UTF-16 strings
+            WTF::CString cString = str.utf8();
+            const auto srcSpan = cString.span();
+            WTF::memcpySpan(buf.first(srcSpan.size()), srcSpan);
+            buf = buf.subspan(srcSpan.size());
+            off += static_cast<uint32_t>(srcSpan.size());
+            return { start, static_cast<uint32_t>(srcSpan.size()) };
+        }
+    };
 
     for (auto pair = iter.next(); pair; pair = iter.next()) {
-        const auto name = pair->key;
-        const auto value = pair->value;
+        const auto& name = pair->key;
+        const auto& value = pair->value;
 
         ASSERT_WITH_MESSAGE(name.length(), "Header name must not be empty");
+        ASSERT_WITH_MESSAGE(name.containsOnlyASCII(), "Header name must be ASCII. This should already be validated before calling this function.");
 
-        if (name.is8Bit() && name.containsOnlyASCII()) {
-            const auto nameSpan = name.span8();
-            memcpy(&buf[i], nameSpan.data(), nameSpan.size());
-            *names = { i, name.length() };
-            i += name.length();
-        } else {
-            ASSERT_WITH_MESSAGE(name.containsOnlyASCII(), "Header name must be ASCII. This should already be validated before calling this function.");
-            WTF::CString nameCString = name.utf8();
-            memcpy(&buf[i], nameCString.data(), nameCString.length());
-            *names = { i, static_cast<uint32_t>(nameCString.length()) };
-            i += static_cast<uint32_t>(nameCString.length());
-        }
+        names[i] = copyString(name);
 
         if (value.length() > 0) {
-            if (value.is8Bit() && value.containsOnlyASCII()) {
-                const auto valueSpan = value.span8();
-                memcpy(&buf[i], valueSpan.data(), valueSpan.size());
-                *values = { i, value.length() };
-                i += value.length();
-            } else {
-                // HTTP headers can contain non-ASCII characters according to RFC 7230
-                // Non-ASCII content should be properly encoded
-                WTF::CString valueCString = value.utf8();
-                memcpy(&buf[i], valueCString.data(), valueCString.length());
-                *values = { i, static_cast<uint32_t>(valueCString.length()) };
-                i += static_cast<uint32_t>(valueCString.length());
-            }
+            values[i] = copyString(value);
         } else {
-            *values = { i, 0 };
+            values[i] = { 0, 0 };
         }
 
-        names++;
-        values++;
+        i++;
     }
+}
+
+void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer* names, StringPointer* values, unsigned char* buf, size_t buf_len, size_t header_count)
+{
+    copyHeadersTo(headers, { names, header_count }, { values, header_count }, { buf, buf_len });
 }
 void WebCore__FetchHeaders__count(WebCore::FetchHeaders* headers, uint32_t* count, uint32_t* buf_len)
 {

@@ -1089,8 +1089,9 @@ UV_EXTERN void uv_os_free_group(uv_group_t* grp)
 
 UV_EXTERN void uv_os_free_passwd(uv_passwd_t* pwd)
 {
-    __bun_throw_not_implemented("uv_os_free_passwd");
-    __builtin_unreachable();
+    if (pwd->username) free((void*)pwd->username);
+    if (pwd->shell) free((void*)pwd->shell);
+    if (pwd->homedir) free((void*)pwd->homedir);
 }
 
 UV_EXTERN int uv_os_get_group(uv_group_t* grp, uv_uid_t gid)
@@ -1101,8 +1102,25 @@ UV_EXTERN int uv_os_get_group(uv_group_t* grp, uv_uid_t gid)
 
 UV_EXTERN int uv_os_get_passwd(uv_passwd_t* pwd)
 {
-    __bun_throw_not_implemented("uv_os_get_passwd");
-    __builtin_unreachable();
+    // Use getpwuid_r to get passwd entry for current user
+    uid_t uid = geteuid();
+    struct passwd pw;
+    struct passwd *result = NULL;
+    char buf[4096];
+
+    int ret = getpwuid_r(uid, &pw, buf, sizeof(buf), &result);
+    if (ret != 0 || result == NULL) {
+        return UV_ENOENT;
+    }
+
+    // Copy data to uv_passwd_t structure
+    pwd->username = result->pw_name ? strdup(result->pw_name) : NULL;
+    pwd->uid = result->pw_uid;
+    pwd->gid = result->pw_gid;
+    pwd->shell = result->pw_shell ? strdup(result->pw_shell) : NULL;
+    pwd->homedir = result->pw_dir ? strdup(result->pw_dir) : NULL;
+
+    return 0;
 }
 
 UV_EXTERN int uv_os_get_passwd2(uv_passwd_t* pwd, uv_uid_t uid)

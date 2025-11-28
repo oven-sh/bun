@@ -932,23 +932,31 @@ pub fn userInfo(globalThis: *jsc.JSGlobalObject, options: gen.UserInfoOptions) b
 
     const result = jsc.JSValue.createEmptyObject(globalThis, 5);
 
-    const home = try homedir(globalThis);
-    defer home.deref();
+    var passwd: libuv.uv_passwd_t = undefined;
+    const err = libuv.uv_os_get_passwd(&passwd);
+    if (err != 0) {
+        const sys_err = jsc.SystemError{
+            .message = bun.String.static("Failed to get user info"),
+            .code = bun.String.static("ERR_SYSTEM_ERROR"),
+            .errno = err,
+            .syscall = bun.String.static("uv_os_get_passwd"),
+        };
+        return globalThis.throwValue(sys_err.toErrorInstance(globalThis));
+    }
+    defer libuv.uv_os_free_passwd(&passwd);
 
-    result.put(globalThis, jsc.ZigString.static("homedir"), home.toJS(globalThis));
+    const homedir_str = if (passwd.homedir) |h| bun.String.cloneUTF8(bun.span(h)) else bun.String.empty;
+    defer homedir_str.deref();
+    result.put(globalThis, jsc.ZigString.static("homedir"), homedir_str.toJS(globalThis));
 
-    if (comptime Environment.isWindows) {
-        result.put(globalThis, jsc.ZigString.static("username"), jsc.ZigString.init(bun.env_var.USER.get() orelse "unknown").withEncoding().toJS(globalThis));
-        result.put(globalThis, jsc.ZigString.static("uid"), jsc.JSValue.jsNumber(-1));
-        result.put(globalThis, jsc.ZigString.static("gid"), jsc.JSValue.jsNumber(-1));
-        result.put(globalThis, jsc.ZigString.static("shell"), jsc.JSValue.jsNull());
+    result.put(globalThis, jsc.ZigString.static("username"), jsc.ZigString.init(bun.span(passwd.username orelse "unknown")).withEncoding().toJS(globalThis));
+    result.put(globalThis, jsc.ZigString.static("uid"), jsc.JSValue.jsNumber(passwd.uid));
+    result.put(globalThis, jsc.ZigString.static("gid"), jsc.JSValue.jsNumber(passwd.gid));
+
+    if (passwd.shell) |shell| {
+        result.put(globalThis, jsc.ZigString.static("shell"), jsc.ZigString.init(bun.span(shell)).withEncoding().toJS(globalThis));
     } else {
-        const username = bun.env_var.USER.get() orelse "unknown";
-
-        result.put(globalThis, jsc.ZigString.static("username"), jsc.ZigString.init(username).withEncoding().toJS(globalThis));
-        result.put(globalThis, jsc.ZigString.static("shell"), jsc.ZigString.init(bun.env_var.SHELL.get() orelse "unknown").withEncoding().toJS(globalThis));
-        result.put(globalThis, jsc.ZigString.static("uid"), jsc.JSValue.jsNumber(c.getuid()));
-        result.put(globalThis, jsc.ZigString.static("gid"), jsc.JSValue.jsNumber(c.getgid()));
+        result.put(globalThis, jsc.ZigString.static("shell"), jsc.ZigString.init("unknown").withEncoding().toJS(globalThis));
     }
 
     return result;

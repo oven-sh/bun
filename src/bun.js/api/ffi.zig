@@ -116,7 +116,7 @@ pub const FFI = struct {
                         const actual_path = extractEmbeddedSourceFile(this.file) orelse this.file;
                         if (actual_path.ptr != this.file.ptr) {
                             // Track extracted file for cleanup
-                            extracted_files.append(bun.default_allocator, actual_path) catch {};
+                            bun.handleOom(extracted_files.append(bun.default_allocator, actual_path));
                         }
                         state.addFile(actual_path) catch return error.CompilationError;
                         current_file_for_errors.* = "";
@@ -126,7 +126,7 @@ pub const FFI = struct {
                             current_file_for_errors.* = file;
                             const actual_path = extractEmbeddedSourceFile(file) orelse file;
                             if (actual_path.ptr != file.ptr) {
-                                extracted_files.append(bun.default_allocator, actual_path) catch {};
+                                bun.handleOom(extracted_files.append(bun.default_allocator, actual_path));
                             }
                             state.addFile(actual_path) catch return error.CompilationError;
                             current_file_for_errors.* = "";

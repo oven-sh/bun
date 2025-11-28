@@ -33,6 +33,7 @@ describe.concurrent("bunshell rm", () => {
   test("force", async () => {
     const files = {
       "existent.txt": "",
+      "existent2.txt": "",
     };
     const tempdir = tempDirWithFiles("rmforce", files);
 
@@ -50,6 +51,14 @@ describe.concurrent("bunshell rm", () => {
       expect(stdout.toString()).toEqual(`${tempdir}/existent.txt\n`);
       expect(exitCode).toBe(0);
       expect(await fileExists(`${tempdir}/existent.txt`)).toBeFalse();
+    }
+
+    {
+      expect(await fileExists(`${tempdir}/existent2.txt`)).toBeTrue();
+      const { stdout, exitCode } = await $`rm -v ./existent2.txt`.cwd(tempdir);
+      expect(stdout.toString()).toEqual(`./existent2.txt\n`);
+      expect(exitCode).toBe(0);
+      expect(await fileExists(`${tempdir}/existent2.txt`)).toBeFalse();
     }
   });
 

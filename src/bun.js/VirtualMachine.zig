@@ -1495,16 +1495,37 @@ fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const
         else
             input_;
 
+        // Check if the input is all ASCII. If it contains non-ASCII bytes (UTF-8 multi-byte sequences),
+        // we need to convert to UTF-16 for proper JSC string storage.
+        // See: https://github.com/oven-sh/bun/issues/25169
+        const is_all_ascii = bun.strings.isAllASCII(input);
+
         const ref = this.allocator.create(jsc.RefString) catch unreachable;
-        ref.* = jsc.RefString{
-            .allocator = this.allocator,
-            .ptr = input.ptr,
-            .len = input.len,
-            .impl = bun.String.createExternal(*jsc.RefString, input, true, ref, &freeRefString).value.WTFStringImpl,
-            .hash = hash,
-            .ctx = this,
-            .onBeforeDeinit = VirtualMachine.clearRefString,
-        };
+        if (is_all_ascii) {
+            // All ASCII - can use Latin-1 storage directly
+            ref.* = jsc.RefString{
+                .allocator = this.allocator,
+                .ptr = input.ptr,
+                .len = input.len,
+                .impl = bun.String.createExternal(*jsc.RefString, input, true, ref, &freeRefString).value.WTFStringImpl,
+                .hash = hash,
+                .ctx = this,
+                .onBeforeDeinit = VirtualMachine.clearRefString,
+            };
+        } else {
+            // Contains non-ASCII UTF-8 - need to convert to UTF-16 for JSC
+            // Use cloneUTF8 which properly handles UTF-8 to UTF-16 conversion
+            const str = bun.String.cloneUTF8(input);
+            ref.* = jsc.RefString{
+                .allocator = this.allocator,
+                .ptr = input.ptr,
+                .len = input.len,
+                .impl = str.value.WTFStringImpl,
+                .hash = hash,
+                .ctx = this,
+                .onBeforeDeinit = VirtualMachine.clearRefString,
+            };
+        }
         entry.value_ptr.* = ref;
     }
     new.* = !entry.found_existing;

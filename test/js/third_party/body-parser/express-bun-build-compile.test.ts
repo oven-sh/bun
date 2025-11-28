@@ -7,8 +7,7 @@ import { join } from "path";
 $.throws(true);
 
 // https://github.com/oven-sh/bun/issues/10624
-// prettier-ignore
-test.todoIf(process.env.BUILDKITE_STEP_KEY?.includes("-debian-13-"))("Express hello world app supports bun build --compile --minify --sourcemap", async () => {
+test("Express hello world app supports bun build --compile --minify --sourcemap", async () => {
   const dir = tempDirWithFiles("express-bun-build-compile", {
     "out.exe": "",
   });

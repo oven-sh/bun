@@ -18,8 +18,7 @@ describe.concurrent(
       );
     });
 
-    // prettier-ignore
-    test.todoIf(process.env.BUILDKITE_STEP_KEY?.includes("-debian-13-"))("generating a standalone binary in nested path, issue #4195", async () => {
+    test("generating a standalone binary in nested path, issue #4195", async () => {
       async function testCompile(outfile: string) {
         const { exited } = Bun.spawn({
           cmd: [

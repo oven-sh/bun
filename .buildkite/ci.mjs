@@ -121,6 +121,10 @@ const buildPlatforms = [
  * @type {Platform[]}
  */
 const testPlatforms = [
+  { os: "darwin", arch: "aarch64", release: "14", tier: "latest" },
+  { os: "darwin", arch: "aarch64", release: "13", tier: "previous" },
+  { os: "darwin", arch: "x64", release: "14", tier: "latest" },
+  { os: "darwin", arch: "x64", release: "13", tier: "previous" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
@@ -129,6 +133,17 @@ const testPlatforms = [
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "12", tier: "latest" },
+  { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
+  { os: "linux", arch: "aarch64", distro: "ubuntu", release: "24.04", tier: "latest" },
+  { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
+  { os: "linux", arch: "x64", distro: "ubuntu", release: "24.04", tier: "latest" },
+  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "25.04", tier: "latest" },
+  { os: "linux", arch: "x64", baseline: true, distro: "ubuntu", release: "24.04", tier: "latest" },
+  { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.22", tier: "latest" },
+  { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.22", tier: "latest" },
+  { os: "linux", arch: "x64", abi: "musl", baseline: true, distro: "alpine", release: "3.22", tier: "latest" },
+  { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
+  { os: "windows", arch: "x64", release: "2019", baseline: true, tier: "oldest" },
 ];
 
 /**

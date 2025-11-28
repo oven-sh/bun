@@ -2,11 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, tempDirWithFiles } from "harness";
 import { join } from "path";
 
-console.log("BUILDKITE_STEP_KEY", process.env.BUILDKITE_STEP_KEY);
-
 describe("Bun.build compile with wasm", () => {
-  // prettier-ignore
-  test.todoIf(process.env.BUILDKITE_STEP_KEY?.includes("-debian-13-"))("compile with wasm module imports", async () => {
+  test("compile with wasm module imports", async () => {
     // This test ensures that embedded wasm modules compile and run correctly
     // The regression was that the module prefix wasn't being set correctly
 

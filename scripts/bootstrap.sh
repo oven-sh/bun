@@ -1766,7 +1766,7 @@ ensure_no_tmpfs() {
 	if ! [ "$os" = "linux" ]; then
 		return
 	fi
-	if ! [ "$distro" = "ubuntu" ]; then
+	if ! ( [ "$distro" = "ubuntu" ] || [ "$distro" = "debian" ] ); then
 		return
 	fi
 

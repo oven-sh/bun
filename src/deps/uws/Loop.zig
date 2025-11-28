@@ -24,7 +24,7 @@ pub const PosixLoop = extern struct {
         .mac => std.posix.system.kevent64_s,
         // TODO:
         .windows => *anyopaque,
-        else => @compileError("Unsupported OS"),
+        .wasm => @compileError("Unsupported OS"),
     };
 
     pub fn uncork(this: *PosixLoop) void {
@@ -118,7 +118,7 @@ pub const PosixLoop = extern struct {
 
     pub fn nextTick(this: *PosixLoop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
         const Handler = struct {
-            pub fn callback(data: *anyopaque) callconv(.C) void {
+            pub fn callback(data: *anyopaque) callconv(.c) void {
                 deferCallback(@as(UserType, @ptrCast(@alignCast(data))));
             }
         };
@@ -134,7 +134,7 @@ pub const PosixLoop = extern struct {
             pub fn removePre(handler: @This()) void {
                 return c.uws_loop_removePostHandler(handler.loop, callback);
             }
-            pub fn callback(data: *anyopaque, _: *Loop) callconv(.C) void {
+            pub fn callback(data: *anyopaque, _: *Loop) callconv(.c) void {
                 callback_fn(@as(UserType, @ptrCast(@alignCast(data))));
             }
         };
@@ -254,7 +254,7 @@ pub const WindowsLoop = extern struct {
 
     pub fn nextTick(this: *Loop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
         const Handler = struct {
-            pub fn callback(data: *anyopaque) callconv(.C) void {
+            pub fn callback(data: *anyopaque) callconv(.c) void {
                 deferCallback(@as(UserType, @ptrCast(@alignCast(data))));
             }
         };
@@ -278,7 +278,7 @@ pub const WindowsLoop = extern struct {
             pub fn removePre(handler: @This()) void {
                 return c.uws_loop_removePostHandler(handler.loop, callback);
             }
-            pub fn callback(data: *anyopaque, _: *Loop) callconv(.C) void {
+            pub fn callback(data: *anyopaque, _: *Loop) callconv(.c) void {
                 callback_fn(@as(UserType, @ptrCast(@alignCast(data))));
             }
         };
@@ -290,9 +290,9 @@ pub const Loop = if (bun.Environment.isWindows) WindowsLoop else PosixLoop;
 const c = struct {
     pub extern fn us_create_loop(
         hint: ?*anyopaque,
-        wakeup_cb: ?*const fn (*Loop) callconv(.C) void,
-        pre_cb: ?*const fn (*Loop) callconv(.C) void,
-        post_cb: ?*const fn (*Loop) callconv(.C) void,
+        wakeup_cb: ?*const fn (*Loop) callconv(.c) void,
+        pre_cb: ?*const fn (*Loop) callconv(.c) void,
+        post_cb: ?*const fn (*Loop) callconv(.c) void,
         ext_size: c_uint,
     ) ?*Loop;
     pub extern fn us_loop_free(loop: ?*Loop) void;
@@ -302,14 +302,14 @@ const c = struct {
     pub extern fn us_wakeup_loop(loop: ?*Loop) void;
     pub extern fn us_loop_integrate(loop: ?*Loop) void;
     pub extern fn us_loop_iteration_number(loop: ?*Loop) c_longlong;
-    pub extern fn uws_loop_addPostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
-    pub extern fn uws_loop_removePostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
-    pub extern fn uws_loop_addPreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
-    pub extern fn uws_loop_removePreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
+    pub extern fn uws_loop_addPostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.c) void)) void;
+    pub extern fn uws_loop_removePostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.c) void)) void;
+    pub extern fn uws_loop_addPreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.c) void)) void;
+    pub extern fn uws_loop_removePreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.c) void)) void;
     pub extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: ?*const bun.timespec) void;
     pub extern fn uws_get_loop() *Loop;
     pub extern fn uws_get_loop_with_native(*anyopaque) *WindowsLoop;
-    pub extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.C) void)) void;
+    pub extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.c) void)) void;
     pub extern fn uws_res_clear_corked_socket(loop: *Loop) void;
     pub extern fn uws_loop_date_header_timer_update(loop: *Loop) void;
 };

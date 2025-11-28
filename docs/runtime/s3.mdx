@@ -540,7 +540,7 @@ const exists = await client.exists("my-file.txt");
 
 `S3File` instances are created by calling the `S3Client` instance method or the `s3.file()` function. Like `Bun.file()`, `S3File` instances are lazy. They don't refer to something that necessarily exists at the time of creation. That's why all the methods that don't involve network requests are fully synchronous.
 
-```ts Type Reference icon="/icons/typescript.svg"  expandable
+```ts Type Reference icon="/icons/typescript.svg" expandable
 interface S3File extends Blob {
   slice(start: number, end?: number): S3File;
   exists(): Promise<boolean>;
@@ -589,7 +589,7 @@ That means using `S3File` instances with `fetch()`, `Response`, and other web AP
 
 To read a partial range of a file, you can use the `slice` method.
 
-```ts s3.ts icon="/icons/typescript.svg"  highlight={1}
+```ts s3.ts icon="/icons/typescript.svg" highlight={1}
 const partial = s3file.slice(0, 1024);
 
 // Read the partial range as a Uint8Array
@@ -697,7 +697,7 @@ To list some or all (up to 1,000) objects in a bucket, you can use the `S3Client
 ```ts s3.ts icon="/icons/typescript.svg" highlight={12, 15-20, 24-29}
 import { S3Client } from "bun";
 
-const credentials = { ... }
+const credentials = {
   accessKeyId: "your-access-key",
   secretAccessKey: "your-secret-key",
   bucket: "my-bucket",
@@ -733,7 +733,7 @@ This is equivalent to calling `new S3Client(credentials).list()`.
 
 To check if an S3 file exists, you can use the `S3Client.exists` static method.
 
-```ts s3.ts icon="/icons/typescript.svg"  highlight={11}
+```ts s3.ts icon="/icons/typescript.svg" highlight={11}
 import { S3Client } from "bun";
 
 const credentials = {

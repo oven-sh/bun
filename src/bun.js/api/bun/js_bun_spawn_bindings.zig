@@ -44,7 +44,7 @@ fn getArgv0(globalThis: *jsc.JSGlobalObject, PATH: []const u8, cwd: []const u8, 
 }
 
 /// `argv` for `Bun.spawn` & `Bun.spawnSync`
-fn getArgv(globalThis: *jsc.JSGlobalObject, args: JSValue, PATH: []const u8, cwd: []const u8, argv0: *?[*:0]const u8, allocator: std.mem.Allocator, argv: *std.ArrayList(?[*:0]const u8)) bun.JSError!void {
+fn getArgv(globalThis: *jsc.JSGlobalObject, args: JSValue, PATH: []const u8, cwd: []const u8, argv0: *?[*:0]const u8, allocator: std.mem.Allocator, argv: *std.array_list.Managed(?[*:0]const u8)) bun.JSError!void {
     var cmds_array = try args.arrayIterator(globalThis);
     // + 1 for argv0
     // + 1 for null terminator
@@ -125,13 +125,14 @@ pub fn spawnMaybeSync(
     var on_exit_callback = JSValue.zero;
     var on_disconnect_callback = JSValue.zero;
     var PATH = jsc_vm.transpiler.env.get("PATH") orelse "";
-    var argv = std.ArrayList(?[*:0]const u8).init(allocator);
+    var argv = std.array_list.Managed(?[*:0]const u8).init(allocator);
     var cmd_value = JSValue.zero;
     var detached = false;
     var args = args_;
     var maybe_ipc_mode: if (is_sync) void else ?IPC.Mode = if (is_sync) {} else null;
     var ipc_callback: JSValue = .zero;
-    var extra_fds = std.ArrayList(bun.spawn.SpawnOptions.Stdio).init(bun.default_allocator);
+    var extra_fds = std.array_list.Managed(bun.spawn.SpawnOptions.Stdio).init(bun.default_allocator);
+    defer extra_fds.deinit();
     var argv0: ?[*:0]const u8 = null;
     var ipc_channel: i32 = -1;
     var timeout: ?i32 = null;
@@ -808,7 +809,7 @@ pub fn spawnMaybeSync(
         jsc_vm.counters.mark(.spawnSync_blocking);
         const debug_timer = Output.DebugTimer.start();
         subprocess.process.wait(true);
-        log("spawnSync fast path took {}", .{debug_timer});
+        log("spawnSync fast path took {f}", .{debug_timer});
 
         // watchOrReap will handle the already exited case for us.
     }
@@ -948,7 +949,7 @@ pub fn spawnMaybeSync(
     const resultPid = jsc.JSValue.jsNumberFromInt32(subprocess.pid());
     subprocess.finalize();
 
-    const sync_value = jsc.JSValue.createEmptyObject(globalThis, 5 + @as(usize, @intFromBool(!signalCode.isEmptyOrUndefinedOrNull())));
+    const sync_value = jsc.JSValue.createEmptyObject(globalThis, 0);
     sync_value.put(globalThis, jsc.ZigString.static("exitCode"), exitCode);
     if (!signalCode.isEmptyOrUndefinedOrNull()) {
         sync_value.put(globalThis, jsc.ZigString.static("signalCode"), signalCode);
@@ -974,7 +975,7 @@ fn throwCommandNotFound(globalThis: *jsc.JSGlobalObject, command: []const u8) bu
     return globalThis.throwValue(err.toErrorInstance(globalThis));
 }
 
-pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, envp: *std.ArrayList(?[*:0]const u8), PATH: *[]const u8) bun.JSError!void {
+pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, envp: *std.array_list.Managed(?[*:0]const u8), PATH: *[]const u8) bun.JSError!void {
     var object_iter = try jsc.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(globalThis, object);
     defer object_iter.deinit();
 
@@ -986,7 +987,7 @@ pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, 
         var value = object_iter.value;
         if (value.isUndefined()) continue;
 
-        const line = try std.fmt.allocPrintZ(envp.allocator, "{}={}", .{ key, try value.getZigString(globalThis) });
+        const line = try std.fmt.allocPrintSentinel(envp.allocator, "{f}={f}", .{ key, try value.getZigString(globalThis) }, 0);
 
         if (key.eqlComptime("PATH")) {
             PATH.* = bun.asByteSlice(line["PATH=".len..]);

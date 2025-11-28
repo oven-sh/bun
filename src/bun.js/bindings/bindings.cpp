@@ -152,6 +152,8 @@
 #include <JavaScriptCore/IntegrityInlines.h>
 #endif
 
+extern "C" size_t Bun__Feature__heap_snapshot;
+
 #if OS(DARWIN)
 #if ASSERT_ENABLED
 #if !__has_feature(address_sanitizer)
@@ -3659,6 +3661,8 @@ JSC::EncodedJSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC::JSGlobalObjec
     // JSC::DeferTermination deferScope(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    Bun__Feature__heap_snapshot += 1;
+
     JSC::HeapSnapshotBuilder snapshotBuilder(vm.ensureHeapProfiler());
     snapshotBuilder.buildSnapshot();
 
@@ -5359,8 +5363,6 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
         JSValue::decode(JSValue4)
     };
 
-    ASSERT(microtaskArgs[0].isCallable());
-
     if (microtaskArgs[1].isEmpty()) {
         microtaskArgs[1] = jsUndefined();
     }
@@ -5675,7 +5677,15 @@ CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__createFromURLQuery(JSC::JSGlo
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg0);
     // don't need to copy the string because it internally does.
-    auto formData = DOMFormData::create(globalObject->scriptExecutionContext(), toString(*arg1));
+    auto str = toString(*arg1);
+    // toString() in helpers.h returns an empty string when the input exceeds
+    // String::MaxLength or Bun's synthetic allocation limit. This is the only
+    // condition under which toString() returns empty for non-empty input.
+    if (str.isEmpty() && arg1->len > 0) {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
+    }
+    auto formData = DOMFormData::create(globalObject->scriptExecutionContext(), WTFMove(str));
     return JSValue::encode(toJSNewlyCreated(arg0, globalObject, WTFMove(formData)));
 }
 

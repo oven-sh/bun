@@ -328,10 +328,29 @@ fn writeProxyConnect(
 
     _ = writer.write("\r\nProxy-Connection: Keep-Alive\r\n") catch 0;
 
+    // Check if user provided Proxy-Authorization in custom headers
+    const user_provided_proxy_auth = if (client.proxy_headers) |hdrs| hdrs.get("proxy-authorization") != null else false;
+
+    // Only write auto-generated proxy_authorization if user didn't provide one
     if (client.proxy_authorization) |auth| {
-        _ = writer.write("Proxy-Authorization: ") catch 0;
-        _ = writer.write(auth) catch 0;
-        _ = writer.write("\r\n") catch 0;
+        if (!user_provided_proxy_auth) {
+            _ = writer.write("Proxy-Authorization: ") catch 0;
+            _ = writer.write(auth) catch 0;
+            _ = writer.write("\r\n") catch 0;
+        }
+    }
+
+    // Write custom proxy headers
+    if (client.proxy_headers) |hdrs| {
+        const slice = hdrs.entries.slice();
+        const names = slice.items(.name);
+        const values = slice.items(.value);
+        for (names, 0..) |name_ptr, idx| {
+            _ = writer.write(hdrs.asStr(name_ptr)) catch 0;
+            _ = writer.write(": ") catch 0;
+            _ = writer.write(hdrs.asStr(values[idx])) catch 0;
+            _ = writer.write("\r\n") catch 0;
+        }
     }
 
     _ = writer.write("\r\n") catch 0;
@@ -359,11 +378,31 @@ fn writeProxyRequest(
     _ = writer.write(request.path) catch 0;
     _ = writer.write(" HTTP/1.1\r\nProxy-Connection: Keep-Alive\r\n") catch 0;
 
+    // Check if user provided Proxy-Authorization in custom headers
+    const user_provided_proxy_auth = if (client.proxy_headers) |hdrs| hdrs.get("proxy-authorization") != null else false;
+
+    // Only write auto-generated proxy_authorization if user didn't provide one
     if (client.proxy_authorization) |auth| {
-        _ = writer.write("Proxy-Authorization: ") catch 0;
-        _ = writer.write(auth) catch 0;
-        _ = writer.write("\r\n") catch 0;
+        if (!user_provided_proxy_auth) {
+            _ = writer.write("Proxy-Authorization: ") catch 0;
+            _ = writer.write(auth) catch 0;
+            _ = writer.write("\r\n") catch 0;
+        }
     }
+
+    // Write custom proxy headers
+    if (client.proxy_headers) |hdrs| {
+        const slice = hdrs.entries.slice();
+        const names = slice.items(.name);
+        const values = slice.items(.value);
+        for (names, 0..) |name_ptr, idx| {
+            _ = writer.write(hdrs.asStr(name_ptr)) catch 0;
+            _ = writer.write(": ") catch 0;
+            _ = writer.write(hdrs.asStr(values[idx])) catch 0;
+            _ = writer.write("\r\n") catch 0;
+        }
+    }
+
     for (request.headers) |header| {
         _ = writer.write(header.name) catch 0;
         _ = writer.write(": ") catch 0;
@@ -450,6 +489,7 @@ if_modified_since: string = "",
 request_content_len_buf: ["-4294967295".len]u8 = undefined,
 
 http_proxy: ?URL = null,
+proxy_headers: ?Headers = null,
 proxy_authorization: ?[]u8 = null,
 proxy_tunnel: ?*ProxyTunnel = null,
 signals: Signals = .{},
@@ -465,6 +505,10 @@ pub fn deinit(this: *HTTPClient) void {
     if (this.proxy_authorization) |auth| {
         this.allocator.free(auth);
         this.proxy_authorization = null;
+    }
+    if (this.proxy_headers) |*hdrs| {
+        hdrs.deinit();
+        this.proxy_headers = null;
     }
     if (this.proxy_tunnel) |tunnel| {
         this.proxy_tunnel = null;
@@ -864,17 +908,17 @@ fn printRequest(request: picohttp.Request, url: string, ignore_insecure: bool, b
     request_.path = url;
 
     if (curl) {
-        Output.prettyErrorln("{}", .{request_.curl(ignore_insecure, body)});
+        Output.prettyErrorln("{f}", .{request_.curl(ignore_insecure, body)});
     }
 
-    Output.prettyErrorln("{}", .{request_});
+    Output.prettyErrorln("{f}", .{request_});
 
     Output.flush();
 }
 
 fn printResponse(response: picohttp.Response) void {
     @branchHint(.cold);
-    Output.prettyErrorln("{}", .{response});
+    Output.prettyErrorln("{f}", .{response});
     Output.flush();
 }
 
@@ -1269,7 +1313,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 this.setTimeout(socket, 5);
                 var stack_buffer = std.heap.stackFallback(1024 * 16, bun.default_allocator);
                 const allocator = stack_buffer.get();
-                var temporary_send_buffer = std.ArrayList(u8).fromOwnedSlice(allocator, &stack_buffer.buffer);
+                var temporary_send_buffer = std.array_list.Managed(u8).fromOwnedSlice(allocator, &stack_buffer.buffer);
                 temporary_send_buffer.items.len = 0;
                 defer temporary_send_buffer.deinit();
                 const writer = &temporary_send_buffer.writer();

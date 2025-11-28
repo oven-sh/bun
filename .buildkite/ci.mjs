@@ -121,6 +121,12 @@ const buildPlatforms = [
  * @type {Platform[]}
  */
 const testPlatforms = [
+  { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
+  { os: "linux", arch: "aarch64", distro: "debian", release: "12", tier: "latest" },
+  { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
+  { os: "linux", arch: "x64", distro: "debian", release: "12", tier: "latest" },
+  { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "13", tier: "latest" },
+  { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "12", tier: "latest" },
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "12", tier: "latest" },
 ];

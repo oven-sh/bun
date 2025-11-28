@@ -117,7 +117,7 @@ ExceptionOr<void> URLPatternParser::performParse(const URLPatternStringOptions& 
 Token URLPatternParser::tryToConsumeToken(TokenType type)
 {
     if (m_index >= m_tokenList.size())
-        return { };
+        return {};
 
     auto& nextToken = m_tokenList[m_index];
 

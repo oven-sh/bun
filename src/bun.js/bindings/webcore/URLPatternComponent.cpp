@@ -104,7 +104,7 @@ JSC::JSValue URLPatternComponent::componentExec(ScriptExecutionContext& context,
     auto contextObject = context.globalObject();
     if (!contextObject) {
         throwTypeError(contextObject, throwScope, "URLPattern execution requires a valid execution context"_s);
-        return { };
+        return {};
     }
     auto regex = JSC::RegExpObject::create(vm, contextObject->regExpStructure(), m_regularExpression.get(), true);
     return regex->exec(contextObject, JSC::jsString(vm, comparedString));

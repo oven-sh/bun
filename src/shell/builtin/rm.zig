@@ -830,7 +830,7 @@ pub const ShellRmTask = struct {
             return Maybe(void).initErr(Syscall.Error.fromCode(bun.sys.E.ISDIR, .TODO).withPath(bun.handleOom(bun.default_allocator.dupeZ(u8, dir_task.path))));
         }
 
-        const flags = bun.O.DIRECTORY | bun.O.RDONLY;
+        const flags = bun.O.DIRECTORY | bun.O.RDONLY | if (bun.Environment.isWindows) bun.O.NOFOLLOW else 0;
         const fd = switch (ShellSyscall.openat(dirfd, path, flags, 0)) {
             .result => |fd| fd,
             .err => |e| {

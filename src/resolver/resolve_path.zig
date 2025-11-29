@@ -931,6 +931,13 @@ pub fn normalizeStringGenericTZ(
         buf_i += 1;
     }
 
+    // If normalization resulted in an empty path, return "."
+    // This happens when the input is just "." or consists only of dots/separators that get normalized away
+    if (buf_i == buf_start and path_.len > 0) {
+        buf[buf_i] = '.';
+        buf_i += 1;
+    }
+
     if (options.zero_terminate) {
         buf[buf_i] = 0;
     }

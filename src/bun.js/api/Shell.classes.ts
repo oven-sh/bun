@@ -6,7 +6,6 @@ export default [
     construct: true,
     noConstructor: true,
     finalize: true,
-    hasPendingActivity: true,
     configurable: false,
     klass: {},
     values: ["resolve", "reject"],

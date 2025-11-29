@@ -894,7 +894,7 @@ declare module "bun:test" {
      * expect(42).toEqual(42); // will pass
      * expect(42).not.toEqual(42); // will fail
      */
-    not: Matchers<unknown>;
+    not: Matchers<T>;
 
     /**
      * Expects the value to be a promise that resolves.

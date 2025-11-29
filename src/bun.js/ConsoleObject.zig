@@ -1,41 +1,44 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const Output = bun.Output;
 const ConsoleObject = @This();
-const String = bun.String;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const strings = bun.strings;
-const ZigException = JSC.ZigException;
-const ZigString = JSC.ZigString;
-const VirtualMachine = JSC.VirtualMachine;
-const string = bun.string;
-const JSLexer = bun.js_lexer;
+
 const ScriptArguments = opaque {};
-const JSPrinter = bun.js_printer;
-const Environment = bun.Environment;
-const default_allocator = bun.default_allocator;
-const JestPrettyFormat = @import("./test/pretty_format.zig").JestPrettyFormat;
-const JSPromise = JSC.JSPromise;
-const EventType = JSC.EventType;
+
+/// Default depth for console.log object inspection
+/// Only --console-depth CLI flag and console.depth bunfig option should modify this
+const DEFAULT_CONSOLE_LOG_DEPTH: u16 = 2;
 
 const Counter = std.AutoHashMapUnmanaged(u64, u32);
 
-const BufferedWriter = std.io.BufferedWriter(4096, Output.WriterType);
-error_writer: BufferedWriter,
-writer: BufferedWriter,
+stderr_buffer: [4096]u8,
+stdout_buffer: [4096]u8,
+
+error_writer_backing: @TypeOf(Output.Source.StreamType.quietWriter(undefined)).Adapter,
+writer_backing: @TypeOf(Output.Source.StreamType.quietWriter(undefined)).Adapter,
+error_writer: *std.Io.Writer,
+writer: *std.Io.Writer,
+
 default_indent: u16 = 0,
 
 counts: Counter = .{},
 
 pub fn format(_: @This(), comptime _: []const u8, _: anytype, _: anytype) !void {}
 
-pub fn init(error_writer: Output.WriterType, writer: Output.WriterType) ConsoleObject {
-    return ConsoleObject{
-        .error_writer = BufferedWriter{ .unbuffered_writer = error_writer },
-        .writer = BufferedWriter{ .unbuffered_writer = writer },
+pub fn init(out: *ConsoleObject, error_writer: Output.Source.StreamType, writer: Output.Source.StreamType) void {
+    out.* = .{
+        .stderr_buffer = undefined,
+        .stdout_buffer = undefined,
+
+        .error_writer_backing = undefined,
+        .writer_backing = undefined,
+
+        .error_writer = undefined,
+        .writer = undefined,
     };
+
+    out.error_writer_backing = error_writer.quietWriter().adaptToNewApi(&out.stderr_buffer);
+    out.writer_backing = writer.quietWriter().adaptToNewApi(&out.stdout_buffer);
+
+    out.error_writer = &out.error_writer_backing.new_interface;
+    out.writer = &out.writer_backing.new_interface;
 }
 
 pub const MessageLevel = enum(u32) {
@@ -80,11 +83,8 @@ pub fn messageWithTypeAndLevel(
     global: *JSGlobalObject,
     vals: [*]const JSValue,
     len: usize,
-) callconv(JSC.conv) void {
-    messageWithTypeAndLevel_(ctype, message_type, level, global, vals, len) catch |err| switch (err) {
-        error.JSError => {},
-        error.OutOfMemory => global.throwOutOfMemory() catch {}, // TODO: properly propagate exception upwards
-    };
+) callconv(jsc.conv) void {
+    messageWithTypeAndLevel_(ctype, message_type, level, global, vals, len) catch |err| bun.jsc.host_fn.voidFromJSError(err, global);
 }
 fn messageWithTypeAndLevel_(
     //console_: *ConsoleObject,
@@ -151,7 +151,8 @@ fn messageWithTypeAndLevel_(
             Output.prettyFmt("<r><red>Assertion failed<r>\n", true)
         else
             "Assertion failed\n";
-        console.error_writer.unbuffered_writer.writeAll(text) catch {};
+        console.error_writer.writeAll(text) catch {};
+        console.error_writer.flush() catch {};
         return;
     }
 
@@ -160,19 +161,27 @@ fn messageWithTypeAndLevel_(
     else
         Output.enable_ansi_colors_stdout;
 
-    var buffered_writer = if (level == .Warning or level == .Error)
-        &console.error_writer
+    const writer = if (level == .Warning or level == .Error)
+        console.error_writer
     else
-        &console.writer;
-    var writer = buffered_writer.writer();
+        console.writer;
     const Writer = @TypeOf(writer);
 
+    if (bun.jsc.Jest.Jest.runner) |runner| {
+        runner.bun_test_root.onBeforePrint();
+    }
+
     var print_length = len;
+    // Get console depth from CLI options or bunfig, fallback to default
+    const cli_context = CLI.get();
+    const console_depth = cli_context.runtime_options.console_depth orelse DEFAULT_CONSOLE_LOG_DEPTH;
+
     var print_options: FormatOptions = .{
         .enable_colors = enable_colors,
         .add_newline = true,
         .flush = true,
         .default_indent = console.default_indent,
+        .max_depth = console_depth,
         .error_display_level = switch (level) {
             .Error => .full,
             else => .normal,
@@ -196,7 +205,7 @@ fn messageWithTypeAndLevel_(
             switch (enable_colors) {
                 inline else => |colors| table_printer.printTable(Writer, writer, colors) catch return,
             }
-            buffered_writer.flush() catch {};
+            writer.flush() catch {};
             return;
         }
     }
@@ -224,8 +233,6 @@ fn messageWithTypeAndLevel_(
             global,
             vals,
             print_length,
-            @TypeOf(buffered_writer.unbuffered_writer.context),
-            Writer,
             writer,
             print_options,
         )
@@ -237,7 +244,7 @@ fn messageWithTypeAndLevel_(
 
     if (message_type == .Trace) {
         writeTrace(Writer, writer, global);
-        buffered_writer.flush() catch {};
+        writer.flush() catch {};
     }
 }
 
@@ -303,7 +310,7 @@ pub const TablePrinter = struct {
 
         pub const WriteError = error{};
 
-        pub const Writer = std.io.Writer(
+        pub const Writer = std.Io.GenericWriter(
             VisibleCharacterCounter,
             VisibleCharacterCounter.WriteError,
             VisibleCharacterCounter.write,
@@ -322,28 +329,35 @@ pub const TablePrinter = struct {
     /// Compute how much horizontal space will take a JSValue when printed
     fn getWidthForValue(this: *TablePrinter, value: JSValue) bun.JSError!u32 {
         var width: usize = 0;
+        var old_writer = VisibleCharacterCounter.Writer{
+            .context = .{
+                .width = &width,
+            },
+        };
+        var discard_buf: [512]u8 = undefined; // using a buffer decreases vtable calls but requires unnecessary memcpys. is it faster or slower?
+        var adapted_writer = old_writer.adaptToNewApi(&discard_buf);
         var value_formatter = this.value_formatter;
 
         const tag = try ConsoleObject.Formatter.Tag.get(value, this.globalObject);
         value_formatter.quote_strings = !(tag.tag == .String or tag.tag == .StringPossiblyFormatted);
         value_formatter.format(
             tag,
-            VisibleCharacterCounter.Writer,
-            VisibleCharacterCounter.Writer{
-                .context = .{
-                    .width = &width,
-                },
-            },
+            *std.Io.Writer,
+            &adapted_writer.new_interface,
             value,
             this.globalObject,
             false,
         ) catch {}; // TODO:
 
+        adapted_writer.new_interface.flush() catch |e| switch (e) {
+            error.WriteFailed => if (Environment.ci_assert) bun.assert(false), // VisibleCharacterCounter write cannot fail
+        };
+
         return @truncate(width);
     }
 
     /// Update the sizes of the columns for the values of a given row, and create any additional columns as needed
-    fn updateColumnsForRow(this: *TablePrinter, columns: *std.ArrayList(Column), row_key: RowKey, row_value: JSValue) bun.JSError!void {
+    fn updateColumnsForRow(this: *TablePrinter, columns: *std.array_list.Managed(Column), row_key: RowKey, row_value: JSValue) bun.JSError!void {
         // update size of "(index)" column
         const row_key_len: u32 = switch (row_key) {
             .str => |value| @intCast(value.visibleWidthExcludeANSIColors(false)),
@@ -371,7 +385,7 @@ pub const TablePrinter = struct {
                     }
                 }
             } else {
-                var cols_iter = try JSC.JSPropertyIterator(.{
+                var cols_iter = try jsc.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
                 }).init(this.globalObject, obj);
@@ -410,7 +424,7 @@ pub const TablePrinter = struct {
 
     fn writeStringNTimes(comptime Writer: type, writer: Writer, comptime str: []const u8, n: usize) !void {
         if (comptime str.len == 1) {
-            try writer.writeByteNTimes(str[0], n);
+            try writer.splatByteAll(str[0], n);
             return;
         }
 
@@ -424,7 +438,7 @@ pub const TablePrinter = struct {
         comptime Writer: type,
         writer: Writer,
         comptime enable_ansi_colors: bool,
-        columns: *std.ArrayList(Column),
+        columns: *std.array_list.Managed(Column),
         row_key: RowKey,
         row_value: JSValue,
     ) !void {
@@ -437,12 +451,12 @@ pub const TablePrinter = struct {
             const needed = columns.items[0].width -| len;
 
             // Right-align the number column
-            try writer.writeByteNTimes(' ', needed + PADDING);
+            try writer.splatByteAll(' ', needed + PADDING);
             switch (row_key) {
-                .str => |value| try writer.print("{}", .{value}),
+                .str => |value| try writer.print("{f}", .{value}),
                 .num => |value| try writer.print("{d}", .{value}),
             }
-            try writer.writeByteNTimes(' ', PADDING);
+            try writer.splatByteAll(' ', PADDING);
         }
 
         for (1..columns.items.len) |col_idx| {
@@ -464,11 +478,11 @@ pub const TablePrinter = struct {
             }
 
             if (value == .zero) {
-                try writer.writeByteNTimes(' ', col.width + (PADDING * 2));
+                try writer.splatByteAll(' ', col.width + (PADDING * 2));
             } else {
                 const len: u32 = try this.getWidthForValue(value);
                 const needed = col.width -| len;
-                try writer.writeByteNTimes(' ', PADDING);
+                try writer.splatByteAll(' ', PADDING);
                 const tag = try ConsoleObject.Formatter.Tag.get(value, this.globalObject);
                 var value_formatter = this.value_formatter;
 
@@ -494,7 +508,7 @@ pub const TablePrinter = struct {
                     enable_ansi_colors,
                 );
 
-                try writer.writeByteNTimes(' ', needed + PADDING);
+                try writer.splatByteAll(' ', needed + PADDING);
             }
         }
         try writer.writeAll("│\n");
@@ -503,13 +517,13 @@ pub const TablePrinter = struct {
     pub fn printTable(
         this: *TablePrinter,
         comptime Writer: type,
-        writer: Writer,
+        writer: *std.Io.Writer,
         comptime enable_ansi_colors: bool,
     ) !void {
         const globalObject = this.globalObject;
 
         var stack_fallback = std.heap.stackFallback(@sizeOf(Column) * 16, this.globalObject.allocator());
-        var columns = try std.ArrayList(Column).initCapacity(stack_fallback.get(), 16);
+        var columns = try std.array_list.Managed(Column).initCapacity(stack_fallback.get(), 16);
         defer {
             for (columns.items) |*col| {
                 col.name.deref();
@@ -532,7 +546,7 @@ pub const TablePrinter = struct {
 
         // if the "properties" arg was provided, pre-populate the columns
         if (!this.properties.isUndefined()) {
-            var properties_iter = try JSC.JSArrayIterator.init(this.properties, globalObject);
+            var properties_iter = try jsc.JSArrayIterator.init(this.properties, globalObject);
             while (try properties_iter.next()) |value| {
                 try columns.append(.{
                     .name = try value.toBunString(globalObject),
@@ -544,8 +558,8 @@ pub const TablePrinter = struct {
         {
             if (this.is_iterable) {
                 var ctx_: struct { this: *TablePrinter, columns: *@TypeOf(columns), idx: u32 = 0, err: bool = false } = .{ .this = this, .columns = &columns };
-                this.tabular_data.forEachWithContext(globalObject, &ctx_, struct {
-                    fn callback(_: *JSC.VM, _: *JSGlobalObject, ctx: *@TypeOf(ctx_), value: JSValue) callconv(.C) void {
+                try this.tabular_data.forEachWithContext(globalObject, &ctx_, struct {
+                    fn callback(_: *jsc.VM, _: *JSGlobalObject, ctx: *@TypeOf(ctx_), value: JSValue) callconv(.c) void {
                         updateColumnsForRow(ctx.this, ctx.columns, .{ .num = ctx.idx }, value) catch {
                             ctx.err = true;
                         };
@@ -555,7 +569,7 @@ pub const TablePrinter = struct {
                 if (ctx_.err) return error.JSError;
             } else {
                 const tabular_obj = try this.tabular_data.toObject(globalObject);
-                var rows_iter = try JSC.JSPropertyIterator(.{
+                var rows_iter = try jsc.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
                 }).init(globalObject, tabular_obj);
@@ -595,15 +609,15 @@ pub const TablePrinter = struct {
                 if (i > 0) try writer.writeAll("│");
                 const len = col.name.visibleWidthExcludeANSIColors(false);
                 const needed = col.width -| len;
-                try writer.writeByteNTimes(' ', 1);
+                try writer.splatByteAll(' ', 1);
                 if (comptime enable_ansi_colors) {
                     try writer.writeAll(Output.prettyFmt("<r><b>", true));
                 }
-                try writer.print("{}", .{col.name});
+                try writer.print("{f}", .{col.name});
                 if (comptime enable_ansi_colors) {
                     try writer.writeAll(Output.prettyFmt("<r>", true));
                 }
-                try writer.writeByteNTimes(' ', needed + PADDING);
+                try writer.splatByteAll(' ', needed + PADDING);
             }
 
             try writer.writeAll("│\n├");
@@ -618,8 +632,8 @@ pub const TablePrinter = struct {
         {
             if (this.is_iterable) {
                 var ctx_: struct { this: *TablePrinter, columns: *@TypeOf(columns), writer: Writer, idx: u32 = 0, err: bool = false } = .{ .this = this, .columns = &columns, .writer = writer };
-                this.tabular_data.forEachWithContext(globalObject, &ctx_, struct {
-                    fn callback(_: *JSC.VM, _: *JSGlobalObject, ctx: *@TypeOf(ctx_), value: JSValue) callconv(.C) void {
+                try this.tabular_data.forEachWithContext(globalObject, &ctx_, struct {
+                    fn callback(_: *jsc.VM, _: *JSGlobalObject, ctx: *@TypeOf(ctx_), value: JSValue) callconv(.c) void {
                         printRow(ctx.this, Writer, ctx.writer, enable_ansi_colors, ctx.columns, .{ .num = ctx.idx }, value) catch {
                             ctx.err = true;
                         };
@@ -631,7 +645,7 @@ pub const TablePrinter = struct {
                 const cell = this.tabular_data.toCell() orelse {
                     return globalObject.throwTypeError("tabular_data must be an object or array", .{});
                 };
-                var rows_iter = try JSC.JSPropertyIterator(.{
+                var rows_iter = try jsc.JSPropertyIterator(.{
                     .skip_empty_name = false,
                     .include_value = true,
                 }).init(globalObject, cell.toObject(globalObject));
@@ -712,7 +726,7 @@ pub const FormatOptions = struct {
             level: ErrorDisplayLevel,
             enable_colors: bool,
             colon: Colon,
-            pub fn format(this: @This(), comptime _: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
                 if (this.enable_colors) {
                     switch (this.level) {
                         .normal => try writer.writeAll(Output.prettyFmt("<r>", true)),
@@ -722,7 +736,7 @@ pub const FormatOptions = struct {
                 }
 
                 if (!this.name.isEmpty()) {
-                    try this.name.format("", opts, writer);
+                    try this.name.format(writer);
                 } else if (this.level == .warn) {
                     try writer.writeAll("warn");
                 } else {
@@ -755,7 +769,7 @@ pub const FormatOptions = struct {
         }
     };
 
-    pub fn fromJS(formatOptions: *FormatOptions, globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSValue) bun.JSError!void {
+    pub fn fromJS(formatOptions: *FormatOptions, globalThis: *jsc.JSGlobalObject, arguments: []const jsc.JSValue) bun.JSError!void {
         const arg1 = arguments[0];
 
         if (arg1.isObject()) {
@@ -767,7 +781,7 @@ pub const FormatOptions = struct {
                     }
                     formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
                 } else if (opt.isNumber()) {
-                    const v = opt.coerce(f64, globalThis);
+                    const v = try opt.coerce(f64, globalThis);
                     if (std.math.isInf(v)) {
                         formatOptions.max_depth = std.math.maxInt(u16);
                     } else {
@@ -795,7 +809,7 @@ pub const FormatOptions = struct {
                     }
                     formatOptions.max_depth = @as(u16, @truncate(@as(u32, @intCast(@min(arg, std.math.maxInt(u16))))));
                 } else if (depthArg.isNumber()) {
-                    const v = depthArg.coerce(f64, globalThis);
+                    const v = try depthArg.coerce(f64, globalThis);
                     if (std.math.isInf(v)) {
                         formatOptions.max_depth = std.math.maxInt(u16);
                     } else {
@@ -803,10 +817,7 @@ pub const FormatOptions = struct {
                     }
                 }
                 if (arguments.len > 1 and !arguments[1].isEmptyOrUndefinedOrNull()) {
-                    formatOptions.enable_colors = arguments[1].coerce(bool, globalThis);
-                    if (globalThis.hasException()) {
-                        return error.JSError;
-                    }
+                    formatOptions.enable_colors = arguments[1].toBoolean();
                 }
             }
         }
@@ -818,9 +829,7 @@ pub fn format2(
     global: *JSGlobalObject,
     vals: [*]const JSValue,
     len: usize,
-    comptime RawWriter: type,
-    comptime Writer: type,
-    writer: Writer,
+    writer: *std.Io.Writer,
     options: FormatOptions,
 ) bun.JSError!void {
     if (len == 1) {
@@ -839,7 +848,7 @@ pub fn format2(
         };
         defer fmt.deinit();
         const tag = try ConsoleObject.Formatter.Tag.get(vals[0], global);
-        fmt.writeIndent(Writer, writer) catch return;
+        fmt.writeIndent(*std.Io.Writer, writer) catch return;
 
         if (tag.tag == .String) {
             if (options.enable_colors) {
@@ -848,7 +857,7 @@ pub fn format2(
                 }
                 try fmt.format(
                     tag,
-                    Writer,
+                    *std.Io.Writer,
                     writer,
                     vals[0],
                     global,
@@ -860,7 +869,7 @@ pub fn format2(
             } else {
                 try fmt.format(
                     tag,
-                    Writer,
+                    *std.Io.Writer,
                     writer,
                     vals[0],
                     global,
@@ -871,17 +880,15 @@ pub fn format2(
                 _ = writer.write("\n") catch 0;
             }
 
-            writer.context.flush() catch {};
+            writer.flush() catch {};
         } else {
             defer {
-                if (comptime Writer != RawWriter) {
-                    if (options.flush) writer.context.flush() catch {};
-                }
+                if (options.flush) writer.flush() catch {};
             }
             if (options.enable_colors) {
                 try fmt.format(
                     tag,
-                    Writer,
+                    *std.Io.Writer,
                     writer,
                     vals[0],
                     global,
@@ -890,7 +897,7 @@ pub fn format2(
             } else {
                 try fmt.format(
                     tag,
-                    Writer,
+                    *std.Io.Writer,
                     writer,
                     vals[0],
                     global,
@@ -904,9 +911,7 @@ pub fn format2(
     }
 
     defer {
-        if (comptime Writer != RawWriter) {
-            if (options.flush) writer.context.flush() catch {};
-        }
+        if (options.flush) writer.flush() catch {};
     }
 
     var this_value: JSValue = vals[0];
@@ -915,6 +920,7 @@ pub fn format2(
         .globalThis = global,
         .ordered_properties = options.ordered_properties,
         .quote_strings = options.quote_strings,
+        .max_depth = options.max_depth,
         .single_line = options.single_line,
         .indent = options.default_indent,
         .stack_check = bun.StackCheck.init(),
@@ -924,7 +930,7 @@ pub fn format2(
     defer fmt.deinit();
     var tag: ConsoleObject.Formatter.Tag.Result = undefined;
 
-    fmt.writeIndent(Writer, writer) catch return;
+    fmt.writeIndent(*std.Io.Writer, writer) catch return;
 
     var any = false;
     if (options.enable_colors) {
@@ -942,7 +948,7 @@ pub fn format2(
                 tag.tag = .{ .StringPossiblyFormatted = {} };
             }
 
-            try fmt.format(tag, Writer, writer, this_value, global, true);
+            try fmt.format(tag, *std.Io.Writer, writer, this_value, global, true);
             if (fmt.remaining_values.len == 0) {
                 break;
             }
@@ -964,7 +970,7 @@ pub fn format2(
                 tag.tag = .{ .StringPossiblyFormatted = {} };
             }
 
-            try fmt.format(tag, Writer, writer, this_value, global, false);
+            try fmt.format(tag, *std.Io.Writer, writer, this_value, global, false);
             if (fmt.remaining_values.len == 0)
                 break;
 
@@ -1040,19 +1046,19 @@ pub const Formatter = struct {
         value: JSValue,
 
         pub const WriteError = error{UhOh};
-        pub fn format(self: ZigFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: ZigFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
             self.formatter.remaining_values = &[_]JSValue{self.value};
             defer {
                 self.formatter.remaining_values = &[_]JSValue{};
             }
-            try self.formatter.format(
-                try Tag.get(self.value, self.formatter.globalThis),
+            self.formatter.format(
+                Tag.get(self.value, self.formatter.globalThis) catch |e| return bun.deprecated.jsErrorToWriteError(e),
                 @TypeOf(writer),
                 writer,
                 self.value,
                 self.formatter.globalThis,
                 false,
-            );
+            ) catch |e| return bun.deprecated.jsErrorToWriteError(e);
         }
     };
 
@@ -1282,7 +1288,7 @@ pub const Formatter = struct {
             if (js_type == .GlobalProxy) {
                 if (!opts.hide_global) {
                     return Tag.get(
-                        JSC.JSValue.c(JSC.C.JSObjectGetProxyTarget(value.asObjectRef())),
+                        jsc.JSValue.c(jsc.C.JSObjectGetProxyTarget(value.asObjectRef())),
                         globalThis,
                     );
                 }
@@ -1382,7 +1388,7 @@ pub const Formatter = struct {
                     .UnlinkedEvalCodeBlock,
                     .UnlinkedFunctionCodeBlock,
                     .CodeBlock,
-                    .JSImmutableButterfly,
+                    .JSCellButterfly,
                     .JSSourceCode,
                     .JSScriptFetcher,
                     .JSScriptFetchParameters,
@@ -1408,7 +1414,7 @@ pub const Formatter = struct {
         }
     };
 
-    const CellType = JSC.C.CellType;
+    const CellType = jsc.C.CellType;
     threadlocal var name_buf: [512]u8 = undefined;
 
     /// https://console.spec.whatwg.org/#formatter
@@ -1630,7 +1636,7 @@ pub const Formatter = struct {
     }
 
     pub fn WrappedWriter(comptime Writer: type) type {
-        if (@hasDecl(Writer, "is_wrapped_writer")) {
+        if (Writer != *std.Io.Writer and @hasDecl(Writer, "is_wrapped_writer")) {
             @compileError("Do not nest WrappedWriter");
         }
 
@@ -1723,11 +1729,11 @@ pub const Formatter = struct {
             }
 
             pub inline fn writeString(self: *@This(), str: ZigString) void {
-                self.print("{}", .{str});
+                self.print("{f}", .{str});
             }
 
             pub inline fn write16Bit(self: *@This(), input: []const u16) void {
-                bun.fmt.formatUTF16Type([]const u16, input, self.ctx) catch {
+                bun.fmt.formatUTF16Type(input, self.ctx) catch {
                     self.failed = true;
                 };
             }
@@ -1748,7 +1754,7 @@ pub const Formatter = struct {
         }
     }
 
-    pub fn printComma(this: *ConsoleObject.Formatter, comptime Writer: type, writer: Writer, comptime enable_ansi_colors: bool) !void {
+    pub fn printComma(this: *ConsoleObject.Formatter, comptime _: type, writer: *std.Io.Writer, comptime enable_ansi_colors: bool) !void {
         try writer.writeAll(comptime Output.prettyFmt("<r><d>,<r>", enable_ansi_colors));
         this.estimated_line_length += 1;
     }
@@ -1758,7 +1764,7 @@ pub const Formatter = struct {
             formatter: *ConsoleObject.Formatter,
             writer: Writer,
             count: usize = 0,
-            pub fn forEach(_: *JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+            pub fn forEach(_: *jsc.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.c) void {
                 var this: *@This() = bun.cast(*@This(), ctx orelse return);
                 if (this.formatter.failed) return;
                 if (single_line and this.count > 0) {
@@ -1832,7 +1838,7 @@ pub const Formatter = struct {
             formatter: *ConsoleObject.Formatter,
             writer: Writer,
             is_first: bool = true,
-            pub fn forEach(_: *JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+            pub fn forEach(_: *jsc.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.c) void {
                 var this: *@This() = bun.cast(*@This(), ctx orelse return);
                 if (this.formatter.failed) return;
                 if (single_line) {
@@ -1874,7 +1880,7 @@ pub const Formatter = struct {
             always_newline: bool = false,
             parent: JSValue,
             const enable_ansi_colors = enable_ansi_colors_;
-            pub fn handleFirstProperty(this: *@This(), globalThis: *JSC.JSGlobalObject, value: JSValue) void {
+            pub fn handleFirstProperty(this: *@This(), globalThis: *jsc.JSGlobalObject, value: JSValue) bun.JSError!void {
                 if (value.isCell() and !value.jsType().isFunction()) {
                     var writer = WrappedWriter(Writer){
                         .ctx = this.writer,
@@ -1882,8 +1888,8 @@ pub const Formatter = struct {
                         .estimated_line_length = &this.formatter.estimated_line_length,
                     };
 
-                    if (getObjectName(globalThis, value)) |name_str| {
-                        writer.print("{} ", .{name_str});
+                    if (try getObjectName(globalThis, value)) |name_str| {
+                        writer.print("{f} ", .{name_str});
                     }
                 }
 
@@ -1908,7 +1914,7 @@ pub const Formatter = struct {
                 value: JSValue,
                 is_symbol: bool,
                 is_private_symbol: bool,
-            ) callconv(.C) void {
+            ) callconv(.c) void {
                 if (key.eqlComptime("constructor")) return;
 
                 var ctx: *@This() = bun.cast(*@This(), ctx_ptr orelse return);
@@ -1928,7 +1934,7 @@ pub const Formatter = struct {
 
                 if (tag.cell.isHidden()) return;
                 if (ctx.i == 0) {
-                    handleFirstProperty(ctx, globalThis, ctx.parent);
+                    handleFirstProperty(ctx, globalThis, ctx.parent) catch return;
                 } else {
                     this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                 }
@@ -1951,14 +1957,14 @@ pub const Formatter = struct {
                         this.addForNewLine(key.len + 1);
 
                         writer.print(
-                            comptime Output.prettyFmt("<r>{}<d>:<r> ", enable_ansi_colors),
+                            comptime Output.prettyFmt("<r>{f}<d>:<r> ", enable_ansi_colors),
                             .{key},
                         );
                     } else if (key.is16Bit() and (!this.quote_keys and JSLexer.isLatin1Identifier(@TypeOf(key.utf16SliceAligned()), key.utf16SliceAligned()))) {
                         this.addForNewLine(key.len + 1);
 
                         writer.print(
-                            comptime Output.prettyFmt("<r>{}<d>:<r> ", enable_ansi_colors),
+                            comptime Output.prettyFmt("<r>{f}<d>:<r> ", enable_ansi_colors),
                             .{key},
                         );
                     } else if (key.is16Bit()) {
@@ -1988,14 +1994,14 @@ pub const Formatter = struct {
                         this.addForNewLine(key.len + 2);
 
                         writer.print(
-                            comptime Output.prettyFmt("<r><green>{s}<r><d>:<r> ", enable_ansi_colors),
+                            comptime Output.prettyFmt("<r><green>{f}<r><d>:<r> ", enable_ansi_colors),
                             .{bun.fmt.formatJSONStringLatin1(key.slice())},
                         );
                     }
                 } else if (Environment.isDebug and is_private_symbol) {
                     this.addForNewLine(1 + "$:".len + key.len);
                     writer.print(
-                        comptime Output.prettyFmt("<r><magenta>{s}{any}<r><d>:<r> ", enable_ansi_colors),
+                        comptime Output.prettyFmt("<r><magenta>{s}{f}<r><d>:<r> ", enable_ansi_colors),
                         .{
                             if (key.len > 0 and key.charAt(0) == '#') "" else "$",
                             key,
@@ -2004,7 +2010,7 @@ pub const Formatter = struct {
                 } else {
                     this.addForNewLine(1 + "[Symbol()]:".len + key.len);
                     writer.print(
-                        comptime Output.prettyFmt("<r><d>[<r><blue>Symbol({any})<r><d>]:<r> ", enable_ansi_colors),
+                        comptime Output.prettyFmt("<r><d>[<r><blue>Symbol({f})<r><d>]:<r> ", enable_ansi_colors),
                         .{key},
                     );
                 }
@@ -2026,9 +2032,9 @@ pub const Formatter = struct {
         };
     }
 
-    fn getObjectName(globalThis: *JSC.JSGlobalObject, value: JSValue) ?ZigString {
+    fn getObjectName(globalThis: *jsc.JSGlobalObject, value: JSValue) bun.JSError!?ZigString {
         var name_str = ZigString.init("");
-        value.getClassName(globalThis, &name_str);
+        try value.getClassName(globalThis, &name_str);
         if (!name_str.eqlComptime("Object")) {
             return name_str;
         } else if (value.getPrototype(globalThis).eqlValue(JSValue.null)) {
@@ -2038,20 +2044,19 @@ pub const Formatter = struct {
     }
 
     extern fn JSC__JSValue__callCustomInspectFunction(
-        *JSC.JSGlobalObject,
+        *jsc.JSGlobalObject,
         JSValue,
         JSValue,
         depth: u32,
         max_depth: u32,
         colors: bool,
-        is_exception: *bool,
     ) JSValue;
 
     pub fn printAs(
         this: *ConsoleObject.Formatter,
         comptime Format: ConsoleObject.Formatter.Tag,
         comptime Writer: type,
-        writer_: Writer,
+        writer_: *std.Io.Writer,
         value: JSValue,
         jsType: JSValue.JSType,
         comptime enable_ansi_colors: bool,
@@ -2061,6 +2066,12 @@ pub const Formatter = struct {
         if (this.globalThis.hasException()) {
             return error.JSError;
         }
+
+        // If we call
+        //   `return try this.printAs`
+        //
+        // Then we can get a spurious `[Circular]` due to the value already being present in the map.
+        var remove_before_recurse = false;
 
         var writer = WrappedWriter(Writer){ .ctx = writer_, .estimated_line_length = &this.estimated_line_length };
         defer {
@@ -2072,7 +2083,7 @@ pub const Formatter = struct {
             if (!this.stack_check.isSafeToRecurse()) {
                 this.failed = true;
                 if (this.can_throw_stack_overflow) {
-                    this.globalThis.throwStackOverflow();
+                    return this.globalThis.throwStackOverflow();
                 }
                 return;
             }
@@ -2087,12 +2098,16 @@ pub const Formatter = struct {
             if (entry.found_existing) {
                 writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", enable_ansi_colors));
                 return;
+            } else {
+                remove_before_recurse = true;
             }
         }
 
         defer {
             if (comptime Format.canHaveCircularReferences()) {
-                _ = this.map.remove(value);
+                if (remove_before_recurse) {
+                    _ = this.map.remove(value);
+                }
             }
         }
 
@@ -2158,13 +2173,13 @@ pub const Formatter = struct {
 
                 if (str.isUTF16()) {
                     // streaming print
-                    writer.print("{}", .{str});
+                    writer.print("{f}", .{str});
                 } else if (str.asUTF8()) |slice| {
                     // fast path
                     writer.writeAll(slice);
                 } else if (!str.isEmpty()) {
                     // slow path
-                    const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, str.latin1()) catch &[_]u8{};
+                    const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, str.latin1()) catch &[_]u8{};
                     if (buf.len > 0) {
                         defer bun.default_allocator.free(buf);
                         writer.writeAll(buf);
@@ -2176,7 +2191,7 @@ pub const Formatter = struct {
                 }
             },
             .Integer => {
-                const int = value.coerce(i64, this.globalThis);
+                const int = try value.coerce(i64, this.globalThis);
                 if (int < std.math.maxInt(u32)) {
                     var i = int;
                     const is_negative = i < 0;
@@ -2202,14 +2217,14 @@ pub const Formatter = struct {
             .Double => {
                 if (value.isCell()) {
                     var number_name = ZigString.Empty;
-                    value.getClassName(this.globalThis, &number_name);
+                    try value.getClassName(this.globalThis, &number_name);
 
                     var number_value = ZigString.Empty;
                     try value.toZigString(&number_value, this.globalThis);
 
                     if (!strings.eqlComptime(number_name.slice(), "Number")) {
                         this.addForNewLine(number_name.len + number_value.len + "[Number ():]".len);
-                        writer.print(comptime Output.prettyFmt("<r><yellow>[Number ({s}): {s}]<r>", enable_ansi_colors), .{
+                        writer.print(comptime Output.prettyFmt("<r><yellow>[Number ({f}): {f}]<r>", enable_ansi_colors), .{
                             number_name,
                             number_value,
                         });
@@ -2217,7 +2232,7 @@ pub const Formatter = struct {
                     }
 
                     this.addForNewLine(number_name.len + number_value.len + 4);
-                    writer.print(comptime Output.prettyFmt("<r><yellow>[{s}: {s}]<r>", enable_ansi_colors), .{
+                    writer.print(comptime Output.prettyFmt("<r><yellow>[{f}: {f}]<r>", enable_ansi_colors), .{
                         number_name,
                         number_value,
                     });
@@ -2251,24 +2266,19 @@ pub const Formatter = struct {
                 writer.print(comptime Output.prettyFmt("<r><yellow>null<r>", enable_ansi_colors), .{});
             },
             .CustomFormattedObject => {
-                var is_exception = false;
                 // Call custom inspect function. Will return the error if there is one
                 // we'll need to pass the callback through to the "this" value in here
-                const result = JSC__JSValue__callCustomInspectFunction(
+                const result = try bun.jsc.fromJSHostCall(this.globalThis, @src(), JSC__JSValue__callCustomInspectFunction, .{
                     this.globalThis,
                     this.custom_formatted_object.function,
                     this.custom_formatted_object.this,
                     this.max_depth -| this.depth,
                     this.max_depth,
                     enable_ansi_colors,
-                    &is_exception,
-                );
-                if (is_exception) {
-                    return error.JSError;
-                }
+                });
                 // Strings are printed directly, otherwise we recurse. It is possible to end up in an infinite loop.
                 if (result.isString()) {
-                    writer.print("{}", .{result.fmtString(this.globalThis)});
+                    writer.print("{f}", .{result.fmtString(this.globalThis)});
                 } else {
                     try this.format(try ConsoleObject.Formatter.Tag.get(result, this.globalThis), Writer, writer_, result, this.globalThis, enable_ansi_colors);
                 }
@@ -2279,12 +2289,19 @@ pub const Formatter = struct {
 
                 if (description.len > 0) {
                     this.addForNewLine(description.len + "()".len);
-                    writer.print(comptime Output.prettyFmt("<r><blue>Symbol({any})<r>", enable_ansi_colors), .{description});
+                    writer.print(comptime Output.prettyFmt("<r><blue>Symbol({f})<r>", enable_ansi_colors), .{description});
                 } else {
                     writer.print(comptime Output.prettyFmt("<r><blue>Symbol()<r>", enable_ansi_colors), .{});
                 }
             },
             .Error => {
+                // Temporarily remove from the visited map to allow printErrorlikeObject to process it
+                // The circular reference check is already done in printAs, so we know it's safe
+                const was_in_map = if (this.map_node != null) this.map.remove(value) else false;
+                defer if (was_in_map) {
+                    _ = this.map.put(value, {}) catch {};
+                };
+
                 VirtualMachine.get().printErrorlikeObject(
                     value,
                     null,
@@ -2298,47 +2315,47 @@ pub const Formatter = struct {
             },
             .Class => {
                 var printable = ZigString.init(&name_buf);
-                value.getClassName(this.globalThis, &printable);
+                try value.getClassName(this.globalThis, &printable);
                 this.addForNewLine(printable.len);
 
                 const proto = value.getPrototype(this.globalThis);
                 var printable_proto = ZigString.init(&name_buf);
-                proto.getClassName(this.globalThis, &printable_proto);
+                try proto.getClassName(this.globalThis, &printable_proto);
                 this.addForNewLine(printable_proto.len);
 
                 if (printable.len == 0) {
                     if (printable_proto.isEmpty()) {
                         writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous)]<r>", enable_ansi_colors), .{});
                     } else {
-                        writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous) extends {}]<r>", enable_ansi_colors), .{printable_proto});
+                        writer.print(comptime Output.prettyFmt("<cyan>[class (anonymous) extends {f}]<r>", enable_ansi_colors), .{printable_proto});
                     }
                 } else {
                     if (printable_proto.isEmpty()) {
-                        writer.print(comptime Output.prettyFmt("<cyan>[class {}]<r>", enable_ansi_colors), .{printable});
+                        writer.print(comptime Output.prettyFmt("<cyan>[class {f}]<r>", enable_ansi_colors), .{printable});
                     } else {
-                        writer.print(comptime Output.prettyFmt("<cyan>[class {} extends {}]<r>", enable_ansi_colors), .{ printable, printable_proto });
+                        writer.print(comptime Output.prettyFmt("<cyan>[class {f} extends {f}]<r>", enable_ansi_colors), .{ printable, printable_proto });
                     }
                 }
             },
             .Function => {
-                var printable = value.getName(this.globalThis);
+                var printable = try value.getName(this.globalThis);
                 defer printable.deref();
 
                 const proto = value.getPrototype(this.globalThis);
-                const func_name = proto.getName(this.globalThis); // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
+                const func_name = try proto.getName(this.globalThis); // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
                 defer func_name.deref();
 
                 if (printable.isEmpty() or func_name.eql(printable)) {
                     if (func_name.isEmpty()) {
                         writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
                     } else {
-                        writer.print(comptime Output.prettyFmt("<cyan>[{}]<r>", enable_ansi_colors), .{func_name});
+                        writer.print(comptime Output.prettyFmt("<cyan>[{f}]<r>", enable_ansi_colors), .{func_name});
                     }
                 } else {
                     if (func_name.isEmpty()) {
-                        writer.print(comptime Output.prettyFmt("<cyan>[Function: {}]<r>", enable_ansi_colors), .{printable});
+                        writer.print(comptime Output.prettyFmt("<cyan>[Function: {f}]<r>", enable_ansi_colors), .{printable});
                     } else {
-                        writer.print(comptime Output.prettyFmt("<cyan>[{}: {}]<r>", enable_ansi_colors), .{ func_name, printable });
+                        writer.print(comptime Output.prettyFmt("<cyan>[{f}: {f}]<r>", enable_ansi_colors), .{ func_name, printable });
                     }
                 }
             },
@@ -2552,19 +2569,19 @@ pub const Formatter = struct {
                 }
             },
             .Private => {
-                if (value.as(JSC.WebCore.Response)) |response| {
+                if (value.as(jsc.WebCore.Response)) |response| {
                     response.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
-                } else if (value.as(JSC.WebCore.Request)) |request| {
+                } else if (value.as(jsc.WebCore.Request)) |request| {
                     request.writeFormat(value, ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
-                } else if (value.as(JSC.API.BuildArtifact)) |build| {
+                } else if (value.as(jsc.API.BuildArtifact)) |build| {
                     build.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
-                } else if (value.as(JSC.WebCore.Blob)) |blob| {
+                } else if (value.as(jsc.WebCore.Blob)) |blob| {
                     blob.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
-                } else if (value.as(JSC.WebCore.S3Client)) |s3client| {
+                } else if (value.as(jsc.WebCore.S3Client)) |s3client| {
                     s3client.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
                 } else if (value.as(bun.webcore.FetchHeaders) != null) {
@@ -2585,7 +2602,7 @@ pub const Formatter = struct {
                             enable_ansi_colors,
                         );
                     }
-                } else if (value.as(JSC.DOMFormData) != null) {
+                } else if (value.as(jsc.DOMFormData) != null) {
                     if (try value.get(this.globalThis, "toJSON")) |toJSONFunction| {
                         const prev_quote_keys = this.quote_keys;
                         this.quote_keys = true;
@@ -2631,15 +2648,28 @@ pub const Formatter = struct {
                 } else if (value.as(bun.api.ResolveMessage)) |resolve_log| {
                     resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                     return;
-                } else if (JestPrettyFormat.printAsymmetricMatcher(this, Format, &writer, writer_, name_buf, value, enable_ansi_colors)) {
+                } else if (try JestPrettyFormat.printAsymmetricMatcher(this, Format, &writer, writer_, name_buf, value, enable_ansi_colors)) {
                     return;
                 } else if (jsType != .DOMWrapper) {
+                    if (remove_before_recurse) {
+                        remove_before_recurse = false;
+                        _ = this.map.remove(value);
+                    }
+
                     if (value.isCallable()) {
+                        remove_before_recurse = true;
                         return try this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors);
                     }
 
+                    remove_before_recurse = true;
                     return try this.printAs(.Object, Writer, writer_, value, jsType, enable_ansi_colors);
                 }
+                if (remove_before_recurse) {
+                    remove_before_recurse = false;
+                    _ = this.map.remove(value);
+                }
+
+                remove_before_recurse = true;
                 return try this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
             },
             .NativeCode => {
@@ -2672,20 +2702,20 @@ pub const Formatter = struct {
             .Boolean => {
                 if (value.isCell()) {
                     var bool_name = ZigString.Empty;
-                    value.getClassName(this.globalThis, &bool_name);
+                    try value.getClassName(this.globalThis, &bool_name);
                     var bool_value = ZigString.Empty;
                     try value.toZigString(&bool_value, this.globalThis);
 
                     if (!strings.eqlComptime(bool_name.slice(), "Boolean")) {
                         this.addForNewLine(bool_value.len + bool_name.len + "[Boolean (): ]".len);
-                        writer.print(comptime Output.prettyFmt("<r><yellow>[Boolean ({s}): {s}]<r>", enable_ansi_colors), .{
+                        writer.print(comptime Output.prettyFmt("<r><yellow>[Boolean ({f}): {f}]<r>", enable_ansi_colors), .{
                             bool_name,
                             bool_value,
                         });
                         return;
                     }
                     this.addForNewLine(bool_value.len + "[Boolean: ]".len);
-                    writer.print(comptime Output.prettyFmt("<r><yellow>[Boolean: {s}]<r>", enable_ansi_colors), .{bool_value});
+                    writer.print(comptime Output.prettyFmt("<r><yellow>[Boolean: {f}]<r>", enable_ansi_colors), .{bool_value});
                     return;
                 }
                 if (value.toBoolean()) {
@@ -2702,8 +2732,8 @@ pub const Formatter = struct {
                 writer.writeAll(comptime Output.prettyFmt("<cyan>" ++ fmt ++ "<r>", enable_ansi_colors));
             },
             .Map => {
-                const length_value = try value.get(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
-                const length = length_value.toInt32();
+                const length_value = try value.get(this.globalThis, "size") orelse jsc.JSValue.jsNumberFromInt32(0);
+                const length = try length_value.coerce(i32, this.globalThis);
 
                 const prev_quote_strings = this.quote_strings;
                 this.quote_strings = true;
@@ -2731,7 +2761,7 @@ pub const Formatter = struct {
                                 .formatter = this,
                                 .writer = writer_,
                             };
-                            value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                            try value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
                             if (this.failed) return;
                             if (single_line and iter.count > 0) {
                                 writer.writeAll(" ");
@@ -2761,7 +2791,7 @@ pub const Formatter = struct {
                                 .formatter = this,
                                 .writer = writer_,
                             };
-                            value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                            try value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
                             if (this.failed) return;
                             if (iter.count > 0) {
                                 if (single_line) {
@@ -2795,7 +2825,7 @@ pub const Formatter = struct {
                                 .formatter = this,
                                 .writer = writer_,
                             };
-                            value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                            try value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
                             if (this.failed) return;
                             if (iter.count > 0 and !single_line) {
                                 writer.writeAll("\n");
@@ -2809,8 +2839,8 @@ pub const Formatter = struct {
                 writer.writeAll("}");
             },
             .Set => {
-                const length_value = try value.get(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
-                const length = length_value.toInt32();
+                const length_value = try value.get(this.globalThis, "size") orelse jsc.JSValue.jsNumberFromInt32(0);
+                const length = try length_value.coerce(i32, this.globalThis);
 
                 const prev_quote_strings = this.quote_strings;
                 this.quote_strings = true;
@@ -2838,7 +2868,7 @@ pub const Formatter = struct {
                                 .formatter = this,
                                 .writer = writer_,
                             };
-                            value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
+                            try value.forEach(this.globalThis, &iter, @TypeOf(iter).forEach);
                             if (this.failed) return;
                             if (single_line and !iter.is_first) {
                                 writer.writeAll(" ");
@@ -2871,12 +2901,12 @@ pub const Formatter = struct {
                 var str = bun.String.empty;
                 defer str.deref();
 
-                value.jsonStringify(this.globalThis, this.indent, &str);
+                try value.jsonStringify(this.globalThis, this.indent, &str);
                 this.addForNewLine(str.length());
                 if (jsType == JSValue.JSType.JSDate) {
                     // in the code for printing dates, it never exceeds this amount
                     var iso_string_buf: [36]u8 = undefined;
-                    var out_buf: []const u8 = std.fmt.bufPrint(&iso_string_buf, "{}", .{str}) catch "";
+                    var out_buf: []const u8 = std.fmt.bufPrint(&iso_string_buf, "{f}", .{str}) catch "";
 
                     if (strings.eql(out_buf, "null")) {
                         out_buf = "Invalid Date";
@@ -2889,7 +2919,7 @@ pub const Formatter = struct {
                     return;
                 }
 
-                writer.print("{}", .{str});
+                writer.print("{f}", .{str});
             },
             .Event => {
                 const event_type_value: JSValue = brk: {
@@ -2904,6 +2934,12 @@ pub const Formatter = struct {
                 const event_type = switch (try EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
                     .MessageEvent, .ErrorEvent => |evt| evt,
                     else => {
+                        if (remove_before_recurse) {
+                            _ = this.map.remove(value);
+                        }
+
+                        // We must potentially remove it again.
+                        remove_before_recurse = true;
                         return try this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
                     },
                 };
@@ -3036,7 +3072,7 @@ pub const Formatter = struct {
                         try type_value.toZigString(&tag_name_str, this.globalThis);
                         is_tag_kind_primitive = true;
                     } else if (_tag.cell.isObject() or type_value.isCallable()) {
-                        type_value.getNameProperty(this.globalThis, &tag_name_str);
+                        try type_value.getNameProperty(this.globalThis, &tag_name_str);
                         if (tag_name_str.len == 0) {
                             tag_name_str = ZigString.init("NoName");
                         }
@@ -3086,7 +3122,7 @@ pub const Formatter = struct {
 
                     // SAFETY: JSX props are always objects
                     const props_obj = props.getObject().?;
-                    var props_iter = try JSC.JSPropertyIterator(.{
+                    var props_iter = try jsc.JSPropertyIterator(.{
                         .skip_empty_name = true,
                         .include_value = true,
                     }).init(this.globalThis, props_obj);
@@ -3115,7 +3151,7 @@ pub const Formatter = struct {
                                 needs_space = false;
 
                                 writer.print(
-                                    comptime Output.prettyFmt("<r><blue>{s}<d>=<r>", enable_ansi_colors),
+                                    comptime Output.prettyFmt("<r><blue>{f}<d>=<r>", enable_ansi_colors),
                                     .{prop.trunc(128)},
                                 );
 
@@ -3292,11 +3328,11 @@ pub const Formatter = struct {
                         this.resetLine();
                     }
 
-                    var display_name = value.getName(this.globalThis);
+                    var display_name = try value.getName(this.globalThis);
                     if (display_name.isEmpty()) {
                         display_name = String.static("Object");
                     }
-                    writer.print(comptime Output.prettyFmt("<r><cyan>[{} ...]<r>", enable_ansi_colors), .{
+                    writer.print(comptime Output.prettyFmt("<r><cyan>[{f} ...]<r>", enable_ansi_colors), .{
                         display_name,
                     });
                     return;
@@ -3314,8 +3350,8 @@ pub const Formatter = struct {
                     else if (value.isCallable())
                         try this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors)
                     else {
-                        if (getObjectName(this.globalThis, value)) |name_str| {
-                            writer.print("{} ", .{name_str});
+                        if (try getObjectName(this.globalThis, value)) |name_str| {
+                            writer.print("{f} ", .{name_str});
                         }
                         writer.writeAll("{}");
                     }
@@ -3466,6 +3502,8 @@ pub const Formatter = struct {
     fn writeTypedArray(this: *ConsoleObject.Formatter, comptime WriterWrapped: type, writer: WriterWrapped, comptime Number: type, slice: []const Number, comptime enable_ansi_colors: bool) void {
         const fmt_ = if (Number == i64 or Number == u64)
             "<r><yellow>{d}n<r>"
+        else if (@typeInfo(Number) == .float)
+            "<r><yellow>{f}<r>"
         else
             "<r><yellow>{d}<r>";
         const more = if (Number == i64 or Number == u64)
@@ -3480,7 +3518,7 @@ pub const Formatter = struct {
         const max = 512;
         leftover = leftover[0..@min(leftover.len, max)];
         for (leftover) |el| {
-            this.printComma(@TypeOf(&writer.ctx), &writer.ctx, enable_ansi_colors) catch return;
+            this.printComma(@TypeOf(writer.ctx), writer.ctx, enable_ansi_colors) catch return;
             writer.space();
 
             writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{
@@ -3493,7 +3531,7 @@ pub const Formatter = struct {
         }
     }
 
-    pub fn format(this: *ConsoleObject.Formatter, result: Tag.Result, comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) bun.JSError!void {
+    pub fn format(this: *ConsoleObject.Formatter, result: Tag.Result, comptime Writer: type, writer: *std.Io.Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) bun.JSError!void {
         const prevGlobalThis = this.globalThis;
         defer this.globalThis = prevGlobalThis;
         this.globalThis = globalThis;
@@ -3522,7 +3560,7 @@ pub fn count(
     ptr: [*]const u8,
     // len
     len: usize,
-) callconv(JSC.conv) void {
+) callconv(jsc.conv) void {
     var this = globalThis.bunVM().console;
     const slice = ptr[0..len];
     const hash = bun.hash(slice);
@@ -3531,13 +3569,12 @@ pub fn count(
     const current = @as(u32, if (counter.found_existing) counter.value_ptr.* else @as(u32, 0)) + 1;
     counter.value_ptr.* = current;
 
-    var writer_ctx = &this.writer;
-    var writer = &writer_ctx.writer();
+    const writer = this.writer;
     if (Output.enable_ansi_colors_stdout)
         writer.print(comptime Output.prettyFmt("<r>{s}<d>: <r><yellow>{d}<r>\n", true), .{ slice, current }) catch unreachable
     else
         writer.print(comptime Output.prettyFmt("<r>{s}<d>: <r><yellow>{d}<r>\n", false), .{ slice, current }) catch unreachable;
-    writer_ctx.flush() catch unreachable;
+    writer.flush() catch unreachable;
 }
 pub fn countReset(
     // console
@@ -3548,7 +3585,7 @@ pub fn countReset(
     ptr: [*]const u8,
     // len
     len: usize,
-) callconv(JSC.conv) void {
+) callconv(jsc.conv) void {
     var this = globalThis.bunVM().console;
     const slice = ptr[0..len];
     const hash = bun.hash(slice);
@@ -3568,7 +3605,7 @@ pub fn time(
     _: *JSGlobalObject,
     chars: [*]const u8,
     len: usize,
-) callconv(JSC.conv) void {
+) callconv(jsc.conv) void {
     const id = bun.hash(chars[0..len]);
     if (!pending_time_logs_loaded) {
         pending_time_logs = PendingTimers.init(default_allocator);
@@ -3588,7 +3625,7 @@ pub fn timeEnd(
     _: *JSGlobalObject,
     chars: [*]const u8,
     len: usize,
-) callconv(JSC.conv) void {
+) callconv(jsc.conv) void {
     if (!pending_time_logs_loaded) {
         return;
     }
@@ -3619,7 +3656,7 @@ pub fn timeLog(
     // args
     args: [*]JSValue,
     args_len: usize,
-) callconv(JSC.conv) void {
+) callconv(jsc.conv) void {
     if (!pending_time_logs_loaded) {
         return;
     }
@@ -3641,11 +3678,15 @@ pub fn timeLog(
         .globalThis = global,
         .ordered_properties = false,
         .quote_strings = false,
+        .max_depth = blk: {
+            const cli_context = CLI.get();
+            break :blk cli_context.runtime_options.console_depth orelse DEFAULT_CONSOLE_LOG_DEPTH;
+        },
         .stack_check = bun.StackCheck.init(),
         .can_throw_stack_overflow = true,
     };
-    var console = global.bunVM().console;
-    var writer = console.error_writer.writer();
+    const console = global.bunVM().console;
+    const writer = console.error_writer;
     const Writer = @TypeOf(writer);
     for (args[0..args_len]) |arg| {
         const tag = ConsoleObject.Formatter.Tag.get(arg, global) catch return;
@@ -3657,7 +3698,7 @@ pub fn timeLog(
         }
     }
     _ = writer.write("\n") catch 0;
-    writer.context.flush() catch {};
+    writer.flush() catch {};
 }
 pub fn profile(
     // console
@@ -3668,7 +3709,7 @@ pub fn profile(
     _: [*]const u8,
     // len
     _: usize,
-) callconv(JSC.conv) void {}
+) callconv(jsc.conv) void {}
 pub fn profileEnd(
     // console
     _: *ConsoleObject,
@@ -3678,7 +3719,7 @@ pub fn profileEnd(
     _: [*]const u8,
     // len
     _: usize,
-) callconv(JSC.conv) void {}
+) callconv(jsc.conv) void {}
 pub fn takeHeapSnapshot(
     // console
     _: *ConsoleObject,
@@ -3688,7 +3729,7 @@ pub fn takeHeapSnapshot(
     _: [*]const u8,
     // len
     _: usize,
-) callconv(JSC.conv) void {
+) callconv(jsc.conv) void {
     // TODO: this does an extra JSONStringify and we don't need it to!
     var snapshot: [1]JSValue = .{globalThis.generateHeapSnapshot()};
     ConsoleObject.messageWithTypeAndLevel(undefined, MessageType.Log, MessageLevel.Debug, globalThis, &snapshot, 1);
@@ -3700,7 +3741,7 @@ pub fn timeStamp(
     _: *JSGlobalObject,
     // args
     _: *ScriptArguments,
-) callconv(JSC.conv) void {}
+) callconv(jsc.conv) void {}
 pub fn record(
     // console
     _: *ConsoleObject,
@@ -3708,7 +3749,7 @@ pub fn record(
     _: *JSGlobalObject,
     // args
     _: *ScriptArguments,
-) callconv(JSC.conv) void {}
+) callconv(jsc.conv) void {}
 pub fn recordEnd(
     // console
     _: *ConsoleObject,
@@ -3716,7 +3757,7 @@ pub fn recordEnd(
     _: *JSGlobalObject,
     // args
     _: *ScriptArguments,
-) callconv(JSC.conv) void {}
+) callconv(jsc.conv) void {}
 pub fn screenshot(
     // console
     _: *ConsoleObject,
@@ -3724,7 +3765,7 @@ pub fn screenshot(
     _: *JSGlobalObject,
     // args
     _: *ScriptArguments,
-) callconv(JSC.conv) void {}
+) callconv(jsc.conv) void {}
 
 comptime {
     @export(&messageWithTypeAndLevel, .{ .name = "Bun__ConsoleObject__messageWithTypeAndLevel" });
@@ -3741,3 +3782,27 @@ comptime {
     @export(&recordEnd, .{ .name = "Bun__ConsoleObject__recordEnd" });
     @export(&screenshot, .{ .name = "Bun__ConsoleObject__screenshot" });
 }
+
+const string = []const u8;
+
+const std = @import("std");
+const CLI = @import("../cli.zig").Command;
+const JestPrettyFormat = @import("./test/pretty_format.zig").JestPrettyFormat;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const JSLexer = bun.js_lexer;
+const JSPrinter = bun.js_printer;
+const Output = bun.Output;
+const String = bun.String;
+const default_allocator = bun.default_allocator;
+const strings = bun.strings;
+
+const jsc = bun.jsc;
+const EventType = jsc.EventType;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSPromise = jsc.JSPromise;
+const JSValue = jsc.JSValue;
+const VirtualMachine = jsc.VirtualMachine;
+const ZigException = jsc.ZigException;
+const ZigString = jsc.ZigString;

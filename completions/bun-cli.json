@@ -1,0 +1,4026 @@
+{
+  "version": "1.1.0",
+  "commands": {
+    "run": {
+      "name": "run",
+      "description": "Flags:",
+      "flags": [],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        },
+        {
+          "name": "file",
+          "required": true,
+          "multiple": false,
+          "type": "string",
+          "completionType": "javascript_files"
+        }
+      ],
+      "examples": [
+        "bun run ./index.js",
+        "bun run ./index.tsx",
+        "bun run dev",
+        "bun run lint"
+      ],
+      "usage": "Usage: bun run [flags] <file or script>",
+      "documentationUrl": "https://bun.com/docs/cli/run",
+      "dynamicCompletions": {
+        "scripts": true,
+        "files": true,
+        "binaries": true
+      }
+    },
+    "test": {
+      "name": "test",
+      "description": "Run all matching test files and print the results to stdout",
+      "flags": [
+        {
+          "name": "timeout",
+          "description": "Set the per-test timeout in milliseconds, default is 5000.",
+          "hasValue": true,
+          "valueType": "val",
+          "defaultValue": "5000",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "update-snapshots",
+          "shortName": "u",
+          "description": "Update snapshot files",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "rerun-each",
+          "description": "Re-run each test file <NUMBER> times, helps catch certain bugs",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "only",
+          "description": "Only run tests that are marked with \"test.only()\"",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "todo",
+          "description": "Include tests that are marked with \"test.todo()\"",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "coverage",
+          "description": "Generate a coverage profile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "coverage-reporter",
+          "description": "Report coverage in 'text' and/or 'lcov'. Defaults to 'text'.",
+          "hasValue": true,
+          "valueType": "val",
+          "defaultValue": "'text'",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "coverage-dir",
+          "description": "Directory for coverage files. Defaults to 'coverage'.",
+          "hasValue": true,
+          "valueType": "val",
+          "defaultValue": "'coverage'",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "bail",
+          "description": "Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.",
+          "hasValue": true,
+          "valueType": "val",
+          "defaultValue": "1",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "test-name-pattern",
+          "shortName": "t",
+          "description": "Run only tests with a name that matches the given regex.",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "reporter",
+          "description": "Test output reporter format. Available: 'junit' (requires --reporter-outfile). Default: console output.",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "reporter-outfile",
+          "description": "Output file path for the reporter format (required with --reporter).",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        }
+      ],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        },
+        {
+          "name": "patterns",
+          "required": false,
+          "multiple": false,
+          "type": "string",
+          "completionType": "test_files"
+        }
+      ],
+      "examples": [
+        "bun test",
+        "bun test foo bar",
+        "bun test --test-name-pattern baz"
+      ],
+      "usage": "Usage: bun test [flags] [<patterns>]",
+      "documentationUrl": "https://bun.com/docs/cli/test",
+      "dynamicCompletions": {
+        "files": true
+      }
+    },
+    "x": {
+      "name": "x",
+      "description": "Execute an npm package executable (CLI), automatically installing into a global shared cache if not installed in node_modules.",
+      "flags": [
+        {
+          "name": "bun",
+          "description": "Force the command to run with Bun instead of Node.js",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        }
+      ],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        },
+        {
+          "name": "package@version",
+          "required": true,
+          "multiple": false,
+          "type": "string",
+          "completionType": "package"
+        },
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        }
+      ],
+      "examples": [],
+      "usage": "Usage: bunx [flags] <package><@version> [flags and arguments for the package]",
+      "dynamicCompletions": {},
+      "aliases": [
+        "bunx"
+      ]
+    },
+    "repl": {
+      "name": "repl",
+      "description": "Options:",
+      "flags": [],
+      "positionalArgs": [
+        {
+          "name": "options",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        }
+      ],
+      "examples": [],
+      "usage": "Usage: bun repl [options]",
+      "dynamicCompletions": {}
+    },
+    "exec": {
+      "name": "exec",
+      "description": "Execute a shell script directly from Bun.",
+      "flags": [],
+      "positionalArgs": [
+        {
+          "name": "script",
+          "required": true,
+          "multiple": false,
+          "type": "string",
+          "completionType": "script"
+        }
+      ],
+      "examples": [
+        "bun exec \"echo hi\"",
+        "bun exec \"echo \\\"hey friends\\\"!\""
+      ],
+      "usage": "Usage: bun exec <script>",
+      "dynamicCompletions": {}
+    },
+    "install": {
+      "name": "install",
+      "description": "Install the dependencies listed in package.json.",
+      "flags": [
+        {
+          "name": "config",
+          "shortName": "c",
+          "description": "Specify path to config file (bunfig.toml)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "yarn",
+          "shortName": "y",
+          "description": "Write a yarn.lock file (yarn v1)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "production",
+          "shortName": "p",
+          "description": "Don't install devDependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-save",
+          "description": "Don't update package.json or save a lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save",
+          "description": "Save to package.json (true by default)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ca",
+          "description": "Provide a Certificate Authority signing certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cafile",
+          "description": "The same as `--ca`, but is a file path to the certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "dry-run",
+          "description": "Don't install anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "frozen-lockfile",
+          "description": "Disallow changes to lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "force",
+          "shortName": "f",
+          "description": "Always request the latest versions from the registry & reinstall all dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cache-dir",
+          "description": "Store & load cached data from a specific directory path",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-cache",
+          "description": "Ignore manifest cache entirely",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "silent",
+          "description": "Don't log anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "quiet",
+          "description": "Only show tarball name when packing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "verbose",
+          "description": "Excessively verbose logging",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-progress",
+          "description": "Disable the progress bar",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-summary",
+          "description": "Don't print a summary",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-verify",
+          "description": "Skip verifying integrity of newly downloaded packages",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ignore-scripts",
+          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "trust",
+          "description": "Add to trustedDependencies in the project's package.json and install the package(s)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "global",
+          "shortName": "g",
+          "description": "Install globally",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cwd",
+          "description": "Set a specific cwd",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "backend",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "registry",
+          "description": "Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "concurrent-scripts",
+          "description": "Maximum number of concurrent jobs for lifecycle scripts (default 5)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "network-concurrency",
+          "description": "Maximum number of concurrent network requests (default 48)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save-text-lockfile",
+          "description": "Save a text-based lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "omit",
+          "description": "Exclude 'dev', 'optional', or 'peer' dependencies from install",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "lockfile-only",
+          "description": "Generate a lockfile without installing dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "linker",
+          "description": "Linker strategy (one of \"isolated\" or \"hoisted\")",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "help",
+          "shortName": "h",
+          "description": "Print this help menu",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "dev",
+          "shortName": "d",
+          "description": "Add dependency to \"devDependencies\"",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "optional",
+          "description": "Add dependency to \"optionalDependencies\"",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "peer",
+          "description": "Add dependency to \"peerDependencies\"",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "exact",
+          "shortName": "E",
+          "description": "Add the exact version instead of the ^range",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "filter",
+          "description": "Install packages for the matching workspaces",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "analyze",
+          "shortName": "a",
+          "description": "Analyze & install all dependencies of files passed as arguments recursively (using Bun's bundler)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "only-missing",
+          "description": "Only add dependencies to package.json if they are not already present",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        }
+      ],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        },
+        {
+          "name": "name@version",
+          "required": true,
+          "multiple": false,
+          "type": "string"
+        }
+      ],
+      "examples": [
+        "bun install",
+        "bun install --production"
+      ],
+      "usage": "Usage: bun install [flags] <name>@<version>",
+      "aliases": [
+        "i"
+      ],
+      "documentationUrl": "https://bun.com/docs/cli/install.",
+      "dynamicCompletions": {}
+    },
+    "add": {
+      "name": "add",
+      "description": "Add a new dependency to package.json and install it.",
+      "flags": [
+        {
+          "name": "config",
+          "shortName": "c",
+          "description": "Specify path to config file (bunfig.toml)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "yarn",
+          "shortName": "y",
+          "description": "Write a yarn.lock file (yarn v1)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "production",
+          "shortName": "p",
+          "description": "Don't install devDependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-save",
+          "description": "Don't update package.json or save a lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save",
+          "description": "Save to package.json (true by default)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ca",
+          "description": "Provide a Certificate Authority signing certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cafile",
+          "description": "The same as `--ca`, but is a file path to the certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "dry-run",
+          "description": "Don't install anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "frozen-lockfile",
+          "description": "Disallow changes to lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "force",
+          "shortName": "f",
+          "description": "Always request the latest versions from the registry & reinstall all dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cache-dir",
+          "description": "Store & load cached data from a specific directory path",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-cache",
+          "description": "Ignore manifest cache entirely",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "silent",
+          "description": "Don't log anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "quiet",
+          "description": "Only show tarball name when packing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "verbose",
+          "description": "Excessively verbose logging",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-progress",
+          "description": "Disable the progress bar",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-summary",
+          "description": "Don't print a summary",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-verify",
+          "description": "Skip verifying integrity of newly downloaded packages",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ignore-scripts",
+          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "trust",
+          "description": "Add to trustedDependencies in the project's package.json and install the package(s)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "global",
+          "shortName": "g",
+          "description": "Install globally",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cwd",
+          "description": "Set a specific cwd",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "backend",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "registry",
+          "description": "Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "concurrent-scripts",
+          "description": "Maximum number of concurrent jobs for lifecycle scripts (default 5)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "network-concurrency",
+          "description": "Maximum number of concurrent network requests (default 48)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save-text-lockfile",
+          "description": "Save a text-based lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "omit",
+          "description": "Exclude 'dev', 'optional', or 'peer' dependencies from install",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "lockfile-only",
+          "description": "Generate a lockfile without installing dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "linker",
+          "description": "Linker strategy (one of \"isolated\" or \"hoisted\")",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "help",
+          "shortName": "h",
+          "description": "Print this help menu",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "dev",
+          "shortName": "d",
+          "description": "Add dependency to \"devDependencies\"",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "optional",
+          "description": "Add dependency to \"optionalDependencies\"",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "peer",
+          "description": "Add dependency to \"peerDependencies\"",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "exact",
+          "shortName": "E",
+          "description": "Add the exact version instead of the ^range",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "analyze",
+          "shortName": "a",
+          "description": "Recursively analyze & install dependencies of files passed as arguments (using Bun's bundler)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "only-missing",
+          "description": "Only add dependencies to package.json if they are not already present",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        }
+      ],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        },
+        {
+          "name": "package@version",
+          "required": true,
+          "multiple": false,
+          "type": "string",
+          "completionType": "package"
+        }
+      ],
+      "examples": [
+        "bun add zod",
+        "bun add zod@next",
+        "bun add zod@3.0.0",
+        "bun add -d typescript",
+        "bun add --optional lodash",
+        "bun add --peer esbuild"
+      ],
+      "usage": "Usage: bun add [flags] <package><@version>",
+      "aliases": [
+        "a"
+      ],
+      "documentationUrl": "https://bun.com/docs/cli/add.",
+      "dynamicCompletions": {
+        "packages": true
+      }
+    },
+    "remove": {
+      "name": "remove",
+      "description": "Remove a package from package.json and uninstall from node_modules.",
+      "flags": [
+        {
+          "name": "config",
+          "shortName": "c",
+          "description": "Specify path to config file (bunfig.toml)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "yarn",
+          "shortName": "y",
+          "description": "Write a yarn.lock file (yarn v1)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "production",
+          "shortName": "p",
+          "description": "Don't install devDependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-save",
+          "description": "Don't update package.json or save a lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save",
+          "description": "Save to package.json (true by default)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ca",
+          "description": "Provide a Certificate Authority signing certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cafile",
+          "description": "The same as `--ca`, but is a file path to the certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "dry-run",
+          "description": "Don't install anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "frozen-lockfile",
+          "description": "Disallow changes to lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "force",
+          "shortName": "f",
+          "description": "Always request the latest versions from the registry & reinstall all dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cache-dir",
+          "description": "Store & load cached data from a specific directory path",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-cache",
+          "description": "Ignore manifest cache entirely",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "silent",
+          "description": "Don't log anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "quiet",
+          "description": "Only show tarball name when packing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "verbose",
+          "description": "Excessively verbose logging",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-progress",
+          "description": "Disable the progress bar",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-summary",
+          "description": "Don't print a summary",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-verify",
+          "description": "Skip verifying integrity of newly downloaded packages",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ignore-scripts",
+          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "trust",
+          "description": "Add to trustedDependencies in the project's package.json and install the package(s)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "global",
+          "shortName": "g",
+          "description": "Install globally",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cwd",
+          "description": "Set a specific cwd",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "backend",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "registry",
+          "description": "Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "concurrent-scripts",
+          "description": "Maximum number of concurrent jobs for lifecycle scripts (default 5)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "network-concurrency",
+          "description": "Maximum number of concurrent network requests (default 48)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save-text-lockfile",
+          "description": "Save a text-based lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "omit",
+          "description": "Exclude 'dev', 'optional', or 'peer' dependencies from install",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "lockfile-only",
+          "description": "Generate a lockfile without installing dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "linker",
+          "description": "Linker strategy (one of \"isolated\" or \"hoisted\")",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "help",
+          "shortName": "h",
+          "description": "Print this help menu",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        }
+      ],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        },
+        {
+          "name": "packages",
+          "required": false,
+          "multiple": false,
+          "type": "string",
+          "completionType": "installed_package"
+        }
+      ],
+      "examples": [
+        "bun remove ts-node"
+      ],
+      "usage": "Usage: bun remove [flags] [<packages>]",
+      "aliases": [
+        "rm"
+      ],
+      "documentationUrl": "https://bun.com/docs/cli/remove.",
+      "dynamicCompletions": {
+        "packages": true
+      }
+    },
+    "update": {
+      "name": "update",
+      "description": "Update dependencies to their most recent versions within the version range in package.json.",
+      "flags": [
+        {
+          "name": "config",
+          "shortName": "c",
+          "description": "Specify path to config file (bunfig.toml)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "yarn",
+          "shortName": "y",
+          "description": "Write a yarn.lock file (yarn v1)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "production",
+          "shortName": "p",
+          "description": "Don't install devDependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-save",
+          "description": "Don't update package.json or save a lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save",
+          "description": "Save to package.json (true by default)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ca",
+          "description": "Provide a Certificate Authority signing certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cafile",
+          "description": "The same as `--ca`, but is a file path to the certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "dry-run",
+          "description": "Don't install anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "frozen-lockfile",
+          "description": "Disallow changes to lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "force",
+          "shortName": "f",
+          "description": "Always request the latest versions from the registry & reinstall all dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cache-dir",
+          "description": "Store & load cached data from a specific directory path",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-cache",
+          "description": "Ignore manifest cache entirely",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "silent",
+          "description": "Don't log anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "quiet",
+          "description": "Only show tarball name when packing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "verbose",
+          "description": "Excessively verbose logging",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-progress",
+          "description": "Disable the progress bar",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-summary",
+          "description": "Don't print a summary",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-verify",
+          "description": "Skip verifying integrity of newly downloaded packages",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ignore-scripts",
+          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "trust",
+          "description": "Add to trustedDependencies in the project's package.json and install the package(s)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "global",
+          "shortName": "g",
+          "description": "Install globally",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cwd",
+          "description": "Set a specific cwd",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "backend",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "registry",
+          "description": "Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "concurrent-scripts",
+          "description": "Maximum number of concurrent jobs for lifecycle scripts (default 5)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "network-concurrency",
+          "description": "Maximum number of concurrent network requests (default 48)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save-text-lockfile",
+          "description": "Save a text-based lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "omit",
+          "description": "Exclude 'dev', 'optional', or 'peer' dependencies from install",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "lockfile-only",
+          "description": "Generate a lockfile without installing dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "linker",
+          "description": "Linker strategy (one of \"isolated\" or \"hoisted\")",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "help",
+          "shortName": "h",
+          "description": "Print this help menu",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "latest",
+          "description": "Update packages to their latest versions",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "interactive",
+          "shortName": "i",
+          "description": "Show an interactive list of outdated packages to select for update",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "filter",
+          "description": "Update packages for the matching workspaces",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "recursive",
+          "shortName": "r",
+          "description": "Update packages in all workspaces",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        }
+      ],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        },
+        {
+          "name": "name@version",
+          "required": true,
+          "multiple": false,
+          "type": "string"
+        }
+      ],
+      "examples": [
+        "bun update",
+        "bun update --latest",
+        "bun update -i",
+        "bun update zod jquery@3"
+      ],
+      "usage": "Usage: bun update [flags] <name>@<version>",
+      "documentationUrl": "https://bun.com/docs/cli/update.",
+      "dynamicCompletions": {}
+    },
+    "audit": {
+      "name": "audit",
+      "description": "Check installed packages for vulnerabilities.",
+      "flags": [
+        {
+          "name": "json",
+          "description": "Output in JSON format",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        }
+      ],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        }
+      ],
+      "examples": [
+        "bun audit",
+        "bun audit --json"
+      ],
+      "usage": "Usage: bun audit [flags]",
+      "documentationUrl": "https://bun.com/docs/install/audit.",
+      "dynamicCompletions": {}
+    },
+    "outdated": {
+      "name": "outdated",
+      "description": "bun outdated v1.2.20-canary.166 (4deeadd5)",
+      "flags": [
+        {
+          "name": "config",
+          "shortName": "c",
+          "description": "Specify path to config file (bunfig.toml)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "yarn",
+          "shortName": "y",
+          "description": "Write a yarn.lock file (yarn v1)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "production",
+          "shortName": "p",
+          "description": "Don't install devDependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-save",
+          "description": "Don't update package.json or save a lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save",
+          "description": "Save to package.json (true by default)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ca",
+          "description": "Provide a Certificate Authority signing certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cafile",
+          "description": "The same as `--ca`, but is a file path to the certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "dry-run",
+          "description": "Don't install anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "frozen-lockfile",
+          "description": "Disallow changes to lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "force",
+          "shortName": "f",
+          "description": "Always request the latest versions from the registry & reinstall all dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cache-dir",
+          "description": "Store & load cached data from a specific directory path",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-cache",
+          "description": "Ignore manifest cache entirely",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "silent",
+          "description": "Don't log anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "quiet",
+          "description": "Only show tarball name when packing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "verbose",
+          "description": "Excessively verbose logging",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-progress",
+          "description": "Disable the progress bar",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-summary",
+          "description": "Don't print a summary",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-verify",
+          "description": "Skip verifying integrity of newly downloaded packages",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ignore-scripts",
+          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "trust",
+          "description": "Add to trustedDependencies in the project's package.json and install the package(s)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "global",
+          "shortName": "g",
+          "description": "Install globally",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cwd",
+          "description": "Set a specific cwd",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "backend",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "registry",
+          "description": "Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "concurrent-scripts",
+          "description": "Maximum number of concurrent jobs for lifecycle scripts (default 5)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "network-concurrency",
+          "description": "Maximum number of concurrent network requests (default 48)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save-text-lockfile",
+          "description": "Save a text-based lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "omit",
+          "description": "Exclude 'dev', 'optional', or 'peer' dependencies from install",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "lockfile-only",
+          "description": "Generate a lockfile without installing dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "linker",
+          "description": "Linker strategy (one of \"isolated\" or \"hoisted\")",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "help",
+          "shortName": "h",
+          "description": "Print this help menu",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "filter",
+          "shortName": "F",
+          "description": "Display outdated dependencies for each matching workspace",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "recursive",
+          "shortName": "r",
+          "description": "Check outdated packages in all workspaces",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        }
+      ],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        },
+        {
+          "name": "filter",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        }
+      ],
+      "examples": [
+        "bun outdated",
+        "bun outdated --filter=\"*\"",
+        "bun outdated --filter=\"./app/*\"",
+        "bun outdated --filter=\"!frontend\"",
+        "bun outdated jquery",
+        "bun outdated \"is-*\"",
+        "bun outdated \"!is-even\""
+      ],
+      "usage": "Usage: bun outdated [flags] [filter]",
+      "documentationUrl": "https://bun.com/docs/cli/outdated.",
+      "dynamicCompletions": {}
+    },
+    "link": {
+      "name": "link",
+      "description": "Register a local directory as a \"linkable\" package, or link a \"linkable\" package to the current project.",
+      "flags": [
+        {
+          "name": "config",
+          "shortName": "c",
+          "description": "Specify path to config file (bunfig.toml)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "yarn",
+          "shortName": "y",
+          "description": "Write a yarn.lock file (yarn v1)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "production",
+          "shortName": "p",
+          "description": "Don't install devDependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-save",
+          "description": "Don't update package.json or save a lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save",
+          "description": "Save to package.json (true by default)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ca",
+          "description": "Provide a Certificate Authority signing certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cafile",
+          "description": "The same as `--ca`, but is a file path to the certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "dry-run",
+          "description": "Don't install anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "frozen-lockfile",
+          "description": "Disallow changes to lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "force",
+          "shortName": "f",
+          "description": "Always request the latest versions from the registry & reinstall all dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cache-dir",
+          "description": "Store & load cached data from a specific directory path",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-cache",
+          "description": "Ignore manifest cache entirely",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "silent",
+          "description": "Don't log anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "quiet",
+          "description": "Only show tarball name when packing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "verbose",
+          "description": "Excessively verbose logging",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-progress",
+          "description": "Disable the progress bar",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-summary",
+          "description": "Don't print a summary",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-verify",
+          "description": "Skip verifying integrity of newly downloaded packages",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ignore-scripts",
+          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "trust",
+          "description": "Add to trustedDependencies in the project's package.json and install the package(s)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "global",
+          "shortName": "g",
+          "description": "Install globally",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cwd",
+          "description": "Set a specific cwd",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "backend",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "registry",
+          "description": "Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "concurrent-scripts",
+          "description": "Maximum number of concurrent jobs for lifecycle scripts (default 5)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "network-concurrency",
+          "description": "Maximum number of concurrent network requests (default 48)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save-text-lockfile",
+          "description": "Save a text-based lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "omit",
+          "description": "Exclude 'dev', 'optional', or 'peer' dependencies from install",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "lockfile-only",
+          "description": "Generate a lockfile without installing dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "linker",
+          "description": "Linker strategy (one of \"isolated\" or \"hoisted\")",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "help",
+          "shortName": "h",
+          "description": "Print this help menu",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        }
+      ],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        },
+        {
+          "name": "packages",
+          "required": false,
+          "multiple": false,
+          "type": "string",
+          "completionType": "package"
+        }
+      ],
+      "examples": [
+        "bun link",
+        "bun link <package>"
+      ],
+      "usage": "Usage: bun link [flags] [<packages>]",
+      "documentationUrl": "https://bun.com/docs/cli/link.",
+      "dynamicCompletions": {}
+    },
+    "unlink": {
+      "name": "unlink",
+      "description": "Unregister the current directory as a \"linkable\" package.",
+      "flags": [
+        {
+          "name": "config",
+          "shortName": "c",
+          "description": "Specify path to config file (bunfig.toml)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "yarn",
+          "shortName": "y",
+          "description": "Write a yarn.lock file (yarn v1)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "production",
+          "shortName": "p",
+          "description": "Don't install devDependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-save",
+          "description": "Don't update package.json or save a lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save",
+          "description": "Save to package.json (true by default)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ca",
+          "description": "Provide a Certificate Authority signing certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cafile",
+          "description": "The same as `--ca`, but is a file path to the certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "dry-run",
+          "description": "Don't install anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "frozen-lockfile",
+          "description": "Disallow changes to lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "force",
+          "shortName": "f",
+          "description": "Always request the latest versions from the registry & reinstall all dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cache-dir",
+          "description": "Store & load cached data from a specific directory path",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-cache",
+          "description": "Ignore manifest cache entirely",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "silent",
+          "description": "Don't log anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "quiet",
+          "description": "Only show tarball name when packing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "verbose",
+          "description": "Excessively verbose logging",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-progress",
+          "description": "Disable the progress bar",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-summary",
+          "description": "Don't print a summary",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-verify",
+          "description": "Skip verifying integrity of newly downloaded packages",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ignore-scripts",
+          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "trust",
+          "description": "Add to trustedDependencies in the project's package.json and install the package(s)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "global",
+          "shortName": "g",
+          "description": "Install globally",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cwd",
+          "description": "Set a specific cwd",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "backend",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "registry",
+          "description": "Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "concurrent-scripts",
+          "description": "Maximum number of concurrent jobs for lifecycle scripts (default 5)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "network-concurrency",
+          "description": "Maximum number of concurrent network requests (default 48)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save-text-lockfile",
+          "description": "Save a text-based lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "omit",
+          "description": "Exclude 'dev', 'optional', or 'peer' dependencies from install",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "lockfile-only",
+          "description": "Generate a lockfile without installing dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "linker",
+          "description": "Linker strategy (one of \"isolated\" or \"hoisted\")",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "help",
+          "shortName": "h",
+          "description": "Print this help menu",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        }
+      ],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        }
+      ],
+      "examples": [
+        "bun unlink"
+      ],
+      "usage": "Usage: bun unlink [flags]",
+      "documentationUrl": "https://bun.com/docs/cli/unlink.",
+      "dynamicCompletions": {}
+    },
+    "publish": {
+      "name": "publish",
+      "description": "bun publish v1.2.20-canary.166 (4deeadd5)",
+      "flags": [
+        {
+          "name": "config",
+          "shortName": "c",
+          "description": "Specify path to config file (bunfig.toml)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "yarn",
+          "shortName": "y",
+          "description": "Write a yarn.lock file (yarn v1)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "production",
+          "shortName": "p",
+          "description": "Don't install devDependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-save",
+          "description": "Don't update package.json or save a lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save",
+          "description": "Save to package.json (true by default)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ca",
+          "description": "Provide a Certificate Authority signing certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cafile",
+          "description": "The same as `--ca`, but is a file path to the certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "dry-run",
+          "description": "Don't install anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "frozen-lockfile",
+          "description": "Disallow changes to lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "force",
+          "shortName": "f",
+          "description": "Always request the latest versions from the registry & reinstall all dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cache-dir",
+          "description": "Store & load cached data from a specific directory path",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-cache",
+          "description": "Ignore manifest cache entirely",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "silent",
+          "description": "Don't log anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "quiet",
+          "description": "Only show tarball name when packing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "verbose",
+          "description": "Excessively verbose logging",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-progress",
+          "description": "Disable the progress bar",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-summary",
+          "description": "Don't print a summary",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-verify",
+          "description": "Skip verifying integrity of newly downloaded packages",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ignore-scripts",
+          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "trust",
+          "description": "Add to trustedDependencies in the project's package.json and install the package(s)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "global",
+          "shortName": "g",
+          "description": "Install globally",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cwd",
+          "description": "Set a specific cwd",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "backend",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "registry",
+          "description": "Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "concurrent-scripts",
+          "description": "Maximum number of concurrent jobs for lifecycle scripts (default 5)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "network-concurrency",
+          "description": "Maximum number of concurrent network requests (default 48)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save-text-lockfile",
+          "description": "Save a text-based lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "omit",
+          "description": "Exclude 'dev', 'optional', or 'peer' dependencies from install",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "lockfile-only",
+          "description": "Generate a lockfile without installing dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "linker",
+          "description": "Linker strategy (one of \"isolated\" or \"hoisted\")",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "help",
+          "shortName": "h",
+          "description": "Print this help menu",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "access",
+          "description": "Set access level for scoped packages",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tag",
+          "description": "Tag the release. Default is \"latest\"",
+          "hasValue": true,
+          "valueType": "val",
+          "defaultValue": "latest",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "otp",
+          "description": "Provide a one-time password for authentication",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "auth-type",
+          "description": "Specify the type of one-time password authentication (default is 'web')",
+          "hasValue": true,
+          "valueType": "val",
+          "defaultValue": "'web')",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "gzip-level",
+          "description": "Specify a custom compression level for gzip. Default is 9.",
+          "hasValue": true,
+          "valueType": "val",
+          "defaultValue": "9",
+          "required": false,
+          "multiple": false
+        }
+      ],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        },
+        {
+          "name": "dist",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        }
+      ],
+      "examples": [
+        "bun publish --dry-run",
+        "bun publish --access public",
+        "bun publish --tag next ./path/to/tarball.tgz"
+      ],
+      "usage": "Usage: bun publish [flags] [dist]",
+      "documentationUrl": "https://bun.com/docs/cli/publish.",
+      "dynamicCompletions": {}
+    },
+    "patch": {
+      "name": "patch",
+      "description": "Prepare a package for patching, or generate and save a patch.",
+      "flags": [
+        {
+          "name": "config",
+          "shortName": "c",
+          "description": "Specify path to config file (bunfig.toml)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "yarn",
+          "shortName": "y",
+          "description": "Write a yarn.lock file (yarn v1)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "production",
+          "shortName": "p",
+          "description": "Don't install devDependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-save",
+          "description": "Don't update package.json or save a lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save",
+          "description": "Save to package.json (true by default)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ca",
+          "description": "Provide a Certificate Authority signing certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cafile",
+          "description": "The same as `--ca`, but is a file path to the certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "dry-run",
+          "description": "Don't install anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "frozen-lockfile",
+          "description": "Disallow changes to lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "force",
+          "shortName": "f",
+          "description": "Always request the latest versions from the registry & reinstall all dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cache-dir",
+          "description": "Store & load cached data from a specific directory path",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-cache",
+          "description": "Ignore manifest cache entirely",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "silent",
+          "description": "Don't log anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "quiet",
+          "description": "Only show tarball name when packing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "verbose",
+          "description": "Excessively verbose logging",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-progress",
+          "description": "Disable the progress bar",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-summary",
+          "description": "Don't print a summary",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-verify",
+          "description": "Skip verifying integrity of newly downloaded packages",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ignore-scripts",
+          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "trust",
+          "description": "Add to trustedDependencies in the project's package.json and install the package(s)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "global",
+          "shortName": "g",
+          "description": "Install globally",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cwd",
+          "description": "Set a specific cwd",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "backend",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "registry",
+          "description": "Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "concurrent-scripts",
+          "description": "Maximum number of concurrent jobs for lifecycle scripts (default 5)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "network-concurrency",
+          "description": "Maximum number of concurrent network requests (default 48)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save-text-lockfile",
+          "description": "Save a text-based lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "omit",
+          "description": "Exclude 'dev', 'optional', or 'peer' dependencies from install",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "lockfile-only",
+          "description": "Generate a lockfile without installing dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "linker",
+          "description": "Linker strategy (one of \"isolated\" or \"hoisted\")",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "help",
+          "shortName": "h",
+          "description": "Print this help menu",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "commit",
+          "description": "Install a package containing modifications in `dir`",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "patches-dir",
+          "description": "The directory to put the patch file in (only if --commit is used)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        }
+      ],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        },
+        {
+          "name": "package@version",
+          "required": true,
+          "multiple": false,
+          "type": "string",
+          "completionType": "package"
+        }
+      ],
+      "examples": [
+        "bun patch jquery",
+        "bun patch --commit 'node_modules/jquery'",
+        "bun patch --patches-dir 'my-patches' 'node_modules/jquery'"
+      ],
+      "usage": "Usage: bun patch [flags or options] <package>@<version>",
+      "documentationUrl": "https://bun.com/docs/install/patch.",
+      "dynamicCompletions": {}
+    },
+    "pm": {
+      "name": "pm",
+      "description": "Run package manager utilities.",
+      "flags": [],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        },
+        {
+          "name": "command",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        }
+      ],
+      "examples": [],
+      "usage": "Usage: bun pm [flags] [<command>]",
+      "documentationUrl": "https://bun.com/docs/cli/pm.",
+      "subcommands": {
+        "pack": {
+          "name": "pack",
+          "description": "create a tarball of the current workspace",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "bin": {
+          "name": "bin",
+          "description": "print the path to bin folder",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "ls": {
+          "name": "ls",
+          "description": "list the dependency tree according to the current lockfile",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "why": {
+          "name": "why",
+          "description": "<pkg>            show dependency tree explaining why a package is installed",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "whoami": {
+          "name": "whoami",
+          "description": "print the current npm username",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "view": {
+          "name": "view",
+          "description": "name[@version]  view package metadata from the registry (use `bun info` instead)",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "version": {
+          "name": "version",
+          "description": "[increment]  bump the version in package.json and create a git tag",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "pkg": {
+          "name": "pkg",
+          "description": "manage data in package.json",
+          "flags": [],
+          "positionalArgs": [],
+          "subcommands": {
+            "get": {
+              "name": "get",
+              "description": "get values from package.json"
+            },
+            "set": {
+              "name": "set",
+              "description": "set values in package.json"
+            },
+            "delete": {
+              "name": "delete",
+              "description": "delete keys from package.json"
+            },
+            "fix": {
+              "name": "fix",
+              "description": "auto-correct common package.json errors"
+            }
+          }
+        },
+        "hash": {
+          "name": "hash",
+          "description": "generate & print the hash of the current lockfile",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "hash-string": {
+          "name": "hash-string",
+          "description": "print the string used to hash the lockfile",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "hash-print": {
+          "name": "hash-print",
+          "description": "print the hash stored in the current lockfile",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "cache": {
+          "name": "cache",
+          "description": "rm             clear the cache",
+          "flags": [],
+          "positionalArgs": [],
+          "subcommands": {
+            "rm": {
+              "name": "rm",
+              "description": "clear the cache"
+            }
+          }
+        },
+        "migrate": {
+          "name": "migrate",
+          "description": "migrate another package manager's lockfile without installing anything",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "untrusted": {
+          "name": "untrusted",
+          "description": "print current untrusted dependencies with scripts",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "trust": {
+          "name": "trust",
+          "description": "names ...      run scripts for untrusted dependencies and add to `trustedDependencies`",
+          "flags": [],
+          "positionalArgs": []
+        },
+        "default-trusted": {
+          "name": "default-trusted",
+          "description": "print the default trusted dependencies list",
+          "flags": [],
+          "positionalArgs": []
+        }
+      },
+      "dynamicCompletions": {}
+    },
+    "info": {
+      "name": "info",
+      "description": "View package metadata from the registry.",
+      "flags": [
+        {
+          "name": "config",
+          "shortName": "c",
+          "description": "Specify path to config file (bunfig.toml)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "yarn",
+          "shortName": "y",
+          "description": "Write a yarn.lock file (yarn v1)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "production",
+          "shortName": "p",
+          "description": "Don't install devDependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-save",
+          "description": "Don't update package.json or save a lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save",
+          "description": "Save to package.json (true by default)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ca",
+          "description": "Provide a Certificate Authority signing certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cafile",
+          "description": "The same as `--ca`, but is a file path to the certificate",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "dry-run",
+          "description": "Don't install anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "frozen-lockfile",
+          "description": "Disallow changes to lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "force",
+          "shortName": "f",
+          "description": "Always request the latest versions from the registry & reinstall all dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cache-dir",
+          "description": "Store & load cached data from a specific directory path",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-cache",
+          "description": "Ignore manifest cache entirely",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "silent",
+          "description": "Don't log anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "quiet",
+          "description": "Only show tarball name when packing",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "verbose",
+          "description": "Excessively verbose logging",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-progress",
+          "description": "Disable the progress bar",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-summary",
+          "description": "Don't print a summary",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-verify",
+          "description": "Skip verifying integrity of newly downloaded packages",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "ignore-scripts",
+          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "trust",
+          "description": "Add to trustedDependencies in the project's package.json and install the package(s)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "global",
+          "shortName": "g",
+          "description": "Install globally",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cwd",
+          "description": "Set a specific cwd",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "backend",
+          "description": "Platform-specific optimizations for installing dependencies. Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\"",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "registry",
+          "description": "Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "concurrent-scripts",
+          "description": "Maximum number of concurrent jobs for lifecycle scripts (default 5)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "network-concurrency",
+          "description": "Maximum number of concurrent network requests (default 48)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save-text-lockfile",
+          "description": "Save a text-based lockfile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "omit",
+          "description": "Exclude 'dev', 'optional', or 'peer' dependencies from install",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "lockfile-only",
+          "description": "Generate a lockfile without installing dependencies",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "linker",
+          "description": "Linker strategy (one of \"isolated\" or \"hoisted\")",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "help",
+          "shortName": "h",
+          "description": "Print this help menu",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "json",
+          "description": "Output in JSON format",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        }
+      ],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        },
+        {
+          "name": "package@version",
+          "required": true,
+          "multiple": false,
+          "type": "string",
+          "completionType": "package"
+        }
+      ],
+      "examples": [
+        "bun info react",
+        "bun info react@18.0.0",
+        "bun info react version --json"
+      ],
+      "usage": "Usage: bun info [flags] <package>[@<version>]",
+      "documentationUrl": "https://bun.com/docs/cli/info.",
+      "dynamicCompletions": {}
+    },
+    "build": {
+      "name": "build",
+      "description": "Transpile and bundle one or more files.",
+      "flags": [
+        {
+          "name": "production",
+          "description": "Set NODE_ENV=production and enable minification",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "compile",
+          "description": "Generate a standalone Bun executable containing your bundled code. Implies --production",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "bytecode",
+          "description": "Use a bytecode cache",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "watch",
+          "description": "Automatically restart the process on file change",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-clear-screen",
+          "description": "Disable clearing the terminal screen on reload when --watch is enabled",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "target",
+          "description": "The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "outdir",
+          "description": "Default to \"dist\" if multiple files",
+          "hasValue": true,
+          "valueType": "val",
+          "defaultValue": "dist",
+          "required": false,
+          "multiple": true
+        },
+        {
+          "name": "outfile",
+          "description": "Write to a file",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "sourcemap",
+          "description": "Build with sourcemaps - 'linked', 'inline', 'external', or 'none'",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "banner",
+          "description": "Add a banner to the bundled output such as \"use client\"; for a bundle being used with RSCs",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "footer",
+          "description": "Add a footer to the bundled output such as // built with bun!",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "format",
+          "description": "Specifies the module format to build to. \"esm\", \"cjs\" and \"iife\" are supported. Defaults to \"esm\".",
+          "hasValue": true,
+          "valueType": "val",
+          "defaultValue": "esm",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "root",
+          "description": "Root directory used for multiple entry points",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": true
+        },
+        {
+          "name": "splitting",
+          "description": "Enable code splitting",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "public-path",
+          "description": "A prefix to be appended to any import paths in bundled code",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "external",
+          "shortName": "e",
+          "description": "Exclude module from transpilation (can use * wildcards). ex: -e react",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "packages",
+          "description": "Add dependencies to bundle or keep them external. \"external\", \"bundle\" is supported. Defaults to \"bundle\".",
+          "hasValue": true,
+          "valueType": "val",
+          "defaultValue": "bundle",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "entry-naming",
+          "description": "Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\"",
+          "hasValue": true,
+          "valueType": "val",
+          "defaultValue": "[dir]/[name]",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "chunk-naming",
+          "description": "Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"",
+          "hasValue": true,
+          "valueType": "val",
+          "defaultValue": "[name]-[hash]",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "asset-naming",
+          "description": "Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"",
+          "hasValue": true,
+          "valueType": "val",
+          "defaultValue": "[name]-[hash]",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "react-fast-refresh",
+          "description": "Enable React Fast Refresh transform (does not emit hot-module code, use this for testing)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "no-bundle",
+          "description": "Transpile file only, do not bundle",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "emit-dce-annotations",
+          "description": "Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed.",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minify",
+          "description": "Enable all minification flags",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minify-syntax",
+          "description": "Minify syntax and inline data",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minify-whitespace",
+          "description": "Minify whitespace",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minify-identifiers",
+          "description": "Minify identifiers",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "css-chunking",
+          "description": "Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS",
+          "hasValue": false,
+          "required": false,
+          "multiple": true
+        },
+        {
+          "name": "conditions",
+          "description": "Pass custom conditions to resolve",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "app",
+          "description": "(EXPERIMENTAL) Build a web app for production using Bun Bake.",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "server-components",
+          "description": "(EXPERIMENTAL) Enable server components",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "env",
+          "description": "Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'.",
+          "hasValue": true,
+          "valueType": "val",
+          "defaultValue": "'disable'",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "windows-hide-console",
+          "description": "When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "windows-icon",
+          "description": "When using --compile targeting Windows, assign an executable icon",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "debug-dump-server-files",
+          "description": "When --app is set, dump all server files to disk even when building statically",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "debug-no-minify",
+          "description": "When --app is set, do not minify anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        }
+      ],
+      "positionalArgs": [],
+      "examples": [
+        "bun build --outfile=bundle.js ./src/index.ts",
+        "bun build --minify --splitting --outdir=out ./index.jsx ./lib/worker.ts",
+        "Bundle code to be run in Bun (reduces server startup time)",
+        "bun build --target=bun --outfile=server.js ./server.ts",
+        "bun build --compile --outfile=my-app ./cli.ts"
+      ],
+      "usage": "Usage:",
+      "documentationUrl": "https://bun.com/docs/bundler",
+      "dynamicCompletions": {
+        "files": true
+      }
+    },
+    "init": {
+      "name": "init",
+      "description": "Initialize a Bun project in the current directory.",
+      "flags": [
+        {
+          "name": "help",
+          "description": "Print this menu",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "yes",
+          "shortName": "y",
+          "description": "Accept all default options",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "minimal",
+          "shortName": "m",
+          "description": "Only initialize type definitions",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "react",
+          "shortName": "r",
+          "description": "Initialize a React project",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        }
+      ],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        },
+        {
+          "name": "folder",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        }
+      ],
+      "examples": [
+        "bun init",
+        "bun init --yes",
+        "bun init --react",
+        "bun init --react=tailwind my-app"
+      ],
+      "usage": "Usage: bun init [flags] [<folder>]",
+      "dynamicCompletions": {}
+    },
+    "create": {
+      "name": "create",
+      "description": "bun create <MyReactComponent.(jsx|tsx)>",
+      "flags": [],
+      "positionalArgs": [],
+      "examples": [],
+      "usage": "Usage:",
+      "documentationUrl": "https://bun.com/docs/cli/bun-create",
+      "dynamicCompletions": {},
+      "aliases": [
+        "c"
+      ]
+    },
+    "upgrade": {
+      "name": "upgrade",
+      "description": "Upgrade Bun",
+      "flags": [],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        }
+      ],
+      "examples": [
+        "bun upgrade",
+        "bun upgrade --stable"
+      ],
+      "usage": "Usage: bun upgrade [flags]",
+      "documentationUrl": "https://bun.com/docs/installation#upgrading",
+      "dynamicCompletions": {}
+    }
+  },
+  "globalFlags": [
+    {
+      "name": "watch",
+      "description": "Automatically restart the process on file change",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "hot",
+      "description": "Enable auto reload in the Bun runtime, test runner, or bundler",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "no-clear-screen",
+      "description": "Disable clearing the terminal screen on reload when --hot or --watch is enabled",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "smol",
+      "description": "Use less memory, but run garbage collection more often",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "preload",
+      "shortName": "r",
+      "description": "Import a module before other modules are loaded",
+      "hasValue": true,
+      "valueType": "val",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "require",
+      "description": "Alias of --preload, for Node.js compatibility",
+      "hasValue": true,
+      "valueType": "val",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "import",
+      "description": "Alias of --preload, for Node.js compatibility",
+      "hasValue": true,
+      "valueType": "val",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "inspect",
+      "description": "Activate Bun's debugger",
+      "hasValue": true,
+      "valueType": "val",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "inspect-wait",
+      "description": "Activate Bun's debugger, wait for a connection before executing",
+      "hasValue": true,
+      "valueType": "val",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "inspect-brk",
+      "description": "Activate Bun's debugger, set breakpoint on first line of code and wait",
+      "hasValue": true,
+      "valueType": "val",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "if-present",
+      "description": "Exit without an error if the entrypoint does not exist",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "no-install",
+      "description": "Disable auto install in the Bun runtime",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "install",
+      "description": "Configure auto-install behavior. One of \"auto\" (default, auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always).",
+      "hasValue": true,
+      "valueType": "val",
+      "choices": [
+        "auto"
+      ],
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "i",
+      "shortName": "i",
+      "description": "Auto-install dependencies during execution. Equivalent to --install=fallback.",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "eval",
+      "shortName": "e",
+      "description": "Evaluate argument as a script",
+      "hasValue": true,
+      "valueType": "val",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "print",
+      "shortName": "p",
+      "description": "Evaluate argument as a script and print the result",
+      "hasValue": true,
+      "valueType": "val",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "prefer-offline",
+      "description": "Skip staleness checks for packages in the Bun runtime and resolve from disk",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "prefer-latest",
+      "description": "Use the latest matching versions of packages in the Bun runtime, always checking npm",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "port",
+      "description": "Set the default port for Bun.serve",
+      "hasValue": true,
+      "valueType": "val",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "conditions",
+      "description": "Pass custom conditions to resolve",
+      "hasValue": true,
+      "valueType": "val",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "fetch-preconnect",
+      "description": "Preconnect to a URL while code is loading",
+      "hasValue": true,
+      "valueType": "val",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "max-http-header-size",
+      "description": "Set the maximum size of HTTP headers in bytes. Default is 16KiB",
+      "hasValue": true,
+      "valueType": "val",
+      "defaultValue": "16KiB",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "dns-result-order",
+      "description": "Set the default order of DNS lookup results. Valid orders: verbatim (default), ipv4first, ipv6first",
+      "hasValue": true,
+      "valueType": "val",
+      "choices": [
+        "verbatim",
+        "(default)",
+        "ipv4first",
+        "ipv6first"
+      ],
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "expose-gc",
+      "description": "Expose gc() on the global object. Has no effect on Bun.gc().",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "no-deprecation",
+      "description": "Suppress all reporting of the custom deprecation.",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "throw-deprecation",
+      "description": "Determine whether or not deprecation warnings result in errors.",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "title",
+      "description": "Set the process title",
+      "hasValue": true,
+      "valueType": "val",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "zero-fill-buffers",
+      "description": "Boolean to force Buffer.allocUnsafe(size) to be zero-filled.",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "redis-preconnect",
+      "description": "Preconnect to $REDIS_URL at startup",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "sql-preconnect",
+      "description": "Preconnect to PostgreSQL at startup",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "no-addons",
+      "description": "Throw an error if process.dlopen is called, and disable export condition \"node-addons\"",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "unhandled-rejections",
+      "description": "One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\"",
+      "hasValue": true,
+      "valueType": "val",
+      "choices": [
+        "strict"
+      ],
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "console-depth",
+      "description": "Set the default depth for console.log object inspection (default: 2)",
+      "hasValue": true,
+      "valueType": "val",
+      "defaultValue": "2)",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "silent",
+      "description": "Don't print the script command",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "elide-lines",
+      "description": "Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines.",
+      "hasValue": true,
+      "valueType": "val",
+      "defaultValue": "10)",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "version",
+      "shortName": "v",
+      "description": "Print version and exit",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "revision",
+      "description": "Print version with revision and exit",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "filter",
+      "shortName": "F",
+      "description": "Run a script in all workspace packages matching the pattern",
+      "hasValue": true,
+      "valueType": "val",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "bun",
+      "shortName": "b",
+      "description": "Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "shell",
+      "description": "Control the shell used for package.json scripts. Supports either 'bun' or 'system'",
+      "hasValue": true,
+      "valueType": "val",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "env-file",
+      "description": "Load environment variables from the specified file(s)",
+      "hasValue": true,
+      "valueType": "val",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "cwd",
+      "description": "Absolute path to resolve files & entry points from. This just changes the process' cwd.",
+      "hasValue": true,
+      "valueType": "val",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "config",
+      "shortName": "c",
+      "description": "Specify path to Bun config file. Default $cwd/bunfig.toml",
+      "hasValue": true,
+      "valueType": "val",
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "help",
+      "shortName": "h",
+      "description": "Display this menu and exit",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    }
+  ],
+  "specialHandling": {
+    "bareCommand": {
+      "description": "Run JavaScript/TypeScript files directly or access package scripts and binaries",
+      "canRunFiles": true,
+      "dynamicCompletions": {
+        "scripts": true,
+        "files": true,
+        "binaries": true
+      }
+    }
+  },
+  "bunGetCompletes": {
+    "available": true,
+    "commands": {
+      "scripts": "bun getcompletes s",
+      "binaries": "bun getcompletes b",
+      "packages": "bun getcompletes a",
+      "files": "bun getcompletes j"
+    }
+  }
+}

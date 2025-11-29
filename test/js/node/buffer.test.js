@@ -193,6 +193,7 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(isAscii(new Buffer(""))).toBeTrue();
         expect(isAscii(new Buffer([32, 32, 128]))).toBeFalse();
         expect(isAscii(new Buffer("What did the 🦊 say?"))).toBeFalse();
+        expect(new isAscii(new Buffer("What did the 🦊 say?"))).toBeFalse();
         expect(isAscii(new Buffer("").buffer)).toBeTrue();
         expect(isAscii(new Buffer([32, 32, 128]).buffer)).toBeFalse();
       });
@@ -327,6 +328,34 @@ for (let withOverridenBufferWrite of [false, true]) {
           expect(() => b[unsignedFunction](2n ** 64n)).toThrow(RangeError);
           expect(() => b[unsignedFunction](-(2n ** 65n))).toThrow(RangeError);
           expect(() => b[unsignedFunction](2n ** 65n)).toThrow(RangeError);
+        }
+      });
+
+      it("write BigInt64 with insufficient buffer space", () => {
+        // Test for bounds check fix - prevent unsigned integer underflow
+        // when byteLength < 8, the check `offset > byteLength - 8` would underflow
+        const buf = Buffer.from("Hello World");
+        const slice = buf.slice(0, 5); // 5 bytes
+
+        for (const fn of ["writeBigInt64LE", "writeBigInt64BE", "writeBigUInt64LE", "writeBigUInt64BE"]) {
+          // Should throw because we need 8 bytes but only have 5
+          expect(() => slice[fn](4096n, 0)).toThrow(RangeError);
+          // Should also throw with large invalid offset
+          expect(() => slice[fn](4096n, 10000)).toThrow(RangeError);
+        }
+
+        // Test exact boundary - 8 bytes should work at offset 0
+        const buf8 = Buffer.allocUnsafe(8);
+        for (const fn of ["writeBigInt64LE", "writeBigInt64BE", "writeBigUInt64LE", "writeBigUInt64BE"]) {
+          expect(buf8[fn](4096n, 0)).toBe(8);
+          // But should fail at offset 1 (not enough space)
+          expect(() => buf8[fn](4096n, 1)).toThrow(RangeError);
+        }
+
+        // Test very small buffers
+        const buf7 = Buffer.allocUnsafe(7);
+        for (const fn of ["writeBigInt64LE", "writeBigInt64BE", "writeBigUInt64LE", "writeBigUInt64BE"]) {
+          expect(() => buf7[fn](0n, 0)).toThrow(RangeError);
         }
       });
 
@@ -3059,4 +3088,89 @@ it("Buffer.from(arrayBuffer, byteOffset, length)", () => {
   expect(buf.byteOffset).toBe(3);
   expect(buf.byteLength).toBe(5);
   expect(buf[Symbol.iterator]().toArray()).toEqual([13, 14, 15, 16, 17]);
+});
+
+describe("ERR_BUFFER_OUT_OF_BOUNDS", () => {
+  for (const method of ["writeBigInt64BE", "writeBigInt64LE", "writeBigUInt64BE", "writeBigUInt64LE"]) {
+    for (const bufferLength of [0, 1, 2, 3, 4, 5, 6]) {
+      const buffer = Buffer.allocUnsafe(bufferLength);
+      it(`Buffer(${bufferLength}).${method}`, () => {
+        expect(() => buffer[method](0n)).toThrow(
+          expect.objectContaining({
+            code: "ERR_BUFFER_OUT_OF_BOUNDS",
+          }),
+        );
+        expect(() => buffer[method](0n, 0)).toThrow(
+          expect.objectContaining({
+            code: "ERR_BUFFER_OUT_OF_BOUNDS",
+          }),
+        );
+      });
+    }
+  }
+
+  for (const method of ["readBigInt64BE", "readBigInt64LE", "readBigUInt64BE", "readBigUInt64LE"]) {
+    for (const bufferLength of [0, 1, 2, 3, 4, 5, 6]) {
+      const buffer = Buffer.allocUnsafe(bufferLength);
+      it(`Buffer(${bufferLength}).${method}`, () => {
+        expect(() => buffer[method]()).toThrow(
+          expect.objectContaining({
+            code: "ERR_BUFFER_OUT_OF_BOUNDS",
+          }),
+        );
+        expect(() => buffer[method](0)).toThrow(
+          expect.objectContaining({
+            code: "ERR_BUFFER_OUT_OF_BOUNDS",
+          }),
+        );
+      });
+    }
+  }
+});
+
+describe("*Write methods with NaN/invalid offset and length", () => {
+  // Regression test: NaN offset/length values must be handled safely.
+  // NaN offset should be treated as 0, and length should be clamped to buffer size.
+  // This matches Node.js behavior where V8's IntegerValue converts NaN to 0.
+  const writeMethods = [
+    "utf8Write",
+    "utf16leWrite",
+    "latin1Write",
+    "asciiWrite",
+    "base64Write",
+    "base64urlWrite",
+    "hexWrite",
+  ];
+
+  for (const method of writeMethods) {
+    it(`${method} should handle NaN offset and custom length via ToNumber coercion`, () => {
+      // F1 is a function - ToNumber(F1) returns NaN, which should be treated as 0
+      function F1() {
+        if (!new.target) {
+          throw "must be called with new";
+        }
+      }
+      // C3 is a class constructor with Symbol.toPrimitive - ToNumber(C3) returns 215
+      class C3 {}
+      C3[Symbol.toPrimitive] = function () {
+        return 215;
+      };
+      const buf = Buffer.from("string");
+      // F1 as offset -> NaN -> 0, C3 as length -> 215 -> clamped to buf.length
+      // This should NOT crash, and should write to the buffer starting at offset 0
+      const result = buf[method]("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", F1, C3);
+      // Result should be clamped to buffer size
+      expect(result).toBeLessThanOrEqual(buf.length);
+    });
+
+    it(`${method} should throw on length larger than available buffer space`, () => {
+      const buf = Buffer.from("string");
+      // Length 1000 with valid offset 0 should throw ERR_BUFFER_OUT_OF_BOUNDS
+      expect(() => buf[method]("test".repeat(100), 0, 1000)).toThrow(
+        expect.objectContaining({
+          code: "ERR_BUFFER_OUT_OF_BOUNDS",
+        }),
+      );
+    });
+  }
 });

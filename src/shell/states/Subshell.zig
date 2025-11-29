@@ -14,7 +14,7 @@ state: union(enum) {
     wait_write_err,
     done,
 } = .idle,
-redirection_file: std.ArrayList(u8),
+redirection_file: std.array_list.Managed(u8),
 exit_code: ExitCode = 0,
 
 pub const ParentPtr = StatePtrUnion(.{
@@ -28,7 +28,7 @@ pub const ChildPtr = StatePtrUnion(.{
     Expansion,
 });
 
-pub fn format(this: *const Subshell, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: *const Subshell, writer: *std.Io.Writer) !void {
     try writer.print("Subshell(0x{x})", .{@intFromPtr(this)});
 }
 
@@ -47,7 +47,7 @@ pub fn init(
         .io = io,
         .redirection_file = undefined,
     };
-    subshell.redirection_file = std.ArrayList(u8).init(subshell.base.allocator());
+    subshell.redirection_file = std.array_list.Managed(u8).init(subshell.base.allocator());
     return subshell;
 }
 
@@ -57,7 +57,7 @@ pub fn initDupeShellState(
     node: *const ast.Subshell,
     parent: ParentPtr,
     io: IO,
-) bun.JSC.Maybe(*Subshell) {
+) bun.sys.Maybe(*Subshell) {
     const subshell = parent.create(Subshell);
     subshell.* = .{
         .base = State.initWithNewAllocScope(.subshell, interpreter, shell_state),
@@ -73,12 +73,12 @@ pub fn initDupeShellState(
             return .{ .err = e };
         },
     };
-    subshell.redirection_file = std.ArrayList(u8).init(subshell.base.allocator());
+    subshell.redirection_file = std.array_list.Managed(u8).init(subshell.base.allocator());
     return .{ .result = subshell };
 }
 
 pub fn start(this: *Subshell) Yield {
-    log("{} start", .{this});
+    log("{f} start", .{this});
     const script = Script.init(this.base.interpreter, this.base.shell, &this.node.script, Script.ParentPtr.init(this), this.io.copy());
     return script.start();
 }
@@ -130,7 +130,7 @@ pub fn next(this: *Subshell) Yield {
 }
 
 pub fn transitionToExec(this: *Subshell) Yield {
-    log("{} transitionToExec", .{this});
+    log("{f} transitionToExec", .{this});
     const script = Script.init(this.base.interpreter, this.base.shell, &this.node.script, Script.ParentPtr.init(this), this.io.copy());
     this.state = .exec;
     return script.start();
@@ -143,7 +143,7 @@ pub fn childDone(this: *Subshell, child_ptr: ChildPtr, exit_code: ExitCode) Yiel
             const err = this.state.expanding_redirect.expansion.state.err;
             defer err.deinit(bun.default_allocator);
             this.state.expanding_redirect.expansion.deinit();
-            return this.writeFailingError("{}\n", .{err});
+            return this.writeFailingError("{f}\n", .{err});
         }
         child_ptr.deinit();
         return .{ .subshell = this };
@@ -157,7 +157,7 @@ pub fn childDone(this: *Subshell, child_ptr: ChildPtr, exit_code: ExitCode) Yiel
     bun.shell.unreachableState("Subshell.childDone", "expected Script or Expansion");
 }
 
-pub fn onIOWriterChunk(this: *Subshell, _: usize, err: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Subshell, _: usize, err: ?jsc.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .wait_write_err);
     }
@@ -188,24 +188,25 @@ pub fn writeFailingError(this: *Subshell, comptime fmt: []const u8, args: anytyp
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const Yield = bun.shell.Yield;
+const assert = bun.assert;
+const jsc = bun.jsc;
+
 const shell = bun.shell;
+const ExitCode = bun.shell.ExitCode;
+const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
 
 const Interpreter = bun.shell.Interpreter;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
-const ExitCode = bun.shell.ExitCode;
-const ShellExecEnv = Interpreter.ShellExecEnv;
-const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-
-const Script = bun.shell.Interpreter.Script;
 const Binary = bun.shell.Interpreter.Binary;
 const Expansion = bun.shell.Interpreter.Expansion;
-const Stmt = bun.shell.Interpreter.Stmt;
+const IO = bun.shell.Interpreter.IO;
 const Pipeline = bun.shell.Interpreter.Pipeline;
+const Script = bun.shell.Interpreter.Script;
+const ShellExecEnv = Interpreter.ShellExecEnv;
+const State = bun.shell.Interpreter.State;
+const Stmt = bun.shell.Interpreter.Stmt;
 
-const JSC = bun.JSC;
-const assert = bun.assert;
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
+const log = bun.shell.interpret.log;

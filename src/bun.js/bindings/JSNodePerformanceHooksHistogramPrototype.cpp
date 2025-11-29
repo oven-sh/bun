@@ -1,5 +1,6 @@
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
+#include "NodeValidator.h"
 #include "root.h"
 
 #include "JSNodePerformanceHooksHistogramPrototype.h"
@@ -140,6 +141,20 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncReset, (JSGloba
     return JSValue::encode(jsUndefined());
 }
 
+static double toPercentile(JSC::ThrowScope& scope, JSGlobalObject* globalObject, JSValue value)
+{
+    Bun::V::validateNumber(scope, globalObject, value, "percentile"_s, jsNumber(0), jsNumber(100));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // TODO: rewrite validateNumber to return the validated value.
+    double percentile = value.toNumber(globalObject);
+    scope.assertNoException();
+    if (percentile <= 0 || percentile > 100 || std::isnan(percentile)) {
+        Bun::ERR::OUT_OF_RANGE(scope, globalObject, "percentile"_s, "> 0 && <= 100"_s, value);
+        return {};
+    }
+    return percentile;
+}
 JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentile, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -156,12 +171,8 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentile, (JS
         return {};
     }
 
-    double percentile = callFrame->uncheckedArgument(0).toNumber(globalObject);
+    double percentile = toPercentile(scope, globalObject, callFrame->uncheckedArgument(0));
     RETURN_IF_EXCEPTION(scope, {});
-    if (percentile <= 0 || percentile > 100 || std::isnan(percentile)) {
-        Bun::ERR::OUT_OF_RANGE(scope, globalObject, "percentile"_s, "> 0 && <= 100"_s, jsNumber(percentile));
-        return {};
-    }
 
     return JSValue::encode(jsNumber(static_cast<double>(thisObject->getPercentile(percentile))));
 }
@@ -182,14 +193,10 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentileBigIn
         return {};
     }
 
-    double percentile = callFrame->uncheckedArgument(0).toNumber(globalObject);
+    double percentile = toPercentile(scope, globalObject, callFrame->uncheckedArgument(0));
     RETURN_IF_EXCEPTION(scope, {});
-    if (percentile <= 0 || percentile > 100 || std::isnan(percentile)) {
-        Bun::ERR::OUT_OF_RANGE(scope, globalObject, "percentile"_s, "> 0 && <= 100"_s, jsNumber(percentile));
-        return {};
-    }
 
-    return JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getPercentile(percentile)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getPercentile(percentile))));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_count, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -215,7 +222,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_countBigInt, (JSG
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "countBigInt"_s);
         return {};
     }
-    return JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getCount()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getCount())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_min, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -251,10 +258,10 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_minBigInt, (JSGlo
     // min returns 9223372036854776000 (as double)
     // minBigInt returns 9223372036854775807n (INT64_MAX)
     if (thisObject->getCount() == 0) {
-        return JSValue::encode(JSBigInt::createFrom(globalObject, INT64_MAX));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, INT64_MAX)));
     }
 
-    return JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getMin()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getMin())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_max, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -280,7 +287,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_maxBigInt, (JSGlo
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "maxBigInt"_s);
         return {};
     }
-    return JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getMax()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getMax())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_mean, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -332,7 +339,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_exceedsBigInt, (J
         WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "exceedsBigInt"_s);
         return {};
     }
-    return JSValue::encode(JSBigInt::createFrom(globalObject, static_cast<uint64_t>(thisObject->getExceeds())));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, static_cast<uint64_t>(thisObject->getExceeds()))));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_percentiles, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -413,6 +420,109 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObj
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(histogram);
+}
+
+// Extern declarations for Timer.zig
+extern "C" void Timer_enableEventLoopDelayMonitoring(void* vm, JSC::EncodedJSValue histogram, int32_t resolution);
+extern "C" void Timer_disableEventLoopDelayMonitoring(void* vm);
+
+// Create histogram for event loop delay monitoring
+JSC_DEFINE_HOST_FUNCTION(jsFunction_monitorEventLoopDelay, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    int32_t resolution = 10; // default 10ms
+    if (callFrame->argumentCount() > 0) {
+        resolution = callFrame->argument(0).toInt32(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (resolution < 1) {
+            throwRangeError(globalObject, scope, "Resolution must be >= 1"_s);
+            return JSValue::encode(jsUndefined());
+        }
+    }
+
+    // Create histogram with range for event loop delays (1ns to 1 hour)
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    Structure* structure = zigGlobalObject->m_JSNodePerformanceHooksHistogramClassStructure.get(zigGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSNodePerformanceHooksHistogram* histogram = JSNodePerformanceHooksHistogram::create(
+        vm, structure, globalObject,
+        1, // lowest: 1 nanosecond
+        3600000000000LL, // highest: 1 hour in nanoseconds
+        3 // figures: 3 significant digits
+    );
+
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return JSValue::encode(histogram);
+}
+
+// Enable event loop delay monitoring
+JSC_DEFINE_HOST_FUNCTION(jsFunction_enableEventLoopDelay, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 2) {
+        throwTypeError(globalObject, scope, "Missing arguments"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSValue histogramValue = callFrame->argument(0);
+    JSNodePerformanceHooksHistogram* histogram = jsDynamicCast<JSNodePerformanceHooksHistogram*>(histogramValue);
+
+    if (!histogram) {
+        throwTypeError(globalObject, scope, "Invalid histogram"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    int32_t resolution = callFrame->argument(1).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Reset histogram data on enable
+    histogram->reset();
+
+    // Enable the event loop delay monitor in Timer.zig
+    Timer_enableEventLoopDelayMonitoring(bunVM(globalObject), JSValue::encode(histogram), resolution);
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+}
+
+// Disable event loop delay monitoring
+JSC_DEFINE_HOST_FUNCTION(jsFunction_disableEventLoopDelay, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 1) {
+        throwTypeError(globalObject, scope, "Missing histogram argument"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSValue histogramValue = callFrame->argument(0);
+    JSNodePerformanceHooksHistogram* histogram = jsDynamicCast<JSNodePerformanceHooksHistogram*>(histogramValue);
+
+    if (!histogram) {
+        throwTypeError(globalObject, scope, "Invalid histogram"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    // Call into Zig to disable monitoring
+    Timer_disableEventLoopDelayMonitoring(bunVM(globalObject));
+
+    return JSValue::encode(jsUndefined());
+}
+
+// Extern function for Zig to record delays
+extern "C" void JSNodePerformanceHooksHistogram_recordDelay(JSC::EncodedJSValue histogram, int64_t delay_ns)
+{
+    if (!histogram || delay_ns <= 0) return;
+
+    auto* hist = jsCast<JSNodePerformanceHooksHistogram*>(JSValue::decode(histogram));
+    hist->record(delay_ns);
 }
 
 } // namespace Bun

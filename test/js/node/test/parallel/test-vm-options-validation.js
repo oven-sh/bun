@@ -78,17 +78,17 @@ assert.throws(() => {
     }, errCheck);
   }
 
-  [/*null,*/ 'bad', 42].forEach((value) => {
+  [null, 'bad', 42].forEach((value) => {
     assertErrors(value, invalidArgType);
   });
-  // [{}, [1], 'bad', null].forEach((value) => {
-  //   assertErrors({ timeout: value }, invalidArgType);
-  // });
-  // [-1, 0, NaN].forEach((value) => {
-  //   assertErrors({ timeout: value }, outOfRange);
-  // });
-  // [{}, [1], 'bad', 1, null].forEach((value) => {
-  //   assertErrors({ displayErrors: value }, invalidArgType);
-  //   assertErrors({ breakOnSigint: value }, invalidArgType);
-  // });
+  [{}, [1], 'bad', null].forEach((value) => {
+    assertErrors({ timeout: value }, invalidArgType);
+  });
+  [-1, 0, NaN].forEach((value) => {
+    assertErrors({ timeout: value }, outOfRange);
+  });
+  [{}, [1], 'bad', 1, null].forEach((value) => {
+    assertErrors({ displayErrors: value }, invalidArgType);
+    assertErrors({ breakOnSigint: value }, invalidArgType);
+  });
 }

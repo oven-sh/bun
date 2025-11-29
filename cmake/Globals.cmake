@@ -125,7 +125,8 @@ setx(CWD ${CMAKE_SOURCE_DIR})
 setx(BUILD_PATH ${CMAKE_BINARY_DIR})
 
 optionx(CACHE_PATH FILEPATH "The path to the cache directory" DEFAULT ${BUILD_PATH}/cache)
-optionx(CACHE_STRATEGY "read-write|read-only|write-only|none" "The strategy to use for caching" DEFAULT "read-write")
+optionx(CACHE_STRATEGY "auto|distributed|local|none" "The strategy to use for caching" DEFAULT
+"auto")
 
 optionx(CI BOOL "If CI is enabled" DEFAULT OFF)
 optionx(ENABLE_ANALYSIS BOOL "If static analysis targets should be enabled" DEFAULT OFF)
@@ -136,21 +137,44 @@ else()
   set(WARNING WARNING)
 endif()
 
-# TODO: This causes flaky zig builds in CI, so temporarily disable it.
-# if(CI)
-#   set(DEFAULT_VENDOR_PATH ${CACHE_PATH}/vendor)
-# else()
-#   set(DEFAULT_VENDOR_PATH ${CWD}/vendor)
-# endif()
-
 optionx(VENDOR_PATH FILEPATH "The path to the vendor directory" DEFAULT ${CWD}/vendor)
 optionx(TMP_PATH FILEPATH "The path to the temporary directory" DEFAULT ${BUILD_PATH}/tmp)
 
 # --- Helper functions ---
 
+# list_filter_out_regex()
+#
+# Description:
+#   Filters out elements from a list that match a regex pattern.
+#
+# Arguments:
+#   list - The list of strings to traverse
+#   pattern - The regex pattern to filter out
+#   touched - A variable to set if any items were removed
+function(list_filter_out_regex list pattern touched)
+  set(result_list "${${list}}")
+  set(keep_list)
+  set(was_modified OFF)
+
+  foreach(line IN LISTS result_list)
+    if(line MATCHES "${pattern}")
+      set(was_modified ON)
+    else()
+      list(APPEND keep_list ${line})
+    endif()
+  endforeach()
+
+  set(${list} "${keep_list}" PARENT_SCOPE)
+  set(${touched} ${was_modified} PARENT_SCOPE)
+endfunction()
+
 # setenv()
 # Description:
 #   Sets an environment variable during the build step, and writes it to a .env file.
+#
+# See Also:
+#   unsetenv()
+#
 # Arguments:
 #   variable string - The variable to set
 #   value    string - The value to set the variable to
@@ -163,13 +187,7 @@ function(setenv variable value)
 
   if(EXISTS ${ENV_PATH})
     file(STRINGS ${ENV_PATH} ENV_FILE ENCODING UTF-8)
-
-    foreach(line ${ENV_FILE})
-      if(line MATCHES "^${variable}=")
-        list(REMOVE_ITEM ENV_FILE ${line})
-        set(ENV_MODIFIED ON)
-      endif()
-    endforeach()
+    list_filter_out_regex(ENV_FILE "^${variable}=" ENV_MODIFIED)
 
     if(ENV_MODIFIED)
       list(APPEND ENV_FILE "${variable}=${value}")
@@ -185,15 +203,38 @@ function(setenv variable value)
   message(STATUS "Set ENV ${variable}: ${value}")
 endfunction()
 
+# See setenv()
+# Description:
+#   Exact opposite of setenv().
+# Arguments:
+#   variable string - The variable to unset.
+# See Also:
+#   setenv()
+function(unsetenv variable)
+  set(ENV_PATH ${BUILD_PATH}/.env)
+  if(NOT EXISTS ${ENV_PATH})
+    return()
+  endif()
+
+  file(STRINGS ${ENV_PATH} ENV_FILE ENCODING UTF-8)
+  list_filter_out_regex(ENV_FILE "^${variable}=" ENV_MODIFIED)
+
+  if(ENV_MODIFIED)
+    list(JOIN ENV_FILE "\n" ENV_FILE)
+    file(WRITE ${ENV_PATH} ${ENV_FILE})
+  endif()
+endfunction()
+
 # satisfies_range()
 # Description:
-#   Check if a version satisfies a version range
+#   Check if a version satisfies a version range or list of ranges
 # Arguments:
 #   version  string - The version to check (e.g. "1.2.3")
-#   range    string - The range to check against (e.g. ">=1.2.3")
+#   range    string - The range to check against (e.g. ">=1.2.3" or ">=19.1.0 <20.0.0")
+#                     Multiple space-separated ranges may be supplied; in this case they must all be satisfied
 #   variable string - The variable to store the result in
-function(satisfies_range version range variable)
-  if(range STREQUAL "ignore")
+function(satisfies_range version ranges variable)
+  if(ranges STREQUAL "ignore")
     set(${variable} ON PARENT_SCOPE)
     return()
   endif()
@@ -206,26 +247,36 @@ function(satisfies_range version range variable)
   endif()
   set(version ${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3})
 
-  string(REGEX MATCH "(>=|<=|>|<)?([0-9]+)\\.([0-9]+)\\.([0-9]+)" match "${range}")
-  if(NOT match)
-    return()
-  endif()
-  set(comparator ${CMAKE_MATCH_1})
-  set(range ${CMAKE_MATCH_2}.${CMAKE_MATCH_3}.${CMAKE_MATCH_4})
+  string(REPLACE " " ";" range_list "${ranges}")
+  set(all_satisfied ON)
 
-  if(comparator STREQUAL ">=")
-    set(comparator VERSION_GREATER_EQUAL)
-  elseif(comparator STREQUAL ">")
-    set(comparator VERSION_GREATER)
-  elseif(comparator STREQUAL "<=")
-    set(comparator VERSION_LESS_EQUAL)
-  elseif(comparator STREQUAL "<")
-    set(comparator VERSION_LESS)
-  else()
-    set(comparator VERSION_EQUAL)
-  endif()
+  foreach(current_item ${range_list})
+    string(REGEX MATCH "(>=|<=|>|<)?([0-9]+)\\.([0-9]+)\\.([0-9]+)" match "${current_item}")
+    if(NOT match)
+      return()
+    endif()
+    set(comparator ${CMAKE_MATCH_1})
+    set(range ${CMAKE_MATCH_2}.${CMAKE_MATCH_3}.${CMAKE_MATCH_4})
 
-  if(version ${comparator} ${range})
+    if(comparator STREQUAL ">=")
+      set(comparator VERSION_GREATER_EQUAL)
+    elseif(comparator STREQUAL ">")
+      set(comparator VERSION_GREATER)
+    elseif(comparator STREQUAL "<=")
+      set(comparator VERSION_LESS_EQUAL)
+    elseif(comparator STREQUAL "<")
+      set(comparator VERSION_LESS)
+    else()
+      set(comparator VERSION_EQUAL)
+    endif()
+
+    if(NOT version ${comparator} ${range})
+      set(all_satisfied OFF)
+      break()
+    endif()
+  endforeach()
+
+  if(all_satisfied)
     set(${variable} ON PARENT_SCOPE)
   endif()
 endfunction()
@@ -306,7 +357,7 @@ function(find_command)
     ${FIND_VALIDATOR}
   )
 
-  if(NOT FIND_REQUIRED STREQUAL "OFF" AND ${FIND_VARIABLE} MATCHES "NOTFOUND")
+  if(FIND_REQUIRED AND ${FIND_VARIABLE} MATCHES "NOTFOUND")
     set(error "Command not found: \"${FIND_NAME}\"")
 
     if(FIND_VERSION)
@@ -904,10 +955,6 @@ function(register_compiler_flags)
       endforeach()
     endforeach()
   endforeach()
-endfunction()
-
-function(register_compiler_definitions)
-
 endfunction()
 
 # register_linker_flags()

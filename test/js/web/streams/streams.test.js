@@ -7,7 +7,7 @@ import {
   readableStreamToText,
 } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, isMacOS, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { createReadStream, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -1059,6 +1059,14 @@ it("new Response(stream).blob() (direct)", async () => {
   expect(await blob.text()).toBe('{"hello":true}');
 });
 
+it("Blob.stream(undefined) does not crash", () => {
+  var blob = new Blob(["abdefgh"]);
+  var stream = blob.stream(undefined);
+  expect(stream instanceof ReadableStream).toBeTrue();
+  stream = blob.stream(null);
+  expect(stream instanceof ReadableStream).toBeTrue();
+});
+
 it("Blob.stream() -> new Response(stream).text()", async () => {
   var blob = new Blob(["abdefgh"]);
   var stream = blob.stream();
@@ -1141,4 +1149,45 @@ it("pipeThrough doesn't cause unhandled rejections on readable errors", async ()
   process.off("unhandledRejection", catchUnhandledRejection);
 
   expect(unhandledRejectionCaught).toBe(false);
+});
+
+it("Handles exception during ReadableStream creation from Response.body", async () => {
+  const dir = tmpdirSync();
+  const testFile = join(dir, "test-fixture.js");
+  writeFileSync(
+    testFile,
+    `
+function recursiveFunction() {
+  const url = new URL("https://example.com/path");
+  const response = new Response("test");
+
+  // Access Response.body which creates a ReadableStream
+  const body = response.body;
+
+  // Set up infinite recursion via URL.pathname setter
+  url[Symbol.toPrimitive] = recursiveFunction;
+  try {
+    url.pathname = url; // Triggers toString() → toPrimitive → recursiveFunction()
+  } catch (e) {
+    // Stack overflow expected
+    if (e instanceof RangeError || e.message?.includes("stack")) {
+      process.exit(0);
+    }
+    throw e;
+  }
+}
+recursiveFunction();
+`,
+  );
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), testFile],
+    env: bunEnv,
+    cwd: dir,
+    stderr: "pipe",
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(exitCode).toBe(0);
 });

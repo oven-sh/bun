@@ -115,6 +115,11 @@ export class HMRModule {
       : null;
   }
 
+  // Module Ids are pre-resolved by the bundler
+  requireResolve(id: Id): Id {
+    return id;
+  }
+
   require(id: Id) {
     try {
       const mod = loadModuleSync(id, true, this);
@@ -147,7 +152,7 @@ export class HMRModule {
 
   get importMeta() {
     const importMeta = {
-      url: `bun://${this.id}`,
+      url: `${location.origin}/${this.id}`,
       main: false,
       require: this.require.bind(this),
       // transpiler rewrites `import.meta.hot.*` to access `HMRModule.*`
@@ -249,7 +254,9 @@ export class HMRModule {
   declare builtin: (id: string) => any;
 }
 if (side === "server") {
-  HMRModule.prototype.builtin = import.meta.require;
+  HMRModule.prototype.builtin = (id: string) =>
+    // @ts-expect-error
+    import.meta.bakeBuiltin(import.meta.resolve(id));
 }
 // prettier-ignore
 HMRModule.prototype.indirectHot = new Proxy({}, {

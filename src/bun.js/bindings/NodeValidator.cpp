@@ -567,7 +567,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * glo
                 length = impl->byteLength();
             }
         } else if (auto* object = data.getObject()) {
-            JSValue lengthValue = object->getIfPropertyExists(globalObject, vm.propertyNames->length);
+            JSValue lengthValue = object->get(globalObject, vm.propertyNames->length);
             RETURN_IF_EXCEPTION(scope, {});
             length = lengthValue.toLength(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
@@ -641,7 +641,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateOneOf, (JSC::JSGlobalObject * global
         for (size_t i = 0; i < length; i++) {
             JSValue element = array->getIndex(globalObject, i);
             RETURN_IF_EXCEPTION(scope, {});
-            if (JSC::sameValue(globalObject, value, element)) {
+            auto same = JSC::sameValue(globalObject, value, element);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (same) {
                 return JSValue::encode(jsUndefined());
             }
         }
@@ -663,6 +665,7 @@ JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject
     JSC::JSString* valueStr = value.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto valueView = valueStr->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     for (ASCIILiteral oneOfStr : oneOf) {
 

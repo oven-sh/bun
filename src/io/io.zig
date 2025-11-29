@@ -3,21 +3,12 @@
 //!
 //! Most I/O happens on the main thread.
 
-const bun = @import("bun");
-const std = @import("std");
-const sys = bun.sys;
-const linux = std.os.linux;
-const Environment = bun.Environment;
 pub const heap = @import("./heap.zig");
-const JSC = bun.JSC;
 
 pub const openForWriting = @import("./openForWriting.zig").openForWriting;
 pub const openForWritingImpl = @import("./openForWriting.zig").openForWritingImpl;
 
-const log = bun.Output.scoped(.loop, false);
-
-const posix = std.posix;
-const assert = bun.assert;
+const log = bun.Output.scoped(.loop, .visible);
 
 pub const Source = @import("./source.zig").Source;
 
@@ -134,7 +125,7 @@ pub const Loop = struct {
                             }
                         },
                         .close => |close| {
-                            log("close({}, registered={any})", .{ close.fd, close.poll.flags.contains(.registered) });
+                            log("close({f}, registered={})", .{ close.fd, close.poll.flags.contains(.registered) });
                             // Only remove from the interest list if it was previously registered.
                             // Otherwise, epoll gets confused.
                             // This state can happen if polling for readable/writable previously failed.
@@ -167,7 +158,7 @@ pub const Loop = struct {
 
             const current_events: []std.os.linux.epoll_event = events[0..rc];
             if (rc != 0) {
-                log("epoll_wait({}) = {d}", .{ this.pollfd(), rc });
+                log("epoll_wait({f}) = {d}", .{ this.pollfd(), rc });
             }
 
             for (current_events) |event| {
@@ -205,14 +196,14 @@ pub const Loop = struct {
 
         while (true) {
             var stack_fallback = std.heap.stackFallback(@sizeOf([256]EventType), bun.default_allocator);
-            var events_list: std.ArrayList(EventType) = std.ArrayList(EventType).initCapacity(stack_fallback.get(), 256) catch unreachable;
+            var events_list: std.array_list.Managed(EventType) = std.array_list.Managed(EventType).initCapacity(stack_fallback.get(), 256) catch unreachable;
             defer events_list.deinit();
 
             // Process pending requests
             {
                 var pending_batch = this.pending.popBatch();
                 var pending = pending_batch.iterator();
-                events_list.ensureUnusedCapacity(pending.batch.count) catch bun.outOfMemory();
+                bun.handleOom(events_list.ensureUnusedCapacity(pending.batch.count));
                 @memset(std.mem.sliceAsBytes(events_list.items.ptr[0..events_list.capacity]), 0);
 
                 while (pending.next()) |request| {
@@ -351,9 +342,6 @@ pub const Action = union(enum) {
         onDone: *const fn (*anyopaque) void,
     };
 };
-
-const ReadFile = bun.webcore.Blob.read_file.ReadFile;
-const WriteFile = bun.webcore.Blob.write_file.WriteFile;
 
 const Pollable = struct {
     const Tag = enum(bun.TaggedPointer.Tag) {
@@ -507,7 +495,7 @@ pub const Poll = struct {
             fd: bun.FileDescriptor,
             kqueue_event: *std.posix.system.kevent64_s,
         ) void {
-            log("register({s}, {})", .{ @tagName(action), fd });
+            log("register({s}, {f})", .{ @tagName(action), fd });
             defer {
                 switch (comptime action) {
                     .readable => poll.flags.insert(Flags.poll_readable),
@@ -633,10 +621,10 @@ pub const Poll = struct {
         }
     }
 
-    pub fn registerForEpoll(this: *Poll, tag: Pollable.Tag, loop: *Loop, comptime flag: Flags, one_shot: bool, fd: bun.FileDescriptor) JSC.Maybe(void) {
+    pub fn registerForEpoll(this: *Poll, tag: Pollable.Tag, loop: *Loop, comptime flag: Flags, one_shot: bool, fd: bun.FileDescriptor) bun.sys.Maybe(void) {
         const watcher_fd = loop.pollfd();
 
-        log("register: {s} ({})", .{ @tagName(flag), fd });
+        log("register: {s} ({f})", .{ @tagName(flag), fd });
 
         bun.assert(fd != bun.invalid_fd);
 
@@ -667,7 +655,7 @@ pub const Poll = struct {
                 &event,
             );
 
-            if (JSC.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
+            if (bun.sys.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
                 return errno;
             }
             // Only mark if it successfully registered.
@@ -687,7 +675,7 @@ pub const Poll = struct {
         });
         this.flags.remove(.needs_rearm);
 
-        return JSC.Maybe(void).success;
+        return .success;
     }
 };
 
@@ -703,3 +691,14 @@ pub const StreamingWriter = @import("./PipeWriter.zig").StreamingWriter;
 pub const StreamBuffer = @import("./PipeWriter.zig").StreamBuffer;
 pub const FileType = @import("./pipes.zig").FileType;
 pub const MaxBuf = @import("./MaxBuf.zig");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const assert = bun.assert;
+const sys = bun.sys;
+const ReadFile = bun.webcore.Blob.read_file.ReadFile;
+const WriteFile = bun.webcore.Blob.write_file.WriteFile;
+
+const std = @import("std");
+const posix = std.posix;
+const linux = std.os.linux;

@@ -1,6 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
 pub const css = @import("../css_parser.zig");
 
 const VendorPrefix = css.VendorPrefix;
@@ -52,7 +49,7 @@ pub const FallbackHandler = struct {
                                 else
                                     fallback,
                             ),
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     }
                     if (comptime has_vendor_prefix) {
                         if (has_fallbacks and @field(property, field.name[1]).contains(VendorPrefix{ .none = true })) {
@@ -75,7 +72,7 @@ pub const FallbackHandler = struct {
                             else
                                 val,
                         ),
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                 } else if (@field(this, field.name) != null) {
                     const index = @field(this, field.name).?;
                     dest.items[index] = @unionInit(
@@ -118,7 +115,7 @@ pub const FallbackHandler = struct {
                 dest.items[i] = Property{ .unparsed = unparsed };
             } else {
                 index.* = dest.items.len;
-                dest.append(context.allocator, Property{ .unparsed = unparsed }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(context.allocator, Property{ .unparsed = unparsed }));
             }
 
             return true;
@@ -133,3 +130,6 @@ pub const FallbackHandler = struct {
         }
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");

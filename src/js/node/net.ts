@@ -26,13 +26,13 @@ const EventEmitter = require("node:events");
 let dns: typeof import("node:dns");
 
 const normalizedArgsSymbol = Symbol("normalizedArgs");
-const { ExceptionWithHostPort } = require("internal/shared");
+const { ExceptionWithHostPort, ConnResetException, NodeAggregateError, ErrnoException } = require("internal/shared");
 import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 import type { TLSSocket } from "node:tls";
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
-const { NodeAggregateError, ErrnoException } = require("internal/shared");
+const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
 
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypePush = Array.prototype.push;
@@ -54,40 +54,6 @@ const addServerName = $newZigFunction("Listener.zig", "jsAddServerName", 3);
 const upgradeDuplexToTLS = $newZigFunction("socket.zig", "jsUpgradeDuplexToTLS", 2);
 const isNamedPipeSocket = $newZigFunction("socket.zig", "jsIsNamedPipeSocket", 1);
 const getBufferedAmount = $newZigFunction("socket.zig", "jsGetBufferedAmount", 1);
-
-// IPv4 Segment
-const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
-const v4Str = `(?:${v4Seg}\\.){3}${v4Seg}`;
-var IPv4Reg;
-
-// IPv6 Segment
-const v6Seg = "(?:[0-9a-fA-F]{1,4})";
-var IPv6Reg;
-
-function isIPv4(s): boolean {
-  return (IPv4Reg ??= new RegExp(`^${v4Str}$`)).test(s);
-}
-
-function isIPv6(s): boolean {
-  return (IPv6Reg ??= new RegExp(
-    "^(?:" +
-      `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` +
-      `(?:${v6Seg}:){6}(?:${v4Str}|:${v6Seg}|:)|` +
-      `(?:${v6Seg}:){5}(?::${v4Str}|(?::${v6Seg}){1,2}|:)|` +
-      `(?:${v6Seg}:){4}(?:(?::${v6Seg}){0,1}:${v4Str}|(?::${v6Seg}){1,3}|:)|` +
-      `(?:${v6Seg}:){3}(?:(?::${v6Seg}){0,2}:${v4Str}|(?::${v6Seg}){1,4}|:)|` +
-      `(?:${v6Seg}:){2}(?:(?::${v6Seg}){0,3}:${v4Str}|(?::${v6Seg}){1,5}|:)|` +
-      `(?:${v6Seg}:){1}(?:(?::${v6Seg}){0,4}:${v4Str}|(?::${v6Seg}){1,6}|:)|` +
-      `(?::(?:(?::${v6Seg}){0,5}:${v4Str}|(?::${v6Seg}){1,7}|:))` +
-      ")(?:%[0-9a-zA-Z-.:]{1,})?$",
-  )).test(s);
-}
-
-function isIP(s): 0 | 4 | 6 {
-  if (isIPv4(s)) return 4;
-  if (isIPv6(s)) return 6;
-  return 0;
-}
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
@@ -236,8 +202,11 @@ const SocketHandlers: SocketHandler = {
   open(socket) {
     const self = socket.data;
     if (!self) return;
-    socket.timeout(Math.ceil(self.timeout / 1000));
-
+    // make sure to disable timeout on usocket and handle on TS side
+    socket.timeout(0);
+    if (self.timeout) {
+      self.setTimeout(self.timeout);
+    }
     self._handle = socket;
     self.connecting = false;
     const options = self[bunTLSConnectOptions];
@@ -412,7 +381,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     if (typeof connectionListener === "function") {
       this.pauseOnConnect = pauseOnConnect;
       if (!isTLS) {
-        connectionListener.$call(self, _socket);
+        self.prependOnceListener("connection", connectionListener);
       }
     }
     self.emit("connection", _socket);
@@ -457,7 +426,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     }
     const connectionListener = server[bunSocketServerOptions]?.connectionListener;
     if (typeof connectionListener === "function") {
-      connectionListener.$call(server, self);
+      server.prependOnceListener("secureConnection", connectionListener);
     }
     server.emit("secureConnection", self);
     // after secureConnection event we emmit secure and secureConnect
@@ -860,7 +829,11 @@ Object.defineProperty(Socket.prototype, "bytesWritten", {
 Socket.prototype[kAttach] = function (port, socket) {
   socket.data = this;
   socket[owner_symbol] = this;
-  socket.timeout(Math.ceil(this.timeout / 1000));
+  if (this.timeout) {
+    this.setTimeout(this.timeout);
+  }
+  // make sure to disable timeout on usocket and handle on TS side
+  socket.timeout(0);
   this._handle = socket;
   this.connecting = false;
 
@@ -1400,11 +1373,6 @@ Socket.prototype.setTimeout = {
     return this;
   },
 }.setTimeout;
-
-Socket.prototype._onTimeout = function _onTimeout() {
-  $debug("_onTimeout");
-  this.emit("timeout");
-};
 
 Socket.prototype._unrefTimer = function _unrefTimer() {
   for (let s = this; s !== null; s = s._parent) {
@@ -1961,7 +1929,9 @@ function internalConnectMultipleTimeout(context, req, handle) {
 }
 
 function afterConnect(status, handle, req, readable, writable) {
+  if (!handle) return;
   const self = handle[owner_symbol];
+  if (!self) return;
 
   // Callback may come after call to destroy
   if (self.destroyed) {
@@ -2444,6 +2414,16 @@ Server.prototype[kRealListen] = function (
   setTimeout(emitListeningNextTick, 1, this);
 };
 
+Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, sock) {
+  switch (event) {
+    case "connection":
+      sock.destroy(err);
+      break;
+    default:
+      this.emit("error", err);
+  }
+};
+
 Server.prototype.getsockname = function getsockname(out) {
   out.port = this.address().port;
   return out;
@@ -2469,17 +2449,6 @@ function addServerAbortSignalOption(self, options) {
     process.nextTick(onAborted);
   } else {
     signal.addEventListener("abort", onAborted);
-  }
-}
-
-class ConnResetException extends Error {
-  constructor(msg) {
-    super(msg);
-    this.code = "ECONNRESET";
-  }
-
-  get ["constructor"]() {
-    return Error;
   }
 }
 

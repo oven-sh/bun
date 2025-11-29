@@ -1,7 +1,7 @@
 /**
  * @note this file patches `node:test` via the require cache.
  */
-import { hideFromStackTrace } from "harness";
+import { hideFromStackTrace, exampleSite } from "harness";
 import assertNode from "node:assert";
 
 type DoneCb = (err?: Error) => any;
@@ -260,7 +260,7 @@ export function createTest(path: string) {
     mock,
   };
 }
-
+export { exampleSite };
 declare namespace Bun {
   function jest(path: string): typeof import("bun:test");
 }

@@ -54,13 +54,13 @@ pub fn convertStmtsForChunkForDevServer(
 
     // Modules which do not have side effects
     for (part_stmts) |stmt| switch (stmt.data) {
-        else => try stmts.inside_wrapper_suffix.append(stmt),
+        else => try stmts.append(.inside_wrapper_suffix, stmt),
 
         .s_import => |st| {
             const record = ast.import_records.mut(st.import_record_index);
             if (record.path.is_disabled) continue;
 
-            const is_builtin = record.tag == .builtin or record.tag == .bun_test or record.tag == .bun or record.tag == .runtime;
+            const is_builtin = record.tag == .builtin or record.tag == .bun or record.tag == .runtime;
             const is_bare_import = st.star_name_loc == null and st.items.len == 0 and st.default_name == null;
 
             if (is_builtin) {
@@ -72,13 +72,13 @@ pub fn convertStmtsForChunkForDevServer(
                             .name = if (record.tag == .runtime) "require" else "builtin",
                             .name_loc = stmt.loc,
                         }, stmt.loc),
-                        .args = .init(try allocator.dupe(Expr, &.{Expr.init(E.String, .{
+                        .args = .fromOwnedSlice(try allocator.dupe(Expr, &.{Expr.init(E.String, .{
                             .data = if (record.tag == .runtime) "bun:wrap" else record.path.pretty,
                         }, record.range.loc)})),
                     }, stmt.loc);
 
                     // var namespace = ...;
-                    try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Local, .{
+                    try stmts.inside_wrapper_prefix.appendNonDependency(Stmt.alloc(S.Local, .{
                         .kind = .k_var, // remove a tdz
                         .decls = try G.Decl.List.fromSlice(allocator, &.{.{
                             .binding = Binding.alloc(
@@ -113,14 +113,14 @@ pub fn convertStmtsForChunkForDevServer(
                     }, .Empty));
                 }
 
-                try stmts.outside_wrapper_prefix.append(stmt);
+                try stmts.append(.outside_wrapper_prefix, stmt);
             }
         },
     };
 
     if (esm_decls.items.len > 0) {
         // var ...;
-        try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Local, .{
+        try stmts.inside_wrapper_prefix.appendNonDependency(Stmt.alloc(S.Local, .{
             .kind = .k_var, // remove a tdz
             .decls = try .fromSlice(allocator, &.{.{
                 .binding = Binding.alloc(allocator, B.Array{
@@ -135,7 +135,7 @@ pub fn convertStmtsForChunkForDevServer(
             }}),
         }, .Empty));
         // hmr.onUpdate = [ ... ];
-        try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.SExpr, .{
+        try stmts.inside_wrapper_prefix.appendNonDependency(Stmt.alloc(S.SExpr, .{
             .value = Expr.init(E.Binary, .{
                 .op = .bin_assign,
                 .left = Expr.init(E.Dot, .{
@@ -144,7 +144,7 @@ pub fn convertStmtsForChunkForDevServer(
                     .name_loc = .Empty,
                 }, .Empty),
                 .right = Expr.init(E.Array, .{
-                    .items = .fromList(esm_callbacks),
+                    .items = .moveFromList(&esm_callbacks),
                     .is_single_line = esm_callbacks.items.len <= 2,
                 }, .Empty),
             }, .Empty),
@@ -152,24 +152,25 @@ pub fn convertStmtsForChunkForDevServer(
     }
 }
 
-const bun = @import("bun");
-const Logger = bun.logger;
-const Loc = Logger.Loc;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-
-const std = @import("std");
-const js_ast = bun.js_ast;
-
-const JSAst = js_ast.BundledAst;
-const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
-const E = js_ast.E;
-const S = js_ast.S;
-const G = js_ast.G;
-const B = js_ast.B;
-const Binding = js_ast.Binding;
-
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
+
+const bun = @import("bun");
+const std = @import("std");
+
+const js_ast = bun.ast;
+const B = js_ast.B;
+const Binding = js_ast.Binding;
+const E = js_ast.E;
+const Expr = js_ast.Expr;
+const G = js_ast.G;
+const JSAst = js_ast.BundledAst;
+const S = js_ast.S;
+const Stmt = js_ast.Stmt;
+
+const LinkerContext = bun.bundle_v2.LinkerContext;
 const StmtList = LinkerContext.StmtList;
+
+const Logger = bun.logger;
+const Loc = Logger.Loc;

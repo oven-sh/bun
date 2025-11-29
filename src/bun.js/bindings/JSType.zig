@@ -178,7 +178,7 @@ pub const JSType = enum(u8) {
     /// Compiled bytecode block ready for execution.
     CodeBlock = 18,
 
-    JSImmutableButterfly = 19,
+    JSCellButterfly = 19,
     JSSourceCode = 20,
     JSScriptFetcher = 21,
     JSScriptFetchParameters = 22,
@@ -484,13 +484,17 @@ pub const JSType = enum(u8) {
     /// ```
     JSPromise = 76,
 
+    /// Context object for Promise.all() operations.
+    /// Internal object used to track the state of Promise.all() resolution.
+    PromiseAllContext = 77,
+
     /// JavaScript Map object for key-value storage.
     /// ```js
     /// new Map()
     /// map.set(key, value)
     /// map.get(key)
     /// ```
-    Map = 77,
+    Map = 78,
 
     /// JavaScript Set object for unique value storage.
     /// ```js
@@ -498,34 +502,34 @@ pub const JSType = enum(u8) {
     /// set.add(value)
     /// set.has(value)
     /// ```
-    Set = 78,
+    Set = 79,
 
     /// WeakMap for weak key-value references.
     /// ```js
     /// new WeakMap()
     /// weakMap.set(object, value)
     /// ```
-    WeakMap = 79,
+    WeakMap = 80,
 
     /// WeakSet for weak value references.
     /// ```js
     /// new WeakSet()
     /// weakSet.add(object)
     /// ```
-    WeakSet = 80,
+    WeakSet = 81,
 
-    WebAssemblyModule = 81,
-    WebAssemblyInstance = 82,
-    WebAssemblyGCObject = 83,
+    WebAssemblyModule = 82,
+    WebAssemblyInstance = 83,
+    WebAssemblyGCObject = 84,
 
     /// Boxed String object.
     /// ```js
     /// new String("hello")
     /// ```
-    StringObject = 84,
+    StringObject = 85,
 
-    DerivedStringObject = 85,
-    InternalFieldTuple = 86,
+    DerivedStringObject = 86,
+    InternalFieldTuple = 87,
 
     MaxJS = 0b11111111,
     Event = 0b11101111,
@@ -569,6 +573,7 @@ pub const JSType = enum(u8) {
             .Map,
             .MapIterator,
             .JSPromise,
+            .PromiseAllContext,
             .Set,
             .SetIterator,
             .IteratorHelper,
@@ -648,22 +653,22 @@ pub const JSType = enum(u8) {
         };
     }
 
-    pub fn toC(this: JSType) C_API.JSTypedArrayType {
+    pub fn toTypedArrayType(this: JSType) bun.jsc.ArrayBuffer.TypedArrayType {
         return switch (this) {
-            .Int8Array => .kJSTypedArrayTypeInt8Array,
-            .Int16Array => .kJSTypedArrayTypeInt16Array,
-            .Int32Array => .kJSTypedArrayTypeInt32Array,
-            .Uint8Array => .kJSTypedArrayTypeUint8Array,
-            .Uint8ClampedArray => .kJSTypedArrayTypeUint8ClampedArray,
-            .Uint16Array => .kJSTypedArrayTypeUint16Array,
-            .Uint32Array => .kJSTypedArrayTypeUint32Array,
-            .Float32Array => .kJSTypedArrayTypeFloat32Array,
-            .Float64Array => .kJSTypedArrayTypeFloat64Array,
-            .ArrayBuffer => .kJSTypedArrayTypeArrayBuffer,
-            .BigInt64Array => .kJSTypedArrayTypeBigInt64Array,
-            .BigUint64Array => .kJSTypedArrayTypeBigUint64Array,
-            // .DataView => .kJSTypedArrayTypeDataView,
-            else => .kJSTypedArrayTypeNone,
+            .Int8Array => .TypeInt8,
+            .Int16Array => .TypeInt16,
+            .Int32Array => .TypeInt32,
+            .Uint8Array => .TypeUint8,
+            .Uint8ClampedArray => .TypeUint8Clamped,
+            .Uint16Array => .TypeUint16,
+            .Uint32Array => .TypeUint32,
+            .Float16Array => .TypeFloat16,
+            .Float32Array => .TypeFloat32,
+            .Float64Array => .TypeFloat64,
+            .BigInt64Array => .TypeBigInt64,
+            .BigUint64Array => .TypeBigUint64,
+            .DataView => .TypeDataView,
+            else => .TypeNone,
         };
     }
 
@@ -681,7 +686,7 @@ pub const JSType = enum(u8) {
             .UnlinkedEvalCodeBlock,
             .UnlinkedFunctionCodeBlock,
             .CodeBlock,
-            .JSImmutableButterfly,
+            .JSCellButterfly,
             .JSSourceCode,
             .JSScriptFetcher,
             .JSScriptFetchParameters,
@@ -797,4 +802,3 @@ pub const JSType = enum(u8) {
 };
 
 const bun = @import("bun");
-const C_API = bun.JSC.C;

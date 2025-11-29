@@ -18,7 +18,7 @@ using namespace WebCore;
 /**
   ServerRouteList holds all the callbacks used by routes in Bun.serve()
 
-  The easier approach would be an std.ArrayList of JSC.Strong in Zig, but that
+  The easier approach would be an std.array_list.Managed of JSC.Strong in Zig, but that
   would mean that now we're holding a Strong reference for every single
   callback. This would show up in profiling, and it's a lot of strong
   references. We could use a JSArray instead, but that would incur unnecessary
@@ -244,12 +244,8 @@ JSValue ServerRouteList::callRoute(Zig::GlobalObject* globalObject, uint32_t ind
 
     auto* params = paramsObjectForRoute(vm, globalObject, index, req);
 
-    JSBunRequest* request = JSBunRequest::create(
-        vm,
-        structure,
-        requestPtr,
-        params);
-    ASSERT(!scope.exception());
+    JSBunRequest* request = JSBunRequest::create(vm, structure, requestPtr, params);
+    scope.assertNoException();
     *requestObject = JSValue::encode(request);
 
     JSValue callback = m_routes.at(index).get();
@@ -259,7 +255,9 @@ JSValue ServerRouteList::callRoute(Zig::GlobalObject* globalObject, uint32_t ind
     args.append(request);
     args.append(serverValue);
 
-    return AsyncContextFrame::call(globalObject, callback, serverValue, args);
+    auto result = AsyncContextFrame::call(globalObject, callback, serverValue, args);
+    RETURN_IF_EXCEPTION(scope, {});
+    return result;
 }
 
 extern "C" JSC::EncodedJSValue Bun__ServerRouteList__callRoute(

@@ -1,11 +1,11 @@
-// Bun Snapshot v1, https://goo.gl/fbAQLP
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
 exports[`should report error on invalid format for package.json 1`] = `
 "1 | foo
     ^
 error: Unexpected foo
     at [dir]/package.json:1:1
-ParserError parsing package.json in "[dir]/"
+ParserError: failed to parse '[dir]/package.json'
 "
 `;
 
@@ -33,23 +33,4 @@ error: "workspaces.packages" expects an array of strings, e.g.
 "
 `;
 
-exports[`should handle modified git resolutions in bun.lock 1`] = `"{"lockfileVersion":0,"workspaces":{"":{"dependencies":{"jquery":"3.7.1"}}},"packages":{"jquery":["jquery@git+ssh://git@github.com/dylan-conway/install-test-8.git#3a1288830817d13da39e9231302261896f8721ea",{},"3a1288830817d13da39e9231302261896f8721ea"]}}"`;
-
-exports[`should read install.saveTextLockfile from bunfig.toml 1`] = `
-"{
-  "lockfileVersion": 1,
-  "workspaces": {
-    "": {
-      "name": "foo",
-    },
-    "packages/pkg1": {
-      "name": "pkg-one",
-      "version": "1.0.0",
-    },
-  },
-  "packages": {
-    "pkg-one": ["pkg-one@workspace:packages/pkg1"],
-  }
-}
-"
-`;
+exports[`should handle modified git resolutions in bun.lock 1`] = `"{"lockfileVersion":0,"configVersion":1,"workspaces":{"":{"dependencies":{"jquery":"3.7.1"}}},"packages":{"jquery":["jquery@git+ssh://git@github.com/dylan-conway/install-test-8.git#3a1288830817d13da39e9231302261896f8721ea",{},"3a1288830817d13da39e9231302261896f8721ea"]}}"`;

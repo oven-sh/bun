@@ -1,8 +1,73 @@
 export {};
 
+/**
+ * This is like a BodyMixin, but exists to more things
+ * (e.g. Blob, ReadableStream, Response, etc.)
+ *
+ * Notably, this doesn't have a `blob()` because it's the lowest
+ * common denominator of these objects. A `Blob` in Bun does not
+ * have a `.blob()` method.
+ */
+interface BunConsumerConvenienceMethods {
+  /**
+   * Consume as text
+   */
+  text(): Promise<string>;
+
+  /**
+   * Consume as a Uint8Array, backed by an ArrayBuffer
+   */
+  bytes(): Promise<Uint8Array<ArrayBuffer>>;
+
+  /**
+   * Consume as JSON
+   */
+  json(): Promise<any>;
+}
+
+declare module "stream/web" {
+  interface ReadableStream extends BunConsumerConvenienceMethods {
+    /**
+     * Consume as a Blob
+     */
+    blob(): Promise<Blob>;
+  }
+}
+
+declare module "buffer" {
+  interface Blob extends BunConsumerConvenienceMethods {
+    // We have to specify bytes again even though it comes from
+    // BunConsumerConvenienceMethods, because inheritance in TypeScript is
+    // slightly different from just "copying in the methods" (the difference is
+    // related to how type parameters are resolved)
+    bytes(): Promise<Uint8Array<ArrayBuffer>>;
+
+    /**
+     * Consume the blob as a FormData instance
+     */
+    formData(): Promise<FormData>;
+
+    /**
+     * Consume the blob as an ArrayBuffer
+     */
+    arrayBuffer(): Promise<ArrayBuffer>;
+
+    /**
+     * Returns a readable stream of the blob's contents
+     */
+    stream(): ReadableStream<Uint8Array<ArrayBuffer>>;
+  }
+}
+
+declare module "url" {
+  interface URLSearchParams {
+    toJSON(): Record<string, string>;
+  }
+}
+
 declare global {
   namespace NodeJS {
-    interface ProcessEnv extends Bun.Env, ImportMetaEnv {}
+    interface ProcessEnv extends Bun.Env {}
 
     interface Process {
       readonly version: string;
@@ -143,6 +208,96 @@ declare global {
         UV_ESOCKTNOSUPPORT: number;
         UV_ENODATA: number;
         UV_EUNATCH: number;
+      };
+      binding(m: "http_parser"): {
+        methods: [
+          "DELETE",
+          "GET",
+          "HEAD",
+          "POST",
+          "PUT",
+          "CONNECT",
+          "OPTIONS",
+          "TRACE",
+          "COPY",
+          "LOCK",
+          "MKCOL",
+          "MOVE",
+          "PROPFIND",
+          "PROPPATCH",
+          "SEARCH",
+          "UNLOCK",
+          "BIND",
+          "REBIND",
+          "UNBIND",
+          "ACL",
+          "REPORT",
+          "MKACTIVITY",
+          "CHECKOUT",
+          "MERGE",
+          "M - SEARCH",
+          "NOTIFY",
+          "SUBSCRIBE",
+          "UNSUBSCRIBE",
+          "PATCH",
+          "PURGE",
+          "MKCALENDAR",
+          "LINK",
+          "UNLINK",
+          "SOURCE",
+          "QUERY",
+        ];
+        allMethods: [
+          "DELETE",
+          "GET",
+          "HEAD",
+          "POST",
+          "PUT",
+          "CONNECT",
+          "OPTIONS",
+          "TRACE",
+          "COPY",
+          "LOCK",
+          "MKCOL",
+          "MOVE",
+          "PROPFIND",
+          "PROPPATCH",
+          "SEARCH",
+          "UNLOCK",
+          "BIND",
+          "REBIND",
+          "UNBIND",
+          "ACL",
+          "REPORT",
+          "MKACTIVITY",
+          "CHECKOUT",
+          "MERGE",
+          "M - SEARCH",
+          "NOTIFY",
+          "SUBSCRIBE",
+          "UNSUBSCRIBE",
+          "PATCH",
+          "PURGE",
+          "MKCALENDAR",
+          "LINK",
+          "UNLINK",
+          "SOURCE",
+          "PRI",
+          "DESCRIBE",
+          "ANNOUNCE",
+          "SETUP",
+          "PLAY",
+          "PAUSE",
+          "TEARDOWN",
+          "GET_PARAMETER",
+          "SET_PARAMETER",
+          "REDIRECT",
+          "RECORD",
+          "FLUSH",
+          "QUERY",
+        ];
+        HTTPParser: unknown;
+        ConnectionsList: unknown;
       };
       binding(m: string): object;
     }

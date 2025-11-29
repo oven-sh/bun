@@ -56,7 +56,6 @@ server.on('listening', common.mustCall(() => {
 
   c.on('connect', () => {
     c.write('GET / HTTP/1.0\r\n' +
-            'Host: localhost\r\n' +
             'Connection: Keep-Alive\r\n\r\n');
   });
 

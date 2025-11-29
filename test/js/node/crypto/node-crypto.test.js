@@ -255,7 +255,6 @@ describe("createHash", () => {
   };
 
   const unsupported = [
-    "blake2s256",
     "id-rsassa-pkcs1-v1_5-with-sha3-224",
     "id-rsassa-pkcs1-v1_5-with-sha3-256",
     "id-rsassa-pkcs1-v1_5-with-sha3-384",
@@ -265,16 +264,11 @@ describe("createHash", () => {
     "ripemd160withrsa",
     "rsa-md5",
     "rsa-ripemd160",
-    "rsa-sha1",
     "rsa-sha1-2",
-    "rsa-sha224",
-    "rsa-sha256",
     "rsa-sha3-224",
     "rsa-sha3-256",
     "rsa-sha3-384",
     "rsa-sha3-512",
-    "rsa-sha384",
-    "rsa-sha512",
     "rsa-sha512/224",
     "rsa-sha512/256",
     "rsa-sm3",
@@ -294,13 +288,14 @@ describe("createHash", () => {
   for (const name_ in nodeValues) {
     const name = name_.toLowerCase();
     const is_unsupported = unsupported.includes(name);
+    const v = nodeValues[name] || nodeValues[name_];
 
     it(`${name} - "Hello World"`, () => {
       if (is_unsupported) {
         expect(() => {
           const hash = crypto.createHash(name);
           hash.update("Hello World");
-          expect(hash.digest("hex")).toBe(nodeValues[name].value);
+          expect(hash.digest("hex")).toBe(v.value);
         }).toThrow(Error(`Digest method not supported`));
       } else {
         const hash = crypto.createHash(name);
@@ -309,8 +304,8 @@ describe("createHash", () => {
         // testing copy to be sure boringssl workarounds for blake2b256/512,
         // ripemd160, sha3-<n>, and shake128/256 are working.
         const copy = hash.copy();
-        expect(hash.digest("hex")).toBe(nodeValues[name].value);
-        expect(copy.digest("hex")).toBe(nodeValues[name].value);
+        expect(hash.digest("hex")).toBe(v.value);
+        expect(copy.digest("hex")).toBe(v.value);
 
         expect(() => {
           hash.copy();
@@ -326,12 +321,12 @@ describe("createHash", () => {
         expect(() => {
           const hash = crypto.createHash(name);
           hash.update("Hello World");
-          expect(hash.digest()).toEqual(Buffer.from(nodeValues[name].value, "hex"));
+          expect(hash.digest()).toEqual(Buffer.from(v.value, "hex"));
         }).toThrow(Error(`Digest method not supported`));
       } else {
         const hash = crypto.createHash(name);
         hash.update("Hello World");
-        expect(hash.digest()).toEqual(Buffer.from(nodeValues[name].value, "hex"));
+        expect(hash.digest()).toEqual(Buffer.from(v.value, "hex"));
       }
     });
   }

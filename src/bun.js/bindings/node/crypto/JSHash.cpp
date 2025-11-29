@@ -232,11 +232,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
 
     if (hash->m_zigHasher) {
         if (hash->m_digestBuffer.size() > 0 || len == 0) {
-            return StringBytes::encode(
-                lexicalGlobalObject,
-                scope,
-                hash->m_digestBuffer.span().subspan(0, hash->m_mdLen),
-                encoding);
+            RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, hash->m_digestBuffer.span().subspan(0, hash->m_mdLen), encoding));
         }
 
         uint32_t maxDigestLen = std::max((uint32_t)EVP_MAX_MD_SIZE, len);
@@ -250,13 +246,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         hash->m_finalized = finalized;
         hash->m_mdLen = std::min(len, totalDigestLen);
 
-        auto result = StringBytes::encode(
-            lexicalGlobalObject,
-            scope,
-            hash->m_digestBuffer.span().subspan(0, hash->m_mdLen),
-            encoding);
-
-        return result;
+        RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, hash->m_digestBuffer.span().subspan(0, hash->m_mdLen), encoding));
     }
 
     // Only compute the digest if it hasn't been cached yet
@@ -284,11 +274,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
     hash->m_finalized = finalized;
 
     // Return the digest with the requested encoding
-    return StringBytes::encode(
-        lexicalGlobalObject,
-        scope,
-        std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(hash->m_digest.data()), len },
-        encoding);
+    RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(hash->m_digest.data()), len }, encoding));
 }
 
 JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -309,8 +295,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
 
         auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
         RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            globalObject, newTarget.getObject(), functionGlobalObject->m_JSHashClassStructure.get(functionGlobalObject));
+        structure = InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->m_JSHashClassStructure.get(functionGlobalObject));
         RETURN_IF_EXCEPTION(scope, {});
     }
 

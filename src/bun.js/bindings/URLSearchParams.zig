@@ -1,26 +1,20 @@
-const bun = @import("bun");
-const JSC = bun.JSC;
-const JSGlobalObject = JSC.JSGlobalObject;
-const JSValue = JSC.JSValue;
-const ZigString = @import("./ZigString.zig").ZigString;
-
 pub const URLSearchParams = opaque {
     extern fn URLSearchParams__create(globalObject: *JSGlobalObject, *const ZigString) JSValue;
     pub fn create(globalObject: *JSGlobalObject, init: ZigString) JSValue {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         return URLSearchParams__create(globalObject, &init);
     }
 
     extern fn URLSearchParams__fromJS(JSValue) ?*URLSearchParams;
     pub fn fromJS(value: JSValue) ?*URLSearchParams {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         return URLSearchParams__fromJS(value);
     }
 
     extern fn URLSearchParams__toString(
         self: *URLSearchParams,
         ctx: *anyopaque,
-        callback: *const fn (ctx: *anyopaque, str: *const ZigString) callconv(.C) void,
+        callback: *const fn (ctx: *anyopaque, str: *const ZigString) callconv(.c) void,
     ) void;
 
     pub fn toString(
@@ -29,10 +23,10 @@ pub const URLSearchParams = opaque {
         ctx: *Ctx,
         comptime callback: *const fn (ctx: *Ctx, str: ZigString) void,
     ) void {
-        JSC.markBinding(@src());
+        jsc.markBinding(@src());
         const Wrap = struct {
             const cb_ = callback;
-            pub fn cb(c: *anyopaque, str: *const ZigString) callconv(.C) void {
+            pub fn cb(c: *anyopaque, str: *const ZigString) callconv(.c) void {
                 cb_(
                     bun.cast(*Ctx, c),
                     str.*,
@@ -43,3 +37,10 @@ pub const URLSearchParams = opaque {
         URLSearchParams__toString(self, ctx, Wrap.cb);
     }
 };
+
+const bun = @import("bun");
+const ZigString = @import("./ZigString.zig").ZigString;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

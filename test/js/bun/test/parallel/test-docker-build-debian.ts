@@ -6,7 +6,7 @@ if (isDockerEnabled()) {
   const docker = dockerExe()!;
   const cwd = resolve(import.meta.dir, "..", "..", "..", "..", "..", "dockerhub", "debian");
   const proc = Bun.spawn({
-    cmd: [docker, "build", "--no-cache", "--rm", "."],
+    cmd: [docker, "build", "--progress=plain", "--no-cache", "--rm", "."],
     stdio: ["ignore", "inherit", "inherit"],
     cwd,
     env: bunEnv,

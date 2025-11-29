@@ -17,20 +17,23 @@ jobs:
           - os: linux
             arch: x64
             runner: ubuntu-latest
+            bun-download-url: https://github.com/oven-sh/bun/releases/download/canary/bun-linux-x64.zip
           - os: linux
             arch: arm64
             runner: ubuntu-24.04-arm
+            bun-download-url: https://github.com/oven-sh/bun/releases/download/canary/bun-linux-aarch64.zip
           - os: macos
             arch: x64
             runner: macos-15-large
-            # bun.sh/download has issues with darwin/x64 canary, use direct GitHub URL
             bun-download-url: https://github.com/oven-sh/bun/releases/download/canary/bun-darwin-x64.zip
           - os: macos
             arch: arm64
             runner: macos-14
+            bun-download-url: https://github.com/oven-sh/bun/releases/download/canary/bun-darwin-aarch64.zip
           - os: windows
             arch: x64
             runner: windows-latest
+            bun-download-url: https://github.com/oven-sh/bun/releases/download/canary/bun-windows-x64.zip
 
     steps:
       - uses: actions/checkout@v4
@@ -38,9 +41,7 @@ jobs:
       - name: Setup Bun (Canary)
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: canary
           bun-download-url: ${{ matrix.bun-download-url }}
-          no-cache: true
 
       - name: Show Bun version
         run: bun --version

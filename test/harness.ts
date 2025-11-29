@@ -870,12 +870,6 @@ export function isDockerEnabled(): boolean {
     }
     return false;
   }
-
-  // TODO: investigate why Docker tests are not working on Linux arm64
-  if (isLinux && process.arch === "arm64") {
-    return false;
-  }
-
   try {
     const info = execSync(`"${dockerCLI}" info`, { stdio: ["ignore", "pipe", "inherit"] });
     return info.toString().indexOf("Server Version:") !== -1;
@@ -886,6 +880,7 @@ export function isDockerEnabled(): boolean {
     return false;
   }
 }
+
 export async function waitForPort(port: number, timeout: number = 60_000): Promise<void> {
   let deadline = Date.now() + Math.max(1, timeout);
   let error: unknown;

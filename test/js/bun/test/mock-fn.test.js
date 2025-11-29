@@ -952,5 +952,66 @@ describe("spyOn", () => {
     expect(fn).not.toBe(_original);
   });
 
+  if (isBun) {
+    // Test for spyOn with numeric/indexed property keys
+    test("spyOn works with indexed properties", () => {
+      function original() {
+        return 42;
+      }
+      const arr = [];
+      arr[0] = original;
+
+      const fn = spyOn(arr, 0);
+      expect(fn).toBe(arr[0]);
+      expect(fn).not.toHaveBeenCalled();
+      expect(arr[0]()).toBe(42);
+      expect(fn).toHaveBeenCalled();
+      expect(fn).toHaveBeenCalledTimes(1);
+      expect(fn.mock.calls).toHaveLength(1);
+
+      fn.mockRestore();
+      expect(arr[0]).toBe(original);
+      expect(arr[0]()).toBe(42);
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    test("spyOn works with indexed properties using string keys", () => {
+      function original() {
+        return 123;
+      }
+      const arr = [];
+      arr[0] = original;
+
+      // Using string "0" instead of number 0
+      const fn = spyOn(arr, "0");
+      expect(fn).toBe(arr[0]);
+      expect(arr[0]()).toBe(123);
+      expect(fn).toHaveBeenCalled();
+
+      fn.mockRestore();
+      expect(arr[0]).toBe(original);
+    });
+
+    test("spyOn works with indexed properties using BigInt keys", () => {
+      function original() {
+        return 456;
+      }
+      const arr = [];
+      arr[14] = original;
+
+      // Using BigInt 14n as property key
+      const fn = spyOn(arr, 14n);
+      expect(fn).toBe(arr[14]);
+      expect(arr[14]()).toBe(456);
+      expect(fn).toHaveBeenCalled();
+      expect(fn).toHaveBeenCalledTimes(1);
+
+      fn.mockRestore();
+      expect(arr[14]).toBe(original);
+      expect(arr[14]()).toBe(456);
+      expect(fn).not.toHaveBeenCalled();
+    });
+  }
+
   // spyOn does not work with getters/setters yet.
 });

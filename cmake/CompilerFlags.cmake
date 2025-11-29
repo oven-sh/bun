@@ -51,6 +51,23 @@ if(ENABLE_ASAN)
   )
 endif()
 
+if(ENABLE_FUZZILLI)
+  register_compiler_flags(
+    DESCRIPTION "Enable coverage instrumentation for fuzzing"
+    -fsanitize-coverage=trace-pc-guard
+  )
+
+  register_linker_flags(
+    DESCRIPTION "Link coverage instrumentation"
+    -fsanitize-coverage=trace-pc-guard
+  )
+
+  register_compiler_flags(
+    DESCRIPTION "Enable fuzzilli-specific code"
+    -DFUZZILLI_ENABLED
+  )
+endif()
+
 # --- Optimization level ---
 if(DEBUG)
   register_compiler_flags(
@@ -215,46 +232,6 @@ if(ENABLE_ASSERTIONS)
     DESCRIPTION "Do not eliminate null-pointer checks"
     -fno-delete-null-pointer-checks
   )
-
-  register_compiler_definitions(
-    DESCRIPTION "Enable libc++ assertions"
-    _LIBCPP_ENABLE_ASSERTIONS=1
-    _LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE ${RELEASE}
-    _LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG ${DEBUG}
-  )
-
-  # Nix glibc already sets _FORTIFY_SOURCE, don't override it
-  if(NOT DEFINED ENV{NIX_CC})
-    register_compiler_definitions(
-      DESCRIPTION "Enable fortified sources (Release only)"
-      _FORTIFY_SOURCE=3 ${RELEASE}
-    )
-  endif()
-
-  if(LINUX)
-    register_compiler_definitions(
-      DESCRIPTION "Enable glibc++ assertions"
-      _GLIBCXX_ASSERTIONS=1
-    )
-  endif()
-else()
-  register_compiler_definitions(
-    DESCRIPTION "Disable debug assertions"
-    NDEBUG=1
-  )
-
-  register_compiler_definitions(
-    DESCRIPTION "Disable libc++ assertions"
-    _LIBCPP_ENABLE_ASSERTIONS=0
-    _LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE
-  )
-
-  if(LINUX)
-    register_compiler_definitions(
-      DESCRIPTION "Disable glibc++ assertions"
-      _GLIBCXX_ASSERTIONS=0
-    )
-  endif()
 endif()
 
 # --- Diagnostics ---
@@ -303,14 +280,6 @@ if(UNIX AND CI)
     -ffile-prefix-map=${VENDOR_PATH}=vendor
     -ffile-prefix-map=${CACHE_PATH}=cache
   )
-endif()
-
-# --- Features ---
-
-# Valgrind cannot handle SSE4.2 instructions
-# This is needed for picohttpparser
-if(ENABLE_VALGRIND AND ARCH STREQUAL "x64")
-  register_compiler_definitions(__SSE4_2__=0)
 endif()
 
 # --- Other ---

@@ -1059,6 +1059,14 @@ it("new Response(stream).blob() (direct)", async () => {
   expect(await blob.text()).toBe('{"hello":true}');
 });
 
+it("Blob.stream(undefined) does not crash", () => {
+  var blob = new Blob(["abdefgh"]);
+  var stream = blob.stream(undefined);
+  expect(stream instanceof ReadableStream).toBeTrue();
+  stream = blob.stream(null);
+  expect(stream instanceof ReadableStream).toBeTrue();
+});
+
 it("Blob.stream() -> new Response(stream).text()", async () => {
   var blob = new Blob(["abdefgh"]);
   var stream = blob.stream();

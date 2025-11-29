@@ -1,40 +1,29 @@
-# `install` benchmark
+# Create T3 App
 
-Requires [`hyperfine`](https://github.com/sharkdp/hyperfine). The goal of this benchmark is to compare installation performance of Bun with other package managers _when caches are hot_.
+This is a [T3 Stack](https://create.t3.gg/) project bootstrapped with `create-t3-app`.
 
-### With lockfile, online mode
+## What's next? How do I make an app with this?
 
-To run the benchmark with the standard "install" command for each package manager:
+We try to keep this project as simple as possible, so you can start with just the scaffolding we set up for you, and add additional things later when they become necessary.
 
-```sh
-$ hyperfine --prepare 'rm -rf node_modules' --warmup 1 --runs 3 'bun install' 'pnpm install' 'yarn' 'npm install'
-```
+If you are not familiar with the different technologies used in this project, please refer to the respective docs. If you still are in the wind, please join our [Discord](https://t3.gg/discord) and ask for help.
 
-### With lockfile, offline mode
+- [Next.js](https://nextjs.org)
+- [NextAuth.js](https://next-auth.js.org)
+- [Prisma](https://prisma.io)
+- [Drizzle](https://orm.drizzle.team)
+- [Tailwind CSS](https://tailwindcss.com)
+- [tRPC](https://trpc.io)
 
-Even though all packages are cached, some tools may hit the npm API during the version resolution step. (This is not the same as re-downloading a package.) To entirely avoid network calls, the other package managers require `--prefer-offline/--offline` flag. To run the benchmark using "offline" mode:
+## Learn More
 
-```sh
-$ hyperfine --prepare 'rm -rf node_modules' --runs 1 'bun install' 'pnpm install --prefer-offline' 'yarn --offline' 'npm install --prefer-offline'
-```
+To learn more about the [T3 Stack](https://create.t3.gg/), take a look at the following resources:
 
-### Without lockfile, offline mode
+- [Documentation](https://create.t3.gg/)
+- [Learn the T3 Stack](https://create.t3.gg/en/faq#what-learning-resources-are-currently-available) — Check out these awesome tutorials
 
-To run the benchmark with offline mode but without lockfiles:
+You can check out the [create-t3-app GitHub repository](https://github.com/t3-oss/create-t3-app) — your feedback and contributions are welcome!
 
-```sh
-$ hyperfine --prepare 'rm -rf node_modules' --warmup 1 'rm bun.lock && bun install' 'rm pnpm-lock.yaml && pnpm install --prefer-offline' 'rm yarn.lock && yarn --offline' 'rm package-lock.json && npm install --prefer-offline'
-```
+## How do I deploy this?
 
-##
-
-To check that the app is working as expected:
-
-```
-$ bun run dev
-$ npm run dev
-$ yarn dev
-$ pnpm dev
-```
-
-Then visit [http://localhost:3000](http://localhost:3000).
+Follow our deployment guides for [Vercel](https://create.t3.gg/en/deployment/vercel), [Netlify](https://create.t3.gg/en/deployment/netlify) and [Docker](https://create.t3.gg/en/deployment/docker) for more information.

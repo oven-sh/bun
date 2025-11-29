@@ -127,6 +127,8 @@ if (NOT ENABLE_ASAN)
   set(ENABLE_ZIG_ASAN OFF)
 endif()
 
+optionx(ENABLE_FUZZILLI BOOL "If fuzzilli support should be enabled" DEFAULT OFF)
+
 if(RELEASE AND LINUX AND CI AND NOT ENABLE_ASSERTIONS AND NOT ENABLE_ASAN)
   set(DEFAULT_LTO ON)
 else()
@@ -138,11 +140,6 @@ optionx(ENABLE_LTO BOOL "If LTO (link-time optimization) should be used" DEFAULT
 if(ENABLE_ASAN AND ENABLE_LTO)
   message(WARNING "ASAN and LTO are not supported together, disabling LTO")
   setx(ENABLE_LTO OFF)
-endif()
-
-if(USE_VALGRIND AND NOT USE_BASELINE)
-  message(WARNING "If valgrind is enabled, baseline must also be enabled")
-  setx(USE_BASELINE ON)
 endif()
 
 if(BUILDKITE_COMMIT)

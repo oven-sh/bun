@@ -457,6 +457,10 @@ pub fn isTLS(this: *WindowsNamedPipe) bool {
     return this.flags.is_ssl;
 }
 
+pub fn loop(this: *WindowsNamedPipe) *bun.Async.Loop {
+    return this.vm.uvLoop();
+}
+
 pub fn encodeAndWrite(this: *WindowsNamedPipe, data: []const u8) i32 {
     log("encodeAndWrite (len: {})", .{data.len});
     if (this.wrapper) |*wrapper| {

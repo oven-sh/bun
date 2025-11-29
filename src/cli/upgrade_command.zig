@@ -39,7 +39,7 @@ pub const Version = struct {
         .mac => "darwin",
         .linux => "linux",
         .windows => "windows",
-        else => @compileError("Unsupported OS for Bun Upgrade"),
+        .wasm => @compileError("Unsupported OS for Bun Upgrade"),
     };
 
     pub const arch_label = if (Environment.isAarch64) "aarch64" else "x64";
@@ -311,7 +311,7 @@ pub const UpgradeCommand = struct {
 
     const manual_upgrade_command = switch (Environment.os) {
         .linux, .mac => "curl -fsSL https://bun.com/install | bash",
-        .windows => "powershell -c 'irm bun.com/install.ps1|iex'",
+        .windows => "powershell -c 'irm bun.sh/install.ps1|iex'",
         else => "(TODO: Install script for " ++ Environment.os.displayString() ++ ")",
     };
 
@@ -422,6 +422,7 @@ pub const UpgradeCommand = struct {
         {
             var refresher = Progress{};
             var progress = refresher.start("Downloading", version.size);
+            progress.unit = .bytes;
             refresher.refresh();
             var async_http = try ctx.allocator.create(HTTP.AsyncHTTP);
             var zip_file_buffer = try ctx.allocator.create(MutableString);
@@ -900,11 +901,11 @@ pub const upgrade_js_bindings = struct {
     var tempdir_fd: ?bun.FileDescriptor = null;
 
     pub fn generate(global: *jsc.JSGlobalObject) jsc.JSValue {
-        const obj = JSValue.createEmptyObject(global, 3);
+        const obj = JSValue.createEmptyObject(global, 2);
         const open = ZigString.static("openTempDirWithoutSharingDelete");
-        obj.put(global, open, jsc.createCallback(global, open, 1, jsOpenTempDirWithoutSharingDelete));
+        obj.put(global, open, jsc.JSFunction.create(global, "openTempDirWithoutSharingDelete", jsOpenTempDirWithoutSharingDelete, 1, .{}));
         const close = ZigString.static("closeTempDirHandle");
-        obj.put(global, close, jsc.createCallback(global, close, 1, jsCloseTempDirHandle));
+        obj.put(global, close, jsc.JSFunction.create(global, "closeTempDirHandle", jsCloseTempDirHandle, 1, .{}));
         return obj;
     }
 

@@ -1638,7 +1638,7 @@ pub const PackCommand = struct {
                 progress = .{};
                 progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
                 node = progress.start("", pack_queue.count() + bundled_pack_queue.count() + 1);
-                node.unit = " files";
+                node.unit = .files;
             }
             defer if (log_level.showProgress()) node.end();
 
@@ -2721,7 +2721,7 @@ pub const bindings = struct {
         const entries = try JSArray.createEmpty(global, entries_info.items.len);
 
         for (entries_info.items, 0..) |entry, i| {
-            const obj = JSValue.createEmptyObject(global, 4);
+            const obj = JSValue.createEmptyObject(global, 0);
             obj.put(global, "pathname", entry.pathname.toJS(global));
             obj.put(global, "kind", entry.kind.toJS(global));
             obj.put(global, "perm", JSValue.jsNumber(entry.perm));
@@ -2731,7 +2731,7 @@ pub const bindings = struct {
             try entries.putIndex(global, @intCast(i), obj);
         }
 
-        const result = JSValue.createEmptyObject(global, 2);
+        const result = JSValue.createEmptyObject(global, 4);
         result.put(global, "entries", entries);
         result.put(global, "size", JSValue.jsNumber(tarball.len));
         result.put(global, "shasum", shasum_str.toJS(global));

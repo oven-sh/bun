@@ -90,7 +90,7 @@ The order of the `--target` flag does not matter, as long as they're delimited b
 | bun-linux-x64         | Linux            | x64          | ✅     | ✅       | glibc |
 | bun-linux-arm64       | Linux            | arm64        | ✅     | N/A      | glibc |
 | bun-windows-x64       | Windows          | x64          | ✅     | ✅       | -     |
-| ~~bun-windows-arm64~~ | Windows          | arm64        | ❌     | ❌       | -     |
+| ~~bun-windows-arm64~~ | ~~Windows~~      | ~~arm64~~    | ❌     | ❌       | -     |
 | bun-darwin-x64        | macOS            | x64          | ✅     | ✅       | -     |
 | bun-darwin-arm64      | macOS            | arm64        | ✅     | N/A      | -     |
 | bun-linux-x64-musl    | Linux            | x64          | ✅     | ✅       | musl  |
@@ -118,7 +118,7 @@ These constants are embedded directly into your compiled binary at build time, p
 
 <Note>
   For comprehensive examples and advanced patterns, see the [Build-time constants
-  guide](https://bun.com/guides/runtime/build-time-constants).
+  guide](/guides/runtime/build-time-constants).
 </Note>
 
 ---
@@ -154,8 +154,8 @@ Using bytecode compilation, `tsc` starts 2x faster:
 Bytecode compilation moves parsing overhead for large input files from runtime to bundle time. Your app starts faster, in exchange for making the `bun build` command a little slower. It doesn't obscure source code.
 
 <Warning>
-  **Experimental:** Bytecode compilation is an experimental feature introduced in Bun v1.1.30. Only `cjs` format is
-  supported (which means no top-level-await). Let us know if you run into any issues!
+  **Experimental:** Bytecode compilation is an experimental feature. Only `cjs` format is supported (which means no
+  top-level-await). Let us know if you run into any issues!
 </Warning>
 
 ### What do these flags do?
@@ -179,6 +179,35 @@ bun build --compile --compile-exec-argv="--smol --user-agent=MyBot" ./app.ts --o
 ```ts app.ts icon="/icons/typescript.svg"
 // In the compiled app
 console.log(process.execArgv); // ["--smol", "--user-agent=MyBot"]
+```
+
+---
+
+## Disabling automatic config loading
+
+By default, standalone executables look for `.env` and `bunfig.toml` files in the directory where the executable is run. You can disable this behavior at build time for deterministic execution regardless of the user's working directory.
+
+```bash icon="terminal" terminal
+# Disable .env loading
+bun build --compile --no-compile-autoload-dotenv ./app.ts --outfile myapp
+
+# Disable bunfig.toml loading
+bun build --compile --no-compile-autoload-bunfig ./app.ts --outfile myapp
+
+# Disable both
+bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig ./app.ts --outfile myapp
+```
+
+You can also configure this via the JavaScript API:
+
+```ts
+await Bun.build({
+  entrypoints: ["./app.ts"],
+  compile: {
+    autoloadDotenv: false, // Disable .env loading
+    autoloadBunfig: false, // Disable bunfig.toml loading
+  },
+});
 ```
 
 ---
@@ -216,7 +245,7 @@ However, with the `BUN_BE_BUN=1` environment variable, it acts just like the `bu
 
 ```bash icon="terminal" terminal
 # With the env var, the executable acts like the `bun` CLI
-bun_BE_BUN=1 ./such-bun install
+BUN_BE_BUN=1 ./such-bun install
 ```
 
 ```txt
@@ -259,12 +288,12 @@ console.log(`Server running at http://localhost:${server.port}`);
   </head>
   <body>
     <h1>Hello World</h1>
-    <script src="./app.js"></script>
+    <script src="./app.ts"></script>
   </body>
 </html>
 ```
 
-```ts app.js icon="file-code"
+```ts app.ts icon="file-code"
 console.log("Hello from the client!");
 ```
 
@@ -320,7 +349,7 @@ new Worker(new URL("./my-worker.ts", import.meta.url));
 new Worker(new URL("./my-worker.ts", import.meta.url).href);
 ```
 
-As of Bun v1.1.25, when you add multiple entrypoints to a standalone executable, they will be bundled separately into the executable.
+When you add multiple entrypoints to a standalone executable, they will be bundled separately into the executable.
 
 In the future, we may automatically detect usages of statically-known paths in `new Worker(path)` and then bundle those into the executable, but for now, you'll need to add it to the shell command manually like the above example.
 
@@ -395,7 +424,7 @@ This database is read-write, but all changes are lost when the executable exits 
 
 ### Embed N-API Addons
 
-As of Bun v1.0.23, you can embed `.node` files into executables.
+You can embed `.node` files into executables.
 
 ```ts index.ts icon="/icons/typescript.svg"
 const addon = require("./addon.node");
@@ -524,12 +553,46 @@ codesign -vvv --verify ./myapp
 
 ---
 
+## Code splitting
+
+Standalone executables support code splitting. Use `--compile` with `--splitting` to create an executable that loads code-split chunks at runtime.
+
+```bash
+bun build --compile --splitting ./src/entry.ts --outdir ./build
+```
+
+<CodeGroup>
+
+```ts src/entry.ts icon="/icons/typescript.svg"
+console.log("Entrypoint loaded");
+const lazy = await import("./lazy.ts");
+lazy.hello();
+```
+
+```ts src/lazy.ts icon="/icons/typescript.svg"
+export function hello() {
+  console.log("Lazy module loaded");
+}
+```
+
+</CodeGroup>
+
+```bash terminal icon="terminal"
+./build/entry
+```
+
+```txt
+Entrypoint loaded
+Lazy module loaded
+```
+
+---
+
 ## Unsupported CLI arguments
 
 Currently, the `--compile` flag can only accept a single entrypoint at a time and does not support the following flags:
 
-- `--outdir` — use `outfile` instead.
-- `--splitting`
+- `--outdir` — use `outfile` instead (except when using with `--splitting`).
 - `--public-path`
 - `--target=node` or `--target=browser`
 - `--no-bundle` - we always bundle everything into the executable.

@@ -378,5 +378,9 @@
   "workspaces": [
     "../bun-debug-adapter-protocol",
     "../bun-inspector-protocol"
-  ]
+  ],
+  "overrides": {
+    "glob": "^13.0.0",
+    "ws": "^8.18.3"
+  }
 }

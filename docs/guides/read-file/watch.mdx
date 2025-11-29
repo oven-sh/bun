@@ -23,8 +23,8 @@ To listen to changes in subdirectories, pass the `recursive: true` option to `fs
 ```ts
 import { watch } from "fs";
 
-const watcher = watch(import.meta.dir, { recursive: true }, (event, filename) => {
-  console.log(`Detected ${event} in ${filename}`);
+const watcher = watch(import.meta.dir, { recursive: true }, (event, relativePath) => {
+  console.log(`Detected ${event} in ${relativePath}`);
 });
 ```
 
@@ -63,4 +63,4 @@ process.on("SIGINT", () => {
 
 ---
 
-Refer to [API > Binary data > Typed arrays](https://bun.com/docs/api/binary-data#typedarray) for more information on working with `Uint8Array` and other binary data formats in Bun.
+Refer to [API > Binary data > Typed arrays](/runtime/binary-data#typedarray) for more information on working with `Uint8Array` and other binary data formats in Bun.

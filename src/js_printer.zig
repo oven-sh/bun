@@ -831,14 +831,14 @@ fn NewPrinter(
 
         fn fmt(p: *Printer, comptime str: string, args: anytype) !void {
             const len = @call(
-                .always_inline,
+                bun.callmod_inline,
                 std.fmt.count,
                 .{ str, args },
             );
             var ptr = try p.writer.reserve(len);
 
             const written = @call(
-                .always_inline,
+                bun.callmod_inline,
                 std.fmt.bufPrint,
                 .{ ptr[0..len], str, args },
             ) catch unreachable;

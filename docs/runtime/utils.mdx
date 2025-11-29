@@ -9,7 +9,7 @@ A `string` containing the version of the `bun` CLI that is currently running.
 
 ```ts terminal icon="terminal"
 Bun.version;
-// => "0.6.4"
+// => "1.3.3"
 ```
 
 ## `Bun.revision`
@@ -233,9 +233,9 @@ Bun.openInEditor(currentFile);
 
 You can override this via the `debug.editor` setting in your [`bunfig.toml`](/runtime/bunfig).
 
-```toml bunfig.toml
-[debug] // [!code ++]
-editor = "code" // [!code ++]
+```toml bunfig.toml icon="settings"
+[debug] # [!code ++]
+editor = "code" # [!code ++]
 ```
 
 Or specify an editor with the `editor` param. You can also specify a line and column number.

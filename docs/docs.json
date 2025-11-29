@@ -188,7 +188,7 @@
           {
             "group": "Publishing & Analysis",
             "icon": "upload",
-            "pages": ["/pm/cli/publish", "/pm/cli/outdated", "/pm/cli/why", "/pm/cli/audit"]
+            "pages": ["/pm/cli/publish", "/pm/cli/outdated", "/pm/cli/why", "/pm/cli/audit", "/pm/cli/info"]
           },
           {
             "group": "Workspace Management",
@@ -354,7 +354,7 @@
               "/guides/ecosystem/discordjs",
               "/guides/ecosystem/docker",
               "/guides/ecosystem/drizzle",
-              "/guides/ecosystem/edgedb",
+              "/guides/ecosystem/gel",
               "/guides/ecosystem/elysia",
               "/guides/ecosystem/express",
               "/guides/ecosystem/hono",
@@ -464,6 +464,7 @@
               "/guides/test/update-snapshots",
               "/guides/test/coverage",
               "/guides/test/coverage-threshold",
+              "/guides/test/concurrent-test-glob",
               "/guides/test/skip-tests",
               "/guides/test/todo-tests",
               "/guides/test/timeout",

@@ -150,7 +150,7 @@ pub extern "kernel32" fn SetCurrentDirectoryW(
 ) callconv(.winapi) win32.BOOL;
 pub const SetCurrentDirectory = SetCurrentDirectoryW;
 pub extern "ntdll" fn RtlNtStatusToDosError(win32.NTSTATUS) callconv(.winapi) Win32Error;
-
+pub extern "advapi32" fn SaferiIsExecutableFileType(szFullPathname: win32.LPCWSTR, bFromShellExecute: win32.BOOLEAN) callconv(.winapi) win32.BOOL;
 // This was originally copied from Zig's standard library
 /// Codes are from https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/18d8fbe8-a967-4f1c-ae50-99ca8e491d2d
 pub const Win32Error = enum(u16) {
@@ -3957,7 +3957,7 @@ pub fn spawnWatcherChild(
 /// broke when I just used it. Not sure. ... but this works!
 fn @"windows process.dlopen"(str: *bun.String) callconv(.c) ?*anyopaque {
     if (comptime !bun.Environment.isWindows) {
-        @compileError(unreachable);
+        @compileError("unreachable");
     }
 
     var buf: bun.WPathBuffer = undefined;

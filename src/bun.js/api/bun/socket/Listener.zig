@@ -234,6 +234,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
     }
 
     const hostname = bun.handleOom(hostname_or_unix.intoOwnedSlice(bun.default_allocator));
+    errdefer bun.default_allocator.free(hostname);
     var connection: Listener.UnixOrHost = if (port) |port_| .{
         .host = .{
             .host = hostname,
@@ -521,6 +522,19 @@ pub fn getPort(this: *Listener, _: *jsc.JSGlobalObject) JSValue {
         return .js_undefined;
     }
     return JSValue.jsNumber(this.connection.host.port);
+}
+
+pub fn getFD(this: *Listener, _: *jsc.JSGlobalObject) JSValue {
+    switch (this.listener) {
+        .uws => |uws_listener| {
+            switch (this.ssl) {
+                inline else => |ssl| {
+                    return uws_listener.socket(ssl).fd().toJSWithoutMakingLibUVOwned();
+                },
+            }
+        },
+        else => return JSValue.jsNumber(-1),
+    }
 }
 
 pub fn ref(this: *Listener, globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!JSValue {

@@ -194,6 +194,7 @@ test/js/node/test/parallel/test-http-server-stale-close.js
 test/js/third_party/comlink/comlink.test.ts
 test/regression/issue/22635/22635.test.ts
 test/js/node/test/parallel/test-child-process-silent.js
+test/js/node/test/parallel/test-http-url.parse-https.request.js
 
 
 # Bun::JSNodeHTTPServerSocket::clearSocketData
@@ -392,6 +393,7 @@ test/napi/node-napi-tests/test/js-native-api/6_object_wrap/do.test.ts
 
 test/bake/dev/production.test.ts
 test/js/third_party/pg-gateway/pglite.test.ts
+test/js/bun/test/parallel/test-integration-rspack.ts
 
 test/js/web/websocket/websocket-subprotocol-strict.test.ts
 test/js/node/net/node-net-server.test.ts

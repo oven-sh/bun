@@ -156,37 +156,33 @@ pub fn callback(task: *ThreadPool.Task) void {
             const name = this.request.git_clone.name.slice();
             const url = this.request.git_clone.url.slice();
             var attempt: u8 = 1;
-            // Check for explicit SSH protocol or implicit SCP-style
-            const is_ssh_like = strings.hasPrefixComptime(url, "ssh://") or strings.hasPrefixComptime(url, "git@");
             const dir = brk: {
-                if (!is_ssh_like) {
-                    if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(
-                        manager.allocator,
-                        this.request.git_clone.env,
-                        &this.log,
-                        manager.getCacheDirectory(),
-                        this.id,
-                        name,
-                        https,
-                        attempt,
-                    ) catch |err| {
-                        // Exit early if git checked and could
-                        // not find the repository, skip ssh
-                        if (err == error.RepositoryNotFound) {
-                            this.err = err;
-                            this.status = Status.fail;
-                            this.data = .{ .git_clone = bun.invalid_fd };
-
-                            return;
-                        }
-
+                if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(
+                    manager.allocator,
+                    this.request.git_clone.env,
+                    &this.log,
+                    manager.getCacheDirectory(),
+                    this.id,
+                    name,
+                    https,
+                    attempt,
+                ) catch |err| {
+                    // Exit early if git checked and could
+                    // not find the repository, skip ssh
+                    if (err == error.RepositoryNotFound) {
                         this.err = err;
                         this.status = Status.fail;
                         this.data = .{ .git_clone = bun.invalid_fd };
-                        attempt += 1;
-                        break :brk null;
-                    };
-                }
+
+                        return;
+                    }
+
+                    this.err = err;
+                    this.status = Status.fail;
+                    this.data = .{ .git_clone = bun.invalid_fd };
+                    attempt += 1;
+                    break :brk null;
+                };
                 break :brk null;
             } orelse if (Repository.trySSH(url)) |ssh| Repository.download(
                 manager.allocator,

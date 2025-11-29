@@ -4714,62 +4714,6 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
-it("should skip HTTPS registry check for SCP-style git URLs", async () => {
-  const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
-  await writeFile(
-    join(package_dir, "package.json"),
-    JSON.stringify({
-      name: "foo",
-      version: "0.0.1",
-      dependencies: {
-        "uglify": "git@github.com:mishoo/UglifyJS.git",
-      },
-    }),
-  );
-  const { exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env: {
-      ...env,
-      GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
-    },
-  });
-  await exited;
-  expect(urls).toBeEmpty();
-});
-
-it("should skip HTTPS registry check for explicit ssh:// git URLs", async () => {
-  const urls: string[] = [];
-  setHandler(dummyRegistry(urls));
-  await writeFile(
-    join(package_dir, "package.json"),
-    JSON.stringify({
-      name: "foo",
-      version: "0.0.1",
-      dependencies: {
-        "uglify": "git+ssh://git@github.com/mishoo/UglifyJS.git",
-      },
-    }),
-  );
-  const { exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: package_dir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env: {
-      ...env,
-      GIT_SSH_COMMAND: "ssh -o BatchMode=yes",
-    },
-  });
-  await exited;
-  expect(urls).toBeEmpty();
-});
-
 it("should handle Git URL with committish in dependencies", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

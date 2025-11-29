@@ -1556,6 +1556,38 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         return gp1->target()->m_globalThis == gp2->target()->m_globalThis;
     }
     default: {
+        // Handle NumberObject and BooleanObject which don't have specific type enum values
+        JSObject* obj1 = jsDynamicCast<JSObject*>(c1);
+        JSObject* obj2 = jsDynamicCast<JSObject*>(c2);
+
+        if (obj1 && obj2) {
+            // Check for NumberObject
+            if (obj1->inherits<NumberObject>()) {
+                if (!obj2->inherits<NumberObject>()) {
+                    return false;
+                }
+
+                JSValue val1 = jsCast<JSWrapperObject*>(obj1)->internalValue();
+                JSValue val2 = jsCast<JSWrapperObject*>(obj2)->internalValue();
+                bool same = JSC::sameValue(globalObject, val1, val2);
+                RETURN_IF_EXCEPTION(scope, {});
+                return same;
+            }
+
+            // Check for BooleanObject
+            if (obj1->inherits<BooleanObject>()) {
+                if (!obj2->inherits<BooleanObject>()) {
+                    return false;
+                }
+
+                JSValue val1 = jsCast<JSWrapperObject*>(obj1)->internalValue();
+                JSValue val2 = jsCast<JSWrapperObject*>(obj2)->internalValue();
+                bool same = JSC::sameValue(globalObject, val1, val2);
+                RETURN_IF_EXCEPTION(scope, {});
+                return same;
+            }
+        }
+
         break;
     }
     }

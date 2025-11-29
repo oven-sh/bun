@@ -157,7 +157,8 @@ jobs:
                 const suites = Array.isArray(testsuites.testsuite) ? testsuites.testsuite : testsuites.testsuite ? [testsuites.testsuite] : [];
 
                 for (const suite of suites) {
-                  const file = suite.file || suite.name;
+                  // Normalize Windows backslashes to forward slashes
+                  const file = (suite.file || suite.name)?.replace(/\\/g, "/");
                   if (!file?.startsWith("test/")) continue;
 
                   const passed = parseInt(suite.tests || 0) - parseInt(suite.failures || 0) - parseInt(suite.skipped || 0);

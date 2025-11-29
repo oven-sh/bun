@@ -417,6 +417,7 @@ pub const Command = struct {
         filters: []const []const u8 = &.{},
         workspaces: bool = false,
         if_present: bool = false,
+        parallel: bool = false,
 
         preloads: []const string = &.{},
         has_loaded_global_config: bool = false,

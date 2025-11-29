@@ -1,0 +1,177 @@
+name: Test Modified Files (Canary)
+
+on:
+  pull_request:
+    paths:
+      - "test/**/*"
+
+jobs:
+  test-canary:
+    name: Test (${{ matrix.os }}-${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: x64
+            runner: ubuntu-latest
+          - os: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - os: macos
+            arch: x64
+            runner: macos-15-large
+          - os: macos
+            arch: arm64
+            runner: macos-14
+          - os: windows
+            arch: x64
+            runner: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun (Canary)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: canary
+
+      - name: Show Bun version
+        run: bun --version
+
+      - name: Install dependencies
+        run: |
+          bun install --frozen-lockfile
+          cd test && bun install --frozen-lockfile
+
+      - name: Get modified test files
+        id: get-tests
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          files=$(gh pr view ${{ github.event.pull_request.number }} --json files -q '.files[].path' | grep -E '^test/.*\.(test|spec)\.(ts|tsx|js|mjs|cjs)$' | tr '\n' ' ')
+          echo "files=$files" >> $GITHUB_OUTPUT
+          echo "Modified test files: $files"
+
+      - name: Run tests
+        if: steps.get-tests.outputs.files != ''
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          unset GITHUB_ACTIONS
+          unset CI
+          mkdir -p junit-results
+          TEST_FILES="${{ steps.get-tests.outputs.files }}"
+          echo "Running tests on: $TEST_FILES"
+
+          for file in $TEST_FILES; do
+            echo "Testing: $file"
+            sanitized=$(echo "$file" | tr '/' '_')
+            bun test --reporter=junit --reporter-outfile="junit-results/${sanitized}.xml" "$file" 2>&1 || true
+          done
+
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-results-${{ matrix.os }}-${{ matrix.arch }}
+          path: junit-results/
+          retention-days: 7
+
+  summary:
+    name: Test Summary
+    needs: test-canary
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: canary
+
+      - name: Download JUnit artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: junit-results-*
+          merge-multiple: false
+
+      - name: Generate Summary
+        run: |
+          bun add fast-xml-parser
+
+          {
+            echo "# Canary Bun Test Summary"
+            echo ""
+            echo "This workflow tests modified test files against **Bun Canary** to verify they fail without the PR's changes."
+            echo ""
+            echo "> **Note:** Test failures are expected - this workflow verifies that tests fail on stable/canary Bun without the PR's changes."
+            echo ""
+          } >> $GITHUB_STEP_SUMMARY
+
+          bun -e '
+            import { XMLParser } from "fast-xml-parser";
+            import { readFileSync, readdirSync, existsSync } from "fs";
+
+            const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "" });
+
+            // Find all junit results directories
+            const dirs = readdirSync(".").filter(d => d.startsWith("junit-results-"));
+            const byFile = {};
+
+            for (const dir of dirs) {
+              const platform = dir.replace("junit-results-", "");
+              if (!existsSync(dir)) continue;
+
+              // Each directory has multiple XML files (one per test file)
+              const xmlFiles = readdirSync(dir).filter(f => f.endsWith(".xml"));
+
+              for (const xmlFile of xmlFiles) {
+                const xmlPath = `${dir}/${xmlFile}`;
+                const content = readFileSync(xmlPath, "utf-8");
+                const parsed = parser.parse(content);
+                const testsuites = parsed.testsuites;
+                if (!testsuites) continue;
+
+                const suites = Array.isArray(testsuites.testsuite) ? testsuites.testsuite : testsuites.testsuite ? [testsuites.testsuite] : [];
+
+                for (const suite of suites) {
+                  const file = suite.file || suite.name;
+                  if (!file?.startsWith("test/")) continue;
+
+                  const testcases = Array.isArray(suite.testcase) ? suite.testcase : suite.testcase ? [suite.testcase] : [];
+                  const failures = testcases.filter(tc => tc.failure).map(tc => tc.name);
+                  const passed = parseInt(suite.tests || 0) - parseInt(suite.failures || 0) - parseInt(suite.skipped || 0);
+
+                  if (!byFile[file]) byFile[file] = [];
+                  byFile[file].push({ platform, passed, total: parseInt(suite.tests || 0), failures });
+                }
+              }
+            }
+
+            // Generate markdown
+            const lines = [];
+            for (const [file, platforms] of Object.entries(byFile)) {
+              lines.push(`## \`${file}\`\n`);
+
+              for (const p of platforms) {
+                const status = `${p.passed}/${p.total}`;
+
+                lines.push(`<details>`);
+                lines.push(`<summary><code>${p.platform}</code> (${status})</summary>\n`);
+
+                if (p.failures.length > 0) {
+                  lines.push(`**Failed tests:**`);
+                  for (const f of p.failures) lines.push(`- ${f}`);
+                } else {
+                  lines.push(`All tests passed.`);
+                }
+                lines.push(`\n</details>\n`);
+              }
+            }
+
+            console.log(lines.join("\n"));
+          ' >> $GITHUB_STEP_SUMMARY

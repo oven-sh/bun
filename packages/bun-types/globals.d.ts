@@ -71,6 +71,20 @@ declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
     prototype: ReadableStream;
     new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
     new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
+    // TODO: Remove when TypeScript's lib.dom.d.ts includes ReadableStream.from()
+    // Tracking: https://github.com/microsoft/TypeScript-DOM-lib-generator/issues/1691
+    /**
+     * Creates a ReadableStream wrapping the provided iterable or async iterable.
+     * @param asyncIterable An iterable or async iterable to wrap in a ReadableStream.
+     * @returns A ReadableStream that reads from the provided iterable.
+     */
+    from<R>(asyncIterable: AsyncIterable<R> | Iterable<R | Promise<R>>): ReadableStream<R>;
+    /**
+     * Creates a ReadableStream wrapping the provided iterable or async iterable.
+     * @param asyncIterable A ReadableStream to return as-is.
+     * @returns The same ReadableStream that was passed in.
+     */
+    from<R>(asyncIterable: ReadableStream<R>): ReadableStream<R>;
   }
 >;
 

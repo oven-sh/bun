@@ -10,9 +10,7 @@ for (let key in process.env) {
 
 for (let key in harness.bunEnv) {
   if (key === "TZ") continue;
-  if (harness.bunEnv[key] === undefined) {
-    continue;
-  }
+  if (harness.bunEnv[key] === undefined) continue;
   process.env[key] = harness.bunEnv[key] + "";
 }
 

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { Worker } from "node:worker_threads";
 
@@ -10,11 +10,7 @@ test("globalThis.onmessage should not prevent process exit", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("hello world\n");
   expect(stderr).toBe("");
@@ -38,11 +34,7 @@ test("globalThis.onmessage can be set to a function", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("function\n");
   expect(stderr).toBe("");
@@ -65,11 +57,7 @@ test("globalThis.onmessage can be set to null", async () => {
     stderr: "pipe",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toBe("null\n");
   expect(stderr).toBe("");
@@ -89,7 +77,7 @@ test("Workers with onmessage should still work properly", async () => {
   const worker = new Worker(String(dir) + "/worker.js");
   const { promise, resolve } = Promise.withResolvers();
 
-  worker.on("message", (msg) => {
+  worker.on("message", msg => {
     resolve(msg);
   });
 

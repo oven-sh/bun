@@ -24,7 +24,7 @@ jobs:
             bun-download-url: https://github.com/oven-sh/bun/releases/download/canary/bun-linux-aarch64.zip
           - os: macos
             arch: x64
-            runner: macos-13
+            runner: macos-15-intel
             bun-download-url: https://github.com/oven-sh/bun/releases/download/canary/bun-darwin-x64.zip
           - os: macos
             arch: arm64

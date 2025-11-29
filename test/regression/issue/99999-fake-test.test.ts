@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
 // This is a fake test to trigger the canary workflow - will be removed
 test("this should fail on canary", () => {

@@ -62,24 +62,35 @@ jobs:
         shell: bash
         run: |
           set +e
-          unset GITHUB_ACTIONS
-          unset CI
-          mkdir -p junit-results
+          export GITHUB_ACTIONS=""
+          export CI=""
+          mkdir -p test-results
           TEST_FILES="${{ steps.get-tests.outputs.files }}"
           echo "Running tests on: $TEST_FILES"
 
           for file in $TEST_FILES; do
             echo "Testing: $file"
             sanitized=$(echo "$file" | tr '/' '_')
-            bun test --reporter=junit --reporter-outfile="junit-results/${sanitized}.xml" "$file" 2>&1 || true
+            # Capture both stdout and JUnit XML
+            bun test --reporter=junit --reporter-outfile="test-results/${sanitized}.xml" "$file" 2>&1 | tee "test-results/${sanitized}.txt" || true
           done
 
-      - name: Upload JUnit results
+      - name: Create empty results if none
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p test-results
+          if [ -z "$(ls -A test-results 2>/dev/null)" ]; then
+            echo '<testsuites></testsuites>' > test-results/empty.xml
+            echo 'No tests ran' > test-results/empty.txt
+          fi
+
+      - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: junit-results-${{ matrix.os }}-${{ matrix.arch }}
-          path: junit-results/
+          name: test-results-${{ matrix.os }}-${{ matrix.arch }}
+          path: test-results/
           retention-days: 7
 
   summary:
@@ -93,10 +104,10 @@ jobs:
         with:
           bun-version: canary
 
-      - name: Download JUnit artifacts
+      - name: Download test results
         uses: actions/download-artifact@v4
         with:
-          pattern: junit-results-*
+          pattern: test-results-*
           merge-multiple: false
 
       - name: Generate Summary
@@ -118,19 +129,22 @@ jobs:
 
             const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "" });
 
-            // Find all junit results directories
-            const dirs = readdirSync(".").filter(d => d.startsWith("junit-results-"));
+            // Find all test results directories
+            const dirs = readdirSync(".").filter(d => d.startsWith("test-results-"));
             const byFile = {};
 
             for (const dir of dirs) {
-              const platform = dir.replace("junit-results-", "");
+              const platform = dir.replace("test-results-", "");
               if (!existsSync(dir)) continue;
 
-              // Each directory has multiple XML files (one per test file)
+              // Each directory has XML and TXT files (one pair per test file)
               const xmlFiles = readdirSync(dir).filter(f => f.endsWith(".xml"));
 
               for (const xmlFile of xmlFiles) {
+                const baseName = xmlFile.replace(".xml", "");
                 const xmlPath = `${dir}/${xmlFile}`;
+                const txtPath = `${dir}/${baseName}.txt`;
+
                 const content = readFileSync(xmlPath, "utf-8");
                 const parsed = parser.parse(content);
                 const testsuites = parsed.testsuites;
@@ -142,12 +156,11 @@ jobs:
                   const file = suite.file || suite.name;
                   if (!file?.startsWith("test/")) continue;
 
-                  const testcases = Array.isArray(suite.testcase) ? suite.testcase : suite.testcase ? [suite.testcase] : [];
-                  const failures = testcases.filter(tc => tc.failure).map(tc => tc.name);
                   const passed = parseInt(suite.tests || 0) - parseInt(suite.failures || 0) - parseInt(suite.skipped || 0);
+                  const output = existsSync(txtPath) ? readFileSync(txtPath, "utf-8") : "No output captured";
 
                   if (!byFile[file]) byFile[file] = [];
-                  byFile[file].push({ platform, passed, total: parseInt(suite.tests || 0), failures });
+                  byFile[file].push({ platform, passed, total: parseInt(suite.tests || 0), output });
                 }
               }
             }
@@ -162,13 +175,9 @@ jobs:
 
                 lines.push(`<details>`);
                 lines.push(`<summary><code>${p.platform}</code> (${status})</summary>\n`);
-
-                if (p.failures.length > 0) {
-                  lines.push(`**Failed tests:**`);
-                  for (const f of p.failures) lines.push(`- ${f}`);
-                } else {
-                  lines.push(`All tests passed.`);
-                }
+                lines.push("```");
+                lines.push(p.output.trim());
+                lines.push("```");
                 lines.push(`\n</details>\n`);
               }
             }

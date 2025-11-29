@@ -9,12 +9,9 @@ describe.concurrent("spawnSync isolated event loop", () => {
         "-e",
         `
         let timerFired = false;
-
         // Set a timer that should NOT fire during spawnSync
         const interval = setInterval(() => {
           timerFired = true;
-          console.log("TIMER_FIRED");
-          process.exit(1);
         }, 1);
 
         // Run a subprocess synchronously
@@ -26,7 +23,7 @@ describe.concurrent("spawnSync isolated event loop", () => {
         clearInterval(interval);
 
         console.log("SUCCESS: Timer did not fire during spawnSync");
-        process.exit(0);
+        console.log("fired:", timerFired);
       `,
       ],
       env: bunEnv,
@@ -37,8 +34,7 @@ describe.concurrent("spawnSync isolated event loop", () => {
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
     expect(stdout).toContain("SUCCESS");
-    expect(stdout).not.toContain("TIMER_FIRED");
-    expect(stdout).not.toContain("FAIL");
+    expect(stdout).toContain("fired: false");
     expect(exitCode).toBe(0);
   });
 
@@ -48,9 +44,9 @@ describe.concurrent("spawnSync isolated event loop", () => {
         bunExe(),
         "-e",
         `
+        let fired = false;
         queueMicrotask(() => {
-          console.log("MICROTASK_FIRED");
-          process.exit(1);  
+          fired = true;
         });
 
         // Run a subprocess synchronously
@@ -60,7 +56,7 @@ describe.concurrent("spawnSync isolated event loop", () => {
         });
 
         console.log("SUCCESS: Timer did not fire during spawnSync");
-        process.exit(0);
+        console.log("fired:", fired);
       `,
       ],
       env: bunEnv,
@@ -71,8 +67,7 @@ describe.concurrent("spawnSync isolated event loop", () => {
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
     expect(stdout).toContain("SUCCESS");
-    expect(stdout).not.toContain("MICROTASK_FIRED");
-    expect(stdout).not.toContain("FAIL");
+    expect(stdout).toContain("fired: false");
     expect(exitCode).toBe(0);
   });
 

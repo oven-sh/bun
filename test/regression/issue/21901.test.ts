@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
 // https://github.com/oven-sh/bun/issues/21901

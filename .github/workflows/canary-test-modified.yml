@@ -23,6 +23,8 @@ jobs:
           - os: macos
             arch: x64
             runner: macos-15-large
+            # bun.sh/download has issues with darwin/x64 canary, use direct GitHub URL
+            bun-download-url: https://github.com/oven-sh/bun/releases/download/canary/bun-darwin-x64.zip
           - os: macos
             arch: arm64
             runner: macos-14
@@ -37,6 +39,7 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: canary
+          bun-download-url: ${{ matrix.bun-download-url }}
           no-cache: true
 
       - name: Show Bun version
@@ -131,7 +134,6 @@ jobs:
 
             const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "" });
 
-            // Find all test results directories
             const dirs = readdirSync(".").filter(d => d.startsWith("test-results-"));
             const byFile = {};
 
@@ -139,11 +141,8 @@ jobs:
               const platform = dir.replace("test-results-", "");
               if (!existsSync(dir)) continue;
 
-              const allFiles = readdirSync(dir);
-              const xmlFiles = allFiles.filter(f => f.endsWith(".xml"));
-              const txtFiles = allFiles.filter(f => f.endsWith(".txt"));
+              const xmlFiles = readdirSync(dir).filter(f => f.endsWith(".xml"));
 
-              // Process XML files if available
               for (const xmlFile of xmlFiles) {
                 const baseName = xmlFile.replace(".xml", "");
                 const xmlPath = `${dir}/${xmlFile}`;
@@ -167,33 +166,8 @@ jobs:
                   byFile[file].push({ platform, passed, total: parseInt(suite.tests || 0), output });
                 }
               }
-
-              // Fallback: process txt files without matching xml (old bun versions)
-              for (const txtFile of txtFiles) {
-                const baseName = txtFile.replace(".txt", "");
-                const xmlPath = `${dir}/${baseName}.xml`;
-                if (existsSync(xmlPath)) continue; // Already processed via XML
-
-                const txtPath = `${dir}/${txtFile}`;
-                const output = readFileSync(txtPath, "utf-8");
-
-                // Extract file name from sanitized filename
-                const file = baseName.replace(/_/g, "/");
-                if (!file?.startsWith("test/")) continue;
-
-                // Parse pass/fail from output
-                const passMatch = output.match(/(\d+)\s+pass/);
-                const failMatch = output.match(/(\d+)\s+fail/);
-                const passed = passMatch ? parseInt(passMatch[1]) : 0;
-                const failed = failMatch ? parseInt(failMatch[1]) : 0;
-                const total = passed + failed;
-
-                if (!byFile[file]) byFile[file] = [];
-                byFile[file].push({ platform, passed, total, output });
-              }
             }
 
-            // Generate markdown
             const lines = [];
             for (const [file, platforms] of Object.entries(byFile)) {
               lines.push(`## \`${file}\`\n`);

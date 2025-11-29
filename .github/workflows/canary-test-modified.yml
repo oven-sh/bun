@@ -121,7 +121,7 @@ jobs:
           bun add fast-xml-parser
 
           {
-            echo "# Canary Bun Test Summary"
+            echo "## Canary Bun Test Summary"
             echo ""
             echo "This workflow tests modified test files against **Bun Canary** to verify they fail without the PR's changes."
             echo ""
@@ -172,7 +172,7 @@ jobs:
 
             const lines = [];
             for (const [file, platforms] of Object.entries(byFile)) {
-              lines.push(`## \`${file}\`\n`);
+              lines.push(`### \`${file}\`\n`);
 
               for (const p of platforms) {
                 const status = `${p.passed}/${p.total}`;

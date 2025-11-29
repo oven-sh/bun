@@ -10,7 +10,7 @@ on:
 jobs:
   publish:
     name: "Publish to VS Code Marketplace"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     steps:
       - name: Checkout
         uses: actions/checkout@v4

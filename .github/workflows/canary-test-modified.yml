@@ -24,11 +24,11 @@ jobs:
             bun-download-url: https://github.com/oven-sh/bun/releases/download/canary/bun-linux-aarch64.zip
           - os: macos
             arch: x64
-            runner: macos-15-large
+            runner: macos-13
             bun-download-url: https://github.com/oven-sh/bun/releases/download/canary/bun-darwin-x64.zip
           - os: macos
             arch: arm64
-            runner: macos-14
+            runner: macos-15
             bun-download-url: https://github.com/oven-sh/bun/releases/download/canary/bun-darwin-aarch64.zip
           - os: windows
             arch: x64

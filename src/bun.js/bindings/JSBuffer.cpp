@@ -1741,6 +1741,16 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
         return Bun::ERR::STRING_TOO_LONG(scope, lexicalGlobalObject);
     }
 
+    // Check encoding-specific output size limits
+    // For hex, output is 2x input size
+    if (encoding == BufferEncodingType::hex && bytes.size() > WTF::String::MaxLength / 2) {
+        return Bun::ERR::STRING_TOO_LONG(scope, lexicalGlobalObject);
+    }
+    // For base64, output is ceil(input * 4 / 3)
+    if ((encoding == BufferEncodingType::base64 || encoding == BufferEncodingType::base64url) && bytes.size() > (WTF::String::MaxLength / 4) * 3) {
+        return Bun::ERR::STRING_TOO_LONG(scope, lexicalGlobalObject);
+    }
+
     switch (encoding) {
     case WebCore::BufferEncodingType::buffer: {
         auto* buffer = createUninitializedBuffer(lexicalGlobalObject, bytes.size());

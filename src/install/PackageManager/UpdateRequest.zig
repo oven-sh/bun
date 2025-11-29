@@ -51,26 +51,24 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!j
     defer arena.deinit();
     var stack = std.heap.stackFallback(1024, arena.allocator());
     const allocator = stack.get();
-    var all_positionals = std.ArrayList([]const u8).init(allocator);
+    var all_positionals = std.array_list.Managed([]const u8).init(allocator);
 
     var log = logger.Log.init(allocator);
 
     if (input.isString()) {
-        var input_str = input.toSliceCloneWithAllocator(
+        var input_str = try input.toSliceCloneWithAllocator(
             globalThis,
             allocator,
-        ) orelse return .zero;
+        );
         if (input_str.len > 0)
             try all_positionals.append(input_str.slice());
     } else if (input.isArray()) {
         var iter = try input.arrayIterator(globalThis);
         while (try iter.next()) |item| {
-            const slice = item.toSliceCloneWithAllocator(globalThis, allocator) orelse return .zero;
-            if (globalThis.hasException()) return .zero;
+            const slice = try item.toSliceCloneWithAllocator(globalThis, allocator);
             if (slice.len == 0) continue;
             try all_positionals.append(slice.slice());
         }
-        if (globalThis.hasException()) return .zero;
     } else {
         return .js_undefined;
     }

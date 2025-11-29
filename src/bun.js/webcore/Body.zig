@@ -272,6 +272,14 @@ pub const Value = union(Tag) {
         };
     }
 
+    pub fn wasString(this: *const Value) bool {
+        return switch (this.*) {
+            .InternalBlob => |*blob| blob.was_string,
+            .WTFStringImpl => true,
+            else => false,
+        };
+    }
+
     pub const heap_breakdown_label = "BodyValue";
     pub const ValueError = union(enum) {
         AbortReason: jsc.CommonAbortReason,
@@ -336,7 +344,7 @@ pub const Value = union(Tag) {
                 defer str.deref();
                 this.* = .{
                     .InternalBlob = InternalBlob{
-                        .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(bytes.slice())),
+                        .bytes = std.array_list.Managed(u8).fromOwnedSlice(bun.default_allocator, @constCast(bytes.slice())),
                         .was_string = true,
                     },
                 };
@@ -413,7 +421,7 @@ pub const Value = union(Tag) {
 
         return Value{
             .InternalBlob = InternalBlob{
-                .bytes = std.ArrayList(u8).fromOwnedSlice(allocator, data),
+                .bytes = std.array_list.Managed(u8).fromOwnedSlice(allocator, data),
                 .was_string = was_string,
             },
         };
@@ -553,7 +561,7 @@ pub const Value = union(Tag) {
 
                 return Body.Value{
                     .InternalBlob = .{
-                        .bytes = std.ArrayList(u8){
+                        .bytes = std.array_list.Managed(u8){
                             .items = bun.default_allocator.dupe(u8, bytes) catch {
                                 return globalThis.throwValue(ZigString.static("Failed to clone ArrayBufferView").toErrorInstance(globalThis));
                             },
@@ -834,7 +842,7 @@ pub const Value = union(Tag) {
                     defer str.deref();
                     break :brk .{
                         .InternalBlob = InternalBlob{
-                            .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, @constCast(utf8.slice())),
+                            .bytes = std.array_list.Managed(u8).fromOwnedSlice(bun.default_allocator, @constCast(utf8.slice())),
                             .was_string = true,
                         },
                     };

@@ -6,7 +6,7 @@ var trace_file: ?bun.sys.File = null;
 pub fn init() void {
     if (trace_file != null) return;
 
-    if (bun.getenvZ("BUN_WATCHER_TRACE")) |trace_path| {
+    if (bun.env_var.BUN_WATCHER_TRACE.get()) |trace_path| {
         if (trace_path.len > 0) {
             const flags = bun.O.WRONLY | bun.O.CREAT | bun.O.APPEND;
             const mode = 0o644;
@@ -28,11 +28,12 @@ pub fn init() void {
 pub fn writeEvents(watcher: *Watcher, events: []Watcher.WatchEvent, changed_files: []?[:0]u8) void {
     const file = trace_file orelse return;
 
-    var buffered = std.io.bufferedWriter(file.writer());
-    defer buffered.flush() catch |err| {
+    var buffer: [4096]u8 = undefined;
+    var buffered = file.writer().adaptToNewApi(&buffer);
+    defer buffered.new_interface.flush() catch |err| {
         bun.Output.err(err, "Failed to flush watcher trace file", .{});
     };
-    const writer = buffered.writer();
+    const writer = &buffered.new_interface;
 
     // Get current timestamp
     const timestamp = std.time.milliTimestamp();
@@ -54,7 +55,7 @@ pub fn writeEvents(watcher: *Watcher, events: []Watcher.WatchEvent, changed_file
         first_file = false;
 
         // Write path as key
-        writer.print("{}", .{bun.fmt.formatJSONStringUTF8(file_path, .{})}) catch return;
+        writer.print("{f}", .{bun.fmt.formatJSONStringUTF8(file_path, .{})}) catch return;
         writer.writeAll(":{\"events\":[") catch return;
 
         // Write array of event types using comptime reflection
@@ -86,7 +87,7 @@ pub fn writeEvents(watcher: *Watcher, events: []Watcher.WatchEvent, changed_file
                 if (name_opt) |name| {
                     if (!first) writer.writeAll(",") catch return;
                     first = false;
-                    writer.print("{}", .{bun.fmt.formatJSONStringUTF8(name, .{})}) catch return;
+                    writer.print("{f}", .{bun.fmt.formatJSONStringUTF8(name, .{})}) catch return;
                 }
             }
             writer.writeAll("]") catch return;

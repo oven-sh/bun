@@ -303,6 +303,7 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
             String targetString = targetJSString->value(globalObject);
             if (!(targetString == "node"_s || targetString == "bun"_s || targetString == "browser"_s)) {
                 JSC::throwTypeError(globalObject, throwScope, "plugin target must be one of 'node', 'bun' or 'browser'"_s);
+                return {};
             }
         }
     }
@@ -940,7 +941,7 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    Zig::GlobalObject* global = static_cast<Zig::GlobalObject*>(globalObject);
     global->onLoadPlugins.fileNamespace.clear();
     global->onResolvePlugins.fileNamespace.clear();
     global->onLoadPlugins.groups.clear();

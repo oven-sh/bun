@@ -31,7 +31,7 @@ pub fn installIsolatedPackages(
             pkg_id: PackageID,
         };
 
-        var node_queue: std.fifo.LinearFifo(QueuedNode, .Dynamic) = .init(lockfile.allocator);
+        var node_queue: bun.LinearFifo(QueuedNode, .Dynamic) = .init(lockfile.allocator);
         defer node_queue.deinit();
 
         try node_queue.writeItem(.{
@@ -51,10 +51,10 @@ pub fn installIsolatedPackages(
         var early_dedupe: std.AutoHashMap(PackageID, Store.Node.Id) = .init(lockfile.allocator);
         defer early_dedupe.deinit();
 
-        var peer_dep_ids: std.ArrayList(DependencyID) = .init(lockfile.allocator);
+        var peer_dep_ids: std.array_list.Managed(DependencyID) = .init(lockfile.allocator);
         defer peer_dep_ids.deinit();
 
-        var visited_parent_node_ids: std.ArrayList(Store.Node.Id) = .init(lockfile.allocator);
+        var visited_parent_node_ids: std.array_list.Managed(Store.Node.Id) = .init(lockfile.allocator);
         defer visited_parent_node_ids.deinit();
 
         // First pass: create full dependency tree with resolved peers
@@ -85,9 +85,16 @@ pub fn installIsolatedPackages(
                             break :check_cycle;
                         }
 
+                        const curr_dep = dependencies[dep_id];
+                        const entry_dep = dependencies[entry.dep_id];
+
                         // ensure the dependency name is the same before skipping the cycle. if they aren't
                         // we lose dependency name information for the symlinks
-                        if (dependencies[dep_id].name_hash == dependencies[entry.dep_id].name_hash) {
+                        if (curr_dep.name_hash == entry_dep.name_hash and
+                            // also ensure workspace self deps are not skipped.
+                            // implicit workspace dep != explicit workspace dep
+                            curr_dep.behavior.workspace == entry_dep.behavior.workspace)
+                        {
                             node_nodes[entry.parent_id.get()].appendAssumeCapacity(curr_id);
                             continue :next_node;
                         }
@@ -243,7 +250,7 @@ pub fn installIsolatedPackages(
                 }
             }
 
-            next_peer: for (peer_dep_ids.items) |peer_dep_id| {
+            for (peer_dep_ids.items) |peer_dep_id| {
                 const resolved_pkg_id, const auto_installed = resolved_pkg_id: {
 
                     // Go through the peers parents looking for a package with the same name.
@@ -309,12 +316,11 @@ pub fn installIsolatedPackages(
                             // version. Only mark all parents if resolution is
                             // different from this transitive peer.
 
-                            if (peer_dep.behavior.isOptionalPeer()) {
-                                // exclude it
-                                continue :next_peer;
-                            }
-
                             const best_version = resolutions[peer_dep_id];
+
+                            if (best_version == invalid_package_id) {
+                                break :resolved_pkg_id .{ invalid_package_id, true };
+                            }
 
                             if (best_version == ids.pkg_id) {
                                 break :resolved_pkg_id .{ ids.pkg_id, true };
@@ -337,16 +343,15 @@ pub fn installIsolatedPackages(
                         curr_id = node_parent_ids[curr_id.get()];
                     }
 
-                    if (peer_dep.behavior.isOptionalPeer()) {
-                        // exclude it
-                        continue;
-                    }
-
                     // choose the current best version
                     break :resolved_pkg_id .{ resolutions[peer_dep_id], true };
                 };
 
-                bun.debugAssert(resolved_pkg_id != invalid_package_id);
+                if (resolved_pkg_id == invalid_package_id) {
+                    // these are optional peers that failed to find any dependency with a matching
+                    // name. they are completely excluded
+                    continue;
+                }
 
                 for (visited_parent_node_ids.items) |visited_parent_id| {
                     const ctx: Store.Node.TransitivePeer.OrderedArraySetCtx = .{
@@ -377,7 +382,7 @@ pub fn installIsolatedPackages(
         if (manager.options.log_level.isVerbose()) {
             const full_tree_end = timer.read();
             timer.reset();
-            Output.prettyErrorln("Resolved peers [{}]", .{bun.fmt.fmtDurationOneDecimal(full_tree_end)});
+            Output.prettyErrorln("Resolved peers [{f}]", .{bun.fmt.fmtDurationOneDecimal(full_tree_end)});
         }
 
         const DedupeInfo = struct {
@@ -389,7 +394,7 @@ pub fn installIsolatedPackages(
         var dedupe: std.AutoHashMapUnmanaged(PackageID, std.ArrayListUnmanaged(DedupeInfo)) = .empty;
         defer dedupe.deinit(lockfile.allocator);
 
-        var res_fmt_buf: std.ArrayList(u8) = .init(lockfile.allocator);
+        var res_fmt_buf: std.array_list.Managed(u8) = .init(lockfile.allocator);
         defer res_fmt_buf.deinit();
 
         const nodes_slice = nodes.slice();
@@ -404,13 +409,19 @@ pub fn installIsolatedPackages(
             node_id: Store.Node.Id,
             entry_parent_id: Store.Entry.Id,
         };
-        var entry_queue: std.fifo.LinearFifo(QueuedEntry, .Dynamic) = .init(lockfile.allocator);
+        var entry_queue: bun.LinearFifo(QueuedEntry, .Dynamic) = .init(lockfile.allocator);
         defer entry_queue.deinit();
 
         try entry_queue.writeItem(.{
             .node_id = .from(0),
             .entry_parent_id = .invalid,
         });
+
+        var public_hoisted: bun.StringArrayHashMap(void) = .init(manager.allocator);
+        defer public_hoisted.deinit();
+
+        var hidden_hoisted: bun.StringArrayHashMap(void) = .init(manager.allocator);
+        defer hidden_hoisted.deinit();
 
         // Second pass: Deduplicate nodes when the pkg_id and peer set match an existing entry.
         next_entry: while (entry_queue.readItem()) |entry| {
@@ -486,7 +497,7 @@ pub fn installIsolatedPackages(
                     hasher.update(pkg_name.slice(string_buf));
                     const pkg_res = pkg_resolutions[peer_ids.pkg_id];
                     res_fmt_buf.clearRetainingCapacity();
-                    try res_fmt_buf.writer().print("{}", .{pkg_res.fmt(string_buf, .posix)});
+                    try res_fmt_buf.writer().print("{f}", .{pkg_res.fmt(string_buf, .posix)});
                     hasher.update(res_fmt_buf.items);
                 }
                 break :peer_hash .from(hasher.final());
@@ -505,11 +516,32 @@ pub fn installIsolatedPackages(
             var new_entry_parents: std.ArrayListUnmanaged(Store.Entry.Id) = try .initCapacity(lockfile.allocator, 1);
             new_entry_parents.appendAssumeCapacity(entry.entry_parent_id);
 
+            const hoisted = hoisted: {
+                if (new_entry_dep_id == invalid_dependency_id) {
+                    break :hoisted false;
+                }
+
+                const dep_name = dependencies[new_entry_dep_id].name.slice(string_buf);
+
+                const hoist_pattern = manager.options.hoist_pattern orelse {
+                    const hoist_entry = try hidden_hoisted.getOrPut(dep_name);
+                    break :hoisted !hoist_entry.found_existing;
+                };
+
+                if (hoist_pattern.isMatch(dep_name)) {
+                    const hoist_entry = try hidden_hoisted.getOrPut(dep_name);
+                    break :hoisted !hoist_entry.found_existing;
+                }
+
+                break :hoisted false;
+            };
+
             const new_entry: Store.Entry = .{
                 .node_id = entry.node_id,
                 .dependencies = new_entry_dependencies,
                 .parents = new_entry_parents,
                 .peer_hash = new_entry_peer_hash,
+                .hoisted = hoisted,
             };
 
             const new_entry_id: Store.Entry.Id = .from(@intCast(store.len));
@@ -532,6 +564,29 @@ pub fn installIsolatedPackages(
                     .{ .entry_id = new_entry_id, .dep_id = new_entry_dep_id },
                     &ctx,
                 );
+
+                if (new_entry_dep_id != invalid_dependency_id) {
+                    if (entry.entry_parent_id == .root) {
+                        // make sure direct dependencies are not replaced
+                        const dep_name = dependencies[new_entry_dep_id].name.slice(string_buf);
+                        try public_hoisted.put(dep_name, {});
+                    } else {
+                        // transitive dependencies (also direct dependencies of workspaces!)
+                        const dep_name = dependencies[new_entry_dep_id].name.slice(string_buf);
+                        if (manager.options.public_hoist_pattern) |public_hoist_pattern| {
+                            if (public_hoist_pattern.isMatch(dep_name)) {
+                                const hoist_entry = try public_hoisted.getOrPut(dep_name);
+                                if (!hoist_entry.found_existing) {
+                                    try entry_dependencies[0].insert(
+                                        lockfile.allocator,
+                                        .{ .entry_id = new_entry_id, .dep_id = new_entry_dep_id },
+                                        &ctx,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             try dedupe_entry.value_ptr.append(lockfile.allocator, .{
@@ -550,13 +605,169 @@ pub fn installIsolatedPackages(
 
         if (manager.options.log_level.isVerbose()) {
             const dedupe_end = timer.read();
-            Output.prettyErrorln("Created store [{}]", .{bun.fmt.fmtDurationOneDecimal(dedupe_end)});
+            Output.prettyErrorln("Created store [{f}]", .{bun.fmt.fmtDurationOneDecimal(dedupe_end)});
         }
 
         break :store .{
             .entries = store,
             .nodes = nodes,
         };
+    };
+
+    // setup node_modules/.bun
+    const is_new_bun_modules = is_new_bun_modules: {
+        const node_modules_path = bun.OSPathLiteral("node_modules");
+        const bun_modules_path = bun.OSPathLiteral("node_modules/" ++ Store.modules_dir_name);
+
+        sys.mkdirat(FD.cwd(), node_modules_path, 0o755).unwrap() catch {
+            sys.mkdirat(FD.cwd(), bun_modules_path, 0o755).unwrap() catch {
+                break :is_new_bun_modules false;
+            };
+
+            // 'node_modules' exists and 'node_modules/.bun' doesn't
+
+            if (comptime Environment.isWindows) {
+                // Windows:
+                // 1. create 'node_modules/.old_modules-{hex}'
+                // 2. for each entry in 'node_modules' rename into 'node_modules/.old_modules-{hex}'
+                // 3. for each workspace 'node_modules' rename into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
+
+                var rename_path: bun.AutoRelPath = .init();
+                defer rename_path.deinit();
+
+                {
+                    var mkdir_path: bun.RelPath(.{ .sep = .auto, .unit = .u16 }) = .from("node_modules");
+                    defer mkdir_path.deinit();
+
+                    mkdir_path.appendFmt(".old_modules-{s}", .{&std.fmt.bytesToHex(std.mem.asBytes(&bun.fastRandom()), .lower)});
+                    rename_path.append(mkdir_path.slice());
+
+                    // 1
+                    sys.mkdirat(FD.cwd(), mkdir_path.sliceZ(), 0o755).unwrap() catch {
+                        break :is_new_bun_modules true;
+                    };
+                }
+
+                const node_modules = bun.openDirForIteration(FD.cwd(), "node_modules").unwrap() catch {
+                    break :is_new_bun_modules true;
+                };
+
+                var entry_path: bun.AutoRelPath = .from("node_modules");
+                defer entry_path.deinit();
+
+                // 2
+                var node_modules_iter = bun.DirIterator.iterate(node_modules, .u8);
+                while (node_modules_iter.next().unwrap() catch break :is_new_bun_modules true) |entry| {
+                    if (bun.strings.startsWithChar(entry.name.slice(), '.')) {
+                        continue;
+                    }
+
+                    var entry_path_save = entry_path.save();
+                    defer entry_path_save.restore();
+
+                    entry_path.append(entry.name.slice());
+
+                    var rename_path_save = rename_path.save();
+                    defer rename_path_save.restore();
+
+                    rename_path.append(entry.name.slice());
+
+                    sys.renameat(FD.cwd(), entry_path.sliceZ(), FD.cwd(), rename_path.sliceZ()).unwrap() catch {};
+                }
+
+                // 3
+                for (lockfile.workspace_paths.values()) |workspace_path| {
+                    var workspace_node_modules: bun.AutoRelPath = .from(workspace_path.slice(lockfile.buffers.string_bytes.items));
+                    defer workspace_node_modules.deinit();
+
+                    const basename = workspace_node_modules.basename();
+
+                    workspace_node_modules.append("node_modules");
+
+                    var rename_path_save = rename_path.save();
+                    defer rename_path_save.restore();
+
+                    rename_path.appendFmt(".old_{s}_modules", .{basename});
+
+                    sys.renameat(FD.cwd(), workspace_node_modules.sliceZ(), FD.cwd(), rename_path.sliceZ()).unwrap() catch {};
+                }
+            } else {
+
+                // Posix:
+                // 1. rename existing 'node_modules' to temp location
+                // 2. create new 'node_modules' directory
+                // 3. rename temp into 'node_modules/.old_modules-{hex}'
+                // 4. attempt renaming 'node_modules/.old_modules-{hex}/.cache' to 'node_modules/.cache'
+                // 5. rename each workspace 'node_modules' into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
+                var temp_node_modules_buf: bun.PathBuffer = undefined;
+                const temp_node_modules = bun.fs.FileSystem.tmpname("tmp_modules", &temp_node_modules_buf, bun.fastRandom()) catch unreachable;
+
+                // 1
+                sys.renameat(FD.cwd(), "node_modules", FD.cwd(), temp_node_modules).unwrap() catch {
+                    break :is_new_bun_modules true;
+                };
+
+                // 2
+                sys.mkdirat(FD.cwd(), node_modules_path, 0o755).unwrap() catch |err| {
+                    Output.err(err, "failed to create './node_modules'", .{});
+                    Global.exit(1);
+                };
+
+                sys.mkdirat(FD.cwd(), bun_modules_path, 0o755).unwrap() catch |err| {
+                    Output.err(err, "failed to create './node_modules/.bun'", .{});
+                    Global.exit(1);
+                };
+
+                var rename_path: bun.AutoRelPath = .from("node_modules");
+                defer rename_path.deinit();
+
+                rename_path.appendFmt(".old_modules-{s}", .{&std.fmt.bytesToHex(std.mem.asBytes(&bun.fastRandom()), .lower)});
+
+                // 3
+                sys.renameat(FD.cwd(), temp_node_modules, FD.cwd(), rename_path.sliceZ()).unwrap() catch {
+                    break :is_new_bun_modules true;
+                };
+
+                rename_path.append(".cache");
+
+                var cache_path: bun.AutoRelPath = .from("node_modules");
+                defer cache_path.deinit();
+
+                cache_path.append(".cache");
+
+                // 4
+                sys.renameat(FD.cwd(), rename_path.sliceZ(), FD.cwd(), cache_path.sliceZ()).unwrap() catch {};
+
+                // remove .cache so we can append destination for each workspace
+                rename_path.undo(1);
+
+                // 5
+                for (lockfile.workspace_paths.values()) |workspace_path| {
+                    var workspace_node_modules: bun.AutoRelPath = .from(workspace_path.slice(lockfile.buffers.string_bytes.items));
+                    defer workspace_node_modules.deinit();
+
+                    const basename = workspace_node_modules.basename();
+
+                    workspace_node_modules.append("node_modules");
+
+                    var rename_path_save = rename_path.save();
+                    defer rename_path_save.restore();
+
+                    rename_path.appendFmt(".old_{s}_modules", .{basename});
+
+                    sys.renameat(FD.cwd(), workspace_node_modules.sliceZ(), FD.cwd(), rename_path.sliceZ()).unwrap() catch {};
+                }
+            }
+
+            break :is_new_bun_modules true;
+        };
+
+        sys.mkdirat(FD.cwd(), bun_modules_path, 0o755).unwrap() catch |err| {
+            Output.err(err, "failed to create './node_modules/.bun'", .{});
+            Global.exit(1);
+        };
+
+        break :is_new_bun_modules true;
     };
 
     {
@@ -586,6 +797,7 @@ pub fn installIsolatedPackages(
         const entry_node_ids = entries.items(.node_id);
         const entry_steps = entries.items(.step);
         const entry_dependencies = entries.items(.dependencies);
+        const entry_hoisted = entries.items(.hoisted);
 
         const string_buf = lockfile.buffers.string_bytes.items;
 
@@ -617,6 +829,7 @@ pub fn installIsolatedPackages(
             .trusted_dependencies_mutex = .{},
             .trusted_dependencies_from_update_requests = manager.findTrustedDependenciesFromUpdateRequests(),
             .supported_backend = .init(PackageInstall.supported_method),
+            .is_new_bun_modules = is_new_bun_modules,
         };
 
         for (tasks, 0..) |*task, _entry_id| {
@@ -630,161 +843,6 @@ pub fn installIsolatedPackages(
                 .next = null,
             };
         }
-
-        const is_new_bun_modules = is_new_bun_modules: {
-            const node_modules_path = bun.OSPathLiteral("node_modules");
-            const bun_modules_path = bun.OSPathLiteral("node_modules/" ++ Store.modules_dir_name);
-
-            sys.mkdirat(FD.cwd(), node_modules_path, 0o755).unwrap() catch {
-                sys.mkdirat(FD.cwd(), bun_modules_path, 0o755).unwrap() catch {
-                    break :is_new_bun_modules false;
-                };
-
-                // 'node_modules' exists and 'node_modules/.bun' doesn't
-
-                if (comptime Environment.isWindows) {
-                    // Windows:
-                    // 1. create 'node_modules/.old_modules-{hex}'
-                    // 2. for each entry in 'node_modules' rename into 'node_modules/.old_modules-{hex}'
-                    // 3. for each workspace 'node_modules' rename into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
-
-                    var rename_path: bun.AutoRelPath = .init();
-                    defer rename_path.deinit();
-
-                    {
-                        var mkdir_path: bun.RelPath(.{ .sep = .auto, .unit = .u16 }) = .from("node_modules");
-                        defer mkdir_path.deinit();
-
-                        mkdir_path.appendFmt(".old_modules-{s}", .{&std.fmt.bytesToHex(std.mem.asBytes(&bun.fastRandom()), .lower)});
-                        rename_path.append(mkdir_path.slice());
-
-                        // 1
-                        sys.mkdirat(FD.cwd(), mkdir_path.sliceZ(), 0o755).unwrap() catch {
-                            break :is_new_bun_modules true;
-                        };
-                    }
-
-                    const node_modules = bun.openDirForIteration(FD.cwd(), "node_modules").unwrap() catch {
-                        break :is_new_bun_modules true;
-                    };
-
-                    var entry_path: bun.AutoRelPath = .from("node_modules");
-                    defer entry_path.deinit();
-
-                    // 2
-                    var node_modules_iter = bun.DirIterator.iterate(node_modules, .u8);
-                    while (node_modules_iter.next().unwrap() catch break :is_new_bun_modules true) |entry| {
-                        if (bun.strings.startsWithChar(entry.name.slice(), '.')) {
-                            continue;
-                        }
-
-                        var entry_path_save = entry_path.save();
-                        defer entry_path_save.restore();
-
-                        entry_path.append(entry.name.slice());
-
-                        var rename_path_save = rename_path.save();
-                        defer rename_path_save.restore();
-
-                        rename_path.append(entry.name.slice());
-
-                        sys.renameat(FD.cwd(), entry_path.sliceZ(), FD.cwd(), rename_path.sliceZ()).unwrap() catch {};
-                    }
-
-                    // 3
-                    for (lockfile.workspace_paths.values()) |workspace_path| {
-                        var workspace_node_modules: bun.AutoRelPath = .from(workspace_path.slice(string_buf));
-                        defer workspace_node_modules.deinit();
-
-                        const basename = workspace_node_modules.basename();
-
-                        workspace_node_modules.append("node_modules");
-
-                        var rename_path_save = rename_path.save();
-                        defer rename_path_save.restore();
-
-                        rename_path.appendFmt(".old_{s}_modules", .{basename});
-
-                        sys.renameat(FD.cwd(), workspace_node_modules.sliceZ(), FD.cwd(), rename_path.sliceZ()).unwrap() catch {};
-                    }
-                } else {
-
-                    // Posix:
-                    // 1. rename existing 'node_modules' to temp location
-                    // 2. create new 'node_modules' directory
-                    // 3. rename temp into 'node_modules/.old_modules-{hex}'
-                    // 4. attempt renaming 'node_modules/.old_modules-{hex}/.cache' to 'node_modules/.cache'
-                    // 5. rename each workspace 'node_modules' into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
-                    var temp_node_modules_buf: bun.PathBuffer = undefined;
-                    const temp_node_modules = bun.fs.FileSystem.tmpname("tmp_modules", &temp_node_modules_buf, bun.fastRandom()) catch unreachable;
-
-                    // 1
-                    sys.renameat(FD.cwd(), "node_modules", FD.cwd(), temp_node_modules).unwrap() catch {
-                        break :is_new_bun_modules true;
-                    };
-
-                    // 2
-                    sys.mkdirat(FD.cwd(), node_modules_path, 0o755).unwrap() catch |err| {
-                        Output.err(err, "failed to create './node_modules'", .{});
-                        Global.exit(1);
-                    };
-
-                    sys.mkdirat(FD.cwd(), bun_modules_path, 0o755).unwrap() catch |err| {
-                        Output.err(err, "failed to create './node_modules/.bun'", .{});
-                        Global.exit(1);
-                    };
-
-                    var rename_path: bun.AutoRelPath = .from("node_modules");
-                    defer rename_path.deinit();
-
-                    rename_path.appendFmt(".old_modules-{s}", .{&std.fmt.bytesToHex(std.mem.asBytes(&bun.fastRandom()), .lower)});
-
-                    // 3
-                    sys.renameat(FD.cwd(), temp_node_modules, FD.cwd(), rename_path.sliceZ()).unwrap() catch {
-                        break :is_new_bun_modules true;
-                    };
-
-                    rename_path.append(".cache");
-
-                    var cache_path: bun.AutoRelPath = .from("node_modules");
-                    defer cache_path.deinit();
-
-                    cache_path.append(".cache");
-
-                    // 4
-                    sys.renameat(FD.cwd(), rename_path.sliceZ(), FD.cwd(), cache_path.sliceZ()).unwrap() catch {};
-
-                    // remove .cache so we can append destination for each workspace
-                    rename_path.undo(1);
-
-                    // 5
-                    for (lockfile.workspace_paths.values()) |workspace_path| {
-                        var workspace_node_modules: bun.AutoRelPath = .from(workspace_path.slice(string_buf));
-                        defer workspace_node_modules.deinit();
-
-                        const basename = workspace_node_modules.basename();
-
-                        workspace_node_modules.append("node_modules");
-
-                        var rename_path_save = rename_path.save();
-                        defer rename_path_save.restore();
-
-                        rename_path.appendFmt(".old_{s}_modules", .{basename});
-
-                        sys.renameat(FD.cwd(), workspace_node_modules.sliceZ(), FD.cwd(), rename_path.sliceZ()).unwrap() catch {};
-                    }
-                }
-
-                break :is_new_bun_modules true;
-            };
-
-            sys.mkdirat(FD.cwd(), bun_modules_path, 0o755).unwrap() catch |err| {
-                Output.err(err, "failed to create './node_modules/.bun'", .{});
-                Global.exit(1);
-            };
-
-            break :is_new_bun_modules true;
-        };
 
         // add the pending task count upfront
         manager.incrementPendingTasks(@intCast(store.entries.len));
@@ -886,6 +944,9 @@ pub fn installIsolatedPackages(
                         };
 
                     if (!needs_install) {
+                        if (entry_hoisted[entry_id.get()]) {
+                            installer.linkToHiddenNodeModules(entry_id);
+                        }
                         // .monotonic is okay because the task isn't running on another thread.
                         entry_steps[entry_id.get()].store(.done, .monotonic);
                         installer.onTaskComplete(entry_id, .skipped);
@@ -965,7 +1026,7 @@ pub fn installIsolatedPackages(
                             ) catch |err| switch (err) {
                                 error.OutOfMemory => |oom| return oom,
                                 error.InvalidURL => {
-                                    Output.err(err, "failed to enqueue package for download: {s}@{}", .{
+                                    Output.err(err, "failed to enqueue package for download: {s}@{f}", .{
                                         pkg_name.slice(string_buf),
                                         pkg_res.fmt(string_buf, .auto),
                                     });
@@ -1002,7 +1063,7 @@ pub fn installIsolatedPackages(
                             ) catch |err| switch (err) {
                                 error.OutOfMemory => bun.outOfMemory(),
                                 error.InvalidURL => {
-                                    Output.err(err, "failed to enqueue github package for download: {s}@{}", .{
+                                    Output.err(err, "failed to enqueue github package for download: {s}@{f}", .{
                                         pkg_name.slice(string_buf),
                                         pkg_res.fmt(string_buf, .auto),
                                     });
@@ -1036,7 +1097,7 @@ pub fn installIsolatedPackages(
                             ) catch |err| switch (err) {
                                 error.OutOfMemory => bun.outOfMemory(),
                                 error.InvalidURL => {
-                                    Output.err(err, "failed to enqueue tarball for download: {s}@{}", .{
+                                    Output.err(err, "failed to enqueue tarball for download: {s}@{f}", .{
                                         pkg_name.slice(string_buf),
                                         pkg_res.fmt(string_buf, .auto),
                                     });

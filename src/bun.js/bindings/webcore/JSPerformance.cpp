@@ -285,7 +285,7 @@ void JSPerformance::finishCreation(VM& vm)
     this->putDirect(
         vm,
         JSC::Identifier::fromString(vm, "timeOrigin"_s),
-        jsNumber(Bun__readOriginTimerStart(reinterpret_cast<Zig::GlobalObject*>(this->globalObject())->bunVM())),
+        jsNumber(Bun__readOriginTimerStart(static_cast<Zig::GlobalObject*>(this->globalObject())->bunVM())),
         PropertyAttribute::ReadOnly | 0);
 }
 

@@ -78,6 +78,8 @@
 #include "JSAbortAlgorithm.h"
 #include "JSAbortController.h"
 #include "JSAbortSignal.h"
+#include "JSCompressionStream.h"
+#include "JSDecompressionStream.h"
 #include "JSBroadcastChannel.h"
 #include "JSBuffer.h"
 #include "JSBufferList.h"
@@ -128,6 +130,7 @@
 #include "JSTextDecoderStream.h"
 #include "JSTransformStream.h"
 #include "JSTransformStreamDefaultController.h"
+#include "JSURLPattern.h"
 #include "JSURLSearchParams.h"
 #include "JSWasmStreamingCompiler.h"
 #include "JSWebSocket.h"
@@ -257,6 +260,11 @@ extern "C" unsigned getJSCBytecodeCacheVersion()
 {
     return getWebKitBytecodeCacheVersion();
 }
+
+// Declare fuzzilli function registration from FuzzilliREPRL.cpp
+#ifdef FUZZILLI_ENABLED
+extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
+#endif
 
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode)
 {
@@ -501,8 +509,13 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     Bun__setDefaultGlobalObject(globalObject);
     JSC::gcProtect(globalObject);
 
+#ifdef FUZZILLI_ENABLED
+    Bun__REPRL__registerFuzzilliFunctions(static_cast<Zig::GlobalObject*>(globalObject));
+#endif
+
     vm.setOnComputeErrorInfo(computeErrorInfoWrapperToString);
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);
+    vm.setComputeLineColumnWithSourcemap(computeLineColumnWithSourcemap);
     vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
         // if you process.nextTick on a microtask we need this
         auto* globalObject = defaultGlobalObject();
@@ -961,9 +974,11 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(AbortSignal);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(BroadcastChannel);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ByteLengthQueuingStrategy)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CloseEvent);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CompressionStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CountQueuingStrategy)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CryptoKey);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CustomEvent);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(DecompressionStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(DOMException);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(DOMFormData);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(DOMURL);
@@ -995,6 +1010,7 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TextEncoderStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TextDecoderStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TransformStream)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TransformStreamDefaultController)
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(URLPattern);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(URLSearchParams);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WebSocket);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(Worker);
@@ -2549,7 +2565,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCheckBufferRead, (JSC::JSGlobalObject * globa
 }
 extern "C" EncodedJSValue Bun__assignStreamIntoResumableSink(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue stream, JSC::EncodedJSValue sink)
 {
-    Zig::GlobalObject* globalThis = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    Zig::GlobalObject* globalThis = static_cast<Zig::GlobalObject*>(globalObject);
     return globalThis->assignStreamToResumableSink(JSValue::decode(stream), JSValue::decode(sink));
 }
 EncodedJSValue GlobalObject::assignStreamToResumableSink(JSValue stream, JSValue sink)
@@ -2972,7 +2988,10 @@ void GlobalObject::handleRejectedPromises()
             continue;
 
         Bun__handleRejectedPromise(this, promise);
-        if (auto ex = scope.exception()) this->reportUncaughtExceptionAtEventLoop(this, ex);
+        if (auto ex = scope.exception()) {
+            scope.clearException();
+            this->reportUncaughtExceptionAtEventLoop(this, ex);
+        }
     }
 }
 
@@ -2987,7 +3006,6 @@ void GlobalObject::visitAdditionalChildren(Visitor& visitor)
     thisObject->globalEventScope->visitJSEventListeners(visitor);
 
     thisObject->m_aboutToBeNotifiedRejectedPromises.visit(thisObject, visitor);
-    thisObject->m_ffiFunctions.visit(thisObject, visitor);
 
     ScriptExecutionContext* context = thisObject->scriptExecutionContext();
     visitor.addOpaqueRoot(context);
@@ -3517,10 +3535,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
     }
 }
 
-napi_env GlobalObject::makeNapiEnv(const napi_module& mod)
+Ref<NapiEnv> GlobalObject::makeNapiEnv(const napi_module& mod)
 {
-    m_napiEnvs.append(std::make_unique<napi_env__>(this, mod));
-    return m_napiEnvs.last().get();
+    m_napiEnvs.append(NapiEnv::create(this, mod));
+    return m_napiEnvs.last();
 }
 
 napi_env GlobalObject::makeNapiEnvForFFI()
@@ -3534,7 +3552,7 @@ napi_env GlobalObject::makeNapiEnvForFFI()
         .nm_priv = nullptr,
         .reserved = {},
     });
-    return out;
+    return &out.leakRef();
 }
 
 bool GlobalObject::hasNapiFinalizers() const
@@ -3549,17 +3567,6 @@ bool GlobalObject::hasNapiFinalizers() const
 }
 
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
-
-void GlobalObject::trackFFIFunction(JSC::JSFunction* function)
-{
-    this->m_ffiFunctions.append(vm(), this, function);
-}
-bool GlobalObject::untrackFFIFunction(JSC::JSFunction* function)
-{
-    return this->m_ffiFunctions.removeFirstMatching(this, [&](JSC::WriteBarrier<JSC::JSFunction>& untrackedFunction) -> bool {
-        return untrackedFunction.get() == function;
-    });
-}
 
 extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObject)
 {

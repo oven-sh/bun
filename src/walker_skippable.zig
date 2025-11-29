@@ -1,13 +1,13 @@
 const Walker = @This();
 
-stack: std.ArrayList(StackItem),
+stack: std.array_list.Managed(StackItem),
 name_buffer: NameBufferList,
 skip_filenames: []const u64 = &[_]u64{},
 skip_dirnames: []const u64 = &[_]u64{},
 skip_all: []const u64 = &[_]u64{},
 seed: u64 = 0,
 
-const NameBufferList = std.ArrayList(bun.OSPathChar);
+const NameBufferList = std.array_list.Managed(bun.OSPathChar);
 
 const WrappedIterator = DirIterator.NewWrappedIterator(if (Environment.isWindows) .u16 else .u8);
 
@@ -109,7 +109,7 @@ pub fn next(self: *Walker) bun.sys.Maybe(?WalkerEntry) {
     return .initResult(null);
 }
 
-pub fn deinit(self: *const Walker) void {
+pub fn deinit(self: *Walker) void {
     if (self.stack.items.len > 0) {
         for (self.stack.items[1..]) |*item| {
             if (self.stack.items.len != 0) {
@@ -137,7 +137,7 @@ pub fn walk(
     var name_buffer = NameBufferList.init(allocator);
     errdefer name_buffer.deinit();
 
-    var stack = std.ArrayList(Walker.StackItem).init(allocator);
+    var stack = std.array_list.Managed(Walker.StackItem).init(allocator);
     errdefer stack.deinit();
 
     var skip_names = try allocator.alloc(u64, skip_filenames.len + skip_dirnames.len);

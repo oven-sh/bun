@@ -2919,17 +2919,23 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
 JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto clientData = WebCore::clientData(vm);
     auto* function = globalObject->getDirect(vm, clientData->builtinNames().createEmptyReadableStreamPrivateName()).getObject();
-    return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
+    auto result = JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(result);
 }
 
 JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto clientData = WebCore::clientData(vm);
     auto* function = globalObject->getDirect(vm, clientData->builtinNames().createUsedReadableStreamPrivateName()).getObject();
-    return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
+    auto result = JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(result);
 }
 
 JSC::EncodedJSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigString* arg1,

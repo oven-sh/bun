@@ -37,6 +37,7 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: canary
+          no-cache: true
 
       - name: Show Bun version
         run: bun --version
@@ -103,6 +104,7 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: canary
+          no-cache: true
 
       - name: Download test results
         uses: actions/download-artifact@v4
@@ -137,9 +139,11 @@ jobs:
               const platform = dir.replace("test-results-", "");
               if (!existsSync(dir)) continue;
 
-              // Each directory has XML and TXT files (one pair per test file)
-              const xmlFiles = readdirSync(dir).filter(f => f.endsWith(".xml"));
+              const allFiles = readdirSync(dir);
+              const xmlFiles = allFiles.filter(f => f.endsWith(".xml"));
+              const txtFiles = allFiles.filter(f => f.endsWith(".txt"));
 
+              // Process XML files if available
               for (const xmlFile of xmlFiles) {
                 const baseName = xmlFile.replace(".xml", "");
                 const xmlPath = `${dir}/${xmlFile}`;
@@ -162,6 +166,30 @@ jobs:
                   if (!byFile[file]) byFile[file] = [];
                   byFile[file].push({ platform, passed, total: parseInt(suite.tests || 0), output });
                 }
+              }
+
+              // Fallback: process txt files without matching xml (old bun versions)
+              for (const txtFile of txtFiles) {
+                const baseName = txtFile.replace(".txt", "");
+                const xmlPath = `${dir}/${baseName}.xml`;
+                if (existsSync(xmlPath)) continue; // Already processed via XML
+
+                const txtPath = `${dir}/${txtFile}`;
+                const output = readFileSync(txtPath, "utf-8");
+
+                // Extract file name from sanitized filename
+                const file = baseName.replace(/_/g, "/");
+                if (!file?.startsWith("test/")) continue;
+
+                // Parse pass/fail from output
+                const passMatch = output.match(/(\d+)\s+pass/);
+                const failMatch = output.match(/(\d+)\s+fail/);
+                const passed = passMatch ? parseInt(passMatch[1]) : 0;
+                const failed = failMatch ? parseInt(failMatch[1]) : 0;
+                const total = passed + failed;
+
+                if (!byFile[file]) byFile[file] = [];
+                byFile[file].push({ platform, passed, total, output });
               }
             }
 

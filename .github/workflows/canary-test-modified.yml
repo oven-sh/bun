@@ -102,7 +102,7 @@ jobs:
     name: Test Summary
     needs: test-canary
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     steps:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2

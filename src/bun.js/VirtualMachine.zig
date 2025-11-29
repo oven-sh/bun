@@ -3512,8 +3512,7 @@ pub const IPCInstanceUnion = union(enum) {
     /// IPC is put in this "enabled but not started" state when IPC is detected
     /// but the client JavaScript has not yet done `.on("message")`
     waiting: struct {
-        // TODO: rename to `fd`
-        info: bun.FD,
+        fd: bun.FD,
         mode: IPC.Mode,
     },
     initialized: *IPCInstance,
@@ -3586,9 +3585,9 @@ pub const IPCInstance = struct {
     pub const Handlers = IPC.NewIPCHandler(IPCInstance);
 };
 
-pub fn initIPCInstance(this: *VirtualMachine, info: bun.FD, mode: IPC.Mode) void {
-    IPC.log("initIPCInstance {f}", .{info});
-    this.ipc = .{ .waiting = .{ .info = info, .mode = mode } };
+pub fn initIPCInstance(this: *VirtualMachine, fd: bun.FD, mode: IPC.Mode) void {
+    IPC.log("initIPCInstance {f}", .{fd});
+    this.ipc = .{ .waiting = .{ .fd = fd, .mode = mode } };
 }
 
 pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
@@ -3596,7 +3595,7 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
     if (this.ipc.? != .waiting) return this.ipc.?.initialized;
     const opts = this.ipc.?.waiting;
 
-    IPC.log("getIPCInstance {f}", .{opts.info});
+    IPC.log("getIPCInstance {f}", .{opts.fd});
 
     this.event_loop.ensureWaker();
 
@@ -3615,7 +3614,7 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
 
             instance.data = .init(opts.mode, .{ .virtual_machine = instance }, .uninitialized);
 
-            const socket = IPC.Socket.fromFd(context, opts.info, IPC.SendQueue, &instance.data, null, true) orelse {
+            const socket = IPC.Socket.fromFd(context, opts.fd, IPC.SendQueue, &instance.data, null, true) orelse {
                 instance.deinit();
                 this.ipc = null;
                 Output.warn("Unable to start IPC socket", .{});
@@ -3637,10 +3636,10 @@ pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
 
             this.ipc = .{ .initialized = instance };
 
-            instance.data.windowsConfigureClient(opts.info) catch {
+            instance.data.windowsConfigureClient(opts.fd) catch {
                 instance.deinit();
                 this.ipc = null;
-                Output.warn("Unable to start IPC pipe '{f}'", .{opts.info});
+                Output.warn("Unable to start IPC pipe '{f}'", .{opts.fd});
                 return null;
             };
 

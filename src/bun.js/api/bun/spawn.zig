@@ -92,6 +92,8 @@ pub const BunSpawn = struct {
 
     pub const Attr = struct {
         detached: bool = false,
+        uid: u32 = std.math.maxInt(u32),
+        gid: u32 = std.math.maxInt(u32),
 
         pub fn init() !Attr {
             return Attr{};
@@ -115,6 +117,14 @@ pub const BunSpawn = struct {
 
         pub fn resetSignals(this: *Attr) !void {
             _ = this;
+        }
+
+        pub fn setUid(this: *Attr, uid: u32) !void {
+            this.uid = uid;
+        }
+
+        pub fn setGid(this: *Attr, gid: u32) !void {
+            this.gid = gid;
         }
     };
 };
@@ -166,7 +176,27 @@ pub const PosixSpawn = struct {
             }
         }
 
+        pub fn setUid(this: *PosixSpawnAttr, uid: u32) !void {
+            if (comptime !Environment.isLinux) {
+                return error.UidGidNotSupported;
+            }
+            if (posix_spawnattr_setuid(&this.attr, uid) != 0) {
+                return error.FailedToSetUid;
+            }
+        }
+
+        pub fn setGid(this: *PosixSpawnAttr, gid: u32) !void {
+            if (comptime !Environment.isLinux) {
+                return error.UidGidNotSupported;
+            }
+            if (posix_spawnattr_setgid(&this.attr, gid) != 0) {
+                return error.FailedToSetGid;
+            }
+        }
+
         extern fn posix_spawnattr_reset_signals(attr: *system.posix_spawnattr_t) c_int;
+        extern fn posix_spawnattr_setuid(attr: *system.posix_spawnattr_t, uid: u32) c_int;
+        extern fn posix_spawnattr_setgid(attr: *system.posix_spawnattr_t, gid: u32) c_int;
     };
 
     pub const PosixSpawnActions = struct {
@@ -266,6 +296,8 @@ pub const PosixSpawn = struct {
         chdir_buf: ?[*:0]u8 = null,
         detached: bool = false,
         actions: ActionsList = .{},
+        uid: u32 = std.math.maxInt(u32),
+        gid: u32 = std.math.maxInt(u32),
 
         const ActionsList = extern struct {
             ptr: ?[*]const BunSpawn.Action = null,
@@ -331,6 +363,8 @@ pub const PosixSpawn = struct {
                     },
                     .chdir_buf = if (actions) |a| a.chdir_buf else null,
                     .detached = if (attr) |a| a.detached else false,
+                    .uid = if (attr) |a| a.uid else std.math.maxInt(u32),
+                    .gid = if (attr) |a| a.gid else std.math.maxInt(u32),
                 },
                 argv,
                 envp,

@@ -994,6 +994,8 @@ pub const PosixSpawnOptions = struct {
     /// for stdout. This is used to preserve
     /// consistent shell semantics.
     no_sigpipe: bool = true,
+    uid: ?u32 = null,
+    gid: ?u32 = null,
 
     pub const Stdio = union(enum) {
         path: []const u8,
@@ -1062,6 +1064,8 @@ pub const WindowsSpawnOptions = struct {
     stream: bool = true,
     use_execve_on_macos: bool = false,
     can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: bool = false,
+    uid: ?u32 = null,
+    gid: ?u32 = null,
     pub const WindowsOptions = struct {
         verbatim_arguments: bool = false,
         hide_window: bool = true,
@@ -1290,6 +1294,18 @@ pub fn spawnProcessPosix(
 
     attr.set(@intCast(flags)) catch {};
     attr.resetSignals() catch {};
+
+    if (options.uid) |uid| {
+        attr.setUid(uid) catch {
+            return .{ .err = bun.sys.Error.fromCode(bun.C.SystemErrno.PERM, .setuid).withPath("spawn") };
+        };
+    }
+
+    if (options.gid) |gid| {
+        attr.setGid(gid) catch {
+            return .{ .err = bun.sys.Error.fromCode(bun.C.SystemErrno.PERM, .setgid).withPath("spawn") };
+        };
+    }
 
     if (options.ipc) |ipc| {
         try actions.inherit(ipc);

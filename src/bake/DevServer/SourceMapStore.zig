@@ -526,7 +526,7 @@ pub fn getParsedSourceMap(store: *Self, script_id: Key, arena: Allocator, gpa: A
         gpa,
         vlq_bytes,
         null,
-        @intCast(entry.paths.len),
+        @intCast(entry.paths.len + 1), // +1 for HMR Runtime at source index 0
         0, // unused
         .{},
     )) {

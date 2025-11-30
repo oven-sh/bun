@@ -356,10 +356,7 @@ pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer,
 /// Determines the best quote character for console output:
 /// - Use double quotes by default
 /// - Use single quotes if string contains double quotes but no single quotes
-pub fn bestQuoteCharForConsole(input: []const u8, comptime encoding: strings.Encoding) u8 {
-    if (comptime encoding == .utf16) {
-        return bestQuoteCharForConsoleUTF16(@alignCast(std.mem.bytesAsSlice(u16, input)));
-    }
+pub fn bestQuoteCharForConsole(input: []const u8) u8 {
     const has_double = strings.containsChar(input, '"');
     const has_single = strings.containsChar(input, '\'');
     // Default to double quotes, use single quotes only to avoid escaping
@@ -367,40 +364,18 @@ pub fn bestQuoteCharForConsole(input: []const u8, comptime encoding: strings.Enc
 }
 
 /// Writes a quoted string for console output, choosing the best quote character
-/// to minimize escaping (following Node.js behavior).
-pub fn writeQuotedString(input: []const u8, comptime Writer: type, writer: Writer, comptime encoding: strings.Encoding) !void {
-    const quote_char = bestQuoteCharForConsole(input, encoding);
+/// to minimize escaping. Only supports latin1 encoding (use JSON path for UTF-16).
+pub fn writeQuotedString(input: []const u8, comptime Writer: type, writer: Writer) !void {
+    const quote_char = bestQuoteCharForConsole(input);
     if (quote_char == '\'') {
         try writer.writeAll("'");
-        try writePreQuotedString(input, Writer, writer, '\'', false, false, encoding);
+        try writePreQuotedString(input, Writer, writer, '\'', false, false, .latin1);
         try writer.writeAll("'");
     } else {
         try writer.writeAll("\"");
-        try writePreQuotedString(input, Writer, writer, '"', false, false, encoding);
+        try writePreQuotedString(input, Writer, writer, '"', false, false, .latin1);
         try writer.writeAll("\"");
     }
-}
-
-/// UTF-16 version of writeQuotedString for console output.
-pub fn writeQuotedStringUTF16(input: []const u16, comptime Writer: type, writer: Writer) !void {
-    const quote_char = bestQuoteCharForConsoleUTF16(input);
-    if (quote_char == '\'') {
-        try writer.writeAll("'");
-        try writePreQuotedString(std.mem.sliceAsBytes(input), Writer, writer, '\'', false, false, .utf16);
-        try writer.writeAll("'");
-    } else {
-        try writer.writeAll("\"");
-        try writePreQuotedString(std.mem.sliceAsBytes(input), Writer, writer, '"', false, false, .utf16);
-        try writer.writeAll("\"");
-    }
-}
-
-/// UTF-16 version of bestQuoteCharForConsole.
-pub fn bestQuoteCharForConsoleUTF16(input: []const u16) u8 {
-    const has_double = strings.containsCharT(u16, input, '"');
-    const has_single = strings.containsCharT(u16, input, '\'');
-    // Default to double quotes, use single quotes only to avoid escaping
-    return if (has_double and !has_single) '\'' else '"';
 }
 
 pub const SourceMapHandler = struct {

@@ -2151,11 +2151,12 @@ pub const Formatter = struct {
                         writer.writeAll(Output.prettyFmt("<r>", true));
 
                     if (str.isUTF16()) {
-                        JSPrinter.writeQuotedStringUTF16(str.utf16(), Writer, writer_) catch unreachable;
+                        // Use JSON path for UTF-16 to properly handle surrogate pairs (emojis)
+                        try this.printAs(.JSON, Writer, writer_, value, .StringObject, enable_ansi_colors);
                         return;
                     }
 
-                    JSPrinter.writeQuotedString(str.latin1(), Writer, writer_, .latin1) catch unreachable;
+                    JSPrinter.writeQuotedString(str.latin1(), Writer, writer_) catch unreachable;
 
                     return;
                 }
@@ -2170,9 +2171,10 @@ pub const Formatter = struct {
                     writer.print("[String: ", .{});
 
                     if (str.isUTF16()) {
-                        JSPrinter.writeQuotedStringUTF16(str.utf16(), Writer, writer_) catch unreachable;
+                        // Use JSON path for UTF-16 to properly handle surrogate pairs (emojis)
+                        try this.printAs(.JSON, Writer, writer_, value, .StringObject, enable_ansi_colors);
                     } else {
-                        JSPrinter.writeQuotedString(str.latin1(), Writer, writer_, .latin1) catch unreachable;
+                        JSPrinter.writeQuotedString(str.latin1(), Writer, writer_) catch unreachable;
                     }
 
                     writer.print("]", .{});

@@ -394,7 +394,11 @@ pub const BunxCommand = struct {
             &this_transpiler,
             &ORIGINAL_PATH,
             root_dir_info.abs_path,
-            ctx.debug.run_in_bun,
+            // On Windows, always ensure bun is in PATH for bunx.
+            // This is needed because child processes spawned by bunx packages
+            // (e.g., `sv create` from SvelteKit) may need to invoke `bun` and
+            // would fail if bun isn't in PATH. See: https://github.com/oven-sh/bun/issues/25151
+            if (Environment.isWindows) true else ctx.debug.run_in_bun,
         );
         this_transpiler.env.map.put("npm_command", "exec") catch unreachable;
         this_transpiler.env.map.put("npm_lifecycle_event", "bunx") catch unreachable;

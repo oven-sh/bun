@@ -792,3 +792,84 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
     });
   });
 });
+
+// Regression test for https://github.com/oven-sh/bun/issues/25151
+// On Windows, child processes spawned by bunx packages couldn't find `bun` in PATH
+it("bunx child processes can spawn bun", async () => {
+  // Create a package that spawns `bun --version` as a child process
+  const tempDir = tmpdirSync();
+  const packageDir = join(tempDir, "package");
+  await Bun.$`mkdir -p ${packageDir}/bin`;
+
+  // Create package.json
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "spawn-bun-test",
+      version: "1.0.0",
+      bin: {
+        "spawn-bun-test": "./bin/spawn-bun.js",
+      },
+    }),
+  );
+
+  // Create a binary that spawns bun
+  await writeFile(
+    join(packageDir, "bin", "spawn-bun.js"),
+    `#!/usr/bin/env node
+const { spawnSync } = require("child_process");
+const result = spawnSync(${isWindows ? '"bun.exe"' : '"bun"'}, ["--version"], { encoding: "utf-8" });
+if (result.error) {
+  console.error("ERROR:", result.error.message);
+  process.exit(1);
+}
+console.log("BUN_VERSION:" + result.stdout.trim());
+process.exit(result.status);
+`,
+  );
+
+  // Make the binary executable
+  if (!isWindows) {
+    await Bun.$`chmod +x ${packageDir}/bin/spawn-bun.js`;
+  }
+
+  // Install the package locally
+  await writeFile(
+    join(x_dir, "package.json"),
+    JSON.stringify({
+      dependencies: {
+        "spawn-bun-test": packageDir,
+      },
+    }),
+  );
+
+  const { exited: installFinished } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: x_dir,
+    env,
+  });
+  expect(await installFinished).toBe(0);
+
+  // Run the package via bunx - it should be able to spawn bun
+  const subprocess = spawn({
+    cmd: [bunExe(), "x", "spawn-bun-test"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const [stderr, stdout, exited] = await Promise.all([
+    subprocess.stderr.text(),
+    subprocess.stdout.text(),
+    subprocess.exited,
+  ]);
+
+  // Should successfully spawn bun and get its version
+  // We just verify that bun was found and executed successfully -
+  // the exact version may differ from the test runner's version
+  expect(stdout).toContain("BUN_VERSION:");
+  expect(stdout).toMatch(/BUN_VERSION:\d+\.\d+\.\d+/);
+  expect(stderr).not.toContain("ERROR:");
+  expect(exited).toBe(0);
+});

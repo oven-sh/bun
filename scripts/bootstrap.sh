@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 20
+# Version: 21
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1565,7 +1565,7 @@ install_buildkite() {
 		return
 	fi
 
-	buildkite_version="3.87.0"
+	buildkite_version="3.114.0"
 	case "$arch" in
 	aarch64)
 		buildkite_arch="arm64"
@@ -1766,7 +1766,7 @@ ensure_no_tmpfs() {
 	if ! [ "$os" = "linux" ]; then
 		return
 	fi
-	if ! [ "$distro" = "ubuntu" ]; then
+	if ! ( [ "$distro" = "ubuntu" ] || [ "$distro" = "debian" ] ); then
 		return
 	fi
 

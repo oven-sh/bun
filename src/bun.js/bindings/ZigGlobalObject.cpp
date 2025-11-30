@@ -217,6 +217,8 @@
 #include <unistd.h>
 #endif
 
+#include "mimalloc.h"
+
 using namespace Bun;
 
 BUN_DECLARE_HOST_FUNCTION(Bun__NodeUtil__jsParseArgs);
@@ -3580,7 +3582,10 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
     globalObject = nullptr;
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     vm.derefSuppressingSaferCPPChecking();
+    ASSERT_WITH_MESSAGE(vm.hasOneRef(), "JSC::VM has more than one ref. destructOnExit will not work.");
     vm.derefSuppressingSaferCPPChecking();
+    WTF::releaseFastMallocFreeMemory();
+    mi_collect(false);
 }
 
 #include "ZigGeneratedClasses+lazyStructureImpl.h"

@@ -1156,10 +1156,11 @@ pub const JSValue = enum(i64) {
         return JSC__JSValue__bigIntSum(globalObject, a, b);
     }
 
-    extern fn JSC__JSValue__toUInt64NoTruncate(this: JSValue) u64;
+    /// Value must be either `isHeapBigInt` or `isNumber`
     pub fn toUInt64NoTruncate(this: JSValue) u64 {
         return JSC__JSValue__toUInt64NoTruncate(this);
     }
+    extern fn JSC__JSValue__toUInt64NoTruncate(this: JSValue) u64;
 
     /// Deprecated: replace with 'toBunString'
     pub fn getZigString(this: JSValue, global: *JSGlobalObject) bun.JSError!ZigString {

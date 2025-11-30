@@ -3432,7 +3432,13 @@ pub const BundleV2 = struct {
                 if (this.transpiler.options.dev_server != null and loader != .html) {
                     import_record.path = this.graph.input_files.items(.source)[id].path;
                 } else {
-                    import_record.source_index = .init(id);
+                    // Only set source_index if the import is actually used
+                    // Unused imports should remain invalid to exclude from bundle
+                    if (!was_unused) {
+                        import_record.source_index = .init(id);
+                    } else {
+                        import_record.source_index = Index.invalid;
+                    }
                 }
                 continue;
             }
@@ -3444,6 +3450,10 @@ pub const BundleV2 = struct {
             const resolve_entry = resolve_queue.getOrPut(path.text) catch |err| bun.handleOom(err);
             if (resolve_entry.found_existing) {
                 import_record.path = resolve_entry.value_ptr.*.path;
+                // Mark unused imports as invalid even when reusing resolve entry
+                if (was_unused) {
+                    import_record.source_index = Index.invalid;
+                }
                 continue;
             }
 

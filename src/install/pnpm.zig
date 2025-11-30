@@ -1763,8 +1763,6 @@ fn migrateSettingsAfterLockfileMigration(allocator: Allocator, manager: *Package
     }
 }
 
-const TOML = bun.interchange.toml.TOML;
-
 const Dependency = @import("./dependency.zig");
 const Npm = @import("./npm.zig");
 const Bin = @import("./bin.zig").Bin;
@@ -1780,6 +1778,7 @@ const OOM = bun.OOM;
 const logger = bun.logger;
 const strings = bun.strings;
 const sys = bun.sys;
+const TOML = bun.interchange.toml.TOML;
 const YAML = bun.interchange.yaml.YAML;
 
 const Semver = bun.Semver;

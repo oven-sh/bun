@@ -201,3 +201,119 @@ describe.todo("workspaces", async () => {
     });
   });
 });
+
+describe("pnpm settings migration", () => {
+  test("migrates onlyBuiltDependencies to trustedDependencies", async () => {
+    const { packageDir } = await verdaccio.createTestDir({
+      files: join(import.meta.dir, "pnpm/settings-trusted"),
+    });
+
+    const proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [exitCode] = await Promise.all([proc.exited]);
+    expect(exitCode).toBe(0);
+
+    const pkgJson = await file(join(packageDir, "package.json")).json();
+    expect(pkgJson.trustedDependencies).toEqual(["esbuild", "fsevents"]);
+  });
+
+  test("migrates minimumReleaseAge to bunfig.toml (minutes to seconds)", async () => {
+    const { packageDir } = await verdaccio.createTestDir({
+      files: join(import.meta.dir, "pnpm/settings-minage"),
+    });
+
+    const proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [exitCode] = await Promise.all([proc.exited]);
+    expect(exitCode).toBe(0);
+
+    const bunfigText = await file(join(packageDir, "bunfig.toml")).text();
+    const bunfig = Bun.TOML.parse(bunfigText) as {
+      install?: { minimumReleaseAge?: number; minimumReleaseAgeExcludes?: string[] };
+    };
+
+    // 1440 minutes * 60 = 86400 seconds
+    expect(bunfig.install?.minimumReleaseAge).toBe(86400);
+    expect(bunfig.install?.minimumReleaseAgeExcludes).toEqual(["webpack", "react"]);
+  });
+
+  test("migrates hoistPattern and shamefullyHoist to bunfig.toml", async () => {
+    const { packageDir } = await verdaccio.createTestDir({
+      files: join(import.meta.dir, "pnpm/settings-hoist"),
+    });
+
+    const proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [exitCode] = await Promise.all([proc.exited]);
+    expect(exitCode).toBe(0);
+
+    const bunfigText = await file(join(packageDir, "bunfig.toml")).text();
+    const bunfig = Bun.TOML.parse(bunfigText) as {
+      install?: { publicHoistPattern?: string[]; hoistPattern?: string[] };
+    };
+
+    // shamefullyHoist prepends "*" to publicHoistPattern
+    expect(bunfig.install?.publicHoistPattern).toEqual(["*", "*plugin*"]);
+    expect(bunfig.install?.hoistPattern).toEqual(["*eslint*", "*babel*"]);
+  });
+
+  test("does not duplicate settings on second migration", async () => {
+    const { packageDir } = await verdaccio.createTestDir({
+      files: join(import.meta.dir, "pnpm/settings-minage"),
+    });
+
+    // First install - migrates settings
+    let proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    let [exitCode] = await Promise.all([proc.exited]);
+    expect(exitCode).toBe(0);
+
+    const bunfigAfterFirst = await file(join(packageDir, "bunfig.toml")).text();
+    const firstParsed = Bun.TOML.parse(bunfigAfterFirst) as { install?: { minimumReleaseAge?: number } };
+    expect(firstParsed.install?.minimumReleaseAge).toBe(86400);
+
+    // Second install - should not duplicate
+    proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    [exitCode] = await Promise.all([proc.exited]);
+    expect(exitCode).toBe(0);
+
+    const bunfigAfterSecond = await file(join(packageDir, "bunfig.toml")).text();
+    const secondParsed = Bun.TOML.parse(bunfigAfterSecond) as { install?: { minimumReleaseAge?: number } };
+
+    // Should still have the same value, not duplicated
+    expect(secondParsed.install?.minimumReleaseAge).toBe(86400);
+    // Key should only appear once since we check if it exists before appending
+    // Use word boundary to not match minimumReleaseAgeExcludes
+    const matches = bunfigAfterSecond.match(/minimumReleaseAge\s*=/g);
+    expect(matches?.length).toBe(1);
+  });
+});

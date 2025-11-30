@@ -826,7 +826,7 @@ pub fn migratePnpmLockfile(
 
     try lockfile.fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(manager, false);
 
-    try updatePackageJsonAfterMigration(allocator, manager, log, dir, found_patches);
+    try migrateSettingsAfterLockfileMigration(allocator, manager, log, dir, found_patches);
 
     return .{
         .ok = .{
@@ -1220,8 +1220,8 @@ fn parseAppendImporterDependencies(
     return .{ @intCast(off), @intCast(end - off) };
 }
 
-/// Updates package.json with workspace and catalog information after migration
-fn updatePackageJsonAfterMigration(allocator: Allocator, manager: *PackageManager, log: *logger.Log, dir: bun.FD, patches: bun.StringArrayHashMap([]const u8)) OOM!void {
+/// Migrates pnpm settings from pnpm-workspace.yaml to package.json and bunfig.toml
+fn migrateSettingsAfterLockfileMigration(allocator: Allocator, manager: *PackageManager, log: *logger.Log, dir: bun.FD, patches: bun.StringArrayHashMap([]const u8)) OOM!void {
     var pkg_json_path: bun.AbsPath(.{}) = .initTopLevelDir();
     defer pkg_json_path.deinit();
 
@@ -1346,6 +1346,12 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, manager: *PackageManage
     var workspace_overrides_obj: ?Expr = null;
     var workspace_patched_deps_obj: ?Expr = null;
 
+    var only_built_dependencies: ?std.array_list.Managed([]const u8) = null;
+    var minimum_release_age_seconds: ?u64 = null;
+    var minimum_release_age_exclude: ?std.array_list.Managed([]const u8) = null;
+    var public_hoist_pattern: ?std.array_list.Managed([]const u8) = null;
+    var hoist_pattern: ?std.array_list.Managed([]const u8) = null;
+
     switch (bun.sys.File.readFrom(bun.FD.cwd(), "pnpm-workspace.yaml", allocator)) {
         .result => |contents| read_pnpm_workspace_yaml: {
             const yaml_source = logger.Source.initPathString("pnpm-workspace.yaml", contents);
@@ -1381,6 +1387,94 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, manager: *PackageManage
 
             if (root.getObject("patchedDependencies")) |patched_deps_expr| {
                 workspace_patched_deps_obj = patched_deps_expr;
+            }
+
+            if (root.get("onlyBuiltDependencies")) |only_built_expr| {
+                if (only_built_expr.asArray()) |_only_built| {
+                    var only_built = _only_built;
+                    var deps: std.array_list.Managed([]const u8) = .init(allocator);
+                    while (only_built.next()) |dep| {
+                        if (dep.asString(allocator)) |dep_str| {
+                            // pnpm allows "pkg@version" format, but for trustedDependencies we only need the package name
+                            const at_idx = strings.indexOfChar(dep_str, '@');
+                            const pkg_name = if (at_idx) |idx| dep_str[0..idx] else dep_str;
+                            try deps.append(pkg_name);
+                        }
+                    }
+                    if (deps.items.len > 0) {
+                        only_built_dependencies = deps;
+                    }
+                }
+            }
+
+            if (root.get("minimumReleaseAge")) |min_age_expr| {
+                if (min_age_expr.data == .e_number) {
+                    // pnpm uses minutes, bun uses seconds
+                    const minutes = min_age_expr.data.e_number.value;
+                    if (minutes >= 0) {
+                        minimum_release_age_seconds = @intFromFloat(minutes * 60);
+                    }
+                }
+            }
+
+            if (root.get("minimumReleaseAgeExclude")) |exclude_expr| {
+                if (exclude_expr.asArray()) |_excludes| {
+                    var excludes = _excludes;
+                    var exclude_list: std.array_list.Managed([]const u8) = .init(allocator);
+                    while (excludes.next()) |excl| {
+                        if (excl.asString(allocator)) |excl_str| {
+                            try exclude_list.append(excl_str);
+                        }
+                    }
+                    if (exclude_list.items.len > 0) {
+                        minimum_release_age_exclude = exclude_list;
+                    }
+                }
+            }
+
+            if (root.get("publicHoistPattern")) |pattern_expr| {
+                if (pattern_expr.asArray()) |_patterns| {
+                    var patterns = _patterns;
+                    var pattern_list: std.array_list.Managed([]const u8) = .init(allocator);
+                    while (patterns.next()) |pat| {
+                        if (pat.asString(allocator)) |pat_str| {
+                            try pattern_list.append(pat_str);
+                        }
+                    }
+                    if (pattern_list.items.len > 0) {
+                        public_hoist_pattern = pattern_list;
+                    }
+                }
+            }
+
+            if (root.get("hoistPattern")) |pattern_expr| {
+                if (pattern_expr.asArray()) |_patterns| {
+                    var patterns = _patterns;
+                    var pattern_list: std.array_list.Managed([]const u8) = .init(allocator);
+                    while (patterns.next()) |pat| {
+                        if (pat.asString(allocator)) |pat_str| {
+                            try pattern_list.append(pat_str);
+                        }
+                    }
+                    if (pattern_list.items.len > 0) {
+                        hoist_pattern = pattern_list;
+                    }
+                }
+            }
+
+            // shamefullyHoist: prepend "*" to publicHoistPattern
+            if (root.get("shamefullyHoist")) |shameful_expr| {
+                if (shameful_expr.asBool()) |value| {
+                    if (value) {
+                        if (public_hoist_pattern) |*patterns| {
+                            try patterns.insert(0, "*");
+                        } else {
+                            var pattern_list: std.array_list.Managed([]const u8) = .init(allocator);
+                            try pattern_list.append("*");
+                            public_hoist_pattern = pattern_list;
+                        }
+                    }
+                }
             }
         },
         .err => {},
@@ -1517,6 +1611,40 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, manager: *PackageManage
         }
     }
 
+    if (only_built_dependencies) |only_built| {
+        if (only_built.items.len > 0) {
+            if (json.asProperty("trustedDependencies")) |existing_prop| {
+                if (existing_prop.expr.data == .e_array) {
+                    const existing_arr = existing_prop.expr.data.e_array;
+                    var existing_set = bun.StringHashMap(void).init(allocator);
+                    for (existing_arr.items.slice()) |item| {
+                        if (item.asString(allocator)) |s| {
+                            try existing_set.put(s, {});
+                        }
+                    }
+                    var new_items: JSAst.ExprNodeList = try .initCapacity(allocator, existing_arr.items.len + only_built.items.len);
+                    for (existing_arr.items.slice()) |item| {
+                        new_items.appendAssumeCapacity(item);
+                    }
+                    for (only_built.items) |dep| {
+                        if (!existing_set.contains(dep)) {
+                            new_items.appendAssumeCapacity(Expr.init(E.String, .{ .data = dep }, .Empty));
+                        }
+                    }
+                    existing_prop.expr.data.e_array.items = new_items;
+                }
+            } else {
+                var items: JSAst.ExprNodeList = try .initCapacity(allocator, only_built.items.len);
+                for (only_built.items) |dep| {
+                    items.appendAssumeCapacity(Expr.init(E.String, .{ .data = dep }, .Empty));
+                }
+                const array = Expr.init(E.Array, .{ .items = items }, .Empty);
+                try json.data.e_object.put(allocator, "trustedDependencies", array);
+            }
+            needs_update = true;
+        }
+    }
+
     if (needs_update) {
         var buffer_writer = JSPrinter.BufferWriter.init(allocator);
         defer buffer_writer.buffer.deinit();
@@ -1545,7 +1673,97 @@ fn updatePackageJsonAfterMigration(allocator: Allocator, manager: *PackageManage
         defer write_file.close();
         _ = write_file.write(root_pkg_json.source.contents).unwrap() catch return;
     }
+
+    const has_bunfig_settings = minimum_release_age_seconds != null or
+        minimum_release_age_exclude != null or
+        public_hoist_pattern != null or
+        hoist_pattern != null;
+
+    if (has_bunfig_settings) {
+        var existing_bunfig: []const u8 = "";
+        var empty_obj = E.Object{};
+        var existing_install: *E.Object = &empty_obj;
+
+        switch (bun.sys.File.readFrom(dir, "bunfig.toml", allocator)) {
+            .result => |contents| {
+                existing_bunfig = contents;
+                const toml_source = logger.Source.initPathString("bunfig.toml", contents);
+                if (TOML.parse(&toml_source, log, allocator, false) catch null) |parsed| {
+                    if (parsed.data == .e_object) {
+                        if (parsed.data.e_object.get("install")) |install_expr| {
+                            if (install_expr.data == .e_object) {
+                                existing_install = install_expr.data.e_object;
+                            }
+                        }
+                    }
+                }
+            },
+            .err => {},
+        }
+
+        var settings_buf = std.array_list.Managed(u8).init(allocator);
+        defer settings_buf.deinit();
+        const settings_writer = settings_buf.writer();
+
+        if (minimum_release_age_seconds) |age_seconds| {
+            if (existing_install.get("minimumReleaseAge") == null) {
+                settings_writer.print("minimumReleaseAge = {d}\n", .{age_seconds}) catch return;
+            }
+        }
+
+        if (minimum_release_age_exclude) |excludes| {
+            if (existing_install.get("minimumReleaseAgeExcludes") == null) {
+                settings_writer.writeAll("minimumReleaseAgeExcludes = [") catch return;
+                for (excludes.items, 0..) |excl, i| {
+                    if (i > 0) settings_writer.writeAll(", ") catch return;
+                    settings_writer.print("\"{s}\"", .{excl}) catch return;
+                }
+                settings_writer.writeAll("]\n") catch return;
+            }
+        }
+
+        if (public_hoist_pattern) |patterns| {
+            if (existing_install.get("publicHoistPattern") == null) {
+                settings_writer.writeAll("publicHoistPattern = [") catch return;
+                for (patterns.items, 0..) |pat, i| {
+                    if (i > 0) settings_writer.writeAll(", ") catch return;
+                    settings_writer.print("\"{s}\"", .{pat}) catch return;
+                }
+                settings_writer.writeAll("]\n") catch return;
+            }
+        }
+
+        if (hoist_pattern) |patterns| {
+            if (existing_install.get("hoistPattern") == null) {
+                settings_writer.writeAll("hoistPattern = [") catch return;
+                for (patterns.items, 0..) |pat, i| {
+                    if (i > 0) settings_writer.writeAll(", ") catch return;
+                    settings_writer.print("\"{s}\"", .{pat}) catch return;
+                }
+                settings_writer.writeAll("]\n") catch return;
+            }
+        }
+
+        if (settings_buf.items.len > 0) {
+            var final_bunfig = std.array_list.Managed(u8).init(allocator);
+            defer final_bunfig.deinit();
+
+            final_bunfig.appendSlice(existing_bunfig) catch return;
+            if (existing_bunfig.len > 0 and existing_bunfig[existing_bunfig.len - 1] != '\n') {
+                final_bunfig.appendSlice("\n\n") catch return;
+            }
+            final_bunfig.appendSlice("[install]\n") catch return;
+            final_bunfig.appendSlice(settings_buf.items) catch return;
+            final_bunfig.appendSlice("\n") catch return;
+
+            const bunfig_file = bun.sys.File.openat(dir, "bunfig.toml", bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o644).unwrap() catch return;
+            defer bunfig_file.close();
+            _ = bunfig_file.write(final_bunfig.items).unwrap() catch return;
+        }
+    }
 }
+
+const TOML = bun.interchange.toml.TOML;
 
 const Dependency = @import("./dependency.zig");
 const Npm = @import("./npm.zig");

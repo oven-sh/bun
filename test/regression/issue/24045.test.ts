@@ -76,3 +76,30 @@ test("assert.deepStrictEqual() should not compare Number and Boolean wrappers", 
     assert.deepStrictEqual(new Number(0), new Boolean(false));
   }).toThrow("Expected values to be strictly deep-equal");
 });
+
+test("assert.deepStrictEqual() should check own properties on wrapper objects", () => {
+  // Same internal value but different own properties should not be equal
+  const num1 = new Number(42);
+  const num2 = new Number(42);
+  (num1 as any).customProp = "hello";
+
+  expect(() => {
+    assert.deepStrictEqual(num1, num2);
+  }).toThrow("Expected values to be strictly deep-equal");
+
+  // Same internal value and same own properties should be equal
+  (num2 as any).customProp = "hello";
+  expect(() => {
+    assert.deepStrictEqual(num1, num2);
+  }).not.toThrow();
+
+  // Different own property values should not be equal
+  const bool1 = new Boolean(true);
+  const bool2 = new Boolean(true);
+  (bool1 as any).foo = 1;
+  (bool2 as any).foo = 2;
+
+  expect(() => {
+    assert.deepStrictEqual(bool1, bool2);
+  }).toThrow("Expected values to be strictly deep-equal");
+});

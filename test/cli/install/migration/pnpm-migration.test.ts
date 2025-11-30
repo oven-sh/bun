@@ -216,7 +216,8 @@ describe("pnpm settings migration", () => {
       stderr: "pipe",
     });
 
-    const [exitCode] = await Promise.all([proc.exited]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
     const pkgJson = await file(join(packageDir, "package.json")).json();
@@ -236,7 +237,8 @@ describe("pnpm settings migration", () => {
       stderr: "pipe",
     });
 
-    const [exitCode] = await Promise.all([proc.exited]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
     const bunfigText = await file(join(packageDir, "bunfig.toml")).text();
@@ -262,7 +264,8 @@ describe("pnpm settings migration", () => {
       stderr: "pipe",
     });
 
-    const [exitCode] = await Promise.all([proc.exited]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
     const bunfigText = await file(join(packageDir, "bunfig.toml")).text();
@@ -288,7 +291,8 @@ describe("pnpm settings migration", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    let [exitCode] = await Promise.all([proc.exited]);
+    let [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
     const bunfigAfterFirst = await file(join(packageDir, "bunfig.toml")).text();
@@ -303,7 +307,8 @@ describe("pnpm settings migration", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    [exitCode] = await Promise.all([proc.exited]);
+    [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
     const bunfigAfterSecond = await file(join(packageDir, "bunfig.toml")).text();
@@ -312,7 +317,7 @@ describe("pnpm settings migration", () => {
     // Should still have the same value, not duplicated
     expect(secondParsed.install?.minimumReleaseAge).toBe(86400);
     // Key should only appear once since we check if it exists before appending
-    // Use word boundary to not match minimumReleaseAgeExcludes
+    // Pattern requires '=' to avoid matching minimumReleaseAgeExcludes
     const matches = bunfigAfterSecond.match(/minimumReleaseAge\s*=/g);
     expect(matches?.length).toBe(1);
   });

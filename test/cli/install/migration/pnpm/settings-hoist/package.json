@@ -1,5 +1,5 @@
 {
-  "name": "test-settings-trusted",
+  "name": "test-settings-hoist",
   "dependencies": {
     "no-deps": "~1.0.0"
   }

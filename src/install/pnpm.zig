@@ -1396,8 +1396,14 @@ fn migrateSettingsAfterLockfileMigration(allocator: Allocator, manager: *Package
                     while (only_built.next()) |dep| {
                         if (dep.asString(allocator)) |dep_str| {
                             // pnpm allows "pkg@version" format, but for trustedDependencies we only need the package name
-                            const at_idx = strings.indexOfChar(dep_str, '@');
-                            const pkg_name = if (at_idx) |idx| dep_str[0..idx] else dep_str;
+                            const pkg_name = if (strings.startsWithChar(dep_str, '@')) blk: {
+                                const after_scope = strings.indexOfCharPos(dep_str, '/', 1) orelse dep_str.len;
+                                const version_sep = strings.indexOfCharPos(dep_str, '@', after_scope);
+                                break :blk if (version_sep) |idx| dep_str[0..idx] else dep_str;
+                            } else blk: {
+                                const at_idx = strings.indexOfChar(dep_str, '@');
+                                break :blk if (at_idx) |idx| dep_str[0..idx] else dep_str;
+                            };
                             try deps.append(pkg_name);
                         }
                     }
@@ -1748,9 +1754,12 @@ fn migrateSettingsAfterLockfileMigration(allocator: Allocator, manager: *Package
             var final_bunfig = std.array_list.Managed(u8).init(allocator);
             defer final_bunfig.deinit();
 
-            final_bunfig.appendSlice(existing_bunfig) catch return;
-            if (existing_bunfig.len > 0 and existing_bunfig[existing_bunfig.len - 1] != '\n') {
-                final_bunfig.appendSlice("\n\n") catch return;
+            if (existing_bunfig.len > 0) {
+                final_bunfig.appendSlice(existing_bunfig) catch return;
+                if (!strings.endsWithChar(existing_bunfig, '\n')) {
+                    final_bunfig.appendSlice("\n") catch return;
+                }
+                final_bunfig.appendSlice("\n") catch return;
             }
             final_bunfig.appendSlice("[install]\n") catch return;
             final_bunfig.appendSlice(settings_buf.items) catch return;

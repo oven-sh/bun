@@ -272,10 +272,10 @@ fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value:
         } else {
             var value_list = try JSValue.createEmptyArray(globalThis, 1);
             try value_list.putIndex(globalThis, 0, new_value);
-            try values.putMayBeIndex(globalThis, &key, value_list);
+            try values.putDirectMayBeIndex(globalThis, &key, value_list);
         }
     } else {
-        try values.putMayBeIndex(globalThis, &key, new_value);
+        try values.putDirectMayBeIndex(globalThis, &key, new_value);
     }
 }
 
@@ -607,24 +607,24 @@ const ParseArgsState = struct {
             };
 
             var obj = JSValue.createEmptyObject(globalThis, num_properties);
-            obj.put(globalThis, ZigString.static("kind"), kind_jsvalue);
+            obj.putDirect(globalThis, ZigString.static("kind"), kind_jsvalue);
             switch (token_generic) {
                 .option => |token| {
-                    obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
-                    obj.put(globalThis, ZigString.static("name"), token.name.asJSValue(globalThis));
-                    obj.put(globalThis, ZigString.static("rawName"), token.makeRawNameJSValue(globalThis));
+                    obj.putDirect(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
+                    obj.putDirect(globalThis, ZigString.static("name"), token.name.asJSValue(globalThis));
+                    obj.putDirect(globalThis, ZigString.static("rawName"), token.makeRawNameJSValue(globalThis));
 
                     // value exists only for string options, otherwise the property exists with "undefined" as value
                     var value = token.value.asJSValue(globalThis);
-                    obj.put(globalThis, ZigString.static("value"), value);
-                    obj.put(globalThis, ZigString.static("inlineValue"), if (value.isUndefined()) .js_undefined else JSValue.jsBoolean(token.inline_value));
+                    obj.putDirect(globalThis, ZigString.static("value"), value);
+                    obj.putDirect(globalThis, ZigString.static("inlineValue"), if (value.isUndefined()) .js_undefined else JSValue.jsBoolean(token.inline_value));
                 },
                 .positional => |token| {
-                    obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
-                    obj.put(globalThis, ZigString.static("value"), token.value.asJSValue(globalThis));
+                    obj.putDirect(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
+                    obj.putDirect(globalThis, ZigString.static("value"), token.value.asJSValue(globalThis));
                 },
                 .@"option-terminator" => |token| {
-                    obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
+                    obj.putDirect(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
                 },
             }
             try this.tokens.push(globalThis, obj);
@@ -723,7 +723,7 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
             if (!option.long_name.eqlComptime("__proto__")) {
                 if (try state.values.getOwn(globalThis, option.long_name) == null) {
                     log("  Setting \"{f}\" to default value", .{option.long_name});
-                    try state.values.putMayBeIndex(globalThis, &option.long_name, default_value);
+                    try state.values.putDirectMayBeIndex(globalThis, &option.long_name, default_value);
                 }
             }
         }
@@ -736,10 +736,10 @@ pub fn parseArgs(globalThis: *JSGlobalObject, callframe: *jsc.CallFrame) bun.JSE
 
     var result = JSValue.createEmptyObject(globalThis, if (return_tokens) 3 else 2);
     if (return_tokens) {
-        result.put(globalThis, ZigString.static("tokens"), state.tokens);
+        result.putDirect(globalThis, ZigString.static("tokens"), state.tokens);
     }
-    result.put(globalThis, ZigString.static("values"), state.values);
-    result.put(globalThis, ZigString.static("positionals"), state.positionals);
+    result.putDirect(globalThis, ZigString.static("values"), state.values);
+    result.putDirect(globalThis, ZigString.static("positionals"), state.positionals);
     return result;
 }
 

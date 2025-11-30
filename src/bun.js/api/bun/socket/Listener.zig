@@ -189,9 +189,9 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
         );
         const errno = @intFromEnum(bun.sys.getErrno(@as(c_int, -1)));
         if (errno != 0) {
-            err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
+            err.putDirect(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
             if (bun.sys.SystemErrno.init(errno)) |str| {
-                err.put(globalObject, ZigString.static("code"), ZigString.init(@tagName(str)).toJS(globalObject));
+                err.putDirect(globalObject, ZigString.static("code"), ZigString.init(@tagName(str)).toJS(globalObject));
             }
         }
         return globalObject.throwValue(err);
@@ -276,12 +276,12 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
         const err = globalObject.createErrorInstance("Failed to listen at {s}", .{hostname});
         log("Failed to listen {d}", .{errno});
         if (errno != 0) {
-            err.put(globalObject, ZigString.static("syscall"), try bun.String.createUTF8ForJS(globalObject, "listen"));
-            err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
-            err.put(globalObject, ZigString.static("address"), ZigString.initUTF8(hostname).toJS(globalObject));
-            if (port) |p| err.put(globalObject, ZigString.static("port"), .jsNumber(p));
+            err.putDirect(globalObject, ZigString.static("syscall"), try bun.String.createUTF8ForJS(globalObject, "listen"));
+            err.putDirect(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
+            err.putDirect(globalObject, ZigString.static("address"), ZigString.initUTF8(hostname).toJS(globalObject));
+            if (port) |p| err.putDirect(globalObject, ZigString.static("port"), .jsNumber(p));
             if (bun.sys.SystemErrno.init(errno)) |str| {
-                err.put(globalObject, ZigString.static("code"), ZigString.init(@tagName(str)).toJS(globalObject));
+                err.putDirect(globalObject, ZigString.static("code"), ZigString.init(@tagName(str)).toJS(globalObject));
             }
         }
         return globalObject.throwValue(err);
@@ -837,9 +837,9 @@ pub fn getsockname(this: *Listener, globalThis: *jsc.JSGlobalObject, callFrame: 
     const address_js = ZigString.init(bun.fmt.formatIp(address_zig, &text_buf) catch unreachable).toJS(globalThis);
     const port_js: JSValue = .jsNumber(socket.getLocalPort(this.ssl));
 
-    out.put(globalThis, bun.String.static("family"), family_js);
-    out.put(globalThis, bun.String.static("address"), address_js);
-    out.put(globalThis, bun.String.static("port"), port_js);
+    out.putDirect(globalThis, bun.String.static("family"), family_js);
+    out.putDirect(globalThis, bun.String.static("address"), address_js);
+    out.putDirect(globalThis, bun.String.static("port"), port_js);
     return .js_undefined;
 }
 

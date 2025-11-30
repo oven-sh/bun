@@ -94,10 +94,10 @@ pub const BuildMessage = struct {
         _: *jsc.CallFrame,
     ) bun.JSError!jsc.JSValue {
         var object = jsc.JSValue.createEmptyObject(globalThis, 4);
-        object.put(globalThis, ZigString.static("name"), bun.String.static("BuildMessage").toJS(globalThis));
-        object.put(globalThis, ZigString.static("position"), this.getPosition(globalThis));
-        object.put(globalThis, ZigString.static("message"), this.getMessage(globalThis));
-        object.put(globalThis, ZigString.static("level"), this.getLevel(globalThis));
+        object.putDirect(globalThis, ZigString.static("name"), bun.String.static("BuildMessage").toJS(globalThis));
+        object.putDirect(globalThis, ZigString.static("position"), this.getPosition(globalThis));
+        object.putDirect(globalThis, ZigString.static("message"), this.getMessage(globalThis));
+        object.putDirect(globalThis, ZigString.static("level"), this.getLevel(globalThis));
         return object;
     }
 
@@ -105,37 +105,37 @@ pub const BuildMessage = struct {
         const location = msg.data.location orelse return jsc.JSValue.jsNull();
         var object = jsc.JSValue.createEmptyObject(globalThis, 7);
 
-        object.put(
+        object.putDirect(
             globalThis,
             ZigString.static("lineText"),
             ZigString.init(location.line_text orelse "").toJS(globalThis),
         );
-        object.put(
+        object.putDirect(
             globalThis,
             ZigString.static("file"),
             ZigString.init(location.file).toJS(globalThis),
         );
-        object.put(
+        object.putDirect(
             globalThis,
             ZigString.static("namespace"),
             ZigString.init(location.namespace).toJS(globalThis),
         );
-        object.put(
+        object.putDirect(
             globalThis,
             ZigString.static("line"),
             JSValue.jsNumber(location.line),
         );
-        object.put(
+        object.putDirect(
             globalThis,
             ZigString.static("column"),
             JSValue.jsNumber(location.column),
         );
-        object.put(
+        object.putDirect(
             globalThis,
             ZigString.static("length"),
             JSValue.jsNumber(location.length),
         );
-        object.put(
+        object.putDirect(
             globalThis,
             ZigString.static("offset"),
             JSValue.jsNumber(location.offset),

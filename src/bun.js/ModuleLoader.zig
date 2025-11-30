@@ -618,7 +618,7 @@ pub fn transpileSourceCode(
                             .u = .{ .ptr = @ptrCast(globalThis) },
                         };
                         const globalValue = decoded.encode();
-                        globalValue.put(
+                        globalValue.putDirect(
                             globalThis,
                             ZigString.static("wasmSourceBytes"),
                             try jsc.ArrayBuffer.create(globalThis, source.contents, .Uint8Array),

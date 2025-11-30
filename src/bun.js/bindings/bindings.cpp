@@ -3723,7 +3723,7 @@ bool JSC__JSValue__isException(JSC::EncodedJSValue JSValue0, JSC::VM* arg1)
     return JSC::JSValue::decode(JSValue0).isBigInt32();
 }
 
-void JSC__JSValue__put(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, const ZigString* arg2, JSC::EncodedJSValue JSValue3)
+void JSC__JSValue__putDirect(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, const ZigString* arg2, JSC::EncodedJSValue JSValue3)
 {
     JSC::JSObject* object = JSC::JSValue::decode(JSValue0).asCell()->getObject();
     object->putDirect(arg1->vm(), Zig::toIdentifier(*arg2, arg1), JSC::JSValue::decode(JSValue3));
@@ -3742,7 +3742,7 @@ void JSC__JSValue__putToPropertyKey(JSC::EncodedJSValue JSValue0, JSC::JSGlobalO
     object->putDirectMayBeIndex(arg1, pkey, value);
 }
 
-extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putMayBeIndex(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const BunString* key, JSC::EncodedJSValue value)
+extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__putDirectMayBeIndex(JSC::EncodedJSValue target, JSC::JSGlobalObject* globalObject, const BunString* key, JSC::EncodedJSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);

@@ -1,6 +1,6 @@
 pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     const object = JSValue.createEmptyObject(globalThis, 2);
-    object.put(
+    object.putDirect(
         globalThis,
         ZigString.static("parse"),
         jsc.JSFunction.create(
@@ -11,7 +11,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
             .{},
         ),
     );
-    object.put(
+    object.putDirect(
         globalThis,
         ZigString.static("stringify"),
         jsc.JSFunction.create(
@@ -1049,7 +1049,7 @@ const ParserCtx = struct {
                     const key_str = try key.toBunString(ctx.global);
                     defer key_str.deref();
 
-                    try obj.putMayBeIndex(ctx.global, &key_str, value);
+                    try obj.putDirectMayBeIndex(ctx.global, &key_str, value);
                 }
 
                 return obj;

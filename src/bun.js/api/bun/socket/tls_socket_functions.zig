@@ -262,31 +262,31 @@ pub fn getCipher(this: *This, globalObject: *jsc.JSGlobalObject, _: *jsc.CallFra
     var result = JSValue.createEmptyObject(globalObject, 0);
 
     if (cipher == null) {
-        result.put(globalObject, ZigString.static("name"), JSValue.jsNull());
-        result.put(globalObject, ZigString.static("standardName"), JSValue.jsNull());
-        result.put(globalObject, ZigString.static("version"), JSValue.jsNull());
+        result.putDirect(globalObject, ZigString.static("name"), JSValue.jsNull());
+        result.putDirect(globalObject, ZigString.static("standardName"), JSValue.jsNull());
+        result.putDirect(globalObject, ZigString.static("version"), JSValue.jsNull());
         return result;
     }
 
     const name = BoringSSL.SSL_CIPHER_get_name(cipher);
     if (name == null) {
-        result.put(globalObject, ZigString.static("name"), JSValue.jsNull());
+        result.putDirect(globalObject, ZigString.static("name"), JSValue.jsNull());
     } else {
-        result.put(globalObject, ZigString.static("name"), ZigString.fromUTF8(name[0..bun.len(name)]).toJS(globalObject));
+        result.putDirect(globalObject, ZigString.static("name"), ZigString.fromUTF8(name[0..bun.len(name)]).toJS(globalObject));
     }
 
     const standard_name = BoringSSL.SSL_CIPHER_standard_name(cipher);
     if (standard_name == null) {
-        result.put(globalObject, ZigString.static("standardName"), JSValue.jsNull());
+        result.putDirect(globalObject, ZigString.static("standardName"), JSValue.jsNull());
     } else {
-        result.put(globalObject, ZigString.static("standardName"), ZigString.fromUTF8(standard_name[0..bun.len(standard_name)]).toJS(globalObject));
+        result.putDirect(globalObject, ZigString.static("standardName"), ZigString.fromUTF8(standard_name[0..bun.len(standard_name)]).toJS(globalObject));
     }
 
     const version = BoringSSL.SSL_CIPHER_get_version(cipher);
     if (version == null) {
-        result.put(globalObject, ZigString.static("version"), JSValue.jsNull());
+        result.putDirect(globalObject, ZigString.static("version"), JSValue.jsNull());
     } else {
-        result.put(globalObject, ZigString.static("version"), ZigString.fromUTF8(version[0..bun.len(version)]).toJS(globalObject));
+        result.putDirect(globalObject, ZigString.static("version"), ZigString.fromUTF8(version[0..bun.len(version)]).toJS(globalObject));
     }
 
     return result;
@@ -404,8 +404,8 @@ pub fn getEphemeralKeyInfo(this: *This, globalObject: *jsc.JSGlobalObject, _: *j
 
     switch (kid) {
         BoringSSL.EVP_PKEY_DH => {
-            result.put(globalObject, ZigString.static("type"), bun.String.static("DH").toJS(globalObject));
-            result.put(globalObject, ZigString.static("size"), JSValue.jsNumber(bits));
+            result.putDirect(globalObject, ZigString.static("type"), bun.String.static("DH").toJS(globalObject));
+            result.putDirect(globalObject, ZigString.static("size"), JSValue.jsNumber(bits));
         },
 
         BoringSSL.EVP_PKEY_EC, BoringSSL.EVP_PKEY_X25519, BoringSSL.EVP_PKEY_X448 => {
@@ -427,9 +427,9 @@ pub fn getEphemeralKeyInfo(this: *This, globalObject: *jsc.JSGlobalObject, _: *j
                     curve_name = "";
                 }
             }
-            result.put(globalObject, ZigString.static("type"), bun.String.static("ECDH").toJS(globalObject));
-            result.put(globalObject, ZigString.static("name"), ZigString.fromUTF8(curve_name).toJS(globalObject));
-            result.put(globalObject, ZigString.static("size"), JSValue.jsNumber(bits));
+            result.putDirect(globalObject, ZigString.static("type"), bun.String.static("ECDH").toJS(globalObject));
+            result.putDirect(globalObject, ZigString.static("name"), ZigString.fromUTF8(curve_name).toJS(globalObject));
+            result.putDirect(globalObject, ZigString.static("size"), JSValue.jsNumber(bits));
         },
         else => {},
     }

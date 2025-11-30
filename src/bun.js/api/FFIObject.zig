@@ -16,7 +16,7 @@ pub const dom_call = DOMCall("FFI", @This(), "ptr", DOMEffect.forRead(.TypedArra
 pub fn toJS(globalObject: *jsc.JSGlobalObject) jsc.JSValue {
     const object = jsc.JSValue.createEmptyObject(globalObject, comptime std.meta.fieldNames(@TypeOf(fields)).len + 2);
     inline for (comptime std.meta.fieldNames(@TypeOf(fields))) |field| {
-        object.put(
+        object.putDirect(
             globalObject,
             comptime ZigString.static(field),
             jsc.JSFunction.create(globalObject, field, @field(fields, field), 1, .{}),
@@ -24,7 +24,7 @@ pub fn toJS(globalObject: *jsc.JSGlobalObject) jsc.JSValue {
     }
 
     dom_call.put(globalObject, object);
-    object.put(globalObject, ZigString.static("read"), Reader.toJS(globalObject));
+    object.putDirect(globalObject, ZigString.static("read"), Reader.toJS(globalObject));
 
     return object;
 }

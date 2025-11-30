@@ -279,17 +279,17 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
                             switch (tag) {
                                 .@"{rgba}" => {
                                     const object = jsc.JSValue.createEmptyObject(globalThis, 4);
-                                    object.put(globalThis, "r", jsc.JSValue.jsNumber(rgba.red));
-                                    object.put(globalThis, "g", jsc.JSValue.jsNumber(rgba.green));
-                                    object.put(globalThis, "b", jsc.JSValue.jsNumber(rgba.blue));
-                                    object.put(globalThis, "a", jsc.JSValue.jsNumber(rgba.alphaF32()));
+                                    object.putDirect(globalThis, "r", jsc.JSValue.jsNumber(rgba.red));
+                                    object.putDirect(globalThis, "g", jsc.JSValue.jsNumber(rgba.green));
+                                    object.putDirect(globalThis, "b", jsc.JSValue.jsNumber(rgba.blue));
+                                    object.putDirect(globalThis, "a", jsc.JSValue.jsNumber(rgba.alphaF32()));
                                     return object;
                                 },
                                 .@"{rgb}" => {
                                     const object = jsc.JSValue.createEmptyObject(globalThis, 3);
-                                    object.put(globalThis, "r", jsc.JSValue.jsNumber(rgba.red));
-                                    object.put(globalThis, "g", jsc.JSValue.jsNumber(rgba.green));
-                                    object.put(globalThis, "b", jsc.JSValue.jsNumber(rgba.blue));
+                                    object.putDirect(globalThis, "r", jsc.JSValue.jsNumber(rgba.red));
+                                    object.putDirect(globalThis, "g", jsc.JSValue.jsNumber(rgba.green));
+                                    object.putDirect(globalThis, "b", jsc.JSValue.jsNumber(rgba.blue));
                                     return object;
                                 },
                                 .@"[rgb]" => {

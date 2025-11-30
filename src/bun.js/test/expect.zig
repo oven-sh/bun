@@ -957,9 +957,9 @@ pub const Expect = struct {
 
                 const wrapper_fn = Bun__JSWrappingFunction__create(globalThis, matcher_name, jsc.toJSHostFn(Expect.applyCustomMatcher), matcher_fn, true);
 
-                expect_proto.put(globalThis, matcher_name, wrapper_fn);
-                expect_constructor.put(globalThis, matcher_name, wrapper_fn);
-                expect_static_proto.put(globalThis, matcher_name, wrapper_fn);
+                expect_proto.putDirect(globalThis, matcher_name, wrapper_fn);
+                expect_constructor.putDirect(globalThis, matcher_name, wrapper_fn);
+                expect_static_proto.putDirect(globalThis, matcher_name, wrapper_fn);
             }
         }
 
@@ -1029,7 +1029,7 @@ pub const Expect = struct {
         const err = switch (Output.enable_ansi_colors_stderr) {
             inline else => |colors| globalThis.createErrorInstance(Output.prettyFmt(fmt, colors), .{ matcher_name, result.toFmt(&formatter) }),
         };
-        err.put(globalThis, ZigString.static("name"), bun.String.static("InvalidMatcherError").toJS(globalThis));
+        err.putDirect(globalThis, ZigString.static("name"), bun.String.static("InvalidMatcherError").toJS(globalThis));
         return globalThis.throwValue(err);
     }
 
@@ -1251,13 +1251,13 @@ pub const Expect = struct {
 
         if (arg.isEmptyOrUndefinedOrNull()) {
             const error_value = bun.String.init("reached unreachable code").toErrorInstance(globalThis);
-            error_value.put(globalThis, ZigString.static("name"), bun.String.init("UnreachableError").toJS(globalThis));
+            error_value.putDirect(globalThis, ZigString.static("name"), bun.String.init("UnreachableError").toJS(globalThis));
             return globalThis.throwValue(error_value);
         }
 
         if (arg.isString()) {
             const error_value = (try arg.toBunString(globalThis)).toErrorInstance(globalThis);
-            error_value.put(globalThis, ZigString.static("name"), bun.String.init("UnreachableError").toJS(globalThis));
+            error_value.putDirect(globalThis, ZigString.static("name"), bun.String.init("UnreachableError").toJS(globalThis));
             return globalThis.throwValue(error_value);
         }
 

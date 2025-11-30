@@ -21,14 +21,14 @@ pub fn createMySQLError(
 ) bun.JSError!JSValue {
     const opts_obj = JSValue.createEmptyObject(globalObject, 0);
     opts_obj.ensureStillAlive();
-    opts_obj.put(globalObject, JSC.ZigString.static("code"), try bun.String.createUTF8ForJS(globalObject, options.code));
+    opts_obj.putDirect(globalObject, JSC.ZigString.static("code"), try bun.String.createUTF8ForJS(globalObject, options.code));
     if (options.errno) |errno| {
-        opts_obj.put(globalObject, JSC.ZigString.static("errno"), JSC.JSValue.jsNumber(errno));
+        opts_obj.putDirect(globalObject, JSC.ZigString.static("errno"), JSC.JSValue.jsNumber(errno));
     }
     if (options.sqlState) |state| {
-        opts_obj.put(globalObject, JSC.ZigString.static("sqlState"), try bun.String.createUTF8ForJS(globalObject, state[0..]));
+        opts_obj.putDirect(globalObject, JSC.ZigString.static("sqlState"), try bun.String.createUTF8ForJS(globalObject, state[0..]));
     }
-    opts_obj.put(globalObject, JSC.ZigString.static("message"), try bun.String.createUTF8ForJS(globalObject, message));
+    opts_obj.putDirect(globalObject, JSC.ZigString.static("message"), try bun.String.createUTF8ForJS(globalObject, message));
 
     return opts_obj;
 }

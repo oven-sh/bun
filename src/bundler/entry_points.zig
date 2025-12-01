@@ -163,7 +163,7 @@ pub const ServerEntryPoint = struct {
                 break :brk try std.fmt.allocPrint(
                     allocator,
                     \\// @bun
-                    \\import * as start from '{}';
+                    \\import * as start from '{f}';
                     \\var hmrSymbol = Symbol("BunServerHMR");
                     \\var entryNamespace = start;
                     \\if (typeof entryNamespace?.then === 'function') {{
@@ -200,7 +200,7 @@ pub const ServerEntryPoint = struct {
             break :brk try std.fmt.allocPrint(
                 allocator,
                 \\// @bun
-                \\import * as start from "{}";
+                \\import * as start from "{f}";
                 \\var entryNamespace = start;
                 \\if (typeof entryNamespace?.then === 'function') {{
                 \\   entryNamespace = entryNamespace.then((entryNamespace) => {{
@@ -245,7 +245,7 @@ pub const MacroEntryPoint = struct {
         const hash = hasher.final();
         const fmt = bun.fmt.hexIntLower(hash);
 
-        const specifier = std.fmt.bufPrint(buf, js_ast.Macro.namespaceWithColon ++ "//{any}.js", .{fmt}) catch unreachable;
+        const specifier = std.fmt.bufPrint(buf, js_ast.Macro.namespaceWithColon ++ "//{f}.js", .{fmt}) catch unreachable;
         len.* = @as(u32, @truncate(specifier.len));
 
         return generateIDFromSpecifier(specifier);
@@ -299,13 +299,13 @@ pub const MacroEntryPoint = struct {
                 \\//Auto-generated file
                 \\var Macros;
                 \\try {{
-                \\  Macros = await import('{s}{s}');
+                \\  Macros = await import('{f}{f}');
                 \\}} catch (err) {{
                 \\   console.error("Error importing macro");
                 \\   throw err;
                 \\}}
                 \\if (!('{s}' in Macros)) {{
-                \\  throw new Error("Macro '{s}' not found in '{s}{s}'");
+                \\  throw new Error("Macro '{s}' not found in '{f}{f}'");
                 \\}}
                 \\
                 \\Bun.registerMacro({d}, Macros['{s}']);
@@ -337,11 +337,13 @@ pub const MacroEntryPoint = struct {
     }
 };
 
-const logger = bun.logger;
-const std = @import("std");
-const bun = @import("bun");
-const string = bun.string;
+const string = []const u8;
+
 const Fs = @import("../fs.zig");
-const js_ast = bun.JSAst;
+const std = @import("std");
+
+const bun = @import("bun");
 const Transpiler = bun.Transpiler;
+const js_ast = bun.ast;
+const logger = bun.logger;
 const strings = bun.strings;

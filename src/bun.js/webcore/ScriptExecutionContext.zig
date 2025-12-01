@@ -1,5 +1,3 @@
-const bun = @import("bun");
-
 extern fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) ?*bun.jsc.JSGlobalObject;
 
 /// Safe handle to a JavaScript execution environment that may have exited.
@@ -17,4 +15,10 @@ pub const Identifier = enum(u32) {
         // concurrently because we expect these identifiers are mostly used by off-thread tasks
         return (self.globalObject() orelse return null).bunVMConcurrently();
     }
+
+    pub fn valid(self: Identifier) bool {
+        return self.globalObject() != null;
+    }
 };
+
+const bun = @import("bun");

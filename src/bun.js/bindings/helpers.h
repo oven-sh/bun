@@ -2,6 +2,7 @@
 
 #include "root.h"
 #include "wtf/text/ASCIILiteral.h"
+#include "wtf/SIMDUTF.h"
 
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/Exception.h>
@@ -79,31 +80,42 @@ static const WTF::String toString(ZigString str)
     }
     if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
         ASSERT_WITH_MESSAGE(!isTaggedExternalPtr(str.ptr), "UTF8 and external ptr are mutually exclusive. The external will never be freed.");
+        // Check if the resulting UTF-16 string could possibly exceed the maximum length.
+        // For valid UTF-8, the number of UTF-16 code units is <= the number of UTF-8 bytes
+        // (ASCII is 1:1; other code points use multiple UTF-8 bytes per UTF-16 code unit).
+        // We only need to compute the actual UTF-16 length when the byte length exceeds the limit.
+        size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength));
+        if (str.len > maxLength) [[unlikely]] {
+            // UTF-8 byte length != UTF-16 length, so use simdutf to calculate the actual UTF-16 length.
+            size_t utf16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(untag(str.ptr)), str.len);
+            if (utf16Length > maxLength) {
+                return {};
+            }
+        }
         return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { untag(str.ptr), str.len });
     }
 
     if (isTaggedExternalPtr(str.ptr)) [[unlikely]] {
         // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
-        if (str.len > Bun__stringSyntheticAllocationLimit) [[unlikely]] {
+        if (str.len > Bun__stringSyntheticAllocationLimit || str.len > WTF::String::MaxLength) [[unlikely]] {
             free_global_string(nullptr, reinterpret_cast<void*>(const_cast<unsigned char*>(untag(str.ptr))), static_cast<unsigned>(str.len));
             return {};
         }
 
         return !isTaggedUTF16Ptr(str.ptr)
             ? WTF::String(WTF::ExternalStringImpl::create({ untag(str.ptr), str.len }, untagVoid(str.ptr), free_global_string))
-            : WTF::String(WTF::ExternalStringImpl::create(
-                  { reinterpret_cast<const UChar*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
+            : WTF::String(WTF::ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
-    if (str.len > Bun__stringSyntheticAllocationLimit) [[unlikely]] {
+    if (str.len > Bun__stringSyntheticAllocationLimit || str.len > WTF::String::MaxLength) [[unlikely]] {
         return {};
     }
 
     return !isTaggedUTF16Ptr(str.ptr)
         ? WTF::String(WTF::StringImpl::createWithoutCopying({ untag(str.ptr), str.len }))
         : WTF::String(WTF::StringImpl::createWithoutCopying(
-              { reinterpret_cast<const UChar*>(untag(str.ptr)), str.len }));
+              { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }));
 }
 
 static WTF::AtomString toAtomString(ZigString str)
@@ -112,7 +124,7 @@ static WTF::AtomString toAtomString(ZigString str)
     if (!isTaggedUTF16Ptr(str.ptr)) {
         return makeAtomString(untag(str.ptr), str.len);
     } else {
-        return makeAtomString(reinterpret_cast<const UChar*>(untag(str.ptr)), str.len);
+        return makeAtomString(reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len);
     }
 }
 
@@ -122,18 +134,26 @@ static const WTF::String toString(ZigString str, StringPointer ptr)
         return WTF::String();
     }
     if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
+        // Check if the resulting UTF-16 string could possibly exceed the maximum length.
+        size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength));
+        if (ptr.len > maxLength) [[unlikely]] {
+            size_t utf16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(&untag(str.ptr)[ptr.off]), ptr.len);
+            if (utf16Length > maxLength) {
+                return {};
+            }
+        }
         return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { &untag(str.ptr)[ptr.off], ptr.len });
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
-    if (str.len > Bun__stringSyntheticAllocationLimit) [[unlikely]] {
+    if (ptr.len > Bun__stringSyntheticAllocationLimit || ptr.len > WTF::String::MaxLength) [[unlikely]] {
         return {};
     }
 
     return !isTaggedUTF16Ptr(str.ptr)
         ? WTF::String(WTF::StringImpl::createWithoutCopying({ &untag(str.ptr)[ptr.off], ptr.len }))
         : WTF::String(WTF::StringImpl::createWithoutCopying(
-              { &reinterpret_cast<const UChar*>(untag(str.ptr))[ptr.off], ptr.len }));
+              { &reinterpret_cast<const char16_t*>(untag(str.ptr))[ptr.off], ptr.len }));
 }
 
 static const WTF::String toStringCopy(ZigString str, StringPointer ptr)
@@ -142,18 +162,26 @@ static const WTF::String toStringCopy(ZigString str, StringPointer ptr)
         return WTF::String();
     }
     if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
+        // Check if the resulting UTF-16 string could possibly exceed the maximum length.
+        size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength));
+        if (ptr.len > maxLength) [[unlikely]] {
+            size_t utf16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(&untag(str.ptr)[ptr.off]), ptr.len);
+            if (utf16Length > maxLength) {
+                return {};
+            }
+        }
         return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { &untag(str.ptr)[ptr.off], ptr.len });
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
-    if (str.len > Bun__stringSyntheticAllocationLimit) [[unlikely]] {
+    if (ptr.len > Bun__stringSyntheticAllocationLimit || ptr.len > WTF::String::MaxLength) [[unlikely]] {
         return {};
     }
 
     return !isTaggedUTF16Ptr(str.ptr)
         ? WTF::String(WTF::StringImpl::create(std::span { &untag(str.ptr)[ptr.off], ptr.len }))
         : WTF::String(WTF::StringImpl::create(
-              std::span { &reinterpret_cast<const UChar*>(untag(str.ptr))[ptr.off], ptr.len }));
+              std::span { &reinterpret_cast<const char16_t*>(untag(str.ptr))[ptr.off], ptr.len }));
 }
 
 static const WTF::String toStringCopy(ZigString str)
@@ -162,25 +190,59 @@ static const WTF::String toStringCopy(ZigString str)
         return WTF::String();
     }
     if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
+        // Check if the resulting UTF-16 string could possibly exceed the maximum length.
+        size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength));
+        if (str.len > maxLength) [[unlikely]] {
+            size_t utf16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(untag(str.ptr)), str.len);
+            if (utf16Length > maxLength) {
+                return {};
+            }
+        }
         return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { untag(str.ptr), str.len });
     }
 
     if (isTaggedUTF16Ptr(str.ptr)) {
-        std::span<UChar> out;
+        std::span<char16_t> out;
         auto impl = WTF::StringImpl::tryCreateUninitialized(str.len, out);
         if (!impl) [[unlikely]] {
             return WTF::String();
         }
-        memcpy(out.data(), untag(str.ptr), str.len * sizeof(UChar));
+        memcpy(out.data(), untag(str.ptr), str.len * sizeof(char16_t));
         return WTF::String(WTFMove(impl));
     } else {
-        std::span<LChar> out;
+        std::span<Latin1Character> out;
         auto impl = WTF::StringImpl::tryCreateUninitialized(str.len, out);
         if (!impl) [[unlikely]]
             return WTF::String();
-        memcpy(out.data(), untag(str.ptr), str.len * sizeof(LChar));
+        memcpy(out.data(), untag(str.ptr), str.len * sizeof(Latin1Character));
         return WTF::String(WTFMove(impl));
     }
+}
+
+static void appendToBuilder(ZigString str, WTF::StringBuilder& builder)
+{
+    if (str.len == 0 || str.ptr == nullptr) {
+        return;
+    }
+    if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
+        // Check if the resulting UTF-16 string could possibly exceed the maximum length.
+        size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength));
+        if (str.len > maxLength) [[unlikely]] {
+            size_t utf16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(untag(str.ptr)), str.len);
+            if (utf16Length > maxLength) {
+                return;
+            }
+        }
+        WTF::String converted = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { untag(str.ptr), str.len });
+        builder.append(converted);
+        return;
+    }
+    if (isTaggedUTF16Ptr(str.ptr)) {
+        builder.append({ reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len });
+        return;
+    }
+
+    builder.append({ untag(str.ptr), str.len });
 }
 
 static WTF::String toStringNotConst(ZigString str) { return toString(str); }
@@ -201,7 +263,7 @@ static const ZigString ZigStringCwd = ZigString { &__dot_char, 1 };
 static const BunString BunStringCwd = BunString { BunStringTag::StaticZigString, ZigStringCwd };
 static const BunString BunStringEmpty = BunString { BunStringTag::Empty, nullptr };
 
-static const unsigned char* taggedUTF16Ptr(const UChar* ptr)
+static const unsigned char* taggedUTF16Ptr(const char16_t* ptr)
 {
     return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | (static_cast<uint64_t>(1) << 63));
 }
@@ -273,7 +335,7 @@ static WTF::StringView toStringView(ZigString str)
 static void throwException(JSC::ThrowScope& scope, ZigErrorType err, JSC::JSGlobalObject* global)
 {
     scope.throwException(global,
-        JSC::Exception::create(global->vm(), JSC::JSValue((JSC::JSCell*)err.ptr)));
+        JSC::Exception::create(global->vm(), JSC::JSValue::decode(err.value)));
 }
 
 static ZigString toZigString(JSC::JSValue val, JSC::JSGlobalObject* global)
@@ -281,14 +343,14 @@ static ZigString toZigString(JSC::JSValue val, JSC::JSGlobalObject* global)
     auto scope = DECLARE_THROW_SCOPE(global->vm());
     auto* str = val.toString(global);
 
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         scope.clearException();
         scope.release();
         return ZigStringEmpty;
     }
 
     auto view = str->view(global);
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         scope.clearException();
         scope.release();
         return ZigStringEmpty;
@@ -307,7 +369,7 @@ static const WTF::String toStringStatic(ZigString str)
     }
 
     if (isTaggedUTF16Ptr(str.ptr)) {
-        return WTF::String(AtomStringImpl::add(std::span { reinterpret_cast<const UChar*>(untag(str.ptr)), str.len }));
+        return WTF::String(AtomStringImpl::add(std::span { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }));
     }
 
     auto* untagged = untag(str.ptr);
@@ -321,13 +383,13 @@ static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* 
     WTF::String message = toString(*str);
     if (message.isNull() && str->len > 0) [[unlikely]] {
         // pending exception while creating an error.
-        return JSC::JSValue();
+        return {};
     }
 
     JSC::JSObject* result = JSC::createError(globalObject, message);
     JSC::EnsureStillAliveScope ensureAlive(result);
 
-    return JSC::JSValue(result);
+    return result;
 }
 
 static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
@@ -335,7 +397,7 @@ static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC::JSGlobalObje
     JSC::JSObject* result = JSC::createTypeError(globalObject, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
-    return JSC::JSValue(result);
+    return result;
 }
 
 static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
@@ -343,7 +405,7 @@ static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC::JSGlobalOb
     JSC::JSObject* result = JSC::createSyntaxError(globalObject, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
-    return JSC::JSValue(result);
+    return result;
 }
 
 static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
@@ -351,7 +413,7 @@ static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC::JSGlobalObj
     JSC::JSObject* result = JSC::createRangeError(globalObject, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
-    return JSC::JSValue(result);
+    return result;
 }
 
 static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject* global)

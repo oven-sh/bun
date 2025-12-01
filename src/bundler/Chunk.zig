@@ -27,8 +27,9 @@ pub const Chunk = struct {
 
     is_executable: bool = false,
     has_html_chunk: bool = false,
+    is_browser_chunk_from_server_build: bool = false,
 
-    output_source_map: sourcemap.SourceMapPieces,
+    output_source_map: SourceMap.SourceMapPieces,
 
     intermediate_output: IntermediateOutput = .{ .empty = {} },
     isolated_hash: u64 = std.math.maxInt(u64),
@@ -115,7 +116,7 @@ pub const Chunk = struct {
 
         pub const CodeResult = struct {
             buffer: []u8,
-            shifts: []sourcemap.SourceMapShifts,
+            shifts: []SourceMap.SourceMapShifts,
         };
 
         pub fn getSize(this: *const IntermediateOutput) usize {
@@ -141,6 +142,7 @@ pub const Chunk = struct {
             chunk: *Chunk,
             chunks: []Chunk,
             display_size: ?*usize,
+            force_absolute_path: bool,
             enable_source_map_shifts: bool,
         ) bun.OOM!CodeResult {
             return switch (enable_source_map_shifts) {
@@ -152,6 +154,7 @@ pub const Chunk = struct {
                     chunk,
                     chunks,
                     display_size,
+                    force_absolute_path,
                     source_map_shifts,
                 ),
             };
@@ -166,21 +169,24 @@ pub const Chunk = struct {
             chunk: *Chunk,
             chunks: []Chunk,
             display_size: ?*usize,
+            force_absolute_path: bool,
             comptime enable_source_map_shifts: bool,
         ) bun.OOM!CodeResult {
             const additional_files = graph.input_files.items(.additional_files);
             const unique_key_for_additional_files = graph.input_files.items(.unique_key_for_additional_file);
+            const relative_platform_buf = bun.path_buffer_pool.get();
+            defer bun.path_buffer_pool.put(relative_platform_buf);
             switch (this.*) {
                 .pieces => |*pieces| {
                     const entry_point_chunks_for_scb = linker_graph.files.items(.entry_point_chunk_index);
 
                     var shift = if (enable_source_map_shifts)
-                        sourcemap.SourceMapShifts{
+                        SourceMap.SourceMapShifts{
                             .after = .{},
                             .before = .{},
                         };
                     var shifts = if (enable_source_map_shifts)
-                        try std.ArrayList(sourcemap.SourceMapShifts).initCapacity(bun.default_allocator, pieces.len + 1);
+                        try std.ArrayList(SourceMap.SourceMapShifts).initCapacity(bun.default_allocator, pieces.len + 1);
 
                     if (enable_source_map_shifts)
                         shifts.appendAssumeCapacity(shift);
@@ -210,7 +216,7 @@ pub const Chunk = struct {
                                     .chunk => chunks[index].final_rel_path,
                                     .scb => chunks[entry_point_chunks_for_scb[index]].final_rel_path,
                                     .html_import => {
-                                        count += std.fmt.count("{}", .{HTMLImportManifest.formatEscapedJSON(.{
+                                        count += std.fmt.count("{f}", .{HTMLImportManifest.formatEscapedJSON(.{
                                             .index = index,
                                             .graph = graph,
                                             .chunks = chunks,
@@ -223,10 +229,10 @@ pub const Chunk = struct {
 
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
-                                    if (from_chunk_dir.len == 0)
+                                    if (from_chunk_dir.len == 0 or force_absolute_path)
                                         file_path
                                     else
-                                        bun.path.relativePlatform(from_chunk_dir, file_path, .posix, false),
+                                        bun.path.relativePlatformBuf(relative_platform_buf, from_chunk_dir, file_path, .posix, false),
                                 );
                                 count += cheap_normalizer[0].len + cheap_normalizer[1].len;
                             },
@@ -239,7 +245,7 @@ pub const Chunk = struct {
                     }
 
                     const debug_id_len = if (enable_source_map_shifts and FeatureFlags.source_map_debug_id)
-                        std.fmt.count("\n//# debugId={}\n", .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }})
+                        std.fmt.count("\n//# debugId={f}\n", .{bun.SourceMap.DebugIDFormatter{ .id = chunk.isolated_hash }})
                     else
                         0;
 
@@ -250,7 +256,7 @@ pub const Chunk = struct {
                         const data = piece.data();
 
                         if (enable_source_map_shifts) {
-                            var data_offset = sourcemap.LineColumnOffset{};
+                            var data_offset = SourceMap.LineColumnOffset{};
                             data_offset.advance(data);
                             shift.before.add(data_offset);
                             shift.after.add(data_offset);
@@ -315,10 +321,10 @@ pub const Chunk = struct {
                                 bun.path.platformToPosixInPlace(u8, @constCast(file_path));
                                 const cheap_normalizer = cheapPrefixNormalizer(
                                     import_prefix,
-                                    if (from_chunk_dir.len == 0)
+                                    if (from_chunk_dir.len == 0 or force_absolute_path)
                                         file_path
                                     else
-                                        bun.path.relativePlatform(from_chunk_dir, file_path, .posix, false),
+                                        bun.path.relativePlatformBuf(relative_platform_buf, from_chunk_dir, file_path, .posix, false),
                                 );
 
                                 if (cheap_normalizer[0].len > 0) {
@@ -346,9 +352,14 @@ pub const Chunk = struct {
                         // This comment must go before the //# sourceMappingURL comment
                         remain = remain[(std.fmt.bufPrint(
                             remain,
-                            "\n//# debugId={}\n",
-                            .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
-                        ) catch bun.outOfMemory()).len..];
+                            "\n//# debugId={f}\n",
+                            .{bun.SourceMap.DebugIDFormatter{ .id = chunk.isolated_hash }},
+                        ) catch |err| switch (err) {
+                            error.NoSpaceLeft => std.debug.panic(
+                                "unexpected NoSpaceLeft error from bufPrint",
+                                .{},
+                            ),
+                        }).len..];
                     }
 
                     bun.assert(remain.len == 0);
@@ -359,7 +370,7 @@ pub const Chunk = struct {
                         .shifts = if (enable_source_map_shifts)
                             shifts.items
                         else
-                            &[_]sourcemap.SourceMapShifts{},
+                            &[_]SourceMap.SourceMapShifts{},
                     };
                 },
                 .joiner => |*joiner| {
@@ -373,10 +384,10 @@ pub const Chunk = struct {
                         if (enable_source_map_shifts and FeatureFlags.source_map_debug_id) {
                             // This comment must go before the //# sourceMappingURL comment
                             const debug_id_fmt = std.fmt.allocPrint(
-                                graph.allocator,
-                                "\n//# debugId={}\n",
-                                .{bun.sourcemap.DebugIDFormatter{ .id = chunk.isolated_hash }},
-                            ) catch bun.outOfMemory();
+                                graph.heap.allocator(),
+                                "\n//# debugId={f}\n",
+                                .{bun.SourceMap.DebugIDFormatter{ .id = chunk.isolated_hash }},
+                            ) catch |err| bun.handleOom(err);
 
                             break :brk try joiner.doneWithEnd(allocator, debug_id_fmt);
                         }
@@ -386,12 +397,12 @@ pub const Chunk = struct {
 
                     return .{
                         .buffer = buffer,
-                        .shifts = &[_]sourcemap.SourceMapShifts{},
+                        .shifts = &[_]SourceMap.SourceMapShifts{},
                     };
                 },
                 .empty => return .{
                     .buffer = "",
-                    .shifts = &[_]sourcemap.SourceMapShifts{},
+                    .shifts = &[_]SourceMap.SourceMapShifts{},
                 },
             }
         }
@@ -516,13 +527,13 @@ pub const Chunk = struct {
         pub const Layers = bun.ptr.Cow(bun.BabyList(bun.css.LayerName), struct {
             const Self = bun.BabyList(bun.css.LayerName);
             pub fn copy(self: *const Self, allocator: std.mem.Allocator) Self {
-                return self.deepClone2(allocator);
+                return self.deepCloneInfallible(allocator);
             }
 
             pub fn deinit(self: *Self, a: std.mem.Allocator) void {
                 // do shallow deinit since `LayerName` has
                 // allocations in arena
-                self.deinitWithAllocator(a);
+                self.clearAndFree(a);
             }
         });
 
@@ -561,7 +572,7 @@ pub const Chunk = struct {
             inner: *const CssImportOrder,
             ctx: *LinkerContext,
 
-            pub fn format(this: *const CssImportOrderDebug, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            pub fn format(this: *const CssImportOrderDebug, writer: *std.Io.Writer) !void {
                 try writer.print("{s} = ", .{@tagName(this.inner.kind)});
                 switch (this.inner.kind) {
                     .layers => |layers| {
@@ -569,7 +580,7 @@ pub const Chunk = struct {
                         const l = layers.inner();
                         for (l.sliceConst(), 0..) |*layer, i| {
                             if (i > 0) try writer.print(", ", .{});
-                            try writer.print("\"{}\"", .{layer});
+                            try writer.print("\"{f}\"", .{layer});
                         }
 
                         try writer.print("]", .{});
@@ -619,41 +630,46 @@ pub const Chunk = struct {
     };
 };
 
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-const FeatureFlags = bun.FeatureFlags;
+pub const Ref = bun.ast.Ref;
 
-const std = @import("std");
-const options = @import("../options.zig");
-const js_ast = @import("../js_ast.zig");
-const sourcemap = bun.sourcemap;
-const StringJoiner = bun.StringJoiner;
-pub const Ref = @import("../ast/base.zig").Ref;
-const BabyList = @import("../baby_list.zig").BabyList;
-const ImportRecord = bun.ImportRecord;
-const ImportKind = bun.ImportKind;
-
-const Loader = options.Loader;
-pub const Index = @import("../ast/base.zig").Index;
-const Stmt = js_ast.Stmt;
-const AutoBitSet = bun.bit_set.AutoBitSet;
-const renamer = bun.renamer;
-const bundler = bun.bundle_v2;
-const BundleV2 = bundler.BundleV2;
-const Graph = bundler.Graph;
-const LinkerGraph = bundler.LinkerGraph;
+pub const Index = bun.ast.Index;
 
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
-const PathTemplate = bundler.PathTemplate;
-const PartRange = bundler.PartRange;
-const EntryPoint = bundler.EntryPoint;
-const CrossChunkImport = bundler.CrossChunkImport;
-const CompileResult = bundler.CompileResult;
-const cheapPrefixNormalizer = bundler.cheapPrefixNormalizer;
-const LinkerContext = bundler.LinkerContext;
+
+const string = []const u8;
+
 const HTMLImportManifest = @import("./HTMLImportManifest.zig");
+const std = @import("std");
+
+const options = @import("../options.zig");
+const Loader = options.Loader;
+
+const bun = @import("bun");
+const FeatureFlags = bun.FeatureFlags;
+const ImportKind = bun.ImportKind;
+const ImportRecord = bun.ImportRecord;
+const Output = bun.Output;
+const SourceMap = bun.SourceMap;
+const StringJoiner = bun.StringJoiner;
+const default_allocator = bun.default_allocator;
+const renamer = bun.renamer;
+const strings = bun.strings;
+const AutoBitSet = bun.bit_set.AutoBitSet;
+const BabyList = bun.collections.BabyList;
+
+const js_ast = bun.ast;
+const Stmt = js_ast.Stmt;
+
+const bundler = bun.bundle_v2;
+const BundleV2 = bundler.BundleV2;
+const CompileResult = bundler.CompileResult;
+const CrossChunkImport = bundler.CrossChunkImport;
+const EntryPoint = bundler.EntryPoint;
+const Graph = bundler.Graph;
+const LinkerContext = bundler.LinkerContext;
+const LinkerGraph = bundler.LinkerGraph;
+const PartRange = bundler.PartRange;
+const PathTemplate = bundler.PathTemplate;
+const cheapPrefixNormalizer = bundler.cheapPrefixNormalizer;

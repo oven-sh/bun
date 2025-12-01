@@ -88,7 +88,7 @@ it("one valid flag, should succeed", async () => {
     env,
   });
 
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   // Should not contain error message
   expect(err.split(/\r?\n/)).not.toContain("error: This command updates bun itself, and does not take package names.");
   expect(err.split(/\r?\n/)).not.toContain("note: Use `bun update --help` instead.");
@@ -104,7 +104,7 @@ it("two valid argument, should succeed", async () => {
     env,
   });
 
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   // Should not contain error message
   expect(err.split(/\r?\n/)).not.toContain("error: This command updates Bun itself, and does not take package names.");
   expect(err.split(/\r?\n/)).not.toContain("note: Use `bun update --stable --profile` instead.");

@@ -1,17 +1,3 @@
-const js_ast = bun.JSAst;
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-
-const std = @import("std");
-const Ref = @import("./ast/base.zig").Ref;
-const RefCtx = @import("./ast/base.zig").RefCtx;
-const logger = bun.logger;
-const JSLexer = @import("./js_lexer.zig");
-
 pub const NoOpRenamer = struct {
     symbols: js_ast.Symbol.Map,
     source: *const logger.Source,
@@ -32,7 +18,7 @@ pub const NoOpRenamer = struct {
         if (renamer.symbols.getConst(resolved)) |symbol| {
             return symbol.original_name;
         } else {
-            Output.panic("Invalid symbol {s} in {s}", .{ ref, renamer.source.path.text });
+            Output.panic("Invalid symbol {f} in {s}", .{ ref, renamer.source.path.text });
         }
     }
 
@@ -85,7 +71,7 @@ pub const SymbolSlot = struct {
     count: u32 = 0,
     needs_capital_for_jsx: bool = false,
 
-    pub const List = std.EnumArray(js_ast.Symbol.SlotNamespace, std.ArrayList(SymbolSlot));
+    pub const List = std.EnumArray(js_ast.Symbol.SlotNamespace, std.array_list.Managed(SymbolSlot));
 
     pub const InlineString = struct {
         bytes: [15]u8 = [_]u8{0} ** 15,
@@ -151,7 +137,7 @@ pub const MinifyRenamer = struct {
         var slots = SymbolSlot.List.initUndefined();
 
         for (first_top_level_slots.slots.values, 0..) |count, ns| {
-            slots.values[ns] = try std.ArrayList(SymbolSlot).initCapacity(allocator, count);
+            slots.values[ns] = try std.array_list.Managed(SymbolSlot).initCapacity(allocator, count);
             slots.values[ns].items.len = count;
             @memset(slots.values[ns].items[0..count], SymbolSlot{});
         }
@@ -276,7 +262,7 @@ pub const MinifyRenamer = struct {
     }
 
     pub fn assignNamesByFrequency(this: *MinifyRenamer, name_minifier: *js_ast.NameMinifier) !void {
-        var name_buf = try std.ArrayList(u8).initCapacity(this.allocator, 64);
+        var name_buf = try std.array_list.Managed(u8).initCapacity(this.allocator, 64);
         defer name_buf.deinit();
 
         var sorted = SlotAndCount.Array.init(this.allocator);
@@ -343,7 +329,7 @@ pub const MinifyRenamer = struct {
 
 pub fn assignNestedScopeSlots(allocator: std.mem.Allocator, module_scope: *js_ast.Scope, symbols: []js_ast.Symbol) js_ast.SlotCounts {
     var slot_counts = js_ast.SlotCounts{};
-    var sorted_members = std.ArrayList(u32).init(allocator);
+    var sorted_members = std.array_list.Managed(u32).init(allocator);
     defer sorted_members.deinit();
 
     // Temporarily set the nested scope slots of top-level symbols to valid so
@@ -378,7 +364,7 @@ pub fn assignNestedScopeSlots(allocator: std.mem.Allocator, module_scope: *js_as
     return slot_counts;
 }
 
-pub fn assignNestedScopeSlotsHelper(sorted_members: *std.ArrayList(u32), scope: *js_ast.Scope, symbols: []js_ast.Symbol, slot_to_copy: js_ast.SlotCounts) js_ast.SlotCounts {
+pub fn assignNestedScopeSlotsHelper(sorted_members: *std.array_list.Managed(u32), scope: *js_ast.Scope, symbols: []js_ast.Symbol, slot_to_copy: js_ast.SlotCounts) js_ast.SlotCounts {
     var slot = slot_to_copy;
 
     // Sort member map keys for determinism
@@ -439,7 +425,7 @@ pub const StableSymbolCount = struct {
     ref: Ref,
     count: u32,
 
-    pub const Array = std.ArrayList(StableSymbolCount);
+    pub const Array = std.array_list.Managed(StableSymbolCount);
 
     pub fn lessThan(_: void, i: StableSymbolCount, j: StableSymbolCount) bool {
         if (i.count > j.count) return true;
@@ -455,7 +441,7 @@ const SlotAndCount = packed struct(u64) {
     slot: u32,
     count: u32,
 
-    pub const Array = std.ArrayList(SlotAndCount);
+    pub const Array = std.array_list.Managed(SlotAndCount);
 
     pub fn lessThan(_: void, a: SlotAndCount, b: SlotAndCount) bool {
         return a.count > b.count or (a.count == b.count and a.slot < b.slot);
@@ -556,7 +542,7 @@ pub const NumberRenamer = struct {
         return renamer;
     }
 
-    pub fn assignNamesRecursive(r: *NumberRenamer, scope: *js_ast.Scope, source_index: u32, parent: ?*NumberScope, sorted: *std.ArrayList(u32)) void {
+    pub fn assignNamesRecursive(r: *NumberRenamer, scope: *js_ast.Scope, source_index: u32, parent: ?*NumberScope, sorted: *std.array_list.Managed(u32)) void {
         var s = r.number_scope_pool.get();
         s.* = NumberScope{
             .parent = parent,
@@ -575,7 +561,7 @@ pub const NumberRenamer = struct {
         s: *NumberScope,
         scope: *js_ast.Scope,
         source_index: u32,
-        sorted: *std.ArrayList(u32),
+        sorted: *std.array_list.Managed(u32),
     ) void {
         {
             sorted.clearRetainingCapacity();
@@ -603,7 +589,7 @@ pub const NumberRenamer = struct {
         }
     }
 
-    pub fn assignNamesRecursiveWithNumberScope(r: *NumberRenamer, initial_scope: *NumberScope, scope_: *js_ast.Scope, source_index: u32, sorted: *std.ArrayList(u32)) void {
+    pub fn assignNamesRecursiveWithNumberScope(r: *NumberRenamer, initial_scope: *NumberScope, scope_: *js_ast.Scope, source_index: u32, sorted: *std.array_list.Managed(u32)) void {
         var s = initial_scope;
         var scope = scope_;
         defer if (s != initial_scope) {
@@ -657,7 +643,7 @@ pub const NumberRenamer = struct {
 
     pub fn nameForSymbol(renamer: *NumberRenamer, ref: Ref) string {
         if (ref.isSourceContentsSlice()) {
-            bun.unreachablePanic("Unexpected unbound symbol!\n{any}", .{ref});
+            bun.unreachablePanic("Unexpected unbound symbol!\n{f}", .{ref});
         }
 
         const resolved = renamer.symbols.follow(ref);
@@ -962,3 +948,19 @@ pub fn computeReservedNamesForScope(
         }
     }
 }
+
+const string = []const u8;
+
+const JSLexer = @import("./js_lexer.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const logger = bun.logger;
+const strings = bun.strings;
+
+const js_ast = bun.ast;
+const Ref = bun.ast.Ref;
+const RefCtx = bun.ast.RefCtx;

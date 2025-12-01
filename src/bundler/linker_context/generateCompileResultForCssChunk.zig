@@ -1,7 +1,6 @@
 pub fn generateCompileResultForCssChunk(task: *ThreadPoolLib.Task) void {
     const part_range: *const PendingPartRange = @fieldParentPtr("task", task);
     const ctx = part_range.ctx;
-    defer ctx.wg.finish();
     var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
     defer worker.unget();
 
@@ -23,7 +22,7 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
     defer trace.end();
 
     var arena = &worker.temporary_arena;
-    var buffer_writer = js_printer.BufferWriter.init(worker.allocator);
+    var allocating_writer = std.Io.Writer.Allocating.init(worker.allocator);
     defer _ = arena.reset(.retain_capacity);
 
     const css_import = chunk.content.css.imports_in_chunk_in_order.at(imports_in_chunk_index);
@@ -40,7 +39,7 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
             };
             _ = switch (css.toCssWithWriter(
                 worker.allocator,
-                &buffer_writer,
+                &allocating_writer.writer,
                 printer_options,
                 .{
                     .import_records = &css_import.condition_import_records,
@@ -63,13 +62,15 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
             };
             return CompileResult{
                 .css = .{
-                    .result = .{ .result = buffer_writer.getWritten() },
+                    .result = .{ .result = allocating_writer.written() },
                     .source_index = Index.invalid.get(),
                 },
             };
         },
         .external_path => {
-            var import_records = BabyList(ImportRecord).init(css_import.condition_import_records.sliceConst());
+            var import_records = BabyList(ImportRecord).fromBorrowedSliceDangerous(
+                css_import.condition_import_records.sliceConst(),
+            );
             const printer_options = bun.css.PrinterOptions{
                 // TODO: make this more configurable
                 .minify = c.options.minify_whitespace,
@@ -77,7 +78,7 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
             };
             _ = switch (css.toCssWithWriter(
                 worker.allocator,
-                &buffer_writer,
+                &allocating_writer.writer,
                 printer_options,
                 .{
                     .import_records = &import_records,
@@ -100,7 +101,7 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
             };
             return CompileResult{
                 .css = .{
-                    .result = .{ .result = buffer_writer.getWritten() },
+                    .result = .{ .result = allocating_writer.written() },
 
                     .source_index = Index.invalid.get(),
                 },
@@ -114,7 +115,7 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
             };
             _ = switch (css.toCssWithWriter(
                 worker.allocator,
-                &buffer_writer,
+                &allocating_writer.writer,
                 printer_options,
                 .{
                     .import_records = &c.graph.ast.items(.import_records)[idx.get()],
@@ -136,7 +137,7 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
             };
             return CompileResult{
                 .css = .{
-                    .result = .{ .result = buffer_writer.getWritten() },
+                    .result = .{ .result = allocating_writer.written() },
                     .source_index = idx.get(),
                 },
             };
@@ -144,25 +145,26 @@ fn generateCompileResultForCssChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCo
     }
 }
 
-const bun = @import("bun");
-const options = bun.options;
-const BabyList = bun.BabyList;
-const Index = bun.bundle_v2.Index;
-const js_printer = bun.js_printer;
-const LinkerContext = bun.bundle_v2.LinkerContext;
-const ThreadPoolLib = bun.ThreadPool;
-
-const Environment = bun.Environment;
-
-const js_ast = bun.js_ast;
-const ImportRecord = bun.ImportRecord;
-
-const Symbol = js_ast.Symbol;
-const bundler = bun.bundle_v2;
-
 pub const DeferredBatchTask = bun.bundle_v2.DeferredBatchTask;
 pub const ThreadPool = bun.bundle_v2.ThreadPool;
 pub const ParseTask = bun.bundle_v2.ParseTask;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const BabyList = bun.BabyList;
+const Environment = bun.Environment;
+const ImportRecord = bun.ImportRecord;
+const ThreadPoolLib = bun.ThreadPool;
+const options = bun.options;
+
+const js_ast = bun.ast;
+const Symbol = js_ast.Symbol;
+
+const bundler = bun.bundle_v2;
 const Chunk = bundler.Chunk;
 const CompileResult = bundler.CompileResult;
+const Index = bun.bundle_v2.Index;
+
+const LinkerContext = bun.bundle_v2.LinkerContext;
 const PendingPartRange = LinkerContext.PendingPartRange;

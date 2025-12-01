@@ -29,7 +29,7 @@ server.listen(0, common.mustCall(function() {
 
     response.on('finish', common.mustCall(function() {
       process.nextTick(() => {
-        // assert.ok(request.socket);
+        assert.ok(request.socket);
         server.close();
       });
     }));

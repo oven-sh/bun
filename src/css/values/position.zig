@@ -1,4 +1,3 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const Printer = css.Printer;
@@ -137,37 +136,37 @@ pub const Position = struct {
         return .{ .result = Position{ .x = x, .y = y } };
     }
 
-    pub fn toCss(this: *const Position, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const Position, dest: *css.Printer) css.PrintErr!void {
         if (this.x == .side and this.y == .length and this.x.side.side != .left) {
-            try this.x.toCss(W, dest);
+            try this.x.toCss(dest);
             try dest.writeStr(" top ");
-            try this.y.length.toCss(W, dest);
+            try this.y.length.toCss(dest);
         } else if (this.x == .side and this.x.side.side != .left and this.y.isCenter()) {
             // If there is a side keyword with an offset, "center" must be a keyword not a percentage.
-            try this.x.toCss(W, dest);
+            try this.x.toCss(dest);
             try dest.writeStr(" center");
         } else if (this.x == .length and this.y == .side and this.y.side.side != .top) {
             try dest.writeStr("left ");
-            try this.x.length.toCss(W, dest);
+            try this.x.length.toCss(dest);
             try dest.writeStr(" ");
-            try this.y.toCss(W, dest);
+            try this.y.toCss(dest);
         } else if (this.x.isCenter() and this.y.isCenter()) {
             // `center center` => 50%
-            try this.x.toCss(W, dest);
+            try this.x.toCss(dest);
         } else if (this.x == .length and this.y.isCenter()) {
             // `center` is assumed if omitted.
-            try this.x.length.toCss(W, dest);
+            try this.x.length.toCss(dest);
         } else if (this.x == .side and this.x.side.offset == null and this.y.isCenter()) {
             const p: LengthPercentage = this.x.side.side.intoLengthPercentage();
-            try p.toCss(W, dest);
+            try p.toCss(dest);
         } else if (this.y == .side and this.y.side.offset == null and this.x.isCenter()) {
-            try this.y.toCss(W, dest);
+            try this.y.toCss(dest);
         } else if (this.x == .side and this.x.side.offset == null and this.y == .side and this.y.side.offset == null) {
             const x: LengthPercentage = this.x.side.side.intoLengthPercentage();
             const y: LengthPercentage = this.y.side.side.intoLengthPercentage();
-            try x.toCss(W, dest);
+            try x.toCss(dest);
             try dest.writeStr(" ");
-            try y.toCss(W, dest);
+            try y.toCss(dest);
         } else {
             const zero = LengthPercentage.zero();
             const fifty = LengthPercentage{ .percentage = .{ .v = 0.5 } };
@@ -222,13 +221,13 @@ pub const Position = struct {
             };
 
             if (x_len != null and y_len != null) {
-                try x_len.?.toCss(W, dest);
+                try x_len.?.toCss(dest);
                 try dest.writeStr(" ");
-                try y_len.?.toCss(W, dest);
+                try y_len.?.toCss(dest);
             } else {
-                try this.x.toCss(W, dest);
+                try this.x.toCss(dest);
                 try dest.writeStr(" ");
-                try this.y.toCss(W, dest);
+                try this.y.toCss(dest);
             }
         }
     }
@@ -323,7 +322,7 @@ pub fn PositionComponent(comptime S: type) type {
             return .{ .result = .{ .side = .{ .side = side, .offset = offset } } };
         }
 
-        pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        pub fn toCss(this: *const @This(), dest: *css.Printer) css.PrintErr!void {
             switch (this.*) {
                 .center => {
                     if (dest.minify) {
@@ -332,12 +331,12 @@ pub fn PositionComponent(comptime S: type) type {
                         try dest.writeStr("center");
                     }
                 },
-                .length => |*lp| try lp.toCss(W, dest),
+                .length => |*lp| try lp.toCss(dest),
                 .side => |*s| {
-                    try s.side.toCss(W, dest);
+                    try s.side.toCss(dest);
                     if (s.offset) |lp| {
                         try dest.writeStr(" ");
-                        try lp.toCss(W, dest);
+                        try lp.toCss(dest);
                     }
                 },
             }
@@ -378,8 +377,8 @@ pub const HorizontalPositionKeyword = enum {
         return css.enum_property_util.parse(@This(), input);
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return css.enum_property_util.toCss(@This(), this, W, dest);
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, dest);
     }
 
     pub fn intoLengthPercentage(this: *const @This()) LengthPercentage {
@@ -412,8 +411,8 @@ pub const VerticalPositionKeyword = enum {
         return css.enum_property_util.parse(@This(), input);
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return css.enum_property_util.toCss(@This(), this, W, dest);
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, dest);
     }
 
     pub fn intoLengthPercentage(this: *const @This()) LengthPercentage {
@@ -426,3 +425,5 @@ pub const VerticalPositionKeyword = enum {
 
 pub const HorizontalPosition = PositionComponent(HorizontalPositionKeyword);
 pub const VerticalPosition = PositionComponent(VerticalPositionKeyword);
+
+const std = @import("std");

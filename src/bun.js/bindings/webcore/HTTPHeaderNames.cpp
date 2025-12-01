@@ -667,14 +667,14 @@ bool findHTTPHeaderName(const StringView stringView, HTTPHeaderName& headerName)
             return true;
         }
     } else {
-        LChar characters[maxHTTPHeaderNameLength];
+        Latin1Character characters[maxHTTPHeaderNameLength];
         const auto span = stringView.span16();
         for (unsigned i = 0; i < length; ++i) {
-            UChar character = span.data()[i];
+            char16_t character = span.data()[i];
             if (!isASCII(character))
                 return false;
 
-            characters[i] = static_cast<LChar>(character);
+            characters[i] = static_cast<Latin1Character>(character);
         }
 
         if (auto nameAndString = HTTPHeaderNamesHash::findHeaderNameImpl(reinterpret_cast<const char*>(characters), length)) {
@@ -692,7 +692,7 @@ StringView httpHeaderNameString(HTTPHeaderName headerName)
 
     const auto& name = headerNameStrings[static_cast<unsigned>(headerName)];
 
-    return StringView(std::span { reinterpret_cast<const LChar*>(name.name), static_cast<unsigned>(name.length) });
+    return StringView(std::span { reinterpret_cast<const Latin1Character*>(name.name), static_cast<unsigned>(name.length) });
 }
 
 } // namespace WebCore

@@ -127,7 +127,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncComputeSecret, (JSC::JSGlobalObject * gl
     }
 
     // Compute the shared secret
-    if (!ECDH_compute_key(secret.data(), secret.size(), pubPoint, ecdh->m_key.get(), nullptr)) {
+    if (!ECDH_compute_key(secret.begin(), secret.size(), pubPoint, ecdh->m_key.get(), nullptr)) {
         return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to compute ECDH key"_s);
     }
 
@@ -136,7 +136,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncComputeSecret, (JSC::JSGlobalObject * gl
     RETURN_IF_EXCEPTION(scope, {});
 
     // Return the encoded result
-    return StringBytes::encode(globalObject, scope, secret.span(), outputEncodingType);
+    RELEASE_AND_RETURN(scope, StringBytes::encode(globalObject, scope, secret.span(), outputEncodingType));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncGetPublicKey, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -203,7 +203,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncGetPrivateKey, (JSC::JSGlobalObject * gl
     std::span<const uint8_t> resultSpan(static_cast<const uint8_t*>(result->data()), byteLength);
 
     // Return the encoded result
-    return StringBytes::encode(globalObject, scope, resultSpan, encodingType);
+    RELEASE_AND_RETURN(scope, StringBytes::encode(globalObject, scope, resultSpan, encodingType));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPublicKey, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

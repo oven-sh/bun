@@ -89,9 +89,7 @@ bool InternalWritableStream::locked() const
     ASSERT(!arguments.hasOverflowed());
 
     auto result = invokeWritableStreamFunction(*globalObject, privateName, arguments);
-    if (scope.exception())
-        scope.clearException();
-
+    CLEAR_IF_EXCEPTION(scope);
     return result.hasException() ? false : result.returnValue().isTrue();
 }
 
@@ -111,8 +109,7 @@ void InternalWritableStream::lock()
     ASSERT(!arguments.hasOverflowed());
 
     auto result = invokeWritableStreamFunction(*globalObject, privateName, arguments);
-    if (scope.exception()) [[unlikely]]
-        scope.clearException();
+    CLEAR_IF_EXCEPTION(scope);
 }
 
 JSC::JSValue InternalWritableStream::abort(JSC::JSGlobalObject& globalObject, JSC::JSValue reason)

@@ -1,6 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-
 /// Type which could be borrowed or owned
 /// The name is from the Rust std's `Cow` type
 /// Can't think of a better name
@@ -79,3 +76,6 @@ pub fn Cow(comptime T: type, comptime VTable: type) type {
         }
     };
 }
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;

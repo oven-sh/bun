@@ -73,6 +73,9 @@ case $platform in
 'MINGW64'*)
     target=windows-x64
     ;;
+'Linux riscv64')
+    error 'Not supported on riscv64'
+    ;;
 'Linux x86_64' | *)
     target=linux-x64
     ;;
@@ -260,8 +263,8 @@ bash)
     )
 
     bash_configs=(
-        "$HOME/.bashrc"
         "$HOME/.bash_profile"
+        "$HOME/.bashrc"
     )
 
     if [[ ${XDG_CONFIG_HOME:-} ]]; then

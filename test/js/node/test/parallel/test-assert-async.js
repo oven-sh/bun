@@ -137,10 +137,7 @@ promises.push(assert.rejects(
     assert.strictEqual(err.code, 'ERR_ASSERTION');
     assert.strictEqual(err.actual, actual);
     assert.strictEqual(err.operator, 'rejects');
-    if (typeof Bun === "undefined") {
-      // disabled on bun because it is missing async stack traces
-      assert.match(err.stack, /rejects/);
-    }
+    assert.match(err.stack, /rejects/);
     return true;
   };
   const err = new Error();

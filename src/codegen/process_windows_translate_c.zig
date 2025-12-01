@@ -7,8 +7,6 @@
 // In these cases, it's better to just reference the underlying function
 // directly: SetCurrentDirectoryW. To make the error better, a post
 // processing step is applied to the translate-c file.
-const std = @import("std");
-const mem = std.mem;
 
 const symbol_replacements = std.StaticStringMap([]const u8).initComptime(&.{
     &.{ "NTSTATUS", "@import(\"std\").os.windows.NTSTATUS" },
@@ -24,13 +22,13 @@ pub fn main() !void {
 
     const in = brk: {
         const in_path = args.next() orelse @panic("missing argument");
-        const in = try std.fs.openFileAbsolute(in_path, .{});
+        const in = try std.fs.cwd().openFile(in_path, .{});
         defer in.close();
-        break :brk try in.readToEndAllocOptions(gpa, std.math.maxInt(u32), null, 1, 0);
+        break :brk try in.readToEndAllocOptions(gpa, std.math.maxInt(u32), null, .fromByteUnits(1), 0);
     };
     defer gpa.free(in);
 
-    var out = try std.ArrayList(u8).initCapacity(gpa, in.len);
+    var out = try std.array_list.Managed(u8).initCapacity(gpa, in.len);
     defer out.deinit();
     const w = out.writer();
 
@@ -70,3 +68,6 @@ pub fn main() !void {
 fn assert(cond: bool) void {
     if (!cond) @panic("unhandled");
 }
+
+const std = @import("std");
+const mem = std.mem;

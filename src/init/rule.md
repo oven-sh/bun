@@ -11,6 +11,7 @@ Default to using Bun instead of Node.js.
 - Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
 - Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
 - Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
+- Use `bunx <package> <command>` instead of `npx <package> <command>`
 - Bun automatically loads .env, so don't use dotenv.
 
 ## APIs
@@ -22,6 +23,18 @@ Default to using Bun instead of Node.js.
 - `WebSocket` is built-in. Don't use `ws`.
 - Prefer `Bun.file` over `node:fs`'s readFile/writeFile
 - Bun.$`ls` instead of execa.
+
+## Testing
+
+Use `bun test` to run tests.
+
+```ts#index.test.ts
+import { test, expect } from "bun:test";
+
+test("hello world", () => {
+  expect(1).toBe(1);
+});
+```
 
 ## Frontend
 
@@ -75,11 +88,10 @@ With the following `frontend.tsx`:
 
 ```tsx#frontend.tsx
 import React from "react";
+import { createRoot } from "react-dom/client";
 
 // import .css files directly and it works
 import './index.css';
-
-import { createRoot } from "react-dom/client";
 
 const root = createRoot(document.body);
 
@@ -96,4 +108,4 @@ Then, run index.ts
 bun --hot ./index.ts
 ```
 
-For more information, read the Bun API docs in `node_modules/bun-types/docs/**.md`.
+For more information, read the Bun API docs in `node_modules/bun-types/docs/**.mdx`.

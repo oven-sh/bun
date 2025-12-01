@@ -1,13 +1,6 @@
-const bun = @import("bun");
-const std = @import("std");
-const PosixSpawn = bun.spawn;
-const Environment = bun.Environment;
-const JSC = bun.JSC;
-const Output = bun.Output;
-const uv = bun.windows.libuv;
 const pid_t = if (Environment.isPosix) std.posix.pid_t else uv.uv_pid_t;
 const fd_t = if (Environment.isPosix) std.posix.fd_t else i32;
-const Maybe = JSC.Maybe;
+const log = bun.Output.scoped(.PROCESS, .visible);
 
 const win_rusage = struct {
     utime: struct {
@@ -43,7 +36,7 @@ const IO_COUNTERS = extern struct {
     OtherTransferCount: u64 = 0,
 };
 
-extern "kernel32" fn GetProcessIoCounters(handle: std.os.windows.HANDLE, counters: *IO_COUNTERS) callconv(std.os.windows.WINAPI) c_int;
+extern "kernel32" fn GetProcessIoCounters(handle: std.os.windows.HANDLE, counters: *IO_COUNTERS) callconv(.winapi) c_int;
 
 pub fn uv_getrusage(process: *uv.uv_process_t) win_rusage {
     var usage_info: Rusage = .{ .utime = .{}, .stime = .{} };
@@ -78,10 +71,6 @@ pub fn uv_getrusage(process: *uv.uv_process_t) win_rusage {
 }
 pub const Rusage = if (Environment.isWindows) win_rusage else std.posix.rusage;
 
-const Subprocess = JSC.Subprocess;
-const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
-const ShellSubprocess = bun.shell.ShellSubprocess;
-const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
 // const ShellSubprocessMini = bun.shell.ShellSubprocessMini;
 pub const ProcessExitHandler = struct {
     ptr: TaggedPointer = TaggedPointer.Null,
@@ -95,7 +84,7 @@ pub const ProcessExitHandler = struct {
             LifecycleScriptSubprocess,
             ShellSubprocess,
             ProcessHandle,
-
+            SecurityScanSubprocess,
             SyncProcess,
         },
     );
@@ -126,6 +115,10 @@ pub const ProcessExitHandler = struct {
                 const subprocess = this.ptr.as(ShellSubprocess);
                 subprocess.onProcessExit(process, status, rusage);
             },
+            @field(TaggedPointer.Tag, @typeName(SecurityScanSubprocess)) => {
+                const subprocess = this.ptr.as(SecurityScanSubprocess);
+                subprocess.onProcessExit(process, status, rusage);
+            },
             @field(TaggedPointer.Tag, @typeName(SyncProcess)) => {
                 const subprocess = this.ptr.as(SyncProcess);
                 if (comptime Environment.isPosix) {
@@ -143,7 +136,7 @@ pub const PidFDType = if (Environment.isLinux) fd_t else u0;
 
 pub const Process = struct {
     const Self = @This();
-    const RefCount = bun.ptr.RefCount(@This(), "ref_count", deinit, .{});
+    const RefCount = bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{});
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
@@ -156,7 +149,7 @@ pub const Process = struct {
     ref_count: RefCount,
     exit_handler: ProcessExitHandler = ProcessExitHandler{},
     sync: bool = false,
-    event_loop: JSC.EventLoopHandle,
+    event_loop: jsc.EventLoopHandle,
 
     pub fn memoryCost(_: *const Process) usize {
         return @sizeOf(@This());
@@ -183,7 +176,7 @@ pub const Process = struct {
             .ref_count = .init(),
             .pid = posix.pid,
             .pidfd = posix.pidfd orelse 0,
-            .event_loop = JSC.EventLoopHandle.init(event_loop),
+            .event_loop = jsc.EventLoopHandle.init(event_loop),
             .sync = sync_,
             .poller = .{ .detached = {} },
             .status = brk: {
@@ -241,7 +234,7 @@ pub const Process = struct {
         } else if (comptime Environment.isWindows) {}
     }
 
-    pub fn onWaitPidFromWaiterThread(this: *Process, waitpid_result: *const JSC.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) void {
+    pub fn onWaitPidFromWaiterThread(this: *Process, waitpid_result: *const bun.sys.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) void {
         if (comptime Environment.isWindows) {
             @compileError("not implemented on this platform");
         }
@@ -261,7 +254,7 @@ pub const Process = struct {
         this.deref();
     }
 
-    fn onWaitPid(this: *Process, waitpid_result: *const JSC.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) void {
+    fn onWaitPid(this: *Process, waitpid_result: *const bun.sys.Maybe(PosixSpawn.WaitPidResult), rusage: *const Rusage) void {
         if (comptime !Environment.isPosix) {
             @compileError("not implemented on this platform");
         }
@@ -300,7 +293,7 @@ pub const Process = struct {
         this.onExit(status, &rusage_result);
     }
 
-    pub fn watchOrReap(this: *Process) JSC.Maybe(bool) {
+    pub fn watchOrReap(this: *Process) bun.sys.Maybe(bool) {
         if (this.hasExited()) {
             this.onExit(this.status, &std.mem.zeroes(Rusage));
             return .{ .result = true };
@@ -321,10 +314,10 @@ pub const Process = struct {
         }
     }
 
-    pub fn watch(this: *Process) JSC.Maybe(void) {
+    pub fn watch(this: *Process) bun.sys.Maybe(void) {
         if (comptime Environment.isWindows) {
             this.poller.uv.ref();
-            return JSC.Maybe(void){ .result = {} };
+            return .success;
         }
 
         if (WaiterThread.shouldUseWaiterThread()) {
@@ -332,7 +325,7 @@ pub const Process = struct {
             this.poller.waiter_thread.ref(this.event_loop);
             this.ref();
             WaiterThread.append(this);
-            return JSC.Maybe(void){ .result = {} };
+            return .success;
         }
 
         const watchfd = if (comptime Environment.isLinux) this.pidfd else this.pid;
@@ -351,7 +344,7 @@ pub const Process = struct {
         )) {
             .result => {
                 this.ref();
-                return JSC.Maybe(void){ .result = {} };
+                return .success;
             },
             .err => |err| {
                 this.poller.fd.disableKeepingProcessAlive(this.event_loop);
@@ -363,28 +356,33 @@ pub const Process = struct {
         unreachable;
     }
 
-    pub fn rewatchPosix(this: *Process) JSC.Maybe(void) {
+    pub fn rewatchPosix(this: *Process) bun.sys.Maybe(void) {
         if (WaiterThread.shouldUseWaiterThread()) {
             if (this.poller != .waiter_thread)
                 this.poller = .{ .waiter_thread = .{} };
             this.poller.waiter_thread.ref(this.event_loop);
             this.ref();
             WaiterThread.append(this);
-            return JSC.Maybe(void){ .result = {} };
+            return .success;
         }
 
         if (this.poller == .fd) {
-            return this.poller.fd.register(
+            const maybe = this.poller.fd.register(
                 this.event_loop.loop(),
                 .process,
                 true,
             );
+            switch (maybe) {
+                .err => {},
+                .result => this.ref(),
+            }
+            return maybe;
         } else {
             @panic("Internal Bun error: poll_ref in Subprocess is null unexpectedly. Please file a bug report.");
         }
     }
 
-    fn onExitUV(process: *uv.uv_process_t, exit_status: i64, term_signal: c_int) callconv(.C) void {
+    fn onExitUV(process: *uv.uv_process_t, exit_status: i64, term_signal: c_int) callconv(.c) void {
         const poller: *PollerWindows = @fieldParentPtr("uv", process);
         var this: *Process = @fieldParentPtr("poller", poller);
         const exit_code: u8 = if (exit_status >= 0) @as(u8, @truncate(@as(u64, @intCast(exit_status)))) else 0;
@@ -418,7 +416,7 @@ pub const Process = struct {
         }
     }
 
-    fn onCloseUV(uv_handle: *uv.uv_process_t) callconv(.C) void {
+    fn onCloseUV(uv_handle: *uv.uv_process_t) callconv(.c) void {
         const poller: *Poller = @fieldParentPtr("uv", uv_handle);
         var this: *Process = @fieldParentPtr("poller", poller);
         bun.windows.libuv.log("Process.onClose({d})", .{uv_handle.pid});
@@ -605,7 +603,7 @@ pub const Status = union(enum) {
         };
     }
 
-    pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         if (self.signalCode()) |signal_code| {
             if (signal_code.toExitCode()) |code| {
                 try writer.print("code: {d}", .{code});
@@ -621,7 +619,7 @@ pub const Status = union(enum) {
                 try writer.print("signal: {d}", .{@intFromEnum(signal)});
             },
             .err => |err| {
-                try writer.print("{}", .{err});
+                try writer.print("{f}", .{err});
             },
             else => {},
         }
@@ -641,7 +639,7 @@ pub const PollerPosix = union(enum) {
         }
     }
 
-    pub fn enableKeepingEventLoopAlive(this: *Poller, event_loop: JSC.EventLoopHandle) void {
+    pub fn enableKeepingEventLoopAlive(this: *Poller, event_loop: jsc.EventLoopHandle) void {
         switch (this.*) {
             .fd => |poll| {
                 poll.enableKeepingProcessAlive(event_loop);
@@ -653,7 +651,7 @@ pub const PollerPosix = union(enum) {
         }
     }
 
-    pub fn disableKeepingEventLoopAlive(this: *PollerPosix, event_loop: JSC.EventLoopHandle) void {
+    pub fn disableKeepingEventLoopAlive(this: *PollerPosix, event_loop: jsc.EventLoopHandle) void {
         switch (this.*) {
             .fd => |poll| {
                 poll.disableKeepingProcessAlive(event_loop);
@@ -686,7 +684,7 @@ pub const PollerWindows = union(enum) {
         }
     }
 
-    pub fn enableKeepingEventLoopAlive(this: *PollerWindows, event_loop: JSC.EventLoopHandle) void {
+    pub fn enableKeepingEventLoopAlive(this: *PollerWindows, event_loop: jsc.EventLoopHandle) void {
         _ = event_loop; // autofix
         switch (this.*) {
             .uv => |*process| {
@@ -696,7 +694,7 @@ pub const PollerWindows = union(enum) {
         }
     }
 
-    pub fn disableKeepingEventLoopAlive(this: *PollerWindows, event_loop: JSC.EventLoopHandle) void {
+    pub fn disableKeepingEventLoopAlive(this: *PollerWindows, event_loop: jsc.EventLoopHandle) void {
         _ = event_loop; // autofix
 
         // This is disabled on Windows
@@ -743,7 +741,7 @@ const WaiterThreadPosix = struct {
     fn NewQueue(comptime T: type) type {
         return struct {
             queue: ConcurrentQueue = .{},
-            active: std.ArrayList(*T) = std.ArrayList(*T).init(bun.default_allocator),
+            active: std.array_list.Managed(*T) = std.array_list.Managed(*T).init(bun.default_allocator),
 
             const TaskQueueEntry = struct {
                 process: *T,
@@ -755,7 +753,7 @@ const WaiterThreadPosix = struct {
             pub const ConcurrentQueue = bun.UnboundedQueue(TaskQueueEntry, .next);
 
             pub const ResultTask = struct {
-                result: JSC.Maybe(PosixSpawn.WaitPidResult),
+                result: bun.sys.Maybe(PosixSpawn.WaitPidResult),
                 subprocess: *T,
                 rusage: Rusage,
 
@@ -777,9 +775,9 @@ const WaiterThreadPosix = struct {
             };
 
             pub const ResultTaskMini = struct {
-                result: JSC.Maybe(PosixSpawn.WaitPidResult),
+                result: bun.sys.Maybe(PosixSpawn.WaitPidResult),
                 subprocess: *T,
-                task: JSC.AnyTaskWithExtraContext = .{},
+                task: jsc.AnyTaskWithExtraContext = .{},
 
                 pub const new = bun.TrivialNew(@This());
 
@@ -816,28 +814,34 @@ const WaiterThreadPosix = struct {
                     }
                 }
 
-                var queue: []*T = this.active.items;
                 var i: usize = 0;
-                while (queue.len > 0 and i < queue.len) {
-                    const process = queue[i];
+                while (i < this.active.items.len) {
+                    var remove = false;
+                    defer {
+                        if (remove) {
+                            _ = this.active.orderedRemove(i);
+                        } else {
+                            i += 1;
+                        }
+                    }
+
+                    const process = this.active.items[i];
                     const pid = process.pid;
                     // this case shouldn't really happen
                     if (pid == 0) {
-                        _ = this.active.orderedRemove(i);
-                        queue = this.active.items;
+                        remove = true;
                         continue;
                     }
 
                     var rusage = std.mem.zeroes(Rusage);
                     const result = PosixSpawn.wait4(pid, std.posix.W.NOHANG, &rusage);
                     if (result == .err or (result == .result and result.result.pid == pid)) {
-                        _ = this.active.orderedRemove(i);
-                        queue = this.active.items;
+                        remove = true;
 
                         switch (process.event_loop) {
                             .js => |event_loop| {
                                 event_loop.enqueueTaskConcurrent(
-                                    JSC.ConcurrentTask.create(JSC.Task.init(
+                                    jsc.ConcurrentTask.create(jsc.Task.init(
                                         ResultTask.new(
                                             .{
                                                 .result = result,
@@ -849,7 +853,7 @@ const WaiterThreadPosix = struct {
                                 );
                             },
                             .mini => |mini| {
-                                const AnyTask = JSC.AnyTaskWithExtraContext.New(ResultTaskMini, void, ResultTaskMini.runFromMainThreadMini);
+                                const AnyTask = jsc.AnyTaskWithExtraContext.New(ResultTaskMini, void, ResultTaskMini.runFromMainThreadMini);
                                 const out = ResultTaskMini.new(
                                     .{
                                         .result = result,
@@ -862,8 +866,6 @@ const WaiterThreadPosix = struct {
                             },
                         }
                     }
-
-                    i += 1;
                 }
             }
         };
@@ -911,7 +913,7 @@ const WaiterThreadPosix = struct {
         thread.detach();
     }
 
-    fn wakeup(_: c_int) callconv(.C) void {
+    fn wakeup(_: c_int) callconv(.c) void {
         const one = @as([8]u8, @bitCast(@as(usize, 1)));
         _ = bun.sys.write(instance.eventfd, &one).unwrap() catch 0;
     }
@@ -922,8 +924,8 @@ const WaiterThreadPosix = struct {
         }
 
         if (comptime Environment.isLinux) {
-            var current_mask = std.posix.empty_sigset;
-            std.os.linux.sigaddset(&current_mask, std.posix.SIG.CHLD);
+            var current_mask = std.posix.sigemptyset();
+            std.os.linux.sigaddset(current_mask[0..1], std.posix.SIG.CHLD);
             const act = std.posix.Sigaction{
                 .handler = .{ .handler = &wakeup },
                 .mask = current_mask,
@@ -958,7 +960,7 @@ const WaiterThreadPosix = struct {
 
                 _ = std.posix.poll(&polls, std.math.maxInt(i32)) catch 0;
             } else {
-                var mask = std.posix.empty_sigset;
+                var mask = std.posix.sigemptyset();
                 var signal: c_int = std.posix.SIG.CHLD;
                 const rc = std.c.sigwait(&mask, &signal);
                 _ = rc;
@@ -985,6 +987,13 @@ pub const PosixSpawnOptions = struct {
     /// and posix_spawnp(2) will behave as a more
     /// featureful execve(2).
     use_execve_on_macos: bool = false,
+    /// If we need to call `socketpair()`, this
+    /// sets SO_NOSIGPIPE when true.
+    ///
+    /// If false, this avoids setting SO_NOSIGPIPE
+    /// for stdout. This is used to preserve
+    /// consistent shell semantics.
+    no_sigpipe: bool = true,
 
     pub const Stdio = union(enum) {
         path: []const u8,
@@ -994,7 +1003,7 @@ pub const PosixSpawnOptions = struct {
         ipc: void,
         pipe: bun.FileDescriptor,
         // TODO: remove this entry, it doesn't seem to be used
-        dup2: struct { out: bun.JSC.Subprocess.StdioKind, to: bun.JSC.Subprocess.StdioKind },
+        dup2: struct { out: bun.jsc.Subprocess.StdioKind, to: bun.jsc.Subprocess.StdioKind },
     };
 
     pub fn deinit(_: *const PosixSpawnOptions) void {
@@ -1007,7 +1016,7 @@ pub const WindowsSpawnResult = struct {
     stdin: StdioResult = .unavailable,
     stdout: StdioResult = .unavailable,
     stderr: StdioResult = .unavailable,
-    extra_pipes: std.ArrayList(StdioResult) = std.ArrayList(StdioResult).init(bun.default_allocator),
+    extra_pipes: std.array_list.Managed(StdioResult) = std.array_list.Managed(StdioResult).init(bun.default_allocator),
     stream: bool = true,
     sync: bool = false,
 
@@ -1056,7 +1065,7 @@ pub const WindowsSpawnOptions = struct {
     pub const WindowsOptions = struct {
         verbatim_arguments: bool = false,
         hide_window: bool = true,
-        loop: JSC.EventLoopHandle = undefined,
+        loop: jsc.EventLoopHandle = undefined,
     };
 
     pub const Stdio = union(enum) {
@@ -1066,7 +1075,7 @@ pub const WindowsSpawnOptions = struct {
         buffer: *bun.windows.libuv.Pipe,
         ipc: *bun.windows.libuv.Pipe,
         pipe: bun.FileDescriptor,
-        dup2: struct { out: bun.JSC.Subprocess.StdioKind, to: bun.JSC.Subprocess.StdioKind },
+        dup2: struct { out: bun.jsc.Subprocess.StdioKind, to: bun.jsc.Subprocess.StdioKind },
 
         pub fn deinit(this: *const Stdio) void {
             if (this.* == .buffer) {
@@ -1092,7 +1101,7 @@ pub const PosixSpawnResult = struct {
     stdout: ?bun.FileDescriptor = null,
     stderr: ?bun.FileDescriptor = null,
     ipc: ?bun.FileDescriptor = null,
-    extra_pipes: std.ArrayList(bun.FileDescriptor) = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator),
+    extra_pipes: std.array_list.Managed(bun.FileDescriptor) = std.array_list.Managed(bun.FileDescriptor).init(bun.default_allocator),
 
     memfds: [3]bool = .{ false, false, false },
 
@@ -1129,7 +1138,7 @@ pub const PosixSpawnResult = struct {
             0;
     }
 
-    pub fn pifdFromPid(this: *PosixSpawnResult) JSC.Maybe(PidFDType) {
+    pub fn pifdFromPid(this: *PosixSpawnResult) bun.sys.Maybe(PidFDType) {
         if (!Environment.isLinux or WaiterThread.shouldUseWaiterThread()) {
             return .{ .err = bun.sys.Error.fromCode(.NOSYS, .pidfd_open) };
         }
@@ -1203,7 +1212,7 @@ pub fn spawnProcess(
     options: *const SpawnOptions,
     argv: [*:null]?[*:0]const u8,
     envp: [*:null]?[*:0]const u8,
-) !JSC.Maybe(SpawnProcessResult) {
+) !bun.sys.Maybe(SpawnProcessResult) {
     if (comptime Environment.isPosix) {
         return spawnProcessPosix(
             options,
@@ -1222,8 +1231,8 @@ pub fn spawnProcessPosix(
     options: *const PosixSpawnOptions,
     argv: [*:null]?[*:0]const u8,
     envp: [*:null]?[*:0]const u8,
-) !JSC.Maybe(PosixSpawnResult) {
-    bun.Analytics.Features.spawn += 1;
+) !bun.sys.Maybe(PosixSpawnResult) {
+    bun.analytics.Features.spawn += 1;
     var actions = try PosixSpawn.Actions.init();
     defer actions.deinit();
 
@@ -1252,12 +1261,12 @@ pub fn spawnProcessPosix(
         try actions.chdir(options.cwd);
     }
     var spawned = PosixSpawnResult{};
-    var extra_fds = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator);
+    var extra_fds = std.array_list.Managed(bun.FileDescriptor).init(bun.default_allocator);
     errdefer extra_fds.deinit();
     var stack_fallback = std.heap.stackFallback(2048, bun.default_allocator);
     const allocator = stack_fallback.get();
-    var to_close_at_end = std.ArrayList(bun.FileDescriptor).init(allocator);
-    var to_set_cloexec = std.ArrayList(bun.FileDescriptor).init(allocator);
+    var to_close_at_end = std.array_list.Managed(bun.FileDescriptor).init(allocator);
+    var to_set_cloexec = std.array_list.Managed(bun.FileDescriptor).init(allocator);
     defer {
         for (to_set_cloexec.items) |fd| {
             _ = bun.sys.setCloseOnExec(fd);
@@ -1270,7 +1279,7 @@ pub fn spawnProcessPosix(
         to_close_at_end.clearAndFree();
     }
 
-    var to_close_on_error = std.ArrayList(bun.FileDescriptor).init(allocator);
+    var to_close_on_error = std.array_list.Managed(bun.FileDescriptor).init(allocator);
 
     errdefer {
         for (to_close_on_error.items) |fd| {
@@ -1342,7 +1351,17 @@ pub fn spawnProcessPosix(
                 }
 
                 const fds: [2]bun.FileDescriptor = brk: {
-                    const pair = try bun.sys.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, .blocking).unwrap();
+                    const pair = if (!options.no_sigpipe) try bun.sys.socketpairForShell(
+                        std.posix.AF.UNIX,
+                        std.posix.SOCK.STREAM,
+                        0,
+                        .blocking,
+                    ).unwrap() else try bun.sys.socketpair(
+                        std.posix.AF.UNIX,
+                        std.posix.SOCK.STREAM,
+                        0,
+                        .blocking,
+                    ).unwrap();
                     break :brk .{ pair[if (i == 0) 1 else 0], pair[if (i == 0) 0 else 1] };
                 };
 
@@ -1473,7 +1492,7 @@ pub fn spawnProcessPosix(
         .result => |pid| {
             spawned.pid = pid;
             spawned.extra_pipes = extra_fds;
-            extra_fds = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator);
+            extra_fds = std.array_list.Managed(bun.FileDescriptor).init(bun.default_allocator);
 
             if (comptime Environment.isLinux) {
                 // If it's spawnSync and we want to block the entire thread
@@ -1513,9 +1532,9 @@ pub fn spawnProcessWindows(
     options: *const WindowsSpawnOptions,
     argv: [*:null]?[*:0]const u8,
     envp: [*:null]?[*:0]const u8,
-) !JSC.Maybe(WindowsSpawnResult) {
+) !bun.sys.Maybe(WindowsSpawnResult) {
     bun.markWindowsOnly();
-    bun.Analytics.Features.spawn += 1;
+    bun.analytics.Features.spawn += 1;
 
     var uv_process_options = std.mem.zeroes(uv.uv_process_options_t);
 
@@ -1534,7 +1553,7 @@ pub fn spawnProcessWindows(
 
     uv_process_options.cwd = cwd.ptr;
 
-    var uv_files_to_close = std.ArrayList(uv.uv_file).init(allocator);
+    var uv_files_to_close = std.array_list.Managed(uv.uv_file).init(allocator);
 
     var failed = false;
 
@@ -1559,7 +1578,7 @@ pub fn spawnProcessWindows(
         uv_process_options.flags |= uv.UV_PROCESS_DETACHED;
     }
 
-    var stdio_containers = try std.ArrayList(uv.uv_stdio_container_t).initCapacity(allocator, 3 + options.extra_fds.len);
+    var stdio_containers = try std.array_list.Managed(uv.uv_stdio_container_t).initCapacity(allocator, 3 + options.extra_fds.len);
     defer stdio_containers.deinit();
     @memset(stdio_containers.allocatedSlice(), std.mem.zeroes(uv.uv_stdio_container_t));
     stdio_containers.items.len = 3 + options.extra_fds.len;
@@ -1733,7 +1752,7 @@ pub fn spawnProcessWindows(
 
     var result = WindowsSpawnResult{
         .process_ = process,
-        .extra_pipes = try std.ArrayList(WindowsSpawnResult.StdioResult).initCapacity(bun.default_allocator, options.extra_fds.len),
+        .extra_pipes = try std.array_list.Managed(WindowsSpawnResult.StdioResult).initCapacity(bun.default_allocator, options.extra_fds.len),
     };
 
     const result_stdios = .{ &result.stdin, &result.stdout, &result.stderr };
@@ -1798,7 +1817,7 @@ pub const sync = struct {
                     .ignore => .ignore,
                     .buffer => .{
                         .buffer = if (Environment.isWindows)
-                            bun.default_allocator.create(bun.windows.libuv.Pipe) catch bun.outOfMemory(),
+                            bun.handleOom(bun.default_allocator.create(bun.windows.libuv.Pipe)),
                     },
                 };
             }
@@ -1823,8 +1842,8 @@ pub const sync = struct {
 
     pub const Result = struct {
         status: Status,
-        stdout: std.ArrayList(u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
-        stderr: std.ArrayList(u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
+        stdout: std.array_list.Managed(u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
+        stderr: std.array_list.Managed(u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
 
         pub fn isOK(this: *const Result) bool {
             return this.status.isOK();
@@ -1837,7 +1856,7 @@ pub const sync = struct {
     };
 
     const SyncWindowsPipeReader = struct {
-        chunks: std.ArrayList([]u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
+        chunks: std.array_list.Managed([]u8) = .{ .items = &.{}, .allocator = bun.default_allocator, .capacity = 0 },
         pipe: *uv.Pipe,
 
         err: bun.sys.E = .SUCCESS,
@@ -1848,11 +1867,11 @@ pub const sync = struct {
         pub const new = bun.TrivialNew(@This());
 
         fn onAlloc(_: *SyncWindowsPipeReader, suggested_size: usize) []u8 {
-            return bun.default_allocator.alloc(u8, suggested_size) catch bun.outOfMemory();
+            return bun.handleOom(bun.default_allocator.alloc(u8, suggested_size));
         }
 
         fn onRead(this: *SyncWindowsPipeReader, data: []const u8) void {
-            this.chunks.append(@constCast(data)) catch bun.outOfMemory();
+            bun.handleOom(this.chunks.append(@constCast(data)));
         }
 
         fn onError(this: *SyncWindowsPipeReader, err: bun.sys.E) void {
@@ -1860,7 +1879,7 @@ pub const sync = struct {
             this.pipe.close(onClose);
         }
 
-        fn onClose(pipe: *uv.Pipe) callconv(.C) void {
+        fn onClose(pipe: *uv.Pipe) callconv(.c) void {
             const this: *SyncWindowsPipeReader = pipe.getData(SyncWindowsPipeReader) orelse @panic("Expected SyncWindowsPipeReader to have data");
             const context = this.context;
             const chunks = this.chunks.items;
@@ -1966,7 +1985,7 @@ pub const sync = struct {
         argv: [*:null]?[*:0]const u8,
         envp: [*:null]?[*:0]const u8,
     ) !Maybe(Result) {
-        var loop: JSC.EventLoopHandle = options.windows.loop;
+        var loop: jsc.EventLoopHandle = options.windows.loop;
         var spawned = switch (try spawnProcessWindows(&options.toSpawnOptions(), argv, envp)) {
             .err => |err| return .{ .err = err },
             .result => |process| process,
@@ -1989,7 +2008,7 @@ pub const sync = struct {
                 switch (reader.start()) {
                     .err => |err| {
                         _ = this.process.kill(1);
-                        Output.panic("Unexpected error starting {s} pipe reader\n{}", .{ @tagName(tag), err });
+                        Output.panic("Unexpected error starting {s} pipe reader\n{f}", .{ @tagName(tag), err });
                     },
                     .result => {},
                 }
@@ -2002,13 +2021,13 @@ pub const sync = struct {
 
         const result = Result{
             .status = this.status orelse @panic("Expected Process to have exited when waiting_count == 0"),
-            .stdout = std.ArrayList(u8).fromOwnedSlice(
+            .stdout = std.array_list.Managed(u8).fromOwnedSlice(
                 bun.default_allocator,
-                flattenOwnedChunks(bun.default_allocator, bun.default_allocator, this.stdout) catch bun.outOfMemory(),
+                bun.handleOom(flattenOwnedChunks(bun.default_allocator, bun.default_allocator, this.stdout)),
             ),
-            .stderr = std.ArrayList(u8).fromOwnedSlice(
+            .stderr = std.array_list.Managed(u8).fromOwnedSlice(
                 bun.default_allocator,
-                flattenOwnedChunks(bun.default_allocator, bun.default_allocator, this.stderr) catch bun.outOfMemory(),
+                bun.handleOom(flattenOwnedChunks(bun.default_allocator, bun.default_allocator, this.stderr)),
             ),
         };
         this.stdout = &.{};
@@ -2048,7 +2067,7 @@ pub const sync = struct {
 
         try string_builder.allocate(bun.default_allocator);
 
-        var args = std.ArrayList(?[*:0]u8).initCapacity(bun.default_allocator, argv.len + 1) catch bun.outOfMemory();
+        var args = bun.handleOom(std.array_list.Managed(?[*:0]u8).initCapacity(bun.default_allocator, argv.len + 1));
         defer args.deinit();
 
         for (argv) |arg| {
@@ -2090,9 +2109,9 @@ pub const sync = struct {
 
         Bun__sendPendingSignalIfNecessary();
 
-        var out = [2]std.ArrayList(u8){
-            std.ArrayList(u8).init(bun.default_allocator),
-            std.ArrayList(u8).init(bun.default_allocator),
+        var out = [2]std.array_list.Managed(u8){
+            std.array_list.Managed(u8).init(bun.default_allocator),
+            std.array_list.Managed(u8).init(bun.default_allocator),
         };
         var out_fds = [2]bun.FileDescriptor{ process.stdout orelse bun.invalid_fd, process.stderr orelse bun.invalid_fd };
         var success = false;
@@ -2182,7 +2201,7 @@ pub const sync = struct {
 
             if (out_fds_to_wait_for[1] != bun.invalid_fd) {
                 poll_fds.len += 1;
-                poll_fds[poll_fds.len - 1].fd = @intCast(out_fds_to_wait_for[0].cast());
+                poll_fds[poll_fds.len - 1].fd = @intCast(out_fds_to_wait_for[1].cast());
             }
 
             if (poll_fds.len == 0) {
@@ -2223,3 +2242,20 @@ pub const sync = struct {
         };
     }
 };
+
+const std = @import("std");
+const ProcessHandle = @import("../../../cli/filter_run.zig").ProcessHandle;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const PosixSpawn = bun.spawn;
+const Maybe = bun.sys.Maybe;
+const ShellSubprocess = bun.shell.ShellSubprocess;
+const uv = bun.windows.libuv;
+
+const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
+const SecurityScanSubprocess = bun.install.SecurityScanSubprocess;
+
+const jsc = bun.jsc;
+const Subprocess = jsc.Subprocess;

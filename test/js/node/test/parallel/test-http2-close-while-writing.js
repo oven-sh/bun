@@ -32,7 +32,7 @@ server.on('session', common.mustCall(function(session) {
 }));
 
 server.listen(0, function() {
-  const client = http2.connect(`https://127.0.0.1:${server.address().port}`, {
+  const client = http2.connect(`https://localhost:${server.address().port}`, {
     ca,
     maxSessionMemory: 1000
   });

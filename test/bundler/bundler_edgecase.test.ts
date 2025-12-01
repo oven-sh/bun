@@ -274,6 +274,7 @@ describe("bundler", () => {
       "/entry.js": /* js */ `console.log(1)`,
     },
     outdir: "/out",
+    backend: "cli",
     loader: {
       ".cool": "wtf",
     },
@@ -1799,6 +1800,28 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toMatch(/[^\.:]module/); // `.module` and `node:module` are ok.
     },
   });
+  itBundled("edgecase/build-cjs-module#20308", {
+    files: {
+      "/entry.ts": /* js */ `
+        import {other} from './other';
+        console.log(capture(import.meta.main), capture(require.main === module), ...other);
+      `,
+      "/other.ts": /* js */ `
+        globalThis['ca' + 'pture'] = x => x;
+
+        export const other = [capture(require.main === module), capture(import.meta.main)];
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    capture: ["false", "false", "require.main == module", "require.main == module"],
+    onAfterBundle(api) {
+      console.log(api.readFile("/out.js"));
+      // This should be marked as a CommonJS module
+      api.expectFile("/out.js").toMatch(/\brequire\b/); // __require is not ok
+      api.expectFile("/out.js").toMatch(/[^\.:]module/); // `.module` and `node:module` are not ok.
+    },
+  });
   itBundled("edgecase/IdentifierInEnum#13081", {
     files: {
       "/entry.ts": `
@@ -2049,6 +2072,7 @@ describe("bundler", () => {
   });
 
   itBundled("edgecase/OutWithTwoFiles", {
+    backend: "cli",
     files: {
       "/entry.ts": `
         import index from './index.html' with { type: 'file' }

@@ -1,15 +1,7 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const logger = bun.logger;
-const Log = logger.Log;
-
 pub const css = @import("./css_parser.zig");
 pub const css_values = @import("./values/values.zig");
 pub const Error = css.Error;
 const Location = css.Location;
-
-const ArrayList = std.ArrayListUnmanaged;
 
 /// A printer error.
 pub const PrinterError = Err(PrinterErrorKind);
@@ -29,24 +21,20 @@ pub fn Err(comptime T: type) type {
         /// The location where the error occurred.
         loc: ?ErrorLocation,
 
-        pub fn fmt(
+        pub fn format(
             this: @This(),
-            comptime _: []const u8,
-            _: std.fmt.FormatOptions,
-            writer: anytype,
+            writer: *std.Io.Writer,
         ) !void {
-            if (@hasDecl(T, "fmt")) {
-                try writer.print("{}", .{this.kind});
-                return;
+            if (@hasDecl(T, "format")) {
+                return this.kind.format(writer);
             }
-            @compileError("fmt not implemented for " ++ @typeName(T));
+            @compileError("format not implemented for " ++ @typeName(T));
         }
 
-        pub fn toJSString(this: @This(), allocator: Allocator, globalThis: *bun.JSC.JSGlobalObject) bun.JSC.JSValue {
-            var error_string = ArrayList(u8){};
-            defer error_string.deinit(allocator);
-            error_string.writer(allocator).print("{}", .{this.kind}) catch unreachable;
-            return bun.String.fromBytes(error_string.items).toJS(globalThis);
+        pub fn toErrorInstance(this: *const @This(), globalThis: *bun.jsc.JSGlobalObject) !bun.jsc.JSValue {
+            var str = try bun.String.createFormat("{f}", .{this.kind});
+            defer str.deref();
+            return str.toErrorInstance(globalThis);
         }
 
         pub fn fromParseError(err: ParseError(ParserError), filename: []const u8) Err(ParserError) {
@@ -80,7 +68,7 @@ pub fn Err(comptime T: type) type {
                 .kind = .err,
                 .data = .{
                     .location = if (this.loc) |*loc| try loc.toLocation(source, allocator) else null,
-                    .text = try std.fmt.allocPrint(allocator, "{}", .{this.kind}),
+                    .text = try std.fmt.allocPrint(allocator, "{f}", .{this.kind}),
                 },
             });
 
@@ -116,9 +104,9 @@ pub fn ParserErrorKind(comptime T: type) type {
         /// A parse error reported by downstream consumer code.
         custom: T,
 
-        pub fn format(this: @This(), comptime formatter: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: @This(), writer: *std.Io.Writer) !void {
             return switch (this) {
-                inline else => |kind| try kind.format(formatter, options, writer),
+                inline else => |kind| try kind.format(writer),
             };
         }
     };
@@ -137,12 +125,10 @@ pub const BasicParseErrorKind = union(enum) {
     /// A qualified rule was encountered that was invalid.
     qualified_rule_invalid,
 
-    pub fn format(this: BasicParseErrorKind, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt; // autofix
-        _ = opts; // autofix
+    pub fn format(this: BasicParseErrorKind, writer: *std.Io.Writer) !void {
         return switch (this) {
             .unexpected_token => |token| {
-                try writer.print("unexpected token: {}", .{token});
+                try writer.print("unexpected token: {f}", .{token});
             },
             .end_of_input => {
                 try writer.print("unexpected end of input", .{});
@@ -178,7 +164,7 @@ pub const ErrorLocation = struct {
         };
     }
 
-    pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: *const @This(), writer: *std.Io.Writer) !void {
         try writer.print("{s}:{d}:{d}", .{ this.filename, this.line, this.column });
     }
 
@@ -210,7 +196,7 @@ pub const PrinterErrorKind = union(enum) {
     invalid_css_modules_pattern_in_grid,
     no_import_records,
 
-    pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) !void {
         return switch (this) {
             .ambiguous_url_in_custom_property => |data| writer.print("Ambiguous relative URL '{s}' in custom property declaration", .{data.url}),
             .fmt_error => writer.writeAll("Formatting error occurred"),
@@ -256,8 +242,12 @@ pub const ParserError = union(enum) {
     unexpected_token: css.Token,
     /// Maximum nesting depth was reached.
     maximum_nesting_depth,
+    unexpected_value: struct {
+        expected: []const u8,
+        received: []const u8,
+    },
 
-    pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) !void {
         return switch (this) {
             .at_rule_body_invalid => writer.writeAll("Invalid at-rule body"),
             .at_rule_prelude_invalid => writer.writeAll("Invalid at-rule prelude"),
@@ -270,11 +260,12 @@ pub const ParserError = union(enum) {
             .invalid_page_selector => writer.writeAll("Invalid @page selector"),
             .invalid_value => writer.writeAll("Invalid value"),
             .qualified_rule_invalid => writer.writeAll("Invalid qualified rule"),
-            .selector_error => |err| writer.print("Invalid selector. {s}", .{err}),
+            .selector_error => |err| writer.print("Invalid selector. {f}", .{err}),
             .unexpected_import_rule => writer.writeAll("@import rules must come before any other rules except @charset and @layer"),
             .unexpected_namespace_rule => writer.writeAll("@namespace rules must come before any other rules except @charset, @import, and @layer"),
-            .unexpected_token => |token| writer.print("Unexpected token: {}", .{token}),
+            .unexpected_token => |token| writer.print("Unexpected token: {f}", .{token}),
             .maximum_nesting_depth => writer.writeAll("Maximum CSS nesting depth exceeded"),
+            .unexpected_value => |v| writer.print("Expected {s}, received {s}", .{ v.expected, v.received }),
         };
     }
 };
@@ -349,7 +340,7 @@ pub const SelectorError = union(enum) {
     unexpected_selector_after_pseudo_element: css.Token,
     ambiguous_css_module_class: []const u8,
 
-    pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) !void {
         return switch (this) {
             .dangling_combinator => try writer.writeAll("Found a dangling combinator with no selector"),
             .empty_selector => try writer.writeAll("Empty selector is not allowed"),
@@ -364,15 +355,15 @@ pub const SelectorError = union(enum) {
             .unexpected_ident => |str| try writer.print("Unexpected identifier '{s}'", .{str}),
             .unsupported_pseudo_class_or_element => |str| try writer.print("Unsupported pseudo-class or pseudo-element '{s}'", .{str}),
 
-            .bad_value_in_attr => |tok| try writer.print("Invalid value in attribute selector: {}", .{tok}),
-            .class_needs_ident => |tok| try writer.print("Expected identifier after '.' in class selector, found: {}", .{tok}),
-            .expected_bar_in_attr => |tok| try writer.print("Expected '|' in attribute selector, found: {}", .{tok}),
-            .explicit_namespace_unexpected_token => |tok| try writer.print("Unexpected token in namespace: {}", .{tok}),
-            .invalid_qual_name_in_attr => |tok| try writer.print("Invalid qualified name in attribute selector: {}", .{tok}),
-            .no_qualified_name_in_attribute_selector => |tok| try writer.print("Missing qualified name in attribute selector: {}", .{tok}),
-            .pseudo_element_expected_ident => |tok| try writer.print("Expected identifier in pseudo-element, found: {}", .{tok}),
-            .unexpected_token_in_attribute_selector => |tok| try writer.print("Unexpected token in attribute selector: {}", .{tok}),
-            .unexpected_selector_after_pseudo_element => |tok| try writer.print("Unexpected selector after pseudo-element: {}", .{tok}),
+            .bad_value_in_attr => |tok| try writer.print("Invalid value in attribute selector: {f}", .{tok}),
+            .class_needs_ident => |tok| try writer.print("Expected identifier after '.' in class selector, found: {f}", .{tok}),
+            .expected_bar_in_attr => |tok| try writer.print("Expected '|' in attribute selector, found: {f}", .{tok}),
+            .explicit_namespace_unexpected_token => |tok| try writer.print("Unexpected token in namespace: {f}", .{tok}),
+            .invalid_qual_name_in_attr => |tok| try writer.print("Invalid qualified name in attribute selector: {f}", .{tok}),
+            .no_qualified_name_in_attribute_selector => |tok| try writer.print("Missing qualified name in attribute selector: {f}", .{tok}),
+            .pseudo_element_expected_ident => |tok| try writer.print("Expected identifier in pseudo-element, found: {f}", .{tok}),
+            .unexpected_token_in_attribute_selector => |tok| try writer.print("Unexpected token in attribute selector: {f}", .{tok}),
+            .unexpected_selector_after_pseudo_element => |tok| try writer.print("Unexpected selector after pseudo-element: {f}", .{tok}),
             .ambiguous_css_module_class => |name| try writer.print("CSS module class: '{s}' is currently not supported.", .{name}),
         };
     }
@@ -407,7 +398,7 @@ pub const MinifyErrorKind = union(enum) {
         custom_media_loc: Location,
     },
 
-    pub fn format(this: *const @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+    pub fn format(this: *const @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         return switch (this.*) {
             .circular_custom_media => |name| try writer.print("Circular @custom-media rule: \"{s}\"", .{name.name}),
             .custom_media_not_defined => |name| try writer.print("Custom media rule \"{s}\" not defined", .{name.name}),
@@ -421,3 +412,10 @@ pub const MinifyErrorKind = union(enum) {
         };
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const logger = bun.logger;
+const Log = logger.Log;

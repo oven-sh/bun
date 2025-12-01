@@ -1,25 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Output = bun.Output;
-const Global = bun.Global;
-const Environment = bun.Environment;
-const strings = bun.strings;
-const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
-
-const std = @import("std");
-const CLI = @import("../cli.zig");
-const Fs = @import("../fs.zig");
-const JSON = bun.JSON;
-const js_ast = bun.JSAst;
-const options = @import("../options.zig");
-const initializeStore = @import("./create_command.zig").initializeStore;
-const logger = bun.logger;
-const JSPrinter = bun.js_printer;
-const exists = bun.sys.exists;
-const existsZ = bun.sys.existsZ;
-
 pub const InitCommand = struct {
     pub fn prompt(
         alloc: std.mem.Allocator,
@@ -44,7 +22,7 @@ pub const InitCommand = struct {
             }
         };
 
-        var input: std.ArrayList(u8) = .init(alloc);
+        var input: std.array_list.Managed(u8) = .init(alloc);
         try bun.Output.buffered_stdin.reader().readUntilDelimiterArrayList(&input, '\n', 1024);
 
         if (strings.endsWithChar(input.items, '\r')) {
@@ -64,7 +42,7 @@ pub const InitCommand = struct {
     extern fn Bun__ttySetMode(fd: i32, mode: i32) i32;
 
     fn processRadioButton(label: string, comptime Choices: type) !Choices {
-        const colors = Output.enable_ansi_colors;
+        const colors = Output.enable_ansi_colors_stdout;
         const choices = switch (colors) {
             inline else => |colors_comptime| comptime choices: {
                 const choices_fields = bun.meta.EnumFields(Choices);
@@ -139,7 +117,10 @@ pub const InitCommand = struct {
             Output.flush();
 
             // Read a single character
-            const byte = std.io.getStdIn().reader().readByte() catch return selected;
+            var stdin_b: [1]u8 = undefined;
+            var stdin_r = std.fs.File.stdin().readerStreaming(&stdin_b);
+            var stdin_i = &stdin_r.interface;
+            const byte = stdin_i.takeByte() catch return selected;
 
             switch (byte) {
                 '\n', '\r' => {
@@ -168,11 +149,11 @@ pub const InitCommand = struct {
                 },
                 27 => { // ESC sequence
                     // Return immediately on plain ESC
-                    const next = std.io.getStdIn().reader().readByte() catch return error.EndOfStream;
+                    const next = stdin_i.takeByte() catch return error.EndOfStream;
                     if (next != '[') return error.EndOfStream;
 
                     // Read arrow key
-                    const arrow = std.io.getStdIn().reader().readByte() catch return error.EndOfStream;
+                    const arrow = stdin_i.takeByte() catch return error.EndOfStream;
                     switch (arrow) {
                         'A' => { // Up arrow
                             if (@intFromEnum(selected) == 0) {
@@ -284,14 +265,16 @@ pub const InitCommand = struct {
         ) !void {
             var file = try std.fs.cwd().createFile(filename, .{ .truncate = true });
             defer file.close();
+            var file_w = file.writerStreaming(&.{});
+            const file_i = &file_w.interface;
 
             // Write contents of known assets to the new file. Template assets get formatted.
             if (comptime @hasDecl(Assets, asset_name)) {
                 const asset = @field(Assets, asset_name);
                 if (comptime is_template) {
-                    try file.writer().print(asset, args);
+                    try file_i.print(asset, args);
                 } else {
-                    try file.writeAll(asset);
+                    try file_i.writeAll(asset);
                 }
                 Output.prettyln(" + <r><d>{s}{s}<r>", .{ filename, message_suffix });
                 Output.flush();
@@ -313,11 +296,13 @@ pub const InitCommand = struct {
         ) !void {
             var file = try std.fs.cwd().createFile(filename, .{ .truncate = true });
             defer file.close();
+            var file_w = file.writerStreaming(&.{});
+            var file_i = &file_w.interface;
 
             if (comptime is_template) {
-                try file.writer().print(contents, args);
+                try file_i.print(contents, args);
             } else {
-                try file.writeAll(contents);
+                try file_i.writeAll(contents);
             }
 
             Output.prettyln(" + <r><d>{s}{s}<r>", .{ filename, message_suffix });
@@ -531,7 +516,7 @@ pub const InitCommand = struct {
             // Find any source file
             var dir = std.fs.cwd().openDir(".", .{ .iterate = true }) catch break :infer;
             defer dir.close();
-            var it = bun.DirIterator.iterate(dir, .u8);
+            var it = bun.DirIterator.iterate(.fromStdDir(dir), .u8);
             while (try it.next().unwrap()) |file| {
                 if (file.kind != .file) continue;
                 const loader = bun.options.Loader.fromString(std.fs.path.extension(file.name.slice())) orelse
@@ -619,7 +604,7 @@ pub const InitCommand = struct {
                     .blank => template = .blank,
                 }
 
-                try Output.writer().writeAll("\n");
+                Output.print("\n", .{});
                 Output.flush();
             } else {
                 Output.note("package.json already exists, configuring existing project", .{});
@@ -806,12 +791,7 @@ pub const InitCommand = struct {
 
         switch (template) {
             .blank, .typescript_library => {
-                if (Template.getCursorRule()) |template_file| {
-                    const result = InitCommand.Assets.createNew(template_file.path, template_file.contents);
-                    result catch {
-                        // No big deal if this fails
-                    };
-                }
+                Template.createAgentRule();
 
                 if (package_json_file != null and !did_load_package_json) {
                     Output.prettyln(" + <r><d>package.json<r>", .{});
@@ -857,7 +837,7 @@ pub const InitCommand = struct {
                     Output.pretty("\nTo get started, run:\n\n    ", .{});
 
                     if (strings.containsAny(" \"'", fields.entry_point)) {
-                        Output.pretty("<cyan>bun run {any}<r>\n\n", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
+                        Output.pretty("<cyan>bun run {f}<r>\n\n", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
                     } else {
                         Output.pretty("<cyan>bun run {s}<r>\n\n", .{fields.entry_point});
                     }
@@ -1013,18 +993,81 @@ const Template = enum {
 
     const agent_rule = @embedFile("../init/rule.md");
     const cursor_rule = TemplateFile{ .path = ".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc", .contents = agent_rule };
+    const cursor_rule_path_to_claude_md = "../../CLAUDE.md";
+
+    fn isClaudeCodeInstalled() bool {
+        if (Environment.isWindows) {
+            // Claude code is not available on Windows, at the time of writing.
+            return false;
+        }
+
+        // Give some way to opt out.
+        if (bun.env_var.BUN_AGENT_RULE_DISABLED.get() or bun.env_var.CLAUDE_CODE_AGENT_RULE_DISABLED.get()) {
+            return false;
+        }
+
+        const pathbuffer = bun.path_buffer_pool.get();
+        defer bun.path_buffer_pool.put(pathbuffer);
+
+        return bun.which(pathbuffer, bun.env_var.PATH.get() orelse return false, bun.fs.FileSystem.instance.top_level_dir, "claude") != null;
+    }
+
+    pub fn createAgentRule() void {
+        var @"create CLAUDE.md" = Template.isClaudeCodeInstalled() and
+            // Never overwrite CLAUDE.md
+            !bun.sys.exists("CLAUDE.md");
+
+        if (Template.getCursorRule()) |template_file| {
+            var did_create_agent_rule = false;
+
+            // If both Cursor & Claude is installed, make the cursor rule a
+            // symlink to ../../CLAUDE.md
+            const asset_path = if (@"create CLAUDE.md") "CLAUDE.md" else template_file.path;
+            const result = InitCommand.Assets.createNew(asset_path, template_file.contents);
+            did_create_agent_rule = true;
+            result catch {
+                did_create_agent_rule = false;
+                if (@"create CLAUDE.md") {
+                    @"create CLAUDE.md" = false;
+                    // If installing the CLAUDE.md fails for some reason, fall back to installing the cursor rule.
+                    InitCommand.Assets.createNew(template_file.path, template_file.contents) catch {};
+                }
+            };
+
+            if (comptime !Environment.isWindows) {
+                // if we did create the CLAUDE.md, then symlinks the
+                // .cursor/rules/*.mdc -> CLAUDE.md so it's easier to keep them in
+                // sync if you change it locally. we use a symlink for the cursor
+                // rule in this case so that the github UI for CLAUDE.md (which may
+                // appear prominently in repos) doesn't show a file path.
+                if (did_create_agent_rule and @"create CLAUDE.md") symlink_cursor_rule: {
+                    @"create CLAUDE.md" = false;
+                    bun.makePath(bun.FD.cwd().stdDir(), ".cursor/rules") catch {};
+                    bun.sys.symlinkat(cursor_rule_path_to_claude_md, .cwd(), template_file.path).unwrap() catch break :symlink_cursor_rule;
+                    Output.prettyln(" + <r><d>{s} -\\> {s}<r>", .{ template_file.path, asset_path });
+                    Output.flush();
+                }
+            }
+        }
+
+        // If cursor is not installed but claude code is installed, then create the CLAUDE.md.
+        if (@"create CLAUDE.md") {
+            // In this case, the frontmatter from the cursor rule is not helpful so let's trim it out.
+            const end_of_frontmatter = if (bun.strings.lastIndexOf(agent_rule, "---\n")) |start| start + "---\n".len else 0;
+
+            InitCommand.Assets.createNew("CLAUDE.md", agent_rule[end_of_frontmatter..]) catch {};
+        }
+    }
 
     fn isCursorInstalled() bool {
         // Give some way to opt-out.
-        if (bun.getenvTruthy("BUN_AGENT_RULE_DISABLED")) {
+        if (bun.env_var.BUN_AGENT_RULE_DISABLED.get() or bun.env_var.CURSOR_AGENT_RULE_DISABLED.get()) {
             return false;
         }
 
         // Detect if they're currently using cursor.
-        if (bun.getenvZAnyCase("CURSOR_TRACE_ID")) |env| {
-            if (env.len > 0) {
-                return true;
-            }
+        if (bun.env_var.CURSOR_TRACE_ID.get()) {
+            return true;
         }
 
         if (Environment.isMac) {
@@ -1035,8 +1078,8 @@ const Template = enum {
 
         if (Environment.isWindows) {
             if (bun.getenvZAnyCase("USER")) |user| {
-                const pathbuf = bun.PathBufferPool.get();
-                defer bun.PathBufferPool.put(pathbuf);
+                const pathbuf = bun.path_buffer_pool.get();
+                defer bun.path_buffer_pool.put(pathbuf);
                 const path = std.fmt.bufPrintZ(pathbuf, "C:\\Users\\{s}\\AppData\\Local\\Programs\\Cursor\\Cursor.exe", .{user}) catch {
                     return false;
                 };
@@ -1049,7 +1092,7 @@ const Template = enum {
 
         return false;
     }
-    pub fn getCursorRule() ?*const TemplateFile {
+    fn getCursorRule() ?*const TemplateFile {
         if (isCursorInstalled()) {
             return &cursor_rule;
         }
@@ -1065,7 +1108,7 @@ const Template = enum {
             .{ .path = "bun-env.d.ts", .contents = @embedFile("../init/react-app/bun-env.d.ts") },
             .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
             .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
-            .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-app/src/index.tsx") },
+            .{ .path = "src/index.ts", .contents = @embedFile("../init/react-app/src/index.ts") },
             .{ .path = "src/App.tsx", .contents = @embedFile("../init/react-app/src/App.tsx") },
             .{ .path = "src/index.html", .contents = @embedFile("../init/react-app/src/index.html") },
             .{ .path = "src/index.css", .contents = @embedFile("../init/react-app/src/index.css") },
@@ -1084,7 +1127,7 @@ const Template = enum {
             .{ .path = "bun-env.d.ts", .contents = @embedFile("../init/react-tailwind/bun-env.d.ts") },
             .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
             .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
-            .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-tailwind/src/index.tsx") },
+            .{ .path = "src/index.ts", .contents = @embedFile("../init/react-tailwind/src/index.ts") },
             .{ .path = "src/App.tsx", .contents = @embedFile("../init/react-tailwind/src/App.tsx") },
             .{ .path = "src/index.html", .contents = @embedFile("../init/react-tailwind/src/index.html") },
             .{ .path = "src/index.css", .contents = @embedFile("../init/react-tailwind/src/index.css") },
@@ -1106,7 +1149,7 @@ const Template = enum {
             .{ .path = "bun-env.d.ts", .contents = @embedFile("../init/react-shadcn/bun-env.d.ts") },
             .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
             .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
-            .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-shadcn/src/index.tsx") },
+            .{ .path = "src/index.ts", .contents = @embedFile("../init/react-shadcn/src/index.ts") },
             .{ .path = "src/App.tsx", .contents = @embedFile("../init/react-shadcn/src/App.tsx") },
             .{ .path = "src/index.html", .contents = @embedFile("../init/react-shadcn/src/index.html") },
             .{ .path = "src/index.css", .contents = @embedFile("../init/react-shadcn/src/index.css") },
@@ -1115,7 +1158,7 @@ const Template = enum {
             .{ .path = "src/components/ui/button.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/button.tsx") },
             .{ .path = "src/components/ui/select.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/select.tsx") },
             .{ .path = "src/components/ui/input.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/input.tsx") },
-            .{ .path = "src/components/ui/form.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/form.tsx") },
+            .{ .path = "src/components/ui/textarea.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/textarea.tsx") },
             .{ .path = "src/APITester.tsx", .contents = @embedFile("../init/react-shadcn/src/APITester.tsx") },
             .{ .path = "src/lib/utils.ts", .contents = @embedFile("../init/react-shadcn/src/lib/utils.ts") },
             .{ .path = "src/react.svg", .contents = @embedFile("../init/react-shadcn/src/react.svg") },
@@ -1135,12 +1178,7 @@ const Template = enum {
     }
 
     pub fn @"write files and run `bun dev`"(comptime this: Template, allocator: std.mem.Allocator) !void {
-        if (Template.getCursorRule()) |rule| {
-            const result = InitCommand.Assets.createNew(rule.path, rule.contents);
-            result catch {
-                // No big deal if this fails
-            };
-        }
+        Template.createAgentRule();
 
         inline for (comptime this.files()) |file| {
             const path = file.path;
@@ -1203,3 +1241,27 @@ const Template = enum {
         Output.flush();
     }
 };
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const CLI = @import("../cli.zig");
+const Fs = @import("../fs.zig");
+const options = @import("../options.zig");
+const std = @import("std");
+const initializeStore = @import("./create_command.zig").initializeStore;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Global = bun.Global;
+const JSON = bun.json;
+const JSPrinter = bun.js_printer;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const default_allocator = bun.default_allocator;
+const js_ast = bun.ast;
+const logger = bun.logger;
+const strings = bun.strings;
+
+const exists = bun.sys.exists;
+const existsZ = bun.sys.existsZ;

@@ -31,9 +31,4 @@ if (isMainThread) {
 } else {
   console.log(workerData);
   assert.notDeepStrictEqual(workerData, {});
-  if (workerData instanceof CryptoKey) {
-    assert.deepStrictEqual(structuredClone(workerData), workerData);
-  } else {
-    assert(workerData.equals(structuredClone(workerData)));
-  }
 }

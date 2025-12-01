@@ -17,6 +17,9 @@ class NotImplementedError extends Error {
     // in the definition so that it isn't bundled unless used
     hideFromStack(NotImplementedError);
   }
+  get ["constructor"]() {
+    return Error;
+  }
 }
 
 function throwNotImplemented(feature: string, issue?: number, extra?: string): never {
@@ -26,7 +29,7 @@ function throwNotImplemented(feature: string, issue?: number, extra?: string): n
   throw new NotImplementedError(feature, issue, extra);
 }
 
-function hideFromStack(...fns) {
+function hideFromStack(...fns: Function[]) {
   for (const fn of fns) {
     Object.defineProperty(fn, "name", {
       value: "::bunternal::",
@@ -34,7 +37,7 @@ function hideFromStack(...fns) {
   }
 }
 
-let warned;
+let warned: Set<string>;
 function warnNotImplementedOnce(feature: string, issue?: number) {
   if (!warned) {
     warned = new Set();
@@ -47,16 +50,14 @@ function warnNotImplementedOnce(feature: string, issue?: number) {
   console.warn(new NotImplementedError(feature, issue));
 }
 
-//
-
 let util: typeof import("node:util");
 class ExceptionWithHostPort extends Error {
   errno: number;
   syscall: string;
   port?: number;
-  address;
+  address: string;
 
-  constructor(err, syscall, address, port) {
+  constructor(err: number, syscall: string, address: string, port?: number) {
     // TODO(joyeecheung): We have to use the type-checked
     // getSystemErrorName(err) to guard against invalid arguments from users.
     // This can be replaced with [ code ] = errmap.get(err) when this method
@@ -80,6 +81,9 @@ class ExceptionWithHostPort extends Error {
       this.port = port;
     }
   }
+  get ["constructor"]() {
+    return Error;
+  }
 }
 
 class NodeAggregateError extends AggregateError {
@@ -87,13 +91,25 @@ class NodeAggregateError extends AggregateError {
     super(new SafeArrayIterator(errors), message);
     this.code = errors[0]?.code;
   }
-
   get ["constructor"]() {
     return AggregateError;
   }
 }
 
+class ConnResetException extends Error {
+  constructor(msg) {
+    super(msg);
+    this.code = "ECONNRESET";
+  }
+  get ["constructor"]() {
+    return Error;
+  }
+}
+
 class ErrnoException extends Error {
+  errno: number;
+  syscall: string;
+
   constructor(err, syscall, original) {
     util ??= require("node:util");
     const code = util.getSystemErrorName(err);
@@ -105,7 +121,6 @@ class ErrnoException extends Error {
     this.code = code;
     this.syscall = syscall;
   }
-
   get ["constructor"]() {
     return Error;
   }
@@ -123,7 +138,18 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
   };
 }
 
-const kEmptyObject = ObjectFreeze({ __proto__: null });
+const kEmptyObject = ObjectFreeze(Object.create(null));
+
+function getLazy<T>(initializer: () => T) {
+  let value: T;
+  let initialized = false;
+  return function () {
+    if (initialized) return value;
+    value = initializer();
+    initialized = true;
+    return value;
+  };
+}
 
 //
 
@@ -134,8 +160,10 @@ export default {
   warnNotImplementedOnce,
   ExceptionWithHostPort,
   NodeAggregateError,
+  ConnResetException,
   ErrnoException,
   once,
+  getLazy,
 
   kHandle: Symbol("kHandle"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),

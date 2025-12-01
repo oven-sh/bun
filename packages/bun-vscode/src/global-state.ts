@@ -1,4 +1,4 @@
-import { ExtensionContext } from "vscode";
+import type { ExtensionContext } from "vscode";
 
 export const GLOBAL_STATE_VERSION = 1;
 

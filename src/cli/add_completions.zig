@@ -7,9 +7,6 @@
 //
 // This used to be a comptime block, but it made the build too slow.
 // Compressing the completions list saves about 100 KB of binary size.
-const std = @import("std");
-const bun = @import("bun");
-const zstd = bun.zstd;
 
 pub const FirstLetter = enum(u8) {
     a = 'a',
@@ -101,3 +98,8 @@ pub fn getPackages(letter: FirstLetter) []const []const u8 {
 }
 
 pub const biggest_list: usize = 1034;
+
+const std = @import("std");
+
+const bun = @import("bun");
+const zstd = bun.zstd;

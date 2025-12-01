@@ -9,6 +9,10 @@
     "*": { "retries": 1, "warnInsteadOfFail": true },
     "note": "flaky since <1.2.14. possibly a real bug. Sometimes Symbol.for('bun:hmr') is not set on the window object, and sometimes there is a js assertion failure."
   },
+  "test/js/node/test/parallel/test-fs-readdir-stack-overflow.js": {
+    "darwin": { "retries": 1, "warnInsteadOfFail": true },
+    "note": "flaky since after 1.3.3. first failing commit is https://github.com/oven-sh/bun/commit/908ab9ce305d194e25526af150fc120efd68a380"
+  },
   "test/integration/next-pages/test/dev-server.test.ts": {
     "darwin": { "retries": 1, "warnInsteadOfFail": true },
     "*": 8,

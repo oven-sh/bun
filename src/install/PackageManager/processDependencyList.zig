@@ -187,6 +187,8 @@ pub fn processExtractedTarballPackage(
             };
 
             package.meta.setHasInstallScript(has_scripts);
+            // Store the computed integrity hash for remote/local tarballs
+            package.meta.integrity = data.computed_integrity;
 
             package = manager.lockfile.appendPackage(package) catch unreachable;
             package_id.* = package.meta.id;

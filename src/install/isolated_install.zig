@@ -1085,6 +1085,7 @@ pub fn installIsolatedPackages(
                                 dep.name.slice(string_buf),
                                 &pkg_res,
                                 ctx,
+                                lockfile.packages.items(.meta)[pkg_id].integrity,
                             );
                         },
                         .remote_tarball => {

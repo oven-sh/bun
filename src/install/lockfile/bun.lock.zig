@@ -535,7 +535,9 @@ pub const Stringifier = struct {
                                 &path_buf,
                             );
 
-                            try writer.writeByte(']');
+                            try writer.print(", \"{f}\"]", .{
+                                pkg_meta.integrity,
+                            });
                         },
                         .remote_tarball => {
                             try writer.print("[\"{f}@{f}\", ", .{
@@ -558,7 +560,9 @@ pub const Stringifier = struct {
                                 &path_buf,
                             );
 
-                            try writer.writeByte(']');
+                            try writer.print(", \"{f}\"]", .{
+                                pkg_meta.integrity,
+                            });
                         },
                         .symlink => {
                             try writer.print("[\"{f}@link:{f}\", ", .{
@@ -1849,7 +1853,7 @@ pub fn parseIntoBinaryLockfile(
 
             // integrity
             switch (res.tag) {
-                .npm => {
+                .npm, .local_tarball, .remote_tarball => {
                     if (i >= pkg_info.len) {
                         try log.addError(source, value.loc, "Missing integrity");
                         return error.InvalidPackageInfo;

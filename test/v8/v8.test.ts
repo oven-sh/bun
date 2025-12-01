@@ -259,9 +259,13 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     it("can hold a lot of locals", async () => {
       await checkSameOutput("test_many_v8_locals", []);
     });
-    it("keeps GC objects alive", async () => {
-      await checkSameOutput("test_handle_scope_gc", []);
-    }, 10000 * (isASAN ? 2 : 1));
+    it(
+      "keeps GC objects alive",
+      async () => {
+        await checkSameOutput("test_handle_scope_gc", []);
+      },
+      10000 * (isASAN ? 2 : 1),
+    );
   });
 
   describe("EscapableHandleScope", () => {

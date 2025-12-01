@@ -535,9 +535,13 @@ pub const Stringifier = struct {
                                 &path_buf,
                             );
 
-                            try writer.print(", \"{f}\"]", .{
-                                pkg_meta.integrity,
-                            });
+                            if (pkg_meta.integrity.tag.isSupported()) {
+                                try writer.print(", \"{f}\"]", .{
+                                    pkg_meta.integrity,
+                                });
+                            } else {
+                                try writer.writeByte(']');
+                            }
                         },
                         .remote_tarball => {
                             try writer.print("[\"{f}@{f}\", ", .{
@@ -560,9 +564,13 @@ pub const Stringifier = struct {
                                 &path_buf,
                             );
 
-                            try writer.print(", \"{f}\"]", .{
-                                pkg_meta.integrity,
-                            });
+                            if (pkg_meta.integrity.tag.isSupported()) {
+                                try writer.print(", \"{f}\"]", .{
+                                    pkg_meta.integrity,
+                                });
+                            } else {
+                                try writer.writeByte(']');
+                            }
                         },
                         .symlink => {
                             try writer.print("[\"{f}@link:{f}\", ", .{
@@ -1853,7 +1861,7 @@ pub fn parseIntoBinaryLockfile(
 
             // integrity
             switch (res.tag) {
-                .npm, .local_tarball, .remote_tarball => {
+                .npm => {
                     if (i >= pkg_info.len) {
                         try log.addError(source, value.loc, "Missing integrity");
                         return error.InvalidPackageInfo;
@@ -1866,6 +1874,16 @@ pub fn parseIntoBinaryLockfile(
                     };
 
                     pkg.meta.integrity = Integrity.parse(integrity_str);
+                },
+                .local_tarball, .remote_tarball => {
+                    // Integrity is optional for tarballs (may be missing in migrated lockfiles)
+                    if (i < pkg_info.len) {
+                        const integrity_expr = pkg_info.at(i);
+                        if (integrity_expr.asString(allocator)) |integrity_str| {
+                            i += 1;
+                            pkg.meta.integrity = Integrity.parse(integrity_str);
+                        }
+                    }
                 },
                 inline .git, .github => |tag| {
                     // .bun-tag

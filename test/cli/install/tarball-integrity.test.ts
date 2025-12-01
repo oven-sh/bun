@@ -104,7 +104,10 @@ describe("tarball integrity", () => {
     // Modify the lockfile to point to v2 tarball but keep the v1 integrity hash
     // This simulates an attacker swapping the tarball content
     // Note: we replace globally since the path appears in multiple places
-    const modifiedLockfile = lockfileContent.replaceAll(v1Tarball, v2Tarball);
+    // On Windows, the lockfile normalizes paths to forward slashes, so we need to match that
+    const v1TarballNormalized = v1Tarball.replaceAll("\\", "/");
+    const v2TarballNormalized = v2Tarball.replaceAll("\\", "/");
+    const modifiedLockfile = lockfileContent.replaceAll(v1TarballNormalized, v2TarballNormalized);
     await Bun.write(lockfilePath, modifiedLockfile);
 
     // Also update package.json to point to v2 (to match the lockfile path)
@@ -120,8 +123,8 @@ describe("tarball integrity", () => {
 
     // Verify the lockfile was modified correctly
     const newLockfile = await Bun.file(lockfilePath).text();
-    expect(newLockfile).toContain(v2Tarball);
-    expect(newLockfile).not.toContain(v1Tarball);
+    expect(newLockfile).toContain(v2TarballNormalized);
+    expect(newLockfile).not.toContain(v1TarballNormalized);
 
     // Clean cache and node_modules to force re-extraction
     await rm(join(projectDir, "node_modules"), { recursive: true, force: true });

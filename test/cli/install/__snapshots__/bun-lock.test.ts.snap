@@ -13,7 +13,7 @@ exports[`should write plaintext lockfiles 1`] = `
     },
   },
   "packages": {
-    "dummy-package": ["bar@./bar-0.0.2.tgz", {}],
+    "dummy-package": ["bar@./bar-0.0.2.tgz", {}, "sha512-DXWxn8qZ4n87XMJjwZUdYPnsrl8Ntz66PudFoxDVkaPEkZBBzENAKsJPgbBacD782W8RwD/v4mjwVyqlPpQ59w=="],
   }
 }
 "

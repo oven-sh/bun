@@ -423,7 +423,11 @@ function ClientRequest(input, options, cb) {
                 return;
               }
               try {
-                if (self.aborted || !self.emit("response", res)) {
+                // HTTP 101 Switching Protocols: emit 'upgrade' instead of 'response'
+                // if there are listeners for the 'upgrade' event (Node.js compatibility)
+                if (res.statusCode === 101 && self.listenerCount("upgrade") > 0) {
+                  self.emit("upgrade", res, self.socket, Buffer.alloc(0));
+                } else if (self.aborted || !self.emit("response", res)) {
                   res._dump();
                 }
               } finally {

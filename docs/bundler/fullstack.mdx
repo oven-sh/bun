@@ -492,6 +492,28 @@ Bun will lazily resolve and load each plugin and use them to bundle your routes.
   the CLI.
 </Note>
 
+## Inline Environment Variables
+
+Bun can replace `process.env.*` references in your frontend JavaScript and TypeScript with their actual values at build time. Configure the `env` option in your `bunfig.toml`:
+
+```toml title="bunfig.toml" icon="settings"
+[serve.static]
+env = "PUBLIC_*"  # only inline env vars starting with PUBLIC_ (recommended)
+# env = "inline"  # inline all environment variables
+# env = "disable" # disable env var replacement (default)
+```
+
+<Note>
+  This only works with literal `process.env.FOO` references, not `import.meta.env` or indirect access like `const env =
+  process.env; env.FOO`.
+
+If an environment variable is not set, you may see runtime errors like `ReferenceError: process
+  is not defined` in the browser.
+
+</Note>
+
+See the [HTML & static sites documentation](/bundler/html-static#inline-environment-variables) for more details on build-time configuration and examples.
+
 ## How It Works
 
 Bun uses `HTMLRewriter` to scan for `<script>` and `<link>` tags in HTML files, uses them as entrypoints for Bun's bundler, generates an optimized bundle for the JavaScript/TypeScript/TSX/JSX and CSS files, and serves the result.
@@ -632,7 +654,7 @@ const server = serve({
 console.log(`🚀 Server running on ${server.url}`);
 ```
 
-```html title="public/index.html"
+```html title="public/index.html" icon="file-code"
 <!DOCTYPE html>
 <html>
   <head>
@@ -757,7 +779,7 @@ export function App() {
 }
 ```
 
-```css title="src/styles.css"
+```css title="src/styles.css" icon="file-code"
 * {
   margin: 0;
   padding: 0;
@@ -999,7 +1021,7 @@ CMD ["bun", "index.js"]
 
 ### Environment Variables
 
-```bash title=".env.production" icon="file-code"
+```ini title=".env.production" icon="file-code"
 NODE_ENV=production
 PORT=3000
 DATABASE_URL=postgresql://user:pass@localhost:5432/myapp

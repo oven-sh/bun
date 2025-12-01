@@ -188,7 +188,7 @@
           {
             "group": "Publishing & Analysis",
             "icon": "upload",
-            "pages": ["/pm/cli/publish", "/pm/cli/outdated", "/pm/cli/why", "/pm/cli/audit"]
+            "pages": ["/pm/cli/publish", "/pm/cli/outdated", "/pm/cli/why", "/pm/cli/audit", "/pm/cli/info"]
           },
           {
             "group": "Workspace Management",
@@ -326,6 +326,7 @@
             "group": "Utilities",
             "icon": "wrench",
             "pages": [
+              "/guides/util/upgrade",
               "/guides/util/detect-bun",
               "/guides/util/version",
               "/guides/util/hash-a-password",
@@ -464,6 +465,7 @@
               "/guides/test/update-snapshots",
               "/guides/test/coverage",
               "/guides/test/coverage-threshold",
+              "/guides/test/concurrent-test-glob",
               "/guides/test/skip-tests",
               "/guides/test/todo-tests",
               "/guides/test/timeout",

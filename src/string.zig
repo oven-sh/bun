@@ -131,6 +131,9 @@ pub const String = extern struct {
     fn createUninitializedLatin1(len: usize) struct { String, []u8 } {
         bun.assert(len > 0);
         const string = bun.cpp.BunString__fromLatin1Unitialized(len);
+        if (string.tag == .Dead) {
+            return .{ string, &.{} };
+        }
         _ = validateRefCount(string);
         const wtf = string.value.WTFStringImpl;
         return .{
@@ -142,6 +145,9 @@ pub const String = extern struct {
     fn createUninitializedUTF16(len: usize) struct { String, []u16 } {
         bun.assert(len > 0);
         const string = bun.cpp.BunString__fromUTF16Unitialized(len);
+        if (string.tag == .Dead) {
+            return .{ string, &.{} };
+        }
         _ = validateRefCount(string);
         const wtf = string.value.WTFStringImpl;
         return .{
@@ -420,7 +426,7 @@ pub const String = extern struct {
         comptime if (@typeInfo(Ctx) != .pointer) @compileError("context must be a pointer");
         bun.assert(bytes.len > 0);
         jsc.markBinding(@src());
-        if (bytes.len > max_length()) {
+        if (bytes.len >= max_length()) {
             if (callback) |cb| {
                 cb(ctx, @ptrCast(@constCast(bytes.ptr)), @truncate(bytes.len));
             }
@@ -460,7 +466,7 @@ pub const String = extern struct {
         jsc.markBinding(@src());
         bun.assert(bytes.len > 0);
 
-        if (bytes.len > max_length()) {
+        if (bytes.len >= max_length()) {
             bun.default_allocator.free(bytes);
             return dead;
         }

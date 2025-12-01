@@ -3733,7 +3733,7 @@ pub const NodeFS = struct {
             return ret.success;
         }
 
-        @compileError(unreachable);
+        @compileError("unreachable");
     }
 
     pub fn exists(this: *NodeFS, args: Arguments.Exists, _: Flavor) Maybe(Return.Exists) {
@@ -4800,7 +4800,7 @@ pub const NodeFS = struct {
                     bun.String => {
                         bun.handleOom(entries.append(jsc.WebCore.encoding.toBunString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(name_to_copy)), name_to_copy), args.encoding)));
                     },
-                    else => @compileError(unreachable),
+                    else => @compileError("unreachable"),
                 }
             }
         }

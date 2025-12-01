@@ -14,7 +14,7 @@ import { join } from "path";
  * 2. Integrity is verified on subsequent installs
  */
 describe("tarball integrity", () => {
-  test("local tarball has integrity hash in lockfile", async () => {
+  test.concurrent("local tarball has integrity hash in lockfile", async () => {
     // Create a package to be packed
     const pkgDir = tempDirWithFiles("tarball-pkg", {
       "package.json": JSON.stringify({ name: "local-pkg", version: "1.0.0" }),
@@ -22,8 +22,8 @@ describe("tarball integrity", () => {
     });
 
     // Pack it into a tarball
-    await pack(String(pkgDir), bunEnv);
-    const tarballPath = join(String(pkgDir), "local-pkg-1.0.0.tgz");
+    await pack(pkgDir, bunEnv);
+    const tarballPath = join(pkgDir, "local-pkg-1.0.0.tgz");
 
     // Create a project that depends on the local tarball
     const projectDir = tempDirWithFiles("tarball-project", {
@@ -38,39 +38,39 @@ describe("tarball integrity", () => {
     // Run bun install
     const installResult = Bun.spawnSync({
       cmd: [bunExe(), "install"],
-      cwd: String(projectDir),
+      cwd: projectDir,
       env: {
         ...bunEnv,
-        BUN_INSTALL_CACHE_DIR: join(String(projectDir), ".bun-cache"),
+        BUN_INSTALL_CACHE_DIR: join(projectDir, ".bun-cache"),
       },
     });
 
     expect(installResult.exitCode).toBe(0);
 
     // Read the lockfile and verify it contains the integrity hash
-    const lockfileContent = await Bun.file(join(String(projectDir), "bun.lock")).text();
+    const lockfileContent = await Bun.file(join(projectDir, "bun.lock")).text();
 
     // The lockfile should contain an integrity hash for the local tarball
     expect(lockfileContent).toContain("sha512-");
     expect(lockfileContent).toContain("local-pkg-1.0.0.tgz");
   });
 
-  test("integrity verification fails when tarball content changes", async () => {
+  test.concurrent("integrity verification fails when tarball content changes", async () => {
     // Create version 1 package
     const v1Dir = tempDirWithFiles("tarball-v1", {
       "package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
       "index.js": "module.exports = 'v1';",
     });
-    await pack(String(v1Dir), bunEnv);
-    const v1Tarball = join(String(v1Dir), "pkg-1.0.0.tgz");
+    await pack(v1Dir, bunEnv);
+    const v1Tarball = join(v1Dir, "pkg-1.0.0.tgz");
 
     // Create version 2 package (different content, same name/version for testing)
     const v2Dir = tempDirWithFiles("tarball-v2", {
       "package.json": JSON.stringify({ name: "pkg", version: "1.0.0", description: "changed" }),
       "index.js": "module.exports = 'v2 - different content';",
     });
-    await pack(String(v2Dir), bunEnv);
-    const v2Tarball = join(String(v2Dir), "pkg-1.0.0.tgz");
+    await pack(v2Dir, bunEnv);
+    const v2Tarball = join(v2Dir, "pkg-1.0.0.tgz");
 
     // Create project pointing to v1
     const projectDir = tempDirWithFiles("tarball-integrity-project", {
@@ -82,12 +82,12 @@ describe("tarball integrity", () => {
       }),
     });
 
-    const cacheDir = join(String(projectDir), ".bun-cache");
+    const cacheDir = join(projectDir, ".bun-cache");
 
     // First install - should succeed and create lockfile with integrity
     const firstInstall = Bun.spawnSync({
       cmd: [bunExe(), "install"],
-      cwd: String(projectDir),
+      cwd: projectDir,
       env: {
         ...bunEnv,
         BUN_INSTALL_CACHE_DIR: cacheDir,
@@ -97,7 +97,7 @@ describe("tarball integrity", () => {
     expect(firstInstall.exitCode).toBe(0);
 
     // Verify lockfile has integrity
-    const lockfilePath = join(String(projectDir), "bun.lock");
+    const lockfilePath = join(projectDir, "bun.lock");
     const lockfileContent = await Bun.file(lockfilePath).text();
     expect(lockfileContent).toContain("sha512-");
 
@@ -109,7 +109,7 @@ describe("tarball integrity", () => {
 
     // Also update package.json to point to v2 (to match the lockfile path)
     await Bun.write(
-      join(String(projectDir), "package.json"),
+      join(projectDir, "package.json"),
       JSON.stringify({
         name: "test-project",
         dependencies: {
@@ -124,13 +124,13 @@ describe("tarball integrity", () => {
     expect(newLockfile).not.toContain(v1Tarball);
 
     // Clean cache and node_modules to force re-extraction
-    await rm(join(String(projectDir), "node_modules"), { recursive: true, force: true });
+    await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
     await rm(cacheDir, { recursive: true, force: true });
 
     // Second install with different tarball content should fail integrity check
     const secondInstall = Bun.spawnSync({
       cmd: [bunExe(), "install"],
-      cwd: String(projectDir),
+      cwd: projectDir,
       env: {
         ...bunEnv,
         BUN_INSTALL_CACHE_DIR: cacheDir,

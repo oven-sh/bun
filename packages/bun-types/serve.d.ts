@@ -1081,6 +1081,18 @@ declare module "bun" {
      * ```
      */
     readonly hostname: string | undefined;
+    
+    /**
+     * The protocol the server is listening on.
+     *
+     * This will be `undefined` when the server is listening on a unix socket.
+     *
+     * @example
+     * ```js
+     * "http"
+     * ```
+     */
+    readonly protocol: string | undefined;
 
     /**
      * Is the server running in development mode?

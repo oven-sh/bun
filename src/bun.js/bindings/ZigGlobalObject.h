@@ -40,6 +40,10 @@ class GlobalInternals;
 } // namespace shim
 } // namespace v8
 
+namespace node {
+struct node_module;
+} // namespace node
+
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/CatchScope.h>
@@ -651,8 +655,17 @@ public:
     // We will add it to the resulting napi value.
     void* m_pendingNapiModuleDlopenHandle = nullptr;
 
-    // Store the napi module struct to defer calling nm_register_func until after dlopen completes
+    // Store ALL napi module structs to defer calling nm_register_func until after dlopen completes
+    // A single .node file can register multiple modules during static constructors
+    WTF::Vector<napi_module> m_pendingNapiModules;
+
+    // Temporary storage for current NAPI module being executed
+    // Used by executePendingNapiModule to execute one module at a time
     std::optional<napi_module> m_pendingNapiModule = {};
+
+    // Store ALL V8 C++ module pointers to defer execution until after dlopen completes
+    // A single .node file can register multiple V8 modules during static constructors
+    WTF::Vector<node::node_module*> m_pendingV8Modules;
 
     JSObject* nodeErrorCache() const { return m_nodeErrorCache.getInitializedOnMainThread(this); }
 

@@ -1645,7 +1645,7 @@ fn getOrPutResolvedPackage(
                             switch (version.tag) {
                                 .dist_tag => {
                                     const tag_str = this.lockfile.str(&version.value.dist_tag.tag);
-                                    Output.prettyErrorln("<d>[minimum-release-age]<r> <b>{s}@{s}<r> selected <green>{s}<r> instead of <yellow>{s}<r> due to {s} filter", .{
+                                    Output.prettyErrorln("<d>[minimum-release-age]<r> <b>{s}@{s}<r> selected <green>{f}<r> instead of <yellow>{f}<r> due to {s} filter", .{
                                         package_name,
                                         tag_str,
                                         filtered.result.version.fmt(manifest.string_buf),
@@ -1655,7 +1655,7 @@ fn getOrPutResolvedPackage(
                                 },
                                 .npm => {
                                     const version_str = version.value.npm.version.fmt(manifest.string_buf);
-                                    Output.prettyErrorln("<d>[minimum-release-age]<r> <b>{s}<r>@{s}<r> selected <green>{s}<r> instead of <yellow>{s}<r> due to {s} filter", .{
+                                    Output.prettyErrorln("<d>[minimum-release-age]<r> <b>{s}<r>@{f}<r> selected <green>{f}<r> instead of <yellow>{f}<r> due to {s} filter", .{
                                         package_name,
                                         version_str,
                                         filtered.result.version.fmt(manifest.string_buf),

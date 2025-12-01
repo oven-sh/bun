@@ -206,7 +206,7 @@ function ClientRequest(input, options, cb) {
     this.finished = true;
 
     if (this.res && !this.res.complete) {
-      this.res.push(null);
+      this.res.emit("end");
     }
 
     // If request is destroyed we abort the current response

@@ -261,7 +261,7 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     });
     it("keeps GC objects alive", async () => {
       await checkSameOutput("test_handle_scope_gc", []);
-    }, 10000);
+    }, 10000 * (isASAN ? 2 : 1));
   });
 
   describe("EscapableHandleScope", () => {

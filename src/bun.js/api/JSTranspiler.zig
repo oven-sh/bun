@@ -388,7 +388,7 @@ pub const Config = struct {
                             const replacementValue = try value.getIndex(globalThis, 1);
                             if (try exportReplacementValue(replacementValue, globalThis, allocator)) |to_replace| {
                                 const replacementKey = try value.getIndex(globalThis, 0);
-                                var slice = replacementKey.toSliceCloneWithAllocator(globalThis, allocator) orelse return error.JSError;
+                                var slice = try replacementKey.toSliceCloneWithAllocator(globalThis, allocator);
                                 errdefer slice.deinit();
                                 const replacement_name = slice.slice();
 
@@ -666,7 +666,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     }
 
     if ((config.log.warnings + config.log.errors) > 0) {
-        return globalThis.throwValue(try config.log.toJS(globalThis, allocator, "Failed to create transpiler"));
+        return globalThis.throwValue(try config.log.toJS(globalThis, bun.default_allocator, "Failed to create transpiler"));
     }
 
     const log = &config.log;
@@ -677,7 +677,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         jsc.VirtualMachine.get().transpiler.env,
     ) catch |err| {
         if ((log.warnings + log.errors) > 0) {
-            return globalThis.throwValue(try log.toJS(globalThis, allocator, "Failed to create transpiler"));
+            return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to create transpiler"));
         }
 
         return globalThis.throwError(err, "Error creating transpiler");
@@ -688,7 +688,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
     transpiler.options.env.behavior = .disable;
     transpiler.configureDefines() catch |err| {
         if ((log.warnings + log.errors) > 0) {
-            return globalThis.throwValue(try log.toJS(globalThis, allocator, "Failed to load define"));
+            return globalThis.throwValue(try log.toJS(globalThis, bun.default_allocator, "Failed to load define"));
         }
         return globalThis.throwError(err, "Failed to load define");
     };

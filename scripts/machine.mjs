@@ -712,7 +712,7 @@ write_files:
       HostKey /etc/ssh/ssh_host_ed25519_key
       SyslogFacility AUTHPRIV
       PermitRootLogin yes
-      AuthorizedKeysFile .ssh/authorized_keys
+      AuthorizedKeysFile %h/.ssh/authorized_keys
       PasswordAuthentication no
       ChallengeResponseAuthentication no
       GSSAPIAuthentication yes
@@ -883,8 +883,7 @@ function getSshKeys() {
     const sshFiles = readdirSync(sshPath, { withFileTypes: true, encoding: "utf-8" });
     const publicPaths = sshFiles
       .filter(entry => entry.isFile() && entry.name.endsWith(".pub"))
-      .map(({ name }) => join(sshPath, name))
-      .filter(path => !readFile(path, { cache: true }).startsWith("ssh-ed25519"));
+      .map(({ name }) => join(sshPath, name));
 
     sshKeys.push(
       ...publicPaths.map(publicPath => ({
@@ -960,10 +959,11 @@ async function getGithubOrgSshKeys(organization) {
  * @returns {Promise<void>}
  */
 async function spawnScp(options) {
-  const { hostname, port, username, identityPaths, password, source, destination, retries = 10 } = options;
+  const { hostname, port, username, identityPaths, password, source, destination, retries = 3 } = options;
   await waitForPort({ hostname, port: port || 22 });
 
   const command = ["scp", "-o", "StrictHostKeyChecking=no"];
+  command.push("-O"); // use SCP instead of SFTP
   if (!password) {
     command.push("-o", "BatchMode=yes");
   }
@@ -1228,7 +1228,6 @@ async function main() {
   };
 
   let { detached, bootstrap, ci, os, arch, distro, release, features } = options;
-  if (os === "freebsd") bootstrap = false;
 
   let name = `${os}-${arch}-${(release || "").replace(/\./g, "")}`;
 

@@ -32,7 +32,7 @@ Packages can declare executables in the `"bin"` field of their `package.json`. T
 
 These executables are commonly plain JavaScript files marked with a [shebang line](<https://en.wikipedia.org/wiki/Shebang_(Unix)>) to indicate which program should be used to execute them. The following file indicates that it should be executed with `node`.
 
-```ts dist/index.js icon="/icons/javascript.svg"
+```js dist/index.js icon="/icons/javascript.svg"
 #!/usr/bin/env node
 
 console.log("Hello world!");
@@ -82,7 +82,7 @@ bunx --package @angular/cli ng
 
 To force bun to always be used with a script, use a shebang.
 
-```ts dist/index.js icon="/icons/javascript.svg"
+```js dist/index.js icon="/icons/javascript.svg"
 #!/usr/bin/env bun
 ```
 

@@ -6026,15 +6026,15 @@ pub fn NewParser_(
             }
 
             // Parse patterns
-            var patterns = std.ArrayList([]const u8).init(p.allocator);
-            defer patterns.deinit();
+            var patterns: std.ArrayListUnmanaged([]const u8) = .{};
+            defer patterns.deinit(p.allocator);
 
             switch (call.args.at(0).data) {
-                .e_string => |str| bun.handleOom(patterns.append(str.slice(p.allocator))),
+                .e_string => |str| bun.handleOom(patterns.append(p.allocator, str.slice(p.allocator))),
                 .e_array => |arr| {
                     for (arr.items.slice()) |item| {
                         if (item.data == .e_string) {
-                            bun.handleOom(patterns.append(item.data.e_string.slice(p.allocator)));
+                            bun.handleOom(patterns.append(p.allocator, item.data.e_string.slice(p.allocator)));
                         } else {
                             bun.handleOom(p.log.addError(p.source, item.loc, "import.meta.glob() patterns must be string literals"));
                             return p.newExpr(E.Object{}, loc);
@@ -6111,8 +6111,8 @@ pub fn NewParser_(
                 }
             } else source_dir;
 
-            var matched_files = std.ArrayList([]const u8).init(p.allocator);
-            defer matched_files.deinit();
+            var matched_files: std.ArrayListUnmanaged([]const u8) = .{};
+            defer matched_files.deinit(p.allocator);
 
             var glob_arena = bun.ArenaAllocator.init(p.allocator);
             defer glob_arena.deinit();
@@ -6151,7 +6151,7 @@ pub fn NewParser_(
                         path;
 
                     const duped = bun.handleOom(p.allocator.dupe(u8, slash_normalized));
-                    bun.handleOom(matched_files.append(duped));
+                    bun.handleOom(matched_files.append(p.allocator, duped));
                 }
             }
 

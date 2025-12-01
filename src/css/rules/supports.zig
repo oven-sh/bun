@@ -400,11 +400,7 @@ pub fn SupportsRule(comptime R: type) type {
         }
 
         pub fn minify(this: *This, context: *css.MinifyContext, parent_is_unused: bool) css.MinifyErr!void {
-            _ = this; // autofix
-            _ = context; // autofix
-            _ = parent_is_unused; // autofix
-            // TODO: Implement this
-            return;
+            try this.rules.minify(context, parent_is_unused);
         }
 
         pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {

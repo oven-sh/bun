@@ -22,7 +22,7 @@ statements: PreparedStatementsMap = .{},
 #auth_plugin: ?AuthMethod = null,
 #auth_state: AuthState = .{ .pending = {} },
 
-#auth_data: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+#auth_data: std.array_list.Managed(u8) = std.array_list.Managed(u8).init(bun.default_allocator),
 #database: []const u8 = "",
 #user: []const u8 = "",
 #password: []const u8 = "",
@@ -313,7 +313,7 @@ pub fn readAndProcessData(this: *MySQLConnection, data: []const u8) !void {
             if (err != error.ShortRead) {
                 if (comptime bun.Environment.allow_assert) {
                     if (@errorReturnTrace()) |trace| {
-                        debug("Error: {s}\n{}", .{ @errorName(err), trace });
+                        debug("Error: {s}\n{f}", .{ @errorName(err), trace });
                     }
                 }
                 return err;
@@ -386,8 +386,8 @@ pub fn handleHandshake(this: *MySQLConnection, comptime Context: type, reader: N
         \\   Server Version: {s}
         \\   Connection ID:  {d}
         \\   Character Set:  {d} ({s})
-        \\   Server Capabilities:   [ {} ] 0x{x:0>8}
-        \\   Status Flags:   [ {} ]
+        \\   Server Capabilities:   [ {f} ] 0x{x:0>8}
+        \\   Status Flags:   [ {f} ]
         \\
     , .{
         this.#server_version.slice(),

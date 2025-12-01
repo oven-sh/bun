@@ -21,8 +21,8 @@ pub const isAarch64 = builtin.target.cpu.arch.isAARCH64();
 pub const isX86 = builtin.target.cpu.arch.isX86();
 pub const isX64 = builtin.target.cpu.arch == .x86_64;
 pub const isMusl = builtin.target.abi.isMusl();
-pub const allow_assert = isDebug or isTest or std.builtin.Mode.ReleaseSafe == builtin.mode;
-pub const ci_assert = isDebug or isTest or enable_asan or (std.builtin.Mode.ReleaseSafe == builtin.mode and is_canary);
+pub const allow_assert = isDebug or isTest or std.builtin.OptimizeMode.ReleaseSafe == builtin.mode;
+pub const ci_assert = isDebug or isTest or enable_asan or (std.builtin.OptimizeMode.ReleaseSafe == builtin.mode and is_canary);
 pub const show_crash_trace = isDebug or isTest or enable_asan;
 /// All calls to `@export` should be gated behind this check, so that code
 /// generators that compile Zig code know not to reference and compile a ton of
@@ -51,6 +51,7 @@ pub const dump_source = isDebug and !isTest;
 pub const base_path = build_options.base_path;
 pub const enable_logs = build_options.enable_logs;
 pub const enable_asan = build_options.enable_asan;
+pub const enable_fuzzilli = build_options.enable_fuzzilli;
 pub const codegen_path = build_options.codegen_path;
 pub const codegen_embed = build_options.codegen_embed;
 

@@ -26,7 +26,8 @@ pub const Run = struct {
         js_ast.Stmt.Data.Store.create();
         const arena = Arena.init();
 
-        if (!ctx.debug.loaded_bunfig) {
+        // Load bunfig.toml unless disabled by compile flags
+        if (!ctx.debug.loaded_bunfig and !graph.flags.disable_autoload_bunfig) {
             try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
         }
 
@@ -81,7 +82,13 @@ pub const Run = struct {
             .unspecified => {},
         }
 
-        b.options.env.behavior = .load_all_without_inlining;
+        // If .env loading is disabled, only load process env vars
+        // Otherwise, load all .env files
+        if (graph.flags.disable_default_env_files) {
+            b.options.env.behavior = .disable;
+        } else {
+            b.options.env.behavior = .load_all_without_inlining;
+        }
 
         b.configureDefines() catch {
             failWithBuildError(vm);
@@ -107,17 +114,17 @@ pub const Run = struct {
             const url = bun.URL.parse(url_str);
 
             if (!url.isHTTP() and !url.isHTTPS()) {
-                Output.errGeneric("preconnect URL must be HTTP or HTTPS: {}", .{bun.fmt.quote(url_str)});
+                Output.errGeneric("preconnect URL must be HTTP or HTTPS: {f}", .{bun.fmt.quote(url_str)});
                 Global.exit(1);
             }
 
             if (url.hostname.len == 0) {
-                Output.errGeneric("preconnect URL must have a hostname: {}", .{bun.fmt.quote(url_str)});
+                Output.errGeneric("preconnect URL must have a hostname: {f}", .{bun.fmt.quote(url_str)});
                 Global.exit(1);
             }
 
             if (!url.hasValidPort()) {
-                Output.errGeneric("preconnect URL must have a valid port: {}", .{bun.fmt.quote(url_str)});
+                Output.errGeneric("preconnect URL must have a valid port: {f}", .{bun.fmt.quote(url_str)});
                 Global.exit(1);
             }
 
@@ -135,7 +142,7 @@ pub const Run = struct {
             try @import("./bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
             null,
         );
-        try bundle.runEnvLoader(false);
+        try bundle.runEnvLoader(bundle.options.env.disable_default_env_files);
         const mini = jsc.MiniEventLoop.initGlobal(bundle.env, null);
         mini.top_level_dir = ctx.args.absolute_working_dir orelse "";
         return bun.shell.Interpreter.initAndRunFromFile(ctx, mini, entry_path);
@@ -273,6 +280,7 @@ pub const Run = struct {
                 .dir = cpu_prof_opts.dir,
             };
             CPUProfiler.startCPUProfiler(vm.jsc_vm);
+            bun.analytics.Features.cpu_profile += 1;
         }
 
         this.addConditionalGlobals();
@@ -518,13 +526,8 @@ noinline fn dumpBuildError(vm: *jsc.VirtualMachine) void {
 
     Output.flush();
 
-    const error_writer = Output.errorWriter();
-    var buffered_writer = std.io.bufferedWriter(error_writer);
-    defer {
-        buffered_writer.flush() catch {};
-    }
-
-    const writer = buffered_writer.writer();
+    const writer = Output.errorWriterBuffered();
+    defer Output.flush();
 
     vm.log.print(writer) catch {};
 }

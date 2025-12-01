@@ -7,6 +7,7 @@ pub const StandaloneModuleGraph = struct {
     files: bun.StringArrayHashMap(File),
     entry_point_id: u32 = 0,
     compile_exec_argv: []const u8 = "",
+    flags: Flags = .{},
 
     // We never want to hit the filesystem for these files
     // We use the `/$bunfs/` prefix to indicate that it's a virtual path
@@ -289,6 +290,13 @@ pub const StandaloneModuleGraph = struct {
         modules_ptr: bun.StringPointer = .{},
         entry_point_id: u32 = 0,
         compile_exec_argv_ptr: bun.StringPointer = .{},
+        flags: Flags = .{},
+    };
+
+    pub const Flags = packed struct(u32) {
+        disable_default_env_files: bool = false,
+        disable_autoload_bunfig: bool = false,
+        _padding: u30 = 0,
     };
 
     const trailer = "\n---- Bun! ----\n";
@@ -334,6 +342,7 @@ pub const StandaloneModuleGraph = struct {
             .files = modules,
             .entry_point_id = offsets.entry_point_id,
             .compile_exec_argv = sliceToZ(raw_bytes, offsets.compile_exec_argv_ptr),
+            .flags = offsets.flags,
         };
     }
 
@@ -349,7 +358,7 @@ pub const StandaloneModuleGraph = struct {
         return bytes[ptr.offset..][0..ptr.length :0];
     }
 
-    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format, compile_exec_argv: []const u8) ![]u8 {
+    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format, compile_exec_argv: []const u8, flags: Flags) ![]u8 {
         var serialize_trace = bun.perf.trace("StandaloneModuleGraph.serialize");
         defer serialize_trace.end();
 
@@ -394,11 +403,11 @@ pub const StandaloneModuleGraph = struct {
 
         try string_builder.allocate(allocator);
 
-        var modules = try std.ArrayList(CompiledModuleGraphFile).initCapacity(allocator, module_count);
+        var modules = try std.array_list.Managed(CompiledModuleGraphFile).initCapacity(allocator, module_count);
 
-        var source_map_header_list = std.ArrayList(u8).init(allocator);
+        var source_map_header_list = std.array_list.Managed(u8).init(allocator);
         defer source_map_header_list.deinit();
-        var source_map_string_list = std.ArrayList(u8).init(allocator);
+        var source_map_string_list = std.array_list.Managed(u8).init(allocator);
         defer source_map_string_list.deinit();
         var source_map_arena = bun.ArenaAllocator.init(allocator);
         defer source_map_arena.deinit();
@@ -498,6 +507,7 @@ pub const StandaloneModuleGraph = struct {
             .modules_ptr = string_builder.appendCount(std.mem.sliceAsBytes(modules.items)),
             .compile_exec_argv_ptr = string_builder.appendCountZ(compile_exec_argv),
             .byte_count = string_builder.len,
+            .flags = flags,
         };
 
         _ = string_builder.append(std.mem.asBytes(&offsets));
@@ -670,7 +680,7 @@ pub const StandaloneModuleGraph = struct {
                                     else => break,
                                 }
 
-                                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}", .{err});
+                                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{f}", .{err});
                                 // No fd to cleanup yet, just return error
                                 return bun.invalid_fd;
                             }
@@ -692,7 +702,7 @@ pub const StandaloneModuleGraph = struct {
                                 }
                             }
 
-                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open bun executable to copy from as read-only\n{}", .{err});
+                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open bun executable to copy from as read-only\n{f}", .{err});
                             cleanup(zname, fd);
                             return bun.invalid_fd;
                         },
@@ -716,7 +726,7 @@ pub const StandaloneModuleGraph = struct {
             .mac => {
                 const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
                 if (input_result.err) |err| {
-                    Output.prettyErrorln("Error reading standalone module graph: {}", .{err});
+                    Output.prettyErrorln("Error reading standalone module graph: {f}", .{err});
                     cleanup(zname, cloned_executable_fd);
                     return bun.invalid_fd;
                 }
@@ -735,7 +745,7 @@ pub const StandaloneModuleGraph = struct {
 
                 switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
                     .err => |err| {
-                        Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
+                        Output.prettyErrorln("Error seeking to start of temporary file: {f}", .{err});
                         cleanup(zname, cloned_executable_fd);
                         return bun.invalid_fd;
                     },
@@ -744,17 +754,14 @@ pub const StandaloneModuleGraph = struct {
 
                 var file = bun.sys.File{ .handle = cloned_executable_fd };
                 const writer = file.writer();
-                const BufferedWriter = std.io.BufferedWriter(512 * 1024, @TypeOf(writer));
-                var buffered_writer = bun.handleOom(bun.default_allocator.create(BufferedWriter));
-                buffered_writer.* = .{
-                    .unbuffered_writer = writer,
-                };
-                macho_file.buildAndSign(buffered_writer.writer()) catch |err| {
+                var buffer: [512 * 1024]u8 = undefined;
+                var buffered_writer = writer.adaptToNewApi(&buffer);
+                macho_file.buildAndSign(&buffered_writer.new_interface) catch |err| {
                     Output.prettyErrorln("Error writing standalone module graph: {}", .{err});
                     cleanup(zname, cloned_executable_fd);
                     return bun.invalid_fd;
                 };
-                buffered_writer.flush() catch |err| {
+                buffered_writer.new_interface.flush() catch |err| {
                     Output.prettyErrorln("Error flushing standalone module graph: {}", .{err});
                     cleanup(zname, cloned_executable_fd);
                     return bun.invalid_fd;
@@ -767,7 +774,7 @@ pub const StandaloneModuleGraph = struct {
             .windows => {
                 const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
                 if (input_result.err) |err| {
-                    Output.prettyErrorln("Error reading standalone module graph: {}", .{err});
+                    Output.prettyErrorln("Error reading standalone module graph: {f}", .{err});
                     cleanup(zname, cloned_executable_fd);
                     return bun.invalid_fd;
                 }
@@ -787,7 +794,7 @@ pub const StandaloneModuleGraph = struct {
 
                 switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
                     .err => |err| {
-                        Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
+                        Output.prettyErrorln("Error seeking to start of temporary file: {f}", .{err});
                         cleanup(zname, cloned_executable_fd);
                         return bun.invalid_fd;
                     },
@@ -820,7 +827,7 @@ pub const StandaloneModuleGraph = struct {
                         const fstat = switch (Syscall.fstat(cloned_executable_fd)) {
                             .result => |res| res,
                             .err => |err| {
-                                Output.prettyErrorln("{}", .{err});
+                                Output.prettyErrorln("{f}", .{err});
                                 cleanup(zname, cloned_executable_fd);
                                 return bun.invalid_fd;
                             },
@@ -842,7 +849,7 @@ pub const StandaloneModuleGraph = struct {
                     switch (Syscall.setFileOffset(cloned_executable_fd, seek_position)) {
                         .err => |err| {
                             Output.prettyErrorln(
-                                "{}\nwhile seeking to end of temporary file (pos: {d})",
+                                "{f}\nwhile seeking to end of temporary file (pos: {d})",
                                 .{
                                     err,
                                     seek_position,
@@ -860,7 +867,7 @@ pub const StandaloneModuleGraph = struct {
                     switch (Syscall.write(cloned_executable_fd, bytes)) {
                         .result => |written| remain = remain[written..],
                         .err => |err| {
-                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write to temporary file\n{}", .{err});
+                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write to temporary file\n{f}", .{err});
                             cleanup(zname, cloned_executable_fd);
                             return bun.invalid_fd;
                         },
@@ -982,8 +989,9 @@ pub const StandaloneModuleGraph = struct {
         windows_options: bun.options.WindowsOptions,
         compile_exec_argv: []const u8,
         self_exe_path: ?[]const u8,
+        flags: Flags,
     ) !CompileResult {
-        const bytes = toBytes(allocator, module_prefix, output_files, output_format, compile_exec_argv) catch |err| {
+        const bytes = toBytes(allocator, module_prefix, output_files, output_format, compile_exec_argv, flags) catch |err| {
             return CompileResult.failFmt("failed to generate module graph bytes: {s}", .{@errorName(err)});
         };
         if (bytes.len == 0) return CompileResult.fail(.no_output_files);
@@ -999,7 +1007,7 @@ pub const StandaloneModuleGraph = struct {
             }
         else blk: {
             var exe_path_buf: bun.PathBuffer = undefined;
-            const version_str = bun.handleOom(std.fmt.allocPrintZ(allocator, "{}", .{target}));
+            const version_str = bun.handleOom(std.fmt.allocPrintSentinel(allocator, "{f}", .{target}, 0));
             defer allocator.free(version_str);
 
             var needs_download: bool = true;
@@ -1008,12 +1016,12 @@ pub const StandaloneModuleGraph = struct {
             if (needs_download) {
                 target.downloadToPath(env, allocator, dest_z) catch |err| {
                     return switch (err) {
-                        error.TargetNotFound => CompileResult.failFmt("Target platform '{}' is not available for download. Check if this version of Bun supports this target.", .{target}),
-                        error.NetworkError => CompileResult.failFmt("Network error downloading executable for '{}'. Check your internet connection and proxy settings.", .{target}),
-                        error.InvalidResponse => CompileResult.failFmt("Downloaded file for '{}' appears to be corrupted. Please try again.", .{target}),
-                        error.ExtractionFailed => CompileResult.failFmt("Failed to extract executable for '{}'. The download may be incomplete.", .{target}),
-                        error.UnsupportedTarget => CompileResult.failFmt("Target '{}' is not supported", .{target}),
-                        else => CompileResult.failFmt("Failed to download '{}': {s}", .{ target, @errorName(err) }),
+                        error.TargetNotFound => CompileResult.failFmt("Target platform '{f}' is not available for download. Check if this version of Bun supports this target.", .{target}),
+                        error.NetworkError => CompileResult.failFmt("Network error downloading executable for '{f}'. Check your internet connection and proxy settings.", .{target}),
+                        error.InvalidResponse => CompileResult.failFmt("Downloaded file for '{f}' appears to be corrupted. Please try again.", .{target}),
+                        error.ExtractionFailed => CompileResult.failFmt("Failed to extract executable for '{f}'. The download may be incomplete.", .{target}),
+                        error.UnsupportedTarget => CompileResult.failFmt("Target '{f}' is not supported", .{target}),
+                        else => CompileResult.failFmt("Failed to download '{f}': {s}", .{ target, @errorName(err) }),
                     };
                 };
             }
@@ -1372,7 +1380,7 @@ pub const StandaloneModuleGraph = struct {
                     return error.FileNotFound;
                 };
             },
-            else => @compileError("TODO"),
+            .wasm => @compileError("TODO"),
         }
     }
 
@@ -1448,8 +1456,8 @@ pub const StandaloneModuleGraph = struct {
     };
 
     pub fn serializeJsonSourceMapForStandalone(
-        header_list: *std.ArrayList(u8),
-        string_payload: *std.ArrayList(u8),
+        header_list: *std.array_list.Managed(u8),
+        string_payload: *std.array_list.Managed(u8),
         arena: std.mem.Allocator,
         json_source: []const u8,
     ) !void {

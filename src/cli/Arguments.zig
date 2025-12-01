@@ -42,6 +42,7 @@ pub const ParamType = clap.Param(clap.Help);
 
 pub const base_params_ = (if (Environment.show_crash_trace) debug_params else [_]ParamType{}) ++ [_]ParamType{
     clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
+    clap.parseParam("--no-env-file                     Disable automatic loading of .env files") catch unreachable,
     clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
     clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
     clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
@@ -148,6 +149,10 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--production                     Set NODE_ENV=production and enable minification") catch unreachable,
     clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production") catch unreachable,
     clap.parseParam("--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv") catch unreachable,
+    clap.parseParam("--compile-autoload-dotenv        Enable autoloading of .env files in standalone executable (default: true)") catch unreachable,
+    clap.parseParam("--no-compile-autoload-dotenv     Disable autoloading of .env files in standalone executable") catch unreachable,
+    clap.parseParam("--compile-autoload-bunfig        Enable autoloading of bunfig.toml in standalone executable (default: true)") catch unreachable,
+    clap.parseParam("--no-compile-autoload-bunfig     Disable autoloading of bunfig.toml in standalone executable") catch unreachable,
     clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
     clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
     clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
@@ -217,19 +222,45 @@ pub const test_only_params = [_]ParamType{
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
+fn loadGlobalBunfig(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+    if (ctx.has_loaded_global_config) return;
+
+    ctx.has_loaded_global_config = true;
+
+    var config_buf: bun.PathBuffer = undefined;
+    if (getHomeConfigPath(&config_buf)) |path| {
+        try loadBunfig(allocator, true, path, ctx, comptime cmd);
+    }
+}
+
 pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+    if (comptime cmd.readGlobalConfig()) {
+        loadGlobalBunfig(allocator, ctx, cmd) catch |err| {
+            if (auto_loaded) return;
+
+            Output.prettyErrorln("{}\nreading global config \"{s}\"", .{
+                err,
+                config_path,
+            });
+            Global.exit(1);
+        };
+    }
+
+    try loadBunfig(allocator, auto_loaded, config_path, ctx, cmd);
+}
+
+fn loadBunfig(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
     const source = switch (bun.sys.File.toSource(config_path, allocator, .{ .convert_bom = true })) {
         .result => |s| s,
         .err => |err| {
             if (auto_loaded) return;
-            Output.prettyErrorln("{}\nwhile reading config \"{s}\"", .{
+            Output.prettyErrorln("{f}\nwhile reading config \"{s}\"", .{
                 err,
                 config_path,
             });
             Global.exit(1);
         },
     };
-
     js_ast.Stmt.Data.Store.create();
     js_ast.Expr.Data.Store.create();
     defer {
@@ -241,6 +272,7 @@ pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_pa
         ctx.log.level = original_level;
     }
     ctx.log.level = logger.Log.Level.warn;
+    ctx.debug.loaded_bunfig = true;
     try Bunfig.parse(allocator, &source, ctx, cmd);
 }
 
@@ -294,7 +326,6 @@ pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx:
     if (config_path_.len == 0) {
         return;
     }
-    defer ctx.debug.loaded_bunfig = true;
     var config_path: [:0]u8 = undefined;
     if (config_path_[0] == '/') {
         @memcpy(config_buf[0..config_path_.len], config_path_);
@@ -510,7 +541,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             ctx.test_options.test_filter_pattern = namePattern;
             const regex = RegularExpression.init(bun.String.fromBytes(namePattern), RegularExpression.Flags.none) catch {
                 Output.prettyErrorln(
-                    "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",
+                    "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {f}",
                     .{
                         bun.fmt.QuotedFormatter{
                             .text = namePattern,
@@ -582,6 +613,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     opts.env_files = args.options("--env-file");
     opts.extension_order = args.options("--extension-order");
 
+    if (args.flag("--no-env-file")) {
+        opts.disable_default_env_files = true;
+    }
+
     if (args.flag("--preserve-symlinks")) {
         opts.preserve_symlinks = true;
     }
@@ -607,7 +642,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
 
             const total_preloads = ctx.preloads.len + preloads.len + preloads2.len + preloads3.len + (if (preload4 != null) @as(usize, 1) else @as(usize, 0));
             if (total_preloads > 0) {
-                var all = std.ArrayList(string).initCapacity(ctx.allocator, total_preloads) catch unreachable;
+                var all = std.array_list.Managed(string).initCapacity(ctx.allocator, total_preloads) catch unreachable;
                 if (ctx.preloads.len > 0) all.appendSliceAssumeCapacity(ctx.preloads);
                 if (preloads.len > 0) all.appendSliceAssumeCapacity(preloads);
                 if (preloads2.len > 0) all.appendSliceAssumeCapacity(preloads2);
@@ -939,7 +974,7 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                     if (_target.len > 4 and strings.hasPrefixComptime(_target, "bun-")) {
                         ctx.bundler_options.compile_target = CLI.Cli.CompileTarget.from(_target[3..]);
                         if (!ctx.bundler_options.compile_target.isSupported()) {
-                            Output.errGeneric("Unsupported compile target: {}\n", .{ctx.bundler_options.compile_target});
+                            Output.errGeneric("Unsupported compile target: {f}\n", .{ctx.bundler_options.compile_target});
                             Global.exit(1);
                         }
                         opts.target = .bun;
@@ -990,6 +1025,42 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Global.crash();
             }
             ctx.bundler_options.compile_exec_argv = compile_exec_argv;
+        }
+
+        // Handle --compile-autoload-dotenv flags
+        {
+            const has_positive = args.flag("--compile-autoload-dotenv");
+            const has_negative = args.flag("--no-compile-autoload-dotenv");
+
+            if (has_positive or has_negative) {
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--compile-autoload-dotenv requires --compile", .{});
+                    Global.crash();
+                }
+                if (has_positive and has_negative) {
+                    Output.errGeneric("Cannot use both --compile-autoload-dotenv and --no-compile-autoload-dotenv", .{});
+                    Global.crash();
+                }
+                ctx.bundler_options.compile_autoload_dotenv = has_positive;
+            }
+        }
+
+        // Handle --compile-autoload-bunfig flags
+        {
+            const has_positive = args.flag("--compile-autoload-bunfig");
+            const has_negative = args.flag("--no-compile-autoload-bunfig");
+
+            if (has_positive or has_negative) {
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--compile-autoload-bunfig requires --compile", .{});
+                    Global.crash();
+                }
+                if (has_positive and has_negative) {
+                    Output.errGeneric("Cannot use both --compile-autoload-bunfig and --no-compile-autoload-bunfig", .{});
+                    Global.crash();
+                }
+                ctx.bundler_options.compile_autoload_bunfig = has_positive;
+            }
         }
 
         if (args.flag("--windows-hide-console")) {

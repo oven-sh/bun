@@ -1081,7 +1081,7 @@ declare module "bun" {
      * ```
      */
     readonly hostname: string | undefined;
-    
+
     /**
      * The protocol the server is listening on.
      *

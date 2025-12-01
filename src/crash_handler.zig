@@ -1858,7 +1858,7 @@ pub const js_bindings = struct {
             .{ "raiseIgnoringPanicHandler", jsRaiseIgnoringPanicHandler },
         }) |tuple| {
             const name = jsc.ZigString.static(tuple[0]);
-            obj.put(global, name, jsc.createCallback(global, name, 1, tuple[1]));
+            obj.put(global, name, jsc.JSFunction.create(global, tuple[0], tuple[1], 1, .{}));
         }
         return obj;
     }

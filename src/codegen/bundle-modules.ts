@@ -532,7 +532,7 @@ declare module "module" {
 `;
 
     for (const [name] of jsclasses) {
-      dts += `\ndeclare function $inherits${name}(value: any): boolean;`;
+      dts += `\ndeclare function $inherits${name}(value: any): value is ${name};`;
     }
 
     return dts;

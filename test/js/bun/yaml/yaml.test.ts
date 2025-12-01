@@ -813,6 +813,131 @@ my_config:
       const input2 = await file(join(import.meta.dir, "fixtures", "AHatInTime.yaml")).text();
       expect(YAML.parse(input2)).toMatchSnapshot();
     });
+
+    test("handles YAML bombs", () => {
+      function buildTest(depth) {
+        const lines: string[] = [];
+        lines.push(`a0: &a0\n  k0: 0`);
+        for (let i = 1; i <= depth; i++) {
+          const refs = Array.from({ length: i }, (_, j) => `*a${j}`).join(", ");
+          lines.push(`a${i}: &a${i}\n  <<: [${refs}]\n  k${i}: ${i}`);
+        }
+        lines.push(`root:\n  <<: *a${depth}`);
+        const input = lines.join("\n");
+
+        const expected: any = {};
+        for (let i = 0; i <= depth; i++) {
+          const record = {};
+          for (let j = 0; j <= i; j++) record[`k${j}`] = j;
+          expected[`a${i}`] = record;
+        }
+        expected.root = { ...expected[`a${depth}`] };
+
+        return { input, expected };
+      }
+
+      const { input, expected } = buildTest(24);
+
+      expect(YAML.parse(input)).toEqual(expected);
+    }, 100);
+
+    describe("merge keys", () => {
+      test("merge overrides", () => {
+        const input = `
+---
+- &CENTER { x: 1, 'y': 2 }
+- &LEFT { x: 0, 'y': 2 }
+- &BIG { r: 10 }
+- &SMALL { r: 1 }
+
+# All the following maps are equal:
+
+- # Explicit keys
+  x: 1
+  'y': 2
+  r: 10
+  label: center/big
+
+- # Merge one map
+  << : *CENTER
+  r: 10
+  label: center/big
+
+- # Merge multiple maps
+  << : [ *CENTER, *BIG ]
+  label: center/big
+
+- # Override
+  << : [ *BIG, *LEFT, *SMALL ]
+  x: 1
+  label: center/big
+  `;
+
+        const expected = [
+          { x: 1, y: 2 },
+          { x: 0, y: 2 },
+          { r: 10 },
+          { r: 1 },
+          { x: 1, y: 2, r: 10, label: "center/big" },
+          { x: 1, y: 2, r: 10, label: "center/big" },
+          { x: 1, y: 2, r: 10, label: "center/big" },
+          { x: 1, y: 2, r: 10, label: "center/big" },
+        ];
+
+        expect(YAML.parse(input)).toEqual(expected);
+      });
+
+      test("duplicate merge key", () => {
+        const input = `
+---
+<<: {x: 1, y: 2}
+foo: bar
+<<: {z: 3, t: 4}
+`;
+
+        expect(YAML.parse(input)).toEqual({
+          x: 1,
+          y: 2,
+          z: 3,
+          t: 4,
+          foo: "bar",
+        });
+      });
+
+      test("duplicate keys from the same anchor", () => {
+        let input = `
+defaults: &d
+  foo: 1
+  foo: 2
+config:
+  <<: *d`;
+        expect(YAML.parse(input)).toEqual({
+          defaults: {
+            foo: 2,
+          },
+          config: {
+            foo: 2,
+          },
+        });
+
+        // Can still override
+        input = `
+defaults: &d
+  foo: 1
+  foo: 2
+config:
+  <<: *d
+  foo: 3`;
+        expect(YAML.parse(input)).toEqual({
+          defaults: {
+            foo: 2,
+          },
+          config: {
+            foo: 3,
+          },
+        });
+      });
+    });
   });
 
   describe("stringify", () => {

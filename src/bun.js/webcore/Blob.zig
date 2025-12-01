@@ -1054,14 +1054,14 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
                 if (source_blob.size == Blob.max_size) {
                     source_blob.resolveSize();
                 }
-                return JSC.JSPromise.resolvedPromiseValue(ctx, JSC.JSValue.jsNumber(source_blob.size));
+                return jsc.JSPromise.resolvedPromiseValue(ctx, .jsNumber(source_blob.size));
             }
         } else if (dest_pathlike.* == .fd and src_pathlike.* == .fd) {
             if (dest_pathlike.fd == src_pathlike.fd) {
                 if (source_blob.size == Blob.max_size) {
                     source_blob.resolveSize();
                 }
-                return JSC.JSPromise.resolvedPromiseValue(ctx, JSC.JSValue.jsNumber(source_blob.size));
+                return jsc.JSPromise.resolvedPromiseValue(ctx, .jsNumber(source_blob.size));
             }
         }
 

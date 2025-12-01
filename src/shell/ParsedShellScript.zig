@@ -7,17 +7,41 @@ pub const fromJSDirect = js.fromJSDirect;
 
 args: ?*ShellArgs = null,
 /// allocated with arena in jsobjs
-jsobjs: std.ArrayList(JSValue),
+jsobjs: std.array_list.Managed(JSValue),
 export_env: ?EnvMap = null,
 quiet: bool = false,
 cwd: ?bun.String = null,
 this_jsvalue: JSValue = .zero,
+estimated_size_for_gc: usize = 0,
+
+fn #computeEstimatedSizeForGC(this: *const ParsedShellScript) usize {
+    var size: usize = @sizeOf(ParsedShellScript);
+    if (this.args) |args| {
+        size += args.memoryCost();
+    }
+    if (this.export_env) |*env| {
+        size += env.memoryCost();
+    }
+    if (this.cwd) |*cwd| {
+        size += cwd.estimatedSize();
+    }
+    size += std.mem.sliceAsBytes(this.jsobjs.allocatedSlice()).len;
+    return size;
+}
+
+pub fn memoryCost(this: *const ParsedShellScript) usize {
+    return this.#computeEstimatedSizeForGC();
+}
+
+pub fn estimatedSize(this: *const ParsedShellScript) usize {
+    return this.estimated_size_for_gc;
+}
 
 pub fn take(
     this: *ParsedShellScript,
     _: *jsc.JSGlobalObject,
     out_args: **ShellArgs,
-    out_jsobjs: *std.ArrayList(JSValue),
+    out_jsobjs: *std.array_list.Managed(JSValue),
     out_quiet: *bool,
     out_cwd: *?bun.String,
     out_export_env: *?EnvMap,
@@ -29,7 +53,7 @@ pub fn take(
     out_export_env.* = this.export_env;
 
     this.args = null;
-    this.jsobjs = std.ArrayList(JSValue).init(bun.default_allocator);
+    this.jsobjs = std.array_list.Managed(JSValue).init(bun.default_allocator);
     this.cwd = null;
     this.export_env = null;
 }
@@ -117,15 +141,15 @@ fn createParsedShellScriptImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.
     var template_args = try template_args_js.arrayIterator(globalThis);
 
     var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, shargs.arena_allocator());
-    var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);
+    var jsstrings = try std.array_list.Managed(bun.String).initCapacity(stack_alloc.get(), 4);
     defer {
         for (jsstrings.items[0..]) |bunstr| {
             bunstr.deref();
         }
         jsstrings.deinit();
     }
-    var jsobjs = std.ArrayList(JSValue).init(shargs.arena_allocator());
-    var script = std.ArrayList(u8).init(shargs.arena_allocator());
+    var jsobjs = std.array_list.Managed(JSValue).init(shargs.arena_allocator());
+    var script = std.array_list.Managed(u8).init(shargs.arena_allocator());
     try bun.shell.shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script, marked_argument_buffer);
 
     var parser: ?bun.shell.Parser = null;
@@ -161,6 +185,7 @@ fn createParsedShellScriptImpl(globalThis: *jsc.JSGlobalObject, callframe: *jsc.
         .args = shargs,
         .jsobjs = jsobjs,
     });
+    parsed_shell_script.estimated_size_for_gc = parsed_shell_script.#computeEstimatedSizeForGC();
     const this_jsvalue = jsc.Codegen.JSParsedShellScript.toJSWithValues(parsed_shell_script, globalThis, marked_argument_buffer);
     parsed_shell_script.this_jsvalue = this_jsvalue;
 

@@ -172,7 +172,7 @@ declare module "bun:test" {
     /**
      * Mock a module
      */
-    module: typeof mock.module;
+    mock: typeof mock.module;
     /**
      * Restore all mocks to their original implementation
      */
@@ -262,7 +262,7 @@ declare module "bun:test" {
      */
     each<T extends Readonly<[any, ...any[]]>>(table: readonly T[]): Describe<[...T]>;
     each<T extends any[]>(table: readonly T[]): Describe<[...T]>;
-    each<T>(table: T[]): Describe<[T]>;
+    each<const T>(table: T[]): Describe<[T]>;
   }
   /**
    * Describes a group of related tests.
@@ -355,6 +355,28 @@ declare module "bun:test" {
    * @param fn the function to run
    */
   export function afterEach(
+    fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
+    options?: HookOptions,
+  ): void;
+  /**
+   * Runs a function after a test finishes, including after all afterEach hooks.
+   *
+   * This is useful for cleanup tasks that need to run at the very end of a test,
+   * after all other hooks have completed.
+   *
+   * Can only be called inside a test, not in describe blocks.
+   *
+   * @example
+   * test("my test", () => {
+   *   onTestFinished(() => {
+   *     // This runs after all afterEach hooks
+   *     console.log("Test finished!");
+   *   });
+   * });
+   *
+   * @param fn the function to run
+   */
+  export function onTestFinished(
     fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
     options?: HookOptions,
   ): void;
@@ -530,7 +552,7 @@ declare module "bun:test" {
      */
     each<T extends Readonly<[unknown, ...unknown[]]>>(table: readonly T[]): Test<T>;
     each<T extends unknown[]>(table: readonly T[]): Test<T>;
-    each<T>(table: T[]): Test<[T]>;
+    each<const T>(table: T[]): Test<[T]>;
   }
   /**
    * Runs a test.

@@ -28,6 +28,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         ping_len: u8 = 0,
         ping_received: bool = false,
         close_received: bool = false,
+        close_frame_buffering: bool = false,
 
         receive_frame: usize = 0,
         receive_body_remain: usize = 0,
@@ -74,7 +75,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             return true;
         }
 
-        pub fn register(global: *jsc.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.C) void {
+        pub fn register(global: *jsc.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.c) void {
             const vm = global.bunVM();
             const loop = @as(*uws.Loop, @ptrCast(@alignCast(loop_)));
 
@@ -110,6 +111,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.clearSendBuffers(true);
             this.ping_received = false;
             this.ping_len = 0;
+            this.close_frame_buffering = false;
             this.receive_pending_chunk_len = 0;
             this.receiving_compressed = false;
             this.message_is_compressed = false;
@@ -117,7 +119,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.deflate = null;
         }
 
-        pub fn cancel(this: *WebSocket) callconv(.C) void {
+        pub fn cancel(this: *WebSocket) callconv(.c) void {
             log("cancel", .{});
             this.clearData();
 
@@ -652,39 +654,42 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     },
 
                     .close => {
-                        this.close_received = true;
-
-                        // invalid close frame with 1 byte
-                        if (data.len == 1 and receive_body_remain == 1) {
+                        if (receive_body_remain == 1 or receive_body_remain > 125) {
                             this.terminate(ErrorCode.invalid_control_frame);
                             terminated = true;
                             break;
                         }
-                        // 2 byte close code and optional reason
-                        if (data.len >= 2 and receive_body_remain >= 2) {
-                            var code = std.mem.readInt(u16, data[0..2], .big);
-                            log("Received close with code {d}", .{code});
-                            if (code == 1001) {
-                                // going away actual sends 1000 (normal close)
-                                code = 1000;
-                            } else if ((code < 1000) or (code >= 1004 and code < 1007) or (code >= 1016 and code <= 2999)) {
-                                // invalid codes must clean close with 1002
-                                code = 1002;
+
+                        if (receive_body_remain > 0) {
+                            if (!this.close_frame_buffering) {
+                                this.ping_len = @truncate(receive_body_remain);
+                                receive_body_remain = 0;
+                                this.close_frame_buffering = true;
                             }
-                            const reason_len = receive_body_remain - 2;
-                            if (reason_len > 125) {
-                                this.terminate(ErrorCode.invalid_control_frame);
-                                terminated = true;
-                                break;
+                            const to_copy = @min(data.len, this.ping_len - receive_body_remain);
+                            @memcpy(this.ping_frame_bytes[6 + receive_body_remain ..][0..to_copy], data[0..to_copy]);
+                            receive_body_remain += to_copy;
+                            data = data[to_copy..];
+                            if (receive_body_remain < this.ping_len) break;
+
+                            this.close_received = true;
+                            const close_data = this.ping_frame_bytes[6..][0..this.ping_len];
+                            if (this.ping_len >= 2) {
+                                var code = std.mem.readInt(u16, close_data[0..2], .big);
+                                if (code == 1001) code = 1000;
+                                if ((code < 1000) or (code >= 1004 and code < 1007) or (code >= 1016 and code <= 2999)) code = 1002;
+                                var buf: [125]u8 = undefined;
+                                @memcpy(buf[0 .. this.ping_len - 2], close_data[2..this.ping_len]);
+                                this.sendCloseWithBody(socket, code, &buf, this.ping_len - 2);
+                            } else {
+                                this.sendClose();
                             }
-                            var close_reason_buf: [125]u8 = undefined;
-                            @memcpy(close_reason_buf[0..reason_len], data[2..receive_body_remain]);
-                            this.sendCloseWithBody(socket, code, &close_reason_buf, reason_len);
-                            data = data[receive_body_remain..];
+                            this.close_frame_buffering = false;
                             terminated = true;
                             break;
                         }
 
+                        this.close_received = true;
                         this.sendClose();
                         terminated = true;
                         break;
@@ -771,7 +776,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
                 {
                     // Compress the content
-                    var compressed = std.ArrayList(u8).init(allocator);
+                    var compressed = std.array_list.Managed(u8).init(allocator);
                     defer compressed.deinit();
 
                     this.deflate.?.compress(content_to_compress, &compressed) catch {
@@ -960,7 +965,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             ptr: [*]const u8,
             len: usize,
             op: u8,
-        ) callconv(.C) void {
+        ) callconv(.c) void {
             if (!this.hasTCP() or op > 0xF) {
                 this.dispatchAbruptClose(ErrorCode.ended);
                 return;
@@ -988,7 +993,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this: *WebSocket,
             blob_value: jsc.JSValue,
             op: u8,
-        ) callconv(.C) void {
+        ) callconv(.c) void {
             if (!this.hasTCP() or op > 0xF) {
                 this.dispatchAbruptClose(ErrorCode.ended);
                 return;
@@ -1030,7 +1035,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this: *WebSocket,
             str_: *const jsc.ZigString,
             op: u8,
-        ) callconv(.C) void {
+        ) callconv(.c) void {
             const str = str_.*;
             if (!this.hasTCP()) {
                 this.dispatchAbruptClose(ErrorCode.ended);
@@ -1094,7 +1099,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.deref();
         }
 
-        pub fn close(this: *WebSocket, code: u16, reason: ?*const jsc.ZigString) callconv(.C) void {
+        pub fn close(this: *WebSocket, code: u16, reason: ?*const jsc.ZigString) callconv(.c) void {
             if (!this.hasTCP())
                 return;
             const tcp = this.tcp;
@@ -1103,7 +1108,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 inner: {
                     var fixed_buffer = std.heap.FixedBufferAllocator.init(&close_reason_buf);
                     const allocator = fixed_buffer.allocator();
-                    const wrote = std.fmt.allocPrint(allocator, "{}", .{str.*}) catch break :inner;
+                    const wrote = std.fmt.allocPrint(allocator, "{f}", .{str.*}) catch break :inner;
                     this.sendCloseWithBody(tcp, code, wrote.ptr[0..125], wrote.len);
                     return;
                 }
@@ -1152,7 +1157,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             buffered_data: [*]u8,
             buffered_data_len: usize,
             deflate_params: ?*const WebSocketDeflate.Params,
-        ) callconv(.C) ?*anyopaque {
+        ) callconv(.c) ?*anyopaque {
             const tcp = @as(*uws.us_socket_t, @ptrCast(input_socket));
             const ctx = @as(*uws.SocketContext, @ptrCast(socket_ctx));
             var ws = bun.new(WebSocket, .{
@@ -1214,7 +1219,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             );
         }
 
-        pub fn finalize(this: *WebSocket) callconv(.C) void {
+        pub fn finalize(this: *WebSocket) callconv(.c) void {
             log("finalize", .{});
             this.clearData();
 
@@ -1241,7 +1246,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             bun.destroy(this);
         }
 
-        pub fn memoryCost(this: *WebSocket) callconv(.C) usize {
+        pub fn memoryCost(this: *WebSocket) callconv(.c) usize {
             var cost: usize = @sizeOf(WebSocket);
             cost += this.send_buffer.buf.len;
             cost += this.receive_buffer.buf.len;

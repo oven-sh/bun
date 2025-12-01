@@ -109,25 +109,25 @@ pub fn Rect(comptime T: type) type {
             return .{ .result = This{ .top = first, .right = second, .bottom = third, .left = fourth } };
         }
 
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-            try css.generic.toCss(T, &this.top, W, dest);
+        pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
+            try css.generic.toCss(T, &this.top, dest);
             const same_vertical = css.generic.eql(T, &this.top, &this.bottom);
             const same_horizontal = css.generic.eql(T, &this.right, &this.left);
             if (same_vertical and same_horizontal and css.generic.eql(T, &this.top, &this.right)) {
                 return;
             }
             try dest.writeStr(" ");
-            try css.generic.toCss(T, &this.right, W, dest);
+            try css.generic.toCss(T, &this.right, dest);
             if (same_vertical and same_horizontal) {
                 return;
             }
             try dest.writeStr(" ");
-            try css.generic.toCss(T, &this.bottom, W, dest);
+            try css.generic.toCss(T, &this.bottom, dest);
             if (same_horizontal) {
                 return;
             }
             try dest.writeStr(" ");
-            try css.generic.toCss(T, &this.left, W, dest);
+            try css.generic.toCss(T, &this.left, dest);
         }
 
         pub fn valParse(i: *css.Parser) Result(T) {

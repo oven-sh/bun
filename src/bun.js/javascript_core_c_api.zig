@@ -19,7 +19,7 @@ pub const JSGlobalContextRef = ?*jsc.JSGlobalObject;
 
 pub const struct_OpaqueJSPropertyNameAccumulator = generic;
 pub const JSPropertyNameAccumulatorRef = ?*struct_OpaqueJSPropertyNameAccumulator;
-pub const JSTypedArrayBytesDeallocator = ?*const fn (*anyopaque, *anyopaque) callconv(.C) void;
+pub const JSTypedArrayBytesDeallocator = ?*const fn (*anyopaque, *anyopaque) callconv(.c) void;
 pub const OpaqueJSValue = generic;
 pub const JSValueRef = ?*OpaqueJSValue;
 pub const JSObjectRef = ?*OpaqueJSValue;
@@ -92,9 +92,9 @@ pub const JSClassAttributes = enum(c_uint) {
 
 pub const kJSClassAttributeNone = @intFromEnum(JSClassAttributes.kJSClassAttributeNone);
 pub const kJSClassAttributeNoAutomaticPrototype = @intFromEnum(JSClassAttributes.kJSClassAttributeNoAutomaticPrototype);
-pub const JSObjectInitializeCallback = *const fn (*jsc.JSGlobalObject, JSObjectRef) callconv(.C) void;
-pub const JSObjectFinalizeCallback = *const fn (JSObjectRef) callconv(.C) void;
-pub const JSObjectGetPropertyNamesCallback = *const fn (*jsc.JSGlobalObject, JSObjectRef, JSPropertyNameAccumulatorRef) callconv(.C) void;
+pub const JSObjectInitializeCallback = *const fn (*jsc.JSGlobalObject, JSObjectRef) callconv(.c) void;
+pub const JSObjectFinalizeCallback = *const fn (JSObjectRef) callconv(.c) void;
+pub const JSObjectGetPropertyNamesCallback = *const fn (*jsc.JSGlobalObject, JSObjectRef, JSPropertyNameAccumulatorRef) callconv(.c) void;
 pub const ExceptionRef = [*c]JSValueRef;
 pub const JSObjectCallAsFunctionCallback = *const fn (
     ctx: *jsc.JSGlobalObject,
@@ -103,10 +103,10 @@ pub const JSObjectCallAsFunctionCallback = *const fn (
     argumentCount: usize,
     arguments: [*c]const JSValueRef,
     exception: ExceptionRef,
-) callconv(.C) JSValueRef;
-pub const JSObjectCallAsConstructorCallback = *const fn (*jsc.JSGlobalObject, JSObjectRef, usize, [*c]const JSValueRef, ExceptionRef) callconv(.C) JSObjectRef;
-pub const JSObjectHasInstanceCallback = *const fn (*jsc.JSGlobalObject, JSObjectRef, JSValueRef, ExceptionRef) callconv(.C) bool;
-pub const JSObjectConvertToTypeCallback = *const fn (*jsc.JSGlobalObject, JSObjectRef, JSType, ExceptionRef) callconv(.C) JSValueRef;
+) callconv(.c) JSValueRef;
+pub const JSObjectCallAsConstructorCallback = *const fn (*jsc.JSGlobalObject, JSObjectRef, usize, [*c]const JSValueRef, ExceptionRef) callconv(.c) JSObjectRef;
+pub const JSObjectHasInstanceCallback = *const fn (*jsc.JSGlobalObject, JSObjectRef, JSValueRef, ExceptionRef) callconv(.c) bool;
+pub const JSObjectConvertToTypeCallback = *const fn (*jsc.JSGlobalObject, JSObjectRef, JSType, ExceptionRef) callconv(.c) JSValueRef;
 
 pub extern "c" fn JSObjectGetPrototype(ctx: *jsc.JSGlobalObject, object: JSObjectRef) JSValueRef;
 pub extern "c" fn JSObjectGetPropertyAtIndex(ctx: *jsc.JSGlobalObject, object: JSObjectRef, propertyIndex: c_uint, exception: ExceptionRef) JSValueRef;

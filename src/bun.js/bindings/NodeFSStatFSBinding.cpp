@@ -369,7 +369,7 @@ inline JSValue constructJSStatFSObject(JSC::JSGlobalObject* lexicalGlobalObject,
 
     if (constructor != newTarget) {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
+        auto* functionGlobalObject = static_cast<Zig::GlobalObject*>(
             // ShadowRealm functions belong to a different global object.
             getFunctionRealm(lexicalGlobalObject, newTarget));
         RETURN_IF_EXCEPTION(scope, {});

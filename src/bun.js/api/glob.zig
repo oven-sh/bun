@@ -6,7 +6,7 @@ pub const fromJS = js.fromJS;
 pub const fromJSDirect = js.fromJSDirect;
 
 pattern: []const u8,
-pattern_codepoints: ?std.ArrayList(u32) = null,
+pattern_codepoints: ?std.array_list.Managed(u32) = null,
 has_pending_activity: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
 
 const ScanOpts = struct {
@@ -18,20 +18,24 @@ const ScanOpts = struct {
     error_on_broken_symlinks: bool,
 
     fn parseCWD(globalThis: *JSGlobalObject, allocator: std.mem.Allocator, cwdVal: jsc.JSValue, absolute: bool, comptime fnName: string) bun.JSError![]const u8 {
-        const cwd_str_raw = try cwdVal.toSlice(globalThis, allocator);
-        if (cwd_str_raw.len == 0) return "";
+        const cwd_string: bun.String = try .fromJS(cwdVal, globalThis);
+        defer cwd_string.deref();
+        if (cwd_string.isEmpty()) return "";
 
-        const cwd_str = cwd_str: {
+        const cwd_str: []const u8 = cwd_str: {
+            const cwd_utf8 = cwd_string.toUTF8WithoutRef(allocator);
+
             // If its absolute return as is
-            if (ResolvePath.Platform.auto.isAbsolute(cwd_str_raw.slice())) {
-                const cwd_str = try cwd_str_raw.cloneIfNeeded(allocator);
-                break :cwd_str cwd_str.ptr[0..cwd_str.len];
+            if (ResolvePath.Platform.auto.isAbsolute(cwd_utf8.slice())) {
+                break :cwd_str (try cwd_utf8.cloneIfBorrowed(allocator)).slice();
             }
 
+            defer cwd_utf8.deinit();
             var path_buf2: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
 
             if (!absolute) {
-                const cwd_str = ResolvePath.joinStringBuf(&path_buf2, &[_][]const u8{cwd_str_raw.slice()}, .auto);
+                const parts: []const []const u8 = &.{cwd_utf8.slice()};
+                const cwd_str = ResolvePath.joinStringBuf(&path_buf2, parts, .auto);
                 break :cwd_str try allocator.dupe(u8, cwd_str);
             }
 
@@ -47,9 +51,8 @@ const ScanOpts = struct {
 
             const cwd_str = ResolvePath.joinStringBuf(&path_buf2, &[_][]const u8{
                 cwd,
-                cwd_str_raw.slice(),
+                cwd_utf8.slice(),
             }, .auto);
-
             break :cwd_str try allocator.dupe(u8, cwd_str);
         };
 
@@ -272,7 +275,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
         return globalThis.throw("Glob.constructor: first argument is not a string", .{});
     }
 
-    const pat_str: []u8 = @constCast((pat_arg.toSliceClone(globalThis) orelse return error.JSError).slice());
+    const pat_str: []u8 = @constCast((try pat_arg.toSliceClone(globalThis)).slice());
 
     const glob = bun.handleOom(alloc.create(Glob));
     glob.* = .{ .pattern = pat_str };
@@ -282,7 +285,7 @@ pub fn constructor(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) b
 
 pub fn finalize(
     this: *Glob,
-) callconv(.C) void {
+) callconv(.c) void {
     const alloc = jsc.VirtualMachine.get().allocator;
     alloc.free(this.pattern);
     if (this.pattern_codepoints) |*codepoints| {
@@ -291,7 +294,7 @@ pub fn finalize(
     alloc.destroy(this);
 }
 
-pub fn hasPendingActivity(this: *Glob) callconv(.C) bool {
+pub fn hasPendingActivity(this: *Glob) callconv(.c) bool {
     return this.has_pending_activity.load(.seq_cst) > 0;
 }
 
@@ -374,7 +377,7 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *jsc.CallFrame
     return jsc.JSValue.jsBoolean(bun.glob.match(this.pattern, str.slice()).matches());
 }
 
-pub fn convertUtf8(codepoints: *std.ArrayList(u32), pattern: []const u8) !void {
+pub fn convertUtf8(codepoints: *std.array_list.Managed(u32), pattern: []const u8) !void {
     const iter = CodepointIterator.init(pattern);
     var cursor = CodepointIterator.Cursor{};
     while (iter.next(&cursor)) {

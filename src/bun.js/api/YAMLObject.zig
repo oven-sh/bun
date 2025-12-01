@@ -3,21 +3,23 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     object.put(
         globalThis,
         ZigString.static("parse"),
-        jsc.createCallback(
+        jsc.JSFunction.create(
             globalThis,
-            ZigString.static("parse"),
-            1,
+            "parse",
             parse,
+            1,
+            .{},
         ),
     );
     object.put(
         globalThis,
         ZigString.static("stringify"),
-        jsc.createCallback(
+        jsc.JSFunction.create(
             globalThis,
-            ZigString.static("stringify"),
-            3,
+            "stringify",
             stringify,
+            3,
+            .{},
         ),
     );
 
@@ -843,14 +845,20 @@ const Stringifier = struct {
             '0' => {
                 if (i == start) {
                     if (i + 1 < str.length()) {
-                        const nc = str.charAt(i + 1);
-                        if (nc == 'x' or nc == 'X') {
-                            base = .hex;
-                        } else if (nc == 'o' or nc == 'O') {
-                            base = .oct;
-                        } else {
-                            offset.* = i;
-                            return false;
+                        switch (str.charAt(i + 1)) {
+                            'x', 'X' => {
+                                base = .hex;
+                            },
+                            'o', 'O' => {
+                                base = .oct;
+                            },
+                            '0'...'9' => {
+                                // 0 prefix allowed
+                            },
+                            else => {
+                                offset.* = i;
+                                return false;
+                            },
                         }
                         i += 1;
                     } else {
@@ -922,7 +930,8 @@ pub fn parse(
     const input_value = callFrame.argumentsAsArray(1)[0];
 
     const input: jsc.Node.BlobOrStringOrBuffer = try jsc.Node.BlobOrStringOrBuffer.fromJS(global, arena.allocator(), input_value) orelse input: {
-        const str = try input_value.toBunString(global);
+        var str = try input_value.toBunString(global);
+        defer str.deref();
         break :input .{ .string_or_buffer = .{ .string = str.toSlice(arena.allocator()) } };
     };
     defer input.deinit();

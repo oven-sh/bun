@@ -391,13 +391,12 @@ pub fn fromPipe(
 
 pub fn empty(globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
     jsc.markBinding(@src());
-    return bun.jsc.fromJSHostCall(globalThis, @src(), ReadableStream__empty, .{globalThis});
+    return bun.cpp.ReadableStream__empty(globalThis);
 }
 
-pub fn used(globalThis: *JSGlobalObject) jsc.JSValue {
+pub fn used(globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
     jsc.markBinding(@src());
-
-    return ReadableStream__used(globalThis);
+    return bun.cpp.ReadableStream__used(globalThis);
 }
 
 pub const StreamTag = enum(usize) {

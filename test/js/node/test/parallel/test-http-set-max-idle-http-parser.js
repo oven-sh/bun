@@ -1,7 +1,7 @@
 'use strict';
 require('../common');
 const assert = require('assert');
-// const httpCommon = require('_http_common');
+const httpCommon = require('_http_common');
 const http = require('http');
 
 [Symbol(), {}, [], () => {}, 1n, true, '1', null, undefined].forEach((value) => {
@@ -13,8 +13,7 @@ const http = require('http');
 });
 
 [1, Number.MAX_SAFE_INTEGER].forEach((value) => {
-  // BUN dont expose httpCommon.parsers.max and setMaxIdleHTTPParsers is a no-op
-  // assert.notStrictEqual(httpCommon.parsers.max, value);
+  assert.notStrictEqual(httpCommon.parsers.max, value);
   http.setMaxIdleHTTPParsers(value);
-  // assert.strictEqual(httpCommon.parsers.max, value);
+  assert.strictEqual(httpCommon.parsers.max, value);
 });

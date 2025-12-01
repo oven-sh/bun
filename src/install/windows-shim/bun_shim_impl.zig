@@ -38,22 +38,12 @@
 //! When this file is updated, the new binary should be compiled and BinLinkingShim.VersionFlag.current should be updated.
 //!
 //! Questions about this file should be directed at @paperclover.
-const builtin = @import("builtin");
 const dbg = builtin.mode == .Debug;
-
-const std = @import("std");
-const w = std.os.windows;
-const assert = std.debug.assert;
-const fmt16 = std.unicode.fmtUtf16Le;
 
 const is_standalone = @import("root") == @This();
 const bun = if (!is_standalone) @import("bun") else @compileError("cannot use 'bun' in standalone build of bun_shim_impl");
-const bunDebugMessage = bun.Output.scoped(.bun_shim_impl, true);
+const bunDebugMessage = bun.Output.scoped(.bun_shim_impl, .hidden);
 const callmod_inline = if (is_standalone) std.builtin.CallModifier.always_inline else bun.callmod_inline;
-
-const Flags = @import("./BinLinkingShim.zig").Flags;
-
-const wliteral = std.unicode.utf8ToUtf16LeStringLiteral;
 
 /// A copy of all ntdll declarations this program uses
 const nt = struct {
@@ -79,7 +69,7 @@ const nt = struct {
         Length: w.ULONG, // [in]
         ByteOffset: ?*w.LARGE_INTEGER, // [in, optional]
         Key: ?*w.ULONG, // [in, optional]
-    ) callconv(w.WINAPI) Status;
+    ) callconv(.winapi) Status;
 
     /// https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntwritefile
     extern "ntdll" fn NtWriteFile(
@@ -92,7 +82,7 @@ const nt = struct {
         Length: w.ULONG, // [in]
         ByteOffset: ?*w.LARGE_INTEGER, // [in, optional]
         Key: ?*w.ULONG, // [in, optional]
-    ) callconv(w.WINAPI) Status;
+    ) callconv(.winapi) Status;
 };
 
 /// A copy of all kernel32 declarations this program uses
@@ -112,7 +102,7 @@ const k32 = struct {
     extern "kernel32" fn SetConsoleMode(
         hConsoleHandle: w.HANDLE, // [in]
         dwMode: w.DWORD, // [in]
-    ) callconv(w.WINAPI) w.BOOL;
+    ) callconv(.winapi) w.BOOL;
 };
 
 fn debug(comptime fmt: []const u8, args: anytype) void {
@@ -174,9 +164,7 @@ const FailReason = enum {
         };
     }
 
-    pub fn format(reason: FailReason, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        if (fmt.len != 0) @compileError("FailReason.format() only takes empty format string");
-
+    pub fn format(reason: FailReason, writer: anytype) !void {
         if (!is_standalone and bun.Environment.allow_assert and reason == .InvalidShimValidation) {
             @panic("Internal Assertion: When encountering FailReason.InvalidShimValidation, you must not print the error, but rather fallback to running the .exe file");
         }
@@ -223,7 +211,7 @@ const FailReason = enum {
     }
 
     pub inline fn write(reason: FailReason, writer: anytype) !void {
-        return reason.format("", undefined, writer);
+        return reason.format(writer);
     }
 };
 
@@ -254,7 +242,7 @@ pub fn writeToHandle(handle: w.HANDLE, data: []const u8) error{}!usize {
     return io.Information;
 }
 
-const NtWriter = std.io.Writer(w.HANDLE, error{}, writeToHandle);
+const NtWriter = std.Io.GenericWriter(w.HANDLE, error{}, writeToHandle);
 
 var failure_reason_data: [512]u8 = undefined;
 var failure_reason_argument: ?[]const u8 = null;
@@ -338,8 +326,8 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
     assert(@intFromPtr(cmd_line_u16.ptr) % 2 == 0); // alignment assumption
 
     if (dbg) {
-        debug("CommandLine: {}", .{fmt16(cmd_line_u16[0 .. cmd_line_b_len / 2])});
-        debug("ImagePathName: {}", .{fmt16(image_path_u16[0 .. image_path_b_len / 2])});
+        debug("CommandLine: {f}", .{fmt16(cmd_line_u16[0 .. cmd_line_b_len / 2])});
+        debug("ImagePathName: {f}", .{fmt16(image_path_u16[0 .. image_path_b_len / 2])});
     }
 
     var buf1: [w.PATH_MAX_WIDE + "\"\" ".len]u16 = undefined;
@@ -362,7 +350,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
     // BUF1: '\??\C:\Users\chloe\project\node_modules\.bin\hello.!!!!!!!!!!!!!!!!!!!!!!!!!!'
     const suffix = comptime (if (is_standalone) wliteral("exe") else wliteral("bunx"));
     if (dbg) if (!std.mem.endsWith(u16, image_path_u16, suffix)) {
-        std.debug.panic("assert failed: image path expected to end with {}, got {}", .{
+        std.debug.panic("assert failed: image path expected to end with {f}, got {f}", .{
             std.unicode.fmtUtf16Le(suffix),
             std.unicode.fmtUtf16Le(image_path_u16),
         });
@@ -387,7 +375,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             .Buffer = buf1_u16,
         };
         if (dbg) debug("NtCreateFile({s})", .{fmt16(unicodeStringToU16(nt_name))});
-        if (dbg) debug("NtCreateFile({any})", .{(unicodeStringToU16(nt_name))});
+        if (dbg) debug("NtCreateFile({f})", .{(unicodeStringToU16(nt_name))});
         var attr = w.OBJECT_ATTRIBUTES{
             .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
             .RootDirectory = null,
@@ -487,7 +475,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         assert(ptr[1] == '.');
 
         while (true) {
-            if (dbg) debug("1 - {}", .{std.unicode.fmtUtf16Le(ptr[0..1])});
+            if (dbg) debug("1 - {f}", .{std.unicode.fmtUtf16Le(ptr[0..1])});
             if (ptr[0] == '\\') {
                 left -= 1;
                 // ptr is of type [*]u16, which means -= operates on number of ITEMS, not BYTES
@@ -505,7 +493,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
         // inlined loop to do this again, because the completion case is different
         // using `inline for` caused comptime issues that made the code much harder to read
         while (true) {
-            if (dbg) debug("2 - {}", .{std.unicode.fmtUtf16Le(ptr[0..1])});
+            if (dbg) debug("2 - {f}", .{std.unicode.fmtUtf16Le(ptr[0..1])});
             if (ptr[0] == '\\') {
                 // ptr is at the position marked S, so move forward one *character*
                 break :brk ptr + 1;
@@ -555,7 +543,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
 
     _ = nt.NtClose(metadata_handle);
 
-    if (dbg) debug("BufferAfterRead: '{}'", .{fmt16(buf1_u16[0 .. ((@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) + read_len) / 2])});
+    if (dbg) debug("BufferAfterRead: '{f}'", .{fmt16(buf1_u16[0 .. ((@intFromPtr(read_ptr) - @intFromPtr(buf1_u8)) + read_len) / 2])});
 
     read_ptr = @ptrFromInt(@intFromPtr(read_ptr) + read_len - @sizeOf(Flags));
     const flags: Flags = @as(*align(1) Flags, @ptrCast(read_ptr)).*;
@@ -615,7 +603,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             //           ^ lpCommandLine                                               ^ null terminator
             @as(*align(1) u16, @ptrCast(argument_start_ptr + user_arguments_u8.len)).* = 0;
 
-            break :spawn_command_line @alignCast(@ptrCast(buf1_u8 + 2 * (nt_object_prefix.len - "\"".len)));
+            break :spawn_command_line @ptrCast(@alignCast(buf1_u8 + 2 * (nt_object_prefix.len - "\"".len)));
         },
         true => spawn_command_line: {
             // When the shebang flag is set, we expect two u32s containing byte lengths of the bin and arg components
@@ -694,7 +682,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
             const filename = buf1_u8[2 * nt_object_prefix.len ..][0..length_of_filename_u8];
             if (dbg) {
                 const sliced = std.mem.bytesAsSlice(u16, filename);
-                debug("filename and quote: '{}'", .{fmt16(@alignCast(sliced))});
+                debug("filename and quote: '{f}'", .{fmt16(@alignCast(sliced))});
                 debug("last char of above is '{}'", .{sliced[sliced.len - 1]});
                 assert(sliced[sliced.len - 1] == '\"');
             }
@@ -778,14 +766,14 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
 
     inline for (.{ 0, 1 }) |attempt_number| iteration: {
         if (dbg)
-            debug("lpCommandLine: {}\n", .{fmt16(std.mem.span(spawn_command_line))});
+            debug("lpCommandLine: {f}\n", .{fmt16(std.mem.span(spawn_command_line))});
         const did_process_spawn = k32.CreateProcessW(
             null,
             spawn_command_line,
             null,
             null,
             1, // true
-            if (is_standalone) 0 else w.CREATE_UNICODE_ENVIRONMENT,
+            .{ .create_unicode_environment = !is_standalone },
             if (is_standalone) null else @constCast(bun_ctx.environment),
             null,
             &startup_info,
@@ -887,7 +875,7 @@ fn launcher(comptime mode: LauncherMode, bun_ctx: anytype) mode.RetType() {
 }
 
 pub const FromBunRunContext = struct {
-    const CommandContext = bun.CLI.Command.Context;
+    const CommandContext = bun.cli.Command.Context;
 
     /// Path like 'C:\Users\chloe\project\node_modules\.bin\foo.bunx'
     base_path: []u16,
@@ -964,3 +952,12 @@ pub inline fn main() noreturn {
     comptime assert(!builtin.link_libcpp);
     launcher(.launch, {});
 }
+
+const builtin = @import("builtin");
+const std = @import("std");
+const Flags = @import("./BinLinkingShim.zig").Flags;
+const assert = std.debug.assert;
+const w = std.os.windows;
+
+const fmt16 = std.unicode.fmtUtf16Le;
+const wliteral = std.unicode.utf8ToUtf16LeStringLiteral;

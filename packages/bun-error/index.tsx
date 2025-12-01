@@ -1,5 +1,6 @@
-import React, { createContext, useContext } from "react";
-import { render, unmountComponentAtNode } from "react-dom";
+import type { JSX } from "preact";
+import { createContext, render } from "preact";
+import { useCallback, useContext, useEffect, useRef, useState } from "preact/hooks";
 import type {
   FallbackMessageContainer,
   JSException,
@@ -164,17 +165,17 @@ const maybeBlobFileURL = (filename: string, line?: number, column?: number): str
   return srcFileURL(filename, line, column);
 };
 
-const openWithoutFlashOfNewTab: React.MouseEventHandler<HTMLAnchorElement> = event => {
-  const target = event.currentTarget;
+const openWithoutFlashOfNewTab: JSX.MouseEventHandler<HTMLAnchorElement> = event => {
+  const target = event.currentTarget as HTMLAnchorElement;
   const href = target.getAttribute("href");
   if (!href || event.button !== 0) {
     return true;
   }
 
   event.preventDefault();
-  event.nativeEvent.preventDefault();
-  event.nativeEvent.stopPropagation();
-  event.nativeEvent.stopImmediatePropagation();
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
 
   const headers = new Headers();
   headers.set("Accept", "text/plain");
@@ -317,17 +318,17 @@ const AsyncSourceLines = ({
   highlight: number;
   highlightColumnStart: number;
   highlightColumnEnd: number;
-  children?: React.ReactNode;
+  children?: any;
   buildURL: (line?: number, column?: number) => string;
   sourceLines: SourceLine[];
   setSourceLines: (lines: SourceLine[]) => void;
 }) => {
-  const [loadState, setLoadState] = React.useState(LoadState.pending);
+  const [loadState, setLoadState] = useState(LoadState.pending);
 
-  const controller = React.useRef<AbortController | null>(null);
-  const url = React.useRef<string>(buildURL(0, 0));
+  const controller = useRef<AbortController | null>(null);
+  const url = useRef<string>(buildURL(0, 0));
 
-  React.useEffect(() => {
+  useEffect(() => {
     controller.current = new AbortController();
     var cancelled = false;
     fetch(url.current, {
@@ -432,7 +433,7 @@ const SourceLines = ({
   highlight: number;
   highlightColumnStart: number;
   highlightColumnEnd: number;
-  children?: React.ReactNode;
+  children?: any;
   buildURL: (line?: number, column?: number) => string;
 }) => {
   let start = sourceLines.length;
@@ -461,7 +462,7 @@ const SourceLines = ({
   const leftPad = maxLineNumber.toString(10).length - minLineNumber.toString(10).length;
 
   const _sourceLines = sourceLines.slice(start, end);
-  const lines = new Array(_sourceLines.length + React.Children.count(children));
+  const lines = new Array(_sourceLines.length + (Array.isArray(children) ? children.length : children ? 1 : 0));
 
   let highlightI = 0;
   for (let i = 0; i < _sourceLines.length; i++) {
@@ -513,7 +514,7 @@ const SourceLines = ({
 const BuildErrorSourceLines = ({ location, filename }: { location: Location; filename: string }) => {
   const { line, line_text, column } = location;
   const sourceLines: SourceLine[] = [{ line, text: line_text }];
-  const buildURL = React.useCallback((line, column) => srcFileURL(filename, line, column), [srcFileURL, filename]);
+  const buildURL = useCallback((line, column) => srcFileURL(filename, line, column), [filename]);
   return (
     <SourceLines
       sourceLines={sourceLines}
@@ -669,15 +670,15 @@ const NativeStackTrace = ({
   frames: StackFrame[];
   sourceLines: SourceLine[];
   setSourceLines: (sourceLines: SourceLine[]) => void;
-  children?: React.ReactNode;
+  children?: any;
   isClient: boolean;
 }) => {
   const { file = "", position } = frames[0];
   const { cwd } = useContext(ErrorGroupContext);
   const filename = normalizedFilename(file, cwd);
   const urlBuilder = isClient ? clientURL : maybeBlobFileURL;
-  const ref = React.useRef<HTMLDivElement>(null);
-  const buildURL = React.useCallback((line, column) => urlBuilder(file, line, column), [file, urlBuilder]);
+  const ref = useRef<HTMLDivElement>(null);
+  const buildURL = useCallback((line, column) => urlBuilder(file, line, column), [file, urlBuilder]);
 
   return (
     <div ref={ref} className={`BunError-NativeStackTrace`}>
@@ -732,7 +733,7 @@ const Indent = ({ by, children }) => {
 
 const JSException = ({ value, isClient = false }: { value: JSExceptionType; isClient: boolean }) => {
   const tag = isClient ? ErrorTagType.client : ErrorTagType.server;
-  const [sourceLines, _setSourceLines] = React.useState(value?.stack?.source_lines ?? []);
+  const [sourceLines, _setSourceLines] = useState(value?.stack?.source_lines ?? []);
   var message = value.message || "";
   var name = value.name || "";
   if (!name && !message) {
@@ -848,7 +849,7 @@ const Summary = ({ errorCount, onClose }: { errorCount: number; onClose: () => v
         {errorCount}&nbsp;error{errorCount > 1 ? "s" : ""}&nbsp;on this page
       </div>
 
-      <a href="https://bun.sh/discord" target="_blank" className="BunError-Summary-help">
+      <a href="https://bun.com/discord" target="_blank" className="BunError-Summary-help">
         <svg width="18" viewBox="0 0 71 55" fill="none" xmlns="http://www.w3.org/2000/svg">
           <g clipPath="url(#clip0)">
             <path
@@ -1242,7 +1243,7 @@ export function renderRuntimeError(error: Error) {
 
 export function dismissError() {
   if (reactRoot) {
-    unmountComponentAtNode(reactRoot);
+    render(null, reactRoot);
     const root = document.getElementById("__bun__error-root");
     if (root) root.remove();
     reactRoot = null;

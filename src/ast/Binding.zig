@@ -56,7 +56,14 @@ pub fn toExpr(binding: *const Binding, wrapper: anytype) Expr {
                 };
             }
 
-            return Expr.init(E.Array, E.Array{ .items = ExprNodeList.init(exprs), .is_single_line = b.is_single_line }, loc);
+            return Expr.init(
+                E.Array,
+                E.Array{
+                    .items = ExprNodeList.fromOwnedSlice(exprs),
+                    .is_single_line = b.is_single_line,
+                },
+                loc,
+            );
         },
         .b_object => |b| {
             const properties = wrapper
@@ -77,7 +84,7 @@ pub fn toExpr(binding: *const Binding, wrapper: anytype) Expr {
             return Expr.init(
                 E.Object,
                 E.Object{
-                    .properties = G.Property.List.init(properties),
+                    .properties = G.Property.List.fromOwnedSlice(properties),
                     .is_single_line = b.is_single_line,
                 },
                 loc,
@@ -147,15 +154,14 @@ pub fn alloc(allocator: std.mem.Allocator, t: anytype, loc: logger.Loc) Binding 
     }
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
 const bun = @import("bun");
 const logger = bun.logger;
-const string = bun.string;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const B = js_ast.B;
 const Binding = js_ast.Binding;
 const E = js_ast.E;

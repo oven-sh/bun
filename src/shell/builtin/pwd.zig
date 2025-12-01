@@ -1,3 +1,5 @@
+const Pwd = @This();
+
 state: union(enum) {
     idle,
     waiting_io: struct {
@@ -49,7 +51,7 @@ pub fn next(this: *Pwd) Yield {
     }
 }
 
-pub fn onIOWriterChunk(this: *Pwd, _: usize, e: ?JSC.SystemError) Yield {
+pub fn onIOWriterChunk(this: *Pwd, _: usize, e: ?jsc.SystemError) Yield {
     if (comptime bun.Environment.allow_assert) {
         assert(this.state == .waiting_io);
     }
@@ -78,13 +80,15 @@ pub inline fn bltn(this: *Pwd) *Builtin {
 }
 
 // --
-const bun = @import("bun");
-const shell = bun.shell;
-const Yield = shell.Yield;
+
 const interpreter = @import("../interpreter.zig");
+
 const Interpreter = interpreter.Interpreter;
 const Builtin = Interpreter.Builtin;
-const Pwd = @This();
-const JSC = bun.JSC;
 
+const bun = @import("bun");
 const assert = bun.assert;
+const jsc = bun.jsc;
+
+const shell = bun.shell;
+const Yield = shell.Yield;

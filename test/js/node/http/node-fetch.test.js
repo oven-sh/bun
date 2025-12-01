@@ -90,3 +90,71 @@ test("node-fetch uses node streams instead of web streams", async () => {
     expect(Buffer.concat(chunks).toString()).toBe("hello world");
   }
 });
+
+test("node-fetch request body streams properly", async () => {
+  let responseResolve;
+  const responsePromise = new Promise(resolve => {
+    responseResolve = resolve;
+  });
+
+  let receivedChunks = [];
+  let requestBodyComplete = false;
+
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req, server) {
+      const reader = req.body.getReader();
+
+      // Read first chunk
+      const { value: firstChunk } = await reader.read();
+      receivedChunks.push(firstChunk);
+
+      // Signal that response can be sent
+      responseResolve();
+
+      // Continue reading remaining chunks
+      let result;
+      while (!(result = await reader.read()).done) {
+        receivedChunks.push(result.value);
+      }
+
+      requestBodyComplete = true;
+      return new Response("response sent");
+    },
+  });
+
+  const requestBody = new stream.Readable({
+    read() {
+      // Will be controlled manually
+    },
+  });
+
+  // Start the fetch request
+  const fetchPromise = fetch2(server.url.href, {
+    body: requestBody,
+    method: "POST",
+  });
+
+  // Send first chunk
+  requestBody.push("first chunk");
+
+  // Wait for response to be available (server has read first chunk)
+  await responsePromise;
+
+  // Response is available, but request body should still be streaming
+  expect(requestBodyComplete).toBe(false);
+
+  // Send more data after response is available
+  requestBody.push("second chunk");
+  requestBody.push("third chunk");
+  requestBody.push(null); // End the stream
+
+  // Now wait for the fetch to complete
+  const result = await fetchPromise;
+  expect(await result.text()).toBe("response sent");
+
+  // Verify all chunks were received
+  const allData = Buffer.concat(receivedChunks).toString();
+  expect(allData).toBe("first chunksecond chunkthird chunk");
+  expect(requestBodyComplete).toBe(true);
+});

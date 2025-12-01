@@ -1,10 +1,8 @@
+const UUID = @This();
+
 //https://github.com/dmgk/zig-uuid
-const std = @import("std");
-const fmt = std.fmt;
-const bun = @import("bun");
 
 pub const Error = error{InvalidUUID};
-const UUID = @This();
 
 bytes: [16]u8,
 
@@ -71,18 +69,12 @@ const hex_to_nibble = [256]u8{
 
 pub fn format(
     self: UUID,
-    comptime layout: []const u8,
-    options: fmt.FormatOptions,
-    writer: anytype,
+    writer: *std.Io.Writer,
 ) !void {
-    _ = options; // currently unused
-
-    if (comptime layout.len != 0 and layout[0] != 's')
-        @compileError("Unsupported format specifier for UUID type: '" ++ layout ++ "'.");
     var buf: [36]u8 = undefined;
     self.print(&buf);
 
-    try fmt.format(writer, "{s}", .{buf});
+    try writer.print("{s}", .{buf});
 }
 
 fn printBytes(
@@ -196,13 +188,8 @@ pub const UUID7 = struct {
         return .{ .bytes = bytes };
     }
 
-    pub fn format(
-        self: UUID7,
-        comptime layout: []const u8,
-        options: fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        return self.toUUID().format(layout, options, writer);
+    pub fn format(self: UUID7, writer: *std.Io.Writer) !void {
+        return self.toUUID().format(writer);
     }
 };
 
@@ -274,12 +261,10 @@ pub const UUID5 = struct {
         return .{ .bytes = bytes };
     }
 
-    pub fn format(
-        self: UUID5,
-        comptime layout: []const u8,
-        options: fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        return self.toUUID().format(layout, options, writer);
+    pub fn format(self: UUID5, writer: *std.Io.Writer) !void {
+        return self.toUUID().format(writer);
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");

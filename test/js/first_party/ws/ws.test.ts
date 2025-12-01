@@ -553,6 +553,88 @@ it("WebSocketServer should handle backpressure", async () => {
   }
 });
 
+it("should abort incorrect WebSocket handshake", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  const wss = new WebSocketServer({ port: 0 });
+  let connectionAttempted = false;
+  let testResolved = false;
+
+  wss.on("connection", () => {
+    connectionAttempted = true;
+    if (!testResolved) {
+      testResolved = true;
+      reject(new Error("Connection should not have been established"));
+    }
+  });
+
+  wss.on("error", error => {
+    // Server errors are expected for invalid handshakes
+    console.log("Server error (expected):", error.message);
+  });
+
+  try {
+    const net = require("node:net");
+    const port = (wss.address() as any).port;
+    const socket = net.createConnection(port, "localhost");
+
+    socket.on("connect", () => {
+      // Send an invalid WebSocket handshake request (invalid Sec-WebSocket-Key)
+      const invalidRequest = [
+        "GET / HTTP/1.1",
+        "Host: localhost",
+        "Connection: Upgrade",
+        "Upgrade: websocket",
+        "Sec-WebSocket-Key: invalid-key", // Invalid key format
+        "Sec-WebSocket-Version: 13",
+        "",
+        "",
+      ].join("\r\n");
+
+      socket.write(invalidRequest);
+    });
+
+    let responseReceived = false;
+    socket.on("data", data => {
+      const response = data.toString();
+      responseReceived = true;
+
+      // Should receive a 400 Bad Request response for invalid handshake
+      if (response.includes("400") && !testResolved) {
+        testResolved = true;
+        resolve();
+      } else if (!testResolved) {
+        testResolved = true;
+        reject(new Error(`Expected 400 response, got: ${response}`));
+      }
+      socket.end();
+    });
+
+    socket.on("error", error => {
+      // Connection errors are also acceptable as the server may close the connection
+      if (!testResolved) {
+        testResolved = true;
+        resolve();
+      }
+    });
+
+    socket.on("close", () => {
+      // If we reach here without getting a proper response and connection wasn't attempted,
+      // the server properly rejected the invalid handshake
+      if (!responseReceived && !connectionAttempted && !testResolved) {
+        testResolved = true;
+        resolve();
+      }
+    });
+
+    await promise;
+  } finally {
+    wss.close();
+  }
+
+  expect(connectionAttempted).toBeFalse();
+  expect(testResolved).toBeTrue();
+});
+
 it("Server should be able to send empty pings", async () => {
   // WebSocket frame creation function with masking
   function createWebSocketFrame(message: string) {

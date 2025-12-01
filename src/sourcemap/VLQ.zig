@@ -1,6 +1,7 @@
 //! Variable-length quantity encoding, limited to i32 as per source map spec.
 //! https://en.wikipedia.org/wiki/Variable-length_quantity
 //! https://sourcemaps.info/spec.html
+
 const VLQ = @This();
 
 /// Encoding min and max ints are "//////D" and "+/////D", respectively.
@@ -163,5 +164,5 @@ pub fn decodeAssumeValid(encoded: []const u8, start: usize) VLQResult {
     return .{ .start = start + encoded_.len, .value = 0 };
 }
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");

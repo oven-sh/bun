@@ -18,8 +18,8 @@ pub const RareData = struct {
 
     pub const stack_buffer_size = 128 * 1024;
 
-    pub fn arrayList(this: *RareData) std.ArrayList(u8) {
-        var list = std.ArrayList(u8).init(this.allocator());
+    pub fn arrayList(this: *RareData) std.array_list.Managed(u8) {
+        var list = std.array_list.Managed(u8).init(this.allocator());
         list.items = &this.stack_fallback.buffer;
         list.items.len = 0;
         list.capacity = this.stack_fallback.buffer.len;
@@ -79,7 +79,7 @@ const COMPRESSION_BUFFER_SIZE = 4096;
 // DEFLATE trailer bytes added by Z_SYNC_FLUSH
 const DEFLATE_TRAILER = [_]u8{ 0x00, 0x00, 0xff, 0xff };
 
-pub fn init(allocator: std.mem.Allocator, params: Params, rare_data: *JSC.RareData) !*PerMessageDeflate {
+pub fn init(allocator: std.mem.Allocator, params: Params, rare_data: *jsc.RareData) !*PerMessageDeflate {
     const self = try allocator.create(PerMessageDeflate);
     self.* = .{
         .allocator = allocator,
@@ -129,14 +129,14 @@ pub fn deinit(self: *PerMessageDeflate) void {
 }
 
 fn canUseLibDeflate(len: usize) bool {
-    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_NO_LIBDEFLATE)) {
+    if (bun.feature_flag.BUN_FEATURE_FLAG_NO_LIBDEFLATE.get()) {
         return false;
     }
 
     return len < RareData.stack_buffer_size;
 }
 
-pub fn decompress(self: *PerMessageDeflate, in_buf: []const u8, out: *std.ArrayList(u8)) error{ InflateFailed, OutOfMemory }!void {
+pub fn decompress(self: *PerMessageDeflate, in_buf: []const u8, out: *std.array_list.Managed(u8)) error{ InflateFailed, OutOfMemory }!void {
 
     // First we try with libdeflate, which is both faster and doesn't need the trailing deflate bytes
     if (canUseLibDeflate(in_buf.len)) {
@@ -147,7 +147,7 @@ pub fn decompress(self: *PerMessageDeflate, in_buf: []const u8, out: *std.ArrayL
         }
     }
 
-    var in_with_trailer = std.ArrayList(u8).init(self.allocator);
+    var in_with_trailer = std.array_list.Managed(u8).init(self.allocator);
     defer in_with_trailer.deinit();
     try in_with_trailer.appendSlice(in_buf);
     try in_with_trailer.appendSlice(&DEFLATE_TRAILER);
@@ -184,7 +184,7 @@ pub fn decompress(self: *PerMessageDeflate, in_buf: []const u8, out: *std.ArrayL
     }
 }
 
-pub fn compress(self: *PerMessageDeflate, in_buf: []const u8, out: *std.ArrayList(u8)) error{ DeflateFailed, OutOfMemory }!void {
+pub fn compress(self: *PerMessageDeflate, in_buf: []const u8, out: *std.array_list.Managed(u8)) error{ DeflateFailed, OutOfMemory }!void {
     self.compress_stream.next_in = in_buf.ptr;
     self.compress_stream.avail_in = @intCast(in_buf.len);
 
@@ -217,7 +217,8 @@ pub fn compress(self: *PerMessageDeflate, in_buf: []const u8, out: *std.ArrayLis
 }
 
 const std = @import("std");
+
 const bun = @import("bun");
-const zlib = bun.zlib;
-const JSC = bun.JSC;
+const jsc = bun.jsc;
 const libdeflate = bun.libdeflate;
+const zlib = bun.zlib;

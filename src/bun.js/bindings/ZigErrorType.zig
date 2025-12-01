@@ -4,4 +4,4 @@ pub const ZigErrorType = extern struct {
 };
 
 const bun = @import("bun");
-const ErrorCode = @import("ErrorCode.zig").ErrorCode;
+const ErrorCode = @import("./ErrorCode.zig").ErrorCode;

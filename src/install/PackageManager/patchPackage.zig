@@ -74,7 +74,7 @@ pub fn doPatchCommit(
         .result => |fd| std.fs.Dir{ .fd = fd.cast() },
         .err => |e| {
             Output.prettyError(
-                "<r><red>error<r>: failed to open root <b>node_modules<r> folder: {}<r>\n",
+                "<r><red>error<r>: failed to open root <b>node_modules<r> folder: {f}<r>\n",
                 .{e},
             );
             Global.crash();
@@ -92,7 +92,7 @@ pub fn doPatchCommit(
                 switch (bun.sys.File.toSource(package_json_path, manager.allocator, .{})) {
                     .result => |s| break :brk s,
                     .err => |e| {
-                        Output.err(e, "failed to read {s}", .{bun.fmt.quote(package_json_path)});
+                        Output.err(e, "failed to read {f}", .{bun.fmt.quote(package_json_path)});
                         Global.crash();
                     },
                 }
@@ -133,7 +133,7 @@ pub fn doPatchCommit(
                 .ids => |ids| brk: {
                     for (ids.items) |id| {
                         const pkg = lockfile.packages.get(id);
-                        const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
+                        const resolution_label = std.fmt.bufPrint(&resolution_buf, "{f}", .{pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
                         if (std.mem.eql(u8, resolution_label, version)) {
                             break :brk pkg;
                         }
@@ -187,7 +187,7 @@ pub fn doPatchCommit(
     const pkg: Package = _pkg;
 
     const name = pkg.name.slice(lockfile.buffers.string_bytes.items);
-    const resolution_label = std.fmt.bufPrint(&resolution_buf, "{s}@{}", .{ name, pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix) }) catch unreachable;
+    const resolution_label = std.fmt.bufPrint(&resolution_buf, "{s}@{f}", .{ name, pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix) }) catch unreachable;
 
     const patchfile_contents = brk: {
         const new_folder = changes_dir;
@@ -207,10 +207,10 @@ pub fn doPatchCommit(
             }, .posix);
         };
 
-        const random_tempdir = bun.span(bun.fs.FileSystem.instance.tmpname("node_modules_tmp", buf2[0..], bun.fastRandom()) catch |e| {
+        const random_tempdir = bun.fs.FileSystem.tmpname("node_modules_tmp", buf2[0..], bun.fastRandom()) catch |e| {
             Output.err(e, "failed to make tempdir", .{});
             Global.crash();
-        });
+        };
 
         // If the package has nested a node_modules folder, we don't want this to
         // appear in the patch file when we run git diff.
@@ -235,10 +235,10 @@ pub fn doPatchCommit(
             break :has_nested_node_modules true;
         };
 
-        const patch_tag_tmpname = bun.span(bun.fs.FileSystem.instance.tmpname("patch_tmp", buf3[0..], bun.fastRandom()) catch |e| {
+        const patch_tag_tmpname = bun.fs.FileSystem.tmpname("patch_tmp", buf3[0..], bun.fastRandom()) catch |e| {
             Output.err(e, "failed to make tempdir", .{});
             Global.crash();
-        });
+        };
 
         var bunpatchtagbuf: BuntagHashBuf = undefined;
         // If the package was already patched then it might have a ".bun-tag-XXXXXXXX"
@@ -266,7 +266,7 @@ pub fn doPatchCommit(
                 patch_tag_tmpname,
                 .{ .move_fallback = true },
             ).asErr()) |e| {
-                Output.warn("failed renaming the bun patch tag, this may cause issues: {}", .{e});
+                Output.warn("failed renaming the bun patch tag, this may cause issues: {f}", .{e});
                 break :has_bun_patch_tag null;
             }
             break :has_bun_patch_tag patch_tag;
@@ -290,7 +290,7 @@ pub fn doPatchCommit(
                         "node_modules",
                         .{ .move_fallback = true },
                     ).asErr()) |e| {
-                        Output.warn("failed renaming nested node_modules folder, this may cause issues: {}", .{e});
+                        Output.warn("failed renaming nested node_modules folder, this may cause issues: {f}", .{e});
                     }
                 }
 
@@ -302,7 +302,7 @@ pub fn doPatchCommit(
                         patch_tag,
                         .{ .move_fallback = true },
                     ).asErr()) |e| {
-                        Output.warn("failed renaming the bun patch tag, this may cause issues: {}", .{e});
+                        Output.warn("failed renaming the bun patch tag, this may cause issues: {f}", .{e});
                     }
                 }
             }
@@ -313,14 +313,14 @@ pub fn doPatchCommit(
             .result => |fd| fd,
             .err => |e| {
                 Output.prettyError(
-                    "<r><red>error<r>: failed to get cwd path {}<r>\n",
+                    "<r><red>error<r>: failed to get cwd path {f}<r>\n",
                     .{e},
                 );
                 Global.crash();
             },
         };
         var gitbuf: bun.PathBuffer = undefined;
-        const git = bun.which(&gitbuf, bun.getenvZ("PATH") orelse "", cwd, "git") orelse {
+        const git = bun.which(&gitbuf, bun.env_var.PATH.get() orelse "", cwd, "git") orelse {
             Output.prettyError(
                 "<r><red>error<r>: git must be installed to use `bun patch --commit` <r>\n",
                 .{},
@@ -340,7 +340,7 @@ pub fn doPatchCommit(
             .result => |r| r,
             .err => |e| {
                 Output.prettyError(
-                    "<r><red>error<r>: failed to make diff {}<r>\n",
+                    "<r><red>error<r>: failed to make diff {f}<r>\n",
                     .{e},
                 );
                 Global.crash();
@@ -358,13 +358,11 @@ pub fn doPatchCommit(
             .err => |stderr| {
                 defer stderr.deinit();
                 const Truncate = struct {
-                    stderr: std.ArrayList(u8),
+                    stderr: std.array_list.Managed(u8),
 
                     pub fn format(
                         this: *const @This(),
-                        comptime _: []const u8,
-                        _: std.fmt.FormatOptions,
-                        writer: anytype,
+                        writer: *std.Io.Writer,
                     ) !void {
                         const truncate_stderr = this.stderr.items.len > 256;
                         if (truncate_stderr) {
@@ -373,7 +371,7 @@ pub fn doPatchCommit(
                     }
                 };
                 Output.prettyError(
-                    "<r><red>error<r>: failed to make diff {}<r>\n",
+                    "<r><red>error<r>: failed to make diff {f}<r>\n",
                     .{
                         Truncate{ .stderr = stderr },
                     },
@@ -395,8 +393,8 @@ pub fn doPatchCommit(
 
     // write the patch contents to temp file then rename
     var tmpname_buf: [1024]u8 = undefined;
-    const tempfile_name = bun.span(try bun.fs.FileSystem.instance.tmpname("tmp", &tmpname_buf, bun.fastRandom()));
-    const tmpdir = manager.getTemporaryDirectory();
+    const tempfile_name = try bun.fs.FileSystem.tmpname("tmp", &tmpname_buf, bun.fastRandom());
+    const tmpdir = manager.getTemporaryDirectory().handle;
     const tmpfd = switch (bun.sys.openat(
         .fromStdDir(tmpdir),
         tempfile_name,
@@ -433,12 +431,12 @@ pub fn doPatchCommit(
         .posix,
     );
 
-    var nodefs = bun.JSC.Node.fs.NodeFS{};
-    const args = bun.JSC.Node.fs.Arguments.Mkdir{
+    var nodefs = bun.jsc.Node.fs.NodeFS{};
+    const args = bun.jsc.Node.fs.Arguments.Mkdir{
         .path = .{ .string = bun.PathString.init(manager.options.patch_features.commit.patches_dir) },
     };
     if (nodefs.mkdirRecursive(args).asErr()) |e| {
-        Output.err(e, "failed to make patches dir {}", .{bun.fmt.quote(args.path.slice())});
+        Output.err(e, "failed to make patches dir {f}", .{bun.fmt.quote(args.path.slice())});
         Global.crash();
     }
 
@@ -454,8 +452,8 @@ pub fn doPatchCommit(
         Global.crash();
     }
 
-    const patch_key = std.fmt.allocPrint(manager.allocator, "{s}", .{resolution_label}) catch bun.outOfMemory();
-    const patchfile_path = manager.allocator.dupe(u8, path_in_patches_dir) catch bun.outOfMemory();
+    const patch_key = bun.handleOom(std.fmt.allocPrint(manager.allocator, "{s}", .{resolution_label}));
+    const patchfile_path = bun.handleOom(manager.allocator.dupe(u8, path_in_patches_dir));
     _ = bun.sys.unlink(bun.path.joinZ(&[_][]const u8{ changes_dir, ".bun-patch-tag" }, .auto));
 
     return .{
@@ -527,7 +525,7 @@ fn escapePatchFilename(allocator: std.mem.Allocator, name: []const u8) ?[]const 
     var count: usize = 0;
     for (name) |c| count += if (ESCAPE_TABLE[c].escaped()) |e| e.len else 1;
     if (count == name.len) return null;
-    var buf = allocator.alloc(u8, count) catch bun.outOfMemory();
+    var buf = bun.handleOom(allocator.alloc(u8, count));
     var i: usize = 0;
     for (name) |c| {
         const e = ESCAPE_TABLE[c].escaped() orelse &[_]u8{c};
@@ -579,7 +577,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
                 switch (bun.sys.File.toSource(package_json_path, manager.allocator, .{})) {
                     .result => |s| break :src s,
                     .err => |e| {
-                        Output.err(e, "failed to read {s}", .{bun.fmt.quote(package_json_path)});
+                        Output.err(e, "failed to read {f}", .{bun.fmt.quote(package_json_path)});
                         Global.crash();
                     },
                 }
@@ -620,7 +618,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
                 .ids => |ids| id: {
                     for (ids.items) |id| {
                         const pkg = lockfile.packages.get(id);
-                        const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
+                        const resolution_label = std.fmt.bufPrint(&resolution_buf, "{f}", .{pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
                         if (std.mem.eql(u8, resolution_label, version)) {
                             break :id pkg;
                         }
@@ -635,7 +633,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
             const existing_patchfile_hash = existing_patchfile_hash: {
                 var __sfb = std.heap.stackFallback(1024, manager.allocator);
                 const allocator = __sfb.get();
-                const name_and_version = std.fmt.allocPrint(allocator, "{s}@{}", .{ name, actual_package.resolution.fmt(strbuf, .posix) }) catch unreachable;
+                const name_and_version = std.fmt.allocPrint(allocator, "{s}@{f}", .{ name, actual_package.resolution.fmt(strbuf, .posix) }) catch unreachable;
                 defer allocator.free(name_and_version);
                 const name_and_version_hash = String.Builder.stringHash(name_and_version);
                 if (lockfile.patched_dependencies.get(name_and_version_hash)) |patched_dep| {
@@ -673,7 +671,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
             const existing_patchfile_hash = existing_patchfile_hash: {
                 var __sfb = std.heap.stackFallback(1024, manager.allocator);
                 const sfballoc = __sfb.get();
-                const name_and_version = std.fmt.allocPrint(sfballoc, "{s}@{}", .{ name, pkg.resolution.fmt(strbuf, .posix) }) catch unreachable;
+                const name_and_version = std.fmt.allocPrint(sfballoc, "{s}@{f}", .{ name, pkg.resolution.fmt(strbuf, .posix) }) catch unreachable;
                 defer sfballoc.free(name_and_version);
                 const name_and_version_hash = String.Builder.stringHash(name_and_version);
                 if (manager.lockfile.patched_dependencies.get(name_and_version_hash)) |patched_dep| {
@@ -708,7 +706,7 @@ pub fn preparePatch(manager: *PackageManager) !void {
     // meaning that changes to the folder will also change the package in the cache.
     //
     // So we will overwrite the folder by directly copying the package in cache into it
-    overwritePackageInNodeModulesFolder(manager, cache_dir, cache_dir_subpath, module_folder) catch |e| {
+    overwritePackageInNodeModulesFolder(cache_dir, cache_dir_subpath, module_folder) catch |e| {
         Output.prettyError(
             "<r><red>error<r>: error overwriting folder in node_modules: {s}\n<r>",
             .{@errorName(e)},
@@ -729,171 +727,49 @@ pub fn preparePatch(manager: *PackageManager) !void {
 }
 
 fn overwritePackageInNodeModulesFolder(
-    manager: *PackageManager,
     cache_dir: std.fs.Dir,
     cache_dir_subpath: []const u8,
     node_modules_folder_path: []const u8,
 ) !void {
-    var node_modules_folder = try std.fs.cwd().openDir(node_modules_folder_path, .{ .iterate = true });
-    defer node_modules_folder.close();
+    FD.cwd().deleteTree(node_modules_folder_path) catch {};
 
-    const IGNORED_PATHS: []const bun.OSPathSlice = &[_][]const bun.OSPathChar{
-        bun.OSPathLiteral("node_modules"),
-        bun.OSPathLiteral(".git"),
-        bun.OSPathLiteral("CMakeFiles"),
+    var dest_subpath: bun.RelPath(.{ .sep = .auto, .unit = .os }) = .from(node_modules_folder_path);
+    defer dest_subpath.deinit();
+
+    const src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }) = src_path: {
+        if (comptime Environment.isWindows) {
+            var path_buf: bun.WPathBuffer = undefined;
+            const abs_path = try bun.getFdPathW(.fromStdDir(cache_dir), &path_buf);
+
+            var src_path: bun.AbsPath(.{ .sep = .auto, .unit = .os }) = .from(abs_path);
+            src_path.append(cache_dir_subpath);
+
+            break :src_path src_path;
+        }
+
+        // unused if not windows
+        break :src_path .init();
+    };
+    defer src_path.deinit();
+
+    var cached_package_folder = try cache_dir.openDir(cache_dir_subpath, .{ .iterate = true });
+    defer cached_package_folder.close();
+
+    const ignore_directories: []const bun.OSPathSlice = &.{
+        comptime bun.OSPathLiteral("node_modules"),
+        comptime bun.OSPathLiteral(".git"),
+        comptime bun.OSPathLiteral("CMakeFiles"),
     };
 
-    const FileCopier = struct {
-        pub fn copy(
-            destination_dir_: std.fs.Dir,
-            walker: *Walker,
-            in_dir: if (bun.Environment.isWindows) []const u16 else void,
-            out_dir: if (bun.Environment.isWindows) []const u16 else void,
-            buf1: if (bun.Environment.isWindows) []u16 else void,
-            buf2: if (bun.Environment.isWindows) []u16 else void,
-            tmpdir_in_node_modules: if (bun.Environment.isWindows) std.fs.Dir else void,
-        ) !u32 {
-            var real_file_count: u32 = 0;
+    var copier: bun.install.FileCopier = try .init(
+        .fromStdDir(cached_package_folder),
+        src_path,
+        dest_subpath,
+        ignore_directories,
+    );
+    defer copier.deinit();
 
-            var copy_file_state: bun.CopyFileState = .{};
-            var pathbuf: bun.PathBuffer = undefined;
-            var pathbuf2: bun.PathBuffer = undefined;
-            // _ = pathbuf; // autofix
-
-            while (try walker.next()) |entry| {
-                if (entry.kind != .file) continue;
-                real_file_count += 1;
-                const openFile = std.fs.Dir.openFile;
-                const createFile = std.fs.Dir.createFile;
-
-                // 1. rename original file in node_modules to tmp_dir_in_node_modules
-                // 2. create the file again
-                // 3. copy cache flie to the newly re-created file
-                // 4. profit
-                if (comptime bun.Environment.isWindows) {
-                    var tmpbuf: [1024]u8 = undefined;
-                    const basename = bun.strings.fromWPath(pathbuf2[0..], entry.basename);
-                    const tmpname = bun.span(bun.fs.FileSystem.instance.tmpname(basename, tmpbuf[0..], bun.fastRandom()) catch |e| {
-                        Output.prettyError("<r><red>error<r>: copying file {s}", .{@errorName(e)});
-                        Global.crash();
-                    });
-
-                    const entrypath = bun.strings.fromWPath(pathbuf[0..], entry.path);
-                    pathbuf[entrypath.len] = 0;
-                    const entrypathZ = pathbuf[0..entrypath.len :0];
-
-                    if (bun.sys.renameatConcurrently(
-                        .fromStdDir(destination_dir_),
-                        entrypathZ,
-                        .fromStdDir(tmpdir_in_node_modules),
-                        tmpname,
-                        .{ .move_fallback = true },
-                    ).asErr()) |e| {
-                        Output.prettyError("<r><red>error<r>: copying file {}", .{e});
-                        Global.crash();
-                    }
-
-                    var outfile = createFile(destination_dir_, entrypath, .{}) catch |e| {
-                        Output.prettyError("<r><red>error<r>: failed to create file {s} ({s})", .{ entrypath, @errorName(e) });
-                        Global.crash();
-                    };
-                    outfile.close();
-
-                    const infile_path = bun.path.joinStringBufWZ(buf1, &[_][]const u16{ in_dir, entry.path }, .auto);
-                    const outfile_path = bun.path.joinStringBufWZ(buf2, &[_][]const u16{ out_dir, entry.path }, .auto);
-
-                    bun.copyFileWithState(infile_path, outfile_path, &copy_file_state).unwrap() catch |err| {
-                        Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-                        Global.crash();
-                    };
-                } else if (comptime Environment.isPosix) {
-                    var in_file = try openFile(entry.dir, entry.basename, .{ .mode = .read_only });
-                    defer in_file.close();
-
-                    @memcpy(pathbuf[0..entry.path.len], entry.path);
-                    pathbuf[entry.path.len] = 0;
-
-                    if (bun.sys.unlinkat(
-                        .fromStdDir(destination_dir_),
-                        pathbuf[0..entry.path.len :0],
-                    ).asErr()) |e| {
-                        Output.prettyError("<r><red>error<r>: copying file {}", .{e.withPath(entry.path)});
-                        Global.crash();
-                    }
-
-                    var outfile = try createFile(destination_dir_, entry.path, .{});
-                    defer outfile.close();
-
-                    const stat = in_file.stat() catch continue;
-                    _ = bun.c.fchmod(outfile.handle, @intCast(stat.mode));
-
-                    bun.copyFileWithState(.fromStdFile(in_file), .fromStdFile(outfile), &copy_file_state).unwrap() catch |err| {
-                        Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
-                        Global.crash();
-                    };
-                }
-            }
-
-            return real_file_count;
-        }
-    };
-
-    var pkg_in_cache_dir = try cache_dir.openDir(cache_dir_subpath, .{ .iterate = true });
-    defer pkg_in_cache_dir.close();
-    var walker = Walker.walk(pkg_in_cache_dir, manager.allocator, &.{}, IGNORED_PATHS) catch bun.outOfMemory();
-    defer walker.deinit();
-
-    var buf1: if (bun.Environment.isWindows) bun.WPathBuffer else void = undefined;
-    var buf2: if (bun.Environment.isWindows) bun.WPathBuffer else void = undefined;
-    var in_dir: if (bun.Environment.isWindows) []const u16 else void = undefined;
-    var out_dir: if (bun.Environment.isWindows) []const u16 else void = undefined;
-
-    if (comptime bun.Environment.isWindows) {
-        const inlen = bun.windows.GetFinalPathNameByHandleW(pkg_in_cache_dir.fd, &buf1, buf1.len, 0);
-        if (inlen == 0) {
-            const e = bun.windows.Win32Error.get();
-            const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
-            Output.prettyError("<r><red>error<r>: copying file {}", .{err});
-            Global.crash();
-        }
-        in_dir = buf1[0..inlen];
-        const outlen = bun.windows.GetFinalPathNameByHandleW(node_modules_folder.fd, &buf2, buf2.len, 0);
-        if (outlen == 0) {
-            const e = bun.windows.Win32Error.get();
-            const err = if (e.toSystemErrno()) |sys_err| bun.errnoToZigErr(sys_err) else error.Unexpected;
-            Output.prettyError("<r><red>error<r>: copying file {}", .{err});
-            Global.crash();
-        }
-        out_dir = buf2[0..outlen];
-        var tmpbuf: [1024]u8 = undefined;
-        const tmpname = bun.span(bun.fs.FileSystem.instance.tmpname("tffbp", tmpbuf[0..], bun.fastRandom()) catch |e| {
-            Output.prettyError("<r><red>error<r>: copying file {s}", .{@errorName(e)});
-            Global.crash();
-        });
-        const temp_folder_in_node_modules = try node_modules_folder.makeOpenPath(tmpname, .{});
-        defer {
-            node_modules_folder.deleteTree(tmpname) catch {};
-        }
-        _ = try FileCopier.copy(
-            node_modules_folder,
-            &walker,
-            in_dir,
-            out_dir,
-            &buf1,
-            &buf2,
-            temp_folder_in_node_modules,
-        );
-    } else if (Environment.isPosix) {
-        _ = try FileCopier.copy(
-            node_modules_folder,
-            &walker,
-            {},
-            {},
-            {},
-            {},
-            {},
-        );
-    }
+    try copier.copy().unwrap();
 }
 
 fn nodeModulesFolderForDependencyIDs(iterator: *Lockfile.Tree.Iterator(.node_modules), ids: []const IdPair) !?Lockfile.Tree.Iterator(.node_modules).Next {
@@ -925,7 +801,7 @@ fn pkgInfoForNameAndVersion(
     version: ?[]const u8,
 ) struct { PackageID, Lockfile.Tree.Iterator(.node_modules).Next } {
     var sfb = std.heap.stackFallback(@sizeOf(IdPair) * 4, lockfile.allocator);
-    var pairs = std.ArrayList(IdPair).initCapacity(sfb.get(), 8) catch bun.outOfMemory();
+    var pairs = bun.handleOom(std.array_list.Managed(IdPair).initCapacity(sfb.get(), 8));
     defer pairs.deinit();
 
     const name_hash = String.Builder.stringHash(name);
@@ -941,12 +817,12 @@ fn pkgInfoForNameAndVersion(
         if (pkg_id == invalid_package_id) continue;
         const pkg = lockfile.packages.get(pkg_id);
         if (version) |v| {
-            const label = std.fmt.bufPrint(buf[0..], "{}", .{pkg.resolution.fmt(strbuf, .posix)}) catch @panic("Resolution name too long");
+            const label = std.fmt.bufPrint(buf[0..], "{f}", .{pkg.resolution.fmt(strbuf, .posix)}) catch @panic("Resolution name too long");
             if (std.mem.eql(u8, label, v)) {
-                pairs.append(.{ @intCast(dep_id), pkg_id }) catch bun.outOfMemory();
+                bun.handleOom(pairs.append(.{ @intCast(dep_id), pkg_id }));
             }
         } else {
-            pairs.append(.{ @intCast(dep_id), pkg_id }) catch bun.outOfMemory();
+            bun.handleOom(pairs.append(.{ @intCast(dep_id), pkg_id }));
         }
     }
 
@@ -1052,7 +928,7 @@ fn pkgInfoForNameAndVersion(
 
         const pkg = lockfile.packages.get(pkgid);
 
-        Output.prettyError("  {s}@<blue>{}<r>\n", .{ pkg.name.slice(strbuf), pkg.resolution.fmt(strbuf, .posix) });
+        Output.prettyError("  {s}@<blue>{f}<r>\n", .{ pkg.name.slice(strbuf), pkg.resolution.fmt(strbuf, .posix) });
 
         if (i + 1 < pairs.items.len) {
             for (pairs.items[i + 1 ..]) |*p| {
@@ -1070,7 +946,7 @@ fn pathArgumentRelativeToRootWorkspacePackage(manager: *PackageManager, lockfile
     if (workspace_package_id == 0) return null;
     const workspace_res = lockfile.packages.items(.resolution)[workspace_package_id];
     const rel_path: []const u8 = workspace_res.value.workspace.slice(lockfile.buffers.string_bytes.items);
-    return bun.default_allocator.dupe(u8, bun.path.join(&[_][]const u8{ rel_path, argument }, .posix)) catch bun.outOfMemory();
+    return bun.handleOom(bun.default_allocator.dupe(u8, bun.path.join(&[_][]const u8{ rel_path, argument }, .posix)));
 }
 
 const PatchArgKind = enum {
@@ -1084,22 +960,20 @@ const PatchArgKind = enum {
     }
 };
 
-// @sortImports
+const string = []const u8;
+const stringZ = [:0]const u8;
 
-const Walker = @import("../../walker_skippable.zig");
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const FD = bun.FD;
 const Global = bun.Global;
-const JSC = bun.JSC;
-const JSON = bun.JSON;
+const JSON = bun.json;
 const Output = bun.Output;
 const default_allocator = bun.default_allocator;
+const jsc = bun.jsc;
 const logger = bun.logger;
-const string = bun.string;
-const stringZ = bun.stringZ;
 const strings = bun.strings;
 const File = bun.sys.File;
 

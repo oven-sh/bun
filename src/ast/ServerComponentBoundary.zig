@@ -102,7 +102,7 @@ pub const List = struct {
         list: std.MultiArrayList(ServerComponentBoundary).Slice,
 
         pub fn hash(_: Adapter, key: Index.Int) u32 {
-            return std.hash.uint32(key);
+            return std.hash.int(@as(u32, key));
         }
 
         pub fn eql(adapt: Adapter, a: Index.Int, _: void, b_index: usize) bool {
@@ -112,12 +112,10 @@ pub const List = struct {
     };
 };
 
-// @sortImports
-
 const bun = @import("bun");
 const std = @import("std");
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const Index = js_ast.Index;
 const ServerComponentBoundary = js_ast.ServerComponentBoundary;
 const UseDirective = js_ast.UseDirective;

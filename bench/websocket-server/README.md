@@ -34,4 +34,4 @@ For example, when the client sends `"foo"`, the server sends back `"John: foo"` 
 
 The client script waits until it receives all the messages for each client before sending the next batch of messages.
 
-This project was created using `bun init` in bun v0.2.1. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
+This project was created using `bun init` in bun v0.2.1. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.

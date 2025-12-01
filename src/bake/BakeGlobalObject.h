@@ -4,13 +4,11 @@
 
 namespace Bake {
 
-struct ProductionPerThread;
-
 class GlobalObject : public Zig::GlobalObject {
 public:
     using Base = Zig::GlobalObject;
 
-    ProductionPerThread* m_perThreadData = nullptr;
+    void* m_perThreadData = nullptr;
     DECLARE_INFO;
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -38,5 +36,8 @@ public:
     {
     }
 };
+
+extern "C" void* BakeGlobalObject__getPerThreadData(JSC::JSGlobalObject* global);
+extern "C" void BakeGlobalObject__attachPerThreadData(GlobalObject* global, void* perThreadData);
 
 }; // namespace Kit

@@ -16,18 +16,7 @@ pub fn JSHostFunctionTypeWithContext(comptime ContextType: type) type {
 pub fn toJSHostFn(comptime functionToWrap: JSHostFnZig) JSHostFn {
     return struct {
         pub fn function(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(jsc.conv) JSValue {
-            if (Environment.allow_assert and Environment.is_canary) {
-                const value = functionToWrap(globalThis, callframe) catch |err| switch (err) {
-                    error.JSError => .zero,
-                    error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-                };
-                debugExceptionAssertion(globalThis, value, functionToWrap);
-                return value;
-            }
-            return @call(.always_inline, functionToWrap, .{ globalThis, callframe }) catch |err| switch (err) {
-                error.JSError => .zero,
-                error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-            };
+            return toJSHostFnResult(globalThis, functionToWrap(globalThis, callframe));
         }
     }.function;
 }
@@ -35,16 +24,25 @@ pub fn toJSHostFn(comptime functionToWrap: JSHostFnZig) JSHostFn {
 pub fn toJSHostFnWithContext(comptime ContextType: type, comptime Function: JSHostFnZigWithContext(ContextType)) JSHostFunctionTypeWithContext(ContextType) {
     return struct {
         pub fn function(ctx: *ContextType, globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(jsc.conv) JSValue {
-            const value = Function(ctx, globalThis, callframe) catch |err| switch (err) {
-                error.JSError => .zero,
-                error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
-            };
-            if (Environment.allow_assert and Environment.is_canary) {
-                debugExceptionAssertion(globalThis, value, Function);
-            }
-            return value;
+            return toJSHostFnResult(globalThis, Function(ctx, globalThis, callframe));
         }
     }.function;
+}
+pub fn toJSHostFnResult(globalThis: *JSGlobalObject, result: bun.JSError!JSValue) JSValue {
+    if (Environment.allow_assert and Environment.is_canary) {
+        const value = result catch |err| switch (err) {
+            error.JSError => .zero,
+            error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
+            error.JSTerminated => .zero,
+        };
+        debugExceptionAssertion(globalThis, value, "_unknown_".*);
+        return value;
+    }
+    return result catch |err| switch (err) {
+        error.JSError => .zero,
+        error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
+        error.JSTerminated => .zero,
+    };
 }
 
 fn debugExceptionAssertion(globalThis: *JSGlobalObject, value: JSValue, comptime func: anytype) void {
@@ -57,7 +55,7 @@ fn debugExceptionAssertion(globalThis: *JSGlobalObject, value: JSValue, comptime
                     \\Native function returned a non-zero JSValue while an exception is pending
                     \\
                     \\    fn: {s}
-                    \\ value: {}
+                    \\ value: {f}
                     \\
                 , .{
                     &func, // use `(lldb) image lookup --address 0x1ec4` to discover what function failed
@@ -70,13 +68,14 @@ fn debugExceptionAssertion(globalThis: *JSGlobalObject, value: JSValue, comptime
     bun.assert((value == .zero) == globalThis.hasException());
 }
 
-pub fn toJSHostSetterValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSError }!void) bool {
+pub fn toJSHostSetterValue(globalThis: *JSGlobalObject, value: error{ OutOfMemory, JSError, JSTerminated }!void) bool {
     value catch |err| switch (err) {
         error.JSError => return false,
         error.OutOfMemory => {
             _ = globalThis.throwOutOfMemoryValue();
             return false;
         },
+        error.JSTerminated => return false,
     };
     return true;
 }
@@ -94,10 +93,11 @@ pub fn toJSHostCall(
     scope.init(globalThis, src);
     defer scope.deinit();
 
-    const returned: error{ OutOfMemory, JSError }!JSValue = @call(.auto, function, args);
+    const returned: error{ OutOfMemory, JSError, JSTerminated }!JSValue = @call(.auto, function, args);
     const normal = returned catch |err| switch (err) {
         error.JSError => .zero,
         error.OutOfMemory => globalThis.throwOutOfMemoryValue(),
+        error.JSTerminated => .zero,
     };
     scope.assertExceptionPresenceMatches(normal == .zero);
     return normal;
@@ -114,12 +114,13 @@ pub fn fromJSHostCall(
     src: std.builtin.SourceLocation,
     comptime function: anytype,
     args: std.meta.ArgsTuple(@TypeOf(function)),
-) bun.JSError!JSValue {
+) error{JSError}!JSValue {
     var scope: jsc.ExceptionValidationScope = undefined;
     scope.init(globalThis, src);
     defer scope.deinit();
 
     const value = @call(.auto, function, args);
+    if (@TypeOf(value) != JSValue) @compileError("fromJSHostCall only supports JSValue");
     scope.assertExceptionPresenceMatches(value == .zero);
     return if (value == .zero) error.JSError else value;
 }
@@ -130,7 +131,7 @@ pub fn fromJSHostCallGeneric(
     src: std.builtin.SourceLocation,
     comptime function: anytype,
     args: std.meta.ArgsTuple(@TypeOf(function)),
-) bun.JSError!@typeInfo(@TypeOf(function)).@"fn".return_type.? {
+) error{JSError}!@typeInfo(@TypeOf(function)).@"fn".return_type.? {
     var scope: jsc.CatchScope = undefined;
     scope.init(globalThis, src);
     defer scope.deinit();
@@ -166,6 +167,18 @@ inline fn parseErrorSet(T: type, errors: []const std.builtin.Type.Error) ParsedH
         }
         break :brk errs;
     };
+}
+
+// For when bubbling up errors to functions that require a C ABI boundary
+// TODO: make this not need a 'globalThis'
+pub fn voidFromJSError(err: bun.JSError, globalThis: *jsc.JSGlobalObject) void {
+    switch (err) {
+        error.JSError => {},
+        error.OutOfMemory => globalThis.throwOutOfMemory() catch {},
+        error.JSTerminated => {},
+    }
+    // TODO: catch exception, declare throw scope, re-throw
+    // c++ needs to be able to see that zig functions can throw for BUN_JSC_validateExceptionChecks
 }
 
 pub fn wrap1(comptime func: anytype) @"return": {
@@ -238,78 +251,52 @@ fn checkWrapParams(comptime func: anytype, comptime N: u8) []const std.builtin.T
     return params;
 }
 
+/// Uses .SysV callconv on Windows. Use to satisfy SYSV_ABI requirement in JSC APIs.
+/// Otherwise (when the C++ counterpart has no explicit calling convention) use wrap4.
+pub fn wrap4v(comptime func: anytype) @"return": {
+    const p = checkWrapParams(func, 4);
+    break :@"return" fn (p[0].type.?, p[1].type.?, p[2].type.?, p[3].type.?) callconv(jsc.conv) JSValue;
+} {
+    const p = @typeInfo(@TypeOf(func)).@"fn".params;
+    return struct {
+        pub fn wrapped(arg0: p[0].type.?, arg1: p[1].type.?, arg2: p[2].type.?, arg3: p[3].type.?) callconv(jsc.conv) JSValue {
+            return toJSHostCall(arg0, @src(), func, .{ arg0, arg1, arg2, arg3 });
+        }
+    }.wrapped;
+}
+
 const private = struct {
     pub extern fn Bun__CreateFFIFunctionWithDataValue(
         *JSGlobalObject,
         ?*const ZigString,
         argCount: u32,
         function: *const JSHostFn,
-        strong: bool,
         data: *anyopaque,
     ) JSValue;
-    pub extern fn Bun__CreateFFIFunction(
-        globalObject: *JSGlobalObject,
-        symbolName: ?*const ZigString,
-        argCount: u32,
-        function: *const JSHostFn,
-        strong: bool,
-    ) *anyopaque;
 
     pub extern fn Bun__CreateFFIFunctionValue(
         globalObject: *JSGlobalObject,
         symbolName: ?*const ZigString,
         argCount: u32,
         function: *const JSHostFn,
-        strong: bool,
         add_ptr_field: bool,
         inputFunctionPtr: ?*anyopaque,
     ) JSValue;
 
-    pub extern fn Bun__untrackFFIFunction(
-        globalObject: *JSGlobalObject,
-        function: JSValue,
-    ) bool;
-
     pub extern fn Bun__FFIFunction_getDataPtr(JSValue) ?*anyopaque;
     pub extern fn Bun__FFIFunction_setDataPtr(JSValue, ?*anyopaque) void;
 };
-
-pub fn NewFunction(
-    globalObject: *JSGlobalObject,
-    symbolName: ?*const ZigString,
-    argCount: u32,
-    comptime function: anytype,
-    strong: bool,
-) JSValue {
-    if (@TypeOf(function) == JSHostFn) {
-        return NewRuntimeFunction(globalObject, symbolName, argCount, function, strong, false, null);
-    }
-    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFn(function), strong, false, null);
-}
-
-pub fn createCallback(
-    globalObject: *JSGlobalObject,
-    symbolName: ?*const ZigString,
-    argCount: u32,
-    comptime function: anytype,
-) JSValue {
-    if (@TypeOf(function) == JSHostFn) {
-        return NewRuntimeFunction(globalObject, symbolName, argCount, function, false, false, null);
-    }
-    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFn(function), false, false, null);
-}
 
 pub fn NewRuntimeFunction(
     globalObject: *JSGlobalObject,
     symbolName: ?*const ZigString,
     argCount: u32,
     functionPointer: *const JSHostFn,
-    strong: bool,
     add_ptr_property: bool,
     inputFunctionPtr: ?*anyopaque,
 ) JSValue {
     jsc.markBinding(@src());
-    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, functionPointer, strong, add_ptr_property, inputFunctionPtr);
+    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, functionPointer, add_ptr_property, inputFunctionPtr);
 }
 
 pub fn getFunctionData(function: JSValue) ?*anyopaque {
@@ -327,7 +314,6 @@ pub fn NewFunctionWithData(
     symbolName: ?*const ZigString,
     argCount: u32,
     comptime function: JSHostFnZig,
-    strong: bool,
     data: *anyopaque,
 ) JSValue {
     jsc.markBinding(@src());
@@ -336,17 +322,8 @@ pub fn NewFunctionWithData(
         symbolName,
         argCount,
         toJSHostFn(function),
-        strong,
         data,
     );
-}
-
-pub fn untrackFunction(
-    globalObject: *JSGlobalObject,
-    value: JSValue,
-) bool {
-    jsc.markBinding(@src());
-    return private.Bun__untrackFFIFunction(globalObject, value);
 }
 
 pub const DOMEffect = struct {
@@ -615,7 +592,7 @@ pub fn wrapInstanceMethod(
 
                         args[i] = try string_value.getZigString(globalThis);
                     },
-                    ?jsc.Cloudflare.ContentOptions => {
+                    ?bun.api.HTMLRewriter.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
                             if (try content_arg.get(globalThis, "html")) |html_val| {
                                 args[i] = .{ .html = html_val.toBoolean() };
@@ -669,7 +646,7 @@ pub fn wrapInstanceMethod(
                 }
             }
 
-            return @call(.always_inline, @field(Container, name), args);
+            return @call(bun.callmod_inline, @field(Container, name), args);
         }
     }.method;
 }
@@ -768,7 +745,7 @@ pub fn wrapStaticMethod(
 
                         args[i] = try string_value.getZigString(globalThis);
                     },
-                    ?jsc.Cloudflare.ContentOptions => {
+                    ?bun.api.HTMLRewriter.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
                             if (try content_arg.get(globalThis, "html")) |html_val| {
                                 args[i] = .{ .html = html_val.toBoolean() };
@@ -811,17 +788,20 @@ pub fn wrapStaticMethod(
 
             defer iter.deinit();
 
-            return @call(.always_inline, @field(Container, name), args);
+            return @call(bun.callmod_inline, @field(Container, name), args);
         }
     }.method;
 }
 
-const bun = @import("bun");
-const jsc = bun.jsc;
-const JSValue = jsc.JSValue;
-const JSGlobalObject = jsc.JSGlobalObject;
-const CallFrame = jsc.CallFrame;
-const ZigString = jsc.ZigString;
-const std = @import("std");
 const string = []const u8;
+
+const std = @import("std");
+
+const bun = @import("bun");
 const Environment = bun.Environment;
+
+const jsc = bun.jsc;
+const CallFrame = jsc.CallFrame;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;
+const ZigString = jsc.ZigString;

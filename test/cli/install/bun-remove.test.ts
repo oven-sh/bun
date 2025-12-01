@@ -212,9 +212,9 @@ it("should not affect if package is not installed", async () => {
     env,
   });
   expect(await exited).toBe(0);
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.split("\n")).toEqual([expect.stringContaining("bun remove v1."), ""]);
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err.replace(/ \[[0-9\.]+m?s\]/, "").split(/\r?\n/)).toEqual([
     "package.json doesn't have dependencies, there's nothing to remove!",
     "",
@@ -304,9 +304,9 @@ it("should remove peerDependencies", async () => {
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\[[0-9\.]+m?s\]/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun remove v1."),
     "",

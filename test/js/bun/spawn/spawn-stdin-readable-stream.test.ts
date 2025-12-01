@@ -18,7 +18,7 @@ describe("spawn stdin ReadableStream", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     expect(text).toBe("hello from stream");
     expect(await proc.exited).toBe(0);
   });
@@ -41,7 +41,7 @@ describe("spawn stdin ReadableStream", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     expect(text).toBe(chunks.join(""));
     expect(await proc.exited).toBe(0);
   });
@@ -64,7 +64,7 @@ describe("spawn stdin ReadableStream", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     expect(text).toBe("binary data stream");
     expect(await proc.exited).toBe(0);
   });
@@ -88,7 +88,7 @@ describe("spawn stdin ReadableStream", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     expect(text).toBe("first\nsecond\nthird\n");
     expect(await proc.exited).toBe(0);
   });
@@ -113,7 +113,7 @@ describe("spawn stdin ReadableStream", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     expect(text).toBe("pull 1\npull 2\npull 3\n");
     expect(await proc.exited).toBe(0);
   });
@@ -139,7 +139,7 @@ describe("spawn stdin ReadableStream", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     expect(text).toBe("async pull 1\nasync pull 2\nasync pull 3\n");
     expect(await proc.exited).toBe(0);
   });
@@ -160,7 +160,7 @@ describe("spawn stdin ReadableStream", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     expect(text).toBe(largeData);
     expect(await proc.exited).toBe(0);
   });
@@ -169,11 +169,12 @@ describe("spawn stdin ReadableStream", () => {
     const chunkSize = 64 * 1024; // 64KB chunks
     const numChunks = 16; // 1MB total
     let pushedChunks = 0;
+    const chunk = Buffer.alloc(chunkSize, "x");
 
     const stream = new ReadableStream({
       pull(controller) {
         if (pushedChunks < numChunks) {
-          controller.enqueue("x".repeat(chunkSize));
+          controller.enqueue(chunk);
           pushedChunks++;
         } else {
           controller.close();
@@ -182,15 +183,24 @@ describe("spawn stdin ReadableStream", () => {
     });
 
     await using proc = spawn({
-      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        let length = 0;
+        process.stdin.on('data', (data) => length += data.length);
+        process.once('beforeExit', () => console.error(length));
+        process.stdin.pipe(process.stdout)
+`,
+      ],
       stdin: stream,
       stdout: "pipe",
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     expect(text.length).toBe(chunkSize * numChunks);
-    expect(text).toBe("x".repeat(chunkSize * numChunks));
+    expect(text).toBe(chunk.toString().repeat(numChunks));
     expect(await proc.exited).toBe(0);
   });
 
@@ -232,7 +242,7 @@ describe("spawn stdin ReadableStream", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     await proc.exited;
 
     // Give some time for cancellation to happen
@@ -261,7 +271,7 @@ describe("spawn stdin ReadableStream", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     // Process should receive data before the error
     expect(text).toBe("before error\n");
 
@@ -400,7 +410,7 @@ describe("spawn stdin ReadableStream", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     await proc.exited;
 
     // The pull method should have been called multiple times
@@ -462,7 +472,7 @@ describe("spawn stdin ReadableStream", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     expect(text).toBe("");
     expect(await proc.exited).toBe(0);
   });
@@ -513,7 +523,7 @@ describe("spawn stdin ReadableStream", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     expect(text).toBe("HELLO WORLD");
     expect(await proc.exited).toBe(0);
   });
@@ -539,7 +549,7 @@ describe("spawn stdin ReadableStream", () => {
     // Read from the second branch independently
     const text2 = await new Response(stream2).text();
 
-    const text1 = await new Response(proc.stdout).text();
+    const text1 = await proc.stdout.text();
     expect(text1).toBe("shared data");
     expect(text2).toBe("shared data");
     expect(await proc.exited).toBe(0);
@@ -570,7 +580,7 @@ describe("spawn stdin ReadableStream", () => {
           env: bunEnv,
         });
 
-        await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+        await Promise.all([proc.stdout.text(), proc.exited]);
       }
 
       const promises = Array.from({ length: iterations }, (_, i) => iterate(i));

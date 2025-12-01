@@ -1,13 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Output = bun.Output;
-const strings = bun.strings;
-const string = bun.string;
-const js_lexer = bun.js_lexer;
-const fmt = std.fmt;
-const Environment = bun.Environment;
-const sha = bun.sha;
-
 pub const TableSymbols = struct {
     enable_ansi_colors: bool,
 
@@ -117,7 +107,7 @@ pub fn Table(
 pub const RedactedNpmUrlFormatter = struct {
     url: string,
 
-    pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         var i: usize = 0;
         while (i < this.url.len) {
             if (strings.startsWithUUID(this.url[i..])) {
@@ -150,13 +140,13 @@ pub fn redactedNpmUrl(str: string) RedactedNpmUrlFormatter {
 pub const RedactedSourceFormatter = struct {
     text: string,
 
-    pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         var i: usize = 0;
         while (i < this.text.len) {
             if (strings.startsWithSecret(this.text[i..])) |secret| {
                 const offset, const len = secret;
                 try writer.writeAll(this.text[i..][0..offset]);
-                try writer.writeByteNTimes('*', len);
+                try writer.splatByteAll('*', len);
                 i += offset + len;
                 continue;
             }
@@ -177,7 +167,7 @@ pub fn redactedSource(str: string) RedactedSourceFormatter {
 pub const DependencyUrlFormatter = struct {
     url: string,
 
-    pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         var remain = this.url;
         while (strings.indexOfChar(remain, '/')) |slash| {
             try writer.writeAll(remain[0..slash]);
@@ -203,7 +193,7 @@ pub fn IntegrityFormatter(comptime style: IntegrityFormatStyle) type {
     return struct {
         bytes: [sha.SHA512.digest]u8,
 
-        pub fn format(this: @This(), comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
             var buf: [std.base64.standard.Encoder.calcSize(sha.SHA512.digest)]u8 = undefined;
             const count = bun.simdutf.base64.encode(this.bytes[0..sha.SHA512.digest], &buf, false);
 
@@ -224,7 +214,7 @@ pub fn integrity(bytes: [sha.SHA512.digest]u8, comptime style: IntegrityFormatSt
 const JSONFormatter = struct {
     input: []const u8,
 
-    pub fn format(self: JSONFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: JSONFormatter, writer: *std.Io.Writer) !void {
         try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .latin1);
     }
 };
@@ -237,7 +227,7 @@ const JSONFormatterUTF8 = struct {
         quote: bool = true,
     };
 
-    pub fn format(self: JSONFormatterUTF8, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: JSONFormatterUTF8, writer: *std.Io.Writer) !void {
         if (self.opts.quote) {
             try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .utf8);
         } else {
@@ -264,7 +254,7 @@ fn getSharedBuffer() []u8 {
 }
 threadlocal var shared_temp_buffer_ptr: ?*SharedTempBuffer = null;
 
-pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !void {
+pub fn formatUTF16Type(slice_: []const u16, writer: *std.Io.Writer) !void {
     var chunk = getSharedBuffer();
 
     // Defensively ensure recursion doesn't cause the buffer to be overwritten in-place
@@ -282,7 +272,7 @@ pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !vo
     var slice = slice_;
 
     while (slice.len > 0) {
-        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice);
+        const result = strings.copyUTF16IntoUTF8(chunk, slice);
         if (result.read == 0 or result.written == 0)
             break;
         try writer.writeAll(chunk[0..result.written]);
@@ -290,7 +280,7 @@ pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !vo
     }
 }
 
-pub fn formatUTF16TypeWithPathOptions(comptime Slice: type, slice_: Slice, writer: anytype, opts: PathFormatOptions) !void {
+pub fn formatUTF16TypeWithPathOptions(slice_: []const u16, writer: *std.Io.Writer, opts: PathFormatOptions) !void {
     var chunk = getSharedBuffer();
 
     // Defensively ensure recursion doesn't cause the buffer to be overwritten in-place
@@ -308,7 +298,7 @@ pub fn formatUTF16TypeWithPathOptions(comptime Slice: type, slice_: Slice, write
     var slice = slice_;
 
     while (slice.len > 0) {
-        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice);
+        const result = strings.copyUTF16IntoUTF8(chunk, slice);
         if (result.read == 0 or result.written == 0)
             break;
 
@@ -349,7 +339,7 @@ pub inline fn debugUtf32PathFormatter(path: []const u32) DebugUTF32PathFormatter
 
 pub const DebugUTF32PathFormatter = struct {
     path: []const u32,
-    pub fn format(this: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) !void {
         var path_buf: bun.PathBuffer = undefined;
         const result = bun.simdutf.convert.utf32.to.utf8.with_errors.le(this.path, &path_buf);
         const converted = if (result.isSuccessful())
@@ -364,11 +354,11 @@ pub const DebugUTF32PathFormatter = struct {
 pub const FormatUTF16 = struct {
     buf: []const u16,
     path_fmt_opts: ?PathFormatOptions = null,
-    pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         if (self.path_fmt_opts) |opts| {
-            try formatUTF16TypeWithPathOptions([]const u16, self.buf, writer, opts);
+            try formatUTF16TypeWithPathOptions(self.buf, writer, opts);
         } else {
-            try formatUTF16Type([]const u16, self.buf, writer);
+            try formatUTF16Type(self.buf, writer);
         }
     }
 };
@@ -376,7 +366,7 @@ pub const FormatUTF16 = struct {
 pub const FormatUTF8 = struct {
     buf: []const u8,
     path_fmt_opts: ?PathFormatOptions = null,
-    pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         if (self.path_fmt_opts) |opts| {
             if (opts.path_sep == .any and opts.escape_backslashes == false) {
                 try writer.writeAll(self.buf);
@@ -454,7 +444,7 @@ pub fn fmtPath(
     };
 }
 
-pub fn formatLatin1(slice_: []const u8, writer: anytype) !void {
+pub fn formatLatin1(slice_: []const u8, writer: *std.Io.Writer) !void {
     var chunk = getSharedBuffer();
     var slice = slice_;
 
@@ -475,7 +465,7 @@ pub fn formatLatin1(slice_: []const u8, writer: anytype) !void {
             try writer.writeAll(slice[0..i]);
             slice = slice[i..];
         }
-        const result = strings.copyLatin1IntoUTF8(chunk, @TypeOf(slice), slice[0..@min(chunk.len, slice.len)]);
+        const result = strings.copyLatin1IntoUTF8(chunk, slice[0..@min(chunk.len, slice.len)]);
         if (result.read == 0 or result.written == 0)
             break;
         try writer.writeAll(chunk[0..result.written]);
@@ -498,7 +488,7 @@ pub const URLFormatter = struct {
         abstract,
     };
 
-    pub fn format(this: URLFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: URLFormatter, writer: *std.Io.Writer) !void {
         try writer.print("{s}://", .{switch (this.proto) {
             .http => "http",
             .https => "https",
@@ -536,7 +526,7 @@ pub const HostFormatter = struct {
     port: ?u16 = null,
     is_https: bool = false,
 
-    pub fn format(formatter: HostFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(formatter: HostFormatter, writer: *std.Io.Writer) !void {
         if (strings.indexOfChar(formatter.host, ':') != null) {
             try writer.writeAll(formatter.host);
             return;
@@ -564,7 +554,7 @@ pub fn fmtIdentifier(name: string) FormatValidIdentifier {
 /// This will always allocate
 pub const FormatValidIdentifier = struct {
     name: string,
-    pub fn format(self: FormatValidIdentifier, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: FormatValidIdentifier, writer: *std.Io.Writer) !void {
         var iterator = strings.CodepointIterator.init(self.name);
         var cursor = strings.CodepointIterator.Cursor{};
 
@@ -629,7 +619,7 @@ pub const FormatValidIdentifier = struct {
 // - Encodes "\n" as "%0A" to support multi-line strings.
 //   https://github.com/actions/toolkit/issues/193#issuecomment-605394935
 // - Strips ANSI output as it will appear malformed.
-pub fn githubActionWriter(writer: anytype, self: string) !void {
+pub fn githubActionWriter(writer: *std.Io.Writer, self: string) !void {
     var offset: usize = 0;
     const end = @as(u32, @truncate(self.len));
     while (offset < end) {
@@ -671,7 +661,7 @@ pub fn githubActionWriter(writer: anytype, self: string) !void {
 pub const GithubActionFormatter = struct {
     text: string,
 
-    pub fn format(this: GithubActionFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: GithubActionFormatter, writer: *std.Io.Writer) !void {
         try githubActionWriter(writer, this.text);
     }
 };
@@ -682,7 +672,7 @@ pub fn githubAction(self: string) strings.GithubActionFormatter {
     };
 }
 
-pub fn quotedWriter(writer: anytype, self: string) !void {
+pub fn quotedWriter(writer: *std.Io.Writer, self: string) !void {
     const remain = self;
     if (strings.containsNewlineOrNonASCIIOrQuote(remain)) {
         try bun.js_printer.writeJSONString(self, @TypeOf(writer), writer, strings.Encoding.utf8);
@@ -696,7 +686,7 @@ pub fn quotedWriter(writer: anytype, self: string) !void {
 pub const QuotedFormatter = struct {
     text: []const u8,
 
-    pub fn format(this: QuotedFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: QuotedFormatter, writer: *std.Io.Writer) !void {
         try quotedWriter(writer, this.text);
     }
 };
@@ -717,12 +707,6 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
         check_for_unhighlighted_write: bool = true,
 
         redact_sensitive_information: bool = false,
-
-        pub const default: Options = .{
-            .enable_colors = Output.enable_ansi_colors,
-            .check_for_no_highlighting = true,
-            .redact_sensitive_information = false,
-        };
     };
 
     const ColorCode = enum {
@@ -747,8 +731,8 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
     pub const Keyword = enum {
         abstract,
         as,
-        @"async",
-        @"await",
+        async,
+        await,
         case,
         @"catch",
         class,
@@ -812,8 +796,8 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
             return switch (this) {
                 .abstract => .blue,
                 .as => .blue,
-                .@"async" => .magenta,
-                .@"await" => .magenta,
+                .async => .magenta,
+                .await => .magenta,
                 .case => .magenta,
                 .@"catch" => .magenta,
                 .class => .magenta,
@@ -888,14 +872,12 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
 
     pub const RedactedKeywords = bun.ComptimeEnumMap(RedactedKeyword);
 
-    pub fn format(this: @This(), comptime unused_fmt: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
-        comptime bun.assert(unused_fmt.len == 0);
-
+    pub fn format(this: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         var text = this.text;
         if (this.opts.check_for_unhighlighted_write) {
             if (!this.opts.enable_colors or text.len > 2048 or text.len == 0 or !strings.isAllASCII(text)) {
                 if (this.opts.redact_sensitive_information) {
-                    try writer.print("{}", .{redactedSource(text)});
+                    try writer.print("{f}", .{redactedSource(text)});
                 } else {
                     try writer.writeAll(text);
                 }
@@ -1042,13 +1024,13 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                                     };
 
                                     if (curly_remain.text.len > 0) {
-                                        try curly_remain.format("", .{}, writer);
+                                        try curly_remain.format(writer);
                                     }
 
                                     if (i < text.len and text[i] == '}') {
+                                        try writer.writeAll("}");
                                         i += 1;
                                     }
-                                    try writer.writeAll("}");
                                     text = text[i..];
                                     i = 0;
                                     if (text.len > 0 and text[0] == char) {
@@ -1075,10 +1057,10 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                             if (i > 2 and text[i - 1] == char) {
                                 const len = text[0..i].len - 2;
                                 try writer.print(Output.prettyFmt("<r><green>{c}", true), .{char});
-                                try writer.writeByteNTimes('*', len);
+                                try writer.splatByteAll('*', len);
                                 try writer.print(Output.prettyFmt("{c}<r>", true), .{char});
                             } else {
-                                try writer.writeByteNTimes('*', text[0..i].len);
+                                try writer.splatByteAll('*', text[0..i].len);
                             }
                             text = text[i..];
                             continue;
@@ -1095,7 +1077,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
 
                                 if (inner.len == 36 and strings.isUUID(inner)) {
                                     try writer.print(Output.prettyFmt("<r><green>{c}", true), .{char});
-                                    try writer.writeByteNTimes('*', 36);
+                                    try writer.splatByteAll('*', 36);
                                     try writer.print(Output.prettyFmt("{c}<r>", true), .{char});
                                     text = text[i..];
                                     continue;
@@ -1104,7 +1086,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                                 const npm_secret_len = strings.startsWithNpmSecret(inner);
                                 if (npm_secret_len != 0) {
                                     try writer.print(Output.prettyFmt("<r><green>{c}", true), .{char});
-                                    try writer.writeByteNTimes('*', npm_secret_len);
+                                    try writer.splatByteAll('*', npm_secret_len);
                                     try writer.print(Output.prettyFmt("{c}<r>", true), .{char});
                                     text = text[i..];
                                     continue;
@@ -1116,7 +1098,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                                         char,
                                         inner[0..offset],
                                     });
-                                    try writer.writeByteNTimes('*', len);
+                                    try writer.splatByteAll('*', len);
                                     try writer.print(Output.prettyFmt("{s}{c}<r>", true), .{
                                         inner[offset + len ..],
                                         char,
@@ -1140,7 +1122,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         if (should_redact_value) {
                             should_redact_value = false;
                             const len = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeByteNTimes('*', len);
+                            try writer.splatByteAll('*', len);
                             text = text[len..];
                             continue;
                         }
@@ -1163,7 +1145,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                             }
 
                             if (this.opts.redact_sensitive_information) {
-                                try writer.print(Output.prettyFmt("<r><d>{}<r>", true), .{redactedSource(remain_to_print)});
+                                try writer.print(Output.prettyFmt("<r><d>{f}<r>", true), .{redactedSource(remain_to_print)});
                             } else {
                                 try writer.print(Output.prettyFmt("<r><d>{s}<r>", true), .{remain_to_print});
                             }
@@ -1187,7 +1169,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                                 }
 
                                 if (this.opts.redact_sensitive_information) {
-                                    try writer.print(Output.prettyFmt("<r><d>{}<r>", true), .{redactedSource(text[0..i])});
+                                    try writer.print(Output.prettyFmt("<r><d>{f}<r>", true), .{redactedSource(text[0..i])});
                                 } else {
                                     try writer.print(Output.prettyFmt("<r><d>{s}<r>", true), .{text[0..i]});
                                 }
@@ -1208,7 +1190,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         if (should_redact_value) {
                             should_redact_value = false;
                             const len = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeByteNTimes('*', len);
+                            try writer.splatByteAll('*', len);
                             text = text[len..];
                             continue;
                         }
@@ -1221,7 +1203,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         if (should_redact_value) {
                             should_redact_value = false;
                             const len = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeByteNTimes('*', len);
+                            try writer.splatByteAll('*', len);
                             text = text[len..];
                             continue;
                         }
@@ -1233,7 +1215,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         if (should_redact_value) {
                             should_redact_value = false;
                             const len = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeByteNTimes('*', len);
+                            try writer.splatByteAll('*', len);
                             text = text[len..];
                             continue;
                         }
@@ -1246,7 +1228,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         if (should_redact_value) {
                             should_redact_value = false;
                             const len = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeByteNTimes('*', len);
+                            try writer.splatByteAll('*', len);
                             text = text[len..];
                             continue;
                         }
@@ -1275,7 +1257,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         if (should_redact_value) {
                             should_redact_value = false;
                             const len = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeByteNTimes('*', len);
+                            try writer.splatByteAll('*', len);
                             text = text[len..];
                             continue;
                         }
@@ -1322,7 +1304,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         if (should_redact_value) {
                             should_redact_value = false;
                             const len = strings.indexOfChar(text, '\n') orelse text.len;
-                            try writer.writeByteNTimes('*', len);
+                            try writer.splatByteAll('*', len);
                             text = text[len..];
                             continue;
                         }
@@ -1366,7 +1348,7 @@ pub fn EnumTagListFormatter(comptime Enum: type, comptime Separator: @Type(.enum
             }
             break :brk text;
         };
-        pub fn format(_: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(_: @This(), writer: *std.Io.Writer) !void {
             try writer.writeAll(output);
         }
     };
@@ -1380,7 +1362,7 @@ pub fn formatIp(address: std.net.Address, into: []u8) ![]u8 {
     // std.net.Address.format includes `:<port>` and square brackets (IPv6)
     //  while Node does neither.  This uses format then strips these to bring
     //  the result into conformance with Node.
-    var result = try std.fmt.bufPrint(into, "{}", .{address});
+    var result = try std.fmt.bufPrint(into, "{f}", .{address});
 
     // Strip `:<port>`
     if (std.mem.lastIndexOfScalar(u8, result, ':')) |colon| {
@@ -1444,7 +1426,7 @@ pub const SizeFormatter = struct {
         space_between_number_and_unit: bool = true,
     };
 
-    pub fn format(self: SizeFormatter, comptime _: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: SizeFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         const math = std.math;
         const value = self.value;
         if (value == 0) {
@@ -1456,7 +1438,7 @@ pub const SizeFormatter = struct {
         }
 
         if (value < 512) {
-            try fmt.formatInt(self.value, 10, .lower, opts, writer);
+            try writer.print("{d}", .{self.value});
             if (self.opts.space_between_number_and_unit) {
                 return writer.writeAll(" bytes");
             } else {
@@ -1479,11 +1461,11 @@ pub const SizeFormatter = struct {
             return;
         }
         const precision: usize = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) 1 else 2;
-        try fmt.formatType(new_value, "d", .{ .precision = precision }, writer, 0);
+        try writer.print("{d:.[1]}", .{ new_value, precision });
         if (self.opts.space_between_number_and_unit) {
-            try writer.writeAll(&.{ ' ', suffix, 'B' });
+            try writer.print(" {c}B", .{suffix});
         } else {
-            try writer.writeAll(&.{ suffix, 'B' });
+            try writer.print("{c}B", .{suffix});
         }
     }
 };
@@ -1552,7 +1534,7 @@ pub fn HexIntFormatter(comptime Int: type, comptime lower: bool) type {
             return buf;
         }
 
-        pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             const value = self.value;
             try writer.writeAll(&getOutBuf(value));
         }
@@ -1581,7 +1563,7 @@ fn TrimmedPrecisionFormatter(comptime precision: usize) type {
         num: f64,
         precision: usize,
 
-        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             const whole = @trunc(self.num);
             try writer.print("{d}", .{whole});
             const rem = self.num - whole;
@@ -1607,7 +1589,7 @@ const FormatDurationData = struct {
 };
 
 /// This is copied from std.fmt.formatDuration, except it will only print one decimal instead of three
-fn formatDurationOneDecimal(data: FormatDurationData, comptime _: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+fn formatDurationOneDecimal(data: FormatDurationData, writer: *std.Io.Writer) !void {
     // worst case: "-XXXyXXwXXdXXhXXmXX.XXXs".len = 24
     var buf: [24]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buf);
@@ -1626,11 +1608,11 @@ fn formatDurationOneDecimal(data: FormatDurationData, comptime _: []const u8, op
     }) |unit| {
         if (ns_remaining >= unit.ns) {
             const units = ns_remaining / unit.ns;
-            std.fmt.formatInt(units, 10, .lower, .{}, buf_writer) catch unreachable;
+            buf_writer.print("{d}", .{units}) catch unreachable;
             buf_writer.writeByte(unit.sep) catch unreachable;
             ns_remaining -= units * unit.ns;
             if (ns_remaining == 0)
-                return std.fmt.formatBuf(fbs.getWritten(), opts, writer);
+                return writer.writeAll(fbs.getWritten());
         }
     }
 
@@ -1641,26 +1623,26 @@ fn formatDurationOneDecimal(data: FormatDurationData, comptime _: []const u8, op
     }) |unit| {
         const kunits = ns_remaining * 1000 / unit.ns;
         if (kunits >= 1000) {
-            std.fmt.formatInt(kunits / 1000, 10, .lower, .{}, buf_writer) catch unreachable;
+            buf_writer.print("{d}", .{kunits / 1000}) catch unreachable;
             const frac = @divFloor(kunits % 1000, 100);
             if (frac > 0) {
                 var decimal_buf = [_]u8{ '.', 0 };
-                _ = std.fmt.formatIntBuf(decimal_buf[1..], frac, 10, .lower, .{ .fill = '0', .width = 1 });
+                _ = std.fmt.printInt(decimal_buf[1..], frac, 10, .lower, .{ .fill = '0', .width = 1 });
                 buf_writer.writeAll(&decimal_buf) catch unreachable;
             }
             buf_writer.writeAll(unit.sep) catch unreachable;
-            return std.fmt.formatBuf(fbs.getWritten(), opts, writer);
+            return writer.writeAll(fbs.getWritten());
         }
     }
 
-    std.fmt.formatInt(ns_remaining, 10, .lower, .{}, buf_writer) catch unreachable;
+    buf_writer.print("{d}", .{ns_remaining}) catch unreachable;
     buf_writer.writeAll("ns") catch unreachable;
-    return std.fmt.formatBuf(fbs.getWritten(), opts, writer);
+    return writer.writeAll(fbs.getWritten());
 }
 
 /// Return a Formatter for number of nanoseconds according to its magnitude:
 /// [#y][#w][#d][#h][#m]#[.###][n|u|m]s
-pub fn fmtDurationOneDecimal(ns: u64) std.fmt.Formatter(formatDurationOneDecimal) {
+pub fn fmtDurationOneDecimal(ns: u64) std.fmt.Alt(FormatDurationData, formatDurationOneDecimal) {
     return .{ .data = FormatDurationData{ .ns = ns } };
 }
 
@@ -1672,9 +1654,9 @@ fn FormatSlice(comptime T: type, comptime delim: []const u8) type {
     return struct {
         slice: T,
 
-        pub fn format(self: @This(), comptime format_str: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             if (self.slice.len == 0) return;
-            const f = "{" ++ format_str ++ "}";
+            const f = "{s}";
             try writer.print(f, .{self.slice[0]});
             for (self.slice[1..]) |item| {
                 if (delim.len > 0) try writer.writeAll(delim);
@@ -1692,10 +1674,8 @@ pub fn double(number: f64) FormatDouble {
 pub const FormatDouble = struct {
     number: f64,
 
-    extern fn WTF__dtoa(buf_124_bytes: *[124]u8, number: f64) usize;
-
     pub fn dtoa(buf: *[124]u8, number: f64) []const u8 {
-        const len = WTF__dtoa(buf, number);
+        const len = bun.cpp.WTF__dtoa(&buf.ptr[0], number);
         return buf[0..len];
     }
 
@@ -1704,11 +1684,11 @@ pub const FormatDouble = struct {
             return "-0";
         }
 
-        const len = WTF__dtoa(buf, number);
+        const len = bun.cpp.WTF__dtoa(&buf.ptr[0], number);
         return buf[0..len];
     }
 
-    pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         var buf: [124]u8 = undefined;
         const slice = dtoa(&buf, self.number);
         try writer.writeAll(slice);
@@ -1724,9 +1704,9 @@ pub fn NullableFallback(comptime T: type) type {
         value: T,
         null_fallback: []const u8,
 
-        pub fn format(self: @This(), comptime template: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             if (self.value) |value| {
-                try std.fmt.formatType(value, template, opts, writer, 4);
+                try writer.print("{}", .{value});
             } else {
                 try writer.writeAll(self.null_fallback);
             }
@@ -1734,12 +1714,11 @@ pub fn NullableFallback(comptime T: type) type {
     };
 }
 
-pub fn escapePowershell(str: []const u8) std.fmt.Formatter(escapePowershellImpl) {
+pub fn escapePowershell(str: []const u8) std.fmt.Alt([]const u8, escapePowershellImpl) {
     return .{ .data = str };
 }
 
-fn escapePowershellImpl(str: []const u8, comptime f: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-    comptime bun.assert(f.len == 0);
+fn escapePowershellImpl(str: []const u8, writer: *std.Io.Writer) !void {
     var remain = str;
     while (bun.strings.indexOfAny(remain, "\"`")) |i| {
         try writer.writeAll(remain[0..i]);
@@ -1754,7 +1733,7 @@ pub const js_bindings = struct {
     const gen = bun.gen.fmt;
 
     /// Internal function for testing in highlighter.test.ts
-    pub fn fmtString(global: *bun.JSC.JSGlobalObject, code: []const u8, formatter_id: gen.Formatter) bun.JSError!bun.String {
+    pub fn fmtString(global: *bun.jsc.JSGlobalObject, code: []const u8, formatter_id: gen.Formatter) bun.JSError!bun.String {
         var buffer = bun.MutableString.initEmpty(bun.default_allocator);
         defer buffer.deinit();
         var writer = buffer.bufferedWriter();
@@ -1765,12 +1744,12 @@ pub const js_bindings = struct {
                     .enable_colors = true,
                     .check_for_unhighlighted_write = false,
                 });
-                std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
+                writer.writer().print("{f}", .{formatter}) catch |err| {
                     return global.throwError(err, "while formatting");
                 };
             },
             .escape_powershell => {
-                std.fmt.format(writer.writer(), "{}", .{escapePowershell(code)}) catch |err| {
+                writer.writer().print("{f}", .{escapePowershell(code)}) catch |err| {
                     return global.throwError(err, "while formatting");
                 };
             },
@@ -1780,7 +1759,7 @@ pub const js_bindings = struct {
             return global.throwError(err, "while formatting");
         };
 
-        return bun.String.createUTF8(buffer.list.items);
+        return bun.String.cloneUTF8(buffer.list.items);
     }
 };
 
@@ -1793,7 +1772,7 @@ fn NewOutOfRangeFormatter(comptime T: type) type {
         field_name: []const u8,
         msg: []const u8 = "",
 
-        pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             if (self.field_name.len > 0) {
                 try writer.writeAll("The value of \"");
                 try writer.writeAll(self.field_name);
@@ -1810,11 +1789,11 @@ fn NewOutOfRangeFormatter(comptime T: type) type {
             const msg = self.msg;
 
             if (min != std.math.maxInt(i64) and max != std.math.maxInt(i64)) {
-                try std.fmt.format(writer, ">= {d} and <= {d}.", .{ min, max });
+                try writer.print(">= {d} and <= {d}.", .{ min, max });
             } else if (min != std.math.maxInt(i64)) {
-                try std.fmt.format(writer, ">= {d}.", .{min});
+                try writer.print(">= {d}.", .{min});
             } else if (max != std.math.maxInt(i64)) {
-                try std.fmt.format(writer, "<= {d}.", .{max});
+                try writer.print("<= {d}.", .{max});
             } else if (msg.len > 0) {
                 try writer.writeAll(msg);
                 try writer.writeByte('.');
@@ -1825,11 +1804,13 @@ fn NewOutOfRangeFormatter(comptime T: type) type {
             }
 
             if (comptime T == f64 or T == f32) {
-                try std.fmt.format(writer, " Received {}", .{double(self.value)});
+                try writer.print(" Received {f}", .{double(self.value)});
             } else if (comptime T == []const u8) {
-                try std.fmt.format(writer, " Received {s}", .{self.value});
+                try writer.print(" Received {s}", .{self.value});
+            } else if (comptime std.meta.hasFn(@TypeOf(self.value), "format")) {
+                try writer.print(" Received {f}", .{self.value});
             } else {
-                try std.fmt.format(writer, " Received {d}", .{self.value});
+                try writer.print(" Received {}", .{self.value});
             }
         }
     };
@@ -1848,7 +1829,6 @@ fn OutOfRangeFormatter(comptime T: type) type {
     } else if (T == bun.String) {
         return BunStringOutOfRangeFormatter;
     }
-
     return IntOutOfRangeFormatter;
 }
 
@@ -1870,12 +1850,11 @@ pub fn outOfRange(value: anytype, options: OutOfRangeOptions) OutOfRangeFormatte
 ///
 /// this hash is used primarily for the hashes in bundler chunk file names. the
 /// output is all lowercase to avoid issues with case-insensitive filesystems.
-pub fn truncatedHash32(int: u64) std.fmt.Formatter(truncatedHash32Impl) {
+pub fn truncatedHash32(int: u64) std.fmt.Alt(u64, truncatedHash32Impl) {
     return .{ .data = int };
 }
 
-fn truncatedHash32Impl(int: u64, comptime fmt_str: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-    comptime bun.assert(fmt_str.len == 0);
+fn truncatedHash32Impl(int: u64, writer: *std.Io.Writer) !void {
     const in_bytes = std.mem.asBytes(&int);
     const chars = "0123456789abcdefghjkmnpqrstvwxyz";
     try writer.writeAll(&.{
@@ -1889,3 +1868,15 @@ fn truncatedHash32Impl(int: u64, comptime fmt_str: []const u8, _: std.fmt.Format
         chars[in_bytes[7] & 31],
     });
 }
+
+const string = []const u8;
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+const Output = bun.Output;
+const js_lexer = bun.js_lexer;
+const sha = bun.sha;
+const strings = bun.strings;
+
+const std = @import("std");
+const fmt = std.fmt;

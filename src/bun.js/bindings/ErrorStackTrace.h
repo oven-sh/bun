@@ -65,6 +65,7 @@ private:
     bool m_isWasmFrame = false;
 
     bool m_isFunctionOrEval = false;
+    bool m_isAsync = false;
 
     enum class SourcePositionsState {
         NotCalculated,
@@ -89,6 +90,7 @@ public:
     JSC::JSString* typeName();
 
     bool isFunctionOrEval() const { return m_isFunctionOrEval; }
+    bool isAsync() const { return m_isAsync; }
 
     bool hasBytecodeIndex() const { return (m_bytecodeIndex.offset() != UINT_MAX) && !m_isWasmFrame; }
     JSC::BytecodeIndex bytecodeIndex() const
@@ -132,7 +134,7 @@ public:
     }
     bool isConstructor() const
     {
-        return m_codeBlock && (JSC::CodeForConstruct == m_codeBlock->specializationKind());
+        return m_codeBlock && (JSC::CodeSpecializationKind::CodeForConstruct == m_codeBlock->specializationKind());
     }
 
 private:
@@ -218,6 +220,11 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame);
 String sourceURL(JSC::StackVisitor& visitor);
 String sourceURL(JSC::VM& vm, JSC::JSFunction* function);
 
+enum class FinalizerSafety {
+    NotInFinalizer,
+    MustNotTriggerGC,
+};
+
 class FunctionNameFlags {
 public:
     static constexpr unsigned None = 0;
@@ -230,6 +237,6 @@ public:
 
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock);
 String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* callee);
-String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, bool isInFinalizer, unsigned int* flags);
+String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, FinalizerSafety, unsigned int* flags);
 
 }

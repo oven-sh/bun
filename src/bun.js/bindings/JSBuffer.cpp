@@ -227,7 +227,7 @@ static JSUint8Array* allocBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_
 
     auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, byteLength);
     // it should have thrown an exception already
-    ASSERT(!!throwScope.exception() == !uint8Array);
+    EXCEPTION_ASSERT(!!throwScope.exception() == !uint8Array);
 
     return uint8Array;
 }
@@ -241,7 +241,7 @@ static JSUint8Array* allocBufferUnsafe(JSC::JSGlobalObject* lexicalGlobalObject,
     auto* result = createUninitializedBuffer(lexicalGlobalObject, byteLength);
 
     // it should have thrown an exception already
-    ASSERT(!!throwScope.exception() == !result);
+    EXCEPTION_ASSERT(!!throwScope.exception() == !result);
 
     return result;
 }
@@ -340,7 +340,6 @@ public:
 
 JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, size_t length, void* ctx, JSTypedArrayBytesDeallocator bytesDeallocator)
 {
-
     JSC::JSUint8Array* uint8Array = nullptr;
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -348,9 +347,9 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
     auto scope = DECLARE_CATCH_SCOPE(lexicalGlobalObject->vm());
 
     if (length > 0) [[likely]] {
-        auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(ptr), length }, createSharedTask<void(void*)>([ctx, bytesDeallocator](void* p) {
-            if (bytesDeallocator)
-                bytesDeallocator(p, ctx);
+        ASSERT(bytesDeallocator);
+        auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(ptr), length }, createSharedTask<void(void*)>([=](void* p) {
+            bytesDeallocator(p, ctx);
         }));
 
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), 0, length);
@@ -467,7 +466,6 @@ static JSC::JSUint8Array* JSBuffer__bufferFromLengthAsArray(JSC::JSGlobalObject*
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
     JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, static_cast<size_t>(length));
-
     RELEASE_AND_RETURN(throwScope, uint8Array);
 }
 
@@ -885,6 +883,9 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
 
     if (byteLength == 0) {
         RELEASE_AND_RETURN(throwScope, constructBufferEmpty(lexicalGlobalObject));
+    } else if (byteLength > MAX_ARRAY_BUFFER_SIZE) [[unlikely]] {
+        throwRangeError(lexicalGlobalObject, throwScope, makeString("JavaScriptCore typed arrays are currently limited to "_s, MAX_ARRAY_BUFFER_SIZE, " bytes. To use an array this large, use an ArrayBuffer instead. If this is causing issues for you, please file an issue in Bun's GitHub repository."_s));
+        return {};
     }
 
     JSC::JSUint8Array* outBuffer = byteLength <= availableLength
@@ -897,21 +898,17 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
         allocBuffer(lexicalGlobalObject, byteLength);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    size_t remain = byteLength;
-    auto* head = outBuffer->typedVector();
-    const int arrayLengthI = args.size();
-    for (int i = 0; i < arrayLengthI && remain > 0; i++) {
+    auto output = outBuffer->typedSpan();
+    const size_t arrayLengthI = args.size();
+    for (size_t i = 0; i < arrayLengthI && output.size() > 0; i++) {
         auto* bufferView = JSC::jsCast<JSC::JSArrayBufferView*>(args.at(i));
-        size_t length = std::min(remain, bufferView->byteLength());
+        auto source = bufferView->span();
+        size_t length = std::min(output.size(), source.size());
 
         ASSERT_WITH_MESSAGE(length > 0, "length should be greater than 0. This should be checked before appending to the MarkedArgumentBuffer.");
 
-        auto* source = bufferView->vector();
-        ASSERT(source);
-        memcpy(head, source, length);
-
-        remain -= length;
-        head += length;
+        WTF::memcpySpan(output.first(length), source.first(length));
+        output = output.subspan(length);
     }
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(outBuffer));
@@ -1744,6 +1741,16 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
         return Bun::ERR::STRING_TOO_LONG(scope, lexicalGlobalObject);
     }
 
+    // Check encoding-specific output size limits
+    // For hex, output is 2x input size
+    if (encoding == BufferEncodingType::hex && bytes.size() > WTF::String::MaxLength / 2) {
+        return Bun::ERR::STRING_TOO_LONG(scope, lexicalGlobalObject);
+    }
+    // For base64, output is ceil(input * 4 / 3)
+    if ((encoding == BufferEncodingType::base64 || encoding == BufferEncodingType::base64url) && bytes.size() > (WTF::String::MaxLength / 4) * 3) {
+        return Bun::ERR::STRING_TOO_LONG(scope, lexicalGlobalObject);
+    }
+
     switch (encoding) {
     case WebCore::BufferEncodingType::buffer: {
         auto* buffer = createUninitializedBuffer(lexicalGlobalObject, bytes.size());
@@ -1756,7 +1763,7 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
         return JSC::JSValue::encode(buffer);
     }
     case BufferEncodingType::latin1: {
-        std::span<LChar> data;
+        std::span<Latin1Character> data;
         auto str = String::tryCreateUninitialized(bytes.size(), data);
         if (str.isNull()) [[unlikely]] {
             throwOutOfMemoryError(lexicalGlobalObject, scope);
@@ -1782,7 +1789,7 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
         return JSValue::encode(jsString(vm, WTFMove(str)));
     }
     case BufferEncodingType::ascii: {
-        std::span<LChar> data;
+        std::span<Latin1Character> data;
         auto str = String::tryCreateUninitialized(bytes.size(), data);
         if (str.isNull()) [[unlikely]] {
             throwOutOfMemoryError(lexicalGlobalObject, scope);
@@ -1988,12 +1995,15 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGl
 template<BufferEncodingType encoding>
 static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSArrayBufferView* castedThis, JSString* str, JSValue offsetValue, JSValue lengthValue)
 {
-    size_t byteLength = castedThis->byteLength();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     double offset;
-    double length;
+    double length = 0;
+    bool lengthWasUndefined = lengthValue.isUndefined();
 
+    // Convert offset and length to numbers BEFORE caching byteLength,
+    // as toNumber can call arbitrary JS (via Symbol.toPrimitive) which
+    // could detach the buffer or cause GC.
     if (offsetValue.isUndefined()) {
         offset = 0;
     } else if (offsetValue.isNumber()) {
@@ -2002,23 +2012,52 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& 
         offset = offsetValue.toNumber(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
     }
-    if (lengthValue.isUndefined()) {
-        length = byteLength - offset;
-    } else if (lengthValue.isNumber()) {
-        length = lengthValue.asNumber();
-    } else {
-        length = lengthValue.toNumber(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
+    if (!lengthWasUndefined) {
+        if (lengthValue.isNumber()) {
+            length = lengthValue.asNumber();
+        } else {
+            length = lengthValue.toNumber(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
     }
 
-    if (offset < 0 || offset > byteLength) {
+    // Re-check if detached after potential JS execution
+    if (castedThis->isDetached()) [[unlikely]] {
+        throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
+        return {};
+    }
+
+    // Now safe to cache byteLength after all JS calls
+    size_t byteLength = castedThis->byteLength();
+
+    // Node.js JS wrapper checks: if (offset < 0 || offset > this.byteLength)
+    // When offset is NaN, both comparisons return false, so no error is thrown.
+    // We need to match this behavior exactly.
+    bool offsetWasNaN = std::isnan(offset);
+    if (!offsetWasNaN && (offset < 0 || offset > byteLength)) {
         return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset");
     }
-    if (length < 0 || length > byteLength - offset) {
-        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "length");
+    // Convert NaN offset to 0 for actual use (matching V8's IntegerValue behavior)
+    size_t safeOffset = offsetWasNaN ? 0 : static_cast<size_t>(offset);
+
+    // Calculate max_length
+    size_t maxLength;
+    if (lengthWasUndefined) {
+        maxLength = byteLength - safeOffset;
+    } else {
+        // Node.js JS wrapper checks: if (length < 0 || length > this.byteLength - offset)
+        // When offset is NaN, (byteLength - offset) is NaN, so (length > NaN) is false.
+        // This means the check passes even for large lengths when offset is NaN.
+        if (!offsetWasNaN && (length < 0 || length > byteLength - offset)) {
+            return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "length");
+        }
+        // Convert NaN length to 0, negative to 0 (for NaN offset case)
+        int64_t intLength = (std::isnan(length) || length < 0) ? 0 : static_cast<int64_t>(length);
+        // Clamp to available buffer space
+        maxLength = std::min(byteLength - safeOffset, static_cast<size_t>(intLength));
     }
 
-    RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
+    RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, safeOffset, maxLength, encoding));
 }
 
 template<BufferEncodingType encoding>
@@ -2129,6 +2168,7 @@ extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject* globalObjec
     }));
 
     auto* view = JSC::JSUint8Array::create(globalObject, structure, WTFMove(buffer), 0, length);
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (!view) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
@@ -2219,6 +2259,64 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_copyBytesFrom, (JSGlobalObj
 extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferConstructorAllocWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int size));
 extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferConstructorAllocUnsafeWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int size));
 extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferConstructorAllocUnsafeSlowWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int size));
+
+static size_t validateOffsetBigInt64(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSValue offsetVal, size_t byteLength)
+{
+    if (byteLength < 8) [[unlikely]] {
+        auto* error = Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, "Attempt to access memory outside buffer bounds"_s);
+        scope.throwException(lexicalGlobalObject, error);
+        return 0;
+    }
+
+    if (offsetVal.isUndefined()) {
+        return 0;
+    }
+
+    size_t offset;
+    size_t maxOffset = byteLength - 8;
+
+    if (offsetVal.isInt32()) {
+        int32_t offsetI = offsetVal.asInt32();
+        if (offsetI < 0) [[unlikely]] {
+            Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
+            return 0;
+        }
+
+        offset = static_cast<size_t>(offsetI);
+
+        if (offset > maxOffset) [[unlikely]] {
+            Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, maxOffset, offsetVal);
+            return 0;
+        }
+
+        return offset;
+    }
+
+    if (!offsetVal.isNumber()) [[unlikely]] {
+        Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
+        return 0;
+    }
+
+    auto offsetD = offsetVal.asNumber();
+    if (offsetD < 0) [[unlikely]] {
+        Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
+        return 0;
+    }
+
+    if (std::fmod(offsetD, 1.0) != 0) [[unlikely]] {
+        Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetVal);
+        return 0;
+    }
+
+    offset = static_cast<size_t>(offsetD);
+
+    if (offset > maxOffset) [[unlikely]] {
+        Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, maxOffset, offsetVal);
+        return 0;
+    }
+
+    return offset;
+}
 
 JSC_DEFINE_JIT_OPERATION(jsBufferConstructorAllocWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int byteLength))
 {
@@ -2454,18 +2552,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE, (JSGlobalObj
     if (bigint->sign() && limb - 0x8000000000000000 > 0x7fffffffffffffff) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
     int64_t value = static_cast<int64_t>(limb);
 
-    if (offsetVal.isUndefined()) offsetVal = jsNumber(0);
-    if (!offsetVal.isNumber()) [[unlikely]]
-        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
-    auto offsetD = offsetVal.asNumber();
-    if (std::fmod(offsetD, 1.0) != 0) [[unlikely]]
-        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetVal);
-    size_t offset = offsetD;
-    if (offset < 0) [[unlikely]]
-        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
-    if (offset > byteLength - 8) [[unlikely]]
-        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
-
+    size_t offset = validateOffsetBigInt64(lexicalGlobalObject, scope, offsetVal, byteLength);
+    RETURN_IF_EXCEPTION(scope, {});
     write_int64_le(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
     return JSValue::encode(jsNumber(offset + 8));
 }
@@ -2494,18 +2582,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE, (JSGlobalObj
     if (bigint->sign() && limb - 0x8000000000000000 > 0x7fffffffffffffff) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
     int64_t value = static_cast<int64_t>(limb);
 
-    if (offsetVal.isUndefined()) offsetVal = jsNumber(0);
-    if (!offsetVal.isNumber()) [[unlikely]]
-        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
-    auto offsetD = offsetVal.asNumber();
-    if (std::fmod(offsetD, 1.0) != 0) [[unlikely]]
-        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetVal);
-    size_t offset = offsetD;
-    if (offset < 0) [[unlikely]]
-        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
-    if (offset > byteLength - 8) [[unlikely]]
-        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
-
+    size_t offset = validateOffsetBigInt64(lexicalGlobalObject, scope, offsetVal, byteLength);
+    RETURN_IF_EXCEPTION(scope, {});
     write_int64_be(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
     return JSValue::encode(jsNumber(offset + 8));
 }
@@ -2533,18 +2611,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE, (JSGlobalOb
     uint64_t value = valueVal.toBigUInt64(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (offsetVal.isUndefined()) offsetVal = jsNumber(0);
-    if (!offsetVal.isNumber()) [[unlikely]]
-        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
-    auto offsetD = offsetVal.asNumber();
-    if (std::fmod(offsetD, 1.0) != 0) [[unlikely]]
-        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetVal);
-    size_t offset = offsetD;
-    if (offset < 0) [[unlikely]]
-        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
-    if (offset > byteLength - 8) [[unlikely]]
-        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
-
+    size_t offset = validateOffsetBigInt64(lexicalGlobalObject, scope, offsetVal, byteLength);
+    RETURN_IF_EXCEPTION(scope, {});
     write_int64_le(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
     return JSValue::encode(jsNumber(offset + 8));
 }
@@ -2572,18 +2640,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE, (JSGlobalOb
     uint64_t value = valueVal.toBigUInt64(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (offsetVal.isUndefined()) offsetVal = jsNumber(0);
-    if (!offsetVal.isNumber()) [[unlikely]]
-        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
-    auto offsetD = offsetVal.asNumber();
-    if (std::fmod(offsetD, 1.0) != 0) [[unlikely]]
-        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetVal);
-    size_t offset = offsetD;
-    if (offset < 0) [[unlikely]]
-        return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
-    if (offset > byteLength - 8) [[unlikely]]
-        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
-
+    size_t offset = validateOffsetBigInt64(lexicalGlobalObject, scope, offsetVal, byteLength);
+    RETURN_IF_EXCEPTION(scope, {});
     write_int64_be(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
     return JSValue::encode(jsNumber(offset + 8));
 }
@@ -2832,6 +2890,7 @@ EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope, JSGlo
     if (isResizableOrGrowableShared) {
         auto* subclassStructure = globalObject->JSResizableOrGrowableSharedBufferSubclassStructure();
         auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), offset, std::nullopt);
+        RETURN_IF_EXCEPTION(throwScope, {});
         if (!uint8Array) [[unlikely]] {
             throwOutOfMemoryError(globalObject, throwScope);
             return {};
@@ -2840,6 +2899,7 @@ EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope, JSGlo
     }
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
     auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), offset, length);
+    RETURN_IF_EXCEPTION(throwScope, {});
     if (!uint8Array) [[unlikely]] {
         throwOutOfMemoryError(globalObject, throwScope);
         return {};

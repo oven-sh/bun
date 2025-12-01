@@ -1,16 +1,22 @@
-#!/usr/bin/env node
-
 import { spawn as nodeSpawn } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import {
   formatAnnotationToHtml,
+  getEnv,
+  getSecret,
   isCI,
+  isWindows,
   parseAnnotations,
+  parseBoolean,
   printEnvironment,
   reportAnnotationToBuildKite,
   startGroup,
 } from "./utils.mjs";
+
+if (globalThis.Bun) {
+  await import("./glob-sources.mjs");
+}
 
 // https://cmake.org/cmake/help/latest/manual/cmake.1.html#generate-a-project-buildsystem
 const generateFlags = [
@@ -57,6 +63,7 @@ async function build(args) {
 
   const generateOptions = parseOptions(args, generateFlags);
   const buildOptions = parseOptions(args, buildFlags);
+  const ciCppBuild = isCI && !!process.env.BUN_CPP_ONLY;
 
   const buildPath = resolve(generateOptions["-B"] || buildOptions["--build"] || "build");
   generateOptions["-B"] = buildPath;
@@ -66,43 +73,8 @@ async function build(args) {
     generateOptions["-S"] = process.cwd();
   }
 
-  const cacheRead = isCacheReadEnabled();
-  const cacheWrite = isCacheWriteEnabled();
-  if (cacheRead || cacheWrite) {
-    const cachePath = getCachePath();
-    if (cacheRead && !existsSync(cachePath)) {
-      const mainCachePath = getCachePath(getDefaultBranch());
-      if (existsSync(mainCachePath)) {
-        mkdirSync(cachePath, { recursive: true });
-        try {
-          cpSync(mainCachePath, cachePath, { recursive: true, force: true });
-        } catch (error) {
-          const { code } = error;
-          switch (code) {
-            case "EPERM":
-            case "EACCES":
-              try {
-                chmodSync(mainCachePath, 0o777);
-                cpSync(mainCachePath, cachePath, { recursive: true, force: true });
-              } catch (error) {
-                console.warn("Failed to copy cache with permissions fix", error);
-              }
-              break;
-            default:
-              console.warn("Failed to copy cache", error);
-          }
-        }
-      }
-    }
-    generateOptions["-DCACHE_PATH"] = cmakePath(cachePath);
-    generateOptions["--fresh"] = undefined;
-    if (cacheRead && cacheWrite) {
-      generateOptions["-DCACHE_STRATEGY"] = "read-write";
-    } else if (cacheRead) {
-      generateOptions["-DCACHE_STRATEGY"] = "read-only";
-    } else if (cacheWrite) {
-      generateOptions["-DCACHE_STRATEGY"] = "write-only";
-    }
+  if (!generateOptions["-DCACHE_STRATEGY"]) {
+    generateOptions["-DCACHE_STRATEGY"] = parseBoolean(getEnv("RELEASE", false) || "false") ? "none" : "auto";
   }
 
   const toolchain = generateOptions["--toolchain"];
@@ -132,56 +104,17 @@ async function build(args) {
 
   await startGroup("CMake Build", () => spawn("cmake", buildArgs, { env }));
 
+  if (ciCppBuild) {
+    await startGroup("sccache stats", () => {
+      spawn("sccache", ["--show-stats"], { env });
+    });
+  }
+
   printDuration("total", Date.now() - startTime);
-}
-
-function cmakePath(path) {
-  return path.replace(/\\/g, "/");
-}
-
-/** @param {string} str */
-const toAlphaNumeric = str => str.replace(/[^a-z0-9]/gi, "-");
-function getCachePath(branch) {
-  const {
-    BUILDKITE_BUILD_PATH: buildPath,
-    BUILDKITE_REPO: repository,
-    BUILDKITE_PULL_REQUEST_REPO: fork,
-    BUILDKITE_BRANCH,
-    BUILDKITE_STEP_KEY,
-  } = process.env;
-
-  // NOTE: settings that could be long should be truncated to avoid hitting max
-  // path length limit on windows (4096)
-  const repositoryKey = toAlphaNumeric(
-    // remove domain name, only leaving 'org/repo'
-    (fork || repository).replace(/^https?:\/\/github\.com\/?/, ""),
-  );
-  const branchName = toAlphaNumeric(branch || BUILDKITE_BRANCH);
-  const branchKey = branchName.startsWith("gh-readonly-queue-")
-    ? branchName.slice(18, branchName.indexOf("-pr-"))
-    : branchName.slice(0, 32);
-  const stepKey = toAlphaNumeric(BUILDKITE_STEP_KEY);
-  return resolve(buildPath, "..", "cache", repositoryKey, branchKey, stepKey);
-}
-
-function isCacheReadEnabled() {
-  return (
-    isBuildkite() &&
-    process.env.BUILDKITE_CLEAN_CHECKOUT !== "true" &&
-    process.env.BUILDKITE_BRANCH !== getDefaultBranch()
-  );
-}
-
-function isCacheWriteEnabled() {
-  return isBuildkite();
 }
 
 function isBuildkite() {
   return process.env.BUILDKITE === "true";
-}
-
-function getDefaultBranch() {
-  return process.env.BUILDKITE_PIPELINE_DEFAULT_BRANCH || "main";
 }
 
 function parseOptions(args, flags = []) {
@@ -214,15 +147,73 @@ function parseOptions(args, flags = []) {
 async function spawn(command, args, options, label) {
   const effectiveArgs = args.filter(Boolean);
   const description = [command, ...effectiveArgs].map(arg => (arg.includes(" ") ? JSON.stringify(arg) : arg)).join(" ");
+  let env = options?.env;
+
   console.log("$", description);
 
   label ??= basename(command);
 
   const pipe = process.env.CI === "true";
+
+  if (isBuildkite()) {
+    if (process.env.BUN_LINK_ONLY && isWindows) {
+      env ||= options?.env || { ...process.env };
+
+      // Pass signing secrets directly to the build process
+      // The PowerShell signing script will handle certificate decoding
+      env.SM_CLIENT_CERT_PASSWORD = getSecret("SM_CLIENT_CERT_PASSWORD", {
+        redact: true,
+        required: true,
+      });
+      env.SM_CLIENT_CERT_FILE = getSecret("SM_CLIENT_CERT_FILE", {
+        redact: true,
+        required: true,
+      });
+      env.SM_API_KEY = getSecret("SM_API_KEY", {
+        redact: true,
+        required: true,
+      });
+      env.SM_KEYPAIR_ALIAS = getSecret("SM_KEYPAIR_ALIAS", {
+        redact: true,
+        required: true,
+      });
+      env.SM_HOST = getSecret("SM_HOST", {
+        redact: true,
+        required: true,
+      });
+    }
+  }
+
   const subprocess = nodeSpawn(command, effectiveArgs, {
     stdio: pipe ? "pipe" : "inherit",
     ...options,
+    env,
   });
+
+  let killedManually = false;
+
+  function onKill() {
+    clearOnKill();
+    if (!subprocess.killed) {
+      killedManually = true;
+      subprocess.kill?.();
+    }
+  }
+
+  function clearOnKill() {
+    process.off("beforeExit", onKill);
+    process.off("SIGINT", onKill);
+    process.off("SIGTERM", onKill);
+  }
+
+  // Kill the entire process tree so everything gets cleaned up. On Windows, job
+  // control groups make this haappen automatically so we don't need to do this
+  // on Windows.
+  if (process.platform !== "win32") {
+    process.once("beforeExit", onKill);
+    process.once("SIGINT", onKill);
+    process.once("SIGTERM", onKill);
+  }
 
   let timestamp;
   subprocess.on("spawn", () => {
@@ -253,8 +244,14 @@ async function spawn(command, args, options, label) {
   }
 
   const { error, exitCode, signalCode } = await new Promise(resolve => {
-    subprocess.on("error", error => resolve({ error }));
-    subprocess.on("exit", (exitCode, signalCode) => resolve({ exitCode, signalCode }));
+    subprocess.on("error", error => {
+      clearOnKill();
+      resolve({ error });
+    });
+    subprocess.on("exit", (exitCode, signalCode) => {
+      clearOnKill();
+      resolve({ exitCode, signalCode });
+    });
   });
 
   if (done) {
@@ -301,7 +298,9 @@ async function spawn(command, args, options, label) {
   }
 
   if (signalCode) {
-    console.error(`Command killed: ${signalCode}`);
+    if (!killedManually) {
+      console.error(`Command killed: ${signalCode}`);
+    }
   } else {
     console.error(`Command exited: code ${exitCode}`);
   }

@@ -5,7 +5,7 @@ import path from "path";
 if (isFlaky && isLinux) {
   test.todo("processes get killed");
 } else {
-  test.each([true, false])(`processes get killed (sync: %p)`, async sync => {
+  test.concurrent.each([true, false])(`processes get killed (sync: %p)`, async sync => {
     const { exited, stdout, stderr } = Bun.spawn({
       cmd: [
         bunExe(),
@@ -17,7 +17,7 @@ if (isFlaky && isLinux) {
       stdin: "inherit",
       env: bunEnv,
     });
-    const [out, err, exitCode] = await Promise.all([new Response(stdout).text(), new Response(stderr).text(), exited]);
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
     // merge outputs so that this test still works if we change which things are printed to stdout
     // and which to stderr
     const combined = out + err;

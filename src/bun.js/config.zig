@@ -1,9 +1,3 @@
-const bun = @import("bun");
-
-const std = @import("std");
-
-const Api = @import("../api/schema.zig").Api;
-
 pub const DefaultBunDefines = struct {
     pub const Keys = struct {
         const window = "window";
@@ -13,16 +7,20 @@ pub const DefaultBunDefines = struct {
     };
 };
 
-pub fn configureTransformOptionsForBunVM(allocator: std.mem.Allocator, _args: Api.TransformOptions) !Api.TransformOptions {
+pub fn configureTransformOptionsForBunVM(allocator: std.mem.Allocator, _args: api.TransformOptions) !api.TransformOptions {
     var args = _args;
 
     args.write = false;
-    args.resolve = Api.ResolveMode.lazy;
+    args.resolve = api.ResolveMode.lazy;
     return try configureTransformOptionsForBun(allocator, args);
 }
 
-pub fn configureTransformOptionsForBun(_: std.mem.Allocator, _args: Api.TransformOptions) !Api.TransformOptions {
+pub fn configureTransformOptionsForBun(_: std.mem.Allocator, _args: api.TransformOptions) !api.TransformOptions {
     var args = _args;
-    args.target = Api.Target.bun;
+    args.target = api.Target.bun;
     return args;
 }
+
+const bun = @import("bun");
+const std = @import("std");
+const api = bun.schema.api;

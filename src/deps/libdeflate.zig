@@ -1,9 +1,7 @@
-const std = @import("std");
-const bun = @import("bun");
 pub const Options = extern struct {
     sizeof_options: usize = @sizeOf(Options),
-    malloc_func: ?*const fn (usize) callconv(.C) ?*anyopaque = @import("std").mem.zeroes(?*const fn (usize) callconv(.C) ?*anyopaque),
-    free_func: ?*const fn (?*anyopaque) callconv(.C) void = @import("std").mem.zeroes(?*const fn (?*anyopaque) callconv(.C) void),
+    malloc_func: ?*const fn (usize) callconv(.c) ?*anyopaque = @import("std").mem.zeroes(?*const fn (usize) callconv(.c) ?*anyopaque),
+    free_func: ?*const fn (?*anyopaque) callconv(.c) void = @import("std").mem.zeroes(?*const fn (?*anyopaque) callconv(.c) void),
 };
 pub extern fn libdeflate_alloc_compressor(compression_level: c_int) ?*Compressor;
 pub extern fn libdeflate_alloc_compressor_ex(compression_level: c_int, options: ?*const Options) ?*Compressor;
@@ -16,7 +14,7 @@ pub extern fn libdeflate_gzip_compress_bound(compressor: *Compressor, in_nbytes:
 pub extern fn libdeflate_free_compressor(compressor: *Compressor) void;
 
 fn load_once() void {
-    libdeflate_set_memory_allocator(bun.Mimalloc.mi_malloc, bun.Mimalloc.mi_free);
+    libdeflate_set_memory_allocator(bun.mimalloc.mi_malloc, bun.mimalloc.mi_free);
 }
 
 var loaded_once = std.once(load_once);
@@ -143,7 +141,10 @@ pub extern fn libdeflate_gzip_decompress_ex(decompressor: *Decompressor, in: ?*c
 pub extern fn libdeflate_free_decompressor(decompressor: *Decompressor) void;
 pub extern fn libdeflate_adler32(adler: u32, buffer: ?*const anyopaque, len: usize) u32;
 pub extern fn libdeflate_crc32(crc: u32, buffer: ?*const anyopaque, len: usize) u32;
-pub extern fn libdeflate_set_memory_allocator(malloc_func: ?*const fn (usize) callconv(.C) ?*anyopaque, free_func: ?*const fn (?*anyopaque) callconv(.C) void) void;
+pub extern fn libdeflate_set_memory_allocator(malloc_func: ?*const fn (usize) callconv(.c) ?*anyopaque, free_func: ?*const fn (?*anyopaque) callconv(.c) void) void;
 pub const libdeflate_compressor = Compressor;
 pub const libdeflate_options = Options;
 pub const libdeflate_decompressor = Decompressor;
+
+const bun = @import("bun");
+const std = @import("std");

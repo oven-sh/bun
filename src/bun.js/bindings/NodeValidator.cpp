@@ -641,7 +641,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateOneOf, (JSC::JSGlobalObject * global
         for (size_t i = 0; i < length; i++) {
             JSValue element = array->getIndex(globalObject, i);
             RETURN_IF_EXCEPTION(scope, {});
-            if (JSC::sameValue(globalObject, value, element)) {
+            auto same = JSC::sameValue(globalObject, value, element);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (same) {
                 return JSValue::encode(jsUndefined());
             }
         }

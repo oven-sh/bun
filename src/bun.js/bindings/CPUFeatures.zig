@@ -31,7 +31,7 @@ pub const Flags = switch (@import("builtin").cpu.arch) {
     else => unreachable,
 };
 
-pub fn format(features: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(features: @This(), writer: *std.Io.Writer) !void {
     var is_first = true;
     inline for (@typeInfo(Flags).@"struct".fields) |field| brk: {
         if (comptime (bun.strings.eql(field.name, "padding") or
@@ -67,5 +67,5 @@ pub fn get() CPUFeatures {
     return .{ .flags = flags };
 }
 
-const std = @import("std");
 const bun = @import("bun");
+const std = @import("std");

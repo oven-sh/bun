@@ -35,7 +35,7 @@ describe("spawn stdin ReadableStream edge cases", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     // Should receive data before the exception
     expect(text).toContain("chunk 1\n");
     expect(text).toContain("chunk 2\n");
@@ -83,7 +83,7 @@ describe("spawn stdin ReadableStream edge cases", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     await proc.exited;
 
     // Give time for more pull attempts
@@ -119,7 +119,7 @@ describe("spawn stdin ReadableStream edge cases", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     expect(text).toBe("text binary data end");
     expect(await proc.exited).toBe(0);
   });
@@ -166,7 +166,7 @@ describe("spawn stdin ReadableStream edge cases", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     const lines = text.trim().split("\n");
     expect(lines.length).toBe(10);
     for (let i = 0; i < 10; i++) {
@@ -266,7 +266,7 @@ describe("spawn stdin ReadableStream edge cases", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     expect(parseInt(text.trim())).toBe(totalChunks);
     expect(await proc.exited).toBe(0);
   });
@@ -293,7 +293,7 @@ describe("spawn stdin ReadableStream edge cases", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     expect(text).toBe("x".repeat(1024 * 5));
     expect(await proc.exited).toBe(0);
 
@@ -384,7 +384,7 @@ describe("spawn stdin ReadableStream edge cases", () => {
       env: bunEnv,
     });
 
-    const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
 
     expect(stdout).toBe("stdout: stdin data");
     expect(stderr).toBe("stderr: stdin data");
@@ -416,7 +416,7 @@ describe("spawn stdin ReadableStream edge cases", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     expect(parseInt(text.trim())).toBe(size);
     expect(await proc.exited).toBe(0);
   });
@@ -442,7 +442,7 @@ describe("spawn stdin ReadableStream edge cases", () => {
       env: bunEnv,
     });
 
-    const text = await new Response(proc.stdout).text();
+    const text = await proc.stdout.text();
     expect(text).toBe("string1 binary1 string2 binary2");
     expect(await proc.exited).toBe(0);
   });
@@ -471,7 +471,7 @@ describe("spawn stdin ReadableStream edge cases", () => {
         env: bunEnv,
       });
 
-      const stdout = await new Response(proc.stdout).text();
+      const stdout = await proc.stdout.text();
       expect(stdout).toBe("test input");
       expect(await proc.exited).toBe(0);
     }

@@ -2,15 +2,14 @@ const std = @import("std");
 
 const path_handler = @import("../src/resolver/resolve_path.zig");
 const bun = @import("bun");
-const string = bun.string;
+const string = []const u8;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const stringZ = bun.stringZ;
+const stringZ = [:0]const u8;
 const default_allocator = bun.default_allocator;
-const C = bun.C;
 
 const Archive = @import("../src/libarchive/libarchive.zig").Archive;
 const Zlib = @import("../src/zlib.zig");
@@ -53,7 +52,7 @@ pub fn main() anyerror!void {
 
     // var dir = try std.fs.cwd().makeOpenPath(folder, .{ .iterate = true });
 
-    var tarball = try std.fs.openFileAbsolute(tarball_path, .{ .mode = .read_only });
+    var tarball = try std.fs.cwd().openFile(tarball_path, .{ .mode = .read_only });
 
     var tarball_buf_list = std.ArrayListUnmanaged(u8){};
 

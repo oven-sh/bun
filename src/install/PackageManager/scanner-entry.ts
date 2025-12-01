@@ -9,74 +9,53 @@ type IPCMessage =
   | { type: "error"; code: "INVALID_VERSION"; message: string }
   | { type: "error"; code: "SCAN_FAILED"; message: string };
 
-// On Windows, NODE_CHANNEL_FD is set and process.send is available.
-// On POSIX, we use raw fd access (fd 3 for output, fd 4 for input).
-const useNodeIPC = typeof process.send === "function";
-
-const IPC_PIPE_FD = 3;
-const JSON_PIPE_FD = 4;
+// Two pipes for IPC:
+// - fd 3: output - child writes response here
+// - fd 4: input - child reads JSON package list here (reads until EOF)
+const IPC_OUTPUT_FD = 3;
+const IPC_INPUT_FD = 4;
 
 function sendAndExit(message: IPCMessage): never {
-  if (useNodeIPC) {
-    process.send!(message);
-  } else {
-    const data = JSON.stringify(message);
-    for (let remaining = data; remaining.length > 0; ) {
-      const written = fs.writeSync(IPC_PIPE_FD, remaining);
-      if (written === 0) {
-        console.error("Failed to write to IPC pipe");
-        process.exit(1);
-      }
-      remaining = remaining.slice(written);
+  const data = JSON.stringify(message);
+  for (let remaining = data; remaining.length > 0; ) {
+    const written = fs.writeSync(IPC_OUTPUT_FD, remaining);
+    if (written === 0) {
+      console.error("Failed to write to IPC pipe");
+      process.exit(1);
     }
-    fs.closeSync(IPC_PIPE_FD);
+    remaining = remaining.slice(written);
   }
+  fs.closeSync(IPC_OUTPUT_FD);
   process.exit(message.type === "error" ? 1 : 0);
 }
 
+// Read packages JSON from fd 4 (reads until EOF when parent closes the pipe)
 let packages: Bun.Security.Package[];
+let packagesJson: string = "";
 
-if (useNodeIPC) {
-  // Windows: Receive packages via NODE_CHANNEL_FD IPC
-  packages = await new Promise<Bun.Security.Package[]>((resolve, reject) => {
-    process.once("message", (data: unknown) => {
-      if (!Array.isArray(data)) {
-        reject(new Error("Expected packages to be an array"));
-        return;
-      }
-      resolve(data as Bun.Security.Package[]);
-    });
-    process.once("disconnect", () => {
-      reject(new Error("IPC channel closed before receiving packages"));
-    });
+try {
+  packagesJson = await Bun.file(IPC_INPUT_FD).text();
+} catch (error) {
+  const message = `Failed to read packages from FD ${IPC_INPUT_FD}: ${error instanceof Error ? error.message : String(error)}`;
+  sendAndExit({
+    type: "error",
+    code: "SCAN_FAILED",
+    message,
   });
-} else {
-  // POSIX: Read packages from fd 4
-  let packagesJson: string = "";
-  try {
-    packagesJson = await Bun.file(JSON_PIPE_FD).text();
-  } catch (error) {
-    const message = `Failed to read packages from FD ${JSON_PIPE_FD}: ${error instanceof Error ? error.message : String(error)}`;
-    sendAndExit({
-      type: "error",
-      code: "SCAN_FAILED",
-      message,
-    });
-  }
+}
 
-  try {
-    packages = JSON.parse(packagesJson);
-    if (!Array.isArray(packages)) {
-      throw new Error("Expected packages to be an array");
-    }
-  } catch (error) {
-    const message = `Failed to parse packages JSON: ${error instanceof Error ? error.message : String(error)}`;
-    sendAndExit({
-      type: "error",
-      code: "SCAN_FAILED",
-      message,
-    });
+try {
+  packages = JSON.parse(packagesJson);
+  if (!Array.isArray(packages)) {
+    throw new Error("Expected packages to be an array");
   }
+} catch (error) {
+  const message = `Failed to parse packages JSON: ${error instanceof Error ? error.message : String(error)}`;
+  sendAndExit({
+    type: "error",
+    code: "SCAN_FAILED",
+    message,
+  });
 }
 
 let scanner: Bun.Security.Scanner;

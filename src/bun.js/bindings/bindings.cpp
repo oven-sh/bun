@@ -152,6 +152,8 @@
 #include <JavaScriptCore/IntegrityInlines.h>
 #endif
 
+extern "C" size_t Bun__Feature__heap_snapshot;
+
 #if OS(DARWIN)
 #if ASSERT_ENABLED
 #if !__has_feature(address_sanitizer)
@@ -1553,9 +1555,20 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         auto* gp2 = jsDynamicCast<JSC::JSGlobalProxy*, JSCell>(c2);
         return gp1->target()->m_globalThis == gp2->target()->m_globalThis;
     }
-    default: {
+    case NumberObjectType:
+    case BooleanObjectType: {
+        // Number and Boolean wrapper objects must be the same type and have the same internal value
+        if (c1Type != c2Type) return false;
+        JSValue val1 = jsCast<JSWrapperObject*>(c1)->internalValue();
+        JSValue val2 = jsCast<JSWrapperObject*>(c2)->internalValue();
+        bool same = JSC::sameValue(globalObject, val1, val2);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!same) return false;
+        // Fall through to check own properties
         break;
     }
+    default:
+        break;
     }
     return std::nullopt;
 }
@@ -2914,20 +2927,26 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
     }
 }
 
-JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
+[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto clientData = WebCore::clientData(vm);
     auto* function = globalObject->getDirect(vm, clientData->builtinNames().createEmptyReadableStreamPrivateName()).getObject();
-    return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
+    JSValue emptyStream = JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(emptyStream);
 }
 
-JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject* globalObject)
+[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto clientData = WebCore::clientData(vm);
     auto* function = globalObject->getDirect(vm, clientData->builtinNames().createUsedReadableStreamPrivateName()).getObject();
-    return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
+    JSValue usedStream = JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(usedStream);
 }
 
 JSC::EncodedJSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigString* arg1,
@@ -3658,6 +3677,8 @@ JSC::EncodedJSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC::JSGlobalObjec
     JSC::JSLockHolder lock(vm);
     // JSC::DeferTermination deferScope(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Bun__Feature__heap_snapshot += 1;
 
     JSC::HeapSnapshotBuilder snapshotBuilder(vm.ensureHeapProfiler());
     snapshotBuilder.buildSnapshot();
@@ -5673,7 +5694,15 @@ CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__createFromURLQuery(JSC::JSGlo
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg0);
     // don't need to copy the string because it internally does.
-    auto formData = DOMFormData::create(globalObject->scriptExecutionContext(), toString(*arg1));
+    auto str = toString(*arg1);
+    // toString() in helpers.h returns an empty string when the input exceeds
+    // String::MaxLength or Bun's synthetic allocation limit. This is the only
+    // condition under which toString() returns empty for non-empty input.
+    if (str.isEmpty() && arg1->len > 0) {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
+    }
+    auto formData = DOMFormData::create(globalObject->scriptExecutionContext(), WTFMove(str));
     return JSValue::encode(toJSNewlyCreated(arg0, globalObject, WTFMove(formData)));
 }
 

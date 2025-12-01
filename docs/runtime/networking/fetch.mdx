@@ -51,13 +51,29 @@ const response = await fetch("http://example.com", {
 
 ### Proxying requests
 
-To proxy a request, pass an object with the `proxy` property set to a URL.
+To proxy a request, pass an object with the `proxy` property set to a URL string:
 
 ```ts
 const response = await fetch("http://example.com", {
   proxy: "http://proxy.com",
 });
 ```
+
+You can also use an object format to send custom headers to the proxy server:
+
+```ts
+const response = await fetch("http://example.com", {
+  proxy: {
+    url: "http://proxy.com",
+    headers: {
+      "Proxy-Authorization": "Bearer my-token",
+      "X-Custom-Proxy-Header": "value",
+    },
+  },
+});
+```
+
+The `headers` are sent directly to the proxy in `CONNECT` requests (for HTTPS targets) or in the proxy request (for HTTP targets). If you provide a `Proxy-Authorization` header, it overrides any credentials in the proxy URL.
 
 ### Custom headers
 

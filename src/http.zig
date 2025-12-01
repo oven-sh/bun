@@ -2230,7 +2230,7 @@ pub fn handleResponseMetadata(
                 }
             },
             hashHeaderConst("Content-Type") => {
-                if (strings.contains(header.value, "text/event-stream")) {
+                if (strings.containsCaseInsensitiveASCII(header.value, "text/event-stream")) {
                     is_server_sent_events = true;
                 }
             },
@@ -2252,25 +2252,27 @@ pub fn handleResponseMetadata(
                 }
             },
             hashHeaderConst("Transfer-Encoding") => {
-                if (strings.eqlComptime(header.value, "gzip")) {
+                // > All transfer-coding names are case-insensitive
+                // https://datatracker.ietf.org/doc/html/rfc7230#section-4
+                if (strings.eqlIgnoreCase(header.value, "gzip")) {
                     if (!this.flags.disable_decompression) {
                         this.state.transfer_encoding = Encoding.gzip;
                     }
-                } else if (strings.eqlComptime(header.value, "deflate")) {
+                } else if (strings.eqlIgnoreCase(header.value, "deflate")) {
                     if (!this.flags.disable_decompression) {
                         this.state.transfer_encoding = Encoding.deflate;
                     }
-                } else if (strings.eqlComptime(header.value, "br")) {
+                } else if (strings.eqlIgnoreCase(header.value, "br")) {
                     if (!this.flags.disable_decompression) {
                         this.state.transfer_encoding = .brotli;
                     }
-                } else if (strings.eqlComptime(header.value, "zstd")) {
+                } else if (strings.eqlIgnoreCase(header.value, "zstd")) {
                     if (!this.flags.disable_decompression) {
                         this.state.transfer_encoding = .zstd;
                     }
-                } else if (strings.eqlComptime(header.value, "identity")) {
+                } else if (strings.eqlIgnoreCase(header.value, "identity")) {
                     this.state.transfer_encoding = Encoding.identity;
-                } else if (strings.eqlComptime(header.value, "chunked")) {
+                } else if (strings.eqlIgnoreCase(header.value, "chunked")) {
                     this.state.transfer_encoding = Encoding.chunked;
                 } else {
                     return error.UnsupportedTransferEncoding;
@@ -2281,7 +2283,8 @@ pub fn handleResponseMetadata(
             },
             hashHeaderConst("Connection") => {
                 if (response.status_code >= 200 and response.status_code <= 299) {
-                    // HTTP headers are case-insensitive (RFC 7230)
+                    // > Connection options are case-insensitive.
+                    // https://datatracker.ietf.org/doc/html/rfc7230#section-6.1
                     if (std.ascii.eqlIgnoreCase(header.value, "close")) {
                         this.state.flags.allow_keepalive = false;
                     } else if (std.ascii.eqlIgnoreCase(header.value, "keep-alive")) {

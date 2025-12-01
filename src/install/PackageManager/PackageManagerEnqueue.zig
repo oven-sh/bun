@@ -129,7 +129,7 @@ pub fn enqueueTarballForReading(
     alias: string,
     resolution: *const Resolution,
     task_context: TaskCallbackContext,
-    integrity: Integrity,
+    integrity: *const Integrity,
 ) void {
     const path = this.lockfile.str(&resolution.value.local_tarball);
     const task_id = Task.Id.forTarball(path);
@@ -152,7 +152,7 @@ pub fn enqueueTarballForReading(
         alias,
         path,
         resolution.*,
-        integrity,
+        integrity.*,
     )));
 }
 

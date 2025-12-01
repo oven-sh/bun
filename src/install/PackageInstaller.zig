@@ -1003,7 +1003,7 @@ pub const PackageInstaller = struct {
                             alias.slice(this.lockfile.buffers.string_bytes.items),
                             resolution,
                             context,
-                            this.lockfile.packages.items(.meta)[package_id].integrity,
+                            &this.lockfile.packages.items(.meta)[package_id].integrity,
                         );
                     },
                     .remote_tarball => {

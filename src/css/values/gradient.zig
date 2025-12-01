@@ -702,7 +702,7 @@ pub const WebKitGradient = union(enum) {
         if (input.expectComma().asErr()) |e| return .{ .err = e };
 
         // todo_stuff.match_ignore_ascii_case
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "linear")) {
+        if (bun.strings.eqlCaseInsensitiveASCII(ident, "linear")) {
             // todo_stuff.depth
             const from = switch (WebKitGradientPoint.parse(input)) {
                 .result => |vv| vv,
@@ -723,7 +723,7 @@ pub const WebKitGradient = union(enum) {
                 .to = to,
                 .stops = stops,
             } } };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "radial")) {
+        } else if (bun.strings.eqlCaseInsensitiveASCII(ident, "radial")) {
             const from = switch (WebKitGradientPoint.parse(input)) {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
@@ -1248,16 +1248,16 @@ pub const WebKitColorStop = struct {
                     i: *css.Parser,
                 ) Result(WebKitColorStop) {
                     // todo_stuff.match_ignore_ascii_case
-                    const position: f32 = if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "color-stop")) position: {
+                    const position: f32 = if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "color-stop")) position: {
                         const p: NumberOrPercentage = switch (@call(.auto, @field(NumberOrPercentage, "parse"), .{i})) {
                             .result => |vv| vv,
                             .err => |e| return .{ .err = e },
                         };
                         if (i.expectComma().asErr()) |e| return .{ .err = e };
                         break :position p.intoF32();
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "from")) position: {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "from")) position: {
                         break :position 0.0;
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "to")) position: {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "to")) position: {
                         break :position 1.0;
                     } else {
                         return .{ .err = closure.loc.newUnexpectedTokenError(.{ .ident = closure.function }) };

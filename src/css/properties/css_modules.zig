@@ -67,7 +67,7 @@ pub const Composes = struct {
             .err => |e| return .{ .err = e },
         };
 
-        if (bun.strings.eqlCaseInsensitiveASCII(name.v, "from", true)) return .{ .err = input.newErrorForNextToken() };
+        if (bun.strings.eqlCaseInsensitiveASCII(name.v, "from")) return .{ .err = input.newErrorForNextToken() };
 
         return .{ .result = name };
     }

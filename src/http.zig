@@ -2356,7 +2356,7 @@ pub fn handleResponseMetadata(
                             const normalized_url_str = try normalized_url.toOwnedSlice(bun.default_allocator);
 
                             const new_url = URL.parse(normalized_url_str);
-                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
+                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin));
                             this.url = new_url;
                             this.redirect = normalized_url_str;
                         } else if (strings.hasPrefixComptime(location, "//")) {
@@ -2396,7 +2396,7 @@ pub fn handleResponseMetadata(
                             const normalized_url_str = try normalized_url.toOwnedSlice(bun.default_allocator);
 
                             const new_url = URL.parse(normalized_url_str);
-                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
+                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin));
                             this.url = new_url;
                             this.redirect = normalized_url_str;
                         } else {
@@ -2416,7 +2416,7 @@ pub fn handleResponseMetadata(
                                 return error.RedirectURLTooLong;
                             };
                             this.url = URL.parse(new_url);
-                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(this.url.origin), strings.withoutTrailingSlash(original_url.origin), true);
+                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(this.url.origin), strings.withoutTrailingSlash(original_url.origin));
                             this.redirect = new_url;
                         }
                     }

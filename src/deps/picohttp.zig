@@ -7,7 +7,7 @@ pub const Header = struct {
 
         pub fn get(this: *const List, name: string) ?string {
             for (this.list) |header| {
-                if (strings.eqlCaseInsensitiveASCII(header.name, name, true)) {
+                if (strings.eqlCaseInsensitiveASCII(header.name, name)) {
                     return header.value;
                 }
             }
@@ -17,11 +17,11 @@ pub const Header = struct {
         pub fn getIfOtherIsAbsent(this: *const List, name: string, other: string) ?string {
             var value: ?string = null;
             for (this.list) |header| {
-                if (strings.eqlCaseInsensitiveASCII(header.name, other, true)) {
+                if (strings.eqlCaseInsensitiveASCII(header.name, other)) {
                     return null;
                 }
 
-                if (value == null and strings.eqlCaseInsensitiveASCII(header.name, name, true)) {
+                if (value == null and strings.eqlCaseInsensitiveASCII(header.name, name)) {
                     value = header.value;
                 }
             }
@@ -129,14 +129,14 @@ pub const Request = struct {
             for (request.headers) |*header| {
                 _ = try writer.writeAll(" ");
                 if (content_type.len == 0) {
-                    if (bun.strings.eqlCaseInsensitiveASCII("content-type", header.name, true)) {
+                    if (bun.strings.eqlCaseInsensitiveASCII("content-type", header.name)) {
                         content_type = header.value;
                     }
                 }
 
                 try header.curl().format(writer);
 
-                if (bun.strings.eqlCaseInsensitiveASCII("accept-encoding", header.name, true)) {
+                if (bun.strings.eqlCaseInsensitiveASCII("accept-encoding", header.name)) {
                     _ = try writer.writeAll(" --compressed");
                 }
             }

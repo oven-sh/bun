@@ -19,7 +19,7 @@ const stack_fallback_size_small = switch (Environment.os) {
 /// Compares ASCII values case-insensitively, non-ASCII values are compared directly
 fn eqlIgnoreCaseT(comptime T: type, a: []const T, b: []const T) bool {
     if (T != u16) {
-        return bun.strings.eqlCaseInsensitiveASCII(a, b, true);
+        return bun.strings.eqlCaseInsensitiveASCII(a, b);
     }
 }
 

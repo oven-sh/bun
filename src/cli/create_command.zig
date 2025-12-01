@@ -2027,7 +2027,7 @@ pub const Example = struct {
         var is_expected_content_type = false;
         var content_type: string = "";
         for (response.headers.list) |header| {
-            if (strings.eqlCaseInsensitiveASCII(header.name, "content-type", true)) {
+            if (strings.eqlCaseInsensitiveASCII(header.name, "content-type")) {
                 content_type = header.value;
 
                 if (strings.eqlComptime(header.value, "application/x-gzip")) {

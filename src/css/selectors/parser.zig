@@ -1214,7 +1214,7 @@ pub const SelectorParser = struct {
             } else {
                 if (bun.strings.startsWithChar(name, '_')) {
                     this.options.warn(loc.newCustomError(SelectorParseErrorKind{ .unsupported_pseudo_class_or_element = name }));
-                } else if (this.options.css_modules != null and bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "local") or bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "global")) {
+                } else if (this.options.css_modules != null and bun.strings.eqlCaseInsensitiveASCII(name, "local") or bun.strings.eqlCaseInsensitiveASCII(name, "global")) {
                     return .{ .err = loc.newCustomError(SelectorParseErrorKind{ .ambiguous_css_module_class = name }) };
                 }
                 return .{ .result = PseudoClass{ .custom = .{ .name = name } } };
@@ -1236,7 +1236,7 @@ pub const SelectorParser = struct {
 
         // todo_stuff.match_ignore_ascii_case
         const pseudo_class = pseudo_class: {
-            if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "lang")) {
+            if (bun.strings.eqlCaseInsensitiveASCII(name, "lang")) {
                 const languages = switch (parser.parseCommaSeparated([]const u8, css.Parser.expectIdentOrString)) {
                     .err => |e| return .{ .err = e },
                     .result => |v| v,
@@ -1244,7 +1244,7 @@ pub const SelectorParser = struct {
                 return .{ .result = PseudoClass{
                     .lang = .{ .languages = languages },
                 } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "dir")) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII(name, "dir")) {
                 break :pseudo_class PseudoClass{
                     .dir = .{
                         .direction = switch (Direction.parse(parser)) {
@@ -1253,7 +1253,7 @@ pub const SelectorParser = struct {
                         },
                     },
                 };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "local") and this.options.css_modules != null) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII(name, "local") and this.options.css_modules != null) {
                 break :pseudo_class PseudoClass{
                     .local = .{
                         .selector = brk: {
@@ -1266,7 +1266,7 @@ pub const SelectorParser = struct {
                         },
                     },
                 };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "global") and this.options.css_modules != null) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII(name, "global") and this.options.css_modules != null) {
                 break :pseudo_class PseudoClass{
                     .global = .{
                         .selector = brk: {
@@ -2724,7 +2724,7 @@ pub fn parse_one_simple_selector(
                     return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
                 }
                 const pseudo_element: Impl.SelectorImpl.PseudoElement = if (is_functional) pseudo_element: {
-                    if (parser.parsePart() and bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "part")) {
+                    if (parser.parsePart() and bun.strings.eqlCaseInsensitiveASCII(name, "part")) {
                         if (!state.allowsPart()) {
                             return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
                         }
@@ -2772,7 +2772,7 @@ pub fn parse_one_simple_selector(
                         return .{ .result = .{ .part_pseudo = names } };
                     }
 
-                    if (parser.parseSlotted() and bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "slotted")) {
+                    if (parser.parseSlotted() and bun.strings.eqlCaseInsensitiveASCII(name, "slotted")) {
                         if (!state.allowsSlotted()) {
                             return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.invalid_state)) };
                         }
@@ -3048,10 +3048,10 @@ pub fn parse_attribute_selector(comptime Impl: type, parser: *SelectorParser, in
 pub fn is_css2_pseudo_element(name: []const u8) bool {
     // ** Do not add to this list! **
     // TODO: todo_stuff.match_ignore_ascii_case
-    return bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "before") or
-        bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "after") or
-        bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "first-line") or
-        bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "first-letter");
+    return bun.strings.eqlCaseInsensitiveASCII(name, "before") or
+        bun.strings.eqlCaseInsensitiveASCII(name, "after") or
+        bun.strings.eqlCaseInsensitiveASCII(name, "first-line") or
+        bun.strings.eqlCaseInsensitiveASCII(name, "first-letter");
 }
 
 /// Parses one compound selector suitable for nested stuff like :-moz-any, etc.
@@ -3173,7 +3173,7 @@ pub fn parse_simple_pseudo_class(
     // The view-transition pseudo elements accept the :only-child pseudo class.
     // https://w3c.github.io/csswg-drafts/css-view-transitions-1/#pseudo-root
     if (state.after_view_transition) {
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "only-child")) {
+        if (bun.strings.eqlCaseInsensitiveASCII(name, "only-child")) {
             return .{ .result = .{ .nth = NthSelectorData.only(false) } };
         }
     }
@@ -3644,9 +3644,9 @@ pub fn parse_attribute_flags(input: *css.Parser) Result(AttributeFlags) {
 
     const ident = if (token.* == .ident) token.ident else return .{ .err = location.newBasicUnexpectedTokenError(token.*) };
 
-    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "i")) {
+    if (bun.strings.eqlCaseInsensitiveASCII(ident, "i")) {
         return .{ .result = AttributeFlags.ascii_case_insensitive };
-    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "s")) {
+    } else if (bun.strings.eqlCaseInsensitiveASCII(ident, "s")) {
         return .{ .result = AttributeFlags.case_sensitive };
     } else {
         return .{ .err = location.newBasicUnexpectedTokenError(token.*) };

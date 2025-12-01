@@ -271,7 +271,7 @@ pub const LengthValue = union(enum) {
             .dimension => |*dim| {
                 // todo_stuff.match_ignore_ascii_case
                 inline for (std.meta.fields(@This())) |field| {
-                    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(field.name, dim.unit)) {
+                    if (bun.strings.eqlCaseInsensitiveASCII(field.name, dim.unit)) {
                         return .{ .result = @unionInit(LengthValue, field.name, dim.num.value) };
                     }
                 }
@@ -363,7 +363,7 @@ pub const LengthValue = union(enum) {
         switch (token.*) {
             .dimension => |*dim| {
                 inline for (std.meta.fields(@This())) |field| {
-                    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(field.name, dim.unit)) {
+                    if (bun.strings.eqlCaseInsensitiveASCII(field.name, dim.unit)) {
                         return .{ .result = @unionInit(LengthValue, field.name, dim.num.value) };
                     }
                 }

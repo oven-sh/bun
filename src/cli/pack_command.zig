@@ -2543,7 +2543,7 @@ pub const PackCommand = struct {
     const stringsEql = if (Environment.isLinux)
         strings.eqlComptime
     else
-        strings.eqlCaseInsensitiveASCIIICheckLength;
+        strings.eqlCaseInsensitiveASCII;
 
     fn isSpecialFileOrVariant(filename: []const u8, comptime name: []const u8) callconv(bun.callconv_inline) bool {
         return switch (filename.len) {

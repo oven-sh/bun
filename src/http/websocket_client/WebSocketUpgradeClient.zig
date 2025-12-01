@@ -94,7 +94,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             // Check if user provided a custom protocol for subprotocols validation
             var protocol_for_subprotocols = client_protocol.*;
             for (extra_headers.names, extra_headers.values) |name, value| {
-                if (strings.eqlCaseInsensitiveASCII(name.slice(), "sec-websocket-protocol", true)) {
+                if (strings.eqlCaseInsensitiveASCII(name.slice(), "sec-websocket-protocol")) {
                     protocol_for_subprotocols = value;
                     break;
                 }
@@ -375,17 +375,17 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             for (response.headers.list) |header| {
                 switch (header.name.len) {
                     "Connection".len => {
-                        if (connection_header.name.len == 0 and strings.eqlCaseInsensitiveASCII(header.name, "Connection", false)) {
+                        if (connection_header.name.len == 0 and strings.eqlCaseInsensitiveASCII(header.name, "Connection")) {
                             connection_header = header;
                         }
                     },
                     "Upgrade".len => {
-                        if (upgrade_header.name.len == 0 and strings.eqlCaseInsensitiveASCII(header.name, "Upgrade", false)) {
+                        if (upgrade_header.name.len == 0 and strings.eqlCaseInsensitiveASCII(header.name, "Upgrade")) {
                             upgrade_header = header;
                         }
                     },
                     "Sec-WebSocket-Version".len => {
-                        if (strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Version", false)) {
+                        if (strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Version")) {
                             if (!strings.eqlComptimeIgnoreLen(header.value, "13")) {
                                 this.terminate(ErrorCode.invalid_websocket_version);
                                 return;
@@ -393,12 +393,12 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                         }
                     },
                     "Sec-WebSocket-Accept".len => {
-                        if (websocket_accept_header.name.len == 0 and strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Accept", false)) {
+                        if (websocket_accept_header.name.len == 0 and strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Accept")) {
                             websocket_accept_header = header;
                         }
                     },
                     "Sec-WebSocket-Protocol".len => {
-                        if (strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Protocol", false)) {
+                        if (strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Protocol")) {
                             const valid = brk: {
                                 // Can't have multiple protocol headers in the response.
                                 if (protocol_header_seen) break :brk false;
@@ -432,7 +432,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                         }
                     },
                     "Sec-WebSocket-Extensions".len => {
-                        if (strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Extensions", false)) {
+                        if (strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Extensions")) {
                             // This is a simplified parser. A full parser would handle multiple extensions and quoted values.
                             var it = std.mem.splitScalar(u8, header.value, ',');
                             while (it.next()) |ext_str| {
@@ -511,12 +511,12 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 return;
             }
 
-            if (!strings.eqlCaseInsensitiveASCII(connection_header.value, "Upgrade", true)) {
+            if (!strings.eqlCaseInsensitiveASCII(connection_header.value, "Upgrade")) {
                 this.terminate(ErrorCode.invalid_connection_header);
                 return;
             }
 
-            if (!strings.eqlCaseInsensitiveASCII(upgrade_header.value, "websocket", true)) {
+            if (!strings.eqlCaseInsensitiveASCII(upgrade_header.value, "websocket")) {
                 this.terminate(ErrorCode.invalid_upgrade_header);
                 return;
             }
@@ -670,11 +670,11 @@ fn buildRequestBody(
 
     for (extra_headers.names, extra_headers.values) |name, value| {
         const name_slice = name.slice();
-        if (user_host == null and strings.eqlCaseInsensitiveASCII(name_slice, "host", true)) {
+        if (user_host == null and strings.eqlCaseInsensitiveASCII(name_slice, "host")) {
             user_host = value;
-        } else if (user_key == null and strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-key", true)) {
+        } else if (user_key == null and strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-key")) {
             user_key = value;
-        } else if (user_protocol == null and strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-protocol", true)) {
+        } else if (user_protocol == null and strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-protocol")) {
             user_protocol = value;
         }
     }
@@ -734,13 +734,13 @@ fn buildRequestBody(
 
     for (extra_headers.names, extra_headers.values) |name, value| {
         const name_slice = name.slice();
-        if (strings.eqlCaseInsensitiveASCII(name_slice, "host", true) or
-            strings.eqlCaseInsensitiveASCII(name_slice, "connection", true) or
-            strings.eqlCaseInsensitiveASCII(name_slice, "upgrade", true) or
-            strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-version", true) or
-            strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-extensions", true) or
-            strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-key", true) or
-            strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-protocol", true))
+        if (strings.eqlCaseInsensitiveASCII(name_slice, "host") or
+            strings.eqlCaseInsensitiveASCII(name_slice, "connection") or
+            strings.eqlCaseInsensitiveASCII(name_slice, "upgrade") or
+            strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-version") or
+            strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-extensions") or
+            strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-key") or
+            strings.eqlCaseInsensitiveASCII(name_slice, "sec-websocket-protocol"))
         {
             continue;
         }

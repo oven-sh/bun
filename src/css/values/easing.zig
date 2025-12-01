@@ -101,7 +101,7 @@ pub const EasingFunction = union(enum) {
                     closure: *const Closure,
                     i: *css.Parser,
                 ) Result(EasingFunction) {
-                    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "cubic-bezier")) {
+                    if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "cubic-bezier")) {
                         const x1 = switch (CSSNumberFns.parse(i)) {
                             .result => |vv| vv,
                             .err => |e| return .{ .err = e },
@@ -122,7 +122,7 @@ pub const EasingFunction = union(enum) {
                             .err => |e| return .{ .err = e },
                         };
                         return .{ .result = EasingFunction{ .cubic_bezier = .{ .x1 = x1, .y1 = y1, .x2 = x2, .y2 = y2 } } };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "steps")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "steps")) {
                         const count = switch (CSSIntegerFns.parse(i)) {
                             .result => |vv| vv,
                             .err => |e| return .{ .err = e },

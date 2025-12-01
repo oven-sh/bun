@@ -1002,7 +1002,7 @@ pub const String = extern struct {
 
             inline for (0..values.len) |i| {
                 bun.assert(bytes.len == values[i].len);
-                if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(bytes, values[i])) {
+                if (bun.strings.eqlCaseInsensitiveASCII(bytes, values[i])) {
                     return i;
                 }
             }
@@ -1023,7 +1023,7 @@ pub const String = extern struct {
         };
 
         inline for (0..values.len) |i| {
-            if (bun.strings.eqlCaseInsensitiveASCIIIgnoreLength(&buffer, values[i])) {
+            if (bun.strings.eqlCaseInsensitiveASCII(&buffer, values[i])) {
                 return i;
             }
         }

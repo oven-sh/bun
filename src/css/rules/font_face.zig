@@ -377,19 +377,19 @@ pub const FontFormat = union(enum) {
             .err => |e| return .{ .err = e },
         };
 
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("woff", s)) {
+        if (bun.strings.eqlCaseInsensitiveASCII("woff", s)) {
             return .{ .result = .woff };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("woff2", s)) {
+        } else if (bun.strings.eqlCaseInsensitiveASCII("woff2", s)) {
             return .{ .result = .woff2 };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("truetype", s)) {
+        } else if (bun.strings.eqlCaseInsensitiveASCII("truetype", s)) {
             return .{ .result = .truetype };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("opentype", s)) {
+        } else if (bun.strings.eqlCaseInsensitiveASCII("opentype", s)) {
             return .{ .result = .opentype };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("embedded-opentype", s)) {
+        } else if (bun.strings.eqlCaseInsensitiveASCII("embedded-opentype", s)) {
             return .{ .result = .embedded_opentype };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("collection", s)) {
+        } else if (bun.strings.eqlCaseInsensitiveASCII("collection", s)) {
             return .{ .result = .collection };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("svg", s)) {
+        } else if (bun.strings.eqlCaseInsensitiveASCII("svg", s)) {
             return .{ .result = .svg };
         } else {
             return .{ .result = .{ .string = s } };
@@ -668,35 +668,35 @@ pub const FontFaceDeclarationParser = struct {
             _ = this; // autofix
             const state = input.state();
             // todo_stuff.match_ignore_ascii_case
-            if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "src")) {
+            if (bun.strings.eqlCaseInsensitiveASCII(name, "src")) {
                 if (input.parseCommaSeparated(Source, Source.parse).asValue()) |sources| {
                     return .{ .result = .{ .source = sources } };
                 }
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "font-family")) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII(name, "font-family")) {
                 if (FontFamily.parse(input).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .font_family = c } };
                     }
                 }
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "font-weight")) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII(name, "font-weight")) {
                 if (Size2D(FontWeight).parse(input).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .font_weight = c } };
                     }
                 }
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "font-style")) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII(name, "font-style")) {
                 if (FontStyle.parse(input).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .font_style = c } };
                     }
                 }
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "font-stretch")) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII(name, "font-stretch")) {
                 if (Size2D(FontStretch).parse(input).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .font_stretch = c } };
                     }
                 }
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "unicode-renage")) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII(name, "unicode-renage")) {
                 if (input.parseList(UnicodeRange, UnicodeRange.parse).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .unicode_range = c } };

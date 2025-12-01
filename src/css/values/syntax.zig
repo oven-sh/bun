@@ -336,33 +336,33 @@ pub const SyntaxComponentKind = union(enum) {
             const end_idx = std.mem.indexOfScalar(u8, input.*, '>') orelse return .{ .err = {} };
             const name = input.*[1..end_idx];
             // todo_stuff.match_ignore_ascii_case
-            const component: SyntaxComponentKind = if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "length"))
+            const component: SyntaxComponentKind = if (bun.strings.eqlCaseInsensitiveASCII(name, "length"))
                 .length
-            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "number"))
+            else if (bun.strings.eqlCaseInsensitiveASCII(name, "number"))
                 .number
-            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "percentage"))
+            else if (bun.strings.eqlCaseInsensitiveASCII(name, "percentage"))
                 .percentage
-            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "length-percentage"))
+            else if (bun.strings.eqlCaseInsensitiveASCII(name, "length-percentage"))
                 .length_percentage
-            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "color"))
+            else if (bun.strings.eqlCaseInsensitiveASCII(name, "color"))
                 .color
-            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "image"))
+            else if (bun.strings.eqlCaseInsensitiveASCII(name, "image"))
                 .image
-            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "url"))
+            else if (bun.strings.eqlCaseInsensitiveASCII(name, "url"))
                 .url
-            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "integer"))
+            else if (bun.strings.eqlCaseInsensitiveASCII(name, "integer"))
                 .integer
-            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "angle"))
+            else if (bun.strings.eqlCaseInsensitiveASCII(name, "angle"))
                 .angle
-            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "time"))
+            else if (bun.strings.eqlCaseInsensitiveASCII(name, "time"))
                 .time
-            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "resolution"))
+            else if (bun.strings.eqlCaseInsensitiveASCII(name, "resolution"))
                 .resolution
-            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "transform-function"))
+            else if (bun.strings.eqlCaseInsensitiveASCII(name, "transform-function"))
                 .transform_function
-            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "transform-list"))
+            else if (bun.strings.eqlCaseInsensitiveASCII(name, "transform-list"))
                 .transform_list
-            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "custom-ident"))
+            else if (bun.strings.eqlCaseInsensitiveASCII(name, "custom-ident"))
                 .custom_ident
             else
                 return .{ .err = {} };

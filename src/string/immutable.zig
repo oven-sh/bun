@@ -53,7 +53,7 @@ pub fn containsT(comptime T: type, self: []const T, str: []const T) callconv(bun
 pub fn containsCaseInsensitiveASCII(self: string, str: string) callconv(bun.callconv_inline) bool {
     var start: usize = 0;
     while (start + str.len <= self.len) {
-        if (eqlCaseInsensitiveASCIIIgnoreLength(self[start..][0..str.len], str)) {
+        if (eqlCaseInsensitiveASCII(self[start..][0..str.len], str)) {
             return true;
         }
         start += 1;
@@ -743,7 +743,7 @@ pub fn isUtf8CharBoundary(c: u8) bool {
 }
 
 pub fn startsWithCaseInsensitiveAscii(self: string, prefix: string) bool {
-    return self.len >= prefix.len and eqlCaseInsensitiveASCII(self[0..prefix.len], prefix, false);
+    return self.len >= prefix.len and eqlCaseInsensitiveASCII(self[0..prefix.len], prefix);
 }
 
 pub fn startsWithGeneric(comptime T: type, self: []const T, str: []const T) bool {
@@ -968,35 +968,25 @@ pub fn eqlComptimeCheckLenWithType(comptime Type: type, a: []const Type, comptim
     return eqlComptimeCheckLenWithKnownType(comptime Type, a, if (@typeInfo(@TypeOf(b)) != .pointer) &b else b, comptime check_len);
 }
 
-pub fn eqlCaseInsensitiveASCIIIgnoreLength(
-    a: string,
-    b: string,
-) bool {
-    return eqlCaseInsensitiveASCII(a, b, false);
-}
+/// Case insensitive equality check for ASCII strings.
+///
+/// Note that this function performs bound checks, but is marked as inline, so the caller may also
+/// perform bounds checks without a performance penalty.
+pub inline fn eqlCaseInsensitiveASCII(a: string, b: string) bool {
+    // This is separated into a slow path to reduce code size of the fast path. We're letting LLVM
+    // decide whether it inlines it or not.
+    const SlowPathNs = struct {
+        pub fn eqlCaseInsensitiveASCII(as: string, bs: string) bool {
+            return bun.c.strncasecmp(as.ptr, bs.ptr, @min(as.len, bs.len)) == 0;
+        }
+    };
 
-pub fn eqlCaseInsensitiveASCIIICheckLength(
-    a: string,
-    b: string,
-) bool {
-    return eqlCaseInsensitiveASCII(a, b, true);
-}
-
-pub fn eqlCaseInsensitiveASCII(a: string, b: string, comptime check_len: bool) bool {
-    if (comptime check_len) {
-        if (a.len != b.len) return false;
-        if (a.len == 0) return true;
-    }
-
-    bun.unsafeAssert(b.len > 0);
-    bun.unsafeAssert(a.len > 0);
-
-    return bun.c.strncasecmp(a.ptr, b.ptr, a.len) == 0;
+    return a.len == b.len and (a.len == 0 or SlowPathNs.eqlCaseInsensitiveASCII(a, b));
 }
 
 pub fn eqlCaseInsensitiveT(comptime T: type, a: []const T, b: []const u8) bool {
+    if (comptime T == u8) return eqlCaseInsensitiveASCII(a, b);
     if (a.len != b.len or a.len == 0) return false;
-    if (comptime T == u8) return eqlCaseInsensitiveASCIIIgnoreLength(a, b);
 
     for (a, b) |c, d| {
         switch (c) {

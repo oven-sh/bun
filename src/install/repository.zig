@@ -53,7 +53,7 @@ const SloppyGlobalGitConfig = struct {
 
             if (@"[core]") {
                 if (!found_askpass) {
-                    if (line.len > "askpass".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."askpass".len], "askpass") and switch (line["askpass".len]) {
+                    if (line.len > "askpass".len and strings.eqlCaseInsensitiveASCII(line[0.."askpass".len], "askpass") and switch (line["askpass".len]) {
                         ' ', '\t', '=' => true,
                         else => false,
                     }) {
@@ -63,7 +63,7 @@ const SloppyGlobalGitConfig = struct {
                 }
 
                 if (!found_ssh_command) {
-                    if (line.len > "sshCommand".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."sshCommand".len], "sshCommand") and switch (line["sshCommand".len]) {
+                    if (line.len > "sshCommand".len and strings.eqlCaseInsensitiveASCII(line[0.."sshCommand".len], "sshCommand") and switch (line["sshCommand".len]) {
                         ' ', '\t', '=' => true,
                         else => false,
                     }) {
@@ -72,7 +72,7 @@ const SloppyGlobalGitConfig = struct {
                 }
             } else {
                 if (!found_askpass) {
-                    if (line.len > "core.askpass".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."core.askpass".len], "core.askpass") and switch (line["core.askpass".len]) {
+                    if (line.len > "core.askpass".len and strings.eqlCaseInsensitiveASCII(line[0.."core.askpass".len], "core.askpass") and switch (line["core.askpass".len]) {
                         ' ', '\t', '=' => true,
                         else => false,
                     }) {
@@ -82,7 +82,7 @@ const SloppyGlobalGitConfig = struct {
                 }
 
                 if (!found_ssh_command) {
-                    if (line.len > "core.sshCommand".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."core.sshCommand".len], "core.sshCommand") and switch (line["core.sshCommand".len]) {
+                    if (line.len > "core.sshCommand".len and strings.eqlCaseInsensitiveASCII(line[0.."core.sshCommand".len], "core.sshCommand") and switch (line["core.sshCommand".len]) {
                         ' ', '\t', '=' => true,
                         else => false,
                     }) {

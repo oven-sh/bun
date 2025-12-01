@@ -1109,6 +1109,7 @@ const default_loaders_posix = .{
     .{ ".node", .napi },
     .{ ".txt", .text },
     .{ ".text", .text },
+    .{ ".md", .text },
     .{ ".html", .html },
     .{ ".jsonc", .jsonc },
 };
@@ -1547,6 +1548,7 @@ const default_loader_ext = [_]string{
     ".toml",  ".yaml",
     ".yml",   ".wasm",
     ".txt",   ".text",
+    ".md",
 
     ".jsonc",
 };
@@ -1574,6 +1576,7 @@ const node_modules_default_loader_ext = [_]string{
     ".cts",
     ".wasm",
     ".text",
+    ".md",
     ".html",
 };
 

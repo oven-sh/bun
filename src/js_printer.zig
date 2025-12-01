@@ -353,20 +353,11 @@ pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer,
     try writer.writeAll("\"");
 }
 
-/// Determines the best quote character for console output:
-/// - Use double quotes by default
-/// - Use single quotes if string contains double quotes but no single quotes
-pub fn bestQuoteCharForConsole(input: []const u8) u8 {
-    const has_double = strings.containsChar(input, '"');
-    const has_single = strings.containsChar(input, '\'');
-    // Default to double quotes, use single quotes only to avoid escaping
-    return if (has_double and !has_single) '\'' else '"';
-}
-
 /// Writes a quoted string for console output, choosing the best quote character
 /// to minimize escaping. Only supports latin1 encoding (use JSON path for UTF-16).
 pub fn writeQuotedString(input: []const u8, comptime Writer: type, writer: Writer) !void {
-    const quote_char = bestQuoteCharForConsole(input);
+    // Reuse existing bestQuoteCharForString which counts quotes in a single pass
+    const quote_char = bestQuoteCharForString(u8, input, false);
     if (quote_char == '\'') {
         try writer.writeAll("'");
         try writePreQuotedString(input, Writer, writer, '\'', false, false, .latin1);

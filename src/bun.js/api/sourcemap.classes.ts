@@ -27,6 +27,5 @@ export default [
     constructNeedsThis: true,
     memoryCost: true,
     estimatedSize: true,
-    structuredClone: false,
   }),
 ];

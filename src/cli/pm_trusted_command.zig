@@ -1,23 +1,4 @@
-const std = @import("std");
-const Progress = bun.Progress;
-const bun = @import("bun");
-const logger = bun.logger;
-const Environment = bun.Environment;
-const Command = @import("../cli.zig").Command;
-const Install = @import("../install/install.zig");
-const LifecycleScriptSubprocess = Install.LifecycleScriptSubprocess;
-const PackageID = Install.PackageID;
-const String = bun.Semver.String;
-const PackageManager = Install.PackageManager;
-const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
-const Lockfile = Install.Lockfile;
-const Global = bun.Global;
-const DependencyID = Install.DependencyID;
-const ArrayIdentityContext = bun.ArrayIdentityContext;
 const DepIdSet = std.ArrayHashMapUnmanaged(DependencyID, void, ArrayIdentityContext, false);
-const strings = bun.strings;
-const string = bun.string;
-const Output = bun.Output;
 
 pub const DefaultTrustedCommand = struct {
     pub fn exec() !void {
@@ -86,6 +67,11 @@ pub const UntrustedCommand = struct {
                     const dep = pm.lockfile.buffers.dependencies.items[dep_id];
                     const alias = dep.name.slice(buf);
                     const package_id = pm.lockfile.buffers.resolutions.items[dep_id];
+
+                    if (package_id >= packages.len) {
+                        continue;
+                    }
+
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
 
@@ -249,9 +235,11 @@ pub const TrustCommand = struct {
                     const dep = pm.lockfile.buffers.dependencies.items[dep_id];
                     const alias = dep.name.slice(buf);
                     const package_id = pm.lockfile.buffers.resolutions.items[dep_id];
-                    if (comptime Environment.allow_assert) {
-                        bun.assertWithLocation(package_id != Install.invalid_package_id, @src());
+
+                    if (package_id >= packages.len) {
+                        continue;
                     }
+
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
 
@@ -362,9 +350,9 @@ pub const TrustCommand = struct {
         const package_json_contents = try pm.root_package_json_file.readToEndAlloc(ctx.allocator, try pm.root_package_json_file.getEndPos());
         defer ctx.allocator.free(package_json_contents);
 
-        const package_json_source = logger.Source.initPathString(PackageManager.package_json_cwd, package_json_contents);
+        const package_json_source = logger.Source.initPathString(PackageManager.root_package_json_path, package_json_contents);
 
-        var package_json = bun.JSON.parseUTF8(&package_json_source, ctx.log, ctx.allocator) catch |err| {
+        var package_json = bun.json.parseUTF8(&package_json_source, ctx.log, ctx.allocator) catch |err| {
             ctx.log.print(Output.errorWriter()) catch {};
 
             Output.errGeneric("failed to parse package.json: {s}", .{@errorName(err)});
@@ -451,3 +439,26 @@ pub const TrustCommand = struct {
         }
     }
 };
+
+const string = []const u8;
+
+const std = @import("std");
+const Command = @import("../cli.zig").Command;
+const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
+
+const Install = @import("../install/install.zig");
+const DependencyID = Install.DependencyID;
+const LifecycleScriptSubprocess = Install.LifecycleScriptSubprocess;
+const Lockfile = Install.Lockfile;
+const PackageID = Install.PackageID;
+const PackageManager = Install.PackageManager;
+
+const bun = @import("bun");
+const ArrayIdentityContext = bun.ArrayIdentityContext;
+const Environment = bun.Environment;
+const Global = bun.Global;
+const Output = bun.Output;
+const Progress = bun.Progress;
+const logger = bun.logger;
+const strings = bun.strings;
+const String = bun.Semver.String;

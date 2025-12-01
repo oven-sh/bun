@@ -32,6 +32,7 @@
 //!
 //! The manifest is generated during the linking phase and serialized as a JSON string
 //! that gets embedded directly into the JavaScript output.
+
 const HTMLImportManifest = @This();
 
 index: u32,
@@ -39,7 +40,7 @@ graph: *const Graph,
 chunks: []Chunk,
 linker_graph: *const LinkerGraph,
 
-pub fn format(this: HTMLImportManifest, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) bun.OOM!void {
+pub fn format(this: HTMLImportManifest, writer: *std.Io.Writer) bun.OOM!void {
     return write(this.index, this.graph, this.linker_graph, this.chunks, writer) catch |err| switch (err) {
         // We use std.fmt.count for this
         error.NoSpaceLeft => unreachable,
@@ -54,7 +55,7 @@ fn writeEntryItem(
     path: []const u8,
     hash: u64,
     loader: options.Loader,
-    kind: bun.JSC.API.BuildArtifact.OutputKind,
+    kind: bun.jsc.API.BuildArtifact.OutputKind,
 ) !void {
     try writer.writeAll("{");
 
@@ -97,23 +98,23 @@ fn writeEntryItem(
 pub fn writeEscapedJSON(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, chunks: []const Chunk, writer: anytype) !void {
     var stack = std.heap.stackFallback(4096, bun.default_allocator);
     const allocator = stack.get();
-    var bytes = std.ArrayList(u8).init(allocator);
+    var bytes = std.array_list.Managed(u8).init(allocator);
     defer bytes.deinit();
     try write(index, graph, linker_graph, chunks, bytes.writer());
     try bun.js_printer.writePreQuotedString(bytes.items, @TypeOf(writer), writer, '"', false, true, .utf8);
 }
 
-fn escapedJSONFormatter(this: HTMLImportManifest, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) bun.OOM!void {
+fn escapedJSONFormatter(this: HTMLImportManifest, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     return writeEscapedJSON(this.index, this.graph, this.linker_graph, this.chunks, writer) catch |err| switch (err) {
         // We use std.fmt.count for this
-        error.NoSpaceLeft => unreachable,
-        error.OutOfMemory => return error.OutOfMemory,
+        error.WriteFailed => unreachable,
+        error.OutOfMemory => return error.WriteFailed,
         else => unreachable,
     };
 }
 
-pub fn formatEscapedJSON(this: HTMLImportManifest) std.fmt.Formatter(escapedJSONFormatter) {
-    return std.fmt.Formatter(escapedJSONFormatter){ .data = this };
+pub fn formatEscapedJSON(this: HTMLImportManifest) std.fmt.Alt(HTMLImportManifest, escapedJSONFormatter) {
+    return .{ .data = this };
 }
 
 pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, chunks: []const Chunk, writer: anytype) !void {
@@ -131,7 +132,7 @@ pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, 
     const inject_compiler_filesystem_prefix = bv2.transpiler.options.compile;
     // Use the server-side public path here.
     const public_path = bv2.transpiler.options.public_path;
-    var temp_buffer = std.ArrayList(u8).init(bun.default_allocator);
+    var temp_buffer = std.array_list.Managed(u8).init(bun.default_allocator);
     defer temp_buffer.deinit();
 
     for (chunks) |*ch| {
@@ -248,18 +249,18 @@ pub fn write(index: u32, graph: *const Graph, linker_graph: *const LinkerGraph, 
     try writer.writeAll("]}");
 }
 
-const bun = @import("bun");
-const strings = bun.strings;
-const default_allocator = bun.default_allocator;
-
 const std = @import("std");
-const options = @import("../options.zig");
 
+const options = @import("../options.zig");
 const Loader = options.Loader;
+
+const bun = @import("bun");
+const default_allocator = bun.default_allocator;
+const strings = bun.strings;
 const AutoBitSet = bun.bit_set.AutoBitSet;
+
 const bundler = bun.bundle_v2;
 const BundleV2 = bundler.BundleV2;
+const Chunk = bundler.Chunk;
 const Graph = bundler.Graph;
 const LinkerGraph = bundler.LinkerGraph;
-
-const Chunk = bundler.Chunk;

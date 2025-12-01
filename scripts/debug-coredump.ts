@@ -44,17 +44,21 @@ if (!fs.existsSync(join(dir, "bun-profile")) || !fs.existsSync(join(dir, `bun-${
   await Bun.$`bash -c ${`age -d -i <(echo "$AGE_CORES_IDENTITY")`} < ${cores} | tar -zxvC ${dir}`;
 
   console.log("moving cores out of nested directory");
-  for await (const file of new Bun.Glob("bun-cores-*/bun-*.core").scan(dir)) {
+  for await (const file of new Bun.Glob("bun-cores-*/*.core").scan(dir)) {
     fs.renameSync(join(dir, file), join(dir, basename(file)));
   }
 } else {
   console.log(`already downloaded in ${dir}`);
 }
 
-console.log("launching debugger:");
-console.log(`${debuggerPath} --core ${join(dir, `bun-${pid}.core`)} ${join(dir, "bun-profile")}`);
+const desiredCore = join(dir, (await new Bun.Glob(`*${pid}.core`).scan(dir).next()).value);
 
-const proc = await Bun.spawn([debuggerPath, "--core", join(dir, `bun-${pid}.core`), join(dir, "bun-profile")], {
+const args = [debuggerPath, "--core", desiredCore, join(dir, "bun-profile")];
+
+console.log("launching debugger:");
+console.log(args.map(Bun.$.escape).join(" "));
+
+const proc = Bun.spawn(args, {
   stdin: "inherit",
   stdout: "inherit",
   stderr: "inherit",

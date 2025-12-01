@@ -3,7 +3,7 @@ pub var enabled = false;
 pub var check = std.once(load);
 
 pub fn load() void {
-    if (bun.getenvZAnyCase("BUN_POSTGRES_SOCKET_MONITOR_READER")) |monitor| {
+    if (bun.env_var.BUN_POSTGRES_SOCKET_MONITOR_READER.get()) |monitor| {
         enabled = true;
         file = std.fs.cwd().createFile(monitor, .{ .truncate = true }) catch {
             enabled = false;
@@ -17,9 +17,7 @@ pub fn write(data: []const u8) void {
     file.writeAll(data) catch {};
 }
 
-const debug = bun.Output.scoped(.Postgres, false);
-
-// @sortImports
+const debug = bun.Output.scoped(.Postgres, .visible);
 
 const bun = @import("bun");
 const std = @import("std");

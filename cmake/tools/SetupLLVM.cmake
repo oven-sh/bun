@@ -72,12 +72,14 @@ macro(find_llvm_command variable command)
     )
   endif()
 
+  math(EXPR LLVM_VERSION_NEXT_MAJOR "${LLVM_VERSION_MAJOR} + 1")
+
   find_command(
     VARIABLE ${variable}
     VERSION_VARIABLE LLVM_VERSION
     COMMAND ${commands}
     PATHS ${LLVM_PATHS}
-    VERSION >=${LLVM_VERSION_MAJOR}.1.0
+    VERSION ">=${LLVM_VERSION_MAJOR}.1.0 <${LLVM_VERSION_NEXT_MAJOR}.0.0"
   )
   list(APPEND CMAKE_ARGS -D${variable}=${${variable}})
 endmacro()
@@ -129,6 +131,9 @@ else()
   find_llvm_command(CMAKE_RANLIB llvm-ranlib)
   if(LINUX)
     find_llvm_command(LLD_PROGRAM ld.lld)
+    # Ensure vendor dependencies use lld instead of ld
+    list(APPEND CMAKE_ARGS -DCMAKE_EXE_LINKER_FLAGS=--ld-path=${LLD_PROGRAM})
+    list(APPEND CMAKE_ARGS -DCMAKE_SHARED_LINKER_FLAGS=--ld-path=${LLD_PROGRAM})
   endif()
   if(APPLE)
     find_llvm_command(CMAKE_DSYMUTIL dsymutil)

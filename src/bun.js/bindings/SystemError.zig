@@ -1,10 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const JSC = bun.JSC;
-const String = bun.String;
-const JSValue = JSC.JSValue;
-const JSGlobalObject = JSC.JSGlobalObject;
-
 pub const SystemError = extern struct {
     errno: c_int = 0,
     /// label for errno
@@ -25,7 +18,7 @@ pub const SystemError = extern struct {
     }
 
     extern fn SystemError__toErrorInstance(this: *const SystemError, global: *JSGlobalObject) JSValue;
-    extern fn SystemError__toErrorInstanceWithInfoObject(this: *const SystemError, global: *JSC.JSGlobalObject) JSValue;
+    extern fn SystemError__toErrorInstanceWithInfoObject(this: *const SystemError, global: *jsc.JSGlobalObject) JSValue;
 
     pub fn getErrno(this: *const SystemError) bun.sys.E {
         // The inverse in bun.sys.Error.toSystemError()
@@ -79,13 +72,13 @@ pub const SystemError = extern struct {
         return SystemError__toErrorInstanceWithInfoObject(this, global);
     }
 
-    pub fn format(self: SystemError, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: SystemError, writer: *std.Io.Writer) !void {
         if (!self.path.isEmpty()) {
             // TODO: remove this hardcoding
             switch (bun.Output.enable_ansi_colors_stderr) {
                 inline else => |enable_colors| try writer.print(
                     comptime bun.Output.prettyFmt(
-                        "<r><red>{}<r><d>:<r> <b>{s}<r>: {} <d>({}())<r>",
+                        "<r><red>{f}<r><d>:<r> <b>{f}<r>: {f} <d>({f}())<r>",
                         enable_colors,
                     ),
                     .{
@@ -101,7 +94,7 @@ pub const SystemError = extern struct {
         switch (bun.Output.enable_ansi_colors_stderr) {
             inline else => |enable_colors| try writer.print(
                 comptime bun.Output.prettyFmt(
-                    "<r><red>{}<r><d>:<r> {} <d>({}())<r>",
+                    "<r><red>{f}<r><d>:<r> {f} <d>({f}())<r>",
                     enable_colors,
                 ),
                 .{
@@ -113,3 +106,12 @@ pub const SystemError = extern struct {
         }
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const String = bun.String;
+
+const jsc = bun.jsc;
+const JSGlobalObject = jsc.JSGlobalObject;
+const JSValue = jsc.JSValue;

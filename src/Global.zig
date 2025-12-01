@@ -1,12 +1,4 @@
-const std = @import("std");
-const Environment = @import("./env.zig");
-
-const Output = @import("output.zig");
-const use_mimalloc = bun.use_mimalloc;
-const Mimalloc = bun.Mimalloc;
-const bun = @import("bun");
-
-const version_string = Environment.version_string;
+const Global = @This();
 
 /// Does not have the canary tag, because it is exposed in `Bun.version`
 /// "1.0.0" or "1.0.0-debug"
@@ -68,7 +60,7 @@ pub inline fn getStartTime() i128 {
     return bun.start_time;
 }
 
-extern "kernel32" fn SetThreadDescription(thread: std.os.windows.HANDLE, name: [*:0]const u16) callconv(std.os.windows.WINAPI) std.os.windows.HRESULT;
+extern "kernel32" fn SetThreadDescription(thread: std.os.windows.HANDLE, name: [*:0]const u16) callconv(.winapi) std.os.windows.HRESULT;
 
 pub fn setThreadName(name: [:0]const u8) void {
     if (Environment.isLinux) {
@@ -81,7 +73,7 @@ pub fn setThreadName(name: [:0]const u8) void {
     }
 }
 
-const ExitFn = *const fn () callconv(.C) void;
+const ExitFn = *const fn () callconv(.c) void;
 
 var on_exit_callbacks = std.ArrayListUnmanaged(ExitFn){};
 export fn Bun__atexit(function: ExitFn) void {
@@ -112,6 +104,7 @@ pub fn isExiting() bool {
 /// Flushes stdout and stderr (in exit/quick_exit callback) and exits with the given code.
 pub fn exit(code: u32) noreturn {
     is_exiting.store(true, .monotonic);
+    _ = @atomicRmw(usize, &bun.analytics.Features.exited, .Add, 1, .monotonic);
 
     // If we are crashing, allow the crash handler to finish it's work.
     bun.crash_handler.sleepForeverIfAnotherThreadIsCrashing();
@@ -121,6 +114,9 @@ pub fn exit(code: u32) noreturn {
         bun.debug_allocator_data.backing = null;
     }
 
+    // Flush output before exiting to ensure all messages are visible
+    Output.flush();
+
     switch (Environment.os) {
         .mac => std.c.exit(@bitCast(code)),
         .windows => {
@@ -128,6 +124,10 @@ pub fn exit(code: u32) noreturn {
             std.os.windows.kernel32.ExitProcess(code);
         },
         else => {
+            if (Environment.enable_asan) {
+                std.c.exit(@bitCast(code));
+                std.c.abort(); // exit should be noreturn
+            }
             bun.c.quick_exit(@bitCast(code));
             std.c.abort(); // quick_exit should be noreturn
         },
@@ -145,7 +145,7 @@ pub fn raiseIgnoringPanicHandler(sig: bun.SignalCode) noreturn {
     if (bun.Environment.os != .windows) {
         var sa: std.c.Sigaction = .{
             .handler = .{ .handler = std.posix.SIG.DFL },
-            .mask = std.posix.empty_sigset,
+            .mask = std.posix.sigemptyset(),
             .flags = std.posix.SA.RESETHAND,
         };
         _ = std.c.sigaction(@intFromEnum(sig), &sa, null);
@@ -166,19 +166,13 @@ pub inline fn mimalloc_cleanup(force: bool) void {
         Mimalloc.mi_collect(force);
     }
 }
-pub const versions = @import("./generated_versions_list.zig");
+// Versions are now handled by CMake-generated header (bun_dependency_versions.h)
 
 // Enabling huge pages slows down bun by 8x or so
 // Keeping this code for:
 // 1. documentation that an attempt was made
 // 2. if I want to configure allocator later
-pub inline fn configureAllocator(_: AllocatorConfiguration) void {
-    // if (comptime !use_mimalloc) return;
-    // const Mimalloc = @import("./allocators/mimalloc.zig");
-    // Mimalloc.mi_option_set_enabled(Mimalloc.mi_option_verbose, config.verbose);
-    // Mimalloc.mi_option_set_enabled(Mimalloc.mi_option_large_os_pages, config.long_running);
-    // if (!config.long_running) Mimalloc.mi_option_set(Mimalloc.mi_option_reset_delay, 0);
-}
+pub inline fn configureAllocator(_: AllocatorConfiguration) void {}
 
 pub fn notimpl() noreturn {
     @branchHint(.cold);
@@ -191,20 +185,17 @@ pub fn crash() noreturn {
     Global.exit(1);
 }
 
-const Global = @This();
-const string = bun.string;
-
 pub const BunInfo = struct {
     bun_version: string,
-    platform: Analytics.GenerateHeader.GeneratePlatform.Platform,
+    platform: analytics.GenerateHeader.GeneratePlatform.Platform,
 
-    const Analytics = @import("./analytics/analytics_thread.zig");
-    const JSON = bun.JSON;
-    const JSAst = bun.JSAst;
+    const analytics = bun.analytics;
+    const JSON = bun.json;
+    const JSAst = bun.ast;
     pub fn generate(comptime Bundler: type, _: Bundler, allocator: std.mem.Allocator) !JSAst.Expr {
         const info = BunInfo{
             .bun_version = Global.package_json_version,
-            .platform = Analytics.GenerateHeader.GeneratePlatform.forOS(),
+            .platform = analytics.GenerateHeader.GeneratePlatform.forOS(),
         };
 
         return try JSON.toAST(allocator, BunInfo, info);
@@ -219,7 +210,7 @@ comptime {
 }
 
 pub export fn Bun__onExit() void {
-    bun.JSC.Node.FSEvents.closeAndWait();
+    bun.jsc.Node.FSEvents.closeAndWait();
 
     runExitCallbacks();
     Output.flush();
@@ -231,3 +222,15 @@ pub export fn Bun__onExit() void {
 comptime {
     _ = Bun__onExit;
 }
+
+const string = []const u8;
+
+const Output = @import("./output.zig");
+const std = @import("std");
+
+const Environment = @import("./env.zig");
+const version_string = Environment.version_string;
+
+const bun = @import("bun");
+const Mimalloc = bun.mimalloc;
+const use_mimalloc = bun.use_mimalloc;

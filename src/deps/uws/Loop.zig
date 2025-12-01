@@ -24,11 +24,15 @@ pub const PosixLoop = extern struct {
         .mac => std.posix.system.kevent64_s,
         // TODO:
         .windows => *anyopaque,
-        else => @compileError("Unsupported OS"),
+        .wasm => @compileError("Unsupported OS"),
     };
 
     pub fn uncork(this: *PosixLoop) void {
         c.uws_res_clear_corked_socket(this);
+    }
+
+    pub fn updateDate(this: *PosixLoop) void {
+        c.uws_loop_date_header_timer_update(this);
     }
 
     pub fn iterationNumber(this: *const PosixLoop) u64 {
@@ -114,7 +118,7 @@ pub const PosixLoop = extern struct {
 
     pub fn nextTick(this: *PosixLoop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
         const Handler = struct {
-            pub fn callback(data: *anyopaque) callconv(.C) void {
+            pub fn callback(data: *anyopaque) callconv(.c) void {
                 deferCallback(@as(UserType, @ptrCast(@alignCast(data))));
             }
         };
@@ -130,7 +134,7 @@ pub const PosixLoop = extern struct {
             pub fn removePre(handler: @This()) void {
                 return c.uws_loop_removePostHandler(handler.loop, callback);
             }
-            pub fn callback(data: *anyopaque, _: *Loop) callconv(.C) void {
+            pub fn callback(data: *anyopaque, _: *Loop) callconv(.c) void {
                 callback_fn(@as(UserType, @ptrCast(@alignCast(data))));
             }
         };
@@ -157,6 +161,14 @@ pub const PosixLoop = extern struct {
     pub fn run(this: *PosixLoop) void {
         c.us_loop_run(this);
     }
+
+    pub fn shouldEnableDateHeaderTimer(this: *const PosixLoop) bool {
+        return this.internal_loop_data.shouldEnableDateHeaderTimer();
+    }
+
+    pub fn deinit(this: *PosixLoop) void {
+        c.us_loop_free(this);
+    }
 };
 
 pub const WindowsLoop = extern struct {
@@ -168,6 +180,10 @@ pub const WindowsLoop = extern struct {
     is_default: c_int,
     pre: *uv.uv_prepare_t,
     check: *uv.uv_check_t,
+
+    pub fn shouldEnableDateHeaderTimer(this: *const WindowsLoop) bool {
+        return this.internal_loop_data.shouldEnableDateHeaderTimer();
+    }
 
     pub fn uncork(this: *PosixLoop) void {
         c.uws_res_clear_corked_socket(this);
@@ -238,11 +254,19 @@ pub const WindowsLoop = extern struct {
 
     pub fn nextTick(this: *Loop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
         const Handler = struct {
-            pub fn callback(data: *anyopaque) callconv(.C) void {
+            pub fn callback(data: *anyopaque) callconv(.c) void {
                 deferCallback(@as(UserType, @ptrCast(@alignCast(data))));
             }
         };
         c.uws_loop_defer(this, user_data, Handler.callback);
+    }
+
+    pub fn updateDate(this: *Loop) void {
+        c.uws_loop_date_header_timer_update(this);
+    }
+
+    pub fn deinit(this: *WindowsLoop) void {
+        c.us_loop_free(this);
     }
 
     fn NewHandler(comptime UserType: type, comptime callback_fn: fn (UserType) void) type {
@@ -254,7 +278,7 @@ pub const WindowsLoop = extern struct {
             pub fn removePre(handler: @This()) void {
                 return c.uws_loop_removePostHandler(handler.loop, callback);
             }
-            pub fn callback(data: *anyopaque, _: *Loop) callconv(.C) void {
+            pub fn callback(data: *anyopaque, _: *Loop) callconv(.c) void {
                 callback_fn(@as(UserType, @ptrCast(@alignCast(data))));
             }
         };
@@ -266,9 +290,9 @@ pub const Loop = if (bun.Environment.isWindows) WindowsLoop else PosixLoop;
 const c = struct {
     pub extern fn us_create_loop(
         hint: ?*anyopaque,
-        wakeup_cb: ?*const fn (*Loop) callconv(.C) void,
-        pre_cb: ?*const fn (*Loop) callconv(.C) void,
-        post_cb: ?*const fn (*Loop) callconv(.C) void,
+        wakeup_cb: ?*const fn (*Loop) callconv(.c) void,
+        pre_cb: ?*const fn (*Loop) callconv(.c) void,
+        post_cb: ?*const fn (*Loop) callconv(.c) void,
         ext_size: c_uint,
     ) ?*Loop;
     pub extern fn us_loop_free(loop: ?*Loop) void;
@@ -278,21 +302,24 @@ const c = struct {
     pub extern fn us_wakeup_loop(loop: ?*Loop) void;
     pub extern fn us_loop_integrate(loop: ?*Loop) void;
     pub extern fn us_loop_iteration_number(loop: ?*Loop) c_longlong;
-    pub extern fn uws_loop_addPostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
-    pub extern fn uws_loop_removePostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
-    pub extern fn uws_loop_addPreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
-    pub extern fn uws_loop_removePreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
+    pub extern fn uws_loop_addPostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.c) void)) void;
+    pub extern fn uws_loop_removePostHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.c) void)) void;
+    pub extern fn uws_loop_addPreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.c) void)) void;
+    pub extern fn uws_loop_removePreHandler(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque, loop: *Loop) callconv(.c) void)) void;
     pub extern fn us_loop_run_bun_tick(loop: ?*Loop, timouetMs: ?*const bun.timespec) void;
     pub extern fn uws_get_loop() *Loop;
     pub extern fn uws_get_loop_with_native(*anyopaque) *WindowsLoop;
-    pub extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.C) void)) void;
+    pub extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: *const (fn (ctx: *anyopaque) callconv(.c) void)) void;
     pub extern fn uws_res_clear_corked_socket(loop: *Loop) void;
+    pub extern fn uws_loop_date_header_timer_update(loop: *Loop) void;
 };
 
-const bun = @import("bun");
-const uws = bun.uws;
+const log = bun.Output.scoped(.Loop, .visible);
 
-const InternalLoopData = uws.InternalLoopData;
-const Environment = bun.Environment;
 const std = @import("std");
-const log = bun.Output.scoped(.Loop, false);
+
+const bun = @import("bun");
+const Environment = bun.Environment;
+
+const uws = bun.uws;
+const InternalLoopData = uws.InternalLoopData;

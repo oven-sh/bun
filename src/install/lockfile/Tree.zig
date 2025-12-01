@@ -1,3 +1,5 @@
+const Tree = @This();
+
 id: Id = invalid_id,
 
 // Should not be used for anything other than name
@@ -50,14 +52,20 @@ pub const invalid_id: Id = std.math.maxInt(Id);
 pub const HoistDependencyResult = union(enum) {
     dependency_loop,
     hoisted,
-    placement: struct {
+    resolve: PackageID,
+    resolve_replace: ResolveReplace,
+    resolve_later,
+    placement: Placement,
+
+    const ResolveReplace = struct {
+        id: Id,
+        dep_id: DependencyID,
+    };
+
+    const Placement = struct {
         id: Id,
         bundled: bool = false,
-    },
-    // replace: struct {
-    //     dest_id: Id,
-    //     dep_id: DependencyID,
-    // },
+    };
 };
 
 pub const SubtreeError = OOM || error{DependencyLoop};
@@ -232,18 +240,23 @@ pub const BuilderMethod = enum {
 pub fn Builder(comptime method: BuilderMethod) type {
     return struct {
         allocator: Allocator,
-        name_hashes: []const PackageNameHash,
         list: bun.MultiArrayList(Entry) = .{},
-        resolutions: []const PackageID,
+        resolutions: []PackageID,
         dependencies: []const Dependency,
         resolution_lists: []const Lockfile.DependencyIDSlice,
         queue: TreeFiller,
         log: *logger.Log,
         lockfile: *const Lockfile,
+        // Unresolved optional peers that might resolve later. if they do we will want to assign
+        // builder.resolutions[peer.dep_id] to the resolved pkg_id. A dependency ID set is used because there
+        // can be multiple instances of the same package in the tree, so the same unresolved dependency ID
+        // could be visited multiple times before it's resolved.
+        pending_optional_peers: std.AutoArrayHashMap(PackageNameHash, std.AutoArrayHashMap(DependencyID, void)),
         manager: if (method == .filter) *const PackageManager else void,
         sort_buf: std.ArrayListUnmanaged(DependencyID) = .{},
         workspace_filters: if (method == .filter) []const WorkspaceFilter else void = if (method == .filter) &.{},
         install_root_dependencies: if (method == .filter) bool else void,
+        packages_to_install: if (method == .filter) ?[]const PackageID else void,
 
         pub fn maybeReportError(this: *@This(), comptime fmt: string, args: anytype) void {
             this.log.addErrorFmt(null, logger.Loc.Empty, this.allocator, fmt, args) catch {};
@@ -284,21 +297,30 @@ pub fn Builder(comptime method: BuilderMethod) type {
                 total += tree.dependencies.len;
             }
 
-            var dependency_ids = try DependencyIDList.initCapacity(z_allocator, total);
-            var next = PackageIDSlice{};
+            var dep_ids = try DependencyIDList.initCapacity(this.allocator, total);
 
             for (trees, dependencies) |*tree, *child| {
-                if (tree.dependencies.len > 0) {
-                    const len = @as(PackageID, @truncate(child.items.len));
-                    next.off += next.len;
-                    next.len = len;
-                    tree.dependencies = next;
-                    dependency_ids.appendSliceAssumeCapacity(child.items);
-                    child.deinit(this.allocator);
+                defer child.deinit(this.allocator);
+
+                const off: u32 = @intCast(dep_ids.items.len);
+                for (child.items) |dep_id| {
+                    const pkg_id = this.lockfile.buffers.resolutions.items[dep_id];
+                    if (pkg_id == invalid_package_id) {
+                        // optional peers that never resolved
+                        continue;
+                    }
+
+                    dep_ids.appendAssumeCapacity(dep_id);
                 }
+                const len: u32 = @intCast(dep_ids.items.len - off);
+
+                tree.dependencies.off = off;
+                tree.dependencies.len = len;
             }
+
             this.queue.deinit();
             this.sort_buf.deinit(this.allocator);
+            this.pending_optional_peers.deinit();
 
             // take over the `builder.list` pointer for only trees
             if (@intFromPtr(trees.ptr) != @intFromPtr(list_ptr)) {
@@ -309,7 +331,7 @@ pub fn Builder(comptime method: BuilderMethod) type {
 
             return .{
                 .trees = std.ArrayListUnmanaged(Tree).fromOwnedSlice(trees),
-                .dep_ids = dependency_ids,
+                .dep_ids = dep_ids,
             };
         }
     };
@@ -325,6 +347,10 @@ pub fn isFilteredDependencyOrWorkspace(
 ) bool {
     const pkg_id = lockfile.buffers.resolutions.items[dep_id];
     if (pkg_id >= lockfile.packages.len) {
+        const dep = lockfile.buffers.dependencies.items[dep_id];
+        if (dep.behavior.isOptionalPeer()) {
+            return false;
+        }
         return true;
     }
 
@@ -337,15 +363,15 @@ pub fn isFilteredDependencyOrWorkspace(
     const res = &pkg_resolutions[pkg_id];
     const parent_res = &pkg_resolutions[parent_pkg_id];
 
-    if (pkg_metas[pkg_id].isDisabled()) {
+    if (pkg_metas[pkg_id].isDisabled(manager.options.cpu, manager.options.os)) {
         if (manager.options.log_level.isVerbose()) {
             const meta = &pkg_metas[pkg_id];
             const name = lockfile.str(&pkg_names[pkg_id]);
-            if (!meta.os.isMatch() and !meta.arch.isMatch()) {
+            if (!meta.os.isMatch(manager.options.os) and !meta.arch.isMatch(manager.options.cpu)) {
                 Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- cpu & os mismatch<r>", .{name});
-            } else if (!meta.os.isMatch()) {
+            } else if (!meta.os.isMatch(manager.options.os)) {
                 Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- os mismatch<r>", .{name});
-            } else if (!meta.arch.isMatch()) {
+            } else if (!meta.arch.isMatch(manager.options.cpu)) {
                 Output.prettyErrorln("<d>Skip installing<r> <b>{s}<r> <d>- cpu mismatch<r>", .{name});
             }
         }
@@ -371,7 +397,7 @@ pub fn isFilteredDependencyOrWorkspace(
         return false;
     }
 
-    if (!dep.behavior.isWorkspaceOnly()) {
+    if (!dep.behavior.isWorkspace()) {
         if (!install_root_dependencies) {
             return true;
         }
@@ -405,7 +431,7 @@ pub fn isFilteredDependencyOrWorkspace(
             },
         };
 
-        switch (bun.glob.match(undefined, pattern, name_or_path)) {
+        switch (bun.glob.match(pattern, name_or_path)) {
             .match, .negate_match => workspace_matched = true,
 
             .negate_no_match => {
@@ -451,8 +477,6 @@ pub fn processSubtree(
     const trees = list_slice.items(.tree);
     const dependency_lists = list_slice.items(.dependencies);
     const next: *Tree = &trees[builder.list.len - 1];
-    const name_hashes: []const PackageNameHash = builder.name_hashes;
-    const max_package_id = @as(PackageID, @truncate(name_hashes.len));
 
     const pkgs = builder.lockfile.packages.slice();
     const pkg_resolutions = pkgs.items(.resolution);
@@ -475,8 +499,6 @@ pub fn processSubtree(
 
     for (builder.sort_buf.items) |dep_id| {
         const pkg_id = builder.resolutions[dep_id];
-        // Skip unresolved packages, e.g. "peerDependencies"
-        if (pkg_id >= max_package_id) continue;
 
         // filter out disabled dependencies
         if (comptime method == .filter) {
@@ -490,14 +512,55 @@ pub fn processSubtree(
             )) {
                 continue;
             }
+
+            // unresolved packages are skipped when filtering. they already had
+            // their chance to resolve.
+            if (pkg_id == invalid_package_id) {
+                continue;
+            }
+
+            if (builder.packages_to_install) |packages_to_install| {
+                if (parent_pkg_id == 0) {
+                    var found = false;
+                    for (packages_to_install) |package_to_install| {
+                        if (pkg_id == package_to_install) {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found) {
+                        continue;
+                    }
+                }
+            }
         }
 
+        const dependency = builder.dependencies[dep_id];
+
         const hoisted: HoistDependencyResult = hoisted: {
-            const dependency = builder.dependencies[dep_id];
 
             // don't hoist if it's a folder dependency or a bundled dependency.
             if (dependency.behavior.isBundled()) {
                 break :hoisted .{ .placement = .{ .id = next.id, .bundled = true } };
+            }
+
+            if (pkg_id == invalid_package_id) {
+                if (dependency.behavior.isOptionalPeer()) {
+                    break :hoisted try next.hoistDependency(
+                        true,
+                        hoist_root_id,
+                        pkg_id,
+                        &dependency,
+                        dependency_lists,
+                        trees,
+                        method,
+                        builder,
+                    );
+                }
+
+                // skip unresolvable dependencies
+                continue;
             }
 
             if (pkg_resolutions[pkg_id].tag == .folder) {
@@ -518,10 +581,65 @@ pub fn processSubtree(
 
         switch (hoisted) {
             .dependency_loop, .hoisted => continue,
+
+            .resolve => |res_id| {
+                bun.debugAssert(pkg_id == invalid_package_id);
+                bun.debugAssert(res_id != invalid_package_id);
+                builder.resolutions[dep_id] = res_id;
+                if (comptime Environment.allow_assert) {
+                    bun.debugAssert(!builder.pending_optional_peers.contains(dependency.name_hash));
+                }
+
+                if (builder.pending_optional_peers.fetchSwapRemove(dependency.name_hash)) |entry| {
+                    var peers = entry.value;
+                    defer peers.deinit();
+                    for (peers.keys()) |unresolved_dep_id| {
+                        // the dependency should be either unresolved or the same dependency as above
+                        bun.debugAssert(unresolved_dep_id == dep_id or builder.resolutions[unresolved_dep_id] == invalid_package_id);
+                        builder.resolutions[unresolved_dep_id] = res_id;
+                    }
+                }
+            },
+            .resolve_replace => |replace| {
+                bun.debugAssert(pkg_id != invalid_package_id);
+                builder.resolutions[replace.dep_id] = pkg_id;
+                if (builder.pending_optional_peers.fetchSwapRemove(dependency.name_hash)) |entry| {
+                    var peers = entry.value;
+                    defer peers.deinit();
+                    for (peers.keys()) |unresolved_dep_id| {
+                        // the dependency should be either unresolved or the same dependency as above
+                        bun.debugAssert(unresolved_dep_id == replace.dep_id or builder.resolutions[unresolved_dep_id] == invalid_package_id);
+                        builder.resolutions[unresolved_dep_id] = pkg_id;
+                    }
+                }
+                for (dependency_lists[replace.id].items) |*placed_dep_id| {
+                    if (placed_dep_id.* == replace.dep_id) {
+                        placed_dep_id.* = dep_id;
+                    }
+                }
+                if (pkg_id != invalid_package_id and builder.resolution_lists[pkg_id].len > 0) {
+                    try builder.queue.writeItem(.{
+                        .tree_id = replace.id,
+                        .dependency_id = dep_id,
+                        .hoist_root_id = hoist_root_id,
+                    });
+                }
+            },
+            .resolve_later => {
+                // `dep_id` is an unresolved optional peer. while hoisting it deduplicated
+                // with another unresolved optional peer. save it so we remember resolve it
+                // later if it's possible to resolve it.
+                const entry = try builder.pending_optional_peers.getOrPut(dependency.name_hash);
+                if (!entry.found_existing) {
+                    entry.value_ptr.* = .init(builder.allocator);
+                }
+
+                try entry.value_ptr.put(dep_id, {});
+            },
             .placement => |dest| {
-                dependency_lists[dest.id].append(builder.allocator, dep_id) catch bun.outOfMemory();
+                bun.handleOom(dependency_lists[dest.id].append(builder.allocator, dep_id));
                 trees[dest.id].dependencies.len += 1;
-                if (builder.resolution_lists[pkg_id].len > 0) {
+                if (pkg_id != invalid_package_id and builder.resolution_lists[pkg_id].len > 0) {
                     try builder.queue.writeItem(.{
                         .tree_id = dest.id,
                         .dependency_id = dep_id,
@@ -561,7 +679,29 @@ fn hoistDependency(
         const dep = builder.dependencies[dep_id];
         if (dep.name_hash != dependency.name_hash) continue;
 
-        if (builder.resolutions[dep_id] == package_id) {
+        const res_id = builder.resolutions[dep_id];
+
+        if (res_id == invalid_package_id and package_id == invalid_package_id) {
+            bun.debugAssert(dep.behavior.isOptionalPeer());
+            bun.debugAssert(dependency.behavior.isOptionalPeer());
+            // both optional peers will need to be resolved if they can resolve later.
+            // remember input package_id and dependency for later
+            return .resolve_later;
+        }
+
+        if (res_id == invalid_package_id) {
+            bun.debugAssert(dep.behavior.isOptionalPeer());
+            return .{ .resolve_replace = .{ .id = this.id, .dep_id = dep_id } };
+        }
+
+        if (package_id == invalid_package_id) {
+            bun.debugAssert(dependency.behavior.isOptionalPeer());
+            bun.debugAssert(res_id != invalid_package_id);
+            // resolve optional peer to `builder.resolutions[dep_id]`
+            return .{ .resolve = res_id }; // 1
+        }
+
+        if (res_id == package_id) {
             // this dependency is the same package as the other, hoist
             return .hoisted; // 1
         }
@@ -580,7 +720,7 @@ fn hoistDependency(
 
         if (dependency.behavior.isPeer()) {
             if (dependency.version.tag == .npm) {
-                const resolution: Resolution = builder.lockfile.packages.items(.resolution)[builder.resolutions[dep_id]];
+                const resolution: Resolution = builder.lockfile.packages.items(.resolution)[res_id];
                 const version = dependency.version.value.npm.version;
                 if (resolution.tag == .npm and version.satisfies(resolution.value.npm.version, builder.buf(), builder.buf())) {
                     return .hoisted; // 1
@@ -596,11 +736,11 @@ fn hoistDependency(
         }
 
         if (as_defined and !dep.behavior.isPeer()) {
-            builder.maybeReportError("Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"", .{
+            builder.maybeReportError("Package \"{f}@{f}\" has a dependency loop\n  Resolution: \"{f}@{f}\"\n  Dependency: \"{f}@{f}\"", .{
                 builder.packageName(package_id),
                 builder.packageVersion(package_id),
-                builder.packageName(builder.resolutions[dep_id]),
-                builder.packageVersion(builder.resolutions[dep_id]),
+                builder.packageName(res_id),
+                builder.packageVersion(res_id),
                 dependency.name.fmt(builder.buf()),
                 dependency.version.literal.fmt(builder.buf()),
             });
@@ -638,35 +778,36 @@ pub const FillItem = struct {
     hoist_root_id: Tree.Id,
 };
 
-pub const TreeFiller = std.fifo.LinearFifo(FillItem, .Dynamic);
+pub const TreeFiller = bun.LinearFifo(FillItem, .Dynamic);
 
-const Allocator = std.mem.Allocator;
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const Dependency = install.Dependency;
-const DependencyID = install.DependencyID;
-const DependencyIDList = Lockfile.DependencyIDList;
-const Environment = bun.Environment;
-const ExternalSlice = Lockfile.ExternalSlice;
-const Lockfile = install.Lockfile;
-const OOM = bun.OOM;
-const Output = bun.Output;
-const PackageID = install.PackageID;
-const PackageIDSlice = Lockfile.PackageIDSlice;
-const PackageManager = bun.install.PackageManager;
-const PackageNameHash = install.PackageNameHash;
-const Path = bun.path;
-const Resolution = install.Resolution;
-const String = bun.Semver.String;
-const Tree = @This();
-const WorkspaceFilter = install.PackageManager.WorkspaceFilter;
-const assert = bun.assert;
-const install = bun.install;
-const invalid_dependency_id = install.invalid_dependency_id;
-const invalid_package_id = install.invalid_package_id;
-const logger = bun.logger;
 const string = []const u8;
-const stringZ = bun.stringZ;
-const z_allocator = bun.z_allocator;
+const stringZ = [:0]const u8;
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const bun = @import("bun");
-const std = @import("std");
+const Environment = bun.Environment;
+const OOM = bun.OOM;
+const Output = bun.Output;
+const Path = bun.path;
+const assert = bun.assert;
+const logger = bun.logger;
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+const String = bun.Semver.String;
+
+const install = bun.install;
+const Dependency = install.Dependency;
+const DependencyID = install.DependencyID;
+const PackageID = install.PackageID;
+const PackageNameHash = install.PackageNameHash;
+const Resolution = install.Resolution;
+const invalid_dependency_id = install.invalid_dependency_id;
+const invalid_package_id = install.invalid_package_id;
+
+const Lockfile = install.Lockfile;
+const DependencyIDList = Lockfile.DependencyIDList;
+const ExternalSlice = Lockfile.ExternalSlice;
+
+const PackageManager = bun.install.PackageManager;
+const WorkspaceFilter = install.PackageManager.WorkspaceFilter;

@@ -50,17 +50,17 @@ it("retries on 500", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "BaR"],
+    cmd: [bunExe(), "add", "BaR", "--linker=hoisted"],
     cwd: package_dir,
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
     env,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).not.toContain("error:");
   expect(err).toContain("Saved lockfile");
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun add v1."),
     "",

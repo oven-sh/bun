@@ -3,6 +3,7 @@
 exports[`should write plaintext lockfiles 1`] = `
 "{
   "lockfileVersion": 1,
+  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "test-package",
@@ -21,6 +22,7 @@ exports[`should write plaintext lockfiles 1`] = `
 exports[`should escape names 1`] = `
 "{
   "lockfileVersion": 1,
+  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "quote-in-dependency-name",
@@ -47,6 +49,7 @@ exports[`should escape names 1`] = `
 exports[`should be the default save format 1`] = `
 "{
   "lockfileVersion": 1,
+  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "jquery-4",
@@ -65,6 +68,7 @@ exports[`should be the default save format 1`] = `
 exports[`should be the default save format 2`] = `
 "{
   "lockfileVersion": 1,
+  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "jquery-4",
@@ -86,6 +90,7 @@ exports[`should be the default save format 2`] = `
 exports[`should save the lockfile if --save-text-lockfile and --frozen-lockfile are used 1`] = `
 "{
   "lockfileVersion": 1,
+  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "test-pkg",
@@ -104,6 +109,7 @@ exports[`should save the lockfile if --save-text-lockfile and --frozen-lockfile 
 exports[`should save the lockfile if --save-text-lockfile and --frozen-lockfile are used 2`] = `
 "{
   "lockfileVersion": 1,
+  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "test-pkg",
@@ -125,6 +131,7 @@ exports[`should save the lockfile if --save-text-lockfile and --frozen-lockfile 
 exports[`should convert a binary lockfile with invalid optional peers 1`] = `
 "{
   "lockfileVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "eassist",
@@ -291,21 +298,10 @@ exports[`should not deduplicate bundled packages with un-bundled packages 2`] = 
 ]
 `;
 
-exports[`should not change formatting unexpectedly 1`] = `
-[
-  "preinstall",
-  "",
-  "+ optional-native@1.0.0",
-  "+ optional-peer-deps@1.0.0 (v1.0.1 available)",
-  "+ uses-what-bin@1.0.0 (v1.5.0 available)",
-  "",
-  "13 packages installed",
-]
-`;
-
 exports[`should not change formatting unexpectedly 2`] = `
 "{
   "lockfileVersion": 1,
+  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "pkg-root",
@@ -402,19 +398,10 @@ exports[`should not change formatting unexpectedly 2`] = `
 "
 `;
 
-exports[`should not change formatting unexpectedly 3`] = `
-[
-  "preinstall",
-  "",
-  "+ bundled-1@1.0.0",
-  "",
-  "13 packages installed",
-]
-`;
-
 exports[`should sort overrides before comparing 1`] = `
 "{
   "lockfileVersion": 1,
+  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "pkg-with-overrides",
@@ -452,6 +439,7 @@ exports[`should sort overrides before comparing 1`] = `
 exports[`should include unused resolutions in the lockfile 1`] = `
 "{
   "lockfileVersion": 1,
+  "configVersion": 1,
   "workspaces": {
     "": {
       "name": "pkg-with-unused-override",

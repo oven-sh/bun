@@ -49,7 +49,7 @@ export class BuildCommand extends Command {
     const { flags } = result;
     this.debug("Options:", flags);
     const { arch, release, url, output } = flags;
-    const { href } = new URL(url ?? `https://bun.com/download/${release}/linux/${arch}?avx2=true`);
+    const { href } = new URL(url ?? `https://bun.sh/download/${release}/linux/${arch}?avx2=true`);
     this.log("Downloading...", href);
     const response = await fetch(href, {
       headers: {

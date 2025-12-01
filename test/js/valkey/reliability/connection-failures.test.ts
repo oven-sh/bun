@@ -185,8 +185,8 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       // Explicitly disconnect to trigger onclose
       client.close();
 
-      // Wait a short time for disconnect callbacks to execute
-      await delay(50);
+      // Wait briefly for disconnect callbacks to execute
+      await delay(10);
 
       // onclose should be called regardless of whether the connection succeeded
       expect(client.connected).toBe(false);
@@ -222,8 +222,8 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       // Disconnect to trigger close handler
       await client.close();
 
-      // Wait a short time for the callbacks to execute
-      await delay(50);
+      // Wait briefly for the callbacks to execute
+      await delay(10);
 
       // First handlers should not have been called because they were replaced
       expect(onconnect1).not.toHaveBeenCalled();

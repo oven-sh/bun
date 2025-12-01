@@ -13,7 +13,7 @@ pub const LifecycleScriptTimeLog = struct {
     pub fn appendConcurrent(log: *LifecycleScriptTimeLog, allocator: std.mem.Allocator, entry: Entry) void {
         log.mutex.lock();
         defer log.mutex.unlock();
-        log.list.append(allocator, entry) catch bun.outOfMemory();
+        bun.handleOom(log.list.append(allocator, entry));
     }
 
     /// this can be called if .start was never called
@@ -37,7 +37,7 @@ pub const LifecycleScriptTimeLog = struct {
             };
 
             // extra \n will print a blank line after this one
-            Output.warn("{s}'s {s} script took {}\n\n", .{
+            Output.warn("{s}'s {s} script took {f}\n\n", .{
                 longest.package_name,
                 Lockfile.Scripts.names[longest.script_id],
                 bun.fmt.fmtDurationOneDecimal(longest.duration),
@@ -54,7 +54,7 @@ pub fn ensurePreinstallStateListCapacity(this: *PackageManager, count: usize) vo
     }
 
     const offset = this.preinstall_state.items.len;
-    this.preinstall_state.ensureTotalCapacity(this.allocator, count) catch bun.outOfMemory();
+    bun.handleOom(this.preinstall_state.ensureTotalCapacity(this.allocator, count));
     this.preinstall_state.expandToCapacity();
     @memset(this.preinstall_state.items[offset..], PreinstallState.unknown);
 }
@@ -83,7 +83,7 @@ pub fn determinePreinstallState(
 
             // Do not automatically start downloading packages which are disabled
             // i.e. don't download all of esbuild's versions or SWCs
-            if (pkg.isDisabled()) {
+            if (pkg.isDisabled(manager.options.cpu, manager.options.os)) {
                 manager.setPreinstallState(pkg.meta.id, lockfile, .done);
                 return .done;
             }
@@ -93,7 +93,7 @@ pub fn determinePreinstallState(
                 var sfb = std.heap.stackFallback(1024, manager.lockfile.allocator);
                 const name_and_version = std.fmt.allocPrint(
                     sfb.get(),
-                    "{s}@{}",
+                    "{s}@{f}",
                     .{
                         pkg.name.slice(manager.lockfile.buffers.string_bytes.items),
                         pkg.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .posix),
@@ -139,7 +139,7 @@ pub fn determinePreinstallState(
             // 4. rename temp dir to `folder_path`
             if (patch_hash != null) {
                 const non_patched_path_ = folder_path[0 .. std.mem.indexOf(u8, folder_path, "_patch_hash=") orelse @panic("Expected folder path to contain `patch_hash=`, this is a bug in Bun. Please file a GitHub issue.")];
-                const non_patched_path = manager.lockfile.allocator.dupeZ(u8, non_patched_path_) catch bun.outOfMemory();
+                const non_patched_path = bun.handleOom(manager.lockfile.allocator.dupeZ(u8, non_patched_path_));
                 defer manager.lockfile.allocator.free(non_patched_path);
                 if (manager.isFolderInCache(non_patched_path)) {
                     manager.setPreinstallState(pkg.meta.id, manager.lockfile, .apply_patch);
@@ -176,7 +176,7 @@ pub fn sleep(this: *PackageManager) void {
 pub fn reportSlowLifecycleScripts(this: *PackageManager) void {
     const log_level = this.options.log_level;
     if (log_level == .silent) return;
-    if (bun.getRuntimeFeatureFlag(.BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING)) {
+    if (bun.feature_flag.BUN_DISABLE_SLOW_LIFECYCLE_SCRIPT_LOGGING.get()) {
         return;
     }
 
@@ -193,12 +193,12 @@ pub fn reportSlowLifecycleScripts(this: *PackageManager) void {
             const package_name = active_lifecycle_script_running_for_the_longest_amount_of_time.package_name;
 
             if (!(package_name.len > 1 and package_name[package_name.len - 1] == 's')) {
-                Output.warn("{s}'s postinstall cost you {}\n", .{
+                Output.warn("{s}'s postinstall cost you {f}\n", .{
                     package_name,
                     bun.fmt.fmtDurationOneDecimal(time_running),
                 });
             } else {
-                Output.warn("{s}' postinstall cost you {}\n", .{
+                Output.warn("{s}' postinstall cost you {f}\n", .{
                     package_name,
                     bun.fmt.fmtDurationOneDecimal(time_running),
                 });
@@ -248,6 +248,8 @@ pub fn loadRootLifecycleScripts(this: *PackageManager, root_package: Package) vo
     }
 }
 
+/// Used to be called from multiple threads; now single-threaded
+/// TODO: re-evaluate whether some variables still need to be atomic
 pub fn spawnPackageLifecycleScripts(
     this: *PackageManager,
     ctx: Command.Context,
@@ -303,7 +305,7 @@ pub fn spawnPackageLifecycleScripts(
         }
 
         if (this.env.get("PATH")) |env_path| {
-            break :shell_bin bun.CLI.RunCommand.findShell(env_path, cwd);
+            break :shell_bin bun.cli.RunCommand.findShell(env_path, cwd);
         }
 
         break :shell_bin null;
@@ -327,7 +329,7 @@ pub fn findTrustedDependenciesFromUpdateRequests(this: *PackageManager) std.Auto
                     const package_id = this.lockfile.buffers.resolutions.items[dep_id];
                     if (package_id == invalid_package_id) continue;
 
-                    const entry = set.getOrPut(this.lockfile.allocator, @truncate(root_dep.name_hash)) catch bun.outOfMemory();
+                    const entry = bun.handleOom(set.getOrPut(this.lockfile.allocator, @truncate(root_dep.name_hash)));
                     if (!entry.found_existing) {
                         const dependency_slice = parts.items(.dependencies)[package_id];
                         addDependenciesToSet(&set, this.lockfile, dependency_slice);
@@ -354,7 +356,7 @@ fn addDependenciesToSet(
         if (package_id == invalid_package_id) continue;
 
         const dep = lockfile.buffers.dependencies.items[dep_id];
-        const entry = names.getOrPut(lockfile.allocator, @truncate(dep.name_hash)) catch bun.outOfMemory();
+        const entry = bun.handleOom(names.getOrPut(lockfile.allocator, @truncate(dep.name_hash)));
         if (!entry.found_existing) {
             const dependency_slice = lockfile.packages.items(.dependencies)[package_id];
             addDependenciesToSet(names, lockfile, dependency_slice);
@@ -362,7 +364,7 @@ fn addDependenciesToSet(
     }
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
@@ -372,8 +374,7 @@ const Output = bun.Output;
 const Path = bun.path;
 const Syscall = bun.sys;
 const default_allocator = bun.default_allocator;
-const string = bun.string;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 
 const Semver = bun.Semver;
 const String = Semver.String;

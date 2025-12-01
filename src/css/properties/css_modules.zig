@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
 
 const Printer = css.Printer;
@@ -48,7 +44,7 @@ pub const Composes = struct {
         };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
         var first = true;
         for (this.names.slice()) |name| {
             if (first) {
@@ -56,12 +52,12 @@ pub const Composes = struct {
             } else {
                 try dest.writeChar(' ');
             }
-            try CustomIdentFns.toCss(&name, W, dest);
+            try CustomIdentFns.toCss(&name, dest);
         }
 
         if (this.from) |*from| {
             try dest.writeStr(" from ");
-            try from.toCss(W, dest);
+            try from.toCss(dest);
         }
     }
 
@@ -117,7 +113,7 @@ pub const Specifier = union(enum) {
         return .{ .result = .global };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
         return switch (this.*) {
             .global => dest.writeStr("global"),
             .import_record_index => |import_record_index| {
@@ -136,3 +132,7 @@ pub const Specifier = union(enum) {
         return css.implementHash(@This(), this, hasher);
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;

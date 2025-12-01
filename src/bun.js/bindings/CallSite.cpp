@@ -76,6 +76,9 @@ void CallSite::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStac
     if (!stackFrame.codeBlock()) {
         m_flags |= static_cast<unsigned int>(Flags::IsNative);
     }
+    if (stackFrame.isAsync()) {
+        m_flags |= static_cast<unsigned int>(Flags::IsAsync);
+    }
 }
 
 template<typename Visitor>
@@ -90,10 +93,7 @@ void CallSite::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 JSC_DEFINE_HOST_FUNCTION(nativeFrameForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSFunction* function = jsCast<JSC::JSFunction*>(callFrame->argument(0));
-
     return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "nativeFrameForTesting"_s));
 }
 

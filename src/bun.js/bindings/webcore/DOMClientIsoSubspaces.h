@@ -10,7 +10,7 @@ using namespace JSC;
 
 class DOMClientIsoSubspaces {
     WTF_MAKE_NONCOPYABLE(DOMClientIsoSubspaces);
-    WTF_MAKE_FAST_ALLOCATED(DOMClientIsoSubspaces);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(DOMClientIsoSubspaces);
 
 public:
     DOMClientIsoSubspaces() = default;
@@ -72,6 +72,8 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSS3File;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSX509Certificate;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNodePerformanceHooksHistogram;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWasmStreamingCompiler;
+
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 
@@ -79,6 +81,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMFormData;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMFormDataIterator;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMURL;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForURLPattern;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForURLSearchParams;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForURLSearchParamsIterator;
 
@@ -281,6 +284,8 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamSource;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTransformStream;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTransformStreamDefaultController;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCompressionStream;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDecompressionStream;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStream;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStreamDefaultController;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStreamDefaultWriter;
@@ -945,6 +950,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSPrivateKeyObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForServerRouteList;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunRequest;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBakeResponse;
 
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSConnectionsList;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSHTTPParser;

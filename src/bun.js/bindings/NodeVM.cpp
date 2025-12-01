@@ -134,7 +134,6 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
             if (actuallyValid) {
                 auto exception = error.toErrorObject(globalObject, sourceCode, -1);
                 RETURN_IF_EXCEPTION(throwScope, nullptr);
-
                 throwException(globalObject, throwScope, exception);
                 return nullptr;
             }
@@ -453,7 +452,8 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
         }
         auto& stack_frame = e_stack[0];
         auto source_url = stack_frame.sourceURL(vm);
-        if (source_url.isEmpty()) {
+        // Treat empty, [unknown], and [source:*] placeholders as missing source URLs
+        if (source_url.isEmpty() || source_url == "[unknown]"_s || source_url.startsWith("[source:"_s)) {
             // copy what Node does: https://github.com/nodejs/node/blob/afe3909483a2d5ae6b847055f544da40571fb28d/lib/vm.js#L94
             source_url = "evalmachine.<anonymous>"_s;
         }
@@ -611,6 +611,7 @@ NodeVMGlobalObject* getGlobalObjectFromContext(JSGlobalObject* globalObject, JSV
 JSC::EncodedJSValue INVALID_ARG_VALUE_VM_VARIATION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value)
 {
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, makeString("The \""_s, name, "\" argument must be an vm.Context"_s)));
+    throwScope.release();
     return {};
 }
 
@@ -735,6 +736,8 @@ Structure* NodeVMGlobalObject::createStructure(JSC::VM& vm, JSC::JSValue prototy
     return JSC::Structure::create(vm, nullptr, prototype, JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags & ~IsImmutablePrototypeExoticObject), info());
 }
 
+void unsafeEvalNoop(JSGlobalObject*, const WTF::String&) {}
+
 const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable()
 {
     static const JSC::GlobalObjectMethodTable table {
@@ -752,7 +755,7 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         &reportUncaughtExceptionAtEventLoop,
         &currentScriptExecutionOwner,
         &scriptExecutionStatus,
-        nullptr, // reportViolationForUnsafeEval
+        &unsafeEvalNoop, // reportViolationForUnsafeEval
         nullptr, // defaultLanguage
         nullptr, // compileStreaming
         nullptr, // instantiateStreaming
@@ -837,14 +840,10 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     }
 
     slot.setThisValue(sandbox);
+
     bool result = sandbox->methodTable()->put(sandbox, globalObject, propertyName, value, slot);
     RETURN_IF_EXCEPTION(scope, false);
-
-    if (!result) {
-        return false;
-    }
-
-    RETURN_IF_EXCEPTION(scope, false);
+    if (!result) return false;
 
     if (isDeclaredOnSandbox && getter.isAccessor() and (getter.attributes() & PropertyAttribute::DontEnum) == 0) {
         return true;
@@ -968,9 +967,7 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
         if (!notContextified) {
             bool result = contextifiedObject->getPropertySlot(globalObject, propertyName, slot);
             RETURN_IF_EXCEPTION(scope, false);
-            if (result) {
-                return true;
-            }
+            if (result) return true;
         }
 
     try_from_global:
@@ -1000,7 +997,7 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
-    if (!thisObject->m_sandbox) {
+    if (!thisObject->m_sandbox) [[likely]] {
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
     }
 
@@ -1016,22 +1013,19 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     }
 
     if (descriptor.isAccessorDescriptor()) {
-        RELEASE_AND_RETURN(scope, JSObject::defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
+        RELEASE_AND_RETURN(scope, contextifiedObject->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
     }
 
     bool isDeclaredOnSandbox = contextifiedObject->getPropertySlot(globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
 
     if (isDeclaredOnSandbox && !isDeclaredOnGlobalProxy) {
-        RELEASE_AND_RETURN(scope, JSObject::defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
+        RELEASE_AND_RETURN(scope, contextifiedObject->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
     }
 
-    bool result = JSObject::defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow);
+    auto did = contextifiedObject->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow);
     RETURN_IF_EXCEPTION(scope, false);
-
-    if (!result) {
-        return false;
-    }
+    if (!did) return false;
 
     RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
 }
@@ -1414,12 +1408,11 @@ JSInternalPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* 
 
 void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, JSC::PropertyNameArray& propertyNames, JSC::DontEnumPropertiesMode mode)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
 
-    VM& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (thisObject->m_sandbox) [[likely]] {
+    if (thisObject->m_sandbox) {
         thisObject->m_sandbox->getOwnPropertyNames(thisObject->m_sandbox.get(), globalObject, propertyNames, mode);
         RETURN_IF_EXCEPTION(scope, );
     }

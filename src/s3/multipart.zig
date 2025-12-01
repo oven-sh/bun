@@ -1,14 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const strings = bun.strings;
-const S3Credentials = @import("./credentials.zig").S3Credentials;
-const ACL = @import("./acl.zig").ACL;
-const Storageclass = @import("./storage_class.zig").StorageClass;
-const JSC = bun.JSC;
-const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
-const S3SimpleRequest = @import("./simple_request.zig");
-const executeSimpleS3Request = S3SimpleRequest.executeSimpleS3Request;
-const S3Error = @import("./error.zig").S3Error;
 // When we start the request we will buffer data until partSize is reached or the last chunk is received.
 // If the buffer is smaller than partSize, it will be sent as a single request. Otherwise, a multipart upload will be initiated.
 // If we send a single request it will retry until the maximum retry count is reached. The single request do not increase the reference count of MultiPartUpload, as they are the final step.
@@ -118,8 +107,8 @@ pub const MultiPartUpload = struct {
     storage_class: ?Storageclass = null,
     credentials: *S3Credentials,
     poll_ref: bun.Async.KeepAlive = bun.Async.KeepAlive.init(),
-    vm: *JSC.VirtualMachine,
-    globalThis: *JSC.JSGlobalObject,
+    vm: *jsc.VirtualMachine,
+    globalThis: *jsc.JSGlobalObject,
 
     buffered: bun.io.StreamBuffer = .{},
 
@@ -141,7 +130,7 @@ pub const MultiPartUpload = struct {
         finished,
     } = .not_started,
 
-    callback: *const fn (S3SimpleRequest.S3UploadResult, *anyopaque) void,
+    callback: *const fn (S3SimpleRequest.S3UploadResult, *anyopaque) bun.JSTerminated!void,
     onWritable: ?*const fn (task: *MultiPartUpload, ctx: *anyopaque, flushed: u64) void = null,
     callback_context: *anyopaque,
 
@@ -150,7 +139,7 @@ pub const MultiPartUpload = struct {
     pub const ref = RefCount.ref;
     pub const deref = RefCount.deref;
 
-    const log = bun.Output.scoped(.S3MultiPartUpload, true);
+    const log = bun.Output.scoped(.S3MultiPartUpload, .hidden);
 
     pub const UploadPart = struct {
         data: []const u8,
@@ -192,7 +181,7 @@ pub const MultiPartUpload = struct {
             return "";
         }
 
-        pub fn onPartResponse(result: S3SimpleRequest.S3PartResult, this: *@This()) void {
+        pub fn onPartResponse(result: S3SimpleRequest.S3PartResult, this: *@This()) bun.JSTerminated!void {
             if (this.state == .canceled or this.ctx.state == .finished) {
                 log("onPartResponse {} canceled", .{this.partNumber});
                 this.freeAllocatedSlice();
@@ -208,7 +197,7 @@ pub const MultiPartUpload = struct {
                         log("onPartResponse {} retry", .{this.partNumber});
                         this.retry -= 1;
                         // retry failed
-                        this.perform();
+                        try this.perform();
                         return;
                     } else {
                         this.state = .not_assigned;
@@ -225,25 +214,25 @@ pub const MultiPartUpload = struct {
                     // we will need to order this
                     this.ctx.multipart_etags.append(bun.default_allocator, .{
                         .number = this.partNumber,
-                        .etag = bun.default_allocator.dupe(u8, etag) catch bun.outOfMemory(),
-                    }) catch bun.outOfMemory();
+                        .etag = bun.handleOom(bun.default_allocator.dupe(u8, etag)),
+                    }) catch |err| bun.handleOom(err);
                     this.state = .not_assigned;
                     defer this.ctx.deref();
                     // mark as available
                     this.ctx.available.set(this.index);
                     // drain more
-                    this.ctx.drainEnqueuedParts(sent);
+                    try this.ctx.drainEnqueuedParts(sent);
                 },
             }
         }
 
-        fn perform(this: *@This()) void {
+        fn perform(this: *@This()) bun.JSTerminated!void {
             var params_buffer: [2048]u8 = undefined;
             const search_params = std.fmt.bufPrint(&params_buffer, "?partNumber={}&uploadId={s}&x-id=UploadPart", .{
                 this.partNumber,
                 this.ctx.upload_id,
             }) catch unreachable;
-            executeSimpleS3Request(this.ctx.credentials, .{
+            try executeSimpleS3Request(this.ctx.credentials, .{
                 .path = this.ctx.path,
                 .method = .PUT,
                 .proxy_url = this.ctx.proxyUrl(),
@@ -251,11 +240,11 @@ pub const MultiPartUpload = struct {
                 .search_params = search_params,
             }, .{ .part = @ptrCast(&onPartResponse) }, this);
         }
-        pub fn start(this: *@This()) void {
+        pub fn start(this: *@This()) bun.JSTerminated!void {
             if (this.state != .pending or this.ctx.state != .multipart_completed) return;
             this.ctx.ref();
             this.state = .started;
-            this.perform();
+            try this.perform();
         }
         pub fn cancel(this: *@This()) void {
             const state = this.state;
@@ -295,18 +284,18 @@ pub const MultiPartUpload = struct {
         if (this.multipart_etags.capacity > 0)
             this.multipart_etags.deinit(bun.default_allocator);
         if (this.multipart_upload_list.cap > 0)
-            this.multipart_upload_list.deinitWithAllocator(bun.default_allocator);
+            this.multipart_upload_list.deinit(bun.default_allocator);
         bun.destroy(this);
     }
 
-    pub fn singleSendUploadResponse(result: S3SimpleRequest.S3UploadResult, this: *@This()) void {
+    pub fn singleSendUploadResponse(result: S3SimpleRequest.S3UploadResult, this: *@This()) bun.JSError!void {
         if (this.state == .finished) return;
         switch (result) {
             .failure => |err| {
                 if (this.options.retry > 0) {
                     log("singleSendUploadResponse {} retry", .{this.options.retry});
                     this.options.retry -= 1;
-                    executeSimpleS3Request(this.credentials, .{
+                    try executeSimpleS3Request(this.credentials, .{
                         .path = this.path,
                         .method = .PUT,
                         .proxy_url = this.proxyUrl(),
@@ -328,7 +317,7 @@ pub const MultiPartUpload = struct {
                 if (this.onWritable) |callback| {
                     callback(this, this.callback_context, this.buffered.size());
                 }
-                this.done();
+                try this.done();
             },
         }
     }
@@ -348,7 +337,7 @@ pub const MultiPartUpload = struct {
         defer this.currentPartNumber += 1;
         if (this.queue == null) {
             // queueSize will never change and is small (max 255)
-            const queue = bun.default_allocator.alloc(UploadPart, queueSize) catch bun.outOfMemory();
+            const queue = bun.handleOom(bun.default_allocator.alloc(UploadPart, queueSize));
             // zero set just in case
             @memset(queue, UploadPart{
                 .data = "",
@@ -361,7 +350,7 @@ pub const MultiPartUpload = struct {
             });
             this.queue = queue;
         }
-        const data = if (needs_clone) bun.default_allocator.dupe(u8, chunk) catch bun.outOfMemory() else chunk;
+        const data = if (needs_clone) bun.handleOom(bun.default_allocator.dupe(u8, chunk)) else chunk;
         const allocated_len = if (needs_clone) data.len else allocated_size;
 
         const queue_item = &this.queue.?[index];
@@ -379,7 +368,7 @@ pub const MultiPartUpload = struct {
     }
 
     /// Drain the parts, this is responsible for starting the parts and processing the buffered data
-    fn drainEnqueuedParts(this: *@This(), flushed: u64) void {
+    fn drainEnqueuedParts(this: *@This(), flushed: u64) bun.JSTerminated!void {
         if (this.state == .finished or this.state == .singlefile_started) {
             return;
         }
@@ -389,14 +378,14 @@ pub const MultiPartUpload = struct {
                 for (queue) |*part| {
                     if (part.state == .pending) {
                         // lets start the part request
-                        part.start();
+                        try part.start();
                     }
                 }
             }
         }
         const partSize = this.partSizeInBytes();
         if (this.ended or this.buffered.size() >= partSize) {
-            this.processMultiPart(partSize);
+            try this.processMultiPart(partSize);
         }
 
         // empty queue
@@ -406,7 +395,7 @@ pub const MultiPartUpload = struct {
             }
             if (this.ended) {
                 // we are done and no more parts are running
-                this.done();
+                try this.done();
             }
         } else if (!this.hasBackpressure() and flushed > 0) {
             // we have more space in the queue, we can drain more
@@ -416,7 +405,7 @@ pub const MultiPartUpload = struct {
         }
     }
     /// Finalize the upload with a failure
-    pub fn fail(this: *@This(), _err: S3Error) void {
+    pub fn fail(this: *@This(), _err: S3Error) bun.JSTerminated!void {
         log("fail {s}:{s}", .{ _err.code, _err.message });
         this.ended = true;
         if (this.queue) |queue| {
@@ -429,12 +418,12 @@ pub const MultiPartUpload = struct {
         if (this.state != .finished) {
             const old_state = this.state;
             this.state = .finished;
-            this.callback(.{ .failure = _err }, this.callback_context);
+            try this.callback(.{ .failure = _err }, this.callback_context);
 
             if (old_state == .multipart_completed) {
                 // we are a multipart upload so we need to rollback
                 // will deref after rollback
-                this.rollbackMultiPartRequest();
+                try this.rollbackMultiPartRequest();
             } else {
                 // single file upload no need to rollback
                 this.deref();
@@ -442,40 +431,46 @@ pub const MultiPartUpload = struct {
         }
     }
     /// Finalize successful the upload
-    fn done(this: *@This()) void {
+    fn done(this: *@This()) bun.JSTerminated!void {
         if (this.state == .multipart_completed) {
             // we are a multipart upload so we need to send the etags and commit
             this.state = .finished;
             // sort the etags
             std.sort.block(UploadPart.UploadPartResult, this.multipart_etags.items, this, UploadPart.sortEtags);
             // start the multipart upload list
-            this.multipart_upload_list.append(bun.default_allocator, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">") catch bun.outOfMemory();
+            bun.handleOom(this.multipart_upload_list.appendSlice(
+                bun.default_allocator,
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">",
+            ));
             for (this.multipart_etags.items) |tag| {
-                this.multipart_upload_list.appendFmt(bun.default_allocator, "<Part><PartNumber>{}</PartNumber><ETag>{s}</ETag></Part>", .{ tag.number, tag.etag }) catch bun.outOfMemory();
+                bun.handleOom(this.multipart_upload_list.appendFmt(bun.default_allocator, "<Part><PartNumber>{}</PartNumber><ETag>{s}</ETag></Part>", .{ tag.number, tag.etag }));
 
                 bun.default_allocator.free(tag.etag);
             }
             this.multipart_etags.deinit(bun.default_allocator);
             this.multipart_etags = .{};
-            this.multipart_upload_list.append(bun.default_allocator, "</CompleteMultipartUpload>") catch bun.outOfMemory();
+            bun.handleOom(this.multipart_upload_list.appendSlice(
+                bun.default_allocator,
+                "</CompleteMultipartUpload>",
+            ));
             // will deref and ends after commit
-            this.commitMultiPartRequest();
+            try this.commitMultiPartRequest();
         } else if (this.state == .singlefile_started) {
             this.state = .finished;
             // single file upload no need to commit
-            this.callback(.{ .success = {} }, this.callback_context);
-            this.deref();
+            defer this.deref();
+            try this.callback(.{ .success = {} }, this.callback_context);
         }
     }
 
     /// Result of the Multipart request, after this we can start draining the parts
-    pub fn startMultiPartRequestResult(result: S3SimpleRequest.S3DownloadResult, this: *@This()) void {
+    pub fn startMultiPartRequestResult(result: S3SimpleRequest.S3DownloadResult, this: *@This()) bun.JSError!void {
         defer this.deref();
         if (this.state == .finished) return;
         switch (result) {
             .failure => |err| {
                 log("startMultiPartRequestResult {s} failed {s}: {s}", .{ this.path, err.message, err.message });
-                this.fail(err);
+                try this.fail(err);
             },
             .success => |response| {
                 const slice = response.body.list.items;
@@ -489,7 +484,7 @@ pub const MultiPartUpload = struct {
                 if (this.upload_id.len == 0) {
                     // Unknown type of response error from AWS
                     log("startMultiPartRequestResult {s} failed invalid id", .{this.path});
-                    this.fail(.{
+                    try this.fail(.{
                         .code = "UnknownError",
                         .message = "Failed to initiate multipart upload",
                     });
@@ -498,10 +493,10 @@ pub const MultiPartUpload = struct {
                 log("startMultiPartRequestResult {s} success id: {s}", .{ this.path, this.upload_id });
                 this.state = .multipart_completed;
                 // start draining the parts
-                this.drainEnqueuedParts(0);
+                try this.drainEnqueuedParts(0);
             },
             // this is "unreachable" but we cover in case AWS returns 404
-            .not_found => this.fail(.{
+            .not_found => try this.fail(.{
                 .code = "UnknownError",
                 .message = "Failed to initiate multipart upload",
             }),
@@ -509,7 +504,7 @@ pub const MultiPartUpload = struct {
     }
 
     /// We do a best effort to commit the multipart upload, if it fails we will retry, if it still fails we will fail the upload
-    pub fn onCommitMultiPartRequest(result: S3SimpleRequest.S3CommitResult, this: *@This()) void {
+    pub fn onCommitMultiPartRequest(result: S3SimpleRequest.S3CommitResult, this: *@This()) bun.JSTerminated!void {
         log("onCommitMultiPartRequest {s}", .{this.upload_id});
 
         switch (result) {
@@ -517,29 +512,29 @@ pub const MultiPartUpload = struct {
                 if (this.options.retry > 0) {
                     this.options.retry -= 1;
                     // retry commit
-                    this.commitMultiPartRequest();
+                    try this.commitMultiPartRequest();
                     return;
                 }
+                defer this.deref();
                 this.state = .finished;
-                this.callback(.{ .failure = err }, this.callback_context);
-                this.deref();
+                try this.callback(.{ .failure = err }, this.callback_context);
             },
             .success => {
+                defer this.deref();
                 this.state = .finished;
-                this.callback(.{ .success = {} }, this.callback_context);
-                this.deref();
+                try this.callback(.{ .success = {} }, this.callback_context);
             },
         }
     }
     /// We do a best effort to rollback the multipart upload, if it fails we will retry, if it still we just deinit the upload
-    pub fn onRollbackMultiPartRequest(result: S3SimpleRequest.S3UploadResult, this: *@This()) void {
+    pub fn onRollbackMultiPartRequest(result: S3SimpleRequest.S3UploadResult, this: *@This()) bun.JSTerminated!void {
         log("onRollbackMultiPartRequest {s}", .{this.upload_id});
         switch (result) {
             .failure => {
                 if (this.options.retry > 0) {
                     this.options.retry -= 1;
                     // retry rollback
-                    this.rollbackMultiPartRequest();
+                    try this.rollbackMultiPartRequest();
                     return;
                 }
                 this.deref();
@@ -550,14 +545,14 @@ pub const MultiPartUpload = struct {
         }
     }
 
-    fn commitMultiPartRequest(this: *@This()) void {
+    fn commitMultiPartRequest(this: *@This()) bun.JSTerminated!void {
         log("commitMultiPartRequest {s}", .{this.upload_id});
         var params_buffer: [2048]u8 = undefined;
         const searchParams = std.fmt.bufPrint(&params_buffer, "?uploadId={s}", .{
             this.upload_id,
         }) catch unreachable;
 
-        executeSimpleS3Request(this.credentials, .{
+        try executeSimpleS3Request(this.credentials, .{
             .path = this.path,
             .method = .POST,
             .proxy_url = this.proxyUrl(),
@@ -565,14 +560,14 @@ pub const MultiPartUpload = struct {
             .search_params = searchParams,
         }, .{ .commit = @ptrCast(&onCommitMultiPartRequest) }, this);
     }
-    fn rollbackMultiPartRequest(this: *@This()) void {
+    fn rollbackMultiPartRequest(this: *@This()) bun.JSTerminated!void {
         log("rollbackMultiPartRequest {s}", .{this.upload_id});
         var params_buffer: [2048]u8 = undefined;
         const search_params = std.fmt.bufPrint(&params_buffer, "?uploadId={s}", .{
             this.upload_id,
         }) catch unreachable;
 
-        executeSimpleS3Request(this.credentials, .{
+        try executeSimpleS3Request(this.credentials, .{
             .path = this.path,
             .method = .DELETE,
             .proxy_url = this.proxyUrl(),
@@ -580,14 +575,14 @@ pub const MultiPartUpload = struct {
             .search_params = search_params,
         }, .{ .upload = @ptrCast(&onRollbackMultiPartRequest) }, this);
     }
-    fn enqueuePart(this: *@This(), chunk: []const u8, allocated_size: usize, needs_clone: bool) bool {
+    fn enqueuePart(this: *@This(), chunk: []const u8, allocated_size: usize, needs_clone: bool) bun.JSTerminated!bool {
         const part = this.getCreatePart(chunk, allocated_size, needs_clone) orelse return false;
 
         if (this.state == .not_started) {
             // will auto start later
             this.state = .multipart_started;
             this.ref();
-            executeSimpleS3Request(this.credentials, .{
+            try executeSimpleS3Request(this.credentials, .{
                 .path = this.path,
                 .method = .POST,
                 .proxy_url = this.proxyUrl(),
@@ -598,16 +593,16 @@ pub const MultiPartUpload = struct {
                 .storage_class = this.storage_class,
             }, .{ .download = @ptrCast(&startMultiPartRequestResult) }, this);
         } else if (this.state == .multipart_completed) {
-            part.start();
+            try part.start();
         }
         return true;
     }
 
-    fn processMultiPart(this: *@This(), part_size: usize) void {
+    fn processMultiPart(this: *@This(), part_size: usize) bun.JSTerminated!void {
         log("processMultiPart {s} {d}", .{ this.path, part_size });
         if (this.buffered.isEmpty() and this.isQueueEmpty() and this.ended) {
             // no more data to send and we are done
-            this.done();
+            try this.done();
             return;
         }
         // need to split in multiple parts because of the size
@@ -629,7 +624,7 @@ pub const MultiPartUpload = struct {
                 const slice = this.buffered.slice();
 
                 // we dont care about the result because we are sending everything
-                if (this.enqueuePart(slice, allocated_size, false)) {
+                if (try this.enqueuePart(slice, allocated_size, false)) {
                     log("processMultiPart {s} {d} full buffer enqueued", .{ this.path, slice.len });
 
                     // queue is not full, we can clear the buffer part now owns the data
@@ -644,7 +639,7 @@ pub const MultiPartUpload = struct {
 
             const slice = this.buffered.slice()[0..len];
             // allocated size is the slice len because we dupe the buffer
-            if (this.enqueuePart(slice, slice.len, true)) {
+            if (try this.enqueuePart(slice, slice.len, true)) {
                 log("processMultiPart {s} {d} slice enqueued", .{ this.path, slice.len });
                 // queue is not full, we can set the offset
                 this.buffered.wrote(len);
@@ -672,10 +667,10 @@ pub const MultiPartUpload = struct {
                 .content_type = this.content_type,
                 .acl = this.acl,
                 .storage_class = this.storage_class,
-            }, .{ .upload = @ptrCast(&singleSendUploadResponse) }, this);
+            }, .{ .upload = @ptrCast(&singleSendUploadResponse) }, this) catch {}; // TODO: properly propagate exception upwards
         } else {
             // we need to split
-            this.processMultiPart(part_size);
+            this.processMultiPart(part_size) catch {}; // TODO: properly propagate exception upwards
         }
     }
 
@@ -709,8 +704,8 @@ pub const MultiPartUpload = struct {
         utf16,
     };
 
-    fn write(this: *@This(), chunk: []const u8, is_last: bool, comptime encoding: WriteEncoding) bun.OOM!bool {
-        if (this.ended) return true; // no backpressure since we are done
+    fn write(this: *@This(), chunk: []const u8, is_last: bool, comptime encoding: WriteEncoding) bun.OOM!ResumableSinkBackpressure {
+        if (this.ended) return .done; // no backpressure since we are done
         // we may call done inside processBuffered so we ensure that we keep a ref until we are done
         this.ref();
         defer this.deref();
@@ -720,7 +715,7 @@ pub const MultiPartUpload = struct {
             if (this.buffered.size() > 0) {
                 this.processBuffered(this.partSizeInBytes());
             }
-            return !this.hasBackpressure();
+            return if (this.hasBackpressure()) .backpressure else .want_more;
         }
         if (is_last) {
             this.ended = true;
@@ -734,7 +729,7 @@ pub const MultiPartUpload = struct {
             this.processBuffered(this.partSizeInBytes());
         } else {
             // still have more data and receive empty, nothing todo here
-            if (chunk.len == 0) return this.hasBackpressure();
+            if (chunk.len == 0) return if (this.hasBackpressure()) .backpressure else .want_more;
             switch (encoding) {
                 .bytes => try this.buffered.write(chunk),
                 .latin1 => try this.buffered.writeLatin1(chunk, true),
@@ -748,18 +743,33 @@ pub const MultiPartUpload = struct {
 
             // wait for more
         }
-        return !this.hasBackpressure();
+        return if (this.hasBackpressure()) .backpressure else .want_more;
     }
 
-    pub fn writeLatin1(this: *@This(), chunk: []const u8, is_last: bool) bun.OOM!bool {
+    pub fn writeLatin1(this: *@This(), chunk: []const u8, is_last: bool) bun.OOM!ResumableSinkBackpressure {
         return try this.write(chunk, is_last, .latin1);
     }
 
-    pub fn writeUTF16(this: *@This(), chunk: []const u8, is_last: bool) bun.OOM!bool {
+    pub fn writeUTF16(this: *@This(), chunk: []const u8, is_last: bool) bun.OOM!ResumableSinkBackpressure {
         return try this.write(chunk, is_last, .utf16);
     }
 
-    pub fn writeBytes(this: *@This(), chunk: []const u8, is_last: bool) bun.OOM!bool {
+    pub fn writeBytes(this: *@This(), chunk: []const u8, is_last: bool) bun.OOM!ResumableSinkBackpressure {
         return try this.write(chunk, is_last, .bytes);
     }
 };
+
+const std = @import("std");
+const ACL = @import("./acl.zig").ACL;
+const MultiPartUploadOptions = @import("./multipart_options.zig").MultiPartUploadOptions;
+const S3Credentials = @import("./credentials.zig").S3Credentials;
+const S3Error = @import("./error.zig").S3Error;
+const Storageclass = @import("./storage_class.zig").StorageClass;
+
+const S3SimpleRequest = @import("./simple_request.zig");
+const executeSimpleS3Request = S3SimpleRequest.executeSimpleS3Request;
+
+const bun = @import("bun");
+const jsc = bun.jsc;
+const strings = bun.strings;
+const ResumableSinkBackpressure = jsc.WebCore.ResumableSinkBackpressure;

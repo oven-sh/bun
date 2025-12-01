@@ -1,5 +1,5 @@
 // TODO determine size and alignment automatically
-const size = 56;
+const size = if (Environment.allow_assert or Environment.enable_asan) 56 else 8;
 const alignment = 8;
 
 /// Binding for JSC::CatchScope. This should be used rarely, only at translation boundaries between
@@ -64,6 +64,11 @@ pub const CatchScope = struct {
         return CatchScope__pureException(&self.bytes);
     }
 
+    pub fn clearException(self: *CatchScope) void {
+        if (comptime Environment.ci_assert) bun.assert(self.location == &self.bytes[0]);
+        return CatchScope__clearException(&self.bytes);
+    }
+
     /// Get the thrown exception if it exists, or if an unhandled trap causes an exception to be thrown
     pub fn exceptionIncludingTraps(self: *CatchScope) ?*jsc.Exception {
         if (comptime Environment.ci_assert) bun.assert(self.location == &self.bytes[0]);
@@ -72,7 +77,7 @@ pub const CatchScope = struct {
 
     /// Intended for use with `try`. Returns if there is already a pending exception or if traps cause
     /// an exception to be thrown (this is the same as how RETURN_IF_EXCEPTION behaves in C++)
-    pub fn returnIfException(self: *CatchScope) bun.JSError!void {
+    pub fn returnIfException(self: *CatchScope) !void {
         if (self.exceptionIncludingTraps() != null) return error.JSError;
     }
 
@@ -97,12 +102,12 @@ pub const CatchScope = struct {
     }
 
     /// If no exception, returns.
-    /// If termination exception, returns JSExecutionTerminated (so you can `try`)
+    /// If termination exception, returns JSTerminated (so you can `try`)
     /// If non-termination exception, assertion failure.
-    pub fn assertNoExceptionExceptTermination(self: *CatchScope) bun.JSExecutionTerminated!void {
+    pub fn assertNoExceptionExceptTermination(self: *CatchScope) bun.JSTerminated!void {
         if (self.exception()) |e| {
             if (jsc.JSValue.fromCell(e).isTerminationException())
-                return error.JSExecutionTerminated
+                return error.JSTerminated
             else if (comptime Environment.ci_assert)
                 self.assertionFailure(e);
             // Unconditionally panicking here is worse for our users.
@@ -161,9 +166,9 @@ pub const ExceptionValidationScope = struct {
     }
 
     /// If no exception, returns.
-    /// If termination exception, returns JSExecutionTerminated (so you can `try`)
+    /// If termination exception, returns JSTerminated (so you can `try`)
     /// If non-termination exception, assertion failure.
-    pub fn assertNoExceptionExceptTermination(self: *ExceptionValidationScope) bun.JSExecutionTerminated!void {
+    pub fn assertNoExceptionExceptTermination(self: *ExceptionValidationScope) bun.JSTerminated!void {
         if (Environment.ci_assert) {
             return self.scope.assertNoExceptionExceptTermination();
         }
@@ -190,6 +195,7 @@ extern fn CatchScope__construct(
 ) void;
 /// only returns exceptions that have already been thrown. does not check traps
 extern fn CatchScope__pureException(ptr: *align(alignment) [size]u8) ?*jsc.Exception;
+extern fn CatchScope__clearException(ptr: *align(alignment) [size]u8) void;
 /// returns if an exception was already thrown, or if a trap (like another thread requesting
 /// termination) causes an exception to be thrown
 extern fn CatchScope__exceptionIncludingTraps(ptr: *align(alignment) [size]u8) ?*jsc.Exception;
@@ -197,6 +203,7 @@ extern fn CatchScope__assertNoException(ptr: *align(alignment) [size]u8) void;
 extern fn CatchScope__destruct(ptr: *align(alignment) [size]u8) void;
 
 const std = @import("std");
+
 const bun = @import("bun");
-const jsc = bun.jsc;
 const Environment = bun.Environment;
+const jsc = bun.jsc;

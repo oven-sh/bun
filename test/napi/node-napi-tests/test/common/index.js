@@ -311,32 +311,17 @@ let knownGlobals = [
   setInterval,
   setTimeout,
   queueMicrotask,
-  addEventListener,
-  alert,
-  confirm,
-  dispatchEvent,
-  postMessage,
-  prompt,
-  removeEventListener,
-  reportError,
-  Bun,
   File,
   process,
   Blob,
   Buffer,
-  BuildError,
-  BuildMessage,
-  HTMLRewriter,
   Request,
-  ResolveError,
-  ResolveMessage,
   Response,
   TextDecoder,
   AbortSignal,
   BroadcastChannel,
   CloseEvent,
   DOMException,
-  ErrorEvent,
   Event,
   EventTarget,
   FormData,
@@ -351,10 +336,30 @@ let knownGlobals = [
   URL,
   URLSearchParams,
   WebSocket,
-  Worker,
-  onmessage,
-  onerror,
 ];
+
+if (typeof Bun === "object") {
+  knownGlobals.push(
+    addEventListener,
+    alert,
+    confirm,
+    dispatchEvent,
+    postMessage,
+    prompt,
+    removeEventListener,
+    Bun,
+    reportError,
+    BuildError,
+    BuildMessage,
+    HTMLRewriter,
+    ResolveError,
+    ResolveMessage,
+    ErrorEvent,
+    Worker,
+    onmessage,
+    onerror,
+  );
+}
 
 const globalKeys = [
   "gc",
@@ -454,12 +459,14 @@ if (process.env.NODE_TEST_KNOWN_GLOBALS !== '0') {
     return leaked;
   }
 
-  process.on('exit', function() {
-    const leaked = leakedGlobals();
-    if (leaked.length > 0) {
-      assert.fail(`Unexpected global(s) found: ${leaked.join(', ')}`);
-    }
-  });
+  // --- Commmented out for Bun ---
+  // process.on('exit', function () {
+  //   const leaked = leakedGlobals();
+  //   if (leaked.length > 0) {
+  //     assert.fail(`Unexpected global(s) found: ${leaked.join(', ')}`);
+  //   }
+  // });
+  // --- Commmented out for Bun ---
 }
 
 const mustCallChecks = [];

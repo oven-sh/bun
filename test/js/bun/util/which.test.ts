@@ -160,3 +160,24 @@ test("Bun.which does look in the current directory when given a path with a slas
     process.chdir(cwd);
   }
 });
+
+test("Bun.which can find executables in a non-ascii directory", async () => {
+  const cwd = process.cwd();
+  const dir = tempDirWithFiles("which-non-ascii-开始学习", {
+    "some_program_name": "#!/usr/bin/env sh\necho posix\nexit 0\n",
+    "some_program_name.cmd": "@echo win32\n@exit 0\n",
+  });
+
+  process.chdir(dir);
+  try {
+    if (!isWindows) {
+      await $`chmod +x ./some_program_name`;
+    }
+
+    const suffix = isWindows ? ".cmd" : "";
+    expect(which("./some_program_name")).toBe(join(dir, "some_program_name" + suffix));
+    expect((await $`./some_program_name`.text()).trim()).toBe(isWindows ? "win32" : "posix");
+  } finally {
+    process.chdir(cwd);
+  }
+});

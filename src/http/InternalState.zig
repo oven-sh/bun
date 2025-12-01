@@ -1,4 +1,5 @@
 const InternalState = @This();
+
 // TODO: reduce the size of this struct
 // Many of these fields can be moved to a packed struct and use less space
 
@@ -216,22 +217,14 @@ pub fn processBodyBuffer(this: *InternalState, buffer: MutableString, is_final_c
     return this.body_out_str.?.list.items.len > 0;
 }
 
-const std = @import("std");
-const bun = @import("bun");
-const MutableString = bun.MutableString;
-const picohttp = bun.picohttp;
-const Output = bun.Output;
-const FeatureFlags = bun.FeatureFlags;
-const HTTPClient = bun.http;
-const HTTPResponseMetadata = HTTPClient.HTTPResponseMetadata;
-const CertificateInfo = HTTPClient.CertificateInfo;
-const Encoding = HTTPClient.Encoding;
-const Decompressor = HTTPClient.Decompressor;
-const HTTPRequestBody = HTTPClient.HTTPRequestBody;
-const log = Output.scoped(.HTTPInternalState, true);
+const log = Output.scoped(.HTTPInternalState, .hidden);
 
 const HTTPStage = enum {
     pending,
+
+    /// The `onOpen` callback has been called for the first time.
+    opened,
+
     headers,
     body,
     body_chunk,
@@ -248,3 +241,18 @@ const Stage = enum(u8) {
     done,
     fail,
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const FeatureFlags = bun.FeatureFlags;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const picohttp = bun.picohttp;
+
+const HTTPClient = bun.http;
+const CertificateInfo = HTTPClient.CertificateInfo;
+const Decompressor = HTTPClient.Decompressor;
+const Encoding = HTTPClient.Encoding;
+const HTTPRequestBody = HTTPClient.HTTPRequestBody;
+const HTTPResponseMetadata = HTTPClient.HTTPResponseMetadata;

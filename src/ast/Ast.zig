@@ -83,14 +83,14 @@ pub const TsEnumsMap = std.ArrayHashMapUnmanaged(Ref, bun.StringHashMapUnmanaged
 
 pub fn fromParts(parts: []Part) Ast {
     return Ast{
-        .parts = Part.List.init(parts),
+        .parts = Part.List.fromOwnedSlice(parts),
         .runtime_imports = .{},
     };
 }
 
-pub fn initTest(parts: []Part) Ast {
+pub fn initTest(parts: []const Part) Ast {
     return Ast{
-        .parts = Part.List.init(parts),
+        .parts = Part.List.fromBorrowedSliceDangerous(parts),
         .runtime_imports = .{},
     };
 }
@@ -107,12 +107,14 @@ pub fn toJSON(self: *const Ast, _: std.mem.Allocator, stream: anytype) !void {
 /// Do not call this if it wasn't globally allocated!
 pub fn deinit(this: *Ast) void {
     // TODO: assert mimalloc-owned memory
-    if (this.parts.len > 0) this.parts.deinitWithAllocator(bun.default_allocator);
-    if (this.symbols.len > 0) this.symbols.deinitWithAllocator(bun.default_allocator);
-    if (this.import_records.len > 0) this.import_records.deinitWithAllocator(bun.default_allocator);
+    this.parts.deinit(bun.default_allocator);
+    this.symbols.deinit(bun.default_allocator);
+    this.import_records.deinit(bun.default_allocator);
 }
 
-// @sortImports
+pub const Class = G.Class;
+
+const string = []const u8;
 
 const std = @import("std");
 const Runtime = @import("../runtime.zig").Runtime;
@@ -121,13 +123,13 @@ const bun = @import("bun");
 const BabyList = bun.BabyList;
 const ImportRecord = bun.ImportRecord;
 const logger = bun.logger;
-const string = bun.string;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const Ast = js_ast.Ast;
 const CharFreq = js_ast.CharFreq;
 const ExportsKind = js_ast.ExportsKind;
 const Expr = js_ast.Expr;
+const G = js_ast.G;
 const InlinedEnumValue = js_ast.InlinedEnumValue;
 const LocRef = js_ast.LocRef;
 const NamedExport = js_ast.NamedExport;
@@ -138,6 +140,3 @@ const RefHashCtx = js_ast.RefHashCtx;
 const Scope = js_ast.Scope;
 const SlotCounts = js_ast.SlotCounts;
 const Symbol = js_ast.Symbol;
-
-const G = js_ast.G;
-pub const Class = G.Class;

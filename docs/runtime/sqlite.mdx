@@ -178,11 +178,11 @@ The caching refers to the **compiled prepared statement** (the SQL bytecode), no
 
 It is completely safe to reuse a cached statement with different parameter values:
 
-```ts 
+```ts
 const query = db.query("SELECT * FROM users WHERE id = ?");
-query.get(1);  // ✓ Works
-query.get(2);  // ✓ Also works - parameters are bound fresh each time
-query.get(3);  // ✓ Still works
+query.get(1); // ✓ Works
+query.get(2); // ✓ Also works - parameters are bound fresh each time
+query.get(3); // ✓ Still works
 ```
 
 Use `.prepare()` instead of `.query()` when you want a fresh `Statement` instance that isn't cached, for example if you're dynamically generating SQL and don't want to fill the cache with one-off queries.

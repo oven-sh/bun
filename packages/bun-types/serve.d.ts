@@ -1085,12 +1085,9 @@ declare module "bun" {
     /**
      * The protocol the server is listening on.
      *
-     * This will be `undefined` when the server is listening on a unix socket.
-     *
-     * @example
-     * ```js
-     * "http"
-     * ```
+     * - "http" for normal servers
+     * - "https" when TLS is enabled
+     * - null for unix sockets or when unavailable
      */
     readonly protocol: "http" | "https" | null;
 

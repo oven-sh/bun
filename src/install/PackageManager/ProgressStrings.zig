@@ -25,23 +25,23 @@ pub const ProgressStrings = struct {
     pub const script_emoji: string = "  ⚙️  ";
 
     pub inline fn download() string {
-        return if (Output.isEmojiEnabled()) download_with_emoji else download_no_emoji;
+        return if (Output.enable_ansi_colors_stderr) download_with_emoji else download_no_emoji;
     }
 
     pub inline fn save() string {
-        return if (Output.isEmojiEnabled()) save_with_emoji else save_no_emoji;
+        return if (Output.enable_ansi_colors_stderr) save_with_emoji else save_no_emoji;
     }
 
     pub inline fn extract() string {
-        return if (Output.isEmojiEnabled()) extract_with_emoji else extract_no_emoji;
+        return if (Output.enable_ansi_colors_stderr) extract_with_emoji else extract_no_emoji;
     }
 
     pub inline fn install() string {
-        return if (Output.isEmojiEnabled()) install_with_emoji else install_no_emoji;
+        return if (Output.enable_ansi_colors_stderr) install_with_emoji else install_no_emoji;
     }
 
     pub inline fn script() string {
-        return if (Output.isEmojiEnabled()) script_with_emoji else script_no_emoji;
+        return if (Output.enable_ansi_colors_stderr) script_with_emoji else script_no_emoji;
     }
 };
 
@@ -52,7 +52,7 @@ pub fn setNodeName(
     emoji: string,
     comptime is_first: bool,
 ) void {
-    if (Output.isEmojiEnabled()) {
+    if (Output.enable_ansi_colors_stderr) {
         if (is_first) {
             @memcpy(this.progress_name_buf[0..emoji.len], emoji);
             @memcpy(this.progress_name_buf[emoji.len..][0..name.len], name);
@@ -92,10 +92,9 @@ pub fn endProgressBar(manager: *PackageManager) void {
     manager.downloads_node = null;
 }
 
-// @sortImports
+const string = []const u8;
 
 const bun = @import("bun");
 const Output = bun.Output;
 const Progress = bun.Progress;
-const string = bun.string;
 const PackageManager = bun.install.PackageManager;

@@ -123,17 +123,20 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     JSFunction* resolveFunction = nullptr;
     JSFunction* requireFunction = nullptr;
     const auto initializeModuleObject = [&]() {
+        SourceCode resolveSourceCode = makeSource("resolve"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
         resolveFunction = JSC::JSBoundFunction::create(vm,
             globalObject,
             globalObject->requireResolveFunctionUnbound(),
             moduleObject->filename(),
-            ArgList(), 1, globalObject->commonStrings().resolveString(globalObject));
+            ArgList(), 1, globalObject->commonStrings().resolveString(globalObject), resolveSourceCode);
         RETURN_IF_EXCEPTION(scope, );
+
+        SourceCode requireSourceCode = makeSource("require"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
         requireFunction = JSC::JSBoundFunction::create(vm,
             globalObject,
             globalObject->requireFunctionUnbound(),
             moduleObject,
-            ArgList(), 1, globalObject->commonStrings().requireString(globalObject));
+            ArgList(), 1, globalObject->commonStrings().requireString(globalObject), requireSourceCode);
         RETURN_IF_EXCEPTION(scope, );
         requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);
         RETURN_IF_EXCEPTION(scope, );
@@ -814,13 +817,10 @@ public:
 
 const JSC::ClassInfo JSCommonJSModulePrototype::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSModulePrototype) };
 
-void JSCommonJSModule::finishCreation(JSC::VM& vm, JSC::JSString* id, JSValue filename, JSC::JSString* dirname, const JSC::SourceCode& sourceCode)
+void JSCommonJSModule::finishCreation(JSC::VM& vm, const JSC::SourceCode& sourceCode)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    m_id.set(vm, this, id);
-    m_filename.set(vm, this, filename);
-    m_dirname.set(vm, this, dirname);
     this->sourceCode = sourceCode;
 }
 
@@ -844,8 +844,8 @@ JSCommonJSModule* JSCommonJSModule::create(
     JSC::JSString* dirname,
     const JSC::SourceCode& sourceCode)
 {
-    JSCommonJSModule* cell = new (NotNull, JSC::allocateCell<JSCommonJSModule>(vm)) JSCommonJSModule(vm, structure);
-    cell->finishCreation(vm, id, filename, dirname, sourceCode);
+    JSCommonJSModule* cell = new (NotNull, JSC::allocateCell<JSCommonJSModule>(vm)) JSCommonJSModule(vm, structure, id, filename, dirname);
+    cell->finishCreation(vm, sourceCode);
     return cell;
 }
 
@@ -1549,18 +1549,22 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
         globalObject->CommonJSModuleObjectStructure(),
         filename, filename, dirname, SourceCode());
 
+    SourceCode requireSourceCode = makeSource("require"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
+
     JSFunction* requireFunction = JSC::JSBoundFunction::create(vm,
         globalObject,
         globalObject->requireFunctionUnbound(),
         moduleObject,
-        ArgList(), 1, globalObject->commonStrings().requireString(globalObject));
+        ArgList(), 1, globalObject->commonStrings().requireString(globalObject), requireSourceCode);
     RETURN_IF_EXCEPTION(scope, nullptr);
+
+    SourceCode resolveSourceCode = makeSource("resolve"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
 
     JSFunction* resolveFunction = JSC::JSBoundFunction::create(vm,
         globalObject,
         globalObject->requireResolveFunctionUnbound(),
         moduleObject->filename(),
-        ArgList(), 1, globalObject->commonStrings().resolveString(globalObject));
+        ArgList(), 1, globalObject->commonStrings().resolveString(globalObject), resolveSourceCode);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     requireFunction->putDirect(vm, vm.propertyNames->resolve, resolveFunction, 0);

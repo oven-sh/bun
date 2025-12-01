@@ -1,15 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-const Environment = bun.Environment;
-const strings = bun.strings;
-
-const std = @import("std");
-const options = @import("../options.zig");
-const logger = bun.logger;
-const cache = @import("../cache.zig");
-const js_ast = bun.JSAst;
-const js_lexer = bun.js_lexer;
-
 // Heuristic: you probably don't have 100 of these
 // Probably like 5-10
 // Array iteration is faster and deterministically ordered in that case.
@@ -23,7 +11,6 @@ const JSXFieldSet = FlagSet(options.JSX.Pragma);
 
 pub const TSConfigJSON = struct {
     pub const new = bun.TrivialNew(@This());
-    pub const deinit = bun.TrivialDeinit(@This());
 
     abs_path: string,
 
@@ -159,7 +146,7 @@ pub const TSConfigJSON = struct {
         // behavior may also be different).
         const json: js_ast.Expr = (json_cache.parseTSConfig(log, source, allocator) catch null) orelse return null;
 
-        bun.Analytics.Features.tsconfig += 1;
+        bun.analytics.Features.tsconfig += 1;
 
         var result: TSConfigJSON = TSConfigJSON{ .abs_path = source.path.text, .paths = PathsMap.init(allocator) };
         errdefer allocator.free(result.paths);
@@ -283,7 +270,7 @@ pub const TSConfigJSON = struct {
                 switch (paths_prop.expr.data) {
                     .e_object => {
                         defer {
-                            bun.Analytics.Features.tsconfig_paths += 1;
+                            bun.analytics.Features.tsconfig_paths += 1;
                         }
                         var paths = paths_prop.expr.data.e_object;
                         result.base_url_for_paths = if (result.base_url.len > 0) result.base_url else ".";
@@ -410,7 +397,7 @@ pub const TSConfigJSON = struct {
         // foo.bar.baz == 3
         // foo.bar.baz.bun == 4
         const parts_count = std.mem.count(u8, text, ".") + @as(usize, @intFromBool(text[text.len - 1] != '.'));
-        var parts = std.ArrayList(string).initCapacity(allocator, parts_count) catch unreachable;
+        var parts = std.array_list.Managed(string).initCapacity(allocator, parts_count) catch unreachable;
 
         if (parts_count == 1) {
             if (!js_lexer.isIdentifier(text)) {
@@ -493,6 +480,23 @@ pub const TSConfigJSON = struct {
         log.addRangeWarningFmt(source, r, allocator, "Non-relative path \"{s}\" is not allowed when \"baseUrl\" is not set (did you forget a leading \"./\"?)", .{text}) catch {};
         return false;
     }
+
+    pub fn deinit(this: *TSConfigJSON) void {
+        this.paths.deinit();
+        bun.destroy(this);
+    }
 };
 
+const string = []const u8;
+
+const cache = @import("../cache.zig");
+const options = @import("../options.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const Environment = bun.Environment;
 const assert = bun.assert;
+const js_ast = bun.ast;
+const js_lexer = bun.js_lexer;
+const logger = bun.logger;
+const strings = bun.strings;

@@ -11,15 +11,7 @@
 //! Using Futex, other Thread synchronization primitives can be built which
 //! efficiently wait for cross-thread events or signals.
 
-const std = @import("std");
-const builtin = @import("builtin");
 const Futex = @This();
-const windows = std.os.windows;
-const linux = std.os.linux;
-const c = std.c;
-const bun = @import("bun");
-const assert = bun.assert;
-const atomic = std.atomic;
 
 /// Checks if `ptr` still contains the value `expect` and, if so, blocks the caller until either:
 /// - The value at `ptr` is no longer equal to `expect`.
@@ -230,10 +222,10 @@ const LinuxImpl = struct {
             ts.nsec = @as(@TypeOf(ts.nsec), @intCast(timeout_ns % std.time.ns_per_s));
         }
 
-        const rc = linux.futex_wait(
-            @as(*const i32, @ptrCast(&ptr.raw)),
-            linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAIT,
-            @as(i32, @bitCast(expect)),
+        const rc = linux.futex_4arg(
+            @ptrCast(&ptr.raw),
+            .{ .cmd = .WAIT, .private = true },
+            expect,
             if (timeout != null) &ts else null,
         );
 
@@ -252,11 +244,7 @@ const LinuxImpl = struct {
     }
 
     fn wake(ptr: *const atomic.Value(u32), max_waiters: u32) void {
-        const rc = linux.futex_wake(
-            @as(*const i32, @ptrCast(&ptr.raw)),
-            linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAKE,
-            std.math.cast(i32, max_waiters) orelse std.math.maxInt(i32),
-        );
+        const rc = linux.futex_3arg(&ptr.raw, .{ .cmd = .WAKE, .private = true }, @bitCast(std.math.cast(i32, max_waiters) orelse std.math.maxInt(i32)));
 
         switch (linux.E.init(rc)) {
             .SUCCESS => {}, // successful wake up
@@ -357,3 +345,15 @@ pub const Deadline = struct {
         return Futex.wait(ptr, expect, until_timeout_ns);
     }
 };
+
+const builtin = @import("builtin");
+
+const bun = @import("bun");
+const assert = bun.assert;
+
+const std = @import("std");
+const atomic = std.atomic;
+const c = std.c;
+
+const linux = std.os.linux;
+const windows = std.os.windows;

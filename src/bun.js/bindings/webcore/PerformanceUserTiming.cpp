@@ -142,9 +142,10 @@ void PerformanceUserTiming::clearMarks(const String& markName)
 
 ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const std::variant<String, double>& mark) const
 {
-    return WTF::switchOn(mark, [&](auto& value) {
+    return std::visit([&](auto& value) {
         return convertMarkToTimestamp(value);
-    });
+    },
+        mark);
 }
 
 ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const String& mark) const
@@ -283,23 +284,24 @@ static bool isNonEmptyDictionary(const PerformanceMeasureOptions& measureOptions
 ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGlobalObject& globalObject, const String& measureName, std::optional<StartOrMeasureOptions>&& startOrMeasureOptions, const String& endMark)
 {
     if (startOrMeasureOptions) {
-        return WTF::switchOn(
-            *startOrMeasureOptions,
-            [&](const PerformanceMeasureOptions& measureOptions) -> ExceptionOr<Ref<PerformanceMeasure>> {
-                if (isNonEmptyDictionary(measureOptions)) {
-                    if (!endMark.isNull())
-                        return Exception { TypeError };
-                    if (!measureOptions.start && !measureOptions.end)
-                        return Exception { TypeError };
-                    if (measureOptions.start && measureOptions.duration && measureOptions.end)
-                        return Exception { TypeError };
-                }
+        return std::visit(
+            WTF::makeVisitor(
+                [&](const PerformanceMeasureOptions& measureOptions) -> ExceptionOr<Ref<PerformanceMeasure>> {
+                    if (isNonEmptyDictionary(measureOptions)) {
+                        if (!endMark.isNull())
+                            return Exception { TypeError };
+                        if (!measureOptions.start && !measureOptions.end)
+                            return Exception { TypeError };
+                        if (measureOptions.start && measureOptions.duration && measureOptions.end)
+                            return Exception { TypeError };
+                    }
 
-                return measure(globalObject, measureName, measureOptions);
-            },
-            [&](const String& startMark) {
-                return measure(measureName, startMark, endMark);
-            });
+                    return measure(globalObject, measureName, measureOptions);
+                },
+                [&](const String& startMark) -> ExceptionOr<Ref<PerformanceMeasure>> {
+                    return measure(measureName, startMark, endMark);
+                }),
+            *startOrMeasureOptions);
     }
 
     return measure(measureName, {}, endMark);

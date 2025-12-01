@@ -105,9 +105,9 @@ fn makeChild(this: *Binary, left: bool) ?ChildPtr {
             const condexpr = CondExpr.init(this.base.interpreter, this.base.shell, node.condexpr, CondExpr.ParentPtr.init(this), this.io.copy());
             return ChildPtr.init(condexpr);
         },
-        .@"async" => {
-            const @"async" = Async.init(this.base.interpreter, this.base.shell, node.@"async", Async.ParentPtr.init(this), this.io.copy());
-            return ChildPtr.init(@"async");
+        .async => {
+            const async = Async.init(this.base.interpreter, this.base.shell, node.async, Async.ParentPtr.init(this), this.io.copy());
+            return ChildPtr.init(async);
         },
     }
 }
@@ -151,24 +151,24 @@ pub fn deinit(this: *Binary) void {
 }
 
 const bun = @import("bun");
+const assert = bun.assert;
+
+const ExitCode = bun.shell.ExitCode;
 const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
 
 const Interpreter = bun.shell.Interpreter;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
-const ExitCode = bun.shell.ExitCode;
-const ShellExecEnv = Interpreter.ShellExecEnv;
-const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-
 const Assigns = bun.shell.Interpreter.Assigns;
 const Async = bun.shell.Interpreter.Async;
 const Cmd = bun.shell.Interpreter.Cmd;
-const If = bun.shell.Interpreter.If;
 const CondExpr = bun.shell.Interpreter.CondExpr;
+const IO = bun.shell.Interpreter.IO;
+const If = bun.shell.Interpreter.If;
 const Pipeline = bun.shell.Interpreter.Pipeline;
-const Subshell = bun.shell.Interpreter.Subshell;
+const ShellExecEnv = Interpreter.ShellExecEnv;
+const State = bun.shell.Interpreter.State;
 const Stmt = bun.shell.Interpreter.Stmt;
+const Subshell = bun.shell.Interpreter.Subshell;
 
-const assert = bun.assert;
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
+const log = bun.shell.interpret.log;

@@ -1,9 +1,12 @@
 pub const Error = error{Fail};
-const std = @import("std");
-const bun = @import("bun");
 pub const MemorySettings = extern struct {
     preallocated_parsing_buffer_size: usize,
     max_allowed_memory_usage: usize,
+};
+
+pub const SourceLocationBytes = extern struct {
+    start: usize,
+    end: usize,
 };
 
 inline fn auto_disable() void {
@@ -76,7 +79,7 @@ pub const HTMLRewriter = opaque {
             encoding: [*]const u8,
             encoding_len: usize,
             memory_settings: MemorySettings,
-            output_sink: ?*const fn ([*]const u8, usize, *anyopaque) callconv(.C) void,
+            output_sink: ?*const fn ([*]const u8, usize, *anyopaque) callconv(.c) void,
             output_sink_user_data: *anyopaque,
             strict: bool,
         ) ?*HTMLRewriter;
@@ -85,7 +88,7 @@ pub const HTMLRewriter = opaque {
             encoding: [*]const u8,
             encoding_len: usize,
             memory_settings: MemorySettings,
-            output_sink: ?*const fn ([*]const u8, usize, *anyopaque) callconv(.C) void,
+            output_sink: ?*const fn ([*]const u8, usize, *anyopaque) callconv(.c) void,
             output_sink_user_data: *anyopaque,
             strict: bool,
         ) ?*HTMLRewriter;
@@ -258,9 +261,9 @@ pub const HTMLRewriter = opaque {
             comptime OutputSinkType: type,
             comptime Writer: (fn (*OutputSinkType, bytes: []const u8) void),
             comptime Done: (fn (*OutputSinkType) void),
-        ) (fn ([*]const u8, usize, *anyopaque) callconv(.C) void) {
+        ) (fn ([*]const u8, usize, *anyopaque) callconv(.c) void) {
             return struct {
-                fn writeChunk(ptr: [*]const u8, len: usize, user_data: *anyopaque) callconv(.C) void {
+                fn writeChunk(ptr: [*]const u8, len: usize, user_data: *anyopaque) callconv(.c) void {
                     auto_disable();
 
                     @setRuntimeSafety(false);
@@ -313,6 +316,7 @@ pub const TextChunk = opaque {
     extern fn lol_html_text_chunk_is_removed(chunk: *const TextChunk) bool;
     extern fn lol_html_text_chunk_user_data_set(chunk: *const TextChunk, user_data: ?*anyopaque) void;
     extern fn lol_html_text_chunk_user_data_get(chunk: *const TextChunk) ?*anyopaque;
+    extern fn lol_html_text_chunk_source_location_bytes(chunk: *const TextChunk) SourceLocationBytes;
 
     pub const Content = extern struct {
         ptr: [*]const u8,
@@ -383,6 +387,10 @@ pub const TextChunk = opaque {
         auto_disable();
         return @as(?*Type, @ptrCast(@alignCast(this.lol_html_text_chunk_user_data_get())));
     }
+    pub fn getSourceLocationBytes(this: *const TextChunk) SourceLocationBytes {
+        auto_disable();
+        return this.lol_html_text_chunk_source_location_bytes();
+    }
 };
 pub const Element = opaque {
     extern fn lol_html_element_get_attribute(element: *const Element, name: [*]const u8, name_len: usize) HTMLString;
@@ -404,6 +412,7 @@ pub const Element = opaque {
     extern fn lol_html_element_user_data_get(element: *const Element) ?*anyopaque;
     extern fn lol_html_element_add_end_tag_handler(element: *Element, end_tag_handler: lol_html_end_tag_handler_t, user_data: ?*anyopaque) c_int;
     extern fn lol_html_element_clear_end_tag_handlers(element: *Element) void;
+    extern fn lol_html_element_source_location_bytes(element: *const Element) SourceLocationBytes;
 
     pub fn getAttribute(element: *const Element, name: []const u8) HTMLString {
         auto_disable();
@@ -554,6 +563,11 @@ pub const Element = opaque {
     pub fn attributes(element: *const Element) ?*Attribute.Iterator {
         return lol_html_attributes_iterator_get(element);
     }
+
+    pub fn getSourceLocationBytes(element: *const Element) SourceLocationBytes {
+        auto_disable();
+        return lol_html_element_source_location_bytes(element);
+    }
 };
 
 pub const HTMLString = extern struct {
@@ -581,7 +595,7 @@ pub const HTMLString = extern struct {
         return this.ptr[0..this.len];
     }
 
-    fn deinit_external(_: [*]u8, ptr: *anyopaque, len: u32) callconv(.C) void {
+    fn deinit_external(_: [*]u8, ptr: *anyopaque, len: u32) callconv(.c) void {
         auto_disable();
         lol_html_str_free(.{ .ptr = @as([*]const u8, @ptrCast(ptr)), .len = len });
     }
@@ -595,7 +609,7 @@ pub const HTMLString = extern struct {
         return bun.String.cloneUTF8(bytes);
     }
 
-    pub fn toJS(this: HTMLString, globalThis: *bun.JSC.JSGlobalObject) bun.JSC.JSValue {
+    pub fn toJS(this: HTMLString, globalThis: *bun.jsc.JSGlobalObject) bun.jsc.JSValue {
         var str = this.toString();
         defer str.deref();
         return str.toJS(globalThis);
@@ -608,6 +622,7 @@ pub const EndTag = opaque {
     extern fn lol_html_end_tag_remove(end_tag: *EndTag) void;
     extern fn lol_html_end_tag_name_get(end_tag: *const EndTag) HTMLString;
     extern fn lol_html_end_tag_name_set(end_tag: *EndTag, name: [*]const u8, name_len: usize) c_int;
+    extern fn lol_html_end_tag_source_location_bytes(end_tag: *const EndTag) SourceLocationBytes;
 
     pub fn before(end_tag: *EndTag, content: []const u8, is_html: bool) Error!void {
         auto_disable();
@@ -643,6 +658,11 @@ pub const EndTag = opaque {
             -1 => error.Fail,
             else => unreachable,
         };
+    }
+
+    pub fn getSourceLocationBytes(end_tag: *const EndTag) SourceLocationBytes {
+        auto_disable();
+        return lol_html_end_tag_source_location_bytes(end_tag);
     }
 };
 
@@ -684,6 +704,7 @@ pub const Comment = opaque {
     extern fn lol_html_comment_is_removed(comment: *const Comment) bool;
     extern fn lol_html_comment_user_data_set(comment: *const Comment, user_data: ?*anyopaque) void;
     extern fn lol_html_comment_user_data_get(comment: *const Comment) ?*anyopaque;
+    extern fn lol_html_comment_source_location_bytes(comment: *const Comment) SourceLocationBytes;
 
     pub fn getText(comment: *const Comment) HTMLString {
         auto_disable();
@@ -728,17 +749,22 @@ pub const Comment = opaque {
 
     pub const isRemoved = lol_html_comment_is_removed;
     pub const remove = lol_html_comment_remove;
+
+    pub fn getSourceLocationBytes(comment: *const Comment) SourceLocationBytes {
+        auto_disable();
+        return lol_html_comment_source_location_bytes(comment);
+    }
 };
 
 pub const Directive = enum(c_uint) {
     @"continue" = 0,
     stop = 1,
 };
-pub const lol_html_comment_handler_t = *const fn (*Comment, ?*anyopaque) callconv(.C) Directive;
-pub const lol_html_text_handler_handler_t = *const fn (*TextChunk, ?*anyopaque) callconv(.C) Directive;
-pub const lol_html_element_handler_t = *const fn (*Element, ?*anyopaque) callconv(.C) Directive;
-pub const lol_html_doc_end_handler_t = *const fn (*DocEnd, ?*anyopaque) callconv(.C) Directive;
-pub const lol_html_end_tag_handler_t = *const fn (*EndTag, ?*anyopaque) callconv(.C) Directive;
+pub const lol_html_comment_handler_t = *const fn (*Comment, ?*anyopaque) callconv(.c) Directive;
+pub const lol_html_text_handler_handler_t = *const fn (*TextChunk, ?*anyopaque) callconv(.c) Directive;
+pub const lol_html_element_handler_t = *const fn (*Element, ?*anyopaque) callconv(.c) Directive;
+pub const lol_html_doc_end_handler_t = *const fn (*DocEnd, ?*anyopaque) callconv(.c) Directive;
+pub const lol_html_end_tag_handler_t = *const fn (*EndTag, ?*anyopaque) callconv(.c) Directive;
 pub const DocEnd = opaque {
     extern fn lol_html_doc_end_append(doc_end: ?*DocEnd, content: [*]const u8, content_len: usize, is_html: bool) c_int;
 
@@ -753,7 +779,7 @@ pub const DocEnd = opaque {
 };
 
 fn DirectiveFunctionType(comptime Container: type) type {
-    return *const fn (*Container, ?*anyopaque) callconv(.C) Directive;
+    return *const fn (*Container, ?*anyopaque) callconv(.c) Directive;
 }
 
 fn DirectiveFunctionTypeForHandler(comptime Container: type, comptime UserDataType: type) type {
@@ -766,7 +792,7 @@ fn DocTypeHandlerCallback(comptime UserDataType: type) type {
 
 pub fn DirectiveHandler(comptime Container: type, comptime UserDataType: type, comptime Callback: (*const fn (this: *UserDataType, container: *Container) bool)) DirectiveFunctionType(Container) {
     return struct {
-        pub fn callback(this: *Container, user_data: ?*anyopaque) callconv(.C) Directive {
+        pub fn callback(this: *Container, user_data: ?*anyopaque) callconv(.c) Directive {
             auto_disable();
             return @as(
                 Directive,
@@ -797,8 +823,9 @@ pub const DocType = opaque {
     extern fn lol_html_doctype_user_data_get(doctype: *const DocType) ?*anyopaque;
     extern fn lol_html_doctype_remove(doctype: *DocType) void;
     extern fn lol_html_doctype_is_removed(doctype: *const DocType) bool;
+    extern fn lol_html_doctype_source_location_bytes(doctype: *const DocType) SourceLocationBytes;
 
-    pub const Callback = *const fn (*DocType, ?*anyopaque) callconv(.C) Directive;
+    pub const Callback = *const fn (*DocType, ?*anyopaque) callconv(.c) Directive;
 
     pub fn getName(this: *const DocType) HTMLString {
         auto_disable();
@@ -820,6 +847,10 @@ pub const DocType = opaque {
         auto_disable();
         return this.lol_html_doctype_is_removed();
     }
+    pub fn getSourceLocationBytes(this: *const DocType) SourceLocationBytes {
+        auto_disable();
+        return this.lol_html_doctype_source_location_bytes();
+    }
 };
 
 pub const Encoding = enum {
@@ -835,3 +866,6 @@ pub const Encoding = enum {
         break :brk labels;
     };
 };
+
+const bun = @import("bun");
+const std = @import("std");

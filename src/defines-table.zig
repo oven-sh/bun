@@ -1,9 +1,3 @@
-const bun = @import("bun");
-const string = bun.string;
-
-const std = @import("std");
-const defines = @import("./defines.zig");
-
 // If something is in this list, then a direct identifier expression or property
 // access chain matching this will be assumed to have no side effects and will
 // be removed.
@@ -187,6 +181,10 @@ pub const global_no_side_effect_property_accesses = &[_][]const string{
     &[_]string{ "console", "trace" },
     &[_]string{ "console", "warn" },
 
+    &[_]string{ "Promise", "resolve" },
+    &[_]string{ "Promise", "reject" },
+    &[_]string{ "Promise", "all" },
+
     // Crypto: Static methods
     &[_]string{ "crypto", "randomUUID" },
 };
@@ -207,7 +205,6 @@ const pure_global_identifier_define = &defines.IdentifierDefine{
     },
     .value = .{ .e_undefined = .{} },
 };
-const js_ast = bun.JSAst;
 
 const identifiers = struct {
     const nan_val = js_ast.E.Number{ .value = std.math.nan(f64) };
@@ -924,3 +921,11 @@ pub const pure_global_identifier_map = bun.ComptimeStringMap(PureGlobalIdentifie
     .{ "window", PureGlobalIdentifierValue.other },
     .{ "crypto", PureGlobalIdentifierValue.other },
 });
+
+const string = []const u8;
+
+const defines = @import("./defines.zig");
+const std = @import("std");
+
+const bun = @import("bun");
+const js_ast = bun.ast;

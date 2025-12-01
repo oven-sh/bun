@@ -1,5 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
 const Printer = css.Printer;
@@ -26,10 +24,10 @@ pub const Percentage = struct {
         return .{ .result = Percentage{ .v = percent } };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
         const x = this.v * 100.0;
         const int_value: ?i32 = if ((x - @trunc(x)) == 0.0)
-            @intFromFloat(this.v)
+            bun.intFromFloat(i32, this.v)
         else
             null;
 
@@ -41,17 +39,16 @@ pub const Percentage = struct {
 
         if (this.v != 0.0 and @abs(this.v) < 0.01) {
             var buf: [32]u8 = undefined;
-            var stream = std.io.fixedBufferStream(&buf);
-            const writer = stream.writer();
-            percent.toCssGeneric(writer) catch return dest.addFmtError();
+            var writer = std.Io.Writer.fixed(&buf);
+            percent.toCssGeneric(&writer) catch return dest.addFmtError();
             if (this.v < 0.0) {
                 try dest.writeChar('-');
-                try dest.writeStr(bun.strings.trimLeadingPattern2(stream.getWritten(), '-', '0'));
+                try dest.writeStr(bun.strings.trimLeadingPattern2(writer.buffered(), '-', '0'));
             } else {
-                try dest.writeStr(bun.strings.trimLeadingChar(stream.getWritten(), '0'));
+                try dest.writeStr(bun.strings.trimLeadingChar(writer.buffered(), '0'));
             }
         } else {
-            try percent.toCss(W, dest);
+            try percent.toCss(dest);
         }
     }
 
@@ -167,11 +164,11 @@ pub fn DimensionPercentage(comptime D: type) type {
             return .{ .err = input.newErrorForNextToken() };
         }
 
-        pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        pub fn toCss(this: *const @This(), dest: *css.Printer) css.PrintErr!void {
             return switch (this.*) {
-                .dimension => |*length| length.toCss(W, dest),
-                .percentage => |*per| per.toCss(W, dest),
-                .calc => |calc| calc.toCss(W, dest),
+                .dimension => |*length| length.toCss(dest),
+                .percentage => |*per| per.toCss(dest),
+                .calc => |calc| calc.toCss(dest),
             };
         }
 
@@ -450,7 +447,7 @@ pub const NumberOrPercentage = union(enum) {
     //     @panic(css.todo_stuff.depth);
     // }
 
-    // pub fn toCss(this: *const NumberOrPercentage, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    // pub fn toCss(this: *const NumberOrPercentage, dest: *css.Printer) css.PrintErr!void {
     //     _ = this; // autofix
     //     _ = dest; // autofix
     //     @panic(css.todo_stuff.depth);
@@ -471,3 +468,6 @@ pub const NumberOrPercentage = union(enum) {
         };
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");

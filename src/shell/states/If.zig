@@ -34,7 +34,7 @@ pub const ChildPtr = StatePtrUnion(.{
     Stmt,
 });
 
-pub fn format(this: *const If, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+pub fn format(this: *const If, writer: *std.Io.Writer) !void {
     try writer.print("If(0x{x}, state={s})", .{ @intFromPtr(this), @tagName(this.state) });
 }
 
@@ -149,7 +149,7 @@ pub fn next(this: *If) Yield {
 }
 
 pub fn deinit(this: *If) void {
-    log("{} deinit", .{this});
+    log("{f} deinit", .{this});
     this.io.deref();
     this.base.endScope();
     this.parent.destroy(this);
@@ -182,23 +182,23 @@ pub fn childDone(this: *If, child: ChildPtr, exit_code: ExitCode) Yield {
     }
 }
 
-const std = @import("std");
 const bun = @import("bun");
-const Yield = bun.shell.Yield;
+const std = @import("std");
+
 const shell = bun.shell;
+const ExitCode = bun.shell.ExitCode;
+const SmolList = bun.shell.SmolList;
+const Yield = bun.shell.Yield;
+const ast = bun.shell.AST;
 
 const Interpreter = bun.shell.Interpreter;
-const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
-const ast = bun.shell.AST;
-const ExitCode = bun.shell.ExitCode;
-const ShellExecEnv = Interpreter.ShellExecEnv;
-const State = bun.shell.Interpreter.State;
-const IO = bun.shell.Interpreter.IO;
-const log = bun.shell.interpret.log;
-
 const Async = bun.shell.Interpreter.Async;
 const Binary = bun.shell.Interpreter.Binary;
-const Stmt = bun.shell.Interpreter.Stmt;
+const IO = bun.shell.Interpreter.IO;
 const Pipeline = bun.shell.Interpreter.Pipeline;
+const ShellExecEnv = Interpreter.ShellExecEnv;
+const State = bun.shell.Interpreter.State;
+const Stmt = bun.shell.Interpreter.Stmt;
 
-const SmolList = bun.shell.SmolList;
+const StatePtrUnion = bun.shell.interpret.StatePtrUnion;
+const log = bun.shell.interpret.log;

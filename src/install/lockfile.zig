@@ -1,3 +1,5 @@
+const Lockfile = @This();
+
 /// The version of the lockfile format, intended to prevent data corruption for format changes.
 format: FormatVersion = FormatVersion.current,
 
@@ -25,6 +27,8 @@ trusted_dependencies: ?TrustedDependenciesSet = null,
 patched_dependencies: PatchedDependenciesMap = .{},
 overrides: OverrideMap = .{},
 catalogs: CatalogMap = .{},
+
+saved_config_version: ?bun.ConfigVersion,
 
 pub const DepSorter = struct {
     lockfile: *const Lockfile,
@@ -110,7 +114,7 @@ pub const LoadResult = union(enum) {
     ok: struct {
         lockfile: *Lockfile,
         loaded_from_binary_lockfile: bool,
-        was_migrated: bool = false,
+        migrated: enum { none, npm, yarn, pnpm } = .none,
         serializer_result: Serializer.SerializerLoadResult,
         format: LockfileFormat,
     },
@@ -143,6 +147,13 @@ pub const LoadResult = union(enum) {
         };
     }
 
+    pub fn migratedFromNpm(this: *const LoadResult) bool {
+        return switch (this.*) {
+            .ok => |ok| ok.migrated == .npm,
+            else => false,
+        };
+    }
+
     pub fn saveFormat(this: LoadResult, options: *const PackageManager.Options) LockfileFormat {
         switch (this) {
             .not_found => {
@@ -167,18 +178,38 @@ pub const LoadResult = union(enum) {
                         return .text;
                     }
 
-                    if (ok.was_migrated) {
+                    if (ok.migrated != .none) {
                         return .binary;
                     }
                 }
 
-                if (ok.was_migrated) {
+                if (ok.migrated != .none) {
                     return .text;
                 }
 
                 return ok.format;
             },
         }
+    }
+
+    // configVersion and boolean for if the configVersion previously existed/needs to be saved to lockfile
+    pub fn chooseConfigVersion(this: *const LoadResult) struct { bun.ConfigVersion, bool } {
+        return switch (this.*) {
+            .not_found, .err => .{ .current, true },
+            .ok => |ok| switch (ok.migrated) {
+                .none => {
+                    if (ok.lockfile.saved_config_version) |config_version| {
+                        return .{ config_version, false };
+                    }
+
+                    // existing bun project without configVersion
+                    return .{ .v0, true };
+                },
+                .pnpm => .{ .v1, true },
+                .npm => .{ .v0, true },
+                .yarn => .{ .v0, true },
+            },
+        };
     }
 
     pub const Step = enum { open_file, read_file, parse_file, migrating };
@@ -288,7 +319,7 @@ pub fn loadFromDir(
             }
         };
 
-        bun.Analytics.Features.text_lockfile += 1;
+        bun.analytics.Features.text_lockfile += 1;
 
         return .{
             .ok = .{
@@ -304,22 +335,20 @@ pub fn loadFromDir(
 
     switch (result) {
         .ok => {
-            if (bun.getenvZ("BUN_DEBUG_TEST_TEXT_LOCKFILE") != null and manager != null) {
+            if (bun.env_var.BUN_DEBUG_TEST_TEXT_LOCKFILE.get() and manager != null) {
 
                 // Convert the loaded binary lockfile into a text lockfile in memory, then
                 // parse it back into a binary lockfile.
 
-                var writer_buf = MutableString.initEmpty(allocator);
-                var buffered_writer = writer_buf.bufferedWriter();
-                const writer = buffered_writer.writer();
+                var writer_allocating = std.Io.Writer.Allocating.init(allocator);
+                defer writer_allocating.deinit();
+                const writer = &writer_allocating.writer;
 
-                TextLockfile.Stringifier.saveFromBinary(allocator, result.ok.lockfile, &result, writer) catch |err| {
+                TextLockfile.Stringifier.saveFromBinary(allocator, result.ok.lockfile, &result, &manager.?.options, writer) catch |err| {
                     Output.panic("failed to convert binary lockfile to text lockfile: {s}", .{@errorName(err)});
                 };
 
-                buffered_writer.flush() catch bun.outOfMemory();
-
-                const text_lockfile_bytes = writer_buf.list.items;
+                const text_lockfile_bytes = bun.handleOom(writer_allocating.toOwnedSlice());
 
                 const source = &logger.Source.initPathString("bun.lock", text_lockfile_bytes);
                 initializeStore();
@@ -331,7 +360,7 @@ pub fn loadFromDir(
                     Output.panic("failed to parse text lockfile converted from binary lockfile: {s}", .{@errorName(err)});
                 };
 
-                bun.Analytics.Features.text_lockfile += 1;
+                bun.analytics.Features.text_lockfile += 1;
             }
         },
         else => {},
@@ -380,8 +409,10 @@ pub fn isResolvedDependencyDisabled(
     dep_id: DependencyID,
     features: Features,
     meta: *const Package.Meta,
+    cpu: Npm.Architecture,
+    os: Npm.OperatingSystem,
 ) bool {
-    if (meta.isDisabled()) return true;
+    if (meta.isDisabled(cpu, os)) return true;
 
     const dep = lockfile.buffers.dependencies.items[dep_id];
 
@@ -450,14 +481,14 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                 if (update.package_id == invalid_package_id) {
                     for (root_deps, old_resolutions) |dep, old_resolution| {
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
-                            if (old_resolution > old.packages.len) continue;
+                            if (old_resolution >= old.packages.len) continue;
                             const res = resolutions_of_yore[old_resolution];
                             if (res.tag != .npm or update.version.tag != .dist_tag) continue;
 
                             // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
 
                             const len = switch (exact_versions) {
-                                else => |exact| std.fmt.count("{s}{}", .{
+                                else => |exact| std.fmt.count("{s}{f}", .{
                                     if (exact) "" else "^",
                                     res.value.npm.version.fmt(old.buffers.string_bytes.items),
                                 }),
@@ -488,14 +519,14 @@ fn preprocessUpdateRequests(old: *Lockfile, manager: *PackageManager, updates: [
                 if (update.package_id == invalid_package_id) {
                     for (root_deps, old_resolutions) |*dep, old_resolution| {
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
-                            if (old_resolution > old.packages.len) continue;
+                            if (old_resolution >= old.packages.len) continue;
                             const res = resolutions_of_yore[old_resolution];
                             if (res.tag != .npm or update.version.tag != .dist_tag) continue;
 
                             // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
 
                             const buf = switch (exact_versions) {
-                                else => |exact| std.fmt.bufPrint(&temp_buf, "{s}{}", .{
+                                else => |exact| std.fmt.bufPrint(&temp_buf, "{s}{f}", .{
                                     if (exact) "" else "^",
                                     res.value.npm.version.fmt(old.buffers.string_bytes.items),
                                 }) catch break,
@@ -538,6 +569,18 @@ pub fn clean(
     }
 
     return old.cleanWithLogger(manager, updates, &log, exact_versions, log_level);
+}
+
+pub fn resolveCatalogDependency(this: *Lockfile, dep: *const Dependency) ?Dependency.Version {
+    if (dep.version.tag != .catalog) {
+        return dep.version;
+    }
+
+    const catalog_dep = this.catalogs.get(this, dep.version.value.catalog, dep.name) orelse {
+        return null;
+    };
+
+    return catalog_dep.version;
 }
 
 /// Is this a direct dependency of the workspace root package.json?
@@ -615,7 +658,7 @@ pub fn cleanWithLogger(
     // preinstall state before linking stage.
     manager.ensurePreinstallStateListCapacity(old.packages.len);
     var preinstall_state = manager.preinstall_state;
-    var old_preinstall_state = preinstall_state.clone(old.allocator) catch bun.outOfMemory();
+    var old_preinstall_state = bun.handleOom(preinstall_state.clone(old.allocator));
     defer old_preinstall_state.deinit(old.allocator);
     @memset(preinstall_state.items, .unknown);
 
@@ -778,7 +821,7 @@ pub fn cleanWithLogger(
     }
 
     if (log_level.isVerbose()) {
-        Output.prettyErrorln("Clean lockfile: {d} packages -> {d} packages in {}\n", .{
+        Output.prettyErrorln("Clean lockfile: {d} packages -> {d} packages in {f}\n", .{
             old.packages.len,
             new.packages.len,
             bun.fmt.fmtDurationOneDecimal(timer.read()),
@@ -791,17 +834,16 @@ pub fn cleanWithLogger(
 pub const MetaHashFormatter = struct {
     meta_hash: *const MetaHash,
 
-    pub fn format(this: MetaHashFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: MetaHashFormatter, writer: *std.Io.Writer) !void {
         var remain: []const u8 = this.meta_hash[0..];
 
-        try std.fmt.format(
-            writer,
-            "{}-{}-{}-{}",
+        try writer.print(
+            "{X}-{x}-{X}-{x}",
             .{
-                std.fmt.fmtSliceHexUpper(remain[0..8]),
-                std.fmt.fmtSliceHexLower(remain[8..16]),
-                std.fmt.fmtSliceHexUpper(remain[16..24]),
-                std.fmt.fmtSliceHexLower(remain[24..32]),
+                remain[0..8],
+                remain[8..16],
+                remain[16..24],
+                remain[24..32],
             },
         );
     }
@@ -863,7 +905,7 @@ pub fn resolve(
     lockfile: *Lockfile,
     log: *logger.Log,
 ) Tree.SubtreeError!void {
-    return lockfile.hoist(log, .resolvable, {}, {}, {});
+    return lockfile.hoist(log, .resolvable, {}, {}, {}, {});
 }
 
 pub fn filter(
@@ -872,8 +914,9 @@ pub fn filter(
     manager: *PackageManager,
     install_root_dependencies: bool,
     workspace_filters: []const WorkspaceFilter,
+    packages_to_install: ?[]const PackageID,
 ) Tree.SubtreeError!void {
-    return lockfile.hoist(log, .filter, manager, install_root_dependencies, workspace_filters);
+    return lockfile.hoist(log, .filter, manager, install_root_dependencies, workspace_filters, packages_to_install);
 }
 
 /// Sets `buffers.trees` and `buffers.hoisted_dependencies`
@@ -884,12 +927,12 @@ pub fn hoist(
     manager: if (method == .filter) *PackageManager else void,
     install_root_dependencies: if (method == .filter) bool else void,
     workspace_filters: if (method == .filter) []const WorkspaceFilter else void,
+    packages_to_install: if (method == .filter) ?[]const PackageID else void,
 ) Tree.SubtreeError!void {
     const allocator = lockfile.allocator;
     var slice = lockfile.packages.slice();
 
     var builder = Tree.Builder(method){
-        .name_hashes = slice.items(.name_hash),
         .queue = .init(allocator),
         .resolution_lists = slice.items(.resolutions),
         .resolutions = lockfile.buffers.resolutions.items,
@@ -900,6 +943,8 @@ pub fn hoist(
         .manager = manager,
         .install_root_dependencies = install_root_dependencies,
         .workspace_filters = workspace_filters,
+        .packages_to_install = packages_to_install,
+        .pending_optional_peers = .init(allocator),
     };
 
     try (Tree{}).processSubtree(
@@ -930,7 +975,103 @@ const PendingResolution = struct {
     parent: PackageID,
 };
 
-const PendingResolutions = std.ArrayList(PendingResolution);
+const PendingResolutions = std.array_list.Managed(PendingResolution);
+
+pub fn fetchNecessaryPackageMetadataAfterYarnOrPnpmMigration(this: *Lockfile, manager: *PackageManager, comptime update_os_cpu: bool) OOM!void {
+    manager.populateManifestCache(.all) catch return;
+
+    const pkgs = this.packages.slice();
+
+    const pkg_names = pkgs.items(.name);
+    const pkg_name_hashes = pkgs.items(.name_hash);
+    const pkg_resolutions = pkgs.items(.resolution);
+    const pkg_bins = pkgs.items(.bin);
+    const pkg_metas = if (update_os_cpu) pkgs.items(.meta) else undefined;
+
+    if (update_os_cpu) {
+        for (pkg_names, pkg_name_hashes, pkg_resolutions, pkg_bins, pkg_metas) |pkg_name, pkg_name_hash, pkg_res, *pkg_bin, *pkg_meta| {
+            switch (pkg_res.tag) {
+                .npm => {
+                    const manifest = manager.manifests.byNameHash(
+                        manager,
+                        manager.scopeForPackageName(pkg_name.slice(this.buffers.string_bytes.items)),
+                        pkg_name_hash,
+                        .load_from_memory_fallback_to_disk,
+                        false,
+                    ) orelse {
+                        continue;
+                    };
+
+                    const pkg = manifest.findByVersion(pkg_res.value.npm.version) orelse {
+                        continue;
+                    };
+
+                    var builder = manager.lockfile.stringBuilder();
+
+                    var bin_extern_strings_count: u32 = 0;
+
+                    bin_extern_strings_count += pkg.package.bin.count(manifest.string_buf, manifest.extern_strings_bin_entries, @TypeOf(&builder), &builder);
+
+                    try builder.allocate();
+                    defer builder.clamp();
+
+                    var extern_strings_list = &manager.lockfile.buffers.extern_strings;
+                    try extern_strings_list.ensureUnusedCapacity(manager.lockfile.allocator, bin_extern_strings_count);
+                    extern_strings_list.items.len += bin_extern_strings_count;
+                    const extern_strings = extern_strings_list.items[extern_strings_list.items.len - bin_extern_strings_count ..];
+
+                    pkg_bin.* = pkg.package.bin.clone(manifest.string_buf, manifest.extern_strings_bin_entries, extern_strings_list.items, extern_strings, @TypeOf(&builder), &builder);
+
+                    // Update os/cpu metadata if not already set
+                    if (pkg_meta.os == .all) {
+                        pkg_meta.os = pkg.package.os;
+                    }
+                    if (pkg_meta.arch == .all) {
+                        pkg_meta.arch = pkg.package.cpu;
+                    }
+                },
+                else => {},
+            }
+        }
+    } else {
+        for (pkg_names, pkg_name_hashes, pkg_resolutions, pkg_bins) |pkg_name, pkg_name_hash, pkg_res, *pkg_bin| {
+            switch (pkg_res.tag) {
+                .npm => {
+                    const manifest = manager.manifests.byNameHash(
+                        manager,
+                        manager.scopeForPackageName(pkg_name.slice(this.buffers.string_bytes.items)),
+                        pkg_name_hash,
+                        .load_from_memory_fallback_to_disk,
+                        false,
+                    ) orelse {
+                        continue;
+                    };
+
+                    const pkg = manifest.findByVersion(pkg_res.value.npm.version) orelse {
+                        continue;
+                    };
+
+                    var builder = manager.lockfile.stringBuilder();
+
+                    var bin_extern_strings_count: u32 = 0;
+
+                    bin_extern_strings_count += pkg.package.bin.count(manifest.string_buf, manifest.extern_strings_bin_entries, @TypeOf(&builder), &builder);
+
+                    try builder.allocate();
+                    defer builder.clamp();
+
+                    var extern_strings_list = &manager.lockfile.buffers.extern_strings;
+                    try extern_strings_list.ensureUnusedCapacity(manager.lockfile.allocator, bin_extern_strings_count);
+                    extern_strings_list.items.len += bin_extern_strings_count;
+                    const extern_strings = extern_strings_list.items[extern_strings_list.items.len - bin_extern_strings_count ..];
+
+                    pkg_bin.* = pkg.package.bin.clone(manifest.string_buf, manifest.extern_strings_bin_entries, extern_strings_list.items, extern_strings, @TypeOf(&builder), &builder);
+                },
+                else => {},
+            }
+        }
+    }
+}
 
 pub const Printer = struct {
     lockfile: *Lockfile,
@@ -999,7 +1140,7 @@ pub const Printer = struct {
                 Global.crash();
             },
             .not_found => {
-                Output.prettyErrorln("<r><red>lockfile not found:<r> {}", .{
+                Output.prettyErrorln("<r><red>lockfile not found:<r> {f}", .{
                     bun.fmt.QuotedFormatter{ .text = std.mem.sliceAsBytes(lockfile_path) },
                 });
                 Global.crash();
@@ -1026,6 +1167,9 @@ pub const Printer = struct {
         };
 
         const entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
+        if (entries_option.* == .err) {
+            return entries_option.err.canonical_error;
+        }
 
         var env_loader: *DotEnv.Loader = brk: {
             const map = try allocator.create(DotEnv.Map);
@@ -1037,7 +1181,7 @@ pub const Printer = struct {
             break :brk loader;
         };
 
-        env_loader.loadProcess();
+        try env_loader.loadProcess();
         try env_loader.load(entries_option.entries, &[_][]u8{}, .production, false);
         var log = logger.Log.init(allocator);
         try options.load(
@@ -1061,8 +1205,8 @@ pub const Printer = struct {
         }
     }
 
-    pub const Tree = @import("lockfile/printer/tree_printer.zig");
-    pub const Yarn = @import("lockfile/printer/Yarn.zig");
+    pub const Tree = @import("./lockfile/printer/tree_printer.zig");
+    pub const Yarn = @import("./lockfile/printer/Yarn.zig");
 };
 
 pub fn verifyData(this: *const Lockfile) !void {
@@ -1095,26 +1239,26 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
 
     const bytes = bytes: {
         if (save_format == .text) {
-            var writer_buf = MutableString.initEmpty(bun.default_allocator);
-            var buffered_writer = writer_buf.bufferedWriter();
-            const writer = buffered_writer.writer();
+            var writer_allocating = std.Io.Writer.Allocating.init(bun.default_allocator);
+            defer writer_allocating.deinit();
+            const writer = &writer_allocating.writer;
 
-            TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this, load_result, writer) catch |err| switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
+            TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this, load_result, options, writer) catch |err| switch (err) {
+                error.WriteFailed => bun.outOfMemory(),
             };
 
-            buffered_writer.flush() catch |err| switch (err) {
-                error.OutOfMemory => bun.outOfMemory(),
+            writer.flush() catch |err| switch (err) {
+                error.WriteFailed => bun.outOfMemory(),
             };
 
-            break :bytes writer_buf.list.items;
+            break :bytes bun.handleOom(writer_allocating.toOwnedSlice());
         }
 
-        var bytes = std.ArrayList(u8).init(bun.default_allocator);
+        var bytes = std.array_list.Managed(u8).init(bun.default_allocator);
 
         var total_size: usize = 0;
         var end_pos: usize = 0;
-        Lockfile.Serializer.save(this, options.log_level.isVerbose(), &bytes, &total_size, &end_pos) catch |err| {
+        Lockfile.Serializer.save(this, options, &bytes, &total_size, &end_pos) catch |err| {
             Output.err(err, "failed to serialize lockfile", .{});
             Global.crash();
         };
@@ -1128,9 +1272,9 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
     var base64_bytes: [8]u8 = undefined;
     bun.csprng(&base64_bytes);
     const tmpname = if (save_format == .text)
-        std.fmt.bufPrintZ(&tmpname_buf, ".lock-{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable
+        std.fmt.bufPrintZ(&tmpname_buf, ".lock-{x}.tmp", .{&base64_bytes}) catch unreachable
     else
-        std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+        std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{x}.tmp", .{&base64_bytes}) catch unreachable;
 
     const file = switch (File.openat(.cwd(), tmpname, bun.O.CREAT | bun.O.WRONLY, 0o777)) {
         .err => |err| {
@@ -1218,6 +1362,7 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) void {
         .overrides = .{},
         .catalogs = .{},
         .meta_hash = zero_hash,
+        .saved_config_version = null,
     };
 }
 
@@ -1414,7 +1559,7 @@ pub fn stringBuf(this: *Lockfile) String.Buf {
 
 pub const Scratch = struct {
     pub const DuplicateCheckerMap = std.HashMap(PackageNameHash, logger.Loc, IdentityContext(PackageNameHash), 80);
-    pub const DependencyQueue = std.fifo.LinearFifo(DependencySlice, .Dynamic);
+    pub const DependencyQueue = bun.LinearFifo(DependencySlice, .Dynamic);
 
     duplicate_checker_map: DuplicateCheckerMap = undefined,
     dependency_list_queue: DependencyQueue = undefined,
@@ -1578,9 +1723,11 @@ pub const FormatVersion = enum(u32) {
     // bun v0.1.7+
     // This change added tarball URLs to npm-resolved packages
     v2 = 2,
+    // Changed semver major/minor/patch to each use u64 instead of u32
+    v3 = 3,
 
     _,
-    pub const current = FormatVersion.v2;
+    pub const current = FormatVersion.v3;
 };
 
 pub const PackageIDSlice = ExternalSlice(PackageID);
@@ -1594,14 +1741,14 @@ pub const DependencyIDList = std.ArrayListUnmanaged(DependencyID);
 pub const StringBuffer = std.ArrayListUnmanaged(u8);
 pub const ExternalStringBuffer = std.ArrayListUnmanaged(ExternalString);
 
-pub const jsonStringify = @import("lockfile/lockfile_json_stringify_for_debugging.zig").jsonStringify;
+pub const jsonStringify = @import("./lockfile/lockfile_json_stringify_for_debugging.zig").jsonStringify;
 pub const assertNoUninitializedPadding = @import("./padding_checker.zig").assertNoUninitializedPadding;
-pub const Buffers = @import("lockfile/Buffers.zig");
-pub const Serializer = @import("lockfile/bun.lockb.zig");
-pub const CatalogMap = @import("lockfile/CatalogMap.zig");
-pub const OverrideMap = @import("lockfile/OverrideMap.zig");
-pub const Package = @import("lockfile/Package.zig").Package;
-pub const Tree = @import("lockfile/Tree.zig");
+pub const Buffers = @import("./lockfile/Buffers.zig");
+pub const Serializer = @import("./lockfile/bun.lockb.zig");
+pub const CatalogMap = @import("./lockfile/CatalogMap.zig");
+pub const OverrideMap = @import("./lockfile/OverrideMap.zig");
+pub const Package = @import("./lockfile/Package.zig").Package(u64);
+pub const Tree = @import("./lockfile/Tree.zig");
 
 pub fn deinit(this: *Lockfile) void {
     this.buffers.deinit(this.allocator);
@@ -1799,14 +1946,14 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
             inline while (j < 16) : (j += 1) {
                 alphabetized_names[(i + j) - 1] = @as(PackageID, @truncate((i + j)));
                 // posix path separators because we only use posix in the lockfile
-                string_builder.fmtCount("{s}@{}\n", .{ names[i + j].slice(bytes), resolutions[i + j].fmt(bytes, .posix) });
+                string_builder.fmtCount("{s}@{f}\n", .{ names[i + j].slice(bytes), resolutions[i + j].fmt(bytes, .posix) });
             }
         }
 
         while (i < packages_len) : (i += 1) {
             alphabetized_names[i - 1] = @as(PackageID, @truncate(i));
             // posix path separators because we only use posix in the lockfile
-            string_builder.fmtCount("{s}@{}\n", .{ names[i].slice(bytes), resolutions[i].fmt(bytes, .posix) });
+            string_builder.fmtCount("{s}@{f}\n", .{ names[i].slice(bytes), resolutions[i].fmt(bytes, .posix) });
         }
     }
 
@@ -1845,7 +1992,7 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool, packag
     string_builder.len += hash_prefix.len;
 
     for (alphabetized_names) |i| {
-        _ = string_builder.fmt("{s}@{}\n", .{ names[i].slice(bytes), resolutions[i].fmt(bytes, .any) });
+        _ = string_builder.fmt("{s}@{f}\n", .{ names[i].slice(bytes), resolutions[i].fmt(bytes, .any) });
     }
 
     if (has_scripts) {
@@ -2002,57 +2149,64 @@ pub const PatchedDep = extern struct {
     }
 };
 
-const Lockfile = @This();
 const MetaHash = [std.crypto.hash.sha2.Sha512T256.digest_length]u8;
 const zero_hash = std.mem.zeroes(MetaHash);
+pub const StringPool = String.Builder.StringPool;
+
+const string = []const u8;
+const stringZ = [:0]const u8;
+
+const Dependency = @import("./dependency.zig");
+const DotEnv = @import("../env_loader.zig");
+const Npm = @import("./npm.zig");
+const Path = @import("../resolver/resolve_path.zig");
+const TextLockfile = @import("./lockfile/bun.lock.zig");
+const migration = @import("./migration.zig");
 const std = @import("std");
+const Crypto = @import("../sha.zig").Hashers;
+const Resolution = @import("./resolution.zig").Resolution;
+const StaticHashMap = @import("../StaticHashMap.zig").StaticHashMap;
+const which = @import("../which.zig").which;
 const Allocator = std.mem.Allocator;
+
+const Fs = @import("../fs.zig");
+const FileSystem = Fs.FileSystem;
+
+const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
+const IdentityContext = @import("../identity_context.zig").IdentityContext;
+
 const bun = @import("bun");
-const default_allocator = bun.default_allocator;
-const logger = bun.logger;
-const string = bun.string;
-const stringZ = bun.stringZ;
-const strings = bun.strings;
-const assert = bun.assert;
-const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const Environment = bun.Environment;
-const File = bun.sys.File;
 const Global = bun.Global;
 const GlobalStringBuilder = bun.StringBuilder;
-const Install = bun.install;
-const JSON = bun.JSON;
-const MutableString = bun.MutableString;
+const JSON = bun.json;
 const OOM = bun.OOM;
 const Output = bun.Output;
-const PackageID = Install.PackageID;
-const PackageInstall = Install.PackageInstall;
-const PackageManager = Install.PackageManager;
-const PackageNameAndVersionHash = Install.PackageNameAndVersionHash;
-const PackageNameHash = Install.PackageNameHash;
+const assert = bun.assert;
+const default_allocator = bun.default_allocator;
+const logger = bun.logger;
+const strings = bun.strings;
+const z_allocator = bun.z_allocator;
+const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+const File = bun.sys.File;
+
 const Semver = bun.Semver;
+const ExternalString = Semver.ExternalString;
 const SlicedString = Semver.SlicedString;
 const String = Semver.String;
+
+const Install = bun.install;
+const DependencyID = Install.DependencyID;
+const ExternalSlice = Install.ExternalSlice;
+const Features = Install.Features;
+const PackageID = Install.PackageID;
+const PackageInstall = Install.PackageInstall;
+const PackageNameAndVersionHash = Install.PackageNameAndVersionHash;
+const PackageNameHash = Install.PackageNameHash;
 const TruncatedPackageNameHash = Install.TruncatedPackageNameHash;
-const WorkspaceFilter = PackageManager.WorkspaceFilter;
 const initializeStore = Install.initializeStore;
 const invalid_dependency_id = Install.invalid_dependency_id;
 const invalid_package_id = Install.invalid_package_id;
-pub const StringPool = String.Builder.StringPool;
-const DependencyID = Install.DependencyID;
-const ExternalSlice = Install.ExternalSlice;
-const ExternalString = Semver.ExternalString;
-const Features = Install.Features;
-const z_allocator = @import("../allocators/memory_allocator.zig").z_allocator;
-const DotEnv = @import("../env_loader.zig");
-const Fs = @import("../fs.zig");
-const FileSystem = Fs.FileSystem;
-const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
-const IdentityContext = @import("../identity_context.zig").IdentityContext;
-const Path = @import("../resolver/resolve_path.zig");
-const Crypto = @import("../sha.zig").Hashers;
-const StaticHashMap = @import("../StaticHashMap.zig").StaticHashMap;
-const which = @import("../which.zig").which;
-const Dependency = @import("./dependency.zig");
-const TextLockfile = @import("./lockfile/bun.lock.zig");
-const migration = @import("./migration.zig");
-const Resolution = @import("./resolution.zig").Resolution;
+
+const PackageManager = Install.PackageManager;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;

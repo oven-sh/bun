@@ -1,15 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Global = bun.Global;
-const Output = bun.Output;
-const strings = bun.strings;
-const string = bun.string;
-const Command = bun.CLI.Command;
-const PackageManager = bun.install.PackageManager;
-const Semver = bun.Semver;
-const PackageID = @import("../install/install.zig").PackageID;
-const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
-
 pub const WhyCommand = struct {
     const PREFIX_LAST = "  └─ ";
     const PREFIX_MIDDLE = "  ├─ ";
@@ -273,7 +261,7 @@ pub const WhyCommand = struct {
         defer arena.deinit();
         const arena_allocator = arena.allocator();
 
-        var target_versions = std.ArrayList(VersionInfo).init(ctx.allocator);
+        var target_versions = std.array_list.Managed(VersionInfo).init(ctx.allocator);
         defer {
             for (target_versions.items) |item| {
                 ctx.allocator.free(item.version);
@@ -281,7 +269,7 @@ pub const WhyCommand = struct {
             target_versions.deinit();
         }
 
-        var all_dependents = std.AutoHashMap(PackageID, std.ArrayList(DependentInfo)).init(arena_allocator);
+        var all_dependents = std.AutoHashMap(PackageID, std.array_list.Managed(DependentInfo)).init(arena_allocator);
 
         const glob = GlobPattern.init(package_pattern);
 
@@ -300,12 +288,12 @@ pub const WhyCommand = struct {
 
                 var dependents_entry = try all_dependents.getOrPut(target_id);
                 if (!dependents_entry.found_existing) {
-                    dependents_entry.value_ptr.* = std.ArrayList(DependentInfo).init(arena_allocator);
+                    dependents_entry.value_ptr.* = std.array_list.Managed(DependentInfo).init(arena_allocator);
                 }
 
-                var dep_version_buf = std.ArrayList(u8).init(arena_allocator);
+                var dep_version_buf = std.array_list.Managed(u8).init(arena_allocator);
                 defer dep_version_buf.deinit();
-                try std.fmt.format(dep_version_buf.writer(), "{}", .{packages.items(.resolution)[pkg_idx].fmt(string_bytes, .auto)});
+                try dep_version_buf.writer().print("{f}", .{packages.items(.resolution)[pkg_idx].fmt(string_bytes, .auto)});
                 const dep_pkg_version = try arena_allocator.dupe(u8, dep_version_buf.items);
 
                 const spec = try arena_allocator.dupe(u8, dependency.version.literal.slice(string_bytes));
@@ -333,9 +321,9 @@ pub const WhyCommand = struct {
 
             if (!glob.matchesName(pkg_name, package_pattern)) continue;
 
-            var version_buf = std.ArrayList(u8).init(ctx.allocator);
+            var version_buf = std.array_list.Managed(u8).init(ctx.allocator);
             defer version_buf.deinit();
-            try std.fmt.format(version_buf.writer(), "{}", .{packages.items(.resolution)[pkg_idx].fmt(string_bytes, .auto)});
+            try version_buf.writer().print("{f}", .{packages.items(.resolution)[pkg_idx].fmt(string_bytes, .auto)});
             const version = try ctx.allocator.dupe(u8, version_buf.items);
 
             if (!glob.matchesVersion(version)) continue;
@@ -420,10 +408,10 @@ pub const WhyCommand = struct {
         allocator: std.mem.Allocator,
         string_bytes: []const u8,
         top_only: bool,
-        all_dependents: *const std.AutoHashMap(PackageID, std.ArrayList(DependentInfo)),
+        all_dependents: *const std.AutoHashMap(PackageID, std.array_list.Managed(DependentInfo)),
         path_tracker: std.AutoHashMap(PackageID, usize),
 
-        fn init(allocator: std.mem.Allocator, string_bytes: []const u8, top_only: bool, all_dependents: *const std.AutoHashMap(PackageID, std.ArrayList(DependentInfo))) TreeContext {
+        fn init(allocator: std.mem.Allocator, string_bytes: []const u8, top_only: bool, all_dependents: *const std.AutoHashMap(PackageID, std.array_list.Managed(DependentInfo))) TreeContext {
             return .{
                 .allocator = allocator,
                 .string_bytes = string_bytes,
@@ -488,3 +476,17 @@ pub const WhyCommand = struct {
         }
     }
 };
+
+const string = []const u8;
+
+const std = @import("std");
+const PackageID = @import("../install/install.zig").PackageID;
+const PackageManagerCommand = @import("./package_manager_command.zig").PackageManagerCommand;
+
+const bun = @import("bun");
+const Global = bun.Global;
+const Output = bun.Output;
+const Semver = bun.Semver;
+const strings = bun.strings;
+const Command = bun.cli.Command;
+const PackageManager = bun.install.PackageManager;

@@ -101,6 +101,8 @@ fn unlink(ctx: Command.Context) !void {
             defer node_modules_path.deinit();
 
             var bin_linker = Bin.Linker{
+                .target_node_modules_path = &node_modules_path,
+                .target_package_name = strings.StringOrTinyString.init(name),
                 .bin = package.bin,
                 .node_modules_path = &node_modules_path,
                 .global_bin_path = manager.options.bin_path,
@@ -130,7 +132,7 @@ fn unlink(ctx: Command.Context) !void {
     }
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
@@ -138,9 +140,8 @@ const bun = @import("bun");
 const Global = bun.Global;
 const Output = bun.Output;
 const Path = bun.path;
-const string = bun.string;
 const strings = bun.strings;
-const Command = bun.CLI.Command;
+const Command = bun.cli.Command;
 
 const Bin = bun.install.Bin;
 const Features = bun.install.Features;

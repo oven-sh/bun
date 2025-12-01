@@ -1,5 +1,3 @@
-const bun = @import("bun");
-
 const lshpack_header = extern struct {
     name: [*]const u8 = undefined,
     name_len: usize = 0,
@@ -12,8 +10,6 @@ const lshpack_header = extern struct {
 /// wrapper implemented at src/bun.js/bindings/c-bindings.cpp
 pub const HPACK = extern struct {
     self: *anyopaque,
-
-    const mimalloc = @import("../../../allocators/mimalloc.zig");
 
     pub const DecodeResult = struct {
         name: []const u8,
@@ -59,9 +55,12 @@ pub const HPACK = extern struct {
     }
 };
 
-const lshpack_wrapper_alloc = ?*const fn (size: usize) callconv(.C) ?*anyopaque;
-const lshpack_wrapper_free = ?*const fn (ptr: ?*anyopaque) callconv(.C) void;
+const lshpack_wrapper_alloc = ?*const fn (size: usize) callconv(.c) ?*anyopaque;
+const lshpack_wrapper_free = ?*const fn (ptr: ?*anyopaque) callconv(.c) void;
 extern fn lshpack_wrapper_init(alloc: lshpack_wrapper_alloc, free: lshpack_wrapper_free, capacity: usize) ?*HPACK;
 extern fn lshpack_wrapper_deinit(self: *HPACK) void;
 extern fn lshpack_wrapper_decode(self: *HPACK, src: [*]const u8, src_len: usize, output: *lshpack_header) usize;
 extern fn lshpack_wrapper_encode(self: *HPACK, name: [*]const u8, name_len: usize, value: [*]const u8, value_len: usize, never_index: c_int, buffer: [*]u8, buffer_len: usize, buffer_offset: usize) usize;
+
+const bun = @import("bun");
+const mimalloc = bun.mimalloc;

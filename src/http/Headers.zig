@@ -1,7 +1,8 @@
 const Headers = @This();
+
 pub const Entry = struct {
-    name: Api.StringPointer,
-    value: Api.StringPointer,
+    name: api.StringPointer,
+    value: api.StringPointer,
 
     pub const List = bun.MultiArrayList(Entry);
 };
@@ -12,6 +13,20 @@ allocator: std.mem.Allocator,
 
 pub fn memoryCost(this: *const Headers) usize {
     return this.buf.items.len + this.entries.memoryCost();
+}
+
+pub fn toFetchHeaders(this: *Headers, global: *bun.jsc.JSGlobalObject) bun.JSError!*FetchHeaders {
+    if (this.entries.len == 0) {
+        return FetchHeaders.createEmpty();
+    }
+    const headers = FetchHeaders.create(
+        global,
+        this.entries.items(.name).ptr,
+        this.entries.items(.value).ptr,
+        &bun.ZigString.fromBytes(this.buf.items),
+        @truncate(this.entries.len),
+    ) orelse return error.JSError;
+    return headers;
 }
 
 pub fn clone(this: *Headers) !Headers {
@@ -38,7 +53,7 @@ pub fn get(this: *const Headers, name: []const u8) ?[]const u8 {
 pub fn append(this: *Headers, name: []const u8, value: []const u8) !void {
     var offset: u32 = @truncate(this.buf.items.len);
     try this.buf.ensureUnusedCapacity(this.allocator, name.len + value.len);
-    const name_ptr = Api.StringPointer{
+    const name_ptr = api.StringPointer{
         .offset = offset,
         .length = @truncate(name.len),
     };
@@ -46,7 +61,7 @@ pub fn append(this: *Headers, name: []const u8, value: []const u8) !void {
     offset = @truncate(this.buf.items.len);
     this.buf.appendSliceAssumeCapacity(value);
 
-    const value_ptr = Api.StringPointer{
+    const value_ptr = api.StringPointer{
         .offset = offset,
         .length = @truncate(value.len),
     };
@@ -75,7 +90,7 @@ pub fn getContentType(this: *const Headers) ?[]const u8 {
     }
     return null;
 }
-pub fn asStr(this: *const Headers, ptr: Api.StringPointer) []const u8 {
+pub fn asStr(this: *const Headers, ptr: api.StringPointer) []const u8 {
     return if (ptr.offset + ptr.length <= this.buf.items.len)
         this.buf.items[ptr.offset..][0..ptr.length]
     else
@@ -98,9 +113,9 @@ pub fn fromPicoHttpHeaders(headers: []const picohttp.Header, allocator: std.mem.
     for (headers) |header| {
         buf_len += header.name.len + header.value.len;
     }
-    result.entries.ensureTotalCapacity(allocator, header_count) catch bun.outOfMemory();
+    bun.handleOom(result.entries.ensureTotalCapacity(allocator, header_count));
     result.entries.len = headers.len;
-    result.buf.ensureTotalCapacityPrecise(allocator, buf_len) catch bun.outOfMemory();
+    bun.handleOom(result.buf.ensureTotalCapacityPrecise(allocator, buf_len));
     result.buf.items.len = buf_len;
     var offset: u32 = 0;
     for (headers, 0..headers.len) |header, i| {
@@ -146,9 +161,9 @@ pub fn from(fetch_headers_ref: ?*FetchHeaders, allocator: std.mem.Allocator, opt
         }
         break :brk false;
     };
-    headers.entries.ensureTotalCapacity(allocator, header_count) catch bun.outOfMemory();
+    bun.handleOom(headers.entries.ensureTotalCapacity(allocator, header_count));
     headers.entries.len = header_count;
-    headers.buf.ensureTotalCapacityPrecise(allocator, buf_len) catch bun.outOfMemory();
+    bun.handleOom(headers.buf.ensureTotalCapacityPrecise(allocator, buf_len));
     headers.buf.items.len = buf_len;
     var sliced = headers.entries.slice();
     var names = sliced.items(.name);
@@ -174,9 +189,11 @@ pub fn from(fetch_headers_ref: ?*FetchHeaders, allocator: std.mem.Allocator, opt
     return headers;
 }
 
-const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
+
 const bun = @import("bun");
 const picohttp = bun.picohttp;
+const api = bun.schema.api;
+
 const Blob = bun.webcore.Blob;
 const FetchHeaders = bun.webcore.FetchHeaders;

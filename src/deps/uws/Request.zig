@@ -30,7 +30,7 @@ pub const Request = opaque {
         if (value == null) return null;
         var string = bun.String.init(value.?);
         defer string.deref();
-        const date_f64 = try bun.String.parseDate(&string, bun.JSC.VirtualMachine.get().global);
+        const date_f64 = try bun.String.parseDate(&string, bun.jsc.VirtualMachine.get().global);
         if (!std.math.isNan(date_f64) and std.math.isFinite(date_f64)) {
             return @intFromFloat(date_f64);
         }

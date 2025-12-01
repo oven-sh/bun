@@ -1,3 +1,5 @@
+const EnvMap = @This();
+
 map: MapType,
 
 pub const Iterator = MapType.Iterator;
@@ -24,9 +26,20 @@ pub fn init(alloc: Allocator) EnvMap {
     return .{ .map = MapType.init(alloc) };
 }
 
+pub fn memoryCost(this: *const EnvMap) usize {
+    var size: usize = @sizeOf(EnvMap);
+    size += std.mem.sliceAsBytes(this.map.keys()).len;
+    size += std.mem.sliceAsBytes(this.map.values()).len;
+    for (this.map.keys(), this.map.values()) |key, value| {
+        size += key.memoryCost();
+        size += value.memoryCost();
+    }
+    return size;
+}
+
 pub fn initWithCapacity(alloc: Allocator, cap: usize) EnvMap {
     var map = MapType.init(alloc);
-    map.ensureTotalCapacity(cap) catch bun.outOfMemory();
+    bun.handleOom(map.ensureTotalCapacity(cap));
     return .{ .map = map };
 }
 
@@ -38,7 +51,7 @@ pub fn deinit(this: *EnvMap) void {
 /// NOTE: This will `.ref()` value, so you should `defer value.deref()` it
 /// before handing it to this function!!!
 pub fn insert(this: *EnvMap, key: EnvStr, val: EnvStr) void {
-    const result = this.map.getOrPut(key) catch bun.outOfMemory();
+    const result = bun.handleOom(this.map.getOrPut(key));
     if (!result.found_existing) {
         key.ref();
     } else {
@@ -58,7 +71,7 @@ pub fn clearRetainingCapacity(this: *EnvMap) void {
 }
 
 pub fn ensureTotalCapacity(this: *EnvMap, new_capacity: usize) void {
-    this.map.ensureTotalCapacity(new_capacity) catch bun.outOfMemory();
+    bun.handleOom(this.map.ensureTotalCapacity(new_capacity));
 }
 
 /// NOTE: Make sure you deref the string when done!
@@ -70,7 +83,7 @@ pub fn get(this: *EnvMap, key: EnvStr) ?EnvStr {
 
 pub fn clone(this: *EnvMap) EnvMap {
     var new: EnvMap = .{
-        .map = this.map.clone() catch bun.outOfMemory(),
+        .map = bun.handleOom(this.map.clone()),
     };
     new.refStrings();
     return new;
@@ -78,7 +91,7 @@ pub fn clone(this: *EnvMap) EnvMap {
 
 pub fn cloneWithAllocator(this: *EnvMap, allocator: Allocator) EnvMap {
     var new: EnvMap = .{
-        .map = this.map.cloneWithAllocator(allocator) catch bun.outOfMemory(),
+        .map = bun.handleOom(this.map.cloneWithAllocator(allocator)),
     };
     new.refStrings();
     return new;
@@ -100,8 +113,7 @@ fn derefStrings(this: *EnvMap) void {
     }
 }
 
-const EnvMap = @This();
 const bun = @import("bun");
-const Allocator = std.mem.Allocator;
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const EnvStr = bun.shell.EnvStr;

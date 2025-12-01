@@ -386,6 +386,9 @@ public:
                     /* We do not need to care for buffering here, write does that */
                     return {0, true};
                 }
+                if (length == 0) {
+                    return {written, failed};
+                }
             }
 
             /* We should only return with new writes, not things written to cork already */

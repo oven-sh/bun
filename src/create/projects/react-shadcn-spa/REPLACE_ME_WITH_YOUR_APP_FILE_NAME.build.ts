@@ -15,7 +15,7 @@ Usage: bun run build.ts [options]
 Common Options:
   --outdir <path>          Output directory (default: "dist")
   --minify                 Enable minification (or --minify.whitespace, --minify.syntax, etc)
-  --source-map <type>      Sourcemap type: none|linked|inline|external
+  --sourcemap <type>      Sourcemap type: none|linked|inline|external
   --target <target>        Build target: browser|bun|node
   --format <format>        Output format: esm|cjs|iife
   --splitting              Enable code splitting
@@ -30,7 +30,7 @@ Common Options:
   --help, -h               Show this help message
 
 Example:
-  bun run build.ts --outdir=dist --minify --source-map=linked --external=react,react-dom
+  bun run build.ts --outdir=dist --minify --sourcemap=linked --external=react,react-dom
 `);
   process.exit(0);
 }

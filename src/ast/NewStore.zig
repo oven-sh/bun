@@ -22,7 +22,7 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
 
     const backing_allocator = bun.default_allocator;
 
-    const log = Output.scoped(.Store, true);
+    const log = Output.scoped(.Store, .hidden);
 
     return struct {
         const Store = @This();
@@ -56,7 +56,7 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
                     _ = block.buffer[block.bytes_used..][0..@sizeOf(T)];
                 }
 
-                return @alignCast(@ptrCast(&block.buffer[start]));
+                return @ptrCast(@alignCast(&block.buffer[start]));
             }
         };
 
@@ -78,7 +78,7 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
         pub fn init() *Store {
             log("init", .{});
             // Avoid initializing the entire struct.
-            const prealloc = backing_allocator.create(PreAlloc) catch bun.outOfMemory();
+            const prealloc = bun.handleOom(backing_allocator.create(PreAlloc));
             prealloc.zero();
 
             return &prealloc.metadata;
@@ -163,8 +163,6 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
         }
     };
 }
-
-// @sortImports
 
 const std = @import("std");
 

@@ -35,6 +35,7 @@ typedef void* zig_mutex_t;
 // IMPORTANT: When changing this, don't forget to update the zig version in uws.zig as well!
 struct us_internal_loop_data_t {
     struct us_timer_t *sweep_timer;
+    int sweep_timer_count;
     struct us_internal_async *wakeup_async;
     int last_write_failed;
     struct us_socket_context_t *head;

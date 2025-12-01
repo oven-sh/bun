@@ -1,4 +1,3 @@
-#include "mimalloc.h"
 #include "root.h"
 
 #include "JavaScriptCore/JSDestructibleObject.h"

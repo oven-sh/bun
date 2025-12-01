@@ -1,4 +1,4 @@
-array: *std.ArrayList(u8),
+array: *std.array_list.Managed(u8),
 
 pub fn offset(this: @This()) usize {
     return this.array.items.len;
@@ -14,9 +14,6 @@ pub fn pwrite(this: @This(), bytes: []const u8, i: usize) AnyPostgresError!void 
 
 pub const Writer = NewWriter(@This());
 
-// @sortImports
-
-const ArrayList = @This();
 const std = @import("std");
 const AnyPostgresError = @import("../AnyPostgresError.zig").AnyPostgresError;
 const NewWriter = @import("./NewWriter.zig").NewWriter;

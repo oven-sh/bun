@@ -27,8 +27,12 @@ afterAll(() => {
   verdaccio.stop();
 });
 
+function splitErrLines(err: string): string[] {
+  return err.split(/\r?\n/).filter(s => !s.startsWith("WARNING: ASAN interferes"));
+}
+
 beforeEach(async () => {
-  ({ packageDir, packageJson } = await verdaccio.createTestDir());
+  ({ packageDir, packageJson } = await verdaccio.createTestDir({ bunfigOpts: { linker: "hoisted" } }));
   env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
   env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
 });
@@ -1757,7 +1761,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     test("will run default trustedDependencies after install that didn't include them", async () => {
-      await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false });
+      await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
       const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
       await writeFile(
@@ -2557,7 +2561,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         test(withRm ? "withRm" : "withoutRm", async () => {
           const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
 
-          await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false });
+          await verdaccio.writeBunfig(packageDir, { saveTextLockfile: false, linker: "hoisted" });
           await writeFile(
             packageJson,
             JSON.stringify({
@@ -2840,7 +2844,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const err = stderrForInstall(await stderr.text());
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
-      expect(err.split(/\r?\n/)).toEqual([
+      expect(splitErrLines(err)).toEqual([
         "No packages! Deleted empty lockfile",
         "",
         `$ ${exe} -e 'process.stderr.write("preinstall stderr 🍦\\n")'`,
@@ -2893,7 +2897,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       const err = stderrForInstall(await stderr.text());
       expect(err).not.toContain("error:");
       expect(err).not.toContain("warn:");
-      expect(err.split(/\r?\n/)).toEqual([
+      expect(splitErrLines(err)).toEqual([
         "Resolving dependencies",
         expect.stringContaining("Resolved, downloaded and extracted "),
         "Saved lockfile",

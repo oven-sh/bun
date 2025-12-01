@@ -1,8 +1,10 @@
 const http2 = require("http2");
 const fs = require("fs");
+const paddingStrategy = process.argv[3];
 const server = http2.createSecureServer({
   ...JSON.parse(process.argv[2]),
   rejectUnauthorized: false,
+  paddingStrategy: paddingStrategy ?? http2.constants.PADDING_STRATEGY_NONE,
 });
 const setCookie = ["a=b", "c=d; Wed, 21 Oct 2015 07:28:00 GMT; Secure; HttpOnly", "e=f"];
 

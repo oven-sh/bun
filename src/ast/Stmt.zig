@@ -406,16 +406,15 @@ pub fn caresAboutScope(self: *Stmt) bool {
     };
 }
 
-// @sortImports
+const string = []const u8;
 
 const std = @import("std");
 
 const bun = @import("bun");
 const Environment = bun.Environment;
 const logger = bun.logger;
-const string = bun.string;
 
-const js_ast = bun.js_ast;
+const js_ast = bun.ast;
 const ASTMemoryAllocator = js_ast.ASTMemoryAllocator;
 const Expr = js_ast.Expr;
 const NewBatcher = js_ast.NewBatcher;

@@ -20,24 +20,35 @@ pub const FuzzilliCommand = if (bun.Environment.enable_fuzzilli) struct {
         // Always embed the REPRL script (it's small and not worth the runtime overhead)
         const reprl_script = @embedFile("../js/eval/fuzzilli-reprl.ts");
 
+        // Open /tmp directory
+        const temp_dir_fd = switch (bun.sys.open("/tmp", bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
+            .result => |fd| fd,
+            .err => {
+                Output.prettyErrorln("<r><red>error<r>: Could not access /tmp directory", .{});
+                Global.exit(1);
+            },
+        };
+        defer temp_dir_fd.close();
+
         // Create temp file for the script
-        var temp_dir = bun.FD.cwd().openDir("/tmp", .{}) catch {
-            Output.prettyErrorln("<r><red>error<r>: Could not access /tmp directory", .{});
-            Global.exit(1);
-        };
-        defer temp_dir.close();
-
         const temp_file_name = "bun-fuzzilli-reprl.js";
-        const temp_file = temp_dir.createFile(temp_file_name, .{ .truncate = true }) catch {
-            Output.prettyErrorln("<r><red>error<r>: Could not create temp file", .{});
-            Global.exit(1);
+        const temp_file_fd = switch (bun.sys.openat(temp_dir_fd, temp_file_name, bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC, 0o644)) {
+            .result => |fd| fd,
+            .err => {
+                Output.prettyErrorln("<r><red>error<r>: Could not create temp file", .{});
+                Global.exit(1);
+            },
         };
-        defer temp_file.close();
+        defer temp_file_fd.close();
 
-        _ = temp_file.writeAll(reprl_script) catch {
-            Output.prettyErrorln("<r><red>error<r>: Could not write temp file", .{});
-            Global.exit(1);
-        };
+        // Write the script to the temp file
+        switch (bun.sys.write(temp_file_fd, reprl_script)) {
+            .err => {
+                Output.prettyErrorln("<r><red>error<r>: Could not write temp file", .{});
+                Global.exit(1);
+            },
+            .result => {},
+        }
 
         Output.prettyErrorln("<r><d>[FUZZILLI] Temp file written, booting JS runtime<r>", .{});
 

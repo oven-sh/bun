@@ -1360,7 +1360,7 @@ pub const FFI = struct {
                 const num = ptr.asPtrAddress();
                 if (num > 0)
                     function.symbol_from_dynamic_library = @as(*anyopaque, @ptrFromInt(num));
-            } else {
+            } else if (ptr.isHeapBigInt()) {
                 const num = ptr.toUInt64NoTruncate();
                 if (num > 0) {
                     function.symbol_from_dynamic_library = @as(*anyopaque, @ptrFromInt(num));

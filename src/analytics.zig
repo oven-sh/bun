@@ -51,6 +51,7 @@ pub const Features = struct {
     pub var tls_server: usize = 0;
     pub var http_server: usize = 0;
     pub var https_server: usize = 0;
+    pub var http_client_proxy: usize = 0;
     /// Set right before JSC::initialize is called
     pub var jsc: usize = 0;
     /// Set when bake.DevServer is initialized
@@ -88,10 +89,13 @@ pub const Features = struct {
     pub var yarn_migration: usize = 0;
     pub var pnpm_migration: usize = 0;
     pub var yaml_parse: usize = 0;
+    pub var cpu_profile: usize = 0;
+    pub var heap_snapshot: usize = 0;
 
     comptime {
         @export(&napi_module_register, .{ .name = "Bun__napi_module_register_count" });
         @export(&process_dlopen, .{ .name = "Bun__process_dlopen_count" });
+        @export(&heap_snapshot, .{ .name = "Bun__Feature__heap_snapshot" });
     }
 
     pub fn formatter() Formatter {

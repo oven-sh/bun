@@ -7,7 +7,69 @@ declare global {
   }
 }
 
-export type { SQLResultArray };
+type ArrayType =
+  | "BOOLEAN"
+  | "BYTEA"
+  | "CHAR"
+  | "NAME"
+  | "TEXT"
+  | "CHAR"
+  | "VARCHAR"
+  | "SMALLINT"
+  | "INT2VECTOR"
+  | "INTEGER"
+  | "INT"
+  | "BIGINT"
+  | "REAL"
+  | "DOUBLE PRECISION"
+  | "NUMERIC"
+  | "MONEY"
+  | "OID"
+  | "TID"
+  | "XID"
+  | "CID"
+  | "JSON"
+  | "JSONB"
+  | "JSONPATH"
+  | "XML"
+  | "POINT"
+  | "LSEG"
+  | "PATH"
+  | "BOX"
+  | "POLYGON"
+  | "LINE"
+  | "CIRCLE"
+  | "CIDR"
+  | "MACADDR"
+  | "INET"
+  | "MACADDR8"
+  | "DATE"
+  | "TIME"
+  | "TIMESTAMP"
+  | "TIMESTAMPTZ"
+  | "INTERVAL"
+  | "TIMETZ"
+  | "BIT"
+  | "VARBIT"
+  | "ACLITEM"
+  | "PG_DATABASE"
+  | (string & {});
+export type { ArrayType, SQLArrayParameter, SQLResultArray };
+class SQLArrayParameter {
+  serializedValues: string;
+  arrayType: ArrayType;
+  constructor(serializedValues: string, arrayType: ArrayType) {
+    this.serializedValues = serializedValues;
+    this.arrayType = arrayType;
+  }
+  toString() {
+    return this.serializedValues;
+  }
+  toJSON() {
+    return this.serializedValues;
+  }
+}
+
 class SQLResultArray<T> extends PublicArray<T> {
   public count!: number | null;
   public command!: string | null;
@@ -828,6 +890,7 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   detachConnectionCloseHandler?(connection: Connection, handler: () => void): void;
 
   getTransactionCommands(options?: string): TransactionCommands;
+  array(values: any[], typeNameOrID?: number | string): SQLArrayParameter;
   getDistributedTransactionCommands?(name: string): TransactionCommands | null;
 
   validateTransactionOptions?(options: string): { valid: boolean; error?: string };
@@ -850,7 +913,7 @@ export default {
   SQLHelper,
   normalizeSSLMode,
   SQLResultArray,
-
+  SQLArrayParameter,
   // @ts-expect-error we're exporting a const enum which works in our builtins
   // generator but not in typescript officially
   SSLMode,

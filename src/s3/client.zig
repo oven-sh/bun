@@ -23,11 +23,11 @@ pub const getListObjectsOptionsFromJS = S3ListObjects.getListObjectsOptionsFromJ
 pub fn stat(
     this: *S3Credentials,
     path: []const u8,
-    callback: *const fn (S3StatResult, *anyopaque) void,
+    callback: *const fn (S3StatResult, *anyopaque) bun.JSTerminated!void,
     callback_context: *anyopaque,
     proxy_url: ?[]const u8,
-) void {
-    S3SimpleRequest.executeSimpleS3Request(this, .{
+) bun.JSTerminated!void {
+    try S3SimpleRequest.executeSimpleS3Request(this, .{
         .path = path,
         .method = .HEAD,
         .proxy_url = proxy_url,
@@ -38,11 +38,11 @@ pub fn stat(
 pub fn download(
     this: *S3Credentials,
     path: []const u8,
-    callback: *const fn (S3DownloadResult, *anyopaque) void,
+    callback: *const fn (S3DownloadResult, *anyopaque) bun.JSTerminated!void,
     callback_context: *anyopaque,
     proxy_url: ?[]const u8,
-) void {
-    S3SimpleRequest.executeSimpleS3Request(this, .{
+) bun.JSTerminated!void {
+    try S3SimpleRequest.executeSimpleS3Request(this, .{
         .path = path,
         .method = .GET,
         .proxy_url = proxy_url,
@@ -55,10 +55,10 @@ pub fn downloadSlice(
     path: []const u8,
     offset: usize,
     size: ?usize,
-    callback: *const fn (S3DownloadResult, *anyopaque) void,
+    callback: *const fn (S3DownloadResult, *anyopaque) bun.JSTerminated!void,
     callback_context: *anyopaque,
     proxy_url: ?[]const u8,
-) void {
+) bun.JSTerminated!void {
     const range = brk: {
         if (size) |size_| {
             var end = (offset + size_);
@@ -71,7 +71,7 @@ pub fn downloadSlice(
         break :brk bun.handleOom(std.fmt.allocPrint(bun.default_allocator, "bytes={}-", .{offset}));
     };
 
-    S3SimpleRequest.executeSimpleS3Request(this, .{
+    try S3SimpleRequest.executeSimpleS3Request(this, .{
         .path = path,
         .method = .GET,
         .proxy_url = proxy_url,
@@ -83,11 +83,11 @@ pub fn downloadSlice(
 pub fn delete(
     this: *S3Credentials,
     path: []const u8,
-    callback: *const fn (S3DeleteResult, *anyopaque) void,
+    callback: *const fn (S3DeleteResult, *anyopaque) bun.JSTerminated!void,
     callback_context: *anyopaque,
     proxy_url: ?[]const u8,
-) void {
-    S3SimpleRequest.executeSimpleS3Request(this, .{
+) bun.JSTerminated!void {
+    try S3SimpleRequest.executeSimpleS3Request(this, .{
         .path = path,
         .method = .DELETE,
         .proxy_url = proxy_url,
@@ -98,10 +98,10 @@ pub fn delete(
 pub fn listObjects(
     this: *S3Credentials,
     listOptions: S3ListObjectsOptions,
-    callback: *const fn (S3ListObjectsResult, *anyopaque) void,
+    callback: *const fn (S3ListObjectsResult, *anyopaque) bun.JSTerminated!void,
     callback_context: *anyopaque,
     proxy_url: ?[]const u8,
-) void {
+) bun.JSTerminated!void {
     var search_params: bun.ByteList = .{};
 
     bun.handleOom(search_params.appendSlice(bun.default_allocator, "?"));
@@ -173,7 +173,7 @@ pub fn listObjects(
         search_params.deinit(bun.default_allocator);
 
         const error_code_and_message = Error.getSignErrorCodeAndMessage(sign_err);
-        callback(.{ .failure = .{ .code = error_code_and_message.code, .message = error_code_and_message.message } }, callback_context);
+        try callback(.{ .failure = .{ .code = error_code_and_message.code, .message = error_code_and_message.message } }, callback_context);
 
         return;
     };
@@ -232,10 +232,10 @@ pub fn upload(
     acl: ?ACL,
     proxy_url: ?[]const u8,
     storage_class: ?StorageClass,
-    callback: *const fn (S3UploadResult, *anyopaque) void,
+    callback: *const fn (S3UploadResult, *anyopaque) bun.JSTerminated!void,
     callback_context: *anyopaque,
-) void {
-    S3SimpleRequest.executeSimpleS3Request(this, .{
+) bun.JSTerminated!void {
+    try S3SimpleRequest.executeSimpleS3Request(this, .{
         .path = path,
         .method = .PUT,
         .proxy_url = proxy_url,
@@ -256,7 +256,7 @@ pub fn writableStream(
     storage_class: ?StorageClass,
 ) bun.JSError!jsc.JSValue {
     const Wrapper = struct {
-        pub fn callback(result: S3UploadResult, sink: *jsc.WebCore.NetworkSink) void {
+        pub fn callback(result: S3UploadResult, sink: *jsc.WebCore.NetworkSink) bun.JSTerminated!void {
             if (sink.endPromise.hasValue() or sink.flushPromise.hasValue()) {
                 const event_loop = sink.globalThis.bunVM().eventLoop();
                 event_loop.enter();
@@ -264,19 +264,19 @@ pub fn writableStream(
                 switch (result) {
                     .success => {
                         if (sink.flushPromise.hasValue()) {
-                            sink.flushPromise.resolve(sink.globalThis, .jsNumber(0));
+                            try sink.flushPromise.resolve(sink.globalThis, .jsNumber(0));
                         }
                         if (sink.endPromise.hasValue()) {
-                            sink.endPromise.resolve(sink.globalThis, .jsNumber(0));
+                            try sink.endPromise.resolve(sink.globalThis, .jsNumber(0));
                         }
                     },
                     .failure => |err| {
                         const js_err = err.toJS(sink.globalThis, sink.path());
                         if (sink.flushPromise.hasValue()) {
-                            sink.flushPromise.reject(sink.globalThis, js_err);
+                            try sink.flushPromise.reject(sink.globalThis, js_err);
                         }
                         if (sink.endPromise.hasValue()) {
-                            sink.endPromise.reject(sink.globalThis, js_err);
+                            try sink.endPromise.reject(sink.globalThis, js_err);
                         }
                         if (!sink.done) {
                             sink.abort();
@@ -359,7 +359,7 @@ pub const S3UploadStreamWrapper = struct {
         }
     }
 
-    pub fn writeRequestData(this: *@This(), data: []const u8) bool {
+    pub fn writeRequestData(this: *@This(), data: []const u8) ResumableSinkBackpressure {
         log("writeRequestData {}", .{data.len});
         return bun.handleOom(this.task.writeBytes(data, false));
     }
@@ -373,27 +373,27 @@ pub const S3UploadStreamWrapper = struct {
                 // if we have a explicit error, reject the promise
                 // if not when calling .fail will create a S3Error instance
                 // this match the previous behavior
-                this.endPromise.reject(this.global, js_err);
+                this.endPromise.reject(this.global, js_err) catch {}; // TODO: properly propagate exception upwards
                 this.endPromise = .empty;
             }
             if (!this.task.ended) {
                 this.task.fail(.{
                     .code = "UnknownError",
                     .message = "ReadableStream ended with an error",
-                });
+                }) catch {}; // TODO: properly propagate exception upwards
             }
         } else {
             _ = bun.handleOom(this.task.writeBytes("", true));
         }
     }
 
-    pub fn resolve(result: S3UploadResult, self: *@This()) void {
+    pub fn resolve(result: S3UploadResult, self: *@This()) bun.JSTerminated!void {
         log("resolve {any}", .{result});
         defer self.deref();
         switch (result) {
             .success => {
                 if (self.endPromise.hasValue()) {
-                    self.endPromise.resolve(self.global, .jsNumber(0));
+                    try self.endPromise.resolve(self.global, .jsNumber(0));
                     self.endPromise = .empty;
                 }
             },
@@ -404,7 +404,7 @@ pub const S3UploadStreamWrapper = struct {
                     sink.cancel(err.toJS(self.global, self.path));
                     sink.deref();
                 } else if (self.endPromise.hasValue()) {
-                    self.endPromise.reject(self.global, err.toJS(self.global, self.path));
+                    try self.endPromise.reject(self.global, err.toJS(self.global, self.path));
                     self.endPromise = .empty;
                 }
             },
@@ -437,7 +437,7 @@ pub fn uploadStream(
     proxy: ?[]const u8,
     callback: ?*const fn (S3UploadResult, *anyopaque) void,
     callback_context: *anyopaque,
-) jsc.JSValue {
+) bun.JSError!jsc.JSValue {
     this.ref(); // ref the credentials
     const proxy_url = (proxy orelse "");
     if (readable_stream.isDisturbed(globalThis)) {
@@ -585,7 +585,7 @@ pub fn downloadStream(
         },
     );
     // enable streaming
-    task.http.enableBodyStreaming();
+    task.http.enableResponseBodyStreaming();
     // queue http request
     bun.http.HTTPThread.init(&.{});
     var batch = bun.ThreadPool.Batch{};
@@ -617,27 +617,27 @@ pub fn readableStream(
         path: []const u8,
         global: *jsc.JSGlobalObject,
 
-        pub fn callback(chunk: bun.MutableString, has_more: bool, request_err: ?Error.S3Error, self: *@This()) void {
+        pub fn callback(chunk: bun.MutableString, has_more: bool, request_err: ?Error.S3Error, self: *@This()) bun.JSTerminated!void {
             defer if (!has_more) self.deinit();
 
             if (self.readable_stream_ref.get(self.global)) |readable| {
                 if (readable.ptr == .Bytes) {
                     if (request_err) |err| {
-                        readable.ptr.Bytes.onData(
+                        try readable.ptr.Bytes.onData(
                             .{ .err = .{ .JSValue = err.toJS(self.global, self.path) } },
                             bun.default_allocator,
                         );
                         return;
                     }
                     if (has_more) {
-                        readable.ptr.Bytes.onData(
+                        try readable.ptr.Bytes.onData(
                             .{ .temporary = bun.ByteList.fromBorrowedSliceDangerous(chunk.list.items) },
                             bun.default_allocator,
                         );
                         return;
                     }
 
-                    readable.ptr.Bytes.onData(
+                    try readable.ptr.Bytes.onData(
                         .{ .temporary_and_done = bun.ByteList.fromBorrowedSliceDangerous(chunk.list.items) },
                         bun.default_allocator,
                     );
@@ -654,7 +654,7 @@ pub fn readableStream(
 
         pub fn opaqueCallback(chunk: bun.MutableString, has_more: bool, err: ?Error.S3Error, opaque_self: *anyopaque) void {
             const self: *@This() = @ptrCast(@alignCast(opaque_self));
-            callback(chunk, has_more, err, self);
+            callback(chunk, has_more, err, self) catch {}; // TODO: properly propagate exception upwards
         }
     };
 
@@ -685,3 +685,4 @@ const std = @import("std");
 const bun = @import("bun");
 const jsc = bun.jsc;
 const picohttp = bun.picohttp;
+const ResumableSinkBackpressure = jsc.WebCore.ResumableSinkBackpressure;

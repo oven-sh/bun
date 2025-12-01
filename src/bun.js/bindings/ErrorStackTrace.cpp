@@ -437,7 +437,22 @@ ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
         }
     }
 
-    return String();
+    // BUGFIX: Don't return empty string which breaks the 'bindings' npm package
+    // The bindings package uses Error.prepareStackTrace to find the calling module
+    // but empty filenames cause it to use the wrong module root directory
+    // Instead, try to get some identifying information for this frame
+
+    // Try to use sourceID if available
+    if (m_codeBlock) {
+        auto sourceID = m_codeBlock->ownerExecutable()->sourceID();
+        if (sourceID != JSC::noSourceID) {
+            // Use a placeholder that includes the sourceID to make frames distinguishable
+            return makeString("[source:"_s, sourceID, "]"_s);
+        }
+    }
+
+    // Last resort: return a distinguishable placeholder instead of empty string
+    return "[unknown]"_s;
 }
 
 ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
@@ -665,11 +680,10 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
     return functionName;
 }
 
-String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, bool isInFinalizer, unsigned int* flags)
+String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, FinalizerSafety finalizerSafety, unsigned int* flags)
 {
-    WTF::String functionName;
     bool isConstructor = false;
-    if (isInFinalizer) {
+    if (finalizerSafety == FinalizerSafety::MustNotTriggerGC) {
 
         if (auto* callee = frame.callee()) {
             if (auto* object = callee->getObject()) {
@@ -684,81 +698,72 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
                     }
                 };
 
-                const auto getName = [&]() -> String {
-                    // First try the "name" property.
-                    {
-                        unsigned attributes;
-                        PropertyOffset offset = structure->getConcurrently(vm.propertyNames->name.impl(), attributes);
-                        if (offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
-                            JSValue name = object->getDirect(offset);
-                            if (name && name.isString()) {
-                                auto str = asString(name)->tryGetValueWithoutGC();
-                                if (!str->isEmpty()) {
-                                    setTypeFlagsIfNecessary();
-
-                                    return str.data;
-                                }
+                // First try the "name" property.
+                {
+                    unsigned attributes;
+                    PropertyOffset offset = structure->getConcurrently(vm.propertyNames->name.impl(), attributes);
+                    if (offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
+                        JSValue name = object->getDirect(offset);
+                        if (name && name.isString()) {
+                            auto str = asString(name)->tryGetValueWithoutGC();
+                            if (!str->isEmpty()) {
+                                setTypeFlagsIfNecessary();
+                                return str;
                             }
                         }
                     }
+                }
 
-                    // Then try the "displayName" property.
-                    {
-                        unsigned attributes;
-                        PropertyOffset offset = structure->getConcurrently(vm.propertyNames->displayName.impl(), attributes);
-                        if (offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
-                            JSValue name = object->getDirect(offset);
-                            if (name && name.isString()) {
-                                auto str = asString(name)->tryGetValueWithoutGC();
-                                if (!str->isEmpty()) {
-                                    functionName = str.data;
-                                    if (!functionName.isEmpty()) {
-                                        setTypeFlagsIfNecessary();
-                                        return functionName;
-                                    }
-                                }
+                // Then try the "displayName" property.
+                {
+                    unsigned attributes;
+                    PropertyOffset offset = structure->getConcurrently(vm.propertyNames->displayName.impl(), attributes);
+                    if (offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
+                        JSValue name = object->getDirect(offset);
+                        if (name && name.isString()) {
+                            auto str = asString(name)->tryGetValueWithoutGC();
+                            if (!str->isEmpty()) {
+                                setTypeFlagsIfNecessary();
+                                return str;
                             }
                         }
                     }
+                }
 
-                    // Lastly, try type-specific properties.
-                    if (jstype == JSC::JSFunctionType) {
-                        auto* function = jsCast<JSC::JSFunction*>(object);
-                        if (function) {
-                            functionName = function->nameWithoutGC(vm);
-                            if (functionName.isEmpty() && !function->isHostFunction()) {
-                                functionName = function->jsExecutable()->ecmaName().string();
-                            }
+                // Lastly, try type-specific properties.
+                if (jstype == JSC::JSFunctionType) {
+                    auto* function = jsCast<JSC::JSFunction*>(object);
+                    if (function) {
+                        auto str = function->nameWithoutGC(vm);
+                        if (str.isEmpty() && !function->isHostFunction()) {
                             setTypeFlagsIfNecessary();
-                            return functionName;
+                            return function->jsExecutable()->ecmaName().string();
                         }
-                    } else if (jstype == JSC::InternalFunctionType) {
-                        auto* function = jsCast<JSC::InternalFunction*>(object);
-                        if (function) {
-                            functionName = function->name();
-                            setTypeFlagsIfNecessary();
-                            return functionName;
-                        }
+                        setTypeFlagsIfNecessary();
+                        return str;
                     }
-
-                    return functionName;
-                };
-
-                functionName = getName();
+                } else if (jstype == JSC::InternalFunctionType) {
+                    auto* function = jsCast<JSC::InternalFunction*>(object);
+                    if (function) {
+                        auto str = function->name();
+                        setTypeFlagsIfNecessary();
+                        return str;
+                    }
+                }
             }
         }
 
-        return functionName;
+        return emptyString();
     }
 
+    WTF::String functionName;
     if (frame.hasLineAndColumnInfo()) {
         auto* codeblock = frame.codeBlock();
         if (codeblock->isConstructor()) {
             isConstructor = true;
         }
 
-        // We cannot run this in FinalizeUnconditionally, as we cannot call getters there
-        if (!isInFinalizer) {
+        if (finalizerSafety == FinalizerSafety::NotInFinalizer) {
             auto codeType = codeblock->codeType();
             switch (codeType) {
             case JSC::CodeType::FunctionCode:
@@ -808,4 +813,9 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
 
     return functionName;
 }
+}
+
+extern "C" void Bun__errorInstance__finalize(void* bunErrorData)
+{
+    UNUSED_PARAM(bunErrorData);
 }

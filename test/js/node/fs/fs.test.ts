@@ -13,6 +13,7 @@ import fs, {
   fdatasync,
   fdatasyncSync,
   fstatSync,
+  ftruncateSync,
   lstatSync,
   mkdirSync,
   mkdtemp,
@@ -2714,14 +2715,15 @@ it("fstat on a large file", () => {
   try {
     dest = `${tmpdir()}/fs.test.ts/${Math.trunc(Math.random() * 10000000000).toString(32)}.stat.txt`;
     mkdirSync(dirname(dest), { recursive: true });
-    const bigBuffer = new Uint8Array(1024 * 1024 * 1024);
     fd = openSync(dest, "w");
-    let offset = 0;
-    while (offset < 5 * 1024 * 1024 * 1024) {
-      offset += writeSync(fd, bigBuffer, 0, bigBuffer.length, offset);
-    }
+
+    // Instead of writing the actual bytes, we can use ftruncate to make a
+    // hole-y file and extend it to the desired size This should generally avoid
+    // the ENOSPC issue and avoid timeouts.
+    ftruncateSync(fd, 5 * 1024 * 1024 * 1024);
     fdatasyncSync(fd);
-    expect(fstatSync(fd).size).toEqual(offset);
+    const stats = fstatSync(fd);
+    expect(stats.size).toEqual(5 * 1024 * 1024 * 1024);
   } catch (error) {
     // TODO: Once `fs.statfsSync` is implemented, make sure that the buffer size
     // is small enough not to cause: ENOSPC: No space left on device.

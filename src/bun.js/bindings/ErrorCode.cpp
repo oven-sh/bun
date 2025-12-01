@@ -121,10 +121,18 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
     case JSC::ErrorType::SyntaxError:
         prototype = JSC::constructEmptyObject(globalObject, globalObject->m_syntaxErrorStructure.prototype(globalObject));
         break;
-    default: {
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO: Add support for more error types");
+    case JSC::ErrorType::EvalError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_evalErrorStructure.prototype(globalObject));
         break;
-    }
+    case JSC::ErrorType::ReferenceError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_referenceErrorStructure.prototype(globalObject));
+        break;
+    case JSC::ErrorType::AggregateError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_aggregateErrorStructure.prototype(globalObject));
+        break;
+    case JSC::ErrorType::SuppressedError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_suppressedErrorStructure.prototype(globalObject));
+        break;
     }
 
     prototype->putDirect(vm, vm.propertyNames->name, jsString(vm, String(name)), 0);
@@ -271,7 +279,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
             if (str->contains('\'')) {
                 builder.append('"');
                 if (str->is8Bit()) {
-                    const auto span = str->span<LChar>();
+                    const auto span = str->span<Latin1Character>();
                     for (const auto c : span) {
                         if (c == '"') {
                             builder.append("\\\""_s);
@@ -420,7 +428,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         if (needsEscape) [[unlikely]] {
             builder.append('"');
             if (view.is8Bit()) {
-                const auto span = view.span<LChar>();
+                const auto span = view.span<Latin1Character>();
                 for (const auto c : span) {
                     if (c == '"') {
                         builder.append("\\\""_s);
@@ -590,10 +598,10 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
 
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const ZigString* arg_name_string, const ZigString* expected_type_string, JSValue actual_value)
 {
-    auto arg_name = std::span<const LChar>(arg_name_string->ptr, arg_name_string->len);
+    auto arg_name = std::span<const Latin1Character>(arg_name_string->ptr, arg_name_string->len);
     ASSERT(WTF::charactersAreAllASCII(arg_name));
 
-    auto expected_type = std::span<const LChar>(expected_type_string->ptr, expected_type_string->len);
+    auto expected_type = std::span<const Latin1Character>(expected_type_string->ptr, expected_type_string->len);
     ASSERT(WTF::charactersAreAllASCII(expected_type));
 
     return ERR_INVALID_ARG_TYPE(scope, globalObject, arg_name, expected_type, actual_value);
@@ -1602,7 +1610,6 @@ extern "C" JSC::EncodedJSValue Bun__wrapAbortError(JSC::JSGlobalObject* lexicalG
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     auto cause = JSC::JSValue::decode(causeParam);
 
     if (cause.isUndefined()) {
@@ -2368,6 +2375,13 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ZSTD_INVALID_PARAM, message));
     }
 
+    case ErrorCode::ERR_SSL_NO_CIPHER_MATCH: {
+        auto err = createError(globalObject, ErrorCode::ERR_SSL_NO_CIPHER_MATCH, "No cipher match"_s);
+        err->putDirect(vm, Identifier::fromString(vm, "reason"_s), jsString(vm, WTF::String("no cipher match"_s)));
+        err->putDirect(vm, Identifier::fromString(vm, "library"_s), jsString(vm, WTF::String("SSL routines"_s)));
+        return JSC::JSValue::encode(err);
+    }
+
     case ErrorCode::ERR_IPC_DISCONNECTED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_DISCONNECTED, "IPC channel is already disconnected"_s));
     case ErrorCode::ERR_SERVER_NOT_RUNNING:
@@ -2428,17 +2442,6 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_CERT_ALTNAME_FORMAT, "Invalid subject alternative name string"_s));
     case ErrorCode::ERR_TLS_SNI_FROM_SERVER:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_SNI_FROM_SERVER, "Cannot issue SNI from a TLS server-side socket"_s));
-    case ErrorCode::ERR_SSL_NO_CIPHER_MATCH: {
-        auto err = createError(globalObject, ErrorCode::ERR_SSL_NO_CIPHER_MATCH, "No cipher match"_s);
-
-        auto reason = JSC::jsString(vm, WTF::String("no cipher match"_s));
-        err->putDirect(vm, Identifier::fromString(vm, "reason"_s), reason);
-
-        auto library = JSC::jsString(vm, WTF::String("SSL routines"_s));
-        err->putDirect(vm, Identifier::fromString(vm, "library"_s), library);
-
-        return JSC::JSValue::encode(err);
-    }
     case ErrorCode::ERR_INVALID_URI:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_URI, "URI malformed"_s));
     case ErrorCode::ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED:

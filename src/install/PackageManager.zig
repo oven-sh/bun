@@ -1,8 +1,5 @@
 cache_directory_: ?std.fs.Dir = null,
 cache_directory_path: stringZ = "",
-temp_dir_: ?std.fs.Dir = null,
-temp_dir_path: stringZ = "",
-temp_dir_name: string = "",
 root_dir: *Fs.FileSystem.DirEntry,
 allocator: std.mem.Allocator,
 log: *logger.Log,
@@ -92,6 +89,7 @@ lockfile: *Lockfile = undefined,
 
 options: Options,
 preinstall_state: std.ArrayListUnmanaged(PreinstallState) = .{},
+postinstall_optimizer: PostinstallOptimizer.List = .{},
 
 global_link_dir: ?std.fs.Dir = null,
 global_dir: ?std.fs.Dir = null,
@@ -100,7 +98,7 @@ global_link_dir_path: string = "",
 onWake: WakeHandler = .{},
 ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
 
-peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = .init(default_allocator),
+peer_dependencies: bun.LinearFifo(DependencyID, .Dynamic) = .init(default_allocator),
 
 // name hash from alias package name -> aliased package dependency version info
 known_npm_aliases: NpmAliasMap = .{},
@@ -359,7 +357,7 @@ pub var configureEnvForScriptsOnce = bun.once(struct {
                 _ = try this.env.loadNodeJSConfig(this_transpiler.fs, bun.handleOom(bun.default_allocator.dupe(u8, node_pathZ)));
             } else brk: {
                 const current_path = this.env.get("PATH") orelse "";
-                var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, current_path.len);
+                var PATH = try std.array_list.Managed(u8).initCapacity(bun.default_allocator, current_path.len);
                 try PATH.appendSlice(current_path);
                 var bun_path: string = "";
                 RunCommand.createFakeTemporaryNodeExecutable(&PATH, &bun_path) catch break :brk;
@@ -457,12 +455,12 @@ var ensureTempNodeGypScriptOnce = bun.once(struct {
 
         const tempdir = manager.getTemporaryDirectory();
         var path_buf: bun.PathBuffer = undefined;
-        const node_gyp_tempdir_name = bun.span(try Fs.FileSystem.instance.tmpname("node-gyp", &path_buf, 12345));
+        const node_gyp_tempdir_name = try Fs.FileSystem.tmpname("node-gyp", &path_buf, 12345);
 
         // used later for adding to path for scripts
         manager.node_gyp_tempdir_name = try manager.allocator.dupe(u8, node_gyp_tempdir_name);
 
-        var node_gyp_tempdir = tempdir.makeOpenPath(manager.node_gyp_tempdir_name, .{}) catch |err| {
+        var node_gyp_tempdir = tempdir.handle.makeOpenPath(manager.node_gyp_tempdir_name, .{}) catch |err| {
             if (err == error.EEXIST) {
                 // it should not exist
                 Output.prettyErrorln("<r><red>error<r>: node-gyp tempdir already exists", .{});
@@ -515,17 +513,17 @@ var ensureTempNodeGypScriptOnce = bun.once(struct {
 
         // Add our node-gyp tempdir to the path
         const existing_path = manager.env.get("PATH") orelse "";
-        var PATH = try std.ArrayList(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + manager.temp_dir_name.len + 1 + manager.node_gyp_tempdir_name.len);
+        var PATH = try std.array_list.Managed(u8).initCapacity(bun.default_allocator, existing_path.len + 1 + tempdir.name.len + 1 + manager.node_gyp_tempdir_name.len);
         try PATH.appendSlice(existing_path);
         if (existing_path.len > 0 and existing_path[existing_path.len - 1] != std.fs.path.delimiter)
             try PATH.append(std.fs.path.delimiter);
-        try PATH.appendSlice(strings.withoutTrailingSlash(manager.temp_dir_name));
+        try PATH.appendSlice(strings.withoutTrailingSlash(tempdir.name));
         try PATH.append(std.fs.path.sep);
         try PATH.appendSlice(manager.node_gyp_tempdir_name);
         try manager.env.map.put("PATH", PATH.items);
 
         const npm_config_node_gyp = try std.fmt.bufPrint(&path_buf, "{s}{s}{s}{s}{s}", .{
-            strings.withoutTrailingSlash(manager.temp_dir_name),
+            strings.withoutTrailingSlash(tempdir.name),
             std.fs.path.sep_str,
             strings.withoutTrailingSlash(manager.node_gyp_tempdir_name),
             std.fs.path.sep_str,
@@ -704,7 +702,7 @@ pub fn init(
                     const json_buf = try ctx.allocator.alloc(u8, json_stat_size + 64);
                     defer ctx.allocator.free(json_buf);
                     const json_len = try json_file.preadAll(json_buf, 0);
-                    const json_path = try bun.getFdPath(.fromStdFile(json_file), &package_json_cwd_buf);
+                    const json_path = try bun.getFdPath(.fromStdFile(json_file), &root_package_json_path_buf);
                     const json_source = logger.Source.initPathString(json_path, json_buf[0..json_len]);
                     initializeStore();
                     const json = try JSON.parsePackageJSONUTF8(&json_source, ctx.log, ctx.allocator);
@@ -774,9 +772,12 @@ pub fn init(
     bun.copy(u8, &cwd_buf, fs.top_level_dir);
     cwd_buf[fs.top_level_dir.len] = 0;
     fs.top_level_dir = cwd_buf[0..fs.top_level_dir.len :0];
-    package_json_cwd = try bun.getFdPath(.fromStdFile(root_package_json_file), &package_json_cwd_buf);
+    root_package_json_path = try bun.getFdPathZ(.fromStdFile(root_package_json_file), &root_package_json_path_buf);
 
     const entries_option = try fs.fs.readDirectory(fs.top_level_dir, null, 0, true);
+    if (entries_option.* == .err) {
+        return entries_option.err.canonical_error;
+    }
 
     var env: *DotEnv.Loader = brk: {
         const map = try ctx.allocator.create(DotEnv.Map);
@@ -791,7 +792,8 @@ pub fn init(
     try env.load(entries_option.entries, &[_][]u8{}, .production, false);
 
     initializeStore();
-    if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |data_dir| {
+
+    if (bun.env_var.XDG_CONFIG_HOME.get() orelse bun.env_var.HOME.get()) |data_dir| {
         var buf: bun.PathBuffer = undefined;
         var parts = [_]string{
             "./.npmrc",
@@ -831,7 +833,7 @@ pub fn init(
         bun.spawn.process.WaiterThread.setShouldUseWaiterThread();
     }
 
-    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS)) {
+    if (bun.feature_flag.BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS.get()) {
         bun.sys.WindowsSymlinkOptions.has_failed_to_create_symlink = true;
     }
 
@@ -878,6 +880,14 @@ pub fn init(
     };
     manager.event_loop.loop().internal_loop_data.setParentEventLoop(bun.jsc.EventLoopHandle.init(&manager.event_loop));
     manager.lockfile = try ctx.allocator.create(Lockfile);
+
+    {
+        // make sure folder packages can find the root package without creating a new one
+        var normalized: bun.AbsPath(.{ .sep = .posix }) = .from(root_package_json_path);
+        defer normalized.deinit();
+        try manager.folders.put(manager.allocator, FolderResolution.hash(normalized.slice()), .{ .package_id = 0 });
+    }
+
     jsc.MiniEventLoop.global = &manager.event_loop.mini;
     if (!manager.options.enable.cache) {
         manager.options.enable.manifest_cache = false;
@@ -1111,8 +1121,8 @@ pub fn initWithRuntimeOnce(
     }
 }
 var cwd_buf: bun.PathBuffer = undefined;
-pub var package_json_cwd_buf: bun.PathBuffer = undefined;
-pub var package_json_cwd: string = "";
+var root_package_json_path_buf: bun.PathBuffer = undefined;
+pub var root_package_json_path: [:0]const u8 = "";
 
 // Default to a maximum of 64 simultaneous HTTP requests for bun install if no proxy is specified
 // if a proxy IS specified, default to 64. We have different values because we might change this in the future.
@@ -1132,8 +1142,8 @@ const ResolveTaskQueue = bun.UnboundedQueue(Task, .next);
 const RepositoryMap = std.HashMapUnmanaged(Task.Id, bun.FileDescriptor, IdentityContext(Task.Id), 80);
 const NpmAliasMap = std.HashMapUnmanaged(PackageNameHash, Dependency.Version, IdentityContext(u64), 80);
 
-const NetworkQueue = std.fifo.LinearFifo(*NetworkTask, .{ .Static = 32 });
-const PatchTaskFifo = std.fifo.LinearFifo(*PatchTask, .{ .Static = 32 });
+const NetworkQueue = bun.LinearFifo(*NetworkTask, .{ .Static = 32 });
+const PatchTaskFifo = bun.LinearFifo(*PatchTask, .{ .Static = 32 });
 
 // pub const ensureTempNodeGypScript = directories.ensureTempNodeGypScript;
 
@@ -1246,6 +1256,8 @@ pub const scheduleTasks = @import("./PackageManager/runTasks.zig").scheduleTasks
 pub const updatePackageJSONAndInstallCatchError = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallCatchError;
 pub const updatePackageJSONAndInstallWithManager = @import("./PackageManager/updatePackageJSONAndInstall.zig").updatePackageJSONAndInstallWithManager;
 
+pub const populateManifestCache = @import("./PackageManager/PopulateManifestCache.zig").populateManifestCache;
+
 const string = []const u8;
 const stringZ = [:0]const u8;
 
@@ -1303,6 +1315,7 @@ const PackageManifestMap = bun.install.PackageManifestMap;
 const PackageNameAndVersionHash = bun.install.PackageNameAndVersionHash;
 const PackageNameHash = bun.install.PackageNameHash;
 const PatchTask = bun.install.PatchTask;
+const PostinstallOptimizer = bun.install.PostinstallOptimizer;
 const PreinstallState = bun.install.PreinstallState;
 const Task = bun.install.Task;
 const TaskCallbackContext = bun.install.TaskCallbackContext;

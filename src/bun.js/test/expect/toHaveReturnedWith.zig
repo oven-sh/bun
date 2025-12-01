@@ -7,19 +7,19 @@ pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe:
     const value: JSValue = try this.getValue(globalThis, thisValue, "toHaveReturnedWith", "<green>expected<r>");
 
     const expected = callframe.argumentsAsArray(1)[0];
-    incrementExpectCallCounter();
+    this.incrementExpectCallCounter();
 
     const returns = try bun.cpp.JSMockFunction__getReturns(globalThis, value);
     if (!returns.jsType().isArray()) {
         var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
         defer formatter.deinit();
-        return globalThis.throw("Expected value must be a mock function: {any}", .{value.toFmt(&formatter)});
+        return globalThis.throw("Expected value must be a mock function: {f}", .{value.toFmt(&formatter)});
     }
 
     const calls_count = @as(u32, @intCast(try returns.getLength(globalThis)));
     var pass = false;
 
-    var successful_returns = std.ArrayList(JSValue).init(globalThis.bunVM().allocator);
+    var successful_returns = std.array_list.Managed(JSValue).init(globalThis.bunVM().allocator);
     defer successful_returns.deinit();
 
     var has_errors = false;
@@ -63,7 +63,7 @@ pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe:
 
     if (this.flags.not) {
         const not_signature = comptime getSignature("toHaveReturnedWith", "<green>expected<r>", true);
-        return this.throw(globalThis, not_signature, "\n\n" ++ "Expected mock function not to have returned: <green>{any}<r>\n", .{expected.toFmt(&formatter)});
+        return this.throw(globalThis, not_signature, "\n\n" ++ "Expected mock function not to have returned: <green>{f}<r>\n", .{expected.toFmt(&formatter)});
     }
 
     // No match was found.
@@ -79,10 +79,10 @@ pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe:
                 .globalThis = globalThis,
                 .not = false,
             };
-            return this.throw(globalThis, signature, "\n\n{any}\n", .{diff_format});
+            return this.throw(globalThis, signature, "\n\n{f}\n", .{diff_format});
         }
 
-        return this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>", .{
+        return this.throw(globalThis, signature, "\n\nExpected: <green>{f}<r>\nReceived: <red>{f}<r>", .{
             expected.toFmt(&formatter),
             received.toFmt(&formatter),
         });
@@ -98,15 +98,15 @@ pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe:
         const fmt =
             \\Some calls errored:
             \\
-            \\    Expected: {any}
+            \\    Expected: {f}
             \\    Received:
-            \\{any}
+            \\{f}
             \\
             \\    Number of returns: {d}
             \\    Number of calls:   {d}
         ;
 
-        switch (Output.enable_ansi_colors) {
+        switch (Output.enable_ansi_colors_stderr) {
             inline else => |colors| {
                 return this.throw(globalThis, signature, Output.prettyFmt("\n\n" ++ fmt ++ "\n", colors), .{
                     expected.toFmt(&formatter),
@@ -124,14 +124,14 @@ pub fn toHaveReturnedWith(this: *Expect, globalThis: *JSGlobalObject, callframe:
             .formatter = &formatter,
         };
         const fmt =
-            \\    <green>Expected<r>: {any}
+            \\    <green>Expected<r>: {f}
             \\    <red>Received<r>:
-            \\{any}
+            \\{f}
             \\
             \\    Number of returns: {d}
         ;
 
-        switch (Output.enable_ansi_colors) {
+        switch (Output.enable_ansi_colors_stderr) {
             inline else => |colors| {
                 return this.throw(globalThis, signature, Output.prettyFmt("\n\n" ++ fmt ++ "\n", colors), .{
                     expected.toFmt(&formatter),
@@ -153,8 +153,6 @@ const jsc = bun.jsc;
 const CallFrame = bun.jsc.CallFrame;
 const JSGlobalObject = bun.jsc.JSGlobalObject;
 const JSValue = bun.jsc.JSValue;
-
-const incrementExpectCallCounter = bun.jsc.Expect.incrementExpectCallCounter;
 const mock = bun.jsc.Expect.mock;
 
 const Expect = bun.jsc.Expect.Expect;

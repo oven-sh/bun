@@ -65,7 +65,7 @@ pub const Report = struct {
             vals: Fraction,
             failing: Fraction,
             failed: bool,
-            writer: anytype,
+            writer: *std.Io.Writer,
             indent_name: bool,
             comptime enable_colors: bool,
         ) !void {
@@ -82,7 +82,7 @@ pub const Report = struct {
             }
 
             try writer.writeAll(filename);
-            try writer.writeByteNTimes(' ', (max_filename_length - filename.len + @as(usize, @intFromBool(!indent_name))));
+            try writer.splatByteAll(' ', (max_filename_length - filename.len + @as(usize, @intFromBool(!indent_name))));
             try writer.writeAll(comptime prettyFmt("<r><d> | <r>", enable_colors));
 
             if (comptime enable_colors) {
@@ -121,7 +121,7 @@ pub const Report = struct {
             max_filename_length: usize,
             fraction: *Fraction,
             base_path: []const u8,
-            writer: anytype,
+            writer: *std.Io.Writer,
             comptime enable_colors: bool,
         ) !void {
             const failing = fraction.*;
@@ -211,7 +211,7 @@ pub const Report = struct {
         pub fn writeFormat(
             report: *const Report,
             base_path: []const u8,
-            writer: anytype,
+            writer: *std.Io.Writer,
         ) !void {
             var filename = report.source_url.slice();
             if (base_path.len > 0) {
@@ -252,7 +252,7 @@ pub const Report = struct {
             }
 
             // LF: lines found
-            try writer.print("LF:{d}\n", .{report.total_lines});
+            try writer.print("LF:{d}\n", .{report.executable_lines.count()});
 
             // LH: lines hit
             try writer.print("LH:{d}\n", .{report.lines_which_have_executed.count()});
@@ -282,7 +282,7 @@ pub const Report = struct {
             usize,
             usize,
             bool,
-        ) callconv(.C) void,
+        ) callconv(.c) void,
     ) bool;
 
     const Generator = struct {
@@ -296,7 +296,7 @@ pub const Report = struct {
             blocks_len: usize,
             function_start_offset: usize,
             ignore_sourcemap: bool,
-        ) callconv(.C) void {
+        ) callconv(.c) void {
             const blocks: []const BasicBlockRange = blocks_ptr[0..function_start_offset];
             var function_blocks: []const BasicBlockRange = blocks_ptr[function_start_offset..blocks_len];
             if (function_blocks.len > 1) {
@@ -371,7 +371,7 @@ pub const ByteRangeMapping = struct {
     }
 
     pub threadlocal var map: ?*HashMap = null;
-    pub fn generate(str: bun.String, source_contents_str: bun.String, source_id: i32) callconv(.C) void {
+    pub fn generate(str: bun.String, source_contents_str: bun.String, source_id: i32) callconv(.c) void {
         var _map = map orelse brk: {
             map = bun.handleOom(bun.jsc.VirtualMachine.get().allocator.create(HashMap));
             map.?.* = HashMap.init(bun.jsc.VirtualMachine.get().allocator);
@@ -390,11 +390,11 @@ pub const ByteRangeMapping = struct {
         entry.value_ptr.* = compute(source_contents.slice(), source_id, slice);
     }
 
-    pub fn getSourceID(this: *ByteRangeMapping) callconv(.C) i32 {
+    pub fn getSourceID(this: *ByteRangeMapping) callconv(.c) i32 {
         return this.source_id;
     }
 
-    pub fn find(path: bun.String) callconv(.C) ?*ByteRangeMapping {
+    pub fn find(path: bun.String) callconv(.c) ?*ByteRangeMapping {
         var slice = path.toUTF8(bun.default_allocator);
         defer slice.deinit();
 
@@ -554,7 +554,7 @@ pub const ByteRangeMapping = struct {
                     }
                     const column_position = byte_offset -| line_start_byte_offset;
 
-                    if (parsed_mapping.mappings.find(@intCast(new_line_index), @intCast(column_position))) |*point| {
+                    if (parsed_mapping.mappings.find(.fromZeroBased(@intCast(new_line_index)), .fromZeroBased(@intCast(column_position)))) |*point| {
                         if (point.original.lines.zeroBased() < 0) continue;
 
                         const line: u32 = @as(u32, @intCast(point.original.lines.zeroBased()));
@@ -598,7 +598,7 @@ pub const ByteRangeMapping = struct {
 
                     const column_position = byte_offset -| line_start_byte_offset;
 
-                    if (parsed_mapping.mappings.find(@intCast(new_line_index), @intCast(column_position))) |point| {
+                    if (parsed_mapping.mappings.find(.fromZeroBased(@intCast(new_line_index)), .fromZeroBased(@intCast(column_position)))) |point| {
                         if (point.original.lines.zeroBased() < 0) continue;
 
                         const line: u32 = @as(u32, @intCast(point.original.lines.zeroBased()));
@@ -656,7 +656,7 @@ pub const ByteRangeMapping = struct {
         blocks_len: usize,
         function_start_offset: usize,
         ignore_sourcemap: bool,
-    ) callconv(.C) bun.jsc.JSValue {
+    ) callconv(.c) bun.jsc.JSValue {
         var this = ByteRangeMapping.find(source_url) orelse return bun.jsc.JSValue.null;
 
         const blocks: []const BasicBlockRange = blocks_ptr[0..function_start_offset];
@@ -673,12 +673,11 @@ pub const ByteRangeMapping = struct {
 
         var coverage_fraction = Fraction{};
 
-        var mutable_str = bun.MutableString.initEmpty(bun.default_allocator);
-        defer mutable_str.deinit();
-        var buffered_writer = mutable_str.bufferedWriter();
-        var writer = buffered_writer.writer();
+        var allocating_writer = std.Io.Writer.Allocating.init(bun.default_allocator);
+        defer allocating_writer.deinit();
+        const buffered_writer = &allocating_writer.writer;
 
-        Report.Text.writeFormat(&report, source_url.utf8ByteLength(), &coverage_fraction, "", &writer, false) catch {
+        Report.Text.writeFormat(&report, source_url.utf8ByteLength(), &coverage_fraction, "", buffered_writer, false) catch {
             return globalThis.throwOutOfMemoryValue();
         };
 
@@ -686,7 +685,7 @@ pub const ByteRangeMapping = struct {
             return globalThis.throwOutOfMemoryValue();
         };
 
-        return bun.String.createUTF8ForJS(globalThis, mutable_str.slice()) catch return .zero;
+        return bun.String.createUTF8ForJS(globalThis, allocating_writer.written()) catch return .zero;
     }
 
     pub fn compute(source_contents: []const u8, source_id: i32, source_url: bun.jsc.ZigString.Slice) ByteRangeMapping {
@@ -726,7 +725,7 @@ const std = @import("std");
 
 const bun = @import("bun");
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
-const LineOffsetTable = bun.sourcemap.LineOffsetTable;
+const LineOffsetTable = bun.SourceMap.LineOffsetTable;
 
 const Output = bun.Output;
 const prettyFmt = Output.prettyFmt;

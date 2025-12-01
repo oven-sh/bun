@@ -198,39 +198,37 @@ fn setupMaxLifetimeTimerIfNecessary(this: *PostgresSQLConnection) void {
     this.vm.timer.insert(&this.max_lifetime_timer);
 }
 
-pub fn onConnectionTimeout(this: *PostgresSQLConnection) bun.api.Timer.EventLoopTimer.Arm {
+pub fn onConnectionTimeout(this: *PostgresSQLConnection) void {
     debug("onConnectionTimeout", .{});
 
     this.timer.state = .FIRED;
     if (this.flags.is_processing_data) {
-        return .disarm;
+        return;
     }
 
     if (this.getTimeoutInterval() == 0) {
         this.resetConnectionTimeout();
-        return .disarm;
+        return;
     }
 
     switch (this.status) {
         .connected => {
-            this.failFmt("ERR_POSTGRES_IDLE_TIMEOUT", "Idle timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
+            this.failFmt("ERR_POSTGRES_IDLE_TIMEOUT", "Idle timeout reached after {f}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.idle_timeout_interval_ms) *| std.time.ns_per_ms)});
         },
         else => {
-            this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timeout after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timeout after {f}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
         .sent_startup_message => {
-            this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timed out after {} (sent startup message, but never received response)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
+            this.failFmt("ERR_POSTGRES_CONNECTION_TIMEOUT", "Connection timeout after {f} (sent startup message, but never received response)", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.connection_timeout_ms) *| std.time.ns_per_ms)});
         },
     }
-    return .disarm;
 }
 
-pub fn onMaxLifetimeTimeout(this: *PostgresSQLConnection) bun.api.Timer.EventLoopTimer.Arm {
+pub fn onMaxLifetimeTimeout(this: *PostgresSQLConnection) void {
     debug("onMaxLifetimeTimeout", .{});
     this.max_lifetime_timer.state = .FIRED;
-    if (this.status == .failed) return .disarm;
-    this.failFmt("ERR_POSTGRES_LIFETIME_TIMEOUT", "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
-    return .disarm;
+    if (this.status == .failed) return;
+    this.failFmt("ERR_POSTGRES_LIFETIME_TIMEOUT", "Max lifetime timeout reached after {f}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
 }
 
 fn start(this: *PostgresSQLConnection) void {
@@ -311,7 +309,7 @@ pub fn failWithJSValue(this: *PostgresSQLConnection, value: JSValue) void {
     this.stopTimers();
     if (this.status == .failed) return;
 
-    this.setStatus(.failed);
+    this.status = .failed;
 
     this.ref();
     defer this.deref();
@@ -321,12 +319,17 @@ pub fn failWithJSValue(this: *PostgresSQLConnection, value: JSValue) void {
 
     const loop = this.vm.eventLoop();
     loop.enter();
+    var js_error = value.toError() orelse value;
+    if (js_error == .zero) {
+        js_error = postgresErrorToJS(this.globalObject, "Connection closed", error.ConnectionClosed);
+    }
+    js_error.ensureStillAlive();
     defer loop.exit();
     _ = on_close.call(
         this.globalObject,
-        this.js_value,
+        .js_undefined,
         &[_]JSValue{
-            value.toError() orelse value,
+            js_error,
             this.getQueriesArray(),
         },
     ) catch |e| this.globalObject.reportActiveExceptionAsUnhandled(e);
@@ -981,7 +984,7 @@ pub fn hasQueryRunning(this: *PostgresSQLConnection) bool {
 }
 
 pub fn canPipeline(this: *PostgresSQLConnection) bool {
-    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING)) {
+    if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING.get()) {
         @branchHint(.unlikely);
         return false;
     }
@@ -1350,6 +1353,9 @@ fn advance(this: *PostgresSQLConnection) void {
 }
 
 pub fn getQueriesArray(this: *const PostgresSQLConnection) JSValue {
+    if (this.js_value.isEmptyOrUndefinedOrNull()) {
+        return .js_undefined;
+    }
     return js.queriesGetCached(this.js_value) orelse .js_undefined;
 }
 
@@ -1421,7 +1427,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             };
             const pending_value = PostgresSQLQuery.js.pendingValueGetCached(thisValue) orelse .zero;
             pending_value.ensureStillAlive();
-            const result = putter.toJS(
+            const result = try putter.toJS(
                 this.globalObject,
                 pending_value,
                 structure,
@@ -1675,14 +1681,14 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
                     first_hasher.update(this.password);
                     first_hasher.update(this.user);
                     first_hasher.final(&first_hash_buf);
-                    const first_hash_str_output = std.fmt.bufPrint(&first_hash_str, "{x}", .{std.fmt.fmtSliceHexLower(&first_hash_buf)}) catch unreachable;
+                    const first_hash_str_output = std.fmt.bufPrint(&first_hash_str, "{x}", .{&first_hash_buf}) catch unreachable;
 
                     // Second hash: md5(first_hash + salt)
                     var final_hasher = bun.sha.MD5.init();
                     final_hasher.update(first_hash_str_output);
                     final_hasher.update(&md5.salt);
                     final_hasher.final(&final_hash_buf);
-                    const final_hash_str_output = std.fmt.bufPrint(&final_hash_str, "{x}", .{std.fmt.fmtSliceHexLower(&final_hash_buf)}) catch unreachable;
+                    const final_hash_str_output = std.fmt.bufPrint(&final_hash_str, "{x}", .{&final_hash_buf}) catch unreachable;
 
                     // Format final password as "md5" + final_hash
                     const final_password = std.fmt.bufPrintZ(&final_password_buf, "md5{s}", .{final_hash_str_output}) catch unreachable;
@@ -1730,7 +1736,7 @@ pub fn on(this: *PostgresSQLConnection, comptime MessageType: @Type(.enum_litera
             }
 
             var request = this.current() orelse {
-                debug("ErrorResponse: {}", .{err});
+                debug("ErrorResponse: {f}", .{err});
                 return error.ExpectedRequest;
             };
             var is_error_owned = true;

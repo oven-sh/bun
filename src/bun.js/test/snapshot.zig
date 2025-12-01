@@ -10,12 +10,13 @@ pub const Snapshots = struct {
     passed: usize = 0,
     failed: usize = 0,
 
-    file_buf: *std.ArrayList(u8),
+    file_buf: *std.array_list.Managed(u8),
     values: *ValuesHashMap,
     counts: *bun.StringHashMap(usize),
     _current_file: ?File = null,
     snapshot_dir_path: ?string = null,
-    inline_snapshots_to_write: *std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(InlineSnapshotToWrite)),
+    inline_snapshots_to_write: *std.AutoArrayHashMap(TestRunner.File.ID, std.array_list.Managed(InlineSnapshotToWrite)),
+    last_error_snapshot_name: ?[]const u8 = null,
 
     pub const InlineSnapshotToWrite = struct {
         line: c_ulong,
@@ -53,7 +54,10 @@ pub const Snapshots = struct {
         return .{ count_entry.key_ptr.*, count_entry.value_ptr.* };
     }
     pub fn getOrPut(this: *Snapshots, expect: *Expect, target_value: []const u8, hint: string) !?string {
-        switch (try this.getSnapshotFile(expect.testScope().?.describe.file_id)) {
+        var buntest_strong = expect.bunTest() orelse return error.SnapshotFailed;
+        defer buntest_strong.deinit();
+        const bunTest = buntest_strong.get();
+        switch (try this.getSnapshotFile(bunTest.file_id)) {
             .result => {},
             .err => |err| {
                 return switch (err.syscall) {
@@ -81,10 +85,23 @@ pub const Snapshots = struct {
         }
 
         // doesn't exist. append to file bytes and add to hashmap.
+        // Prevent snapshot creation in CI environments unless --update-snapshots is used
+        if (bun.ci.isCI()) {
+            if (!this.update_snapshots) {
+                // Store the snapshot name for error reporting
+                if (this.last_error_snapshot_name) |old_name| {
+                    this.allocator.free(old_name);
+                    this.last_error_snapshot_name = null;
+                }
+                this.last_error_snapshot_name = try this.allocator.dupe(u8, name_with_counter);
+                return error.SnapshotCreationNotAllowedInCI;
+            }
+        }
+
         const estimated_length = "\nexports[`".len + name_with_counter.len + "`] = `".len + target_value.len + "`;\n".len;
         try this.file_buf.ensureUnusedCapacity(estimated_length + 10);
         try this.file_buf.writer().print(
-            "\nexports[`{}`] = `{}`;\n",
+            "\nexports[`{f}`] = `{f}`;\n",
             .{
                 strings.formatEscapes(name_with_counter, .{ .quote_char = '`' }),
                 strings.formatEscapes(target_value, .{ .quote_char = '`' }),
@@ -196,7 +213,7 @@ pub const Snapshots = struct {
     pub fn addInlineSnapshotToWrite(self: *Snapshots, file_id: TestRunner.File.ID, value: InlineSnapshotToWrite) !void {
         const gpres = try self.inline_snapshots_to_write.getOrPut(file_id);
         if (!gpres.found_existing) {
-            gpres.value_ptr.* = std.ArrayList(InlineSnapshotToWrite).init(self.allocator);
+            gpres.value_ptr.* = std.array_list.Managed(InlineSnapshotToWrite).init(self.allocator);
         }
         try gpres.value_ptr.append(value);
     }
@@ -244,7 +261,7 @@ pub const Snapshots = struct {
 
             const source = &bun.logger.Source.initPathString(test_filename, file_text);
 
-            var result_text = std.ArrayList(u8).init(arena);
+            var result_text = std.array_list.Managed(u8).init(arena);
 
             // 3. start looping, finding bytes from line/col
 
@@ -252,9 +269,17 @@ pub const Snapshots = struct {
             var last_byte: usize = 0;
             var last_line: c_ulong = 1;
             var last_col: c_ulong = 1;
+            var last_value: []const u8 = "";
             for (ils_info.items) |ils| {
                 if (ils.line == last_line and ils.col == last_col) {
-                    try log.addErrorFmt(source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Multiple inline snapshots for the same call are not supported", .{});
+                    if (!bun.strings.eql(ils.value, last_value)) {
+                        const DiffFormatter = @import("./diff_format.zig").DiffFormatter;
+                        try log.addErrorFmt(source, .{ .start = @intCast(uncommitted_segment_end) }, arena, "Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value:\n{f}", .{DiffFormatter{
+                            .received_string = ils.value,
+                            .expected_string = last_value,
+                            .globalThis = vm.global,
+                        }});
+                    }
                     continue;
                 }
 
@@ -269,6 +294,7 @@ pub const Snapshots = struct {
                 last_byte += byte_offset_add;
                 last_line = ils.line;
                 last_col = ils.col;
+                last_value = ils.value;
 
                 var next_start = last_byte;
                 inline_snapshot_dbg("-> Found byte {}", .{next_start});
@@ -392,7 +418,7 @@ pub const Snapshots = struct {
                     break :D source_until_final_start[line_start..][0..indent_count];
                 };
 
-                var re_indented_string = std.ArrayList(u8).init(arena);
+                var re_indented_string = std.array_list.Managed(u8).init(arena);
                 defer re_indented_string.deinit();
                 const re_indented = if (ils.value.len > 0 and ils.value[0] == '\n') blk: {
                     // append starting newline

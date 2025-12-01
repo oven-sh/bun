@@ -1,5 +1,6 @@
-import { YAML } from "bun";
+import { YAML, file } from "bun";
 import { describe, expect, test } from "bun:test";
+import { join } from "path";
 
 describe("Bun.YAML", () => {
   describe("parse", () => {
@@ -493,6 +494,58 @@ document: 2
       expect(YAML.parse(yaml)).toEqual([{ document: 1 }, { document: 2 }]);
     });
 
+    test("document markers in quoted strings", () => {
+      const inputs = [
+        { expected: "hi ... hello", input: '"hi ... hello"' },
+        { expected: "hi ... hello", input: "'hi ... hello'" },
+        { expected: { foo: "hi ... hello" }, input: 'foo: "hi ... hello"' },
+        { expected: { foo: "hi ... hello" }, input: "foo: 'hi ... hello'" },
+        {
+          expected: "hi ... hello",
+          input: `"hi
+  ...
+  hello"`,
+        },
+        {
+          expected: "hi ... hello",
+          input: `'hi
+  ...
+  hello'`,
+        },
+        {
+          expected: { foo: "hi ... hello" },
+          input: `foo: "hi
+  ...
+  hello"`,
+        },
+        {
+          expected: { foo: "hi ... hello" },
+          input: `foo: 'hi
+  ...
+  hello'`,
+        },
+        {
+          expected: { foo: { bar: "hi ... hello" } },
+          input: `foo:
+  bar: "hi
+    ...
+    hello"`,
+        },
+        {
+          expected: { foo: { bar: "hi ... hello" } },
+          input: `foo:
+  bar: 'hi
+    ...
+    hello'`,
+        },
+      ];
+
+      for (const { input, expected } of inputs) {
+        expect(YAML.parse(input)).toEqual(expected);
+        expect(YAML.parse(YAML.stringify(YAML.parse(input)))).toEqual(expected);
+      }
+    });
+
     test("handles multiline strings", () => {
       const yaml = `
 literal: |
@@ -539,9 +592,9 @@ null_value: null
     });
 
     test("throws on invalid YAML", () => {
-      expect(() => YAML.parse("[ invalid")).toThrow();
-      expect(() => YAML.parse("{ key: value")).toThrow();
-      expect(() => YAML.parse(":\n :  - invalid")).toThrow();
+      expect(() => YAML.parse("[ invalid")).toThrow(SyntaxError);
+      expect(() => YAML.parse("{ key: value")).toThrow(SyntaxError);
+      expect(() => YAML.parse(":\n :  - invalid")).toThrow(SyntaxError);
     });
 
     test("handles dates and timestamps", () => {
@@ -700,6 +753,189 @@ production:
           host: "prod.example.com",
           database: "prod_db",
         },
+      });
+    });
+
+    test("issue 22659", () => {
+      const input1 = `- test2: next
+  test1: +`;
+      expect(YAML.parse(input1)).toMatchInlineSnapshot(`
+        [
+          {
+            "test1": "+",
+            "test2": "next",
+          },
+        ]
+      `);
+      const input2 = `- test1: +
+  test2: next`;
+      expect(YAML.parse(input2)).toMatchInlineSnapshot(`
+        [
+          {
+            "test1": "+",
+            "test2": "next",
+          },
+        ]
+      `);
+    });
+
+    test("issue 22392", () => {
+      const input = `
+foo: "some
+  ...
+  string"
+`;
+      expect(YAML.parse(input)).toMatchInlineSnapshot(`
+        {
+          "foo": "some ... string",
+        }
+      `);
+    });
+
+    test("issue 22286", async () => {
+      const input1 = `
+my_anchor: &MyAnchor "MyAnchor"
+
+my_config:
+  *MyAnchor :
+    some_key: "some_value"
+`;
+      expect(YAML.parse(input1)).toMatchInlineSnapshot(`
+        {
+          "my_anchor": "MyAnchor",
+          "my_config": {
+            "MyAnchor": {
+              "some_key": "some_value",
+            },
+          },
+        }
+      `);
+      const input2 = await file(join(import.meta.dir, "fixtures", "AHatInTime.yaml")).text();
+      expect(YAML.parse(input2)).toMatchSnapshot();
+    });
+
+    test("handles YAML bombs", () => {
+      function buildTest(depth) {
+        const lines: string[] = [];
+        lines.push(`a0: &a0\n  k0: 0`);
+        for (let i = 1; i <= depth; i++) {
+          const refs = Array.from({ length: i }, (_, j) => `*a${j}`).join(", ");
+          lines.push(`a${i}: &a${i}\n  <<: [${refs}]\n  k${i}: ${i}`);
+        }
+        lines.push(`root:\n  <<: *a${depth}`);
+        const input = lines.join("\n");
+
+        const expected: any = {};
+        for (let i = 0; i <= depth; i++) {
+          const record = {};
+          for (let j = 0; j <= i; j++) record[`k${j}`] = j;
+          expected[`a${i}`] = record;
+        }
+        expected.root = { ...expected[`a${depth}`] };
+
+        return { input, expected };
+      }
+
+      const { input, expected } = buildTest(24);
+
+      expect(YAML.parse(input)).toEqual(expected);
+    }, 100);
+
+    describe("merge keys", () => {
+      test("merge overrides", () => {
+        const input = `
+---
+- &CENTER { x: 1, 'y': 2 }
+- &LEFT { x: 0, 'y': 2 }
+- &BIG { r: 10 }
+- &SMALL { r: 1 }
+
+# All the following maps are equal:
+
+- # Explicit keys
+  x: 1
+  'y': 2
+  r: 10
+  label: center/big
+
+- # Merge one map
+  << : *CENTER
+  r: 10
+  label: center/big
+
+- # Merge multiple maps
+  << : [ *CENTER, *BIG ]
+  label: center/big
+
+- # Override
+  << : [ *BIG, *LEFT, *SMALL ]
+  x: 1
+  label: center/big
+  `;
+
+        const expected = [
+          { x: 1, y: 2 },
+          { x: 0, y: 2 },
+          { r: 10 },
+          { r: 1 },
+          { x: 1, y: 2, r: 10, label: "center/big" },
+          { x: 1, y: 2, r: 10, label: "center/big" },
+          { x: 1, y: 2, r: 10, label: "center/big" },
+          { x: 1, y: 2, r: 10, label: "center/big" },
+        ];
+
+        expect(YAML.parse(input)).toEqual(expected);
+      });
+
+      test("duplicate merge key", () => {
+        const input = `
+---
+<<: {x: 1, y: 2}
+foo: bar
+<<: {z: 3, t: 4}
+`;
+
+        expect(YAML.parse(input)).toEqual({
+          x: 1,
+          y: 2,
+          z: 3,
+          t: 4,
+          foo: "bar",
+        });
+      });
+
+      test("duplicate keys from the same anchor", () => {
+        let input = `
+defaults: &d
+  foo: 1
+  foo: 2
+config:
+  <<: *d`;
+        expect(YAML.parse(input)).toEqual({
+          defaults: {
+            foo: 2,
+          },
+          config: {
+            foo: 2,
+          },
+        });
+
+        // Can still override
+        input = `
+defaults: &d
+  foo: 1
+  foo: 2
+config:
+  <<: *d
+  foo: 3`;
+        expect(YAML.parse(input)).toEqual({
+          defaults: {
+            foo: 2,
+          },
+          config: {
+            foo: 3,
+          },
+        });
       });
     });
   });
@@ -979,6 +1215,40 @@ production:
       });
     });
 
+    const indicatorQuotingTests = [
+      "-",
+      "?",
+      ":",
+      ",",
+      "[",
+      "]",
+      "{",
+      "}",
+      "#",
+      "&",
+      "*",
+      "!",
+      "|",
+      ">",
+      "'",
+      '"',
+      "%",
+      "@",
+      "`",
+      " ",
+      "\t",
+      "\n",
+      "\r",
+    ];
+
+    for (const indicatorOrWhitespace of indicatorQuotingTests) {
+      test(`round-trip string starting with '${indicatorOrWhitespace}'`, () => {
+        const array = [{ key: indicatorOrWhitespace }];
+        expect(YAML.parse(YAML.stringify(array))).toEqual(array);
+        expect(YAML.parse(YAML.stringify(array, null, 2))).toEqual(array);
+      });
+    }
+
     test("strings are properly referenced", () => {
       const config = {
         version: "1.0",
@@ -1184,6 +1454,11 @@ production:
         // Octal numbers
         expect(YAML.stringify("0o777")).toBe('"0o777"');
         expect(YAML.stringify("0O644")).toBe('"0O644"');
+
+        // Zero prefix
+        expect(YAML.stringify({ a: "011", b: "110" })).toBe('{a: "011",b: "110"}');
+        expect(YAML.stringify(YAML.parse('"0123"'))).toBe('"0123"');
+        expect(YAML.stringify("0000123")).toBe('"0000123"');
       });
 
       test("quotes strings with colons followed by spaces", () => {

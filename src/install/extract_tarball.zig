@@ -146,9 +146,9 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
     };
 
     var resolved: string = "";
-    const tmpname = try FileSystem.instance.tmpname(basename[0..@min(basename.len, 32)], std.mem.asBytes(&tmpname_buf), bun.fastRandom());
+    const tmpname = try FileSystem.tmpname(basename[0..@min(basename.len, 32)], std.mem.asBytes(&tmpname_buf), bun.fastRandom());
     {
-        var extract_destination = bun.MakePath.makeOpenPath(tmpdir, bun.span(tmpname), .{}) catch |err| {
+        var extract_destination = bun.MakePath.makeOpenPath(tmpdir, tmpname, .{}) catch |err| {
             log.addErrorFmt(
                 null,
                 logger.Loc.Empty,
@@ -212,8 +212,8 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                     null,
                     logger.Loc.Empty,
                     bun.default_allocator,
-                    "{s} decompressing \"{s}\" to \"{}\"",
-                    .{ @errorName(err), name, bun.fmt.fmtPath(u8, std.mem.span(tmpname), .{}) },
+                    "{s} decompressing \"{s}\" to \"{f}\"",
+                    .{ @errorName(err), name, bun.fmt.fmtPath(u8, tmpname, .{}) },
                 ) catch unreachable;
                 return error.InstallFailed;
             };
@@ -222,7 +222,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         if (PackageManager.verbose_install) {
             const decompressing_ended_at: u64 = bun.getRoughTickCount().ns();
             const elapsed = decompressing_ended_at - time_started_for_verbose_logs;
-            Output.prettyErrorln("[{s}] Extract {s}<r> (decompressed {} tgz file in {})", .{ name, tmpname, bun.fmt.size(tgz_bytes.len, .{}), std.fmt.fmtDuration(elapsed) });
+            Output.prettyErrorln("[{s}] Extract {s}<r> (decompressed {f} tgz file in {D})", .{ name, tmpname, bun.fmt.size(tgz_bytes.len, .{}), elapsed });
         }
 
         switch (this.resolution.tag) {
@@ -284,7 +284,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
 
         if (PackageManager.verbose_install) {
             const elapsed = bun.getRoughTickCount().ns() - time_started_for_verbose_logs;
-            Output.prettyErrorln("[{s}] Extracted to {s} ({})<r>", .{ name, tmpname, std.fmt.fmtDuration(elapsed) });
+            Output.prettyErrorln("[{s}] Extracted to {s} ({D})<r>", .{ name, tmpname, elapsed });
             Output.flush();
         }
     }
@@ -315,9 +315,8 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         const path_to_use = path2;
 
         while (true) {
-            const dir_to_move = bun.sys.openDirAtWindowsA(.fromStdDir(this.temp_dir), bun.span(tmpname), .{
+            const dir_to_move = bun.sys.openDirAtWindowsA(.fromStdDir(this.temp_dir), tmpname, .{
                 .can_rename_or_delete = true,
-                .create = false,
                 .iterable = false,
                 .read_only = true,
             }).unwrap() catch |err| {
@@ -348,7 +347,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                                 // and then delete that temp dir
                                 // The goal is to make it more difficult for an application to reach this folder
                                 var tmpname_bytes = std.mem.asBytes(&tmpname_buf);
-                                const tmpname_len = std.mem.sliceTo(tmpname, 0).len;
+                                const tmpname_len = tmpname.len;
 
                                 tmpname_bytes[tmpname_len..][0..4].* = .{ 't', 'm', 'p', 0 };
                                 const tempdest = tmpname_bytes[0 .. tmpname_len + 3 :0];
@@ -375,7 +374,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                         null,
                         logger.Loc.Empty,
                         bun.default_allocator,
-                        "moving \"{s}\" to cache dir failed\n{}\n  From: {s}\n    To: {s}",
+                        "moving \"{s}\" to cache dir failed\n{f}\n  From: {s}\n    To: {s}",
                         .{ name, err, tmpname, folder_name },
                     ) catch unreachable;
                     return error.InstallFailed;
@@ -396,7 +395,6 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         // 2b. Delete the temporary directory version ONLY if we're not using a provided temporary directory
         // 3. If rename still fails, fallback to racily deleting the cache directory version and then renaming the temporary directory version again.
         //
-        const src = bun.sliceTo(tmpname, 0);
 
         if (create_subdir) {
             if (bun.Dirname.dirname(u8, folder_name)) |folder| {
@@ -406,7 +404,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
 
         if (bun.sys.renameatConcurrently(
             .fromStdDir(tmpdir),
-            src,
+            tmpname,
             .fromStdDir(cache_dir),
             folder_name,
             .{ .move_fallback = true },
@@ -415,7 +413,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
                 null,
                 logger.Loc.Empty,
                 bun.default_allocator,
-                "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
+                "moving \"{s}\" to cache dir failed: {f}\n  From: {s}\n    To: {s}",
                 .{ name, err, tmpname, folder_name },
             ) catch unreachable;
             return error.InstallFailed;
@@ -497,7 +495,7 @@ fn extract(this: *const ExtractTarball, log: *logger.Log, tgz_bytes: []const u8)
         };
     }
 
-    if (!bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX)) {
+    if (!bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX.get()) {
         // create an index storing each version of a package installed
         if (strings.indexOfChar(basename, '/') == null) create_index: {
             const dest_name = switch (this.resolution.tag) {

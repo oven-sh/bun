@@ -3392,7 +3392,7 @@ private:
         if (is8Bit) {
             if ((end - ptr) < static_cast<int>(length))
                 return false;
-            str = Identifier::fromString(vm, { reinterpret_cast<const LChar*>(ptr), length });
+            str = Identifier::fromString(vm, { reinterpret_cast<const Latin1Character*>(ptr), length });
             ptr += length;
             return true;
         }
@@ -6275,9 +6275,11 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
         for (const auto& property : m_simpleInMemoryPropertyTable) {
             // We **must** clone this so that the atomic flag doesn't get set to true.
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, property.propertyName.isolatedCopy());
-            JSValue value = WTF::switchOn(
-                property.value, [](JSValue value) -> JSValue { return value; },
-                [&](const String& string) -> JSValue { return jsString(vm, string); });
+            JSValue value = std::visit(
+                WTF::makeVisitor(
+                    [](JSValue value) -> JSValue { return value; },
+                    [&](const String& string) -> JSValue { return jsString(vm, string); }),
+                property.value);
             object->putDirect(vm, identifier, value);
         }
 

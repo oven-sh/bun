@@ -64,7 +64,7 @@ pub fn VisitExpr(
             }
             pub fn e_import_meta(p: *P, expr: Expr, in: ExprIn) Expr {
                 // TODO: delete import.meta might not work
-                const is_delete_target = std.meta.activeTag(p.delete_target) == .e_import_meta;
+                const is_delete_target = p.delete_target == .e_import_meta;
 
                 if (p.define.dots.get("meta")) |meta| {
                     for (meta) |define| {
@@ -609,7 +609,8 @@ pub fn VisitExpr(
                                     p.delete_target = dot.data;
                                 }
 
-                                return p.visitExprInOut(dot, in);
+                                // don't call visitExprInOut on `dot` because we've already visited `target` above!
+                                return dot;
                             }
 
                             // Handle property rewrites to ensure things
@@ -640,7 +641,7 @@ pub fn VisitExpr(
                 if (p.options.features.minify_syntax) {
                     if (index.data.as(.e_number)) |number| {
                         if (number.value >= 0 and
-                            number.value < std.math.maxInt(usize) and
+                            number.value < @as(f64, @as(comptime_float, std.math.maxInt(usize))) and
                             @mod(number.value, 1) == 0)
                         {
                             // "foo"[2] -> "o"
@@ -1444,9 +1445,20 @@ pub fn VisitExpr(
                     // Why? Because we *don't* want to check for uses of
                     // `useState` _inside_ React, and we know React uses
                     // commonjs so it will never be `.e_import_identifier`.
-                    e_.target.data == .e_import_identifier) {
+                    check_for_usestate: {
+                        if (e_.target.data == .e_import_identifier) break :check_for_usestate true;
+                        // Also check for `React.useState(...)`
+                        if (e_.target.data == .e_dot and e_.target.data.e_dot.target.data == .e_import_identifier) {
+                            const id = e_.target.data.e_dot.target.data.e_import_identifier;
+                            const name = p.symbols.items[id.ref.innerIndex()].original_name;
+                            break :check_for_usestate bun.strings.eqlComptime(name, "React");
+                        }
+                        break :check_for_usestate false;
+                    }) {
                         bun.assert(p.options.features.server_components.isServerSide());
-                        if (bun.strings.eqlComptime(original_name, "useState")) {
+                        if (!bun.strings.startsWith(p.source.path.pretty, "node_modules") and
+                            bun.strings.eqlComptime(original_name, "useState"))
+                        {
                             p.log.addError(
                                 p.source,
                                 expr.loc,
@@ -1667,4 +1679,4 @@ const options = js_parser.options;
 
 const std = @import("std");
 const List = std.ArrayListUnmanaged;
-const ListManaged = std.ArrayList;
+const ListManaged = std.array_list.Managed;

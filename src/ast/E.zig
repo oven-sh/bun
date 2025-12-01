@@ -498,7 +498,7 @@ pub const Number = struct {
     }
 
     pub fn to(self: Number, comptime T: type) T {
-        return @as(T, @intFromFloat(@min(@max(@trunc(self.value), 0), comptime @min(std.math.floatMax(f64), std.math.maxInt(T)))));
+        return @as(T, @intFromFloat(@min(@max(@trunc(self.value), 0), comptime @min(std.math.floatMax(f64), @as(f64, @as(comptime_float, std.math.maxInt(T)))))));
     }
 
     pub fn jsonStringify(self: *const Number, writer: anytype) !void {
@@ -752,7 +752,7 @@ pub const Object = struct {
     pub fn hasProperty(obj: *const Object, name: string) bool {
         for (obj.properties.slice()) |prop| {
             const key = prop.key orelse continue;
-            if (std.meta.activeTag(key.data) != .e_string) continue;
+            if (key.data != .e_string) continue;
             if (key.data.e_string.eql(string, name)) return true;
         }
         return false;
@@ -762,7 +762,7 @@ pub const Object = struct {
         for (obj.properties.slice(), 0..) |prop, i| {
             const value = prop.value orelse continue;
             const key = prop.key orelse continue;
-            if (std.meta.activeTag(key.data) != .e_string) continue;
+            if (key.data != .e_string) continue;
             const key_str = key.data.e_string;
             if (key_str.eql(string, name)) {
                 return Expr.Query{
@@ -963,7 +963,7 @@ pub const String = struct {
 
     pub fn resolveRopeIfNeeded(this: *String, allocator: std.mem.Allocator) void {
         if (this.next == null or !this.isUTF8()) return;
-        var bytes = bun.handleOom(std.ArrayList(u8).initCapacity(allocator, this.rope_len));
+        var bytes = bun.handleOom(std.array_list.Managed(u8).initCapacity(allocator, this.rope_len));
         bytes.appendSliceAssumeCapacity(this.data);
         var str = this.next;
         while (str) |part| {
@@ -1100,11 +1100,30 @@ pub const String = struct {
     }
 
     pub fn eqlComptime(s: *const String, comptime value: []const u8) bool {
-        bun.assert(s.next == null);
-        return if (s.isUTF8())
-            strings.eqlComptime(s.data, value)
-        else
-            strings.eqlComptimeUTF16(s.slice16(), value);
+        if (!s.isUTF8()) {
+            bun.assertf(s.next == null, "transpiler: utf-16 string is a rope", .{}); // utf-16 strings are not ropes
+            return strings.eqlComptimeUTF16(s.slice16(), value);
+        }
+        if (s.next == null) {
+            // latin-1 or utf-8, non-rope
+            return strings.eqlComptime(s.data, value);
+        }
+
+        // latin-1 or utf-8, rope
+        return eql8Rope(s, value);
+    }
+    fn eql8Rope(s: *const String, value: []const u8) bool {
+        bun.assertf(s.next != null and s.isUTF8(), "transpiler: bad call to eql8Rope", .{});
+        if (s.rope_len != value.len) return false;
+        var i: usize = 0;
+        var next: ?*const String = s;
+        while (next) |current| : (next = current.next) {
+            if (!strings.eqlLong(current.data, value[i..][0..current.data.len], false)) return false;
+            i += current.data.len;
+        }
+        bun.assertf(i == value.len, "transpiler: rope string length mismatch 1", .{});
+        bun.assertf(i == s.rope_len, "transpiler: rope string length mismatch 2", .{});
+        return true;
     }
 
     pub fn hasPrefixComptime(s: *const String, comptime value: anytype) bool {
@@ -1185,16 +1204,14 @@ pub const String = struct {
         }
     }
 
-    pub fn format(s: String, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        comptime bun.assert(fmt.len == 0);
-
+    pub fn format(s: String, writer: *std.Io.Writer) !void {
         try writer.writeAll("E.String");
         if (s.next == null) {
             try writer.writeAll("(");
             if (s.isUTF8()) {
                 try writer.print("\"{s}\"", .{s.data});
             } else {
-                try writer.print("\"{}\"", .{bun.fmt.utf16(s.slice16())});
+                try writer.print("\"{f}\"", .{bun.fmt.utf16(s.slice16())});
             }
             try writer.writeAll(")");
         } else {
@@ -1204,7 +1221,7 @@ pub const String = struct {
                 if (part.isUTF8()) {
                     try writer.print("\"{s}\"", .{part.data});
                 } else {
-                    try writer.print("\"{}\"", .{bun.fmt.utf16(part.slice16())});
+                    try writer.print("\"{f}\"", .{bun.fmt.utf16(part.slice16())});
                 }
                 it = part.next;
                 if (it != null) try writer.writeAll(" ");
@@ -1274,7 +1291,7 @@ pub const Template = struct {
             return Expr.init(E.String, this.head.cooked, loc);
         }
 
-        var parts = std.ArrayList(TemplatePart).initCapacity(allocator, this.parts.len) catch unreachable;
+        var parts = std.array_list.Managed(TemplatePart).initCapacity(allocator, this.parts.len) catch unreachable;
         var head = Expr.init(E.String, this.head.cooked, loc);
         for (this.parts) |part_src| {
             var part = part_src;

@@ -80,11 +80,12 @@ pub const Options = struct {
         };
     }
 
-    inline fn throwBadPort(global: *jsc.JSGlobalObject, port_: jsc.JSValue) bun.JSError {
+    fn throwBadPort(global: *jsc.JSGlobalObject, port_: jsc.JSValue) bun.JSError {
         const ty = global.determineSpecificType(port_) catch {
             return global.ERR(.SOCKET_BAD_PORT, "The \"options.port\" argument must be a valid IP port number.", .{}).throw();
         };
-        return global.ERR(.SOCKET_BAD_PORT, "The \"options.port\" argument must be a valid IP port number. Got {s}.", .{ty}).throw();
+        defer ty.deref();
+        return global.ERR(.SOCKET_BAD_PORT, "The \"options.port\" argument must be a valid IP port number. Got {f}.", .{ty}).throw();
     }
 };
 
@@ -595,7 +596,7 @@ pub const sockaddr = extern union {
     pub fn fmt(self: *const sockaddr, buf: *[inet.INET6_ADDRSTRLEN]u8) [:0]const u8 {
         const addr_src: *const anyopaque = if (self.family() == AF.INET) @ptrCast(&self.sin.addr) else @ptrCast(&self.sin6.addr);
         const formatted = std.mem.sliceTo(ares.ares_inet_ntop(self.family().int(), addr_src, buf, buf.len) orelse {
-            std.debug.panic("Invariant violation: SocketAddress created with invalid IPv6 address ({any})", .{self});
+            std.debug.panic("Invariant violation: SocketAddress created with invalid IPv6 address", .{});
         }, 0);
         if (comptime bun.Environment.isDebug) bun.assertWithLocation(bun.strings.isAllASCII(formatted), @src());
         return formatted;

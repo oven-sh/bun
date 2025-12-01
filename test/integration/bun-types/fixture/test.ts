@@ -79,6 +79,10 @@ describe("bun:test", () => {
   });
 });
 
+test.each([1, 2, 3])("test.each", a => {
+  expectType<1 | 2 | 3>(a);
+});
+
 // inference should work when data is passed directly in
 test.each([
   ["a", true, 5],
@@ -104,9 +108,17 @@ describe.each([
   expectType<boolean>(b);
   expectType<number | string>(c);
 });
+// @ts-expect-error
 describe.each([{ asdf: "asdf" }, { asdf: "asdf" }])("test.each", (a, b, c) => {
+  // this test was wrong because this describe.each call will only have one argument, not three.
+  // it is now marked with ts-expect-error and the fixed test is below.
+});
+describe.each([{ asdf: "asdf" }, { asdf: "asdf" }])("test.each", a => {
   expectType<{ asdf: string }>(a);
-  expectType<{ asdf: string }>(c);
+});
+test.each([{ asdf: "asdf" }, { asdf: "asdf" }])("test.each", (a, done) => {
+  expectType<{ asdf: string }>(a);
+  expectType<(err?: unknown) => void>(done);
 });
 
 // no inference on data
@@ -114,8 +126,11 @@ const data = [
   ["a", true, 5],
   ["b", false, "asdf"],
 ];
-test.each(data)("test.each", arg => {
-  expectType<string | number | boolean>(arg);
+
+test.each(data)("test.each", (a, b, c) => {
+  expectType<string | number | boolean | ((err?: unknown) => void)>(a);
+  expectType<string | number | boolean | ((err?: unknown) => void)>(b);
+  expectType<string | number | boolean | ((err?: unknown) => void)>(c);
 });
 describe.each(data)("test.each", (a, b, c) => {
   expectType<string | number | boolean>(a);
@@ -336,6 +351,35 @@ test("expectTypeOf basic type checks", () => {
 });
 
 mock.clearAllMocks();
+
+test
+  .each([
+    [1, 2, 3],
+    [4, 5, 6],
+  ])
+  .todo("test.each", (a, b, c, done) => {
+    expectType<number>(a);
+    expectType<number>(b);
+    expectType<number>(c);
+    expectType<(err?: unknown) => void>(done);
+  });
+describe.each([
+  [1, 2, 3],
+  [4, 5, 6],
+])("describe.each", (a, b, c) => {
+  expectType<number>(a);
+  expectType<number>(b);
+  expectType<number>(c);
+});
+
+declare let mylist: number[];
+describe.each(mylist)("describe.each", a => {
+  expectTypeOf(a).toBeNumber();
+});
+test.each(mylist)("test.each", (a, done) => {
+  expectTypeOf(a).toBeNumber();
+  expectType<(err?: unknown) => void>(done);
+});
 
 // Advanced use case tests for #18511:
 

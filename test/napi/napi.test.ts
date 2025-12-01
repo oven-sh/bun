@@ -4,7 +4,7 @@ import { readdirSync } from "fs";
 import { bunEnv, bunExe, isCI, isMacOS, isMusl, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
-describe("napi", () => {
+describe.concurrent("napi", () => {
   beforeAll(() => {
     // build gyp
     console.time("Building node-gyp");
@@ -263,6 +263,24 @@ describe("napi", () => {
     it("prevents underflow when unref called on zero refcount", async () => {
       // This tests the fix for napi_reference_unref underflow protection
       await checkSameOutput("test_ref_unref_underflow", []);
+    });
+  });
+
+  describe("napi_create_external_buffer", () => {
+    it("handles empty/null data without throwing", async () => {
+      const result = await checkSameOutput("test_napi_create_external_buffer_empty", []);
+      expect(result).toContain("PASS: napi_create_external_buffer with nullptr and zero length");
+      expect(result).toContain("PASS: napi_create_external_buffer with non-null data and zero length");
+      expect(result).toContain("PASS: napi_create_external_buffer with nullptr finalizer");
+      expect(result).not.toContain("FAIL");
+    });
+
+    it("empty buffer returns null pointer and 0 length from napi_get_buffer_info and napi_get_typedarray_info", async () => {
+      const result = await checkSameOutput("test_napi_empty_buffer_info", []);
+      expect(result).toContain("PASS: napi_get_buffer_info returns null pointer and 0 length for empty buffer");
+      expect(result).toContain("PASS: napi_get_typedarray_info returns null pointer and 0 length for empty buffer");
+      expect(result).toContain("PASS: napi_is_detached_arraybuffer returns true for empty buffer's arraybuffer");
+      expect(result).not.toContain("FAIL");
     });
   });
 
@@ -531,6 +549,14 @@ describe("napi", () => {
     await checkSameOutput("test_deferred_exceptions", []);
   });
 
+  it("behaves as expected when performing operations with numeric string keys", async () => {
+    await checkSameOutput("test_napi_numeric_string_keys", []);
+  });
+
+  it("behaves as expected when performing operations with default values", async () => {
+    await checkSameOutput("test_napi_get_default_values", []);
+  });
+
   it("NAPI finalizer iterator invalidation crash prevention", () => {
     // This test verifies that the DeferGCForAWhile fix prevents iterator invalidation
     // during NAPI finalizer cleanup. While we couldn't reproduce the exact crash
@@ -561,53 +587,57 @@ describe("napi", () => {
     expect(result).toContain("Unrefs succeeded:");
     expect(result).toContain("SUCCESS: napi_reference_unref worked in finalizers without crashing");
     expect(result).toContain("Test completed:");
-  });
+  }, 10_000);
 
   it.todoIf(
     // The test does not properly avoid the non-zero exit code on Windows.
     isWindows,
-  )("napi_reference_unref is blocked from finalizers in experimental modules", async () => {
-    // Experimental NAPI modules should NOT be able to call napi_reference_unref from finalizers
-    // The process should crash/abort when this is attempted
-    // This matches Node.js behavior for experimental modules
+  )(
+    "napi_reference_unref is blocked from finalizers in experimental modules",
+    async () => {
+      // Experimental NAPI modules should NOT be able to call napi_reference_unref from finalizers
+      // The process should crash/abort when this is attempted
+      // This matches Node.js behavior for experimental modules
 
-    // Note: Node.js may not enforce this check for manually-registered experimental modules
-    // (ones that set nm_version to NAPI_VERSION_EXPERIMENTAL manually)
-    // But Bun should still enforce it for safety
+      // Note: Node.js may not enforce this check for manually-registered experimental modules
+      // (ones that set nm_version to NAPI_VERSION_EXPERIMENTAL manually)
+      // But Bun should still enforce it for safety
 
-    // Test with Bun - should crash
-    // Use the wrapper script that kills the process after seeing the crash messages
-    // to avoid hanging on llvm-symbolizer
-    const { BUN_INSPECT_CONNECT_TO: _, ASAN_OPTIONS, ...rest } = bunEnv;
-    const bunProc = spawn({
-      cmd: [bunExe(), join(__dirname, "napi-app/test_experimental_with_timeout.js")],
-      env: {
-        ...rest,
-        BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",
-        // Override ASAN_OPTIONS to disable coredump and symbolization for this specific test
-        // Otherwise ASAN will hang trying to create a core dump or symbolize
-        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0",
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+      // Test with Bun - should crash
+      // Use the wrapper script that kills the process after seeing the crash messages
+      // to avoid hanging on llvm-symbolizer
+      const { BUN_INSPECT_CONNECT_TO: _, ASAN_OPTIONS, ...rest } = bunEnv;
+      const bunProc = spawn({
+        cmd: [bunExe(), join(__dirname, "napi-app/test_experimental_with_timeout.js")],
+        env: {
+          ...rest,
+          BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",
+          // Override ASAN_OPTIONS to disable coredump and symbolization for this specific test
+          // Otherwise ASAN will hang trying to create a core dump or symbolize
+          ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-    const [bunStdout, bunStderr, bunExitCode] = await Promise.all([
-      bunProc.stdout.text(),
-      bunProc.stderr.text(),
-      bunProc.exited,
-    ]);
+      const [bunStdout, bunStderr, bunExitCode] = await Promise.all([
+        bunProc.stdout.text(),
+        bunProc.stderr.text(),
+        bunProc.exited,
+      ]);
 
-    // The wrapper script should exit with 0 if the test passed
-    expect(bunExitCode).toBe(0);
-    expect(bunStdout + bunStderr).toContain("Loading experimental module");
-    expect(bunStdout + bunStderr).toContain("Created");
-    expect(bunStderr).toContain("FATAL ERROR");
-    expect(bunStdout + bunStderr).toContain("TEST PASSED: Process crashed as expected");
+      // The wrapper script should exit with 0 if the test passed
+      expect(bunExitCode).toBe(0);
+      expect(bunStdout + bunStderr).toContain("Loading experimental module");
+      expect(bunStdout + bunStderr).toContain("Created");
+      expect(bunStderr).toContain("FATAL ERROR");
+      expect(bunStdout + bunStderr).toContain("TEST PASSED: Process crashed as expected");
 
-    // The error message should NOT contain "Did not crash"
-    expect(bunStdout + bunStderr).not.toContain("ERROR: Did not crash");
-  });
+      // The error message should NOT contain "Did not crash"
+      expect(bunStdout + bunStderr).not.toContain("ERROR: Did not crash");
+    },
+    25_000,
+  );
 });
 
 async function checkSameOutput(test: string, args: any[] | string, envArgs: Record<string, string> = {}) {
@@ -759,6 +789,6 @@ describe("cleanup hooks", () => {
   describe("duplicate prevention", () => {
     it("should crash on duplicate hooks", async () => {
       await checkBothFail("test_cleanup_hook_duplicates", []);
-    });
+    }, 10_000);
   });
 });

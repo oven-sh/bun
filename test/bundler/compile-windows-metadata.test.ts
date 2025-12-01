@@ -15,7 +15,7 @@ function cleanup(outfile: string) {
   };
 }
 
-describe.skipIf(!isWindows)("Windows compile metadata", () => {
+describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
   describe("CLI flags", () => {
     test("all metadata flags via CLI", async () => {
       using dir = tempDir("windows-metadata-cli", {

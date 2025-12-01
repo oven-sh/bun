@@ -50,7 +50,7 @@ pub const PackageManagerCommand = struct {
 
         Output.flush();
         Output.disableBuffering();
-        try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
+        try Output.writer().print("{f}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
         Output.enableBuffering();
         Global.exit(0);
     }
@@ -103,7 +103,7 @@ pub const PackageManagerCommand = struct {
             \\  <d>└<r> <cyan>--quiet<r>                   only output the tarball filename
             \\  <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder
             \\  <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder
-            \\  <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile
+            \\  <b><green>bun<r> <blue>list<r>                  list the dependency tree according to the current lockfile
             \\  <d>└<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
             \\  <b><green>bun pm<r> <blue>why<r> <d>\<pkg\><r>            show dependency tree explaining why a package is installed
             \\  <b><green>bun pm<r> <blue>whoami<r>               print the current npm username
@@ -111,7 +111,7 @@ pub const PackageManagerCommand = struct {
             \\  <b><green>bun pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag
             \\  <d>└<r> <cyan>increment<r>                 patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific version
             \\  <b><green>bun pm<r> <blue>pkg<r>                  manage data in package.json
-            \\  <d>├<r> <cyan>get<r> <d>[key ...]<r> 
+            \\  <d>├<r> <cyan>get<r> <d>[key ...]<r>
             \\  <d>├<r> <cyan>set<r> <d>key=value ...<r>
             \\  <d>├<r> <cyan>delete<r> <d>key ...<r>
             \\  <d>└<r> <cyan>fix<r>                       auto-correct common package.json errors
@@ -138,6 +138,10 @@ pub const PackageManagerCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         var args = try std.process.argsAlloc(ctx.allocator);
         args = args[1..];
+
+        // Check if we're being invoked directly as "bun whoami" instead of "bun pm whoami"
+        const is_direct_whoami = if (bun.argv.len > 1) strings.eqlComptime(bun.argv[1], "whoami") else false;
+
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .pm);
         var pm, const cwd = PackageManager.init(ctx, cli, PackageManager.Subcommand.pm) catch |err| {
             if (err == error.MissingPackageJSON) {
@@ -154,7 +158,13 @@ pub const PackageManagerCommand = struct {
         };
         defer ctx.allocator.free(cwd);
 
-        const subcommand = getSubcommand(&pm.options.positionals);
+        var subcommand = if (is_direct_whoami) "whoami" else getSubcommand(&pm.options.positionals);
+
+        // Normalize "list" to "ls" (handles both "bun list" and "bun pm list")
+        if (strings.eqlComptime(subcommand, "list")) {
+            subcommand = "ls";
+        }
+
         if (pm.options.global) {
             try pm.setupGlobalDir(ctx);
         }
@@ -173,7 +183,7 @@ pub const PackageManagerCommand = struct {
                         Output.errGeneric("missing authentication (run <cyan>`bunx npm login`<r>)", .{});
                     },
                     error.ProbablyInvalidAuth => {
-                        Output.errGeneric("failed to authenticate with registry '{}'", .{
+                        Output.errGeneric("failed to authenticate with registry '{f}'", .{
                             bun.fmt.redactedNpmUrl(pm.options.scope.url.href),
                         });
                     },
@@ -196,7 +206,7 @@ pub const PackageManagerCommand = struct {
             if (pm.options.global) {
                 warner: {
                     if (Output.enable_ansi_colors_stderr) {
-                        if (bun.getenvZ("PATH")) |path| {
+                        if (bun.env_var.PATH.get()) |path| {
                             var path_iter = std.mem.tokenizeScalar(u8, path, std.fs.path.delimiter);
                             while (path_iter.next()) |entry| {
                                 if (strings.eql(entry, output_path)) {
@@ -220,7 +230,7 @@ pub const PackageManagerCommand = struct {
 
             Output.flush();
             Output.disableBuffering();
-            try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
+            try Output.writer().print("{f}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-print")) {
@@ -229,7 +239,7 @@ pub const PackageManagerCommand = struct {
 
             Output.flush();
             Output.disableBuffering();
-            try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
+            try Output.writer().print("{f}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-string")) {
@@ -316,7 +326,7 @@ pub const PackageManagerCommand = struct {
 
             var max_depth: usize = 0;
 
-            var directories = std.ArrayList(NodeModulesFolder).init(ctx.allocator);
+            var directories = std.array_list.Managed(NodeModulesFolder).init(ctx.allocator);
             defer directories.deinit();
             while (iterator.next(null)) |node_modules| {
                 const path_len = node_modules.relative_path.len;
@@ -335,6 +345,10 @@ pub const PackageManagerCommand = struct {
                     .tree_id = node_modules.tree_id,
                     .depth = node_modules.depth,
                 });
+            }
+
+            if (directories.items.len == 0) {
+                return;
             }
 
             const first_directory = directories.orderedRemove(0);
@@ -375,9 +389,9 @@ pub const PackageManagerCommand = struct {
                     const resolution = resolutions[package_id].fmt(string_bytes, .auto);
 
                     if (index < sorted_dependencies.len - 1) {
-                        Output.prettyln("<d>├──<r> {s}<r><d>@{any}<r>\n", .{ name, resolution });
+                        Output.prettyln("<d>├──<r> {s}<r><d>@{f}<r>\n", .{ name, resolution });
                     } else {
-                        Output.prettyln("<d>└──<r> {s}<r><d>@{any}<r>\n", .{ name, resolution });
+                        Output.prettyln("<d>└──<r> {s}<r><d>@{f}<r>\n", .{ name, resolution });
                     }
                 }
             }
@@ -447,7 +461,7 @@ fn printNodeModulesFolderStructure(
     directory: *const NodeModulesFolder,
     directory_package_id: ?PackageID,
     depth: usize,
-    directories: *std.ArrayList(NodeModulesFolder),
+    directories: *std.array_list.Managed(NodeModulesFolder),
     lockfile: *Lockfile,
     more_packages: []bool,
 ) !void {
@@ -486,7 +500,7 @@ fn printNodeModulesFolderStructure(
                     }
                 }
             }
-            const directory_version = try std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[id].fmt(string_bytes, .auto)});
+            const directory_version = try std.fmt.bufPrint(&resolution_buf, "{f}", .{resolutions[id].fmt(string_bytes, .auto)});
             if (std.mem.indexOf(u8, path, "node_modules")) |j| {
                 Output.prettyln("{s}<d>@{s}<r>", .{ path[0 .. j - 1], directory_version });
             } else {
@@ -522,6 +536,12 @@ fn printNodeModulesFolderStructure(
         }
 
         const package_id = lockfile.buffers.resolutions.items[dependency_id];
+
+        if (package_id >= lockfile.packages.len) {
+            // in case we are loading from a binary lockfile with invalid package ids
+            continue;
+        }
+
         var dir_index: usize = 0;
         var found_node_modules = false;
         while (dir_index < directories.items.len) : (dir_index += 1) {
@@ -561,7 +581,7 @@ fn printNodeModulesFolderStructure(
         }
 
         var resolution_buf: [512]u8 = undefined;
-        const package_version = try std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[package_id].fmt(string_bytes, .auto)});
+        const package_version = try std.fmt.bufPrint(&resolution_buf, "{f}", .{resolutions[package_id].fmt(string_bytes, .auto)});
         Output.prettyln("{s}<d>@{s}<r>", .{ package_name, package_version });
     }
 }
@@ -579,12 +599,6 @@ const PmPkgCommand = @import("./pm_pkg_command.zig").PmPkgCommand;
 const PmVersionCommand = @import("./pm_version_command.zig").PmVersionCommand;
 const PmWhyCommand = @import("./pm_why_command.zig").PmWhyCommand;
 
-const Install = @import("../install/install.zig");
-const DependencyID = Install.DependencyID;
-const Npm = Install.Npm;
-const PackageID = Install.PackageID;
-const PackageManager = Install.PackageManager;
-
 const DefaultTrustedCommand = @import("./pm_trusted_command.zig").DefaultTrustedCommand;
 const TrustCommand = @import("./pm_trusted_command.zig").TrustCommand;
 const UntrustedCommand = @import("./pm_trusted_command.zig").UntrustedCommand;
@@ -596,3 +610,9 @@ const Output = bun.Output;
 const log = bun.log;
 const strings = bun.strings;
 const File = bun.sys.File;
+
+const install = bun.install;
+const DependencyID = install.DependencyID;
+const Npm = install.Npm;
+const PackageID = install.PackageID;
+const PackageManager = install.PackageManager;

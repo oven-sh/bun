@@ -1,29 +1,28 @@
-import { spawnSync } from "bun";
+import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { existsSync, mkdtempSync, realpathSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-describe.each(["why", "pm why"])("bun %s", cmd => {
-  let package_dir: string;
-  let i = 0;
+let package_dir: string;
+let i = 0;
+beforeAll(async () => {
+  const base = mkdtempSync(join(realpathSync(tmpdir()), "why-test-"));
 
-  beforeAll(async () => {
-    const base = mkdtempSync(join(realpathSync(tmpdir()), "why-test-"));
+  package_dir = join(base, `why-test-${Math.random().toString(36).slice(2)}`);
+  await mkdir(package_dir, { recursive: true });
+});
 
-    package_dir = join(base, `why-test-${Math.random().toString(36).slice(2)}`);
-    await mkdir(package_dir, { recursive: true });
-  });
+afterAll(async () => {
+  if (existsSync(package_dir)) {
+    await rm(package_dir, { recursive: true, force: true });
+  }
+});
 
-  afterAll(async () => {
-    if (existsSync(package_dir)) {
-      await rm(package_dir, { recursive: true, force: true });
-    }
-  });
-
-  function setupTestWithDependencies() {
+describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
+  async function setupTestWithDependencies() {
     const testDir = tempDirWithFiles(`why-${i++}`, {
       "package.json": JSON.stringify(
         {
@@ -42,16 +41,18 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
       ),
     });
 
-    spawnSync({
+    const install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
       cwd: testDir,
       env: bunEnv,
     });
 
+    expect(await install.exited).toBe(0);
+
     return testDir;
   }
 
-  function setupComplexDependencyTree() {
+  async function setupComplexDependencyTree() {
     const testDir = tempDirWithFiles(`why-complex-${i++}`, {
       "package.json": JSON.stringify(
         {
@@ -72,19 +73,23 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
       ),
     });
 
-    spawnSync({
+    const install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
       cwd: testDir,
       env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
     });
+
+    expect(await install.exited).toBe(0);
 
     return testDir;
   }
 
   it("should show help when no package is specified", async () => {
-    const testDir = setupTestWithDependencies();
+    const testDir = await setupTestWithDependencies();
 
-    const { stdout, exitCode } = spawnSync({
+    const { stdout, exited } = spawn({
       cmd: [bunExe(), ...cmd.split(" ")],
       cwd: testDir,
       env: bunEnv,
@@ -92,41 +97,40 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
       stderr: "pipe",
     });
 
-    expect(stdout.toString()).toContain(`bun why v${Bun.version.replace("-debug", "")}`);
-    expect(exitCode).toBe(1);
+    expect(await stdout.text()).toContain(`bun why v${Bun.version.replace("-debug", "")}`);
+    expect(await exited).toBe(1);
   });
 
   it("should show direct dependency", async () => {
-    await writeFile(
-      join(package_dir, "package.json"),
-      JSON.stringify({
+    const tempDir = tempDirWithFiles(`why-direct-dependency-${i++}`, {
+      "package.json": JSON.stringify({
         name: "foo",
         version: "0.0.1",
         dependencies: {
           lodash: "^4.17.21",
         },
       }),
-    );
+    });
 
-    const install = spawnSync({
+    const install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: package_dir,
+      cwd: tempDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect(install.exitCode).toBe(0);
+    expect(await install.exited).toBe(0);
 
-    const { stdout, exitCode } = spawnSync({
+    const { stdout, exited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "lodash"],
-      cwd: package_dir,
+      cwd: tempDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
 
-    expect(exitCode).toBe(0);
-    const output = stdout.toString();
+    expect(await exited).toBe(0);
+    const output = await stdout.text();
 
     expect(output).toContain("lodash@");
     expect(output).toContain("foo");
@@ -134,36 +138,35 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
   });
 
   it("should show nested dependencies", async () => {
-    await writeFile(
-      join(package_dir, "package.json"),
-      JSON.stringify({
+    const tempDir = tempDirWithFiles(`why-nested-${i++}`, {
+      "package.json": JSON.stringify({
         name: "foo",
         version: "0.0.1",
         dependencies: {
           express: "^4.18.2",
         },
       }),
-    );
+    });
 
-    const install = spawnSync({
+    const install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: package_dir,
+      cwd: tempDir,
       env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: "inherit",
+      stderr: "inherit",
     });
-    expect(install.exitCode).toBe(0);
+    expect(await install.exited).toBe(0);
 
-    const { stdout, exitCode } = spawnSync({
+    const { stdout, exited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "mime-types"],
-      cwd: package_dir,
+      cwd: tempDir,
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
 
-    expect(exitCode).toBe(0);
-    const output = stdout.toString();
+    expect(await exited).toBe(0);
+    const output = await stdout.text();
     expect(output).toContain("mime-types@");
 
     expect(output).toContain("accepts@");
@@ -171,94 +174,81 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
   });
 
   it("should handle workspace dependencies", async () => {
-    await writeFile(
-      join(package_dir, "package.json"),
-      JSON.stringify({
+    const tempDir = tempDirWithFiles(`why-workspace-${i++}`, {
+      "package.json": JSON.stringify({
         name: "workspace-root",
         version: "1.0.0",
         workspaces: ["packages/*"],
       }),
-    );
-
-    await mkdir(join(package_dir, "packages", "pkg-a"), { recursive: true });
-    await mkdir(join(package_dir, "packages", "pkg-b"), { recursive: true });
-
-    await writeFile(
-      join(package_dir, "packages", "pkg-a", "package.json"),
-      JSON.stringify({
+      "packages/pkg-a/package.json": JSON.stringify({
         name: "pkg-a",
         version: "1.0.0",
         dependencies: {
           lodash: "^4.17.21",
         },
       }),
-    );
-
-    await writeFile(
-      join(package_dir, "packages", "pkg-b", "package.json"),
-      JSON.stringify({
+      "packages/pkg-b/package.json": JSON.stringify({
         name: "pkg-b",
         version: "1.0.0",
         dependencies: {
           "pkg-a": "workspace:*",
         },
       }),
-    );
+    });
 
-    const install = spawnSync({
+    const install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: package_dir,
+      cwd: tempDir,
       env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: "inherit",
+      stderr: "inherit",
     });
-    expect(install.exitCode).toBe(0);
+    expect(await install.exited).toBe(0);
 
-    const { stdout, exitCode } = spawnSync({
+    const { stdout, exited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "pkg-a"],
-      cwd: package_dir,
+      cwd: tempDir,
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
 
-    expect(exitCode).toBe(0);
-    const output = stdout.toString();
+    expect(await exited).toBe(0);
+    const output = await stdout.text();
     expect(output).toContain("pkg-a@");
     expect(output).toContain("pkg-b@");
   });
 
   it("should handle npm aliases", async () => {
-    await writeFile(
-      join(package_dir, "package.json"),
-      JSON.stringify({
+    const tempDir = tempDirWithFiles(`why-alias-${i++}`, {
+      "package.json": JSON.stringify({
         name: "foo",
         version: "0.0.1",
         dependencies: {
           "alias-pkg": "npm:lodash@^4.17.21",
         },
       }),
-    );
+    });
 
-    const install = spawnSync({
+    const install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: package_dir,
+      cwd: tempDir,
       env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: "inherit",
+      stderr: "inherit",
     });
-    expect(install.exitCode).toBe(0);
+    expect(await install.exited).toBe(0);
 
-    const { stdout, stderr, exitCode } = spawnSync({
+    const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "alias-pkg"],
-      cwd: package_dir,
+      cwd: tempDir,
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
 
-    if (exitCode === 0) {
-      const output = stdout.toString();
+    if ((await exited) === 0) {
+      const output = await stdout.text();
       expect(output).toContain("alias-pkg@");
     } else {
       expect(true).toBe(true);
@@ -266,37 +256,36 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
   });
 
   it("should show error for non-existent package", async () => {
-    await writeFile(
-      join(package_dir, "package.json"),
-      JSON.stringify({
+    const tempDir = tempDirWithFiles(`why-non-existent-${i++}`, {
+      "package.json": JSON.stringify({
         name: "foo",
         version: "0.0.1",
         dependencies: {
           lodash: "^4.17.21",
         },
       }),
-    );
+    });
 
-    const install = spawnSync({
+    const install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: package_dir,
+      cwd: tempDir,
       env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+      stdout: "inherit",
+      stderr: "inherit",
     });
-    expect(install.exitCode).toBe(0);
+    expect(await install.exited).toBe(0);
 
-    const { stdout, stderr, exitCode } = spawnSync({
+    const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "non-existent-package"],
-      cwd: package_dir,
+      cwd: tempDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
 
-    expect(exitCode).toBe(1);
+    expect(await exited).toBe(1);
 
-    const combinedOutput = stdout.toString() + stderr.toString();
+    const combinedOutput = (await stdout.text()) + (await stderr.text());
 
     expect(combinedOutput.includes("No packages matching") || combinedOutput.includes("not found in lockfile")).toBe(
       true,
@@ -304,9 +293,8 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
   });
 
   it("should show dependency types correctly", async () => {
-    await writeFile(
-      join(package_dir, "package.json"),
-      JSON.stringify({
+    const tempDir = tempDirWithFiles(`why-dependency-types-${i++}`, {
+      "package.json": JSON.stringify({
         name: "foo",
         version: "0.0.1",
         dependencies: {
@@ -322,55 +310,54 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
           "chalk": "^5.0.0",
         },
       }),
-    );
+    });
 
-    const install = spawnSync({
+    const install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: package_dir,
+      cwd: tempDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect(install.exitCode).toBe(0);
+    expect(await install.exited).toBe(0);
 
-    const { stdout: devStdout, exitCode: devExited } = spawnSync({
+    const { stdout: devStdout, exited: devExited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "typescript"],
-      cwd: package_dir,
+      cwd: tempDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect(devExited).toBe(0);
-    const devOutput = devStdout.toString();
+    expect(await devExited).toBe(0);
+    const devOutput = await devStdout.text();
     expect(devOutput).toContain("dev");
 
-    const { stdout: peerStdout, exitCode: peerExited } = spawnSync({
+    const { stdout: peerStdout, exited: peerExited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "react"],
-      cwd: package_dir,
+      cwd: tempDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect(peerExited).toBe(0);
-    const peerOutput = peerStdout.toString();
+    expect(await peerExited).toBe(0);
+    const peerOutput = await peerStdout.text();
     expect(peerOutput).toContain("peer");
 
-    const { stdout: optStdout, exitCode: optExited } = spawnSync({
+    const { stdout: optStdout, exited: optExited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "chalk"],
-      cwd: package_dir,
+      cwd: tempDir,
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
-    expect(optExited).toBe(0);
-    const optOutput = optStdout.toString();
+    expect(await optExited).toBe(0);
+    const optOutput = await optStdout.text();
     expect(optOutput).toContain("optional");
   });
 
   it("should handle packages with multiple versions", async () => {
-    await writeFile(
-      join(package_dir, "package.json"),
-      JSON.stringify({
+    const tempDir = tempDirWithFiles(`why-multi-version-${i++}`, {
+      "package.json": JSON.stringify({
         name: "multi-version-test",
         version: "1.0.0",
         dependencies: {
@@ -378,43 +365,43 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
           "old-package": "npm:react@^16.0.0",
         },
       }),
-    );
+    });
 
-    const install = spawnSync({
+    const install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: package_dir,
+      cwd: tempDir,
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
-    expect(install.exitCode).toBe(0);
+    expect(await install.exited).toBe(0);
 
-    const { stdout, exitCode } = spawnSync({
+    const { stdout, exited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "react"],
-      cwd: package_dir,
+      cwd: tempDir,
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
-    expect(exitCode).toBe(0);
-    const output = stdout.toString();
+    expect(await exited).toBe(0);
+    const output = await stdout.text();
 
     expect(output).toContain("react@");
   });
 
   it("should handle deeply nested dependencies", async () => {
-    const testDir = setupComplexDependencyTree();
+    const testDir = await setupComplexDependencyTree();
 
-    const { stdout, exitCode } = spawnSync({
+    const { stdout, exited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "mime-db"],
       cwd: testDir,
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
 
-    expect(exitCode).toBe(0);
-    const output = stdout.toString();
+    expect(await exited).toBe(0);
+    const output = await stdout.text();
 
     expect(output).toContain("mime-db@");
     expect(output).toContain("mime-types@");
@@ -425,26 +412,25 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
   });
 
   it("should support glob patterns for package names", async () => {
-    const testDir = setupComplexDependencyTree();
+    const testDir = await setupComplexDependencyTree();
 
-    const { stdout, exitCode } = spawnSync({
+    const { stdout, exited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "@types/*"],
       cwd: testDir,
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
 
-    expect(exitCode).toBe(0);
-    const output = stdout.toString();
+    expect(await exited).toBe(0);
+    const output = await stdout.text();
     expect(output).toContain("@types/");
     expect(output).toContain("dev");
   });
 
   it("should support version constraints in the query", async () => {
-    await writeFile(
-      join(package_dir, "package.json"),
-      JSON.stringify({
+    const tempDir = tempDirWithFiles(`why-version-test-${i++}`, {
+      "package.json": JSON.stringify({
         name: "version-test",
         version: "1.0.0",
         dependencies: {
@@ -452,27 +438,27 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
           "lodash": "^4.17.21",
         },
       }),
-    );
+    });
 
-    const install = spawnSync({
+    const install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: package_dir,
+      cwd: tempDir,
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
-    expect(install.exitCode).toBe(0);
+    expect(await install.exited).toBe(0);
 
-    const { stdout, exitCode } = spawnSync({
+    const { stdout, exited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "react@^18.0.0"],
-      cwd: package_dir,
+      cwd: tempDir,
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
 
-    if (exitCode === 0) {
-      const output = stdout.toString();
+    if ((await exited) === 0) {
+      const output = await stdout.text();
       expect(output).toContain("react@");
     } else {
       expect(true).toBe(true);
@@ -480,71 +466,54 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
   });
 
   it("should handle nested workspaces", async () => {
-    await writeFile(
-      join(package_dir, "package.json"),
-      JSON.stringify({
+    const tempDir = tempDirWithFiles(`why-workspace-${i++}`, {
+      "package.json": JSON.stringify({
         name: "workspace-root",
         version: "1.0.0",
         workspaces: ["packages/*", "apps/*"],
       }),
-    );
-
-    await mkdir(join(package_dir, "packages", "pkg-a"), { recursive: true });
-    await mkdir(join(package_dir, "packages", "pkg-b"), { recursive: true });
-    await mkdir(join(package_dir, "apps", "app-a"), { recursive: true });
-
-    await writeFile(
-      join(package_dir, "packages", "pkg-a", "package.json"),
-      JSON.stringify({
+      "packages/pkg-a/package.json": JSON.stringify({
         name: "pkg-a",
         version: "1.0.0",
         dependencies: {
           lodash: "^4.17.21",
         },
       }),
-    );
-
-    await writeFile(
-      join(package_dir, "packages", "pkg-b", "package.json"),
-      JSON.stringify({
+      "packages/pkg-b/package.json": JSON.stringify({
         name: "pkg-b",
         version: "1.0.0",
         dependencies: {
           "pkg-a": "workspace:*",
         },
       }),
-    );
-
-    await writeFile(
-      join(package_dir, "apps", "app-a", "package.json"),
-      JSON.stringify({
+      "apps/app-a/package.json": JSON.stringify({
         name: "app-a",
         version: "1.0.0",
         dependencies: {
           "pkg-b": "workspace:*",
         },
       }),
-    );
+    });
 
-    const install = spawnSync({
+    const install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: package_dir,
+      cwd: tempDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect(install.exitCode).toBe(0);
+    expect(await install.exited).toBe(0);
 
-    const { stdout, exitCode } = spawnSync({
+    const { stdout, exited } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "lodash"],
-      cwd: package_dir,
+      cwd: tempDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
 
-    expect(exitCode).toBe(0);
-    const output = stdout.toString();
+    expect(await exited).toBe(0);
+    const output = await stdout.text();
     expect(output).toContain("lodash@");
     expect(output).toContain("pkg-a");
 
@@ -553,38 +522,38 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
   });
 
   it("should support the --top flag to limit dependency tree depth", async () => {
-    const testDir = setupComplexDependencyTree();
+    const tempDir = await setupComplexDependencyTree();
 
-    const { stdout: stdoutWithTop, exitCode: exitedWithTop } = spawnSync({
+    const { stdout: stdoutWithTop, exited: exitedWithTop } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "mime-db", "--top"],
-      cwd: testDir,
+      cwd: tempDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
 
-    expect(exitedWithTop).toBe(0);
-    const outputWithTop = stdoutWithTop.toString();
+    expect(await exitedWithTop).toBe(0);
+    const outputWithTop = await stdoutWithTop.text();
 
-    const { stdout: stdoutWithoutTop, exitCode: exitedWithoutTop } = spawnSync({
+    const { stdout: stdoutWithoutTop, exited: exitedWithoutTop } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "mime-db"],
-      cwd: testDir,
+      cwd: tempDir,
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
 
-    expect(exitedWithoutTop).toBe(0);
-    const outputWithoutTop = stdoutWithoutTop.toString();
+    expect(await exitedWithoutTop).toBe(0);
+    const outputWithoutTop = await stdoutWithoutTop.text();
 
     expect(outputWithTop.length).toBeGreaterThan(0);
     expect(outputWithoutTop.length).toBeGreaterThan(0);
   });
 
   it("should support the --depth flag to limit dependency tree depth", async () => {
-    const testDir = setupComplexDependencyTree();
+    const testDir = await setupComplexDependencyTree();
 
-    const { stdout: stdoutDepth2, exitCode: exitedDepth2 } = spawnSync({
+    const { stdout: stdoutDepth2, exited: exitedDepth2 } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "mime-db", "--depth", "2"],
       cwd: testDir,
       env: bunEnv,
@@ -592,10 +561,10 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
       stderr: "pipe",
     });
 
-    expect(exitedDepth2).toBe(0);
-    const outputDepth2 = stdoutDepth2.toString();
+    expect(await exitedDepth2).toBe(0);
+    const outputDepth2 = await stdoutDepth2.text();
 
-    const { stdout: stdoutNoDepth, exitCode: exitedNoDepth } = spawnSync({
+    const { stdout: stdoutNoDepth, exited: exitedNoDepth } = spawn({
       cmd: [bunExe(), ...cmd.split(" "), "mime-db"],
       cwd: testDir,
       env: bunEnv,
@@ -603,8 +572,8 @@ describe.each(["why", "pm why"])("bun %s", cmd => {
       stderr: "pipe",
     });
 
-    expect(exitedNoDepth).toBe(0);
-    const outputNoDepth = stdoutNoDepth.toString();
+    expect(await exitedNoDepth).toBe(0);
+    const outputNoDepth = await stdoutNoDepth.text();
 
     expect(outputDepth2.split("\n").length).toBeLessThan(outputNoDepth.split("\n").length);
 

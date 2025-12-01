@@ -32,6 +32,7 @@ function Agent(options): void {
   this.requests = { __proto__: null };
   this.sockets = { __proto__: null };
   this.freeSockets = { __proto__: null };
+  this.fakeSockets = { __proto__: null };
   this.keepAliveMsecs = this.options.keepAliveMsecs || 1000;
   this.keepAlive = this.options.keepAlive || false;
   this.maxSockets = this.options.maxSockets || Agent.defaultMaxSockets;
@@ -452,6 +453,17 @@ Agent.prototype.reuseSocket = function reuseSocket(socket, req) {
   socket.ref();
 };
 
+Agent.prototype.getPooledFakeSocket = function getPooledFakeSocket(name) {
+  const pool = this.fakeSockets[name];
+  return pool?.length > 0 ? pool.pop() : null;
+};
+
+Agent.prototype.returnFakeSocket = function returnFakeSocket(name, socket) {
+  if (socket.destroyed) return;
+  this.fakeSockets[name] ||= [];
+  this.fakeSockets[name].push(socket);
+};
+
 Agent.prototype.destroy = function destroy() {
   const sets = [this.freeSockets, this.sockets];
   for (let s = 0; s < sets.length; s++) {
@@ -464,6 +476,7 @@ Agent.prototype.destroy = function destroy() {
       }
     }
   }
+  this.fakeSockets = { __proto__: null };
 };
 
 function setRequestSocket(agent, req, socket) {

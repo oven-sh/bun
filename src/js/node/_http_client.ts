@@ -42,7 +42,10 @@ const {
   reqSymbol,
   callCloseCallback,
   emitCloseNTAndComplete,
+  fakeSocketSymbol,
 } = require("internal/http");
+
+const { FakeSocket } = require("internal/http/FakeSocket");
 
 const { globalAgent } = require("node:_http_agent");
 const { IncomingMessage } = require("node:_http_incoming");
@@ -396,6 +399,18 @@ function ClientRequest(input, options, cb) {
           }));
           setIsNextIncomingMessageHTTPS(prevIsHTTPS);
           res.req = this;
+
+          // Return socket to pool when response completes (for FakeSocket reuse)
+          const clientReq = this;
+          res.once("end", () => {
+            const socket = clientReq[fakeSocketSymbol];
+            const agent = clientReq[kAgent];
+            if (socket && agent?.keepAlive && !socket.destroyed) {
+              const name = agent.getName({ host: clientReq[kHost], port: clientReq[kPort] });
+              agent.returnFakeSocket?.(name, socket);
+            }
+          });
+
           let timer;
           res.setTimeout = (msecs, callback) => {
             if (timer) {
@@ -926,6 +941,28 @@ function ClientRequest(input, options, cb) {
 const ClientRequestPrototype = {
   constructor: ClientRequest,
   __proto__: OutgoingMessage.prototype,
+
+  get socket() {
+    if (this[fakeSocketSymbol]) return this[fakeSocketSymbol];
+
+    const agent = this[kAgent];
+    if (agent?.keepAlive) {
+      const name = agent.getName({ host: this[kHost], port: this[kPort] });
+      const pooled = agent.getPooledFakeSocket?.(name);
+      if (pooled) {
+        pooled._reassign(this);
+        this[fakeSocketSymbol] = pooled;
+        return pooled;
+      }
+    }
+
+    this[fakeSocketSymbol] = new FakeSocket(this);
+    return this[fakeSocketSymbol];
+  },
+
+  set socket(value) {
+    this[fakeSocketSymbol] = value;
+  },
 
   setTimeout(msecs, callback) {
     if (this.destroyed) {

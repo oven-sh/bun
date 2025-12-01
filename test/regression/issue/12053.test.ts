@@ -168,4 +168,83 @@ describe("http.Agent connection reuse (#12053)", () => {
       server.close();
     }
   });
+
+  describe("JavaScript socket object reuse", () => {
+    test("same socket object is emitted for reused connections", async () => {
+      const agent = new http.Agent({ keepAlive: true });
+      const sockets: unknown[] = [];
+
+      const server = net.createServer(socket => {
+        socket.on("data", () => {
+          socket.write("HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: 2\r\n\r\nOK");
+        });
+      });
+
+      await new Promise<void>(resolve => server.listen(0, resolve));
+      const { port } = server.address() as { port: number };
+
+      const makeRequest = () =>
+        new Promise<void>((resolve, reject) => {
+          const req = http.get({ hostname: "localhost", port, agent, path: "/" }, res => {
+            res.on("data", () => {});
+            res.on("end", resolve);
+          });
+          req.on("socket", socket => {
+            sockets.push(socket);
+          });
+          req.on("error", reject);
+        });
+
+      try {
+        await makeRequest();
+        await makeRequest();
+
+        // Both requests should receive the same socket object
+        expect(sockets.length).toBe(2);
+        expect(sockets[0]).toBe(sockets[1]);
+      } finally {
+        agent.destroy();
+        server.close();
+      }
+    });
+
+    test("different socket objects when keepAlive is false", async () => {
+      const agent = new http.Agent({ keepAlive: false });
+      const sockets: unknown[] = [];
+
+      const server = net.createServer(socket => {
+        socket.on("data", () => {
+          socket.write("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n\r\nOK");
+          socket.end();
+        });
+      });
+
+      await new Promise<void>(resolve => server.listen(0, resolve));
+      const { port } = server.address() as { port: number };
+
+      const makeRequest = () =>
+        new Promise<void>((resolve, reject) => {
+          const req = http.get({ hostname: "localhost", port, agent, path: "/" }, res => {
+            res.on("data", () => {});
+            res.on("end", resolve);
+          });
+          req.on("socket", socket => {
+            sockets.push(socket);
+          });
+          req.on("error", reject);
+        });
+
+      try {
+        await makeRequest();
+        await makeRequest();
+
+        // Each request should receive a different socket object
+        expect(sockets.length).toBe(2);
+        expect(sockets[0]).not.toBe(sockets[1]);
+      } finally {
+        agent.destroy();
+        server.close();
+      }
+    });
+  });
 });

@@ -17,6 +17,12 @@ var FakeSocket = class Socket extends Duplex {
     super();
     this._httpMessage = httpMessage;
   }
+
+  // Reassign to a new request for socket reuse
+  _reassign(httpMessage: any) {
+    this._httpMessage = httpMessage;
+    this.#address = undefined;
+  }
   address() {
     // Call server.requestIP() without doing any property getter twice.
     var internalData;

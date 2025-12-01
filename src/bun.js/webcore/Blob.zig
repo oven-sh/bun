@@ -1050,7 +1050,7 @@ pub fn writeFileWithSourceDestination(ctx: *jsc.JSGlobalObject, source_blob: *Bl
         const dest_pathlike = &destination_store.data.file.pathlike;
         const src_pathlike = &source_store.data.file.pathlike;
         if (dest_pathlike.* == .path and src_pathlike.* == .path) {
-            if (std.mem.eql(u8, dest_pathlike.path.slice(), src_pathlike.path.slice())) {
+            if (strings.eql(dest_pathlike.path.slice(), src_pathlike.path.slice())) {
                 if (source_blob.size == Blob.max_size) {
                     source_blob.resolveSize();
                 }

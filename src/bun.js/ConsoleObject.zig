@@ -2156,7 +2156,11 @@ pub const Formatter = struct {
                         return;
                     }
 
-                    JSPrinter.writeQuotedString(str.latin1(), Writer, writer_) catch unreachable;
+                    if (str.isUTF8()) {
+                        JSPrinter.writeQuotedString(str.latin1(), Writer, writer_, .utf8) catch unreachable;
+                    } else {
+                        JSPrinter.writeQuotedString(str.latin1(), Writer, writer_, .latin1) catch unreachable;
+                    }
 
                     return;
                 }
@@ -2173,8 +2177,10 @@ pub const Formatter = struct {
                     if (str.isUTF16()) {
                         // Use JSON path for UTF-16 to properly handle surrogate pairs (emojis)
                         try this.printAs(.JSON, Writer, writer_, value, .StringObject, enable_ansi_colors);
+                    } else if (str.isUTF8()) {
+                        JSPrinter.writeQuotedString(str.latin1(), Writer, writer_, .utf8) catch unreachable;
                     } else {
-                        JSPrinter.writeQuotedString(str.latin1(), Writer, writer_) catch unreachable;
+                        JSPrinter.writeQuotedString(str.latin1(), Writer, writer_, .latin1) catch unreachable;
                     }
 
                     writer.print("]", .{});

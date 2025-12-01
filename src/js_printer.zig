@@ -354,17 +354,17 @@ pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer,
 }
 
 /// Writes a quoted string for console output, choosing the best quote character
-/// to minimize escaping. Only supports latin1 encoding (use JSON path for UTF-16).
-pub fn writeQuotedString(input: []const u8, comptime Writer: type, writer: Writer) !void {
+/// to minimize escaping. Supports latin1 and utf8 encodings (use JSON path for UTF-16).
+pub fn writeQuotedString(input: []const u8, comptime Writer: type, writer: Writer, comptime encoding: strings.Encoding) !void {
     // Reuse existing bestQuoteCharForString which counts quotes in a single pass
     const quote_char = bestQuoteCharForString(u8, input, false);
     if (quote_char == '\'') {
         try writer.writeAll("'");
-        try writePreQuotedString(input, Writer, writer, '\'', false, false, .latin1);
+        try writePreQuotedString(input, Writer, writer, '\'', false, false, encoding);
         try writer.writeAll("'");
     } else {
         try writer.writeAll("\"");
-        try writePreQuotedString(input, Writer, writer, '"', false, false, .latin1);
+        try writePreQuotedString(input, Writer, writer, '"', false, false, encoding);
         try writer.writeAll("\"");
     }
 }

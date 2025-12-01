@@ -556,7 +556,7 @@ pub const Result = union(Tag) {
         if (jsc.VirtualMachine.get().isShuttingDown()) {
             var that = this.*;
             that.deinit();
-            return .zero;
+            return .js_undefined;
         }
 
         switch (this.*) {

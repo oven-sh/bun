@@ -61,7 +61,7 @@ pub fn onStart(this: *@This()) streams.Start {
 
 pub fn value(this: *@This()) JSValue {
     const result = this.pending_value.get() orelse {
-        return .zero;
+        return .js_undefined;
     };
     this.pending_value.clearWithoutDeallocation();
     return result;

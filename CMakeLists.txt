@@ -24,13 +24,17 @@ if(CMAKE_HOST_APPLE)
   include(SetupMacSDK)
 endif()
 include(SetupLLVM)
-include(SetupCcache)
 
 # --- Project ---
 
 parse_package_json(VERSION_VARIABLE DEFAULT_VERSION)
 optionx(VERSION STRING "The version of Bun" DEFAULT ${DEFAULT_VERSION})
 project(Bun VERSION ${VERSION})
+
+# Bun uses C++23, which is compatible with BoringSSL's C++17 requirement
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 include(Options)
 include(CompilerFlags)
 
@@ -42,6 +46,19 @@ include(SetupBun)
 include(SetupEsbuild)
 include(SetupZig)
 include(SetupRust)
+
+find_program(SCCACHE_PROGRAM sccache)
+if(SCCACHE_PROGRAM AND NOT DEFINED ENV{NO_SCCACHE})
+  include(SetupSccache)
+else()
+  find_program(CCACHE_PROGRAM ccache)
+  if(CCACHE_PROGRAM)
+    include(SetupCcache)
+  endif()
+endif()
+
+# Generate dependency versions header
+include(GenerateDependencyVersions)
 
 # --- Targets ---
 

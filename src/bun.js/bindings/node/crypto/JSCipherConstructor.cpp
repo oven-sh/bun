@@ -31,6 +31,7 @@ JSC_DEFINE_HOST_FUNCTION(callCipher, (JSC::JSGlobalObject * lexicalGlobalObject,
     ArgList args = ArgList(callFrame);
     auto callData = JSC::getConstructData(constructor);
     JSC::JSValue result = JSC::construct(globalObject, constructor, callData, args);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(result);
 }
 
@@ -98,7 +99,7 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
     JSValue isDecipherValue = callFrame->argument(0);
     ASSERT(isDecipherValue.isBoolean());
     CipherKind cipherKind = isDecipherValue.toBoolean(globalObject) ? CipherKind::Decipher : CipherKind::Cipher;
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSValue cipherValue = callFrame->argument(1);
     JSValue keyValue = callFrame->argument(2);
@@ -106,37 +107,37 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
     JSValue optionsValue = callFrame->argument(4);
 
     V::validateString(scope, globalObject, cipherValue, "cipher"_s);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSValue encodingValue = jsUndefined();
     if (optionsValue.pureToBoolean() != TriState::False) {
 
         encodingValue = optionsValue.get(globalObject, Identifier::fromString(vm, "encoding"_s));
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (encodingValue.isUndefinedOrNull()) {
             encodingValue = jsUndefined();
         } else {
             V::validateString(scope, globalObject, encodingValue, "options.encoding"_s);
-            RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 
     KeyObject keyObject = KeyObject::prepareSecretKey(globalObject, scope, keyValue, encodingValue);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     auto keyData = keyObject.symmetricKey().span();
 
     JSArrayBufferView* ivView = nullptr;
     if (!ivValue.isNull()) {
         ivView = getArrayBufferOrView(globalObject, scope, ivValue, "iv"_s, jsUndefined());
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     std::optional<uint32_t> authTagLength = std::nullopt;
     if (optionsValue.pureToBoolean() != TriState::False) {
         JSValue authTagLengthValue = optionsValue.get(globalObject, Identifier::fromString(vm, "authTagLength"_s));
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (!authTagLengthValue.isUndefinedOrNull()) {
             std::optional<int32_t> maybeAuthTagLength = authTagLengthValue.tryGetAsInt32();
@@ -149,7 +150,7 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
     }
 
     WTF::String cipherString = cipherValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (keyData.size() > INT_MAX) [[unlikely]] {
         return ERR::OUT_OF_RANGE(scope, globalObject, "key is too big"_s, 0, INT_MAX, jsNumber(keyData.size()));
@@ -197,13 +198,13 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
     const bool encrypt = cipherKind == CipherKind::Cipher;
     if (!ctx.init(cipher, encrypt)) {
         throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to initialize cipher"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     int32_t maxMessageSize = 0;
     if (cipher.isSupportedAuthenticatedMode()) {
         initAuthenticated(globalObject, scope, ctx, cipherString, cipherKind, ivLen, authTagLength, maxMessageSize);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     if (!ctx.setKeyLength(keyData.size())) {

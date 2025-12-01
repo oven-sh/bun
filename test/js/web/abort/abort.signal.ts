@@ -1,23 +1,28 @@
-import type { Server } from "bun";
-
-using server = Bun.serve({
+using server2 = Bun.serve({
   port: 0,
   async fetch() {
-    const signal = AbortSignal.timeout(1);
-    return await fetch("https://example.com", { signal });
+    await Bun.sleep(1000);
+    return new Response("test");
   },
 });
 
-function hostname(server: Server) {
-  if (server.hostname.startsWith(":")) return `[${server.hostname}]`;
-  return server.hostname;
-}
+using server = Bun.serve({
+  port: 0,
+  error(error) {
+    return new Response(error.message, { status: 500 });
+  },
+  async fetch() {
+    const signal = AbortSignal.timeout(1);
+    return await fetch(server2.url.href, { signal });
+  },
+});
 
-let url = `http://${hostname(server)}:${server.port}/`;
+let url = server.url.href;
 
 const responses: Response[] = [];
 for (let i = 0; i < 10; i++) {
   responses.push(await fetch(url));
 }
 // we fail if any of the requests succeeded
-process.exit(responses.every(res => res.status === 500) ? 0 : 1);
+const anySuccess = responses.some(res => res.status >= 200 && res.status < 500);
+process.exit(anySuccess ? 1 : 0);

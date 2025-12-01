@@ -2,6 +2,7 @@
 //! only use this for big strings
 //! like source code
 //! not little ones
+
 const RefString = @This();
 
 ptr: [*]const u8 = undefined,
@@ -55,6 +56,7 @@ pub fn deinit(this: *RefString) void {
     this.allocator.destroy(this);
 }
 
+const std = @import("std");
+
 const bun = @import("bun");
 const jsc = bun.jsc;
-const std = @import("std");

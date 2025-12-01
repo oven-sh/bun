@@ -177,9 +177,8 @@ JSC_DEFINE_HOST_FUNCTION(constructDirent, (JSC::JSGlobalObject * globalObject, J
 
         auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(globalObject, newTarget.getObject()));
         RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            globalObject, newTarget.getObject(), functionGlobalObject->m_JSDirentClassStructure.get(functionGlobalObject));
-        scope.release();
+        structure = InternalFunction::createSubclassStructure(globalObject, newTarget.getObject(), functionGlobalObject->m_JSDirentClassStructure.get(functionGlobalObject));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     auto* object = JSC::JSFinalObject::create(vm, structure);
@@ -339,6 +338,7 @@ extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject
     JSString* pathValue = nullptr;
     if (path && path->tag == BunStringTag::WTFStringImpl && previousPath && *previousPath && (*previousPath)->length() == path->impl.wtf->length()) {
         auto view = (*previousPath)->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         if (view == path->impl.wtf) {
             pathValue = *previousPath;
 

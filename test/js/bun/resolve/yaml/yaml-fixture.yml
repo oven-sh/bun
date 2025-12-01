@@ -1,0 +1,4 @@
+framework: next
+bundle:
+  packages:
+    "@emotion/react": true

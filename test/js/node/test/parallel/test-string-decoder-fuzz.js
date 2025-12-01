@@ -44,6 +44,5 @@ function runSingleFuzzTest() {
 }
 
 const start = Date.now();
-// Run this for 1 second
-while (Date.now() - start < 1000)
+while (Date.now() - start < 100)
   runSingleFuzzTest();

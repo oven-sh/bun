@@ -1,18 +1,7 @@
-const bun = @import("bun");
-const std = @import("std");
-const builtin = @import("builtin");
-const Allocator = std.mem.Allocator;
-const ArrayList = std.ArrayList;
-const JSC = bun.JSC;
-const JSValue = bun.JSC.JSValue;
-const JSGlobalObject = bun.JSC.JSGlobalObject;
-const Syscall = @import("../sys.zig");
-const Glob = @import("../glob.zig");
-const CodepointIterator = @import("../string_immutable.zig").UnsignedCodepointIterator;
-const isAllAscii = @import("../string_immutable.zig").isAllASCII;
-
 pub const interpret = @import("./interpreter.zig");
 pub const subproc = @import("./subproc.zig");
+
+pub const AllocScope = @import("./AllocScope.zig");
 
 pub const EnvMap = interpret.EnvMap;
 pub const EnvStr = interpret.EnvStr;
@@ -25,7 +14,10 @@ pub const IOReader = Interpreter.IOReader;
 // pub const IOWriter = interpret.IOWriter;
 // pub const SubprocessMini = subproc.ShellSubprocessMini;
 
-const GlobWalker = Glob.GlobWalker_(null, true);
+pub const Yield = @import("./Yield.zig").Yield;
+pub const unreachableState = interpret.unreachableState;
+
+const GlobWalker = bun.glob.GlobWalker(null, true);
 // const GlobWalker = Glob.BunGlobWalker;
 
 pub const SUBSHELL_TODO_ERROR = "Subshells are not implemented, please open GitHub issue!";
@@ -40,7 +32,7 @@ pub const WINDOWS_DEV_NULL: [:0]const u8 = "NUL";
 
 /// The strings in this type are allocated with event loop ctx allocator
 pub const ShellErr = union(enum) {
-    sys: JSC.SystemError,
+    sys: jsc.SystemError,
     custom: []const u8,
     invalid_arguments: struct { val: []const u8 = "" },
     todo: []const u8,
@@ -49,22 +41,22 @@ pub const ShellErr = union(enum) {
         return .{
             .sys = switch (@TypeOf(e)) {
                 Syscall.Error => e.toShellSystemError(),
-                JSC.SystemError => e,
+                jsc.SystemError => e,
                 else => @compileError("Invalid `e`: " ++ @typeName(e)),
             },
         };
     }
 
-    pub fn format(this: *const ShellErr, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: *const ShellErr, writer: *std.Io.Writer) !void {
         return switch (this.*) {
-            .sys => |e| writer.print("bun: {s}: {}", .{ e.message, e.path }),
+            .sys => |e| writer.print("bun: {f}: {f}", .{ e.message, e.path }),
             .custom => |msg| writer.print("bun: {s}", .{msg}),
             .invalid_arguments => |args| writer.print("bun: invalid arguments: {s}", .{args.val}),
             .todo => |msg| writer.print("bun: TODO: {s}", .{msg}),
         };
     }
 
-    pub fn throwJS(this: *const @This(), globalThis: *JSC.JSGlobalObject) bun.JSError {
+    pub fn throwJS(this: *const @This(), globalThis: *jsc.JSGlobalObject) bun.JSError {
         defer {
             // basically `transferToJS`. don't want to double deref the sys error
             switch (this.*) {
@@ -82,9 +74,9 @@ pub const ShellErr = union(enum) {
                 return globalThis.throwValue(err);
             },
             .custom => {
-                const err_value = bun.String.createUTF8(this.custom).toErrorInstance(globalThis);
+                const err_value = bun.String.cloneUTF8(this.custom).toErrorInstance(globalThis);
                 return globalThis.throwValue(err_value);
-                // this.bunVM().allocator.free(JSC.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
+                // this.bunVM().allocator.free(jsc.ZigString.untagged(str._unsafe_ptr_do_not_use)[0..str.len]);
             },
             .invalid_arguments => {
                 return globalThis.throwInvalidArguments("{s}", .{this.invalid_arguments.val});
@@ -99,7 +91,7 @@ pub const ShellErr = union(enum) {
         defer this.deinit(bun.default_allocator);
         switch (this) {
             .sys => |err| {
-                bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>bunsh: {s}: {}<r>", .{ err.message, err.path });
+                bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>bunsh: {f}: {f}<r>", .{ err.message, err.path });
             },
             .custom => |custom| {
                 bun.Output.prettyErrorln("<r><red>error<r>: Failed due to error: <b>{s}<r>", .{custom});
@@ -162,12 +154,12 @@ fn setEnv(name: [*:0]const u8, value: [*:0]const u8) void {
 /// [1] => write end
 pub const Pipe = [2]bun.FileDescriptor;
 
-const log = bun.Output.scoped(.SHELL, true);
+const log = bun.Output.scoped(.SHELL, .hidden);
 
 pub const GlobalJS = struct {
-    globalThis: *JSC.JSGlobalObject,
+    globalThis: *jsc.JSGlobalObject,
 
-    pub inline fn init(g: *JSC.JSGlobalObject) GlobalJS {
+    pub inline fn init(g: *jsc.JSGlobalObject) GlobalJS {
         return .{
             .globalThis = g,
         };
@@ -177,35 +169,35 @@ pub const GlobalJS = struct {
         return this.globalThis.bunVM().allocator;
     }
 
-    pub inline fn eventLoopCtx(this: @This()) *JSC.VirtualMachine {
+    pub inline fn eventLoopCtx(this: @This()) *jsc.VirtualMachine {
         return this.globalThis.bunVM();
     }
 
     pub inline fn throwInvalidArguments(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
         return .{
-            .invalid_arguments = .{ .val = std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args) catch bun.outOfMemory() },
+            .invalid_arguments = .{ .val = bun.handleOom(std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args)) },
         };
     }
 
     pub inline fn throwTODO(this: @This(), msg: []const u8) ShellErr {
         return .{
-            .todo = std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s}", .{msg}) catch bun.outOfMemory(),
+            .todo = bun.handleOom(std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s}", .{msg})),
         };
     }
 
     pub inline fn throwError(this: @This(), err: bun.sys.Error) void {
-        this.globalThis.throwValue(err.toJSC(this.globalThis));
+        this.globalThis.throwValue(err.toJS(this.globalThis));
     }
 
     pub inline fn handleError(this: @This(), err: anytype, comptime fmt: []const u8) ShellErr {
-        const str = std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}) catch bun.outOfMemory();
+        const str = bun.handleOom(std.fmt.allocPrint(this.globalThis.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}));
         return .{
             .custom = str,
         };
     }
 
     pub inline fn throw(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
-        const str = std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args) catch bun.outOfMemory();
+        const str = bun.handleOom(std.fmt.allocPrint(this.globalThis.bunVM().allocator, fmt, args));
         return .{
             .custom = str,
         };
@@ -220,7 +212,7 @@ pub const GlobalJS = struct {
     }
 
     pub inline fn enqueueTaskConcurrentWaitPid(this: @This(), task: anytype) void {
-        this.globalThis.bunVMConcurrently().enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(task)));
+        this.globalThis.bunVMConcurrently().enqueueTaskConcurrent(jsc.ConcurrentTask.create(jsc.Task.init(task)));
     }
 
     pub inline fn topLevelDir(this: @This()) []const u8 {
@@ -231,8 +223,8 @@ pub const GlobalJS = struct {
         return this.globalThis.bunVM().transpiler.env;
     }
 
-    pub inline fn platformEventLoop(this: @This()) *JSC.PlatformEventLoop {
-        const loop = JSC.AbstractVM(this.eventLoopCtx());
+    pub inline fn platformEventLoop(this: @This()) *jsc.PlatformEventLoop {
+        const loop = jsc.AbstractVM(this.eventLoopCtx());
         return loop.platformEventLoop();
     }
 
@@ -242,9 +234,9 @@ pub const GlobalJS = struct {
 };
 
 pub const GlobalMini = struct {
-    mini: *JSC.MiniEventLoop,
+    mini: *jsc.MiniEventLoop,
 
-    pub inline fn init(g: *JSC.MiniEventLoop) @This() {
+    pub inline fn init(g: *jsc.MiniEventLoop) @This() {
         return .{
             .mini = g,
         };
@@ -258,7 +250,7 @@ pub const GlobalMini = struct {
         return this.mini.allocator;
     }
 
-    pub inline fn eventLoopCtx(this: @This()) *JSC.MiniEventLoop {
+    pub inline fn eventLoopCtx(this: @This()) *jsc.MiniEventLoop {
         return this.mini;
     }
 
@@ -266,18 +258,18 @@ pub const GlobalMini = struct {
 
     pub inline fn throwTODO(this: @This(), msg: []const u8) ShellErr {
         return .{
-            .todo = std.fmt.allocPrint(this.mini.allocator, "{s}", .{msg}) catch bun.outOfMemory(),
+            .todo = bun.handleOom(std.fmt.allocPrint(this.mini.allocator, "{s}", .{msg})),
         };
     }
 
     pub inline fn throwInvalidArguments(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
         return .{
-            .invalid_arguments = .{ .val = std.fmt.allocPrint(this.allocator(), fmt, args) catch bun.outOfMemory() },
+            .invalid_arguments = .{ .val = bun.handleOom(std.fmt.allocPrint(this.allocator(), fmt, args)) },
         };
     }
 
     pub inline fn handleError(this: @This(), err: anytype, comptime fmt: []const u8) ShellErr {
-        const str = std.fmt.allocPrint(this.mini.allocator, "{s} " ++ fmt, .{@errorName(err)}) catch bun.outOfMemory();
+        const str = bun.handleOom(std.fmt.allocPrint(this.mini.allocator, "{s} " ++ fmt, .{@errorName(err)}));
         return .{
             .custom = str,
         };
@@ -292,7 +284,7 @@ pub const GlobalMini = struct {
     }
 
     pub inline fn enqueueTaskConcurrentWaitPid(this: @This(), task: anytype) void {
-        var anytask = bun.default_allocator.create(JSC.AnyTaskWithExtraContext) catch bun.outOfMemory();
+        var anytask = bun.handleOom(bun.default_allocator.create(jsc.AnyTaskWithExtraContext));
         _ = anytask.from(task, "runFromMainThreadMini");
         this.mini.enqueueTaskConcurrent(anytask);
     }
@@ -302,7 +294,7 @@ pub const GlobalMini = struct {
     }
 
     pub inline fn throw(this: @This(), comptime fmt: []const u8, args: anytype) ShellErr {
-        const str = std.fmt.allocPrint(this.allocator(), fmt, args) catch bun.outOfMemory();
+        const str = bun.handleOom(std.fmt.allocPrint(this.allocator(), fmt, args));
         return .{
             .custom = str,
         };
@@ -312,21 +304,37 @@ pub const GlobalMini = struct {
         shellerr.throwMini();
     }
 
-    pub inline fn platformEventLoop(this: @This()) *JSC.PlatformEventLoop {
-        const loop = JSC.AbstractVM(this.eventLoopCtx());
+    pub inline fn platformEventLoop(this: @This()) *jsc.PlatformEventLoop {
+        const loop = jsc.AbstractVM(this.eventLoopCtx());
         return loop.platformEventLoop();
     }
 };
 
-// const GlobalHandle = if (JSC.EventLoopKind == .js) GlobalJS else GlobalMini;
+// const GlobalHandle = if (jsc.EventLoopKind == .js) GlobalJS else GlobalMini;
 
 pub const AST = struct {
     pub const Script = struct {
         stmts: []Stmt,
+
+        pub fn memoryCost(this: *const @This()) usize {
+            var cost: usize = 0;
+            for (this.stmts) |*stmt| {
+                cost += stmt.memoryCost();
+            }
+            return cost;
+        }
     };
 
     pub const Stmt = struct {
         exprs: []Expr,
+
+        pub fn memoryCost(this: *const @This()) usize {
+            var cost: usize = 0;
+            for (this.exprs) |*expr| {
+                cost += expr.memoryCost();
+            }
+            return cost;
+        }
     };
 
     pub const Expr = union(Expr.Tag) {
@@ -346,7 +354,26 @@ pub const AST = struct {
         /// Note that commands in a pipeline cannot be async
         /// TODO: Extra indirection for essentially a boolean feels bad for performance
         /// could probably find a more efficient way to encode this information.
-        @"async": *Expr,
+        async: *Expr,
+
+        pub fn memoryCost(this: *const @This()) usize {
+            return switch (this.*) {
+                .assign => |assign| brk: {
+                    var cost: usize = 0;
+                    for (assign) |*expr| {
+                        cost += expr.memoryCost();
+                    }
+                    break :brk cost;
+                },
+                .binary => |binary| binary.memoryCost(),
+                .pipeline => |pipeline| pipeline.memoryCost(),
+                .cmd => |cmd| cmd.memoryCost(),
+                .subshell => |subshell| subshell.memoryCost(),
+                .@"if" => |@"if"| @"if".memoryCost(),
+                .condexpr => |condexpr| condexpr.memoryCost(),
+                .async => |async| async.memoryCost(),
+            };
+        }
 
         pub fn asPipelineItem(this: *Expr) ?PipelineItem {
             return switch (this.*) {
@@ -367,7 +394,7 @@ pub const AST = struct {
             subshell,
             @"if",
             condexpr,
-            @"async",
+            async,
         };
     };
 
@@ -377,6 +404,12 @@ pub const AST = struct {
         args: ArgList = ArgList.zeroes,
 
         const ArgList = SmolList(Atom, 2);
+
+        pub fn memoryCost(this: *const @This()) usize {
+            var cost: usize = @sizeOf(Op);
+            cost += this.args.memoryCost();
+            return cost;
+        }
 
         // args: SmolList(1, comptime INLINED_MAX: comptime_int)
         pub const Op = enum {
@@ -600,6 +633,15 @@ pub const AST = struct {
         script: Script,
         redirect: ?Redirect = null,
         redirect_flags: RedirectFlags = .{},
+
+        pub fn memoryCost(this: *const @This()) usize {
+            var cost: usize = @sizeOf(Subshell);
+            cost += this.script.memoryCost();
+            if (this.redirect) |*redirect| {
+                cost += redirect.memoryCost();
+            }
+            return cost;
+        }
     };
 
     /// TODO: If we know cond/then/elif/else is just a single command we don't need to store the stmt
@@ -625,6 +667,14 @@ pub const AST = struct {
                 .@"if" = @"if",
             };
         }
+
+        pub fn memoryCost(this: *const @This()) usize {
+            var cost: usize = @sizeOf(If);
+            cost += this.cond.memoryCost();
+            cost += this.then.memoryCost();
+            cost += this.else_parts.memoryCost();
+            return cost;
+        }
     };
 
     pub const Binary = struct {
@@ -633,10 +683,25 @@ pub const AST = struct {
         right: Expr,
 
         const Op = enum { And, Or };
+
+        pub fn memoryCost(this: *const @This()) usize {
+            var cost: usize = @sizeOf(Binary);
+            cost += this.left.memoryCost();
+            cost += this.right.memoryCost();
+            return cost;
+        }
     };
 
     pub const Pipeline = struct {
         items: []PipelineItem,
+
+        pub fn memoryCost(this: *const @This()) usize {
+            var cost: usize = 0;
+            for (this.items) |*item| {
+                cost += item.memoryCost();
+            }
+            return cost;
+        }
     };
 
     pub const PipelineItem = union(enum) {
@@ -645,6 +710,30 @@ pub const AST = struct {
         subshell: *Subshell,
         @"if": *If,
         condexpr: *CondExpr,
+
+        pub fn memoryCost(this: *const @This()) usize {
+            var cost: usize = 0;
+            switch (this.*) {
+                .cmd => |cmd| {
+                    cost += cmd.memoryCost();
+                },
+                .assigns => |assigns| {
+                    for (assigns) |*assign| {
+                        cost += assign.memoryCost();
+                    }
+                },
+                .subshell => |subshell| {
+                    cost += subshell.memoryCost();
+                },
+                .@"if" => |@"if"| {
+                    cost += @"if".memoryCost();
+                },
+                .condexpr => |condexpr| {
+                    cost += condexpr.memoryCost();
+                },
+            }
+            return cost;
+        }
     };
 
     pub const CmdOrAssigns = union(CmdOrAssigns.Tag) {
@@ -704,6 +793,13 @@ pub const AST = struct {
                 .value = value,
             };
         }
+
+        pub fn memoryCost(this: *const @This()) usize {
+            var cost: usize = @sizeOf(Assign);
+            cost += this.label.len;
+            cost += this.value.memoryCost();
+            return cost;
+        }
     };
 
     pub const Cmd = struct {
@@ -711,6 +807,21 @@ pub const AST = struct {
         name_and_args: []Atom,
         redirect: RedirectFlags = .{},
         redirect_file: ?Redirect = null,
+
+        pub fn memoryCost(this: *const @This()) usize {
+            var cost: usize = @sizeOf(Cmd);
+            for (this.assigns) |*assign| {
+                cost += assign.memoryCost();
+            }
+            for (this.name_and_args) |*atom| {
+                cost += atom.memoryCost();
+            }
+
+            if (this.redirect_file) |*redirect_file| {
+                cost += redirect_file.memoryCost();
+            }
+            return cost;
+        }
     };
 
     /// Bit flags for redirects:
@@ -795,6 +906,13 @@ pub const AST = struct {
     pub const Redirect = union(enum) {
         atom: Atom,
         jsbuf: JSBuf,
+
+        pub fn memoryCost(this: *const @This()) usize {
+            return switch (this.*) {
+                .atom => |*atom| atom.memoryCost(),
+                .jsbuf => @sizeOf(JSBuf),
+            };
+        }
     };
 
     pub const Atom = union(Atom.Tag) {
@@ -802,6 +920,13 @@ pub const AST = struct {
         compound: CompoundAtom,
 
         pub const Tag = enum(u8) { simple, compound };
+
+        pub fn memoryCost(this: *const @This()) usize {
+            return switch (this.*) {
+                .simple => |*simple| simple.memoryCost(),
+                .compound => |*compound| compound.memoryCost(),
+            };
+        }
 
         pub fn merge(this: Atom, right: Atom, allocator: Allocator) !Atom {
             if (this == .simple and right == .simple) {
@@ -904,6 +1029,12 @@ pub const AST = struct {
         cmd_subst: struct {
             script: Script,
             quoted: bool = false,
+
+            pub fn memoryCost(this: *const @This()) usize {
+                var cost: usize = @sizeOf(@This());
+                cost += this.script.memoryCost();
+                return cost;
+            }
         },
 
         pub fn glob_hint(this: SimpleAtom) bool {
@@ -920,12 +1051,35 @@ pub const AST = struct {
                 .tilde => false,
             };
         }
+
+        pub fn memoryCost(this: *const @This()) usize {
+            return switch (this.*) {
+                .Var => this.Var.len,
+                .Text => this.Text.len,
+                .cmd_subst => this.cmd_subst.memoryCost(),
+                else => 0,
+            } + @sizeOf(SimpleAtom);
+        }
     };
 
     pub const CompoundAtom = struct {
         atoms: []SimpleAtom,
         brace_expansion_hint: bool = false,
         glob_hint: bool = false,
+
+        pub fn memoryCost(this: *const @This()) usize {
+            var cost: usize = @sizeOf(CompoundAtom);
+            cost += this.#atomsMemoryCost();
+            return cost;
+        }
+
+        fn #atomsMemoryCost(this: *const @This()) usize {
+            var cost: usize = 0;
+            for (this.atoms) |*atom| {
+                cost += atom.memoryCost();
+            }
+            return cost;
+        }
     };
 };
 
@@ -935,7 +1089,7 @@ pub const Parser = struct {
     alloc: Allocator,
     jsobjs: []JSValue,
     current: u32 = 0,
-    errors: std.ArrayList(Error),
+    errors: std.array_list.Managed(Error),
     inside_subshell: ?SubshellKind = null,
 
     const SubshellKind = enum {
@@ -962,7 +1116,7 @@ pub const Parser = struct {
             .tokens = lex_result.tokens,
             .alloc = allocator,
             .jsobjs = jsobjs,
-            .errors = std.ArrayList(Error).init(allocator),
+            .errors = std.array_list.Managed(Error).init(allocator),
         };
     }
 
@@ -1021,7 +1175,7 @@ pub const Parser = struct {
     }
 
     pub fn parse_stmt(self: *Parser) !AST.Stmt {
-        var exprs = std.ArrayList(AST.Expr).init(self.alloc);
+        var exprs = std.array_list.Managed(AST.Expr).init(self.alloc);
 
         while (if (self.inside_subshell == null)
             !self.match_any_comptime(&.{ .Semicolon, .Newline, .Eof })
@@ -1110,7 +1264,7 @@ pub const Parser = struct {
         var expr = try self.parse_compound_cmd();
 
         if (self.peek() == .Pipe) {
-            var pipeline_items = std.ArrayList(AST.PipelineItem).init(self.alloc);
+            var pipeline_items = std.array_list.Managed(AST.PipelineItem).init(self.alloc);
             try pipeline_items.append(expr.asPipelineItem() orelse {
                 try self.add_error_expected_pipeline_item(@as(AST.Expr.Tag, expr));
                 return ParseError.Expected;
@@ -1444,7 +1598,7 @@ pub const Parser = struct {
     }
 
     fn parse_simple_cmd(self: *Parser) !AST.CmdOrAssigns {
-        var assigns = std.ArrayList(AST.Assign).init(self.alloc);
+        var assigns = std.array_list.Managed(AST.Assign).init(self.alloc);
         while (if (self.inside_subshell == null)
             !self.check_any_comptime(&.{ .Semicolon, .Newline, .Eof })
         else
@@ -1477,7 +1631,7 @@ pub const Parser = struct {
             return .{ .assigns = assigns.items[0..] };
         };
 
-        var name_and_args = std.ArrayList(AST.Atom).init(self.alloc);
+        var name_and_args = std.array_list.Managed(AST.Atom).init(self.alloc);
         try name_and_args.append(name);
         while (try self.parse_atom()) |arg| {
             try name_and_args.append(arg);
@@ -1596,7 +1750,7 @@ pub const Parser = struct {
 
     fn parse_atom(self: *Parser) !?AST.Atom {
         var array_alloc = std.heap.stackFallback(@sizeOf(AST.SimpleAtom), self.alloc);
-        var atoms = try std.ArrayList(AST.SimpleAtom).initCapacity(array_alloc.get(), 1);
+        var atoms = try std.array_list.Managed(AST.SimpleAtom).initCapacity(array_alloc.get(), 1);
         var has_brace_open = false;
         var has_brace_close = false;
         var has_comma = false;
@@ -1945,7 +2099,7 @@ pub const Parser = struct {
                 }
                 break :size i;
             };
-            var buf = self.alloc.alloc(u8, size) catch bun.outOfMemory();
+            var buf = bun.handleOom(self.alloc.alloc(u8, size));
             var i: usize = 0;
             for (errors) |e| {
                 @memcpy(buf[i .. i + e.msg.len], e.msg);
@@ -2064,6 +2218,10 @@ pub const Token = union(TokenTag) {
             if (bun.Environment.allow_assert) assert(range.start <= range.end);
             return range.end - range.start;
         }
+
+        pub fn slice(range: TextRange, buf: []const u8) []const u8 {
+            return buf[range.start..range.end];
+        }
     };
 
     pub fn asHumanReadable(self: Token, strpool: []const u8) []const u8 {
@@ -2084,7 +2242,7 @@ pub const Token = union(TokenTag) {
             .Dollar => "`$`",
             .Asterisk => "`*`",
             .DoubleAsterisk => "`**`",
-            .Eq => "`+`",
+            .Eq => "`=`",
             .Semicolon => "`;`",
             .Newline => "`\\n`",
             // Comment,
@@ -2123,15 +2281,15 @@ pub const LexResult = struct {
             const size = size: {
                 var i: usize = 0;
                 for (errors) |e| {
-                    i += e.msg.len;
+                    i += e.msg.len();
                 }
                 break :size i;
             };
-            var buf = arena.alloc(u8, size) catch bun.outOfMemory();
+            var buf = bun.handleOom(arena.alloc(u8, size));
             var i: usize = 0;
             for (errors) |e| {
-                @memcpy(buf[i .. i + e.msg.len], e.msg);
-                i += e.msg.len;
+                @memcpy(buf[i .. i + e.msg.len()], e.msg.slice(this.strpool));
+                i += e.msg.len();
             }
             break :str buf;
         };
@@ -2140,7 +2298,7 @@ pub const LexResult = struct {
 };
 pub const LexError = struct {
     /// Allocated with lexer arena
-    msg: []const u8,
+    msg: Token.TextRange,
 };
 
 /// A special char used to denote the beginning of a special token
@@ -2170,7 +2328,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         tokens: ArrayList(Token),
         delimit_quote: bool = false,
         in_subshell: ?SubShellKind = null,
-        errors: std.ArrayList(LexError),
+        errors: std.array_list.Managed(LexError),
 
         /// Contains a list of strings we need to escape
         /// Not owned by this struct
@@ -2217,17 +2375,17 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
         pub fn get_result(self: @This()) LexResult {
             return .{
-                .tokens = self.tokens.items[0..],
-                .strpool = self.strpool.items[0..],
-                .errors = self.errors.items[0..],
+                .tokens = self.tokens.items,
+                .strpool = self.strpool.items,
+                .errors = self.errors.items,
             };
         }
 
         pub fn add_error(self: *@This(), msg: []const u8) void {
             const start = self.strpool.items.len;
-            self.strpool.appendSlice(msg) catch bun.outOfMemory();
+            bun.handleOom(self.strpool.appendSlice(msg));
             const end = self.strpool.items.len;
-            self.errors.append(.{ .msg = self.strpool.items[start..end] }) catch bun.outOfMemory();
+            bun.handleOom(self.errors.append(.{ .msg = .{ .start = @intCast(start), .end = @intCast(end) } }));
         }
 
         fn make_sublexer(self: *@This(), kind: SubShellKind) @This() {
@@ -3063,7 +3221,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     if (non_ascii_idx > 0) {
                         try self.strpool.appendSlice(bytes[0..non_ascii_idx]);
                     }
-                    self.strpool = try bun.strings.allocateLatin1IntoUTF8WithList(self.strpool, self.strpool.items.len, []const u8, bytes[non_ascii_idx..]);
+                    self.strpool = try bun.strings.allocateLatin1IntoUTF8WithList(self.strpool, self.strpool.items.len, bytes[non_ascii_idx..]);
                 }
             }
             const end = self.strpool.items.len;
@@ -3582,7 +3740,7 @@ pub const CmdEnvIter = struct {
     const Value = struct {
         val: [:0]const u8,
 
-        pub fn format(self: Value, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: Value, writer: *std.Io.Writer) !void {
             try writer.writeAll(self.val);
         }
     };
@@ -3590,7 +3748,7 @@ pub const CmdEnvIter = struct {
     const Key = struct {
         val: []const u8,
 
-        pub fn format(self: Key, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: Key, writer: *std.Io.Writer) !void {
             try writer.writeAll(self.val);
         }
 
@@ -3619,8 +3777,6 @@ pub const CmdEnvIter = struct {
         };
     }
 };
-
-const ExpansionStr = union(enum) {};
 
 pub const Test = struct {
     pub const TestToken = union(TokenTag) {
@@ -3705,20 +3861,21 @@ pub const Test = struct {
 };
 
 pub fn shellCmdFromJS(
-    globalThis: *JSC.JSGlobalObject,
+    globalThis: *jsc.JSGlobalObject,
     string_args: JSValue,
-    template_args: *JSC.JSArrayIterator,
-    out_jsobjs: *std.ArrayList(JSValue),
-    jsstrings: *std.ArrayList(bun.String),
-    out_script: *std.ArrayList(u8),
+    template_args: *jsc.JSArrayIterator,
+    out_jsobjs: *std.array_list.Managed(JSValue),
+    jsstrings: *std.array_list.Managed(bun.String),
+    out_script: *std.array_list.Managed(u8),
+    marked_argument_buffer: *jsc.MarkedArgumentBuffer,
 ) bun.JSError!void {
     var builder = ShellSrcBuilder.init(globalThis, out_script, jsstrings);
     var jsobjref_buf: [128]u8 = [_]u8{0} ** 128;
 
-    var string_iter = string_args.arrayIterator(globalThis);
+    var string_iter = try string_args.arrayIterator(globalThis);
     var i: u32 = 0;
     const last = string_iter.len -| 1;
-    while (string_iter.next()) |js_value| {
+    while (try string_iter.next()) |js_value| {
         defer i += 1;
         if (!try builder.appendJSValueStr(js_value, false)) {
             return globalThis.throw("Shell script string contains invalid UTF-16", .{});
@@ -3726,36 +3883,37 @@ pub fn shellCmdFromJS(
         // const str = js_value.getZigString(globalThis);
         // try script.appendSlice(str.full());
         if (i < last) {
-            const template_value = template_args.next() orelse {
+            const template_value = try template_args.next() orelse {
                 return globalThis.throw("Shell script is missing JSValue arg", .{});
             };
-            try handleTemplateValue(globalThis, template_value, out_jsobjs, out_script, jsstrings, jsobjref_buf[0..]);
+            try handleTemplateValue(globalThis, template_value, out_jsobjs, out_script, jsstrings, jsobjref_buf[0..], marked_argument_buffer);
         }
     }
     return;
 }
 
 pub fn handleTemplateValue(
-    globalThis: *JSC.JSGlobalObject,
+    globalThis: *jsc.JSGlobalObject,
     template_value: JSValue,
-    out_jsobjs: *std.ArrayList(JSValue),
-    out_script: *std.ArrayList(u8),
-    jsstrings: *std.ArrayList(bun.String),
+    out_jsobjs: *std.array_list.Managed(JSValue),
+    out_script: *std.array_list.Managed(u8),
+    jsstrings: *std.array_list.Managed(bun.String),
     jsobjref_buf: []u8,
+    marked_argument_buffer: *jsc.MarkedArgumentBuffer,
 ) bun.JSError!void {
     var builder = ShellSrcBuilder.init(globalThis, out_script, jsstrings);
     if (template_value != .zero) {
         if (template_value.asArrayBuffer(globalThis)) |array_buffer| {
             _ = array_buffer;
             const idx = out_jsobjs.items.len;
-            template_value.protect();
+            marked_argument_buffer.append(template_value);
             try out_jsobjs.append(template_value);
             const slice = std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx }) catch return globalThis.throwOutOfMemory();
             try out_script.appendSlice(slice);
             return;
         }
 
-        if (template_value.as(JSC.WebCore.Blob)) |blob| {
+        if (template_value.as(jsc.WebCore.Blob)) |blob| {
             if (blob.store) |store| {
                 if (store.data == .file) {
                     if (store.data.file.pathlike == .path) {
@@ -3769,29 +3927,29 @@ pub fn handleTemplateValue(
             }
 
             const idx = out_jsobjs.items.len;
-            template_value.protect();
+            marked_argument_buffer.append(template_value);
             try out_jsobjs.append(template_value);
             const slice = std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx }) catch return globalThis.throwOutOfMemory();
             try out_script.appendSlice(slice);
             return;
         }
 
-        if (JSC.WebCore.ReadableStream.fromJS(template_value, globalThis)) |rstream| {
+        if (try jsc.WebCore.ReadableStream.fromJS(template_value, globalThis)) |rstream| {
             _ = rstream;
 
             const idx = out_jsobjs.items.len;
-            template_value.protect();
+            marked_argument_buffer.append(template_value);
             try out_jsobjs.append(template_value);
             const slice = std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx }) catch return globalThis.throwOutOfMemory();
             try out_script.appendSlice(slice);
             return;
         }
 
-        if (template_value.as(JSC.WebCore.Response)) |req| {
+        if (template_value.as(jsc.WebCore.Response)) |req| {
             _ = req;
 
             const idx = out_jsobjs.items.len;
-            template_value.protect();
+            marked_argument_buffer.append(template_value);
             try out_jsobjs.append(template_value);
             const slice = std.fmt.bufPrint(jsobjref_buf[0..], "{s}{d}", .{ LEX_JS_OBJREF_PREFIX, idx }) catch return globalThis.throwOutOfMemory();
             try out_script.appendSlice(slice);
@@ -3806,11 +3964,11 @@ pub fn handleTemplateValue(
         }
 
         if (template_value.jsType().isArray()) {
-            var array = template_value.arrayIterator(globalThis);
+            var array = try template_value.arrayIterator(globalThis);
             const last = array.len -| 1;
             var i: u32 = 0;
-            while (array.next()) |arr| : (i += 1) {
-                try handleTemplateValue(globalThis, arr, out_jsobjs, out_script, jsstrings, jsobjref_buf);
+            while (try array.next()) |arr| : (i += 1) {
+                try handleTemplateValue(globalThis, arr, out_jsobjs, out_script, jsstrings, jsobjref_buf, marked_argument_buffer);
                 if (i < last) {
                     const str = bun.String.static(" ");
                     if (!try builder.appendBunStr(str, false)) {
@@ -3822,7 +3980,7 @@ pub fn handleTemplateValue(
         }
 
         if (template_value.isObject()) {
-            if (template_value.getOwnTruthy(globalThis, "raw")) |maybe_str| {
+            if (try template_value.getOwnTruthy(globalThis, "raw")) |maybe_str| {
                 const bunstr = try maybe_str.toBunString(globalThis);
                 defer bunstr.deref();
                 if (!try builder.appendBunStr(bunstr, false)) {
@@ -3846,22 +4004,22 @@ pub fn handleTemplateValue(
             return;
         }
 
-        return globalThis.throw("Invalid JS object used in shell: {}, you might need to call `.toString()` on it", .{template_value.fmtString(globalThis)});
+        return globalThis.throw("Invalid JS object used in shell: {f}, you might need to call `.toString()` on it", .{template_value.fmtString(globalThis)});
     }
 
     return;
 }
 
 pub const ShellSrcBuilder = struct {
-    globalThis: *JSC.JSGlobalObject,
-    outbuf: *std.ArrayList(u8),
-    jsstrs_to_escape: *std.ArrayList(bun.String),
+    globalThis: *jsc.JSGlobalObject,
+    outbuf: *std.array_list.Managed(u8),
+    jsstrs_to_escape: *std.array_list.Managed(bun.String),
     jsstr_ref_buf: [128]u8 = [_]u8{0} ** 128,
 
     pub fn init(
-        globalThis: *JSC.JSGlobalObject,
-        outbuf: *std.ArrayList(u8),
-        jsstrs_to_escape: *std.ArrayList(bun.String),
+        globalThis: *jsc.JSGlobalObject,
+        outbuf: *std.array_list.Managed(u8),
+        jsstrs_to_escape: *std.array_list.Managed(bun.String),
     ) ShellSrcBuilder {
         return .{
             .globalThis = globalThis,
@@ -3907,7 +4065,7 @@ pub const ShellSrcBuilder = struct {
         if (!invalid) return false;
         if (allow_escape) {
             if (needsEscapeUtf8AsciiLatin1(utf8)) {
-                const bunstr = bun.String.createUTF8(utf8);
+                const bunstr = bun.String.cloneUTF8(utf8);
                 defer bunstr.deref();
                 try this.appendJSStrRef(bunstr);
                 return true;
@@ -3935,7 +4093,7 @@ pub const ShellSrcBuilder = struct {
             try this.appendUTF8Impl(latin1[0..non_ascii_idx]);
         }
 
-        this.outbuf.* = try bun.strings.allocateLatin1IntoUTF8WithList(this.outbuf.*, this.outbuf.items.len, []const u8, latin1);
+        this.outbuf.* = try bun.strings.allocateLatin1IntoUTF8WithList(this.outbuf.*, this.outbuf.items.len, latin1);
     }
 
     pub fn appendJSStrRef(this: *ShellSrcBuilder, bunstr: bun.String) bun.OOM!void {
@@ -3964,7 +4122,7 @@ pub fn assertSpecialChar(comptime c: u8) void {
 /// Characters that need to be backslashed inside double quotes
 const BACKSLASHABLE_CHARS = [_]u8{ '$', '`', '"', '\\' };
 
-pub fn escapeBunStr(bunstr: bun.String, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) bun.OOM!bool {
+pub fn escapeBunStr(bunstr: bun.String, outbuf: *std.array_list.Managed(u8), comptime add_quotes: bool) bun.OOM!bool {
     if (bunstr.isUTF16()) {
         const res = try escapeUtf16(bunstr.utf16(), outbuf, add_quotes);
         return !res.is_invalid;
@@ -3975,7 +4133,7 @@ pub fn escapeBunStr(bunstr: bun.String, outbuf: *std.ArrayList(u8), comptime add
 }
 
 /// works for utf-8, latin-1, and ascii
-pub fn escape8Bit(str: []const u8, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) !void {
+pub fn escape8Bit(str: []const u8, outbuf: *std.array_list.Managed(u8), comptime add_quotes: bool) !void {
     try outbuf.ensureUnusedCapacity(str.len);
 
     if (add_quotes) try outbuf.append('\"');
@@ -3996,10 +4154,10 @@ pub fn escape8Bit(str: []const u8, outbuf: *std.ArrayList(u8), comptime add_quot
     if (add_quotes) try outbuf.append('\"');
 }
 
-pub fn escapeUtf16(str: []const u16, outbuf: *std.ArrayList(u8), comptime add_quotes: bool) !struct { is_invalid: bool = false } {
+pub fn escapeUtf16(str: []const u16, outbuf: *std.array_list.Managed(u8), comptime add_quotes: bool) !struct { is_invalid: bool = false } {
     if (add_quotes) try outbuf.append('"');
 
-    const non_ascii = bun.strings.firstNonASCII16([]const u16, str) orelse 0;
+    const non_ascii = bun.strings.firstNonASCII16(str) orelse 0;
     var cp_buf: [4]u8 = undefined;
 
     var i: usize = 0;
@@ -4009,7 +4167,7 @@ pub fn escapeUtf16(str: []const u16, outbuf: *std.ArrayList(u8), comptime add_qu
                 defer i += 1;
                 break :brk str[i];
             }
-            const ret = bun.strings.utf16Codepoint([]const u16, str[i..]);
+            const ret = bun.strings.utf16Codepoint(str[i..]);
             if (ret.fail) return .{ .is_invalid = true };
             i += ret.len;
             break :brk ret.code_point;
@@ -4069,6 +4227,33 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
             return this;
         }
 
+        pub fn memoryCost(this: *const @This()) usize {
+            var cost: usize = @sizeOf(@This());
+            switch (this.*) {
+                .inlined => |*inlined| {
+                    if (comptime bun.trait.isContainer(T) and @hasDecl(T, "memoryCost")) {
+                        for (inlined.slice()) |*item| {
+                            cost += item.memoryCost();
+                        }
+                    } else {
+                        cost += std.mem.sliceAsBytes(inlined.allocatedSlice()).len;
+                    }
+                },
+                .heap => {
+                    if (comptime bun.trait.isContainer(T) and @hasDecl(T, "memoryCost")) {
+                        for (this.heap.slice()) |*item| {
+                            cost += item.memoryCost();
+                        }
+                        cost += this.heap.memoryCost();
+                    } else {
+                        cost += std.mem.sliceAsBytes(this.heap.allocatedSlice()).len;
+                    }
+                },
+            }
+
+            return cost;
+        }
+
         pub fn initWithSlice(vals: []const T) @This() {
             if (bun.Environment.allow_assert) assert(vals.len <= std.math.maxInt(u32));
             if (vals.len <= INLINED_MAX) {
@@ -4078,13 +4263,13 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                 return this;
             }
             var this: @This() = .{
-                .heap = ByteList.initCapacity(bun.default_allocator, vals.len) catch bun.outOfMemory(),
+                .heap = bun.handleOom(ByteList.initCapacity(bun.default_allocator, vals.len)),
             };
             this.heap.appendSliceAssumeCapacity(vals);
             return this;
         }
 
-        pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(this: *const @This(), writer: *std.Io.Writer) !void {
             const slc = this.slice();
             try writer.print("{}", .{slc});
         }
@@ -4102,10 +4287,18 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
             items: [INLINED_MAX]T = undefined,
             len: u32 = 0,
 
+            pub fn slice(this: *const Inlined) []const T {
+                return this.items[0..this.len];
+            }
+
+            pub fn allocatedSlice(this: *const Inlined) []const T {
+                return &this.items;
+            }
+
             pub fn promote(this: *Inlined, n: usize, new: T) bun.BabyList(T) {
-                var list = bun.BabyList(T).initCapacity(bun.default_allocator, n) catch bun.outOfMemory();
-                list.append(bun.default_allocator, this.items[0..INLINED_MAX]) catch bun.outOfMemory();
-                list.push(bun.default_allocator, new) catch bun.outOfMemory();
+                var list = bun.handleOom(bun.BabyList(T).initCapacity(bun.default_allocator, n));
+                bun.handleOom(list.appendSlice(bun.default_allocator, this.items[0..INLINED_MAX]));
+                bun.handleOom(list.append(bun.default_allocator, new));
                 return list;
             }
 
@@ -4145,6 +4338,19 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
                 },
                 .inlined => {
                     _ = this.inlined.orderedRemove(idx);
+                },
+            }
+        }
+
+        pub fn pop(this: *@This()) T {
+            switch (this.*) {
+                .heap => {
+                    return this.heap.pop().?;
+                },
+                .inlined => {
+                    const val = this.inlined.items[this.inlined.len - 1];
+                    this.inlined.len -= 1;
+                    return val;
                 },
             }
         }
@@ -4230,14 +4436,15 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
             switch (this.*) {
                 .inlined => {
                     if (this.inlined.len == INLINED_MAX) {
-                        this.* = .{ .heap = this.inlined.promote(INLINED_MAX, new) };
+                        const promoted = this.inlined.promote(INLINED_MAX, new);
+                        this.* = .{ .heap = promoted };
                         return;
                     }
                     this.inlined.items[this.inlined.len] = new;
                     this.inlined.len += 1;
                 },
                 .heap => {
-                    this.heap.push(bun.default_allocator, new) catch bun.outOfMemory();
+                    bun.handleOom(this.heap.append(bun.default_allocator, new));
                 },
             }
         }
@@ -4270,11 +4477,11 @@ pub fn SmolList(comptime T: type, comptime INLINED_MAX: comptime_int) type {
 
 /// Used in JS tests, see `internal-for-testing.ts` and shell tests.
 pub const TestingAPIs = struct {
-    pub fn disabledOnThisPlatform(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        if (comptime bun.Environment.isWindows) return JSValue.false;
+    pub fn disabledOnThisPlatform(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
+        if (comptime bun.Environment.isWindows) return .false;
 
         const arguments_ = callframe.arguments_old(1);
-        var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string = arguments.nextEat() orelse {
             return globalThis.throw("shellInternals.disabledOnPosix: expected 1 arguments, got 0", .{});
         };
@@ -4286,18 +4493,21 @@ pub const TestingAPIs = struct {
 
         inline for (Interpreter.Builtin.Kind.DISABLED_ON_POSIX) |disabled| {
             if (bun.strings.eqlComptime(utf8str.byteSlice(), @tagName(disabled))) {
-                return JSValue.true;
+                return .true;
             }
         }
-        return JSValue.false;
+        return .false;
     }
 
-    pub fn shellLex(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
+    pub const shellLex = jsc.MarkedArgumentBuffer.wrap(shellLexImpl);
+
+    fn shellLexImpl(
+        globalThis: *jsc.JSGlobalObject,
+        callframe: *jsc.CallFrame,
+        marked_argument_buffer: *jsc.MarkedArgumentBuffer,
+    ) bun.JSError!jsc.JSValue {
         const arguments_ = callframe.arguments_old(2);
-        var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string_args = arguments.nextEat() orelse {
             return globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
         };
@@ -4308,24 +4518,20 @@ pub const TestingAPIs = struct {
         const template_args_js = arguments.nextEat() orelse {
             return globalThis.throw("shell: expected 2 arguments, got 0", .{});
         };
-        var template_args = template_args_js.arrayIterator(globalThis);
+        var template_args = try template_args_js.arrayIterator(globalThis);
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
-        var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);
+        var jsstrings = try std.array_list.Managed(bun.String).initCapacity(stack_alloc.get(), 4);
         defer {
             for (jsstrings.items[0..]) |bunstr| {
                 bunstr.deref();
             }
             jsstrings.deinit();
         }
-        var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
-        defer {
-            for (jsobjs.items) |jsval| {
-                jsval.unprotect();
-            }
-        }
+        var jsobjs = std.array_list.Managed(JSValue).init(arena.allocator());
+        defer jsobjs.deinit();
 
-        var script = std.ArrayList(u8).init(arena.allocator());
-        try shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script);
+        var script = std.array_list.Managed(u8).init(arena.allocator());
+        try shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script, marked_argument_buffer);
 
         const lex_result = brk: {
             if (bun.strings.isAllASCII(script.items[0..])) {
@@ -4347,25 +4553,28 @@ pub const TestingAPIs = struct {
             return globalThis.throwPretty("{s}", .{str});
         }
 
-        var test_tokens = try std.ArrayList(Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len);
+        var test_tokens = try std.array_list.Managed(Test.TestToken).initCapacity(arena.allocator(), lex_result.tokens.len);
         for (lex_result.tokens) |tok| {
             const test_tok = Test.TestToken.from_real(tok, lex_result.strpool);
             try test_tokens.append(test_tok);
         }
 
-        const str = try std.json.stringifyAlloc(globalThis.bunVM().allocator, test_tokens.items[0..], .{});
+        const str = bun.handleOom(std.fmt.allocPrint(globalThis.bunVM().allocator, "{f}", .{std.json.fmt(test_tokens.items[0..], .{})}));
 
         defer globalThis.bunVM().allocator.free(str);
         var bun_str = bun.String.fromBytes(str);
         return bun_str.toJS(globalThis);
     }
 
-    pub fn shellParse(
-        globalThis: *JSC.JSGlobalObject,
-        callframe: *JSC.CallFrame,
-    ) bun.JSError!JSC.JSValue {
+    pub const shellParse = jsc.MarkedArgumentBuffer.wrap(shellParseImpl);
+
+    fn shellParseImpl(
+        globalThis: *jsc.JSGlobalObject,
+        callframe: *jsc.CallFrame,
+        marked_argument_buffer: *jsc.MarkedArgumentBuffer,
+    ) bun.JSError!jsc.JSValue {
         const arguments_ = callframe.arguments_old(2);
-        var arguments = JSC.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
+        var arguments = jsc.CallFrame.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string_args = arguments.nextEat() orelse {
             return globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
         };
@@ -4376,23 +4585,19 @@ pub const TestingAPIs = struct {
         const template_args_js = arguments.nextEat() orelse {
             return globalThis.throw("shell: expected 2 arguments, got 0", .{});
         };
-        var template_args = template_args_js.arrayIterator(globalThis);
+        var template_args = try template_args_js.arrayIterator(globalThis);
         var stack_alloc = std.heap.stackFallback(@sizeOf(bun.String) * 4, arena.allocator());
-        var jsstrings = try std.ArrayList(bun.String).initCapacity(stack_alloc.get(), 4);
+        var jsstrings = try std.array_list.Managed(bun.String).initCapacity(stack_alloc.get(), 4);
         defer {
             for (jsstrings.items[0..]) |bunstr| {
                 bunstr.deref();
             }
             jsstrings.deinit();
         }
-        var jsobjs = std.ArrayList(JSValue).init(arena.allocator());
-        defer {
-            for (jsobjs.items) |jsval| {
-                jsval.unprotect();
-            }
-        }
-        var script = std.ArrayList(u8).init(arena.allocator());
-        try shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script);
+        var jsobjs = std.array_list.Managed(JSValue).init(arena.allocator());
+        defer jsobjs.deinit();
+        var script = std.array_list.Managed(u8).init(arena.allocator());
+        try shellCmdFromJS(globalThis, string_args, &template_args, &jsobjs, &jsstrings, &script, marked_argument_buffer);
 
         var out_parser: ?Parser = null;
         var out_lex_result: ?LexResult = null;
@@ -4412,14 +4617,27 @@ pub const TestingAPIs = struct {
             return globalThis.throwError(err, "failed to lex/parse shell");
         };
 
-        const str = try std.json.stringifyAlloc(globalThis.bunVM().allocator, script_ast, .{});
+        const str = bun.handleOom(std.fmt.allocPrint(globalThis.bunVM().allocator, "{f}", .{std.json.fmt(script_ast, .{})}));
 
         defer globalThis.bunVM().allocator.free(str);
-        var bun_str = bun.String.fromBytes(str);
-        return bun_str.toJS(globalThis);
+        return bun.String.createUTF8ForJS(globalThis, str);
     }
 };
 
+pub const ShellSubprocess = @import("./subproc.zig").ShellSubprocess;
+
+const Syscall = @import("../sys.zig");
+const builtin = @import("builtin");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const ArrayList = std.array_list.Managed;
+
+const bun = @import("bun");
 const assert = bun.assert;
 
-pub const ShellSubprocess = @import("subproc.zig").ShellSubprocess;
+const jsc = bun.jsc;
+const JSGlobalObject = bun.jsc.JSGlobalObject;
+const JSValue = bun.jsc.JSValue;
+
+const CodepointIterator = bun.strings.UnsignedCodepointIterator;
+const isAllAscii = bun.strings.isAllASCII;

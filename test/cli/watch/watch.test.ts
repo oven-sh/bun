@@ -9,7 +9,7 @@ let watchee: Subprocess;
 
 for (const dir of ["dir", "©️"]) {
   it.todoIf(isBroken && isWindows)(
-    `should watch files ${dir === "dir" ? "" : "(non-ascii path)"}`,
+    `should watch files${dir === "dir" ? "" : " (non-ascii path)"}`,
     async () => {
       const cwd = join(tmpdirSync(), dir);
       const path = join(cwd, "watchee.js");

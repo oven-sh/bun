@@ -17,7 +17,9 @@ import {
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
-beforeEach(dummyBeforeEach);
+beforeEach(async () => {
+  await dummyBeforeEach();
+});
 afterEach(dummyAfterEach);
 
 it("should install vendored node_modules with hardlink", async () => {
@@ -39,7 +41,7 @@ it("should install vendored node_modules with hardlink", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--backend", "hardlink"],
+    cmd: [bunExe(), "install", "--backend", "hardlink", "--linker=hoisted"],
     cwd: package_dir,
     stdout: "pipe",
     stdin: "pipe",
@@ -48,10 +50,10 @@ it("should install vendored node_modules with hardlink", async () => {
   });
 
   expect(stderr).toBeDefined();
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out).toContain("1 package installed");
 
   expect(await exited).toBe(0);

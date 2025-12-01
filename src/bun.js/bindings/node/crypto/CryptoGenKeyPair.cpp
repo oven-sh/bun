@@ -45,7 +45,7 @@ void KeyPairJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callb
     }
 
     JSValue publicKeyValue = m_keyObj.exportPublic(lexicalGlobalObject, scope, m_publicKeyEncoding);
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         JSValue exceptionValue = scope.exception();
         scope.clearException();
         exceptionCallback(exceptionValue);
@@ -53,7 +53,7 @@ void KeyPairJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callb
     }
 
     JSValue privateKeyValue = m_keyObj.exportPrivate(lexicalGlobalObject, scope, m_privateKeyEncoding);
-    if (scope.exception()) {
+    if (scope.exception()) [[unlikely]] {
         JSValue exceptionValue = scope.exception();
         scope.clearException();
         exceptionCallback(exceptionValue);
@@ -128,57 +128,57 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPair, (JSC::JSGlobalObject * globalObject,
     }
 
     V::validateFunction(scope, globalObject, callbackValue, "callback"_s);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     V::validateString(scope, globalObject, typeValue, "type"_s);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     KeyEncodingConfig config = parseKeyEncodingConfig(globalObject, scope, typeValue, optionsValue);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (!optionsValue.isUndefined()) {
         V::validateObject(scope, globalObject, optionsValue, "options"_s);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     JSString* typeString = typeValue.toString(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
     GCOwnedDataScope<WTF::StringView> typeView = typeString->view(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (typeView == "rsa"_s || typeView == "rsa-pss"_s) {
         std::optional<RsaKeyPairJobCtx> ctx = RsaKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
-        ASSERT(ctx.has_value() == !scope.exception());
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
+        RETURN_IF_EXCEPTION(scope, {});
         RsaKeyPairJob::createAndSchedule(globalObject, WTFMove(*ctx), callbackValue);
         return JSValue::encode(jsUndefined());
     }
     if (typeView == "dsa"_s) {
         std::optional<DsaKeyPairJobCtx> ctx = DsaKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
-        ASSERT(ctx.has_value() == !scope.exception());
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
+        RETURN_IF_EXCEPTION(scope, {});
         DsaKeyPairJob::createAndSchedule(globalObject, WTFMove(*ctx), callbackValue);
         return JSValue::encode(jsUndefined());
     }
     if (typeView == "ec"_s) {
         std::optional<EcKeyPairJobCtx> ctx = EcKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
-        ASSERT(ctx.has_value() == !scope.exception());
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
+        RETURN_IF_EXCEPTION(scope, {});
         EcKeyPairJob::createAndSchedule(globalObject, WTFMove(*ctx), callbackValue);
         return JSValue::encode(jsUndefined());
     }
     // TODO: should just get `id` here
     if (typeView == "ed25519"_s || typeView == "ed448"_s || typeView == "x25519"_s || typeView == "x448"_s) {
         std::optional<NidKeyPairJobCtx> ctx = NidKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
-        ASSERT(ctx.has_value() == !scope.exception());
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
+        RETURN_IF_EXCEPTION(scope, {});
         NidKeyPairJob::createAndSchedule(globalObject, WTFMove(*ctx), callbackValue);
         return JSValue::encode(jsUndefined());
     }
     if (typeView == "dh"_s) {
         std::optional<DhKeyPairJobCtx> ctx = DhKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
-        ASSERT(ctx.has_value() == !scope.exception());
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
+        RETURN_IF_EXCEPTION(scope, {});
         DhKeyPairJob::createAndSchedule(globalObject, WTFMove(*ctx), callbackValue);
         return JSValue::encode(jsUndefined());
     }
@@ -195,20 +195,20 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
     JSValue optionsValue = callFrame->argument(1);
 
     V::validateString(scope, globalObject, typeValue, "type"_s);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     KeyEncodingConfig config = parseKeyEncodingConfig(globalObject, scope, typeValue, optionsValue);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (!optionsValue.isUndefined()) {
         V::validateObject(scope, globalObject, optionsValue, "options"_s);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     JSString* typeString = typeValue.toString(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
     GCOwnedDataScope<WTF::StringView> typeView = typeString->view(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
 
     JSObject* result = JSC::constructEmptyObject(globalObject);
     JSValue publicKeyValue = jsUndefined();
@@ -216,100 +216,100 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeyPairSync, (JSGlobalObject * globalObject, 
 
     if (typeView == "rsa"_s || typeView == "rsa-pss"_s) {
         std::optional<RsaKeyPairJobCtx> ctx = RsaKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
-        ASSERT(ctx.has_value() == !scope.exception());
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
+        RETURN_IF_EXCEPTION(scope, {});
         ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
         if (!keyCtx) {
             throwCryptoError(globalObject, scope, ctx->err());
-            return JSValue::encode({});
+            return {};
         }
         ctx->runTask(globalObject, keyCtx);
         if (!ctx->m_keyObj.data()) {
             throwCryptoError(globalObject, scope, ctx->err());
-            return JSValue::encode({});
+            return {};
         }
         publicKeyValue = ctx->m_keyObj.exportPublic(globalObject, scope, ctx->m_publicKeyEncoding);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
         privateKeyValue = ctx->m_keyObj.exportPrivate(globalObject, scope, ctx->m_privateKeyEncoding);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
     } else if (typeView == "dsa"_s) {
         auto ctx = DsaKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
-        ASSERT(ctx.has_value() == !scope.exception());
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
+        RETURN_IF_EXCEPTION(scope, {});
         ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
         if (!keyCtx) {
             throwCryptoError(globalObject, scope, ctx->err());
-            return JSValue::encode({});
+            return {};
         }
         ctx->runTask(globalObject, keyCtx);
         if (!ctx->m_keyObj.data()) {
             throwCryptoError(globalObject, scope, ctx->err());
-            return JSValue::encode({});
+            return {};
         }
         publicKeyValue = ctx->m_keyObj.exportPublic(globalObject, scope, ctx->m_publicKeyEncoding);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
         privateKeyValue = ctx->m_keyObj.exportPrivate(globalObject, scope, ctx->m_privateKeyEncoding);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
     } else if (typeView == "ec"_s) {
         auto ctx = EcKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
-        ASSERT(ctx.has_value() == !scope.exception());
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
+        RETURN_IF_EXCEPTION(scope, {});
         ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
         if (!keyCtx) {
             throwCryptoError(globalObject, scope, ctx->err());
-            return JSValue::encode({});
+            return {};
         }
         ctx->runTask(globalObject, keyCtx);
         if (!ctx->m_keyObj.data()) {
             throwCryptoError(globalObject, scope, ctx->err());
-            return JSValue::encode({});
+            return {};
         }
         publicKeyValue = ctx->m_keyObj.exportPublic(globalObject, scope, ctx->m_publicKeyEncoding);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
         privateKeyValue = ctx->m_keyObj.exportPrivate(globalObject, scope, ctx->m_privateKeyEncoding);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
     } else if (typeView == "ed25519"_s || typeView == "ed448"_s || typeView == "x25519"_s || typeView == "x448"_s) {
         auto ctx = NidKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
-        ASSERT(ctx.has_value() == !scope.exception());
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
+        RETURN_IF_EXCEPTION(scope, {});
         ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
         if (!keyCtx) {
             throwCryptoError(globalObject, scope, ctx->err());
-            return JSValue::encode({});
+            return {};
         }
         ctx->runTask(globalObject, keyCtx);
         if (!ctx->m_keyObj.data()) {
             throwCryptoError(globalObject, scope, ctx->err());
-            return JSValue::encode({});
+            return {};
         }
         publicKeyValue = ctx->m_keyObj.exportPublic(globalObject, scope, ctx->m_publicKeyEncoding);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
         privateKeyValue = ctx->m_keyObj.exportPrivate(globalObject, scope, ctx->m_privateKeyEncoding);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
     } else if (typeView == "dh"_s) {
         auto ctx = DhKeyPairJobCtx::fromJS(globalObject, scope, typeView, optionsValue, config);
-        ASSERT(ctx.has_value() == !scope.exception());
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        EXCEPTION_ASSERT(ctx.has_value() == !scope.exception());
+        RETURN_IF_EXCEPTION(scope, {});
         ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
         if (!keyCtx) {
             throwCryptoError(globalObject, scope, ctx->err());
-            return JSValue::encode({});
+            return {};
         }
         ctx->runTask(globalObject, keyCtx);
         if (!ctx->m_keyObj.data()) {
             throwCryptoError(globalObject, scope, ctx->err());
-            return JSValue::encode({});
+            return {};
         }
         publicKeyValue = ctx->m_keyObj.exportPublic(globalObject, scope, ctx->m_publicKeyEncoding);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
         privateKeyValue = ctx->m_keyObj.exportPrivate(globalObject, scope, ctx->m_privateKeyEncoding);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        RETURN_IF_EXCEPTION(scope, {});
     } else {
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "type"_s, typeValue, "must be a supported key type"_s);
     }
 
     result->putDirect(vm, Identifier::fromString(vm, "publicKey"_s), publicKeyValue);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    RETURN_IF_EXCEPTION(scope, {});
     result->putDirect(vm, Identifier::fromString(vm, "privateKey"_s), privateKeyValue);
     return JSValue::encode(result);
 }

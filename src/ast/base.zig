@@ -1,11 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
-const js_ast = bun.JSAst;
-
-pub const NodeIndex = u32;
-pub const NodeIndexNone = 4294967293;
-
 // TODO: figure out if we actually need this
 
 pub const RefHashCtx = struct {
@@ -138,9 +130,8 @@ pub const Ref = packed struct(u64) {
         return this.tag == .symbol;
     }
 
-    pub fn format(ref: Ref, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try std.fmt.format(
-            writer,
+    pub fn format(ref: Ref, writer: *std.Io.Writer) !void {
+        try writer.print(
             "Ref[inner={d}, src={d}, .{s}]",
             .{
                 ref.innerIndex(),
@@ -150,16 +141,16 @@ pub const Ref = packed struct(u64) {
         );
     }
 
-    pub fn dump(ref: Ref, symbol_table: anytype) std.fmt.Formatter(dumpImpl) {
+    pub fn dump(ref: Ref, symbol_table: anytype) std.fmt.Alt(DumpImplData, dumpImpl) {
         return .{ .data = .{
             .ref = ref,
             .symbol = ref.getSymbol(symbol_table),
         } };
     }
 
-    fn dumpImpl(data: struct { ref: Ref, symbol: *js_ast.Symbol }, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try std.fmt.format(
-            writer,
+    const DumpImplData = struct { ref: Ref, symbol: *ast.Symbol };
+    fn dumpImpl(data: DumpImplData, writer: *std.Io.Writer) !void {
+        try writer.print(
             "Ref[inner={d}, src={d}, .{s}; original_name={s}, uses={d}]",
             .{
                 data.ref.inner_index,
@@ -222,18 +213,23 @@ pub const Ref = packed struct(u64) {
         return try writer.write([2]u32{ self.sourceIndex(), self.innerIndex() });
     }
 
-    pub fn getSymbol(ref: Ref, symbol_table: anytype) *js_ast.Symbol {
+    pub fn getSymbol(ref: Ref, symbol_table: anytype) *ast.Symbol {
         // Different parts of the bundler use different formats of the symbol table
         // In the parser you only have one array, and .sourceIndex() is ignored.
         // In the bundler, you have a 2D array where both parts of the ref are used.
         const resolved_symbol_table = switch (@TypeOf(symbol_table)) {
-            *const std.ArrayList(js_ast.Symbol) => symbol_table.items,
-            *std.ArrayList(js_ast.Symbol) => symbol_table.items,
-            []js_ast.Symbol => symbol_table,
-            *js_ast.Symbol.Map => return symbol_table.get(ref) orelse
+            *const std.array_list.Managed(ast.Symbol) => symbol_table.items,
+            *std.array_list.Managed(ast.Symbol) => symbol_table.items,
+            []ast.Symbol => symbol_table,
+            *ast.Symbol.Map => return symbol_table.get(ref) orelse
                 unreachable, // ref must exist within symbol table
             else => |T| @compileError("Unsupported type to Ref.getSymbol: " ++ @typeName(T)),
         };
         return &resolved_symbol_table[ref.innerIndex()];
     }
 };
+
+const std = @import("std");
+
+const bun = @import("bun");
+const ast = bun.ast;

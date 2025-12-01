@@ -444,7 +444,7 @@ static size_t IndexOfNeedsEscapeForJavaScriptStringImpl(const uint8_t* HWY_RESTR
     // Set up SIMD constants
     const auto vec_backslash = hn::Set(d, uint8_t { '\\' });
     const auto vec_min_ascii = hn::Set(d, uint8_t { 0x20 });
-    const auto vec_max_ascii = hn::Set(d, uint8_t { 127 });
+    const auto vec_max_ascii = hn::Set(d, uint8_t { 0x7E });
     const auto vec_quote = hn::Set(d, quote_char);
 
     const auto vec_dollar = hn::Set(d, uint8_t { '$' });
@@ -482,7 +482,7 @@ static size_t IndexOfNeedsEscapeForJavaScriptStringImpl(const uint8_t* HWY_RESTR
     // Scalar check for the remainder
     for (; i < text_len; ++i) {
         const uint8_t char_ = text[i];
-        if (char_ >= 127 || (char_ < 0x20 && char_ != 0x09) || char_ == '\\' || char_ == quote_char || (is_backtick && char_ == '$')) {
+        if (char_ >= 127 || char_ < 0x20 || char_ == '\\' || char_ == quote_char || (is_backtick && char_ == '$')) {
             return i;
         }
     }

@@ -1,18 +1,3 @@
-const URL = @import("../url.zig").URL;
-const bun = @import("bun");
-const std = @import("std");
-const MutableString = bun.MutableString;
-const string = @import("../string_types.zig").string;
-const strings = @import("../string_immutable.zig");
-const PackageManager = @import("../install/install.zig").PackageManager;
-const logger = bun.logger;
-const Output = bun.Output;
-const Global = bun.Global;
-const JSON = bun.JSON;
-const http = bun.http;
-const Semver = bun.Semver;
-const PackageManifest = @import("../install/npm.zig").PackageManifest;
-
 pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: string, property_path: ?string, json_output: bool) !void {
     const name, var version = bun.install.Dependency.splitNameAndVersionOrLatest(brk: {
         // Extremely best effort.
@@ -27,9 +12,9 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
                     switch (bun.sys.File.readFrom(manager.root_dir.fd, "package.json", allocator)) {
                         .err => {},
                         .result => |str| {
-                            const source = logger.Source.initPathString("package.json", str);
+                            const source = &logger.Source.initPathString("package.json", str);
                             var log = logger.Log.init(allocator);
-                            const json = JSON.parse(&source, &log, allocator, false) catch break :from_package_json;
+                            const json = JSON.parse(source, &log, allocator, false) catch break :from_package_json;
                             if (json.getStringCloned(allocator, "name") catch null) |name| {
                                 if (name.len > 0) {
                                     break :brk name;
@@ -49,7 +34,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
     const scope = manager.scopeForPackageName(name);
 
     var url_buf: bun.PathBuffer = undefined;
-    const encoded_name = try std.fmt.bufPrint(&url_buf, "{s}", .{bun.fmt.dependencyUrl(name)});
+    const encoded_name = try std.fmt.bufPrint(&url_buf, "{f}", .{bun.fmt.dependencyUrl(name)});
     var path_buf: bun.PathBuffer = undefined;
     // Always fetch the full registry manifest, not a specific version
     const url = URL.parse(try std.fmt.bufPrint(&path_buf, "{s}/{s}", .{
@@ -99,8 +84,8 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
     }
 
     var log = logger.Log.init(allocator);
-    const source = logger.Source.initPathString("view.json", response_buf.list.items);
-    var json = JSON.parseUTF8(&source, &log, allocator) catch |err| {
+    const source = &logger.Source.initPathString("view.json", response_buf.list.items);
+    var json = JSON.parseUTF8(source, &log, allocator) catch |err| {
         Output.err(err, "failed to parse response body as JSON", .{});
         Global.crash();
     };
@@ -119,6 +104,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
         "", // last_modified (not needed for view)
         "", // etag (not needed for view)
         0, // public_max_age (not needed for view)
+        true, // is_extended_manifest (view uses application/json Accept header)
     ) catch |err| {
         Output.err(err, "failed to parse package manifest", .{});
         Global.exit(1);
@@ -168,14 +154,14 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
         }
 
         if (json_output) {
-            Output.print("{{ \"error\": \"No matching version found\", \"version\": {} }}\n", .{
+            Output.print("{{ \"error\": \"No matching version found\", \"version\": {f} }}\n", .{
                 bun.fmt.formatJSONStringUTF8(spec_, .{
                     .quote = true,
                 }),
             });
             Output.flush();
         } else {
-            Output.errGeneric("No version of <b>{}<r> satisfying <b>{}<r> found", .{
+            Output.errGeneric("No version of <b>{f}<r> satisfying <b>{f}<r> found", .{
                 bun.fmt.quote(name),
                 bun.fmt.quote(version),
             });
@@ -188,7 +174,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
             if (versions_to_display.len > 0) {
                 Output.prettyErrorln("\nRecent versions:<r>", .{});
                 for (versions_to_display) |*v| {
-                    Output.prettyErrorln("<d>-<r> {}", .{v.fmt(parsed_manifest.string_buf)});
+                    Output.prettyErrorln("<d>-<r> {f}", .{v.fmt(parsed_manifest.string_buf)});
                 }
 
                 if (start_index > 0) {
@@ -201,14 +187,14 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
 
     // Treat versions specially because npm does some normalization on there.
     if (json.getObject("versions")) |versions_object| {
-        const keys = try allocator.alloc(bun.JSAst.Expr, versions_object.data.e_object.properties.len);
+        const keys = try allocator.alloc(bun.ast.Expr, versions_object.data.e_object.properties.len);
         for (versions_object.data.e_object.properties.slice(), keys) |*prop, *key| {
             key.* = prop.key.?;
         }
-        const versions_array = bun.JSAst.Expr.init(
-            bun.JSAst.E.Array,
-            bun.JSAst.E.Array{
-                .items = .init(keys),
+        const versions_array = bun.ast.Expr.init(
+            bun.ast.E.Array,
+            bun.ast.E.Array{
+                .items = .fromOwnedSlice(keys),
             },
             .{ .start = -1 },
         );
@@ -225,7 +211,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
             if (value.data == .e_string) {
                 const slice = value.data.e_string.slice(allocator);
                 if (json_output) {
-                    Output.println("{s}", .{bun.fmt.formatJSONStringUTF8(slice, .{})});
+                    Output.println("{f}", .{bun.fmt.formatJSONStringUTF8(slice, .{})});
                 } else {
                     Output.println("{s}", .{slice});
                 }
@@ -241,7 +227,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
                 @TypeOf(&package_json_writer),
                 &package_json_writer,
                 value,
-                &source,
+                source,
                 .{
                     .mangled_props = null,
                 },
@@ -251,7 +237,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
             Global.exit(0);
         } else {
             if (json_output) {
-                Output.print("{{ \"error\": \"Property not found\", \"version\": {}, \"property\": {} }}\n", .{
+                Output.print("{{ \"error\": \"Property not found\", \"version\": {f}, \"property\": {f} }}\n", .{
                     bun.fmt.formatJSONStringUTF8(spec_, .{
                         .quote = true,
                     }),
@@ -277,7 +263,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
             @TypeOf(&package_json_writer),
             &package_json_writer,
             manifest,
-            &source,
+            source,
             .{
                 .mangled_props = null,
                 .indent = .{
@@ -357,7 +343,7 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
             Output.prettyln(" <d>.<r>integrity<r><d>:<r> <green>{s}<r>", .{i});
         }
         if (dist.getNumber("unpackedSize")) |u| {
-            Output.prettyln(" <d>.<r>unpackedSize<r><d>:<r> <blue>{}<r>", .{bun.fmt.size(@as(u64, @intFromFloat(u[0])), .{})});
+            Output.prettyln(" <d>.<r>unpackedSize<r><d>:<r> <blue>{f}<r>", .{bun.fmt.size(@as(u64, @intFromFloat(u[0])), .{})});
         }
     }
 
@@ -405,3 +391,20 @@ pub fn view(allocator: std.mem.Allocator, manager: *PackageManager, spec_: strin
         }
     }
 }
+
+const string = []const u8;
+
+const std = @import("std");
+const PackageManager = @import("../install/install.zig").PackageManager;
+const PackageManifest = @import("../install/npm.zig").PackageManifest;
+const URL = @import("../url.zig").URL;
+
+const bun = @import("bun");
+const Global = bun.Global;
+const JSON = bun.json;
+const MutableString = bun.MutableString;
+const Output = bun.Output;
+const Semver = bun.Semver;
+const http = bun.http;
+const logger = bun.logger;
+const strings = bun.strings;

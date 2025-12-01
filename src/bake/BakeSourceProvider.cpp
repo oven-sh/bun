@@ -1,5 +1,6 @@
 // clang-format off
 #include "BakeSourceProvider.h"
+#include "DevServerSourceProvider.h"
 #include "BakeGlobalObject.h"
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/Completion.h"
@@ -16,13 +17,20 @@
 
 namespace Bake {
 
-extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(GlobalObject* global, BunString source, bool separateSSRGraph) {
+  
+extern "C" BunString BakeSourceProvider__getSourceSlice(SourceProvider* provider)
+{
+    return Bun::toStringView(provider->source());
+}
+
+extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(JSC::JSGlobalObject* global, BunString source, bool separateSSRGraph) {
   auto& vm = JSC::getVM(global);
   auto scope = DECLARE_THROW_SCOPE(vm);
 
   String string = "bake://server-runtime.js"_s;
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
   JSC::SourceCode sourceCode = JSC::SourceCode(SourceProvider::create(
+    global,
     source.toWTFString(),
     origin,
     WTFMove(string),
@@ -31,7 +39,7 @@ extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(GlobalObject* global, B
   ));
 
   JSC::JSValue fnValue = vm.interpreter.executeProgram(sourceCode, global, global);
-  RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
+  RETURN_IF_EXCEPTION(scope, {});
 
   RELEASE_ASSERT(fnValue);
 
@@ -42,7 +50,7 @@ extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(GlobalObject* global, B
   args.append(JSC::jsBoolean(separateSSRGraph)); // separateSSRGraph
   args.append(Zig::ImportMetaObject::create(global, "bake://server-runtime.js"_s)); // importMeta
 
-  return JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, fn, callData, JSC::jsUndefined(), args));
+  RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, fn, callData, JSC::jsUndefined(), args)));
 }
 
 extern "C" JSC::JSInternalPromise* BakeLoadModuleByKey(GlobalObject* global, JSC::JSString* key) {
@@ -56,6 +64,7 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(GlobalObject* global, BunS
   String string = "bake://server.patch.js"_s;
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
   JSC::SourceCode sourceCode = JSC::SourceCode(SourceProvider::create(
+    global,
     source.toWTFString(),
     origin,
     WTFMove(string),
@@ -64,7 +73,35 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(GlobalObject* global, BunS
   ));
 
   JSC::JSValue result = vm.interpreter.executeProgram(sourceCode, global, global);
-  RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
+  RETURN_IF_EXCEPTION(scope, {});
+
+  RELEASE_ASSERT(result);
+  return JSC::JSValue::encode(result);
+}
+
+extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(GlobalObject* global, BunString source, const char* sourceMapJSONPtr, size_t sourceMapJSONLength) {
+  JSC::VM&vm = global->vm();
+  auto scope = DECLARE_THROW_SCOPE(vm);
+
+  String string = "bake://server.patch.js"_s;
+  JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
+  
+  // Use DevServerSourceProvider with the source map JSON
+  auto provider = DevServerSourceProvider::create(
+    global,
+    source.toWTFString(),
+    sourceMapJSONPtr,
+    sourceMapJSONLength,
+    origin,
+    WTFMove(string),
+    WTF::TextPosition(),
+    JSC::SourceProviderSourceType::Program
+  );
+  
+  JSC::SourceCode sourceCode = JSC::SourceCode(provider);
+
+  JSC::JSValue result = vm.interpreter.executeProgram(sourceCode, global, global);
+  RETURN_IF_EXCEPTION(scope, {});
 
   RELEASE_ASSERT(result);
   return JSC::JSValue::encode(result);
@@ -119,6 +156,7 @@ extern "C" JSC::EncodedJSValue BakeRegisterProductionChunk(JSC::JSGlobalObject* 
   JSC::JSString* key = JSC::jsString(vm, string);
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
   JSC::SourceCode sourceCode = JSC::SourceCode(SourceProvider::create(
+    global,
     source.toWTFString(),
     origin,
     WTFMove(string),
@@ -127,7 +165,7 @@ extern "C" JSC::EncodedJSValue BakeRegisterProductionChunk(JSC::JSGlobalObject* 
   ));
 
   global->moduleLoader()->provideFetch(global, key, sourceCode);
-  RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode({}));
+  RETURN_IF_EXCEPTION(scope, {});
 
   return JSC::JSValue::encode(key);
 }

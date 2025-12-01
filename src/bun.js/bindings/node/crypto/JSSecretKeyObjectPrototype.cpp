@@ -42,13 +42,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSecretKeyObjectExport, (JSGlobalObject * globalObject
     JSSecretKeyObject* secretKeyObject = jsDynamicCast<JSSecretKeyObject*>(callFrame->thisValue());
     if (!secretKeyObject) {
         throwThisTypeError(*globalObject, scope, "SecretKeyObject"_s, "export"_s);
-        return JSValue::encode({});
+        return {};
     }
 
     KeyObject& handle = secretKeyObject->handle();
     JSValue optionsValue = callFrame->argument(0);
 
-    return JSValue::encode(handle.exportSecret(globalObject, scope, optionsValue));
+    RELEASE_AND_RETURN(scope, JSValue::encode(handle.exportSecret(globalObject, scope, optionsValue)));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsSecretKeyObjectSymmetricKeySize, (JSGlobalObject*, JSC::EncodedJSValue thisValue, PropertyName propertyName))
@@ -70,7 +70,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSecretKeyObjectSymmetricKeySize, (JSGlobalObject*, JS
 //     JSSecretKeyObject* secretKeyObject = jsDynamicCast<JSSecretKeyObject*>(callFrame->thisValue());
 //     if (!secretKeyObject) {
 //         throwThisTypeError(*globalObject, scope, "SecretKeyObject"_s, "toCryptoKey"_s);
-//         return JSValue::encode({});
+//         return {};
 //     }
 
 //     KeyObject& handle = secretKeyObject->handle();

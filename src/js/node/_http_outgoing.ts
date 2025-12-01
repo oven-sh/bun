@@ -1,6 +1,6 @@
 const { Stream } = require("internal/stream");
 const { isUint8Array, validateString } = require("internal/validators");
-const { deprecate } = require("node:util");
+const { deprecate } = require("internal/util/deprecate");
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectKeys = Object.keys;
 const {
@@ -515,7 +515,7 @@ ObjectDefineProperty(OutgoingMessage.prototype, "_headerNames", {
     function () {
       const headers = this.getHeaders();
       if (headers !== null) {
-        const out = { __proto__: null };
+        const out = Object.create(null);
         const keys = ObjectKeys(headers);
         // Retain for(;;) loop for performance reasons
         // Refs: https://github.com/nodejs/node/pull/30958
@@ -562,7 +562,7 @@ ObjectDefineProperty(OutgoingMessage.prototype, "_headers", {
       if (val == null) {
         this[kOutHeaders] = null;
       } else if (typeof val === "object") {
-        const headers = (this[kOutHeaders] = { __proto__: null });
+        const headers = (this[kOutHeaders] = Object.create(null));
         const keys = ObjectKeys(val);
         // Retain for(;;) loop for performance reasons
         // Refs: https://github.com/nodejs/node/pull/30958

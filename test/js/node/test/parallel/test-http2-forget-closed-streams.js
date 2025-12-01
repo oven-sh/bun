@@ -34,10 +34,9 @@ server.on('session', function(session) {
 });
 
 server.listen(0, function() {
-  const client = http2.connect(`http://localhost:${server.address().port}`);
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
 
   function next(i) {
-    if (process.versions.bun.includes("-debug")) console.log(`next(${i})`);
     if (i === 10000) {
       client.close();
       return server.close();

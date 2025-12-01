@@ -38,7 +38,7 @@ InspectorHTTPServerAgent::~InspectorHTTPServerAgent()
     }
 }
 
-void InspectorHTTPServerAgent::didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*)
+void InspectorHTTPServerAgent::didCreateFrontendAndBackend()
 {
 }
 
@@ -182,13 +182,18 @@ extern "C" {
 
 // Functions for Zig to call to notify about HTTP server events
 
-void Bun__HTTPServerAgent__notifyServerStarted(Inspector::InspectorHTTPServerAgent* agent, int serverId, int hotReloadId, BunString* address, double startTime, void* serverInstance)
+typedef int ServerId;
+typedef int HotReloadId;
+typedef int RouteId;
+typedef int RequestId;
+
+[[ZIG_EXPORT(nothrow)]] void Bun__HTTPServerAgent__notifyServerStarted(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, HotReloadId hotReloadId, const BunString* address, double startTime, void* serverInstance)
 {
 
     agent->serverStarted(serverId, address->toWTFString(), startTime, serverInstance);
 }
 
-void Bun__HTTPServerAgent__notifyServerStopped(Inspector::InspectorHTTPServerAgent* agent, int serverId, double timestamp)
+[[ZIG_EXPORT(nothrow)]] void Bun__HTTPServerAgent__notifyServerStopped(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, double timestamp)
 {
 
     agent->serverStopped(serverId, timestamp);
@@ -214,7 +219,7 @@ struct Route {
     BunString script_url;
 };
 
-void Bun__HTTPServerAgent__notifyServerRoutesUpdated(Inspector::InspectorHTTPServerAgent* agent, int serverId, int hotReloadId,
+[[ZIG_EXPORT(nothrow)]] void Bun__HTTPServerAgent__notifyServerRoutesUpdated(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, HotReloadId hotReloadId,
     Route* routes_ptr, size_t routes_len)
 {
 

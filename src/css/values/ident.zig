@@ -1,8 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("bun");
-const Symbol = bun.JSAst.Symbol;
-
 pub const css = @import("../css_parser.zig");
 pub const Result = css.Result;
 pub const Printer = css.Printer;
@@ -45,10 +40,10 @@ pub const DashedIdentReference = struct {
         return .{ .result = DashedIdentReference{ .ident = ident, .from = from } };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
         if (dest.css_module) |*css_module| {
             if (css_module.config.dashed_idents) {
-                if (try css_module.referenceDashed(W, dest, this.ident.v, &this.from, dest.loc.source_index)) |name| {
+                if (try css_module.referenceDashed(dest, this.ident.v, &this.from, dest.loc.source_index)) |name| {
                     try dest.writeStr("--");
                     css.serializer.serializeName(name, dest) catch return dest.addFmtError();
                     return;
@@ -101,7 +96,7 @@ pub const DashedIdent = struct {
 
     const This = @This();
 
-    pub fn toCss(this: *const DashedIdent, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const DashedIdent, dest: *Printer) PrintErr!void {
         return dest.writeDashedIdent(this, true);
     }
 
@@ -127,7 +122,7 @@ pub const Ident = struct {
         return .{ .result = .{ .v = ident } };
     }
 
-    pub fn toCss(this: *const Ident, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const Ident, dest: *Printer) PrintErr!void {
         return css.serializer.serializeIdentifier(this.v, dest) catch return dest.addFmtError();
     }
 
@@ -175,10 +170,10 @@ pub const IdentOrRef = packed struct(u128) {
         return this.asIdent().?.v;
     }
 
-    pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(this: @This(), writer: *std.Io.Writer) !void {
         if (this.__ref_bit) {
             const ref = this.asRef().?;
-            return writer.print("Ref({})", .{ref});
+            return writer.print("Ref({f})", .{ref});
         }
         return writer.print("Ident({s})", .{this.asIdent().?.v});
     }
@@ -198,7 +193,7 @@ pub const IdentOrRef = packed struct(u128) {
         };
 
         if (comptime bun.Environment.isDebug) {
-            const heap_ptr: *[]const u8 = debug_ident[1].create([]const u8) catch bun.outOfMemory();
+            const heap_ptr: *[]const u8 = bun.handleOom(debug_ident[1].create([]const u8));
             heap_ptr.* = debug_ident[0];
             this.__ptrbits = @intCast(@intFromPtr(heap_ptr));
         }
@@ -230,7 +225,7 @@ pub const IdentOrRef = packed struct(u128) {
         return null;
     }
 
-    pub fn asStr(this: @This(), map: *const bun.JSAst.Symbol.Map, local_names: ?*const css.LocalsResultsMap) ?[]const u8 {
+    pub fn asStr(this: @This(), map: *const bun.ast.Symbol.Map, local_names: ?*const css.LocalsResultsMap) ?[]const u8 {
         if (this.isIdent()) return this.asIdent().?.v;
         const ref = this.asRef().?;
         const final_ref = map.follow(ref);
@@ -293,15 +288,14 @@ pub const CustomIdent = struct {
 
     const This = @This();
 
-    pub fn toCss(this: *const CustomIdent, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return @This().toCssWithOptions(this, W, dest, true);
+    pub fn toCss(this: *const CustomIdent, dest: *Printer) PrintErr!void {
+        return @This().toCssWithOptions(this, dest, true);
     }
 
     /// Write the custom ident to CSS.
     pub fn toCssWithOptions(
         this: *const CustomIdent,
-        comptime W: type,
-        dest: *Printer(W),
+        dest: *Printer,
         enabled_css_modules: bool,
     ) PrintErr!void {
         const css_module_custom_idents_enabled = enabled_css_modules and
@@ -323,3 +317,8 @@ pub const CustomIdent = struct {
 
 /// A list of CSS [`<custom-ident>`](https://www.w3.org/TR/css-values-4/#custom-idents) values.
 pub const CustomIdentList = css.SmallList(CustomIdent, 1);
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const Symbol = bun.ast.Symbol;

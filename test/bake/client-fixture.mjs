@@ -69,11 +69,12 @@ function createWindow(windowUrl) {
     window.internal = internal;
   };
 
+  const original_window_fetch = window.fetch;
   window.fetch = async function (url, options) {
     if (typeof url === "string") {
       url = new URL(url, windowUrl).href;
     }
-    return fetch(url, options);
+    return await original_window_fetch(url, options);
   };
 
   // Provide WebSocket

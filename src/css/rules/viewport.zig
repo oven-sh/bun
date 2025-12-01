@@ -1,4 +1,3 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -15,16 +14,18 @@ pub const ViewportRule = struct {
 
     const This = @This();
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
         try dest.writeChar('@');
-        try this.vendor_prefix.toCss(W, dest);
+        try this.vendor_prefix.toCss(dest);
         try dest.writeStr("viewport");
-        try this.declarations.toCssBlock(W, dest);
+        try this.declarations.toCssBlock(dest);
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {
         return css.implementDeepClone(@This(), this, allocator);
     }
 };
+
+const std = @import("std");

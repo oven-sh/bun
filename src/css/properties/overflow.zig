@@ -1,6 +1,3 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
 
 const Printer = css.Printer;
@@ -25,11 +22,11 @@ pub const Overflow = struct {
         return .{ .result = Overflow{ .x = x, .y = y } };
     }
 
-    pub fn toCss(this: *const Overflow, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-        try this.x.toCss(W, dest);
+    pub fn toCss(this: *const Overflow, dest: *css.Printer) css.PrintErr!void {
+        try this.x.toCss(dest);
         if (this.y != this.x) {
             try dest.writeChar(' ');
-            try this.y.toCss(W, dest);
+            try this.y.toCss(dest);
         }
     }
 
@@ -78,3 +75,6 @@ pub const TextOverflow = enum {
     pub const toCss = css_impl.toCss;
     pub const deepClone = css_impl.deepClone;
 };
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;

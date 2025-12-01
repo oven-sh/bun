@@ -1,9 +1,5 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
 pub const css = @import("../css_parser.zig");
 const Result = css.Result;
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
 const Angle = css.css_values.angle.Angle;
@@ -205,42 +201,56 @@ pub fn Calc(comptime V: type) type {
         }
 
         // TODO: intoValueOwned
-        pub fn intoValue(this: @This(), allocator: std.mem.Allocator) V {
+        pub fn intoValue(this: @This(), allocator: std.mem.Allocator) Result(V) {
             switch (V) {
                 Angle => return switch (this) {
-                    .value => |v| v.*,
-                    // TODO: give a better error message
-                    else => bun.unreachablePanic("", .{}),
+                    .value => |v| .{ .result = v.* },
+                    else => .{ .err = css.ParseError(css.ParserError){
+                        .kind = .{ .custom = .{ .unexpected_value = .{
+                            .expected = "angle value",
+                            .received = @tagName(this),
+                        } } },
+                        .location = css.SourceLocation{ .line = 0, .column = 0 },
+                    } },
                 },
                 CSSNumber => return switch (this) {
-                    .value => |v| v.*,
-                    .number => |n| n,
-                    // TODO: give a better error message
-                    else => bun.unreachablePanic("", .{}),
+                    .value => |v| .{ .result = v.* },
+                    .number => |n| .{ .result = n },
+                    else => .{ .err = css.ParseError(css.ParserError){
+                        .kind = .{ .custom = .{ .unexpected_value = .{
+                            .expected = "number value",
+                            .received = @tagName(this),
+                        } } },
+                        .location = css.SourceLocation{ .line = 0, .column = 0 },
+                    } },
                 },
-                Length => return Length{
+                Length => return .{ .result = Length{
                     .calc = bun.create(allocator, Calc(Length), this),
-                },
+                } },
                 Percentage => return switch (this) {
-                    .value => |v| v.*,
-                    // TODO: give a better error message
-                    else => bun.unreachablePanic("", .{}),
+                    .value => |v| .{ .result = v.* },
+                    else => .{ .result = Percentage{ .v = std.math.nan(f32) } },
                 },
                 Time => return switch (this) {
-                    .value => |v| v.*,
-                    // TODO: give a better error message
-                    else => bun.unreachablePanic("", .{}),
+                    .value => |v| .{ .result = v.* },
+                    else => .{ .err = css.ParseError(css.ParserError){
+                        .kind = .{ .custom = .{ .unexpected_value = .{
+                            .expected = "time value",
+                            .received = @tagName(this),
+                        } } },
+                        .location = css.SourceLocation{ .line = 0, .column = 0 },
+                    } },
                 },
-                DimensionPercentage(LengthValue) => return DimensionPercentage(LengthValue){ .calc = bun.create(
+                DimensionPercentage(LengthValue) => return .{ .result = DimensionPercentage(LengthValue){ .calc = bun.create(
                     allocator,
                     Calc(DimensionPercentage(LengthValue)),
                     this,
-                ) },
-                DimensionPercentage(Angle) => return DimensionPercentage(Angle){ .calc = bun.create(
+                ) } },
+                DimensionPercentage(Angle) => return .{ .result = DimensionPercentage(Angle){ .calc = bun.create(
                     allocator,
                     Calc(DimensionPercentage(Angle)),
                     this,
-                ) },
+                ) } },
                 else => @compileError("Unimplemented, intoValue() for V = " ++ @typeName(V)),
             }
         }
@@ -253,34 +263,50 @@ pub fn Calc(comptime V: type) type {
         }
 
         // TODO: change to addOwned()
-        pub fn add(this: @This(), allocator: std.mem.Allocator, rhs: @This()) @This() {
+        pub fn add(this: @This(), allocator: std.mem.Allocator, rhs: @This()) Result(@This()) {
             if (this == .value and rhs == .value) {
                 // PERF: we can reuse the allocation here
-                return intoCalc(addValue(allocator, this.value.*, rhs.value.*), allocator);
+                return .{ .result = intoCalc(addValue(allocator, this.value.*, rhs.value.*), allocator) };
             } else if (this == .number and rhs == .number) {
-                return .{ .number = this.number + rhs.number };
+                return .{ .result = .{ .number = this.number + rhs.number } };
             } else if (this == .value) {
                 // PERF: we can reuse the allocation here
-                return intoCalc(addValue(allocator, this.value.*, intoValue(rhs, allocator)), allocator);
+                const rhs_value = switch (intoValue(rhs, allocator)) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                };
+                return .{ .result = intoCalc(addValue(allocator, this.value.*, rhs_value), allocator) };
             } else if (rhs == .value) {
                 // PERF: we can reuse the allocation here
-                return intoCalc(addValue(allocator, intoValue(this, allocator), rhs.value.*), allocator);
+                const this_value = switch (intoValue(this, allocator)) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                };
+                return .{ .result = intoCalc(addValue(allocator, this_value, rhs.value.*), allocator) };
             } else if (this == .function) {
-                return This{
+                return .{ .result = This{
                     .sum = .{
                         .left = bun.create(allocator, This, this),
                         .right = bun.create(allocator, This, rhs),
                     },
-                };
+                } };
             } else if (rhs == .function) {
-                return This{
+                return .{ .result = This{
                     .sum = .{
                         .left = bun.create(allocator, This, this),
                         .right = bun.create(allocator, This, rhs),
                     },
-                };
+                } };
             } else {
-                return intoCalc(addValue(allocator, intoValue(this, allocator), intoValue(rhs, allocator)), allocator);
+                const this_value = switch (intoValue(this, allocator)) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                };
+                const rhs_value = switch (intoValue(rhs, allocator)) {
+                    .result => |v| v,
+                    .err => |e| return .{ .err = e },
+                };
+                return .{ .result = intoCalc(addValue(allocator, this_value, rhs_value), allocator) };
             }
         }
 
@@ -875,14 +901,20 @@ pub fn Calc(comptime V: type) type {
                             .result => |vv| vv,
                             .err => |e| return .{ .err = e },
                         };
-                        cur = cur.add(input.allocator(), next);
+                        cur = switch (cur.add(input.allocator(), next)) {
+                            .result => |v| v,
+                            .err => |e| return .{ .err = e },
+                        };
                     } else if (next_tok.* == .delim and next_tok.delim == '-') {
                         var rhs = switch (This.parseProduct(input, ctx, parse_ident)) {
                             .result => |vv| vv,
                             .err => |e| return .{ .err = e },
                         };
                         rhs = rhs.mulF32(input.allocator(), -1.0);
-                        cur = cur.add(input.allocator(), rhs);
+                        cur = switch (cur.add(input.allocator(), rhs)) {
+                            .result => |v| v,
+                            .err => |e| return .{ .err = e },
+                        };
                     } else {
                         return .{ .err = input.newUnexpectedTokenError(next_tok.*) };
                     }
@@ -1300,33 +1332,33 @@ pub fn Calc(comptime V: type) type {
             return null;
         }
 
-        pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        pub fn toCss(this: *const @This(), dest: *css.Printer) css.PrintErr!void {
             const was_in_calc = dest.in_calc;
             dest.in_calc = true;
 
-            const res = toCssImpl(this, W, dest);
+            const res = toCssImpl(this, dest);
 
             dest.in_calc = was_in_calc;
             return res;
         }
 
-        pub fn toCssImpl(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        pub fn toCssImpl(this: *const @This(), dest: *css.Printer) css.PrintErr!void {
             return switch (this.*) {
-                .value => |v| v.toCss(W, dest),
-                .number => |n| CSSNumberFns.toCss(&n, W, dest),
+                .value => |v| v.toCss(dest),
+                .number => |n| CSSNumberFns.toCss(&n, dest),
                 .sum => |sum| {
                     const a = sum.left;
                     const b = sum.right;
-                    try a.toCss(W, dest);
+                    try a.toCss(dest);
                     // White space is always required.
                     if (b.isSignNegative()) {
                         try dest.writeStr(" - ");
                         var b2 = b.deepClone(dest.allocator).mulF32(dest.allocator, -1.0);
                         defer b2.deinit(dest.allocator);
-                        try b2.toCss(W, dest);
+                        try b2.toCss(dest);
                     } else {
                         try dest.writeStr(" + ");
-                        try b.toCss(W, dest);
+                        try b.toCss(dest);
                     }
                     return;
                 },
@@ -1335,16 +1367,16 @@ pub fn Calc(comptime V: type) type {
                     const calc = this.product.expression;
                     if (@abs(num) < 1.0) {
                         const div = 1.0 / num;
-                        try calc.toCss(W, dest);
+                        try calc.toCss(dest);
                         try dest.delim('/', true);
-                        try CSSNumberFns.toCss(&div, W, dest);
+                        try CSSNumberFns.toCss(&div, dest);
                     } else {
-                        try CSSNumberFns.toCss(&num, W, dest);
+                        try CSSNumberFns.toCss(&num, dest);
                         try dest.delim('*', true);
-                        try calc.toCss(W, dest);
+                        try calc.toCss(dest);
                     }
                 },
-                .function => |f| return f.toCss(W, dest),
+                .function => |f| return f.toCss(dest),
             };
         }
 
@@ -1460,7 +1492,7 @@ pub fn Calc(comptime V: type) type {
                         continue;
                     }
                 } else {
-                    reduced.append(allocator, arg.*) catch bun.outOfMemory();
+                    bun.handleOom(reduced.append(allocator, arg.*));
                     // set to dummy value since we moved it into `reduced`
                     arg.* = This{ .number = 420 };
                     continue;
@@ -1610,11 +1642,11 @@ pub fn MathFunction(comptime V: type) type {
             }
         }
 
-        pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+        pub fn toCss(this: *const @This(), dest: *css.Printer) css.PrintErr!void {
             return switch (this.*) {
                 .calc => |*calc| {
                     try dest.writeStr("calc(");
-                    try calc.toCss(W, dest);
+                    try calc.toCss(dest);
                     try dest.writeChar(')');
                 },
                 .min => |*args| {
@@ -1626,7 +1658,7 @@ pub fn MathFunction(comptime V: type) type {
                         } else {
                             try dest.delim(',', false);
                         }
-                        try arg.toCss(W, dest);
+                        try arg.toCss(dest);
                     }
                     try dest.writeChar(')');
                 },
@@ -1639,52 +1671,52 @@ pub fn MathFunction(comptime V: type) type {
                         } else {
                             try dest.delim(',', false);
                         }
-                        try arg.toCss(W, dest);
+                        try arg.toCss(dest);
                     }
                     try dest.writeChar(')');
                 },
                 .clamp => |*clamp| {
                     try dest.writeStr("clamp(");
-                    try clamp.min.toCss(W, dest);
+                    try clamp.min.toCss(dest);
                     try dest.delim(',', false);
-                    try clamp.center.toCss(W, dest);
+                    try clamp.center.toCss(dest);
                     try dest.delim(',', false);
-                    try clamp.max.toCss(W, dest);
+                    try clamp.max.toCss(dest);
                     try dest.writeChar(')');
                 },
                 .round => |*rnd| {
                     try dest.writeStr("round(");
                     if (rnd.strategy != RoundingStrategy.default()) {
-                        try rnd.strategy.toCss(W, dest);
+                        try rnd.strategy.toCss(dest);
                         try dest.delim(',', false);
                     }
-                    try rnd.value.toCss(W, dest);
+                    try rnd.value.toCss(dest);
                     try dest.delim(',', false);
-                    try rnd.interval.toCss(W, dest);
+                    try rnd.interval.toCss(dest);
                     try dest.writeChar(')');
                 },
                 .rem => |*rem| {
                     try dest.writeStr("rem(");
-                    try rem.dividend.toCss(W, dest);
+                    try rem.dividend.toCss(dest);
                     try dest.delim(',', false);
-                    try rem.divisor.toCss(W, dest);
+                    try rem.divisor.toCss(dest);
                     try dest.writeChar(')');
                 },
                 .mod_ => |*mod_| {
                     try dest.writeStr("mod(");
-                    try mod_.dividend.toCss(W, dest);
+                    try mod_.dividend.toCss(dest);
                     try dest.delim(',', false);
-                    try mod_.divisor.toCss(W, dest);
+                    try mod_.divisor.toCss(dest);
                     try dest.writeChar(')');
                 },
                 .abs => |*v| {
                     try dest.writeStr("abs(");
-                    try v.toCss(W, dest);
+                    try v.toCss(dest);
                     try dest.writeChar(')');
                 },
                 .sign => |*v| {
                     try dest.writeStr("sign(");
-                    try v.toCss(W, dest);
+                    try v.toCss(dest);
                     try dest.writeChar(')');
                 },
                 .hypot => |*args| {
@@ -1696,7 +1728,7 @@ pub fn MathFunction(comptime V: type) type {
                         } else {
                             try dest.delim(',', false);
                         }
-                        try arg.toCss(W, dest);
+                        try arg.toCss(dest);
                     }
                     try dest.writeChar(')');
                 },
@@ -1773,8 +1805,8 @@ pub const RoundingStrategy = enum {
         return css.enum_property_util.parse(@This(), input);
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return css.enum_property_util.toCss(@This(), this, W, dest);
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, dest);
     }
 
     pub fn default() RoundingStrategy {
@@ -1788,7 +1820,7 @@ fn arr2(allocator: std.mem.Allocator, a: anytype, b: anytype) ArrayList(@TypeOf(
         @compileError("arr2: types must match");
     }
     var arr = ArrayList(T){};
-    arr.appendSlice(allocator, &.{ a, b }) catch bun.outOfMemory();
+    bun.handleOom(arr.appendSlice(allocator, &.{ a, b }));
     return arr;
 }
 
@@ -1834,8 +1866,8 @@ pub const Constant = enum {
         return css.enum_property_util.parse(@This(), input);
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
-        return css.enum_property_util.toCss(@This(), this, W, dest);
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
+        return css.enum_property_util.toCss(@This(), this, dest);
     }
 
     pub fn intoF32(this: *const @This()) f32 {
@@ -1852,3 +1884,9 @@ pub const Constant = enum {
 fn absf(a: f32) f32 {
     return @abs(a);
 }
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;
+const Allocator = std.mem.Allocator;

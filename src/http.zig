@@ -586,7 +586,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
             hashHeaderConst("Connection") => {
                 override_connection_header = true;
                 const connection_value = this.headerStr(header_values[i]);
-                if (std.ascii.eqlIgnoreCase(connection_value, "close")) {
+                if (bun.strings.eqlCaseInsensitiveASCII(connection_value, "close")) {
                     this.flags.disable_keepalive = true;
                 }
             },
@@ -609,7 +609,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
             },
             hashHeaderConst("Upgrade") => {
                 const value = this.headerStr(header_values[i]);
-                if (!std.ascii.eqlIgnoreCase(value, "h2") and !std.ascii.eqlIgnoreCase(value, "h2c")) {
+                if (!bun.strings.eqlCaseInsensitiveASCII(value, "h2") and !bun.strings.eqlCaseInsensitiveASCII(value, "h2c")) {
                     this.flags.upgrade_state = .pending;
                 }
             },

@@ -511,8 +511,8 @@ pub const AF = enum(inet.sa_family_t) {
 
             if (fam_str.is8Bit()) {
                 const slice = fam_str.latin1();
-                if (std.ascii.eqlIgnoreCase(slice[0..4], "ipv4")) return AF.INET;
-                if (std.ascii.eqlIgnoreCase(slice[0..4], "ipv6")) return AF.INET6;
+                if (bun.strings.eqlCaseInsensitiveASCII(slice[0..4], "ipv4")) return AF.INET;
+                if (bun.strings.eqlCaseInsensitiveASCII(slice[0..4], "ipv6")) return AF.INET6;
                 return global.throwInvalidArgumentPropertyValue("options.family", "'ipv4' or 'ipv6'", value);
             } else {
                 // not full ignore-case since that would require converting

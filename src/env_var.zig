@@ -292,7 +292,7 @@ const kind = struct {
             const false_values = .{ "", "0", "false", "no", "off" };
 
             inline for (false_values) |tv| {
-                if (std.ascii.eqlIgnoreCase(s, tv)) {
+                if (bun.strings.eqlCaseInsensitiveASCII(s, tv)) {
                     return false;
                 }
             }

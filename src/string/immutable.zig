@@ -973,15 +973,7 @@ pub fn eqlComptimeCheckLenWithType(comptime Type: type, a: []const Type, comptim
 /// Note that this function performs bound checks, but is marked as inline, so the caller may also
 /// perform bounds checks without a performance penalty.
 pub inline fn eqlCaseInsensitiveASCII(a: string, b: string) bool {
-    // This is separated into a slow path to reduce code size of the fast path. We're letting LLVM
-    // decide whether it inlines it or not.
-    const SlowPathNs = struct {
-        pub fn eqlCaseInsensitiveASCII(as: string, bs: string) bool {
-            return bun.c.strncasecmp(as.ptr, bs.ptr, @min(as.len, bs.len)) == 0;
-        }
-    };
-
-    return a.len == b.len and (a.len == 0 or SlowPathNs.eqlCaseInsensitiveASCII(a, b));
+    return std.ascii.eqlIgnoreCase(a, b);
 }
 
 pub fn eqlCaseInsensitiveT(comptime T: type, a: []const T, b: []const u8) bool {

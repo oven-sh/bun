@@ -4842,7 +4842,7 @@ const Tokenizer = struct {
 
     pub fn seeFunction(this: *Tokenizer, name: []const u8) void {
         if (this.var_or_env_functions == .looking_for_them) {
-            if (std.ascii.eqlIgnoreCase(name, "var") and std.ascii.eqlIgnoreCase(name, "env")) {
+            if (bun.strings.eqlCaseInsensitiveASCII(name, "var") and bun.strings.eqlCaseInsensitiveASCII(name, "env")) {
                 this.var_or_env_functions = .seen_at_least_one;
             }
         }
@@ -5188,7 +5188,7 @@ const Tokenizer = struct {
         const value = this.consumeName();
         if (!this.isEof() and this.nextByteUnchecked() == '(') {
             this.advance(1);
-            if (std.ascii.eqlIgnoreCase(value, "url")) return if (this.consumeUnquotedUrl()) |tok| return tok else .{ .function = value };
+            if (bun.strings.eqlCaseInsensitiveASCII(value, "url")) return if (this.consumeUnquotedUrl()) |tok| return tok else .{ .function = value };
             this.seeFunction(value);
             return .{ .function = value };
         }

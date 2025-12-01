@@ -9,7 +9,12 @@ pub const SubscriptionCtx = struct {
 
     pub fn init(valkey_parent: *JSValkeyClient) bun.JSError!Self {
         const callback_map = jsc.JSMap.create(valkey_parent.globalObject);
-        const parent_this = valkey_parent.this_value.tryGet() orelse unreachable;
+        const parent_this = valkey_parent.this_value.tryGet() orelse {
+            // this_value should always be set by the time init is called from the constructor.
+            // If we get here, something is seriously wrong with how the client was created.
+            bun.Output.debugWarn("SubscriptionCtx.init called with uninitialized this_value", .{});
+            @panic("SubscriptionCtx.init called with uninitialized this_value");
+        };
 
         ParentJS.gc.set(.subscriptionCallbackMap, parent_this, valkey_parent.globalObject, callback_map);
 
@@ -26,10 +31,22 @@ pub const SubscriptionCtx = struct {
     }
 
     fn subscriptionCallbackMap(this: *Self) *jsc.JSMap {
-        const parent_this = this.parent().this_value.tryGet() orelse unreachable;
+        const parent_this = this.parent().this_value.tryGet() orelse {
+            // this_value should always be set when subscriptionCallbackMap is called.
+            // If we get here, it means the client was not properly initialized.
+            bun.Output.debugWarn("subscriptionCallbackMap called with uninitialized this_value", .{});
+            @panic("subscriptionCallbackMap called with uninitialized this_value");
+        };
 
-        const value_js = ParentJS.gc.get(.subscriptionCallbackMap, parent_this).?;
-        return jsc.JSMap.fromJS(value_js).?;
+        const value_js = ParentJS.gc.get(.subscriptionCallbackMap, parent_this) orelse {
+            // subscriptionCallbackMap should always exist if we have a valid this_value.
+            bun.Output.debugWarn("subscriptionCallbackMap not found in gc values", .{});
+            @panic("subscriptionCallbackMap not found in gc values");
+        };
+        return jsc.JSMap.fromJS(value_js) orelse {
+            bun.Output.debugWarn("subscriptionCallbackMap is not a JSMap", .{});
+            @panic("subscriptionCallbackMap is not a JSMap");
+        };
     }
 
     /// Get the total number of channels that this subscription context is subscribed to.
@@ -139,7 +156,12 @@ pub const SubscriptionCtx = struct {
             } else if (existing_handler_arr.isArray()) {
                 // Use the existing array
                 handlers_array = existing_handler_arr;
-            } else unreachable;
+            } else {
+                // The subscription callback map should only contain arrays.
+                // If we get here, the map was corrupted somehow.
+                bun.Output.debugWarn("subscriptionCallbackMap contained non-array value", .{});
+                @panic("subscriptionCallbackMap contained non-array value");
+            }
         } else {
             // No existing_handler_arr exists, create a new array
             handlers_array = try jsc.JSArray.createEmpty(globalObject, 0);

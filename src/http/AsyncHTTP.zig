@@ -93,6 +93,7 @@ const AtomicState = std.atomic.Value(State);
 
 pub const Options = struct {
     http_proxy: ?URL = null,
+    proxy_headers: ?Headers = null,
     hostname: ?[]u8 = null,
     signals: ?Signals = null,
     unix_socket_path: ?jsc.ZigString.Slice = null,
@@ -185,6 +186,7 @@ pub fn init(
         .signals = options.signals orelse this.signals,
         .async_http_id = this.async_http_id,
         .http_proxy = this.http_proxy,
+        .proxy_headers = options.proxy_headers,
         .redirect_type = redirect_type,
     };
     if (options.unix_socket_path) |val| {

@@ -30,6 +30,7 @@ var futex_atomic: std.atomic.Value(u32) = .init(0);
 
 pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
     const debugger = &(this.debugger orelse return);
+    bun.analytics.Features.debugger += 1;
     if (!debugger.must_block_until_connected) {
         return;
     }

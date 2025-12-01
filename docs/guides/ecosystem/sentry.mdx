@@ -20,7 +20,7 @@ bun add @sentry/bun
 
 Then, initialize the Sentry SDK with your Sentry DSN in your app's entry file. You can find your DSN in your Sentry project settings.
 
-```js sentry.ts icon="/icons/typescript.svg"
+```ts sentry.ts icon="/icons/typescript.svg"
 import * as Sentry from "@sentry/bun";
 
 // Ensure to call this before importing any other modules!
@@ -37,7 +37,7 @@ Sentry.init({
 
 You can verify that Sentry is working by capturing a test error:
 
-```js sentry.ts icon="/icons/typescript.svg"
+```ts sentry.ts icon="/icons/typescript.svg"
 setTimeout(() => {
   try {
     foo();

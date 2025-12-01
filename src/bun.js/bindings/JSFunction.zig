@@ -30,7 +30,7 @@ pub const JSFunction = opaque {
     pub fn create(
         global: *JSGlobalObject,
         fn_name: anytype,
-        comptime implementation: jsc.JSHostFnZig,
+        comptime implementation: anytype,
         function_length: u32,
         options: CreateJSFunctionOptions,
     ) JSValue {
@@ -40,7 +40,11 @@ pub const JSFunction = opaque {
                 bun.String => fn_name,
                 else => bun.String.init(fn_name),
             },
-            jsc.toJSHostFn(implementation),
+            switch (@TypeOf(implementation)) {
+                jsc.JSHostFnZig => jsc.toJSHostFn(implementation),
+                jsc.JSHostFn => implementation,
+                else => @compileError("unexpected function type"),
+            },
             function_length,
             options.implementation_visibility,
             options.intrinsic,

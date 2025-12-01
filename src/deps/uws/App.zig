@@ -85,7 +85,7 @@ pub fn NewApp(comptime ssl: bool) type {
                 pub fn handle(res: *uws.uws_res, req: *Request, user_data: ?*anyopaque) callconv(.c) void {
                     if (comptime UserDataType == void) {
                         return @call(
-                            .always_inline,
+                            bun.callmod_inline,
                             handler,
                             .{
                                 {},
@@ -95,7 +95,7 @@ pub fn NewApp(comptime ssl: bool) type {
                         );
                     } else {
                         return @call(
-                            .always_inline,
+                            bun.callmod_inline,
                             handler,
                             .{
                                 @as(UserDataType, @ptrCast(@alignCast(user_data.?))),

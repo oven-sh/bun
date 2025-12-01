@@ -30,7 +30,7 @@ It's common for a monorepo to have the following structure:
 
 In the root `package.json`, the `"workspaces"` key is used to indicate which subdirectories should be considered packages/workspaces within the monorepo. It's conventional to place all the workspace in a directory called `packages`.
 
-```json
+```json package.json icon="file-json"
 {
   "name": "my-project",
   "version": "1.0.0",
@@ -42,14 +42,21 @@ In the root `package.json`, the `"workspaces"` key is used to indicate which sub
 ```
 
 <Note>
-  **Glob support** — Bun supports full glob syntax in `"workspaces"` (see [here](/runtime/glob#supported-glob-patterns)
-  for a comprehensive list of supported syntax), _except_ for exclusions (e.g. `!**/excluded/**`), which are not
-  implemented yet.
+  **Glob support** — Bun supports full glob syntax in `"workspaces"`, including negative patterns (e.g.
+  `!**/excluded/**`). See [here](/runtime/glob#supported-glob-patterns) for a comprehensive list of supported syntax.
 </Note>
+
+```json package.json icon="file-json"
+{
+  "name": "my-project",
+  "version": "1.0.0",
+  "workspaces": ["packages/**", "!packages/**/test/**", "!packages/**/template/**"]
+}
+```
 
 Each workspace has it's own `package.json`. When referencing other packages in the monorepo, semver or workspace protocols (e.g. `workspace:*`) can be used as the version field in your `package.json`.
 
-```json
+```json packages/pkg-a/package.json icon="file-json"
 {
   "name": "pkg-a",
   "version": "1.0.0",

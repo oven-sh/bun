@@ -814,6 +814,8 @@ pub const RunCommand = struct {
                 }
             }
 
+            // Always skip default .env files for package.json script runner
+            // (see comment in env_loader.zig:542-548 - the script's own bun instance loads .env)
             this_transpiler.runEnvLoader(true) catch {};
         }
 

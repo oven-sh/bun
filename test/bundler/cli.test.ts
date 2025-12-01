@@ -419,3 +419,20 @@ test("log case 2", async () => {
     "
   `);
 });
+
+test("cannot use both --outdir and --outfile", async () => {
+  const tmpdir = tmpdirSync();
+  const inputFile = path.join(tmpdir, "input.js");
+
+  writeFileSync(inputFile, 'console.log("Hello, world!");');
+
+  const { exited, stderr } = Bun.spawn({
+    cmd: [bunExe(), "build", "--outdir=" + tmpdir + "/out", "--outfile=" + tmpdir + "/out.js", inputFile],
+    env: bunEnv,
+    cwd: tmpdir,
+    stderr: "pipe",
+  });
+
+  expect(await stderr.text()).toContain("cannot use both --outdir and --outfile");
+  expect(await exited).not.toBe(0);
+});

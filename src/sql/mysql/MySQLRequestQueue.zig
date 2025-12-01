@@ -32,7 +32,7 @@ pub inline fn markAsPrepared(this: *@This()) void {
     }
 }
 pub inline fn canPipeline(this: *@This(), connection: *MySQLConnection) bool {
-    if (bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING)) {
+    if (bun.feature_flag.BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING.get()) {
         @branchHint(.unlikely);
         return false;
     }
@@ -211,14 +211,13 @@ pub fn deinit(this: *@This()) void {
     this.#requests.deinit();
 }
 
-const Queue = std.fifo.LinearFifo(*JSMySQLQuery, .Dynamic);
+const Queue = bun.LinearFifo(*JSMySQLQuery, .Dynamic);
 
 const debug = bun.Output.scoped(.MySQLRequestQueue, .visible);
 
 const JSMySQLQuery = @import("./js/JSMySQLQuery.zig");
 const MySQLConnection = @import("./js/JSMySQLConnection.zig");
 const bun = @import("bun");
-const std = @import("std");
 
 const jsc = bun.jsc;
 const JSValue = jsc.JSValue;

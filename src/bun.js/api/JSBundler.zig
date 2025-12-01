@@ -57,6 +57,8 @@ pub const JSBundler = struct {
             windows_description: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             windows_copyright: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             outfile: OwnedString = OwnedString.initEmpty(bun.default_allocator),
+            autoload_dotenv: bool = true,
+            autoload_bunfig: bool = true,
 
             pub fn fromJS(globalThis: *jsc.JSGlobalObject, config: jsc.JSValue, allocator: std.mem.Allocator, compile_target: ?CompileTarget) JSError!?CompileOptions {
                 var this = CompileOptions{
@@ -175,6 +177,14 @@ pub const JSBundler = struct {
                     var slice = try outfile.toSlice(globalThis, bun.default_allocator);
                     defer slice.deinit();
                     try this.outfile.appendSliceExact(slice.slice());
+                }
+
+                if (try object.getBooleanLoose(globalThis, "autoloadDotenv")) |autoload_dotenv| {
+                    this.autoload_dotenv = autoload_dotenv;
+                }
+
+                if (try object.getBooleanLoose(globalThis, "autoloadBunfig")) |autoload_bunfig| {
+                    this.autoload_bunfig = autoload_bunfig;
                 }
 
                 return this;
@@ -617,7 +627,7 @@ pub const JSBundler = struct {
                     const value_type = property_value.jsType();
 
                     if (!value_type.isStringLike()) {
-                        return globalThis.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop});
+                        return globalThis.throwInvalidArguments("define \"{f}\" must be a JSON string", .{prop});
                     }
 
                     var val = jsc.ZigString.init("");
@@ -693,6 +703,12 @@ pub const JSBundler = struct {
 
                 const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(this.compile.?.compile_target.os, "root/");
                 try this.public_path.append(base_public_path);
+
+                // When using --compile, only `external` sourcemaps work, as we do not
+                // look at the source map comment. Override any other sourcemap type.
+                if (this.source_map != .none) {
+                    this.source_map = .external;
+                }
 
                 if (compile.outfile.isEmpty()) {
                     const entry_point = this.entry_points.keys()[0];
@@ -930,8 +946,8 @@ pub const JSBundler = struct {
                 resolve.value = .{ .no_match = {} };
             } else {
                 const global = resolve.bv2.plugins.?.globalObject();
-                const path = path_value.toSliceCloneWithAllocator(global, bun.default_allocator) orelse @panic("Unexpected: path is not a string");
-                const namespace = namespace_value.toSliceCloneWithAllocator(global, bun.default_allocator) orelse @panic("Unexpected: namespace is not a string");
+                const path = path_value.toSliceCloneWithAllocator(global, bun.default_allocator) catch @panic("Unexpected: path is not a string");
+                const namespace = namespace_value.toSliceCloneWithAllocator(global, bun.default_allocator) catch @panic("Unexpected: namespace is not a string");
                 resolve.value = .{
                     .success = .{
                         .path = path.slice(),
@@ -1155,8 +1171,14 @@ pub const JSBundler = struct {
         extern fn JSBundlerPlugin__tombstone(*Plugin) void;
         extern fn JSBundlerPlugin__runOnEndCallbacks(*Plugin, jsc.JSValue, jsc.JSValue, jsc.JSValue) jsc.JSValue;
 
-        pub fn runOnEndCallbacks(this: *Plugin, globalThis: *jsc.JSGlobalObject, build_promise: *jsc.JSPromise, build_result: jsc.JSValue, rejection: jsc.JSValue) JSError!jsc.JSValue {
+        pub fn runOnEndCallbacks(this: *Plugin, globalThis: *jsc.JSGlobalObject, build_promise: *jsc.JSPromise, build_result: jsc.JSValue, rejection: bun.JSError!jsc.JSValue) bun.JSError!jsc.JSValue {
             jsc.markBinding(@src());
+
+            const rejection_value = rejection catch |err| switch (err) {
+                error.OutOfMemory => globalThis.createOutOfMemoryError(),
+                error.JSError => globalThis.takeError(err),
+                error.JSTerminated => return error.JSTerminated,
+            };
 
             var scope: jsc.CatchScope = undefined;
             scope.init(globalThis, @src());
@@ -1166,7 +1188,7 @@ pub const JSBundler = struct {
                 this,
                 build_promise.asValue(globalThis),
                 build_result,
-                rejection,
+                rejection_value,
             );
 
             try scope.returnIfException();
@@ -1465,7 +1487,7 @@ pub const BuildArtifact = struct {
         globalThis: *jsc.JSGlobalObject,
     ) JSValue {
         var buf: [512]u8 = undefined;
-        const out = std.fmt.bufPrint(&buf, "{any}", .{bun.fmt.truncatedHash32(this.hash)}) catch @panic("Unexpected");
+        const out = std.fmt.bufPrint(&buf, "{f}", .{bun.fmt.truncatedHash32(this.hash)}) catch @panic("Unexpected");
         return ZigString.init(out).toJS(globalThis);
     }
 
@@ -1489,7 +1511,7 @@ pub const BuildArtifact = struct {
         return jsc.JSValue.jsNull();
     }
 
-    pub fn finalize(this: *BuildArtifact) callconv(.C) void {
+    pub fn finalize(this: *BuildArtifact) callconv(.c) void {
         this.deinit();
 
         bun.default_allocator.destroy(this);
@@ -1546,7 +1568,7 @@ pub const BuildArtifact = struct {
                 try formatter.writeIndent(Writer, writer);
                 try writer.print(
                     comptime Output.prettyFmt(
-                        "<r>hash<r>: <green>\"{any}\"<r>",
+                        "<r>hash<r>: <green>\"{f}\"<r>",
                         enable_ansi_colors,
                     ),
                     .{bun.fmt.truncatedHash32(this.hash)},

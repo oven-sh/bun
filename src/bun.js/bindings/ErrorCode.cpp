@@ -121,10 +121,18 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
     case JSC::ErrorType::SyntaxError:
         prototype = JSC::constructEmptyObject(globalObject, globalObject->m_syntaxErrorStructure.prototype(globalObject));
         break;
-    default: {
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO: Add support for more error types");
+    case JSC::ErrorType::EvalError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_evalErrorStructure.prototype(globalObject));
         break;
-    }
+    case JSC::ErrorType::ReferenceError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_referenceErrorStructure.prototype(globalObject));
+        break;
+    case JSC::ErrorType::AggregateError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_aggregateErrorStructure.prototype(globalObject));
+        break;
+    case JSC::ErrorType::SuppressedError:
+        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_suppressedErrorStructure.prototype(globalObject));
+        break;
     }
 
     prototype->putDirect(vm, vm.propertyNames->name, jsString(vm, String(name)), 0);
@@ -2367,6 +2375,13 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ZSTD_INVALID_PARAM, message));
     }
 
+    case ErrorCode::ERR_SSL_NO_CIPHER_MATCH: {
+        auto err = createError(globalObject, ErrorCode::ERR_SSL_NO_CIPHER_MATCH, "No cipher match"_s);
+        err->putDirect(vm, Identifier::fromString(vm, "reason"_s), jsString(vm, WTF::String("no cipher match"_s)));
+        err->putDirect(vm, Identifier::fromString(vm, "library"_s), jsString(vm, WTF::String("SSL routines"_s)));
+        return JSC::JSValue::encode(err);
+    }
+
     case ErrorCode::ERR_IPC_DISCONNECTED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_DISCONNECTED, "IPC channel is already disconnected"_s));
     case ErrorCode::ERR_SERVER_NOT_RUNNING:
@@ -2427,17 +2442,6 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_CERT_ALTNAME_FORMAT, "Invalid subject alternative name string"_s));
     case ErrorCode::ERR_TLS_SNI_FROM_SERVER:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_SNI_FROM_SERVER, "Cannot issue SNI from a TLS server-side socket"_s));
-    case ErrorCode::ERR_SSL_NO_CIPHER_MATCH: {
-        auto err = createError(globalObject, ErrorCode::ERR_SSL_NO_CIPHER_MATCH, "No cipher match"_s);
-
-        auto reason = JSC::jsString(vm, WTF::String("no cipher match"_s));
-        err->putDirect(vm, Identifier::fromString(vm, "reason"_s), reason);
-
-        auto library = JSC::jsString(vm, WTF::String("SSL routines"_s));
-        err->putDirect(vm, Identifier::fromString(vm, "library"_s), library);
-
-        return JSC::JSValue::encode(err);
-    }
     case ErrorCode::ERR_INVALID_URI:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_URI, "URI malformed"_s));
     case ErrorCode::ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED:

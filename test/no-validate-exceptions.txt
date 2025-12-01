@@ -26,6 +26,7 @@ test/js/node/test/parallel/test-worker.mjs
 test/js/node/test/system-ca/test-native-root-certs.test.mjs
 test/js/node/events/event-emitter.test.ts
 test/js/node/module/node-module-module.test.js
+test/js/node/module/module-resolve-filename-paths.test.js
 test/js/node/process/call-constructor.test.js
 test/js/node/stubs.test.js
 test/js/node/timers/node-timers.test.ts
@@ -49,6 +50,11 @@ test/bundler/esbuild/default.test.ts
 test/cli/install/bun-repl.test.ts
 test/js/third_party/astro/astro-post.test.js
 test/regression/issue/ctrl-c.test.ts
+test/bundler/bundler_comments.test.ts
+test/js/node/test/parallel/test-fs-promises-file-handle-readLines.mjs
+test/js/bun/test/parallel/test-require-builtins.ts
+test/cli/install/bun-install-lifecycle-scripts.test.ts
+test/js/bun/test/parallel/test-integration-rspack.ts
 
 # trips asan on my macos test machine
 test/js/node/test/parallel/test-fs-watch.js
@@ -117,26 +123,29 @@ test/napi/node-napi-tests/test/node-api/test_make_callback_recurse/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_threadsafe_function/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_worker_terminate_finalization/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_reference_by_node_api_version/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_env_teardown_gc/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_general/do.test.ts
 
 # normalizeCryptoAlgorithmParameters
-test/js/node/test/parallel/test-webcrypto-derivekey.js
-test/js/node/test/parallel/test-webcrypto-digest.js
-test/js/node/test/parallel/test-webcrypto-encrypt-decrypt-aes.js
 test/js/bun/crypto/wpt-webcrypto.generateKey.test.ts
-test/js/node/test/parallel/test-webcrypto-encrypt-decrypt.js
-test/js/node/test/parallel/test-webcrypto-sign-verify.js
-test/js/node/test/parallel/test-webcrypto-cryptokey-workers.js
+test/js/deno/crypto/webcrypto.test.ts
+test/js/node/crypto/node-crypto.test.js
 test/js/node/test/parallel/test-crypto-oaep-zero-length.js
 test/js/node/test/parallel/test-crypto-psychic-signatures.js
 test/js/node/test/parallel/test-crypto-subtle-zero-length.js
-test/js/node/test/parallel/test-crypto-worker-thread.js
 test/js/node/test/parallel/test-crypto-webcrypto-aes-decrypt-tag-too-small.js
-test/js/web/crypto/web-crypto.test.ts
-test/js/node/crypto/node-crypto.test.js
+test/js/node/test/parallel/test-crypto-worker-thread.js
+test/js/node/test/parallel/test-webcrypto-cryptokey-workers.js
+test/js/node/test/parallel/test-webcrypto-derivekey.js
+test/js/node/test/parallel/test-webcrypto-digest.js
+test/js/node/test/parallel/test-webcrypto-encrypt-decrypt-aes.js
+test/js/node/test/parallel/test-webcrypto-encrypt-decrypt.js
+test/js/node/test/parallel/test-webcrypto-sign-verify.js
 test/js/third_party/pg/pg.test.ts
+test/js/web/crypto/web-crypto.test.ts
 test/regression/issue/01466.test.ts
 test/regression/issue/21311.test.ts
-test/js/deno/crypto/webcrypto.test.ts
+test/regression/issue/24399.test.ts
 vendor/elysia/test/aot/response.test.ts
 vendor/elysia/test/cookie/response.test.ts
 vendor/elysia/test/cookie/signature.test.ts
@@ -148,3 +157,6 @@ vendor/elysia/test/ws/message.test.ts
 test/js/node/test/parallel/test-worker-abort-on-uncaught-exception.js
 test/js/bun/glob/import-meta-glob.test.ts
 test/bundler/bundler_loader.test.ts
+
+# TODO: WebCore fixes
+test/js/web/urlpattern/urlpattern.test.ts

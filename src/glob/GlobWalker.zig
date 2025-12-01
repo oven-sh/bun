@@ -675,7 +675,7 @@ pub fn GlobWalker_(
                 this.iter_state.directory.at_cwd = false;
                 this.iter_state.directory.fd = .empty;
 
-                log("Transition(dirpath={s}, fd={}, component_idx={d})", .{ dir_path, fd, component_idx });
+                log("Transition(dirpath={s}, component_idx={d})", .{ dir_path, component_idx });
 
                 this.iter_state.directory.fd = fd;
                 const iterator = Accessor.DirIter.iterate(fd);
@@ -1431,12 +1431,12 @@ pub fn GlobWalker_(
             if (component.len == 0) return null;
 
             out: {
-                if (component.len == 1 and pattern[component.start] == '.') {
+                if (bun.strings.eqlComptime(pattern[component.start .. component.start + component.len], ".")) {
                     component.syntax_hint = .Dot;
                     has_relative_patterns.* = true;
                     break :out;
                 }
-                if (component.len == 2 and pattern[component.start] == '.' and pattern[component.start] == '.') {
+                if (bun.strings.eqlComptime(pattern[component.start .. component.start + component.len], "..")) {
                     component.syntax_hint = .DotBack;
                     has_relative_patterns.* = true;
                     break :out;

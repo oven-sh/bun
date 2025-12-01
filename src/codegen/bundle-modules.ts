@@ -204,7 +204,7 @@ const config_cli = [
   process.execPath,
   "build",
   ...bundledEntryPoints,
-  ...(debug ? [] : ["--minify-syntax"]),
+  ...(debug ? [] : ["--minify-syntax", "--keep-names"]),
   "--root",
   TMP_DIR,
   "--target",
@@ -532,7 +532,7 @@ declare module "module" {
 `;
 
     for (const [name] of jsclasses) {
-      dts += `\ndeclare function $inherits${name}(value: any): boolean;`;
+      dts += `\ndeclare function $inherits${name}(value: any): value is ${name};`;
     }
 
     return dts;

@@ -203,6 +203,16 @@ declare module "bun" {
     isSubscribed(topic: string): boolean;
 
     /**
+     * Returns an array of all topics the client is currently subscribed to.
+     *
+     * @example
+     * ws.subscribe("chat");
+     * ws.subscribe("notifications");
+     * console.log(ws.subscriptions); // ["chat", "notifications"]
+     */
+    readonly subscriptions: string[];
+
+    /**
      * Batches `send()` and `publish()` operations, which makes it faster to send data.
      *
      * The `message`, `open`, and `drain` callbacks are automatically corked, so
@@ -273,7 +283,8 @@ declare module "bun" {
      *     return new Response();
      *   },
      *   websocket: {
-     *     open(ws) {
+     *     data: {} as {accessToken: string | null},
+     *     message(ws) {
      *       console.log(ws.data.accessToken);
      *     }
      *   }
@@ -476,13 +487,15 @@ declare module "bun" {
   }
 
   namespace Serve {
-    type ExtractRouteParams<T> = T extends `${string}:${infer Param}/${infer Rest}`
-      ? { [K in Param]: string } & ExtractRouteParams<Rest>
-      : T extends `${string}:${infer Param}`
-        ? { [K in Param]: string }
-        : T extends `${string}*`
-          ? {}
-          : {};
+    type ExtractRouteParams<T> = string extends T
+      ? Record<string, string>
+      : T extends `${string}:${infer Param}/${infer Rest}`
+        ? { [K in Param]: string } & ExtractRouteParams<Rest>
+        : T extends `${string}:${infer Param}`
+          ? { [K in Param]: string }
+          : T extends `${string}*`
+            ? {}
+            : {};
 
     /**
      * Development configuration for {@link Bun.serve}
@@ -539,14 +552,16 @@ declare module "bun" {
       [Path in R]:
         | BaseRouteValue
         | Handler<BunRequest<Path>, Server<WebSocketData>, Response>
-        | Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response>>>;
+        | Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response> | Response>>;
     };
 
     type RoutesWithUpgrade<WebSocketData, R extends string> = {
       [Path in R]:
         | BaseRouteValue
         | Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void>
-        | Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void>>>;
+        | Partial<
+            Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void> | Response>
+          >;
     };
 
     type FetchOrRoutes<WebSocketData, R extends string> =
@@ -776,7 +791,7 @@ declare module "bun" {
      * } satisfies Bun.Serve.Options<{ name: string }>;
      * ```
      */
-    type Options<WebSocketData, R extends string = never> = Bun.__internal.XOR<
+    type Options<WebSocketData, R extends string = string> = Bun.__internal.XOR<
       HostnamePortServeOptions<WebSocketData>,
       UnixServeOptions<WebSocketData>
     > &
@@ -1266,7 +1281,7 @@ declare module "bun" {
    * });
    * ```
    */
-  function serve<WebSocketData = undefined, R extends string = string>(
+  function serve<WebSocketData = undefined, R extends string = never>(
     options: Serve.Options<WebSocketData, R>,
   ): Server<WebSocketData>;
 }

@@ -65,34 +65,34 @@ pub fn toIncludeRepeated(this: *Expect, globalThis: *JSGlobalObject, callFrame: 
     const substring_fmt = substring.toFmt(&formatter);
     const times_fmt = count.toFmt(&formatter);
 
-    const received_line = "Received: <red>{any}<r>\n";
+    const received_line = "Received: <red>{f}<r>\n";
 
     if (not) {
         if (countAsNum == 0) {
-            const expected_line = "Expected to include: <green>{any}<r> \n";
+            const expected_line = "Expected to include: <green>{f}<r> \n";
             const signature = comptime getSignature("toIncludeRepeated", "<green>expected<r>", true);
             return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ substring_fmt, expect_string_fmt });
         } else if (countAsNum == 1) {
-            const expected_line = "Expected not to include: <green>{any}<r> \n";
+            const expected_line = "Expected not to include: <green>{f}<r> \n";
             const signature = comptime getSignature("toIncludeRepeated", "<green>expected<r>", true);
             return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ substring_fmt, expect_string_fmt });
         } else {
-            const expected_line = "Expected not to include: <green>{any}<r> <green>{any}<r> times \n";
+            const expected_line = "Expected not to include: <green>{f}<r> <green>{f}<r> times \n";
             const signature = comptime getSignature("toIncludeRepeated", "<green>expected<r>", true);
             return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ substring_fmt, times_fmt, expect_string_fmt });
         }
     }
 
     if (countAsNum == 0) {
-        const expected_line = "Expected to not include: <green>{any}<r>\n";
+        const expected_line = "Expected to not include: <green>{f}<r>\n";
         const signature = comptime getSignature("toIncludeRepeated", "<green>expected<r>", false);
         return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ substring_fmt, expect_string_fmt });
     } else if (countAsNum == 1) {
-        const expected_line = "Expected to include: <green>{any}<r>\n";
+        const expected_line = "Expected to include: <green>{f}<r>\n";
         const signature = comptime getSignature("toIncludeRepeated", "<green>expected<r>", false);
         return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ substring_fmt, expect_string_fmt });
     } else {
-        const expected_line = "Expected to include: <green>{any}<r> <green>{any}<r> times \n";
+        const expected_line = "Expected to include: <green>{f}<r> <green>{f}<r> times \n";
         const signature = comptime getSignature("toIncludeRepeated", "<green>expected<r>", false);
         return this.throw(globalThis, signature, "\n\n" ++ expected_line ++ received_line, .{ substring_fmt, times_fmt, expect_string_fmt });
     }

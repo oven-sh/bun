@@ -112,7 +112,7 @@ pub fn forManifest(
                     null,
                     logger.Loc.Empty,
                     allocator,
-                    "Failed to join registry {} and package {} URLs",
+                    "Failed to join registry {f} and package {f} URLs",
                     .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
                 ) catch |err| bun.handleOom(err);
             } else {
@@ -120,7 +120,7 @@ pub fn forManifest(
                     null,
                     logger.Loc.Empty,
                     allocator,
-                    "Failed to join registry {} and package {} URLs",
+                    "Failed to join registry {f} and package {f} URLs",
                     .{ bun.fmt.QuotedFormatter{ .text = scope.url.href }, bun.fmt.QuotedFormatter{ .text = name } },
                 ) catch |err| bun.handleOom(err);
             }
@@ -133,7 +133,7 @@ pub fn forManifest(
                     null,
                     logger.Loc.Empty,
                     allocator,
-                    "Registry URL must be http:// or https://\nReceived: \"{}\"",
+                    "Registry URL must be http:// or https://\nReceived: \"{f}\"",
                     .{tmp},
                 ) catch |err| bun.handleOom(err);
             } else {
@@ -141,7 +141,7 @@ pub fn forManifest(
                     null,
                     logger.Loc.Empty,
                     allocator,
-                    "Registry URL must be http:// or https://\nReceived: \"{}\"",
+                    "Registry URL must be http:// or https://\nReceived: \"{f}\"",
                     .{tmp},
                 ) catch |err| bun.handleOom(err);
             }
@@ -204,7 +204,7 @@ pub fn forManifest(
             },
         );
         header_builder.header_count = 1;
-        header_builder.content = GlobalStringBuilder{ .ptr = @as([*]u8, @constCast(@ptrCast(header_buf.ptr))), .len = header_buf.len, .cap = header_buf.len };
+        header_builder.content = GlobalStringBuilder{ .ptr = @as([*]u8, @ptrCast(@constCast(header_buf.ptr))), .len = header_buf.len, .cap = header_buf.len };
     }
 
     this.response_buffer = try MutableString.init(allocator, 0);
@@ -234,7 +234,7 @@ pub fn forManifest(
     }
 
     // Incase the ETag causes invalidation, we fallback to the last modified date.
-    if (last_modified.len != 0 and bun.getRuntimeFeatureFlag(.BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304)) {
+    if (last_modified.len != 0 and bun.feature_flag.BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304.get()) {
         this.unsafe_http_client.client.flags.force_last_modified = true;
         this.unsafe_http_client.client.if_modified_since = last_modified;
     }
@@ -275,7 +275,7 @@ pub fn forTarball(
 
     if (!(strings.hasPrefixComptime(this.url_buf, "https://") or strings.hasPrefixComptime(this.url_buf, "http://"))) {
         const msg = .{
-            .fmt = "Expected tarball URL to start with https:// or http://, got {} while fetching package {}",
+            .fmt = "Expected tarball URL to start with https:// or http://, got {f} while fetching package {f}",
             .args = .{ bun.fmt.QuotedFormatter{ .text = this.url_buf }, bun.fmt.QuotedFormatter{ .text = tarball.name.slice() } },
         };
 

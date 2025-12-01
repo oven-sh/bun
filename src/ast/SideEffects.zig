@@ -365,7 +365,7 @@ pub const SideEffects = enum(u1) {
                 else => false,
             });
         }
-        const stack: *std.ArrayList(BinaryExpressionSimplifyVisitor) = &p.binary_expression_simplify_stack;
+        const stack: *std.array_list.Managed(BinaryExpressionSimplifyVisitor) = &p.binary_expression_simplify_stack;
         const stack_bottom = stack.items.len;
         defer stack.shrinkRetainingCapacity(stack_bottom);
 
@@ -399,7 +399,7 @@ pub const SideEffects = enum(u1) {
         return if (result.isMissing()) null else result;
     }
 
-    fn findIdentifiers(binding: Binding, decls: *std.ArrayList(G.Decl)) void {
+    fn findIdentifiers(binding: Binding, decls: *std.array_list.Managed(G.Decl)) void {
         switch (binding.data) {
             .b_identifier => {
                 decls.append(.{ .binding = binding }) catch unreachable;
@@ -460,7 +460,7 @@ pub const SideEffects = enum(u1) {
                     return true;
                 }
 
-                var decls = std.ArrayList(G.Decl).initCapacity(allocator, local.decls.len) catch unreachable;
+                var decls = std.array_list.Managed(G.Decl).initCapacity(allocator, local.decls.len) catch unreachable;
                 for (local.decls.slice()) |decl| {
                     findIdentifiers(decl.binding, &decls);
                 }

@@ -641,7 +641,7 @@ pub fn VisitExpr(
                 if (p.options.features.minify_syntax) {
                     if (index.data.as(.e_number)) |number| {
                         if (number.value >= 0 and
-                            number.value < std.math.maxInt(usize) and
+                            number.value < @as(f64, @as(comptime_float, std.math.maxInt(usize))) and
                             @mod(number.value, 1) == 0)
                         {
                             // "foo"[2] -> "o"
@@ -1682,4 +1682,4 @@ const options = js_parser.options;
 
 const std = @import("std");
 const List = std.ArrayListUnmanaged;
-const ListManaged = std.ArrayList;
+const ListManaged = std.array_list.Managed;

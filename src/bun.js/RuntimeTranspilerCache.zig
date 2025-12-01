@@ -13,8 +13,9 @@
 /// Version 14: Updated global defines table list.
 /// Version 15: Updated global defines table list.
 /// Version 16: Added typeof undefined minification optimization.
-/// Version 17: Added import.meta.glob support.
-const expected_version = 17;
+/// Version 17: Removed transpiler import rewrite for bun:test. Not bumping it causes test/js/bun/http/req-url-leak.test.ts to fail with SyntaxError: Export named 'expect' not found in module 'bun:test'.
+/// Version 18: Added import.meta.glob support.
+const expected_version = 18;
 
 const debug = Output.scoped(.cache, .visible);
 const MINIMUM_CACHE_SIZE = 50 * 1024;
@@ -363,9 +364,9 @@ pub const RuntimeTranspilerCache = struct {
         buf: []u8,
         input_hash: u64,
     ) !usize {
-        const fmt_name = if (comptime bun.Environment.allow_assert) "{any}.debug.pile" else "{any}.pile";
+        const fmt_name = if (comptime bun.Environment.allow_assert) "{x}.debug.pile" else "{x}.pile";
 
-        const printed = try std.fmt.bufPrint(buf, fmt_name, .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&input_hash))});
+        const printed = try std.fmt.bufPrint(buf, fmt_name, .{std.mem.asBytes(&input_hash)});
         return printed.len;
     }
 
@@ -383,10 +384,10 @@ pub const RuntimeTranspilerCache = struct {
 
     fn reallyGetCacheDir(buf: *bun.PathBuffer) [:0]const u8 {
         if (comptime bun.Environment.isDebug) {
-            bun_debug_restore_from_cache = bun.getenvZ("BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE") != null;
+            bun_debug_restore_from_cache = bun.env_var.BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE.get();
         }
 
-        if (bun.getenvZ("BUN_RUNTIME_TRANSPILER_CACHE_PATH")) |dir| {
+        if (bun.env_var.BUN_RUNTIME_TRANSPILER_CACHE_PATH.get()) |dir| {
             if (dir.len == 0 or (dir.len == 1 and dir[0] == '0')) {
                 return "";
             }
@@ -397,7 +398,7 @@ pub const RuntimeTranspilerCache = struct {
             return buf[0..len :0];
         }
 
-        if (bun.getenvZ("XDG_CACHE_HOME")) |dir| {
+        if (bun.env_var.XDG_CACHE_HOME.get()) |dir| {
             const parts = &[_][]const u8{ dir, "bun", "@t@" };
             return bun.fs.FileSystem.instance.absBufZ(parts, buf);
         }
@@ -405,7 +406,7 @@ pub const RuntimeTranspilerCache = struct {
         if (comptime bun.Environment.isMac) {
             // On a mac, default to ~/Library/Caches/bun/*
             // This is different than ~/.bun/install/cache, and not configurable by the user.
-            if (bun.getenvZ("HOME")) |home| {
+            if (bun.env_var.HOME.get()) |home| {
                 const parts = &[_][]const u8{
                     home,
                     "Library/",
@@ -417,7 +418,7 @@ pub const RuntimeTranspilerCache = struct {
             }
         }
 
-        if (bun.getenvZ(bun.DotEnv.home_env)) |dir| {
+        if (bun.env_var.HOME.get()) |dir| {
             const parts = &[_][]const u8{ dir, ".bun", "install", "cache", "@t@" };
             return bun.fs.FileSystem.instance.absBufZ(parts, buf);
         }

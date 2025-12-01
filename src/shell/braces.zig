@@ -56,7 +56,7 @@ const ExpandError = ParserError;
 pub fn expand(
     allocator: Allocator,
     tokens: []Token,
-    out: []std.ArrayList(u8),
+    out: []std.array_list.Managed(u8),
     contains_nested: bool,
 ) ExpandError!void {
     var out_key_counter: u16 = 1;
@@ -73,7 +73,7 @@ pub fn expand(
 
 fn expandNested(
     root: *AST.Group,
-    out: []std.ArrayList(u8),
+    out: []std.array_list.Managed(u8),
     out_key: u16,
     out_key_counter: *u16,
     start: u32,
@@ -156,7 +156,7 @@ fn expandNested(
 fn expandFlat(
     tokens: []const Token,
     expansion_table: []const ExpansionVariant,
-    out: []std.ArrayList(u8),
+    out: []std.array_list.Managed(u8),
     out_key: u16,
     out_key_counter: *u16,
     depth_: u8,
@@ -230,7 +230,7 @@ pub const Parser = struct {
     current: usize = 0,
     tokens: []const Token,
     alloc: Allocator,
-    errors: std.ArrayList(Error),
+    errors: std.array_list.Managed(Error),
 
     // FIXME error location
     const Error = struct { msg: []const u8 };
@@ -239,14 +239,14 @@ pub const Parser = struct {
         return .{
             .tokens = tokens,
             .alloc = alloc,
-            .errors = std.ArrayList(Error).init(alloc),
+            .errors = std.array_list.Managed(Error).init(alloc),
         };
     }
 
     pub fn parse(self: *Parser) !AST.Group {
         var group_alloc_ = std.heap.stackFallback(@sizeOf(AST.Atom), self.alloc);
         const group_alloc = group_alloc_.get();
-        var nodes = std.ArrayList(AST.Atom).init(group_alloc);
+        var nodes = std.array_list.Managed(AST.Atom).init(group_alloc);
         while (!self.match(.eof)) {
             try nodes.append(try self.parseAtom() orelse break);
         }
@@ -271,12 +271,12 @@ pub const Parser = struct {
     }
 
     fn parseExpansion(self: *Parser) !AST.Expansion {
-        var variants = std.ArrayList(AST.Group).init(self.alloc);
+        var variants = std.array_list.Managed(AST.Group).init(self.alloc);
         while (!self.match_any(&.{ .close, .eof })) {
             if (self.match(.eof)) break;
             var group_alloc_ = std.heap.stackFallback(@sizeOf(AST.Atom), self.alloc);
             const group_alloc = group_alloc_.get();
-            var group = std.ArrayList(AST.Atom).init(group_alloc);
+            var group = std.array_list.Managed(AST.Atom).init(group_alloc);
             var close = false;
             while (!self.match(.eof)) {
                 if (self.match(.close)) {
@@ -415,13 +415,13 @@ pub fn calculateExpandedAmount(tokens: []const Token) u32 {
     return variant_count;
 }
 
-fn buildExpansionTableAlloc(alloc: Allocator, tokens: []Token) !std.ArrayList(ExpansionVariant) {
-    var table = std.ArrayList(ExpansionVariant).init(alloc);
+fn buildExpansionTableAlloc(alloc: Allocator, tokens: []Token) !std.array_list.Managed(ExpansionVariant) {
+    var table = std.array_list.Managed(ExpansionVariant).init(alloc);
     try buildExpansionTable(tokens, &table);
     return table;
 }
 
-fn buildExpansionTable(tokens: []Token, table: *std.ArrayList(ExpansionVariant)) !void {
+fn buildExpansionTable(tokens: []Token, table: *std.array_list.Managed(ExpansionVariant)) !void {
     const BraceState = struct {
         tok_idx: u16,
         variants: u16,
@@ -732,8 +732,8 @@ const bun = @import("bun");
 const assert = bun.assert;
 
 const std = @import("std");
-const ArrayList = std.ArrayList;
 const t = std.testing;
+const ArrayList = std.array_list.Managed;
 
 const Allocator = std.mem.Allocator;
 const BraceLexerError = Allocator.Error;

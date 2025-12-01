@@ -1092,7 +1092,7 @@ declare module "bun" {
      * "http"
      * ```
      */
-    readonly protocol: string | undefined;
+    readonly protocol: "http" | "https" | null;
 
     /**
      * Is the server running in development mode?

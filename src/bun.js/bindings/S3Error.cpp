@@ -27,21 +27,16 @@ SYSV_ABI JSC::EncodedJSValue S3Error__toErrorInstance(const S3Error* arg0,
 
     auto& vm = JSC::getVM(globalObject);
 
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSValue message = JSC::jsUndefined();
+    WTF::String message;
     if (err.message.tag != BunStringTag::Empty) {
-        message = Bun::toJS(globalObject, err.message);
+        message = err.message.toWTFString();
     }
 
     auto& names = WebCore::builtinNames(vm);
 
-    JSC::JSValue options = JSC::jsUndefined();
     auto prototype = defaultGlobalObject(globalObject)->m_S3ErrorStructure.getInitializedOnMainThread(globalObject);
-    JSC::JSObject* result = JSC::ErrorInstance::create(globalObject, prototype, message, options);
-    result->putDirect(
-        vm, vm.propertyNames->name,
-        JSC::JSValue(defaultGlobalObject(globalObject)->commonStrings().s3ErrorString(globalObject)),
-        JSC::PropertyAttribute::DontEnum | 0);
+    JSC::JSObject* result = JSC::ErrorInstance::create(vm, prototype, message, {});
+    result->putDirect(vm, vm.propertyNames->name, defaultGlobalObject(globalObject)->commonStrings().s3ErrorString(globalObject), JSC::PropertyAttribute::DontEnum | 0);
     if (err.code.tag != BunStringTag::Empty) {
         JSC::JSValue code = Bun::toJS(globalObject, err.code);
         result->putDirect(vm, names.codePublicName(), code,
@@ -54,10 +49,7 @@ SYSV_ABI JSC::EncodedJSValue S3Error__toErrorInstance(const S3Error* arg0,
             JSC::PropertyAttribute::DontDelete | 0);
     }
 
-    RETURN_IF_EXCEPTION(scope, {});
-    scope.release();
-
-    return JSC::JSValue::encode(JSC::JSValue(result));
+    return JSC::JSValue::encode(result);
 }
 }
 }

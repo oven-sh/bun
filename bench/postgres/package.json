@@ -9,6 +9,8 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "postgres": "^3.4.5"
+    "mariadb": "^3.4.5",
+    "mysql2": "^3.14.3",
+    "postgres": "^3.4.7"
   }
 }

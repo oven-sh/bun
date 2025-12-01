@@ -1,7 +1,4 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
-const bun = @import("bun");
-const ArrayList = std.ArrayListUnmanaged;
 const Printer = css.Printer;
 const Maybe = css.Maybe;
 const PrintErr = css.PrintErr;
@@ -131,7 +128,7 @@ pub const KeyframesName = union(enum) {
         }
     }
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
         const css_module_aimation_enabled = if (dest.css_module) |css_module| css_module.config.animation else false;
 
         switch (this.*) {
@@ -178,13 +175,13 @@ pub const KeyframeSelector = union(enum) {
     //     @panic(css.todo_stuff.depth);
     // }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *Printer) PrintErr!void {
         switch (this.*) {
             .percentage => |p| {
                 if (dest.minify and p.v == 1.0) {
                     try dest.writeStr("to");
                 } else {
-                    try p.toCss(W, dest);
+                    try p.toCss(dest);
                 }
             },
             .from => {
@@ -216,17 +213,17 @@ pub const Keyframe = struct {
 
     const This = @This();
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
         var first = true;
         for (this.selectors.items) |sel| {
             if (!first) {
                 try dest.delim(',', false);
             }
             first = false;
-            try sel.toCss(W, dest);
+            try sel.toCss(dest);
         }
 
-        try this.declarations.toCssBlock(W, dest);
+        try this.declarations.toCssBlock(dest);
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
@@ -247,7 +244,7 @@ pub const KeyframesRule = struct {
 
     const This = @This();
 
-    pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -265,9 +262,9 @@ pub const KeyframesRule = struct {
                 }
 
                 try dest.writeChar('@');
-                try css.VendorPrefix.fromName(prefix_name).toCss(W, dest);
+                try css.VendorPrefix.fromName(prefix_name).toCss(dest);
                 try dest.writeStr("keyframes ");
-                try this.name.toCss(W, dest);
+                try this.name.toCss(dest);
                 try dest.whitespace();
                 try dest.writeChar('{');
                 dest.indent();
@@ -280,7 +277,7 @@ pub const KeyframesRule = struct {
                         try dest.writeChar('\n'); // no indent
                     }
                     try dest.newline();
-                    try keyframe.toCss(W, dest);
+                    try keyframe.toCss(dest);
                 }
                 dest.dedent();
                 try dest.newline();
@@ -299,3 +296,8 @@ pub const KeyframesRule = struct {
         return css.implementDeepClone(@This(), this, allocator);
     }
 };
+
+const bun = @import("bun");
+
+const std = @import("std");
+const ArrayList = std.ArrayListUnmanaged;

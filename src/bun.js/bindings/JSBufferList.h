@@ -92,7 +92,7 @@ public:
     {
         if (length() == 0) [[unlikely]]
             return JSC::jsUndefined();
-        return JSC::JSValue(m_deque.first().get());
+        return m_deque.first().get();
     }
 
     JSC::JSValue concat(JSC::VM&, JSC::JSGlobalObject*, size_t);

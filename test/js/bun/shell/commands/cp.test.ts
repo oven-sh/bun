@@ -61,7 +61,7 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
     .runAsTest("dir -> ? fails without -R");
 
   describe("EBUSY windows", () => {
-    TestBuilder.command/* sh */ `
+    TestBuilder.command /* sh */ `
     echo hi! > hello.txt
     mkdir somedir 
     cp ${{ raw: Array(50).fill("hello.txt").join(" ") }} somedir 

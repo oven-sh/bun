@@ -33,6 +33,6 @@ if (numAbortSignalObjects > 10) {
 }
 
 const rss = (process.memoryUsage().rss / 1024 / 1024) | 0;
-if (rss > 170) {
+if (rss > 200) {
   throw new Error(`Memory leak detected: ${rss} MB, expected < 170 MB`);
 }

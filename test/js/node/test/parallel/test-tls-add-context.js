@@ -22,16 +22,17 @@ const serverOptions = {
 
 let connections = 0;
 
-const server = tls.createServer(serverOptions, (c) => {
+const server = tls.createServer(serverOptions, common.mustCall((c) => {
   if (++connections === 3) {
     server.close();
   }
+  console.log(c.servername,c.authorized);
   if (c.servername === 'unknowncontext') {
     assert.strictEqual(c.authorized, false);
     return;
   }
   assert.strictEqual(c.authorized, true);
-});
+}, 3));
 
 const secureContext = {
   key: loadPEM('agent1-key'),
@@ -73,3 +74,5 @@ server.listen(0, common.mustCall(() => {
     client3.end();
   }));
 }));
+
+setTimeout(()=>process.exit(0),1000).unref();

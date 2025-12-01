@@ -1,7 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Allocator = std.mem.Allocator;
-
 pub const css = @import("../css_parser.zig");
 
 const Printer = css.Printer;
@@ -107,20 +103,20 @@ pub const Size = union(enum) {
         return .{ .result = Size{ .length_percentage = lp } };
     }
 
-    pub fn toCss(this: *const Size, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const Size, dest: *css.Printer) css.PrintErr!void {
         return switch (this.*) {
             .auto => dest.writeStr("auto"),
             .contain => dest.writeStr("contain"),
             .min_content => |vp| {
-                try vp.toCss(W, dest);
+                try vp.toCss(dest);
                 try dest.writeStr("min-content");
             },
             .max_content => |vp| {
-                try vp.toCss(W, dest);
+                try vp.toCss(dest);
                 try dest.writeStr("max-content");
             },
             .fit_content => |vp| {
-                try vp.toCss(W, dest);
+                try vp.toCss(dest);
                 try dest.writeStr("fit-content");
             },
             .stretch => |vp| {
@@ -136,10 +132,10 @@ pub const Size = union(enum) {
             },
             .fit_content_function => |l| {
                 try dest.writeStr("fit-content(");
-                try l.toCss(W, dest);
+                try l.toCss(dest);
                 try dest.writeChar(')');
             },
-            .length_percentage => |l| return l.toCss(W, dest),
+            .length_percentage => |l| return l.toCss(dest),
         };
     }
 
@@ -267,20 +263,20 @@ pub const MaxSize = union(enum) {
         };
     }
 
-    pub fn toCss(this: *const MaxSize, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const MaxSize, dest: *css.Printer) css.PrintErr!void {
         switch (this.*) {
             .none => try dest.writeStr("none"),
             .contain => try dest.writeStr("contain"),
             .min_content => |vp| {
-                try vp.toCss(W, dest);
+                try vp.toCss(dest);
                 try dest.writeStr("min-content");
             },
             .max_content => |vp| {
-                try vp.toCss(W, dest);
+                try vp.toCss(dest);
                 try dest.writeStr("max-content");
             },
             .fit_content => |vp| {
-                try vp.toCss(W, dest);
+                try vp.toCss(dest);
                 try dest.writeStr("fit-content");
             },
             .stretch => |vp| {
@@ -296,10 +292,10 @@ pub const MaxSize = union(enum) {
             },
             .fit_content_function => |l| {
                 try dest.writeStr("fit-content(");
-                try l.toCss(W, dest);
+                try l.toCss(dest);
                 try dest.writeChar(')');
             },
-            .length_percentage => |l| try l.toCss(W, dest),
+            .length_percentage => |l| try l.toCss(dest),
         }
     }
 
@@ -361,14 +357,14 @@ pub const AspectRatio = struct {
         };
     }
 
-    pub fn toCss(this: *const AspectRatio, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const AspectRatio, dest: *css.Printer) css.PrintErr!void {
         if (this.auto) {
             try dest.writeStr("auto");
         }
 
         if (this.ratio) |*ratio| {
             if (this.auto) try dest.writeChar(' ');
-            try ratio.toCss(W, dest);
+            try ratio.toCss(dest);
         }
     }
 
@@ -473,14 +469,14 @@ pub const SizeHandler = struct {
     inline fn logicalUnparsedHelper(this: *@This(), property: *const Property, unparsed: *const UnparsedProperty, comptime physical: PropertyIdTag, logical_supported: bool, dest: *css.DeclarationList, context: *css.PropertyHandlerContext) void {
         if (logical_supported) {
             bun.bits.insert(SizeProperty, &this.flushed_properties, SizeProperty.tryFromPropertyIdTag(@as(PropertyIdTag, unparsed.property_id)).?);
-            dest.append(context.allocator, property.deepClone(context.allocator)) catch bun.outOfMemory();
+            bun.handleOom(dest.append(context.allocator, property.deepClone(context.allocator)));
         } else {
             dest.append(context.allocator, Property{
                 .unparsed = unparsed.withPropertyId(
                     context.allocator,
                     @unionInit(PropertyId, @tagName(physical), {}),
                 ),
-            }) catch bun.outOfMemory();
+            }) catch |err| bun.handleOom(err);
             @field(this.flushed_properties, @tagName(physical)) = true;
         }
     }
@@ -553,7 +549,7 @@ pub const SizeHandler = struct {
                             @tagName(property),
                             @unionInit(SizeType, @tagName(feature), prefix),
                         ),
-                    ) catch bun.outOfMemory();
+                    ) catch |err| bun.handleOom(err);
                 }
             }
         }
@@ -583,7 +579,7 @@ pub const SizeHandler = struct {
                 },
                 else => {},
             }
-            dest.append(context.allocator, @unionInit(Property, @tagName(property), val.deepClone(context.allocator))) catch bun.outOfMemory();
+            bun.handleOom(dest.append(context.allocator, @unionInit(Property, @tagName(property), val.deepClone(context.allocator))));
             @field(this.flushed_properties, @tagName(property)) = true;
         }
     }
@@ -605,3 +601,7 @@ pub const SizeHandler = struct {
         }
     }
 };
+
+const bun = @import("bun");
+const std = @import("std");
+const Allocator = std.mem.Allocator;

@@ -36,14 +36,6 @@
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/text/StringView.h>
 
-static StringView extractCookieName(const StringView& cookie)
-{
-    auto nameEnd = cookie.find('=');
-    if (nameEnd == notFound)
-        return String();
-    return cookie.substring(0, nameEnd);
-}
-
 namespace WebCore {
 
 HTTPHeaderMap::HTTPHeaderMap()
@@ -153,7 +145,7 @@ void HTTPHeaderMap::setUncommonHeaderCloneName(const StringView name, const Stri
         return equalIgnoringASCIICase(header.key, name);
     });
     if (index == notFound) {
-        std::span<LChar> ptr;
+        std::span<Latin1Character> ptr;
         auto nameCopy = WTF::String::createUninitialized(name.length(), ptr);
         memcpy(ptr.data(), name.span8().data(), name.length());
         m_uncommonHeaders.append(UncommonHeader { nameCopy, value });

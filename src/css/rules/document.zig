@@ -1,4 +1,3 @@
-const std = @import("std");
 pub const css = @import("../css_parser.zig");
 const Printer = css.Printer;
 const PrintErr = css.PrintErr;
@@ -17,7 +16,7 @@ pub fn MozDocumentRule(comptime R: type) type {
 
         const This = @This();
 
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
             // #[cfg(feature = "sourcemap")]
             // dest.add_mapping(self.loc);
             try dest.writeStr("@-moz-document url-prefix()");
@@ -25,7 +24,7 @@ pub fn MozDocumentRule(comptime R: type) type {
             try dest.writeChar('{');
             dest.indent();
             try dest.newline();
-            try this.rules.toCss(W, dest);
+            try this.rules.toCss(dest);
             dest.dedent();
             try dest.newline();
             try dest.writeChar('}');
@@ -36,3 +35,5 @@ pub fn MozDocumentRule(comptime R: type) type {
         }
     };
 }
+
+const std = @import("std");

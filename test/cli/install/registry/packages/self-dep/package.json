@@ -1,0 +1,65 @@
+{
+	"name": "self-dep",
+	"versions": {
+		"1.0.1": {
+			"name": "self-dep",
+			"version": "1.0.1",
+			"_id": "self-dep@1.0.1",
+			"_integrity": "sha512-X9HQMiuvWXqhxJExWwQz5X+z901PvtvYVVAsEli2k5FDVOg2j6opnkQjha5iDTWbqBrG1m95N3rKwmq3OftU/Q==",
+			"_nodeVersion": "24.3.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-X9HQMiuvWXqhxJExWwQz5X+z901PvtvYVVAsEli2k5FDVOg2j6opnkQjha5iDTWbqBrG1m95N3rKwmq3OftU/Q==",
+			"shasum": "b95f3e460b2f2ede25a18cc3c25bc226a3edfc71",
+			"dist": {
+				"integrity": "sha512-X9HQMiuvWXqhxJExWwQz5X+z901PvtvYVVAsEli2k5FDVOg2j6opnkQjha5iDTWbqBrG1m95N3rKwmq3OftU/Q==",
+				"shasum": "b95f3e460b2f2ede25a18cc3c25bc226a3edfc71",
+				"tarball": "http://http://localhost:4873/self-dep/-/self-dep-1.0.1.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.2": {
+			"name": "self-dep",
+			"version": "1.0.2",
+			"dependencies": {
+				"self-dep": "1.0.1"
+			},
+			"_id": "self-dep@1.0.2",
+			"_integrity": "sha512-idMxfr8aIs5CwIVOMTykKRK7MBURv62AjBZ+zRH2zPOZMsWbe+sBXha0zPhQNfP7cUWccF3yiSvs0AQwQXGKfA==",
+			"_nodeVersion": "24.3.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-idMxfr8aIs5CwIVOMTykKRK7MBURv62AjBZ+zRH2zPOZMsWbe+sBXha0zPhQNfP7cUWccF3yiSvs0AQwQXGKfA==",
+			"shasum": "d1bc984e927fd960511dbef211551408e3bb2f72",
+			"dist": {
+				"integrity": "sha512-idMxfr8aIs5CwIVOMTykKRK7MBURv62AjBZ+zRH2zPOZMsWbe+sBXha0zPhQNfP7cUWccF3yiSvs0AQwQXGKfA==",
+				"shasum": "d1bc984e927fd960511dbef211551408e3bb2f72",
+				"tarball": "http://http://localhost:4873/self-dep/-/self-dep-1.0.2.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2025-10-03T21:30:17.221Z",
+		"created": "2025-10-03T21:30:02.446Z",
+		"1.0.1": "2025-10-03T21:30:02.446Z",
+		"1.0.2": "2025-10-03T21:30:17.221Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.2"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"self-dep-1.0.1.tgz": {
+			"shasum": "b95f3e460b2f2ede25a18cc3c25bc226a3edfc71",
+			"version": "1.0.1"
+		},
+		"self-dep-1.0.2.tgz": {
+			"shasum": "d1bc984e927fd960511dbef211551408e3bb2f72",
+			"version": "1.0.2"
+		}
+	},
+	"_rev": "",
+	"_id": "self-dep",
+	"readme": ""
+}

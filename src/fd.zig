@@ -156,7 +156,7 @@ pub const FD = packed struct(backing_int) {
                     if (isStdioHandle(std.os.windows.STD_OUTPUT_HANDLE, handle)) return 1;
                     if (isStdioHandle(std.os.windows.STD_ERROR_HANDLE, handle)) return 2;
                     std.debug.panic(
-                        \\Cast bun.FD.uv({}) makes closing impossible!
+                        \\Cast bun.FD.uv({f}) makes closing impossible!
                         \\
                         \\The supplier of fd FD should call 'FD.makeLibUVOwned',
                         \\probably where open() was called.
@@ -225,7 +225,8 @@ pub const FD = packed struct(backing_int) {
     /// In debug, fd assertion failure can print where the FD was actually
     /// closed.
     pub fn close(fd: FD) void {
-        bun.debugAssert(fd.closeAllowingBadFileDescriptor(@returnAddress()) == null); // use after close!
+        const err = fd.closeAllowingBadFileDescriptor(@returnAddress());
+        bun.debugAssert(err == null); // use after close!
     }
 
     /// fd function will NOT CLOSE stdin/stdout/stderr.
@@ -234,7 +235,7 @@ pub const FD = packed struct(backing_int) {
     /// Prefer asserting that EBADF does not happen with `.close()`
     pub fn closeAllowingBadFileDescriptor(fd: FD, return_address: ?usize) ?bun.sys.Error {
         if (fd.stdioTag() != null) {
-            log("close({}) SKIPPED", .{fd});
+            log("close({f}) SKIPPED", .{fd});
             return null;
         }
         return fd.closeAllowingStandardIo(return_address orelse @returnAddress());
@@ -248,7 +249,7 @@ pub const FD = packed struct(backing_int) {
         // Format the file descriptor for logging BEFORE closing it.
         // Otherwise the file descriptor is always invalid after closing it.
         var buf: if (Environment.isDebug) [1050]u8 else void = undefined;
-        const fd_fmt = if (Environment.isDebug) std.fmt.bufPrint(&buf, "{}", .{fd}) catch buf[0..];
+        const fd_fmt = if (Environment.isDebug) std.fmt.bufPrint(&buf, "{f}", .{fd}) catch buf[0..];
 
         const result: ?bun.sys.Error = switch (os) {
             .linux => result: {
@@ -286,7 +287,7 @@ pub const FD = packed struct(backing_int) {
                     };
                 },
             },
-            else => @compileError("FD.close() not implemented for fd platform"),
+            .wasm => @compileError("FD.close() not implemented for fd platform"),
         };
         if (Environment.isDebug) {
             if (result) |err| {
@@ -294,7 +295,7 @@ pub const FD = packed struct(backing_int) {
                     bun.Output.debugWarn("close({s}) = EBADF. This is an indication of a file descriptor UAF", .{fd_fmt});
                     bun.crash_handler.dumpCurrentStackTrace(return_address orelse @returnAddress(), .{ .frame_count = 4, .stop_at_jsc_llint = true });
                 } else {
-                    log("close({s}) = {}", .{ fd_fmt, err });
+                    log("close({s}) = {f}", .{ fd_fmt, err });
                 }
             } else {
                 log("close({s})", .{fd_fmt});
@@ -323,7 +324,7 @@ pub const FD = packed struct(backing_int) {
     }
     // If a non-number is given, returns null.
     // If the given number is not an fd (negative), an error is thrown and error.JSException is returned.
-    pub fn fromJSValidated(value: JSValue, global: *JSC.JSGlobalObject) bun.JSError!?FD {
+    pub fn fromJSValidated(value: JSValue, global: *jsc.JSGlobalObject) bun.JSError!?FD {
         if (!value.isNumber())
             return null;
         const float = value.asNumber();
@@ -344,15 +345,36 @@ pub const FD = packed struct(backing_int) {
     }
     /// After calling, the input file descriptor is no longer valid and must not be used.
     /// If an error is thrown, the file descriptor is cleaned up for you.
-    pub fn toJS(any_fd: FD, global: *JSC.JSGlobalObject) JSValue {
+    pub fn toJS(any_fd: FD, global: *jsc.JSGlobalObject) JSValue {
+        if (!any_fd.isValid()) {
+            return JSValue.jsNumberFromInt32(-1);
+        }
         const uv_owned_fd = any_fd.makeLibUVOwned() catch {
             any_fd.close();
-            return global.throwValue((JSC.SystemError{
+            return global.throwValue((jsc.SystemError{
                 .message = bun.String.static("EMFILE, too many open files"),
                 .code = bun.String.static("EMFILE"),
             }).toErrorInstance(global)) catch .zero;
         };
         return JSValue.jsNumberFromInt32(uv_owned_fd.uv());
+    }
+
+    /// Convert an FD to a JavaScript number without transferring ownership to libuv.
+    /// Unlike toJS(), this does not call makeLibUVOwned() on Windows, so the caller
+    /// retains ownership and must close the FD themselves.
+    /// Returns -1 for invalid file descriptors.
+    /// On Windows: returns Uint64 for system handles, Int32 for uv file descriptors.
+    pub fn toJSWithoutMakingLibUVOwned(any_fd: FD) JSValue {
+        if (!any_fd.isValid()) {
+            return JSValue.jsNumberFromInt32(-1);
+        }
+        if (Environment.isWindows) {
+            return switch (any_fd.kind) {
+                .system => JSValue.jsNumberFromUint64(@intCast(any_fd.value.as_system)),
+                .uv => JSValue.jsNumberFromInt32(any_fd.value.as_uv),
+            };
+        }
+        return JSValue.jsNumberFromInt32(any_fd.value.as_system);
     }
 
     pub const Stdio = enum(u8) {
@@ -434,24 +456,10 @@ pub const FD = packed struct(backing_int) {
         };
     };
 
-    pub fn format(fd: FD, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(fd: FD, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         if (!fd.isValid()) {
             try writer.writeAll("[invalid_fd]");
             return;
-        }
-
-        if (fmt.len != 0) {
-            // The reason for fd error is because formatting FD as an integer on windows is
-            // ambiguous and almost certainly a mistake. You probably meant to format fd.cast().
-            //
-            // Remember fd formatter will
-            // - on posix, print the number
-            // - on windows, print if it is a handle or a libuv file descriptor
-            // - in debug on all platforms, print the path of the file descriptor
-            //
-            // Not having fd error caused a linux+debug only crash in bun.sys.getFdPath because
-            // we forgot to change the thing being printed to "fd.native()" when the FD was introduced.
-            @compileError("invalid format string for bun.FD.format. must be empty like '{}'");
         }
 
         switch (os) {
@@ -495,7 +503,7 @@ pub const FD = packed struct(backing_int) {
                         } else print_with_path: {
                             var fd_path: bun.WPathBuffer = undefined;
                             const path = std.os.windows.GetFinalPathNameByHandle(handle, .{ .volume_name = .Nt }, &fd_path) catch break :print_with_path;
-                            return try writer.print("{d}[{}]", .{
+                            return try writer.print("{d}[{f}]", .{
                                 fd.value.as_system,
                                 bun.fmt.utf16(path),
                             });
@@ -536,6 +544,19 @@ pub const FD = packed struct(backing_int) {
     /// Properly converts FD.invalid into FD.Optional.none
     pub fn toOptional(fd: FD) Optional {
         return @enumFromInt(@as(backing_int, @bitCast(fd)));
+    }
+
+    pub fn makePath(dir: FD, comptime T: type, subpath: []const T) !void {
+        return switch (T) {
+            u8 => bun.makePath(dir.stdDir(), subpath),
+            u16 => bun.makePathW(dir.stdDir(), subpath),
+            else => @compileError("unexpected type"),
+        };
+    }
+
+    // TODO: make our own version of deleteTree
+    pub fn deleteTree(dir: FD, subpath: []const u8) !void {
+        try dir.stdDir().deleteTree(subpath);
     }
 
     // The following functions are from bun.sys but with the 'f' prefix dropped
@@ -639,6 +660,81 @@ pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) error{SystemFdQuotaExceeded}!c_in
     return out;
 }
 
+/// On Windows we use libuv and often pass file descriptors to functions
+/// like `uv_pipe_open`, `uv_tty_init`.
+///
+/// But `uv_pipe` and `uv_tty` **take ownership of the file descriptor**.
+///
+/// This can easily cause use-after-frees, double closing the FD, etc.
+///
+/// So this type represents an FD that could possibly be moved to libuv.
+///
+/// Note that on Posix, this is just a wrapper over FD and does nothing.
+pub const MovableIfWindowsFd = union(enum) {
+    const Self = @This();
+
+    _inner: if (bun.Environment.isWindows) ?FD else FD,
+
+    pub fn init(fd: FD) Self {
+        return .{ ._inner = fd };
+    }
+
+    pub fn get(self: *const Self) ?FD {
+        return self._inner;
+    }
+
+    pub fn getPosix(self: *const Self) FD {
+        if (comptime bun.Environment.isWindows)
+            @compileError("MovableIfWindowsFd.getPosix is not available on Windows");
+
+        return self._inner;
+    }
+
+    pub fn close(self: *Self) void {
+        if (comptime bun.Environment.isPosix) {
+            self._inner.close();
+            self._inner = FD.invalid;
+            return;
+        }
+        if (self._inner) |fd| {
+            fd.close();
+            self._inner = null;
+        }
+    }
+
+    pub fn isValid(self: *const Self) bool {
+        if (comptime bun.Environment.isPosix) return self._inner.isValid();
+        return self._inner != null and self._inner.?.isValid();
+    }
+
+    pub fn isOwned(self: *const Self) bool {
+        if (comptime bun.Environment.isPosix) return true;
+        return self._inner != null;
+    }
+
+    /// Takes the FD, leaving `self` in a "moved-from" state. Only available on Windows.
+    pub fn take(self: *Self) ?FD {
+        if (comptime bun.Environment.isPosix) {
+            @compileError("MovableIfWindowsFd.take is not available on Posix");
+        }
+        const result = self._inner;
+        self._inner = null;
+        return result;
+    }
+
+    pub fn format(self: *const Self, writer: *std.Io.Writer) !void {
+        if (comptime bun.Environment.isPosix) {
+            try writer.print("{f}", .{self.get().?});
+            return;
+        }
+        if (self._inner) |fd| {
+            try writer.print("{f}", .{fd});
+            return;
+        }
+        try writer.print("[moved]", .{});
+    }
+};
+
 pub var windows_cached_fd_set: if (Environment.isDebug) bool else void = if (Environment.isDebug) false;
 pub var windows_cached_stdin: FD = undefined;
 pub var windows_cached_stdout: FD = undefined;
@@ -659,27 +755,28 @@ const comptime_stderr: FD = if (os != .windows)
 else
     @compileError("no comptime stdio on windows");
 
-const fd_t = std.posix.fd_t;
-const HANDLE = bun.windows.HANDLE;
-const uv_file = bun.windows.libuv.uv_file;
-const assert = bun.assert;
-const E = std.posix.E;
-
-const bun = @import("bun");
-
-const Environment = bun.Environment;
-const is_posix = Environment.isPosix;
-const os = Environment.os;
-
-const std = @import("std");
-
-const JSC = bun.JSC;
-const JSValue = JSC.JSValue;
-const libuv = bun.windows.libuv;
 const libuv_private = struct {
     extern fn uv_get_osfhandle(fd: c_int) fd_t;
     extern fn uv_open_osfhandle(os_fd: fd_t) c_int;
 };
-const allow_assert = Environment.allow_assert;
 
+const std = @import("std");
+
+const bun = @import("bun");
+const assert = bun.assert;
+const HANDLE = bun.windows.HANDLE;
 const log = bun.sys.syslog;
+
+const Environment = bun.Environment;
+const allow_assert = Environment.allow_assert;
+const is_posix = Environment.isPosix;
+const os = Environment.os;
+
+const jsc = bun.jsc;
+const JSValue = jsc.JSValue;
+
+const libuv = bun.windows.libuv;
+const uv_file = bun.windows.libuv.uv_file;
+
+const E = std.posix.E;
+const fd_t = std.posix.fd_t;

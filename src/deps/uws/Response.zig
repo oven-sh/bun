@@ -10,9 +10,8 @@
 /// - Offers safe casting between Zig and C representations
 /// - Maintains zero-cost abstractions over the underlying µWebSockets API
 pub fn NewResponse(ssl_flag: i32) type {
-    // making this opaque crashes Zig 0.14.0 when built in Debug or ReleaseSafe
-    return struct {
-        const Response = @This();
+    return opaque {
+        const Response = NewResponse(ssl_flag);
         const ssl = ssl_flag == 1;
 
         pub inline fn castRes(res: *c.uws_res) *Response {
@@ -23,6 +22,10 @@ pub fn NewResponse(ssl_flag: i32) type {
             return @as(*c.uws_res, @ptrCast(@alignCast(res)));
         }
 
+        pub inline fn downcastSocket(res: *Response) *bun.uws.us_socket_t {
+            return @as(*bun.uws.us_socket_t, @ptrCast(@alignCast(res)));
+        }
+
         pub fn end(res: *Response, data: []const u8, close_connection: bool) void {
             c.uws_res_end(ssl_flag, res.downcast(), data.ptr, data.len, close_connection);
         }
@@ -31,10 +34,20 @@ pub fn NewResponse(ssl_flag: i32) type {
             return c.uws_res_try_end(ssl_flag, res.downcast(), data.ptr, data.len, total, close_);
         }
 
-        pub fn flushHeaders(res: *Response) void {
-            c.uws_res_flush_headers(ssl_flag, res.downcast());
+        pub fn getSocketData(res: *Response) ?*anyopaque {
+            return c.uws_res_get_socket_data(ssl_flag, res.downcast());
         }
 
+        pub fn isConnectRequest(res: *Response) bool {
+            return c.uws_res_is_connect_request(ssl_flag, res.downcast());
+        }
+
+        pub fn flushHeaders(res: *Response, flushImmediately: bool) void {
+            c.uws_res_flush_headers(ssl_flag, res.downcast(), flushImmediately);
+        }
+        pub fn isCorked(res: *Response) bool {
+            return c.uws_res_is_corked(ssl_flag, res.downcast());
+        }
         pub fn state(res: *const Response) State {
             return c.uws_res_state(ssl_flag, @as(*const c.uws_res, @ptrCast(@alignCast(res))));
         }
@@ -44,14 +57,14 @@ pub fn NewResponse(ssl_flag: i32) type {
         }
 
         pub fn prepareForSendfile(res: *Response) void {
-            return c.uws_res_prepare_for_sendfile(ssl_flag, res.downcast());
+            c.uws_res_prepare_for_sendfile(ssl_flag, res.downcast());
         }
 
-        pub fn uncork(_: *Response) void {
-            // c.uws_res_uncork(
-            //     ssl_flag,
-            //     res.downcast(),
-            // );
+        pub fn uncork(res: *Response) void {
+            c.uws_res_uncork(
+                ssl_flag,
+                res.downcast(),
+            );
         }
         pub fn pause(res: *Response) void {
             c.uws_res_pause(ssl_flag, res.downcast());
@@ -103,6 +116,14 @@ pub fn NewResponse(ssl_flag: i32) type {
             return c.uws_res_has_responded(ssl_flag, res.downcast());
         }
 
+        pub fn markWroteContentLengthHeader(res: *Response) void {
+            c.uws_res_mark_wrote_content_length_header(ssl_flag, res.downcast());
+        }
+
+        pub fn writeMark(res: *Response) void {
+            c.uws_res_write_mark(ssl_flag, res.downcast());
+        }
+
         pub fn getNativeHandle(res: *Response) bun.FileDescriptor {
             if (comptime Environment.isWindows) {
                 // on windows uSockets exposes SOCKET
@@ -140,16 +161,18 @@ pub fn NewResponse(ssl_flag: i32) type {
             user_data: UserDataType,
         ) void {
             const Wrapper = struct {
-                pub fn handle(this: *c.uws_res, amount: u64, data: ?*anyopaque) callconv(.C) bool {
+                pub fn handle(this: *c.uws_res, amount: u64, data: ?*anyopaque) callconv(.c) bool {
                     if (comptime UserDataType == void) {
                         return @call(bun.callmod_inline, handler, .{ {}, amount, castRes(this) });
-                    } else {
+                    } else if (data) |user_data_ptr| {
+                        // null should always be treated as a no-op, there's no case where it should have any effect.
                         return @call(bun.callmod_inline, handler, .{
-                            @as(UserDataType, @ptrCast(@alignCast(data.?))),
+                            @as(UserDataType, @ptrCast(@alignCast(user_data_ptr))),
                             amount,
                             castRes(this),
                         });
                     }
+                    return true;
                 }
             };
             c.uws_res_on_writable(ssl_flag, res.downcast(), Wrapper.handle, user_data);
@@ -165,11 +188,12 @@ pub fn NewResponse(ssl_flag: i32) type {
         }
         pub fn onAborted(res: *Response, comptime UserDataType: type, comptime handler: fn (UserDataType, *Response) void, optional_data: UserDataType) void {
             const Wrapper = struct {
-                pub fn handle(this: *c.uws_res, user_data: ?*anyopaque) callconv(.C) void {
+                pub fn handle(this: *c.uws_res, user_data: ?*anyopaque) callconv(.c) void {
                     if (comptime UserDataType == void) {
                         @call(bun.callmod_inline, handler, .{ {}, castRes(this), {} });
-                    } else {
-                        @call(bun.callmod_inline, handler, .{ @as(UserDataType, @ptrCast(@alignCast(user_data.?))), castRes(this) });
+                    } else if (user_data) |user_data_ptr| {
+                        // null should always be treated as a no-op, there's no case where it should have any effect.
+                        @call(bun.callmod_inline, handler, .{ @as(UserDataType, @ptrCast(@alignCast(user_data_ptr))), castRes(this) });
                     }
                 }
             };
@@ -181,11 +205,12 @@ pub fn NewResponse(ssl_flag: i32) type {
         }
         pub fn onTimeout(res: *Response, comptime UserDataType: type, comptime handler: fn (UserDataType, *Response) void, optional_data: UserDataType) void {
             const Wrapper = struct {
-                pub fn handle(this: *c.uws_res, user_data: ?*anyopaque) callconv(.C) void {
+                pub fn handle(this: *c.uws_res, user_data: ?*anyopaque) callconv(.c) void {
                     if (comptime UserDataType == void) {
                         @call(bun.callmod_inline, handler, .{ {}, castRes(this) });
-                    } else {
-                        @call(bun.callmod_inline, handler, .{ @as(UserDataType, @ptrCast(@alignCast(user_data.?))), castRes(this) });
+                    } else if (user_data) |user_data_ptr| {
+                        // null should always be treated as a no-op, there's no case where it should have any effect.
+                        @call(bun.callmod_inline, handler, .{ @as(UserDataType, @ptrCast(@alignCast(user_data_ptr))), castRes(this) });
                     }
                 }
             };
@@ -207,7 +232,7 @@ pub fn NewResponse(ssl_flag: i32) type {
         ) void {
             const Wrapper = struct {
                 const handler_fn = handler;
-                pub fn handle(this: *c.uws_res, chunk_ptr: [*c]const u8, len: usize, last: bool, user_data: ?*anyopaque) callconv(.C) void {
+                pub fn handle(this: *c.uws_res, chunk_ptr: [*c]const u8, len: usize, last: bool, user_data: ?*anyopaque) callconv(.c) void {
                     if (comptime UserDataType == void) {
                         @call(bun.callmod_inline, handler_fn, .{
                             {},
@@ -215,9 +240,10 @@ pub fn NewResponse(ssl_flag: i32) type {
                             if (len > 0) chunk_ptr[0..len] else "",
                             last,
                         });
-                    } else {
+                    } else if (user_data) |user_data_ptr| {
+                        // null should always be treated as a no-op, there's no case where it should have any effect.
                         @call(bun.callmod_inline, handler_fn, .{
-                            @as(UserDataType, @ptrCast(@alignCast(user_data.?))),
+                            @as(UserDataType, @ptrCast(@alignCast(user_data_ptr))),
                             castRes(this),
                             if (len > 0) chunk_ptr[0..len] else "",
                             last,
@@ -236,18 +262,18 @@ pub fn NewResponse(ssl_flag: i32) type {
         pub fn corked(
             res: *Response,
             comptime handler: anytype,
-            args_tuple: anytype,
+            args_tuple: std.meta.ArgsTuple(@TypeOf(handler)),
         ) void {
             const Wrapper = struct {
                 const handler_fn = handler;
                 const Args = *@TypeOf(args_tuple);
-                pub fn handle(user_data: ?*anyopaque) callconv(.C) void {
-                    const args: Args = @alignCast(@ptrCast(user_data.?));
-                    @call(.always_inline, handler_fn, args.*);
+                pub fn handle(user_data: ?*anyopaque) callconv(.c) void {
+                    const args: Args = @ptrCast(@alignCast(user_data.?));
+                    @call(bun.callmod_inline, handler_fn, args.*);
                 }
             };
 
-            c.uws_res_cork(ssl_flag, res.downcast(), @constCast(@ptrCast(&args_tuple)), Wrapper.handle);
+            c.uws_res_cork(ssl_flag, res.downcast(), @ptrCast(@constCast(&args_tuple)), Wrapper.handle);
         }
 
         pub fn runCorkedWithType(
@@ -257,7 +283,7 @@ pub fn NewResponse(ssl_flag: i32) type {
             optional_data: UserDataType,
         ) void {
             const Wrapper = struct {
-                pub fn handle(user_data: ?*anyopaque) callconv(.C) void {
+                pub fn handle(user_data: ?*anyopaque) callconv(.c) void {
                     if (comptime UserDataType == void) {
                         @call(bun.callmod_inline, handler, .{
                             {},
@@ -305,9 +331,52 @@ pub const AnyResponse = union(enum) {
     SSL: *uws.NewApp(true).Response,
     TCP: *uws.NewApp(false).Response,
 
+    pub fn assertSSL(this: AnyResponse) *uws.NewApp(true).Response {
+        return switch (this) {
+            .SSL => |resp| resp,
+            .TCP => bun.Output.panic("Expected SSL response, got TCP response", .{}),
+        };
+    }
+
+    pub fn assertNoSSL(this: AnyResponse) *uws.NewApp(false).Response {
+        return switch (this) {
+            .SSL => bun.Output.panic("Expected TCP response, got SSL response", .{}),
+            .TCP => |resp| resp,
+        };
+    }
+
+    pub fn markNeedsMore(this: AnyResponse) void {
+        return switch (this) {
+            inline else => |resp| resp.markNeedsMore(),
+        };
+    }
+
+    pub fn markWroteContentLengthHeader(this: AnyResponse) void {
+        return switch (this) {
+            inline else => |resp| resp.markWroteContentLengthHeader(),
+        };
+    }
+
+    pub fn writeMark(this: AnyResponse) void {
+        return switch (this) {
+            inline else => |resp| resp.writeMark(),
+        };
+    }
+
+    pub fn endSendFile(this: AnyResponse, write_offset: u64, close_connection: bool) void {
+        return switch (this) {
+            inline else => |resp| resp.endSendFile(write_offset, close_connection),
+        };
+    }
+
     pub fn socket(this: AnyResponse) *c.uws_res {
         return switch (this) {
             inline else => |resp| resp.downcast(),
+        };
+    }
+    pub fn getSocketData(this: AnyResponse) ?*anyopaque {
+        return switch (this) {
+            inline else => |resp| resp.getSocketData(),
         };
     }
     pub fn getRemoteSocketInfo(this: AnyResponse) ?SocketAddress {
@@ -315,10 +384,20 @@ pub const AnyResponse = union(enum) {
             inline else => |resp| resp.getRemoteSocketInfo(),
         };
     }
-    pub fn flushHeaders(this: AnyResponse) void {
+    pub fn flushHeaders(this: AnyResponse, flushImmediately: bool) void {
+        switch (this) {
+            inline else => |resp| resp.flushHeaders(flushImmediately),
+        }
+    }
+    pub fn isCorked(this: AnyResponse) bool {
         return switch (this) {
-            inline else => |resp| resp.flushHeaders(),
+            inline else => |resp| resp.isCorked(),
         };
+    }
+    pub fn uncork(this: AnyResponse) void {
+        switch (this) {
+            inline else => |resp| resp.uncork(),
+        }
     }
     pub fn getWriteOffset(this: AnyResponse) u64 {
         return switch (this) {
@@ -333,9 +412,9 @@ pub const AnyResponse = union(enum) {
     }
 
     pub fn writeContinue(this: AnyResponse) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.writeContinue(),
-        };
+        }
     }
 
     pub fn state(this: AnyResponse) State {
@@ -348,7 +427,7 @@ pub const AnyResponse = union(enum) {
         return switch (@TypeOf(response)) {
             *uws.NewApp(true).Response => .{ .SSL = response },
             *uws.NewApp(false).Response => .{ .TCP = response },
-            else => @compileError(unreachable),
+            else => @compileError("unreachable"),
         };
     }
 
@@ -359,25 +438,25 @@ pub const AnyResponse = union(enum) {
     }
 
     pub fn onData(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, []const u8, bool) void, optional_data: UserDataType) void {
-        return switch (this) {
+        switch (this) {
             inline .SSL, .TCP => |resp, ssl| resp.onData(UserDataType, struct {
                 pub fn onDataCallback(user_data: UserDataType, _: *uws.NewApp(ssl == .SSL).Response, data: []const u8, last: bool) void {
-                    @call(.always_inline, handler, .{ user_data, data, last });
+                    @call(bun.callmod_inline, handler, .{ user_data, data, last });
                 }
             }.onDataCallback, optional_data),
-        };
+        }
     }
 
     pub fn writeStatus(this: AnyResponse, status: []const u8) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.writeStatus(status),
-        };
+        }
     }
 
     pub fn writeHeader(this: AnyResponse, key: []const u8, value: []const u8) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.writeHeader(key, value),
-        };
+        }
     }
 
     pub fn write(this: AnyResponse, data: []const u8) WriteResult {
@@ -387,9 +466,9 @@ pub const AnyResponse = union(enum) {
     }
 
     pub fn end(this: AnyResponse, data: []const u8, close_connection: bool) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.end(data, close_connection),
-        };
+        }
     }
 
     pub fn shouldCloseConnection(this: AnyResponse) bool {
@@ -405,27 +484,34 @@ pub const AnyResponse = union(enum) {
     }
 
     pub fn pause(this: AnyResponse) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.pause(),
-        };
+        }
     }
 
     pub fn @"resume"(this: AnyResponse) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.@"resume"(),
-        };
+        }
     }
 
     pub fn writeHeaderInt(this: AnyResponse, key: []const u8, value: u64) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.writeHeaderInt(key, value),
-        };
+        }
     }
 
     pub fn endWithoutBody(this: AnyResponse, close_connection: bool) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.endWithoutBody(close_connection),
-        };
+        }
+    }
+
+    pub fn forceClose(this: AnyResponse) void {
+        switch (this) {
+            .SSL => |resp| resp.downcastSocket().close(true, .failure),
+            .TCP => |resp| resp.downcastSocket().close(false, .failure),
+        }
     }
 
     pub fn onWritable(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, u64, AnyResponse) bool, optional_data: UserDataType) void {
@@ -438,10 +524,10 @@ pub const AnyResponse = union(enum) {
                 return handler(user_data, offset, .{ .TCP = resp });
             }
         };
-        return switch (this) {
+        switch (this) {
             .SSL => |resp| resp.onWritable(UserDataType, wrapper.ssl_handler, optional_data),
             .TCP => |resp| resp.onWritable(UserDataType, wrapper.tcp_handler, optional_data),
-        };
+        }
     }
 
     pub fn onTimeout(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, AnyResponse) void, optional_data: UserDataType) void {
@@ -454,10 +540,10 @@ pub const AnyResponse = union(enum) {
             }
         };
 
-        return switch (this) {
+        switch (this) {
             .SSL => |resp| resp.onTimeout(UserDataType, wrapper.ssl_handler, optional_data),
             .TCP => |resp| resp.onTimeout(UserDataType, wrapper.tcp_handler, optional_data),
-        };
+        }
     }
 
     pub fn onAborted(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, AnyResponse) void, optional_data: UserDataType) void {
@@ -469,51 +555,57 @@ pub const AnyResponse = union(enum) {
                 handler(user_data, .{ .TCP = resp });
             }
         };
-        return switch (this) {
+        switch (this) {
             .SSL => |resp| resp.onAborted(UserDataType, wrapper.ssl_handler, optional_data),
             .TCP => |resp| resp.onAborted(UserDataType, wrapper.tcp_handler, optional_data),
-        };
+        }
     }
 
     pub fn clearAborted(this: AnyResponse) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.clearAborted(),
-        };
+        }
     }
     pub fn clearTimeout(this: AnyResponse) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.clearTimeout(),
-        };
+        }
     }
 
     pub fn clearOnWritable(this: AnyResponse) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.clearOnWritable(),
-        };
+        }
     }
 
     pub fn clearOnData(this: AnyResponse) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.clearOnData(),
+        }
+    }
+
+    pub fn isConnectRequest(this: AnyResponse) bool {
+        return switch (this) {
+            inline else => |resp| resp.isConnectRequest(),
         };
     }
 
     pub fn endStream(this: AnyResponse, close_connection: bool) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.endStream(close_connection),
-        };
+        }
     }
 
-    pub fn corked(this: AnyResponse, comptime handler: anytype, args_tuple: anytype) void {
-        return switch (this) {
+    pub fn corked(this: AnyResponse, comptime handler: anytype, args_tuple: std.meta.ArgsTuple(@TypeOf(handler))) void {
+        switch (this) {
             inline else => |resp| resp.corked(handler, args_tuple),
-        };
+        }
     }
 
     pub fn runCorkedWithType(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType) void, optional_data: UserDataType) void {
-        return switch (this) {
+        switch (this) {
             inline else => |resp| resp.runCorkedWithType(UserDataType, handler, optional_data),
-        };
+        }
     }
 
     pub fn upgrade(
@@ -575,12 +667,17 @@ pub const uws_res = c.uws_res;
 
 const c = struct {
     pub const uws_res = opaque {};
+    pub extern fn uws_res_mark_wrote_content_length_header(ssl: i32, res: *c.uws_res) void;
+    pub extern fn uws_res_write_mark(ssl: i32, res: *c.uws_res) void;
     pub extern fn us_socket_mark_needs_more_not_ssl(socket: ?*c.uws_res) void;
     pub extern fn uws_res_state(ssl: c_int, res: *const c.uws_res) State;
+    pub extern fn uws_res_is_connect_request(ssl: i32, res: *c.uws_res) bool;
     pub extern fn uws_res_get_remote_address_info(res: *c.uws_res, dest: *[*]const u8, port: *i32, is_ipv6: *bool) usize;
     pub extern fn uws_res_uncork(ssl: i32, res: *c.uws_res) void;
     pub extern fn uws_res_end(ssl: i32, res: *c.uws_res, data: [*c]const u8, length: usize, close_connection: bool) void;
-    pub extern fn uws_res_flush_headers(ssl: i32, res: *c.uws_res) void;
+    pub extern fn uws_res_flush_headers(ssl: i32, res: *c.uws_res, flushImmediately: bool) void;
+    pub extern fn uws_res_is_corked(ssl: i32, res: *c.uws_res) bool;
+    pub extern fn uws_res_get_socket_data(ssl: i32, res: *c.uws_res) ?*uws.SocketData;
     pub extern fn uws_res_pause(ssl: i32, res: *c.uws_res) void;
     pub extern fn uws_res_resume(ssl: i32, res: *c.uws_res) void;
     pub extern fn uws_res_write_continue(ssl: i32, res: *c.uws_res) void;
@@ -596,10 +693,10 @@ const c = struct {
     pub extern fn uws_res_get_write_offset(ssl: i32, res: *c.uws_res) u64;
     pub extern fn uws_res_override_write_offset(ssl: i32, res: *c.uws_res, u64) void;
     pub extern fn uws_res_has_responded(ssl: i32, res: *c.uws_res) bool;
-    pub extern fn uws_res_on_writable(ssl: i32, res: *c.uws_res, handler: ?*const fn (*c.uws_res, u64, ?*anyopaque) callconv(.C) bool, user_data: ?*anyopaque) void;
+    pub extern fn uws_res_on_writable(ssl: i32, res: *c.uws_res, handler: ?*const fn (*c.uws_res, u64, ?*anyopaque) callconv(.c) bool, user_data: ?*anyopaque) void;
     pub extern fn uws_res_clear_on_writable(ssl: i32, res: *c.uws_res) void;
-    pub extern fn uws_res_on_aborted(ssl: i32, res: *c.uws_res, handler: ?*const fn (*c.uws_res, ?*anyopaque) callconv(.C) void, optional_data: ?*anyopaque) void;
-    pub extern fn uws_res_on_timeout(ssl: i32, res: *c.uws_res, handler: ?*const fn (*c.uws_res, ?*anyopaque) callconv(.C) void, optional_data: ?*anyopaque) void;
+    pub extern fn uws_res_on_aborted(ssl: i32, res: *c.uws_res, handler: ?*const fn (*c.uws_res, ?*anyopaque) callconv(.c) void, optional_data: ?*anyopaque) void;
+    pub extern fn uws_res_on_timeout(ssl: i32, res: *c.uws_res, handler: ?*const fn (*c.uws_res, ?*anyopaque) callconv(.c) void, optional_data: ?*anyopaque) void;
     pub extern fn uws_res_try_end(
         ssl: i32,
         res: *c.uws_res,
@@ -616,7 +713,7 @@ const c = struct {
     pub extern fn uws_res_on_data(
         ssl: i32,
         res: *c.uws_res,
-        handler: ?*const fn (*c.uws_res, [*c]const u8, usize, bool, ?*anyopaque) callconv(.C) void,
+        handler: ?*const fn (*c.uws_res, [*c]const u8, usize, bool, ?*anyopaque) callconv(.c) void,
         optional_data: ?*anyopaque,
     ) void;
     pub extern fn uws_res_upgrade(
@@ -631,13 +728,15 @@ const c = struct {
         sec_web_socket_extensions_length: usize,
         ws: ?*uws.SocketContext,
     ) *Socket;
-    pub extern fn uws_res_cork(i32, res: *c.uws_res, ctx: *anyopaque, corker: *const (fn (?*anyopaque) callconv(.C) void)) void;
+    pub extern fn uws_res_cork(i32, res: *c.uws_res, ctx: *anyopaque, corker: *const (fn (?*anyopaque) callconv(.c) void)) void;
 };
 
+const std = @import("std");
+
 const bun = @import("bun");
-const uws = bun.uws;
-const Socket = uws.Socket;
-const SocketContext = uws.SocketContext;
 const Environment = bun.Environment;
 
+const uws = bun.uws;
+const Socket = uws.Socket;
 const SocketAddress = uws.SocketAddress;
+const SocketContext = uws.SocketContext;

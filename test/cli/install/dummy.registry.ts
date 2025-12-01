@@ -8,7 +8,7 @@ import { tmpdirSync } from "harness";
 
 let expect: (typeof import("bun:test"))["expect"];
 
-import { readdir, writeFile } from "fs/promises";
+import { writeFile } from "fs/promises";
 import { basename, join } from "path";
 
 type Handler = (req: Request) => Response | Promise<Response>;
@@ -25,6 +25,17 @@ export let package_dir: string;
 export let requested: number;
 export let root_url: string;
 export let check_npm_auth_type = { check: true };
+
+export async function write(path: string, content: string | object) {
+  if (!package_dir) throw new Error("writeToPackageDir() must be called in a test");
+
+  await Bun.write(join(package_dir, path), typeof content === "string" ? content : JSON.stringify(content));
+}
+
+export function read(path: string) {
+  return Bun.file(join(package_dir, path));
+}
+
 export function dummyRegistry(urls: string[], info: any = { "0.0.2": {} }, numberOfTimesTo500PerURL = 0) {
   let retryCountsByURL = new Map<string, number>();
   const _handler: Handler = async request => {
@@ -79,9 +90,7 @@ export function dummyRegistry(urls: string[], info: any = { "0.0.2": {} }, numbe
           latest: info.latest ?? version,
         },
       }),
-      {
-        status: status,
-      },
+      { status },
     );
   };
   return _handler;
@@ -117,7 +126,7 @@ export function getPort() {
 let packageDirGetter: () => string = () => {
   return tmpdirSync();
 };
-export async function dummyBeforeEach() {
+export async function dummyBeforeEach(opts?: { linker: "hoisted" | "isolated" }) {
   resetHandler();
   requested = 0;
   package_dir = packageDirGetter();
@@ -128,6 +137,7 @@ export async function dummyBeforeEach() {
 cache = false
 registry = "http://localhost:${server.port}/"
 saveTextLockfile = false
+${opts ? `linker = "${opts.linker}"` : ""}
 `,
   );
 }
@@ -156,6 +166,5 @@ if (Bun.main === import.meta.path) {
   setHandler(dummyRegistry([]));
   console.log("Running dummy registry!\n\n URL: ", root_url!, "\n", "DIR: ", package_dir!);
 } else {
-  // @ts-expect-error
   ({ expect } = Bun.jest(import.meta.path));
 }

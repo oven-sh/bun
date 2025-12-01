@@ -1,6 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-
 extern const jsc_llint_begin: u8;
 extern const jsc_llint_end: u8;
 /// allocated using bun.default_allocator. when called from lldb, it is never freed.
@@ -13,16 +10,15 @@ pub export fn dumpBtjsTrace() [*:0]const u8 {
 }
 
 fn dumpBtjsTraceDebugImpl() [*:0]const u8 {
-    var result_writer = std.ArrayList(u8).init(bun.default_allocator);
-    const w = result_writer.writer();
+    var result_writer = std.Io.Writer.Allocating.init(bun.default_allocator);
+    defer result_writer.deinit();
+    const w = &result_writer.writer;
 
     const debug_info = std.debug.getSelfDebugInfo() catch |err| {
         w.print("Unable to dump stack trace: Unable to open debug info: {s}\x00", .{@errorName(err)}) catch {
-            result_writer.deinit();
             return "<oom>".ptr;
         };
         return @ptrCast((result_writer.toOwnedSlice() catch {
-            result_writer.deinit();
             return "<oom>".ptr;
         }).ptr);
     };
@@ -30,7 +26,7 @@ fn dumpBtjsTraceDebugImpl() [*:0]const u8 {
     // std.log.info("jsc_llint_begin: {x}", .{@intFromPtr(&jsc_llint_begin)});
     // std.log.info("jsc_llint_end: {x}", .{@intFromPtr(&jsc_llint_end)});
 
-    const tty_config = std.io.tty.detectConfig(std.io.getStdOut());
+    const tty_config = std.io.tty.detectConfig(std.fs.File.stdout());
 
     var context: std.debug.ThreadContext = undefined;
     const has_context = std.debug.getContext(&context);
@@ -55,21 +51,19 @@ fn dumpBtjsTraceDebugImpl() [*:0]const u8 {
     }
 
     // remove nulls
-    for (result_writer.items) |*itm| if (itm.* == 0) {
+    for (result_writer.written()) |*itm| if (itm.* == 0) {
         itm.* = ' ';
     };
     // add null terminator
-    result_writer.append(0) catch {
-        result_writer.deinit();
+    w.writeByte(0) catch {
         return "<oom>".ptr;
     };
     return @ptrCast((result_writer.toOwnedSlice() catch {
-        result_writer.deinit();
         return "<oom>".ptr;
     }).ptr);
 }
 
-fn printSourceAtAddress(debug_info: *std.debug.SelfInfo, out_stream: anytype, address: usize, tty_config: std.io.tty.Config, fp: usize) !void {
+fn printSourceAtAddress(debug_info: *std.debug.SelfInfo, out_stream: *std.Io.Writer, address: usize, tty_config: std.io.tty.Config, fp: usize) !void {
     if (!bun.Environment.isDebug) unreachable;
     const module = debug_info.getModuleForAddress(address) catch |err| switch (err) {
         error.MissingDebugInfo, error.InvalidDebugInfo => return printUnknownSource(debug_info, out_stream, address, tty_config),
@@ -92,11 +86,11 @@ fn printSourceAtAddress(debug_info: *std.debug.SelfInfo, out_stream: anytype, ad
     }
     const do_llint = probably_llint and allow_llint;
 
-    const frame: *const bun.JSC.CallFrame = @ptrFromInt(fp);
+    const frame: *const bun.jsc.CallFrame = @ptrFromInt(fp);
     if (do_llint) {
-        const srcloc = frame.getCallerSrcLoc(bun.JSC.VirtualMachine.get().global);
+        const srcloc = frame.getCallerSrcLoc(bun.jsc.VirtualMachine.get().global);
         try tty_config.setColor(out_stream, .bold);
-        try out_stream.print("{s}:{d}:{d}: ", .{ srcloc.str, srcloc.line, srcloc.column });
+        try out_stream.print("{f}:{d}:{d}: ", .{ srcloc.str, srcloc.line, srcloc.column });
         try tty_config.setColor(out_stream, .reset);
     }
 
@@ -120,7 +114,7 @@ fn printSourceAtAddress(debug_info: *std.debug.SelfInfo, out_stream: anytype, ad
     }
 }
 
-fn printUnknownSource(debug_info: *std.debug.SelfInfo, out_stream: anytype, address: usize, tty_config: std.io.tty.Config) !void {
+fn printUnknownSource(debug_info: *std.debug.SelfInfo, out_stream: *std.Io.Writer, address: usize, tty_config: std.io.tty.Config) !void {
     if (!bun.Environment.isDebug) unreachable;
     const module_name = debug_info.getModuleNameForAddress(address);
     return printLineInfo(
@@ -135,7 +129,7 @@ fn printUnknownSource(debug_info: *std.debug.SelfInfo, out_stream: anytype, addr
     );
 }
 fn printLineInfo(
-    out_stream: anytype,
+    out_stream: *std.Io.Writer,
     source_location: ?std.debug.SourceLocation,
     address: usize,
     symbol_name: []const u8,
@@ -169,7 +163,7 @@ fn printLineInfo(
                     // The caret already takes one char
                     const space_needed = @as(usize, @intCast(sl.column - 1));
 
-                    try out_stream.writeByteNTimes(' ', space_needed);
+                    try out_stream.splatByteAll(' ', space_needed);
                     try tty_config.setColor(out_stream, .green);
                     try out_stream.writeAll("^");
                     try tty_config.setColor(out_stream, .reset);
@@ -185,7 +179,7 @@ fn printLineInfo(
     }
 }
 
-fn printLineFromFileAnyOs(out_stream: anytype, source_location: std.debug.SourceLocation) !void {
+fn printLineFromFileAnyOs(out_stream: *std.Io.Writer, source_location: std.debug.SourceLocation) !void {
     if (!bun.Environment.isDebug) unreachable;
 
     // Need this to always block even in async I/O mode, because this could potentially
@@ -241,7 +235,7 @@ fn printLineFromFileAnyOs(out_stream: anytype, source_location: std.debug.Source
     }
 }
 
-fn printLastUnwindError(it: *std.debug.StackIterator, debug_info: *std.debug.SelfInfo, out_stream: anytype, tty_config: std.io.tty.Config) void {
+fn printLastUnwindError(it: *std.debug.StackIterator, debug_info: *std.debug.SelfInfo, out_stream: *std.Io.Writer, tty_config: std.io.tty.Config) void {
     if (!bun.Environment.isDebug) unreachable;
     if (!std.debug.have_ucontext) return;
     if (it.getLastError()) |unwind_error| {
@@ -249,7 +243,7 @@ fn printLastUnwindError(it: *std.debug.StackIterator, debug_info: *std.debug.Sel
     }
 }
 
-fn printUnwindError(debug_info: *std.debug.SelfInfo, out_stream: anytype, address: usize, err: std.debug.UnwindError, tty_config: std.io.tty.Config) !void {
+fn printUnwindError(debug_info: *std.debug.SelfInfo, out_stream: *std.Io.Writer, address: usize, err: std.debug.UnwindError, tty_config: std.io.tty.Config) !void {
     if (!bun.Environment.isDebug) unreachable;
 
     const module_name = debug_info.getModuleNameForAddress(address) orelse "???";
@@ -261,3 +255,6 @@ fn printUnwindError(debug_info: *std.debug.SelfInfo, out_stream: anytype, addres
     }
     try tty_config.setColor(out_stream, .reset);
 }
+
+const bun = @import("bun");
+const std = @import("std");

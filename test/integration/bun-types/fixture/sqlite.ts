@@ -34,3 +34,19 @@ const query3 = db.prepare<
 >("select name, dob from users where id = $id");
 const allResults3 = query3.all({ $id: "asdf" });
 expectType<Array<{ name: string; dob: number }>>(allResults3);
+
+db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)");
+const insert = db.prepare("INSERT INTO cats (name, age) VALUES ($name, $age)");
+const insertManyCats = db.transaction((cats: Array<{ $name: string; $age: number }>) => {
+  for (const cat of cats) insert.run(cat);
+});
+insertManyCats([
+  {
+    $name: "Joey",
+    $age: 2,
+  },
+  { $name: "Sally", $age: 4 },
+  { $name: "Junior", $age: 1 },
+  // @ts-expect-error - Should fail
+  { fail: true },
+]);

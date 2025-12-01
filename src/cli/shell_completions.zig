@@ -1,8 +1,3 @@
-const std = @import("std");
-const bun = @import("bun");
-const Output = bun.Output;
-const strings = bun.strings;
-
 pub const Shell = enum {
     unknown,
     bash,
@@ -72,3 +67,9 @@ pub fn print(this: @This()) void {
         }
     }
 }
+
+const std = @import("std");
+
+const bun = @import("bun");
+const Output = bun.Output;
+const strings = bun.strings;

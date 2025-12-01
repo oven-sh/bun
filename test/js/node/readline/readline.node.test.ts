@@ -2038,4 +2038,52 @@ describe("readline.createInterface()", () => {
   //   rl.write("text");
   //   rl.write(null, { ctrl: true, name: "c" });
   // });
+
+  it("should support Symbol.dispose for using statements", () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let closed = false;
+
+    {
+      using rl = readline.createInterface({
+        input: input,
+        output: output,
+      });
+
+      rl.on("close", () => {
+        closed = true;
+      });
+
+      // Verify the interface has the Symbol.dispose method
+      assert.strictEqual(typeof rl[Symbol.dispose], "function");
+      assert.strictEqual(!closed, true);
+    }
+
+    // After exiting the using block, the interface should be closed
+    assert.strictEqual(closed, true);
+  });
+
+  it("should support Symbol.dispose as alias for close()", () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let closed = false;
+
+    const rl = readline.createInterface({
+      input: input,
+      output: output,
+    });
+
+    rl.on("close", () => {
+      closed = true;
+    });
+
+    // Verify Symbol.dispose exists and works the same as close()
+    assert.strictEqual(typeof rl[Symbol.dispose], "function");
+    assert.strictEqual(!closed, true);
+
+    rl[Symbol.dispose]();
+
+    assert.strictEqual(closed, true);
+    assert.strictEqual(rl.closed, true);
+  });
 });

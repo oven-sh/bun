@@ -9,7 +9,7 @@
 
 #include "wtf/Assertions.h"
 
-extern "C" mach_port_t io_darwin_create_machport(uint64_t wakeup, int32_t fd,
+extern "C" mach_port_t io_darwin_create_machport(int32_t fd,
     void* wakeup_buffer_,
     size_t nbytes)
 {
@@ -117,10 +117,15 @@ extern "C" bool io_darwin_schedule_wakeup(mach_port_t waker)
     }
 }
 
+extern "C" void io_darwin_close_machport(mach_port_t port)
+{
+    mach_port_deallocate(mach_task_self(), port);
+}
+
 #else
 
 // stub out these symbols
-extern "C" int io_darwin_create_machport(unsigned long long wakeup, int fd,
+extern "C" int io_darwin_create_machport(int fd,
     void* wakeup_buffer_,
     unsigned long long nbytes)
 {
@@ -129,5 +134,7 @@ extern "C" int io_darwin_create_machport(unsigned long long wakeup, int fd,
 
 // stub out these symbols
 extern "C" bool io_darwin_schedule_wakeup(void* waker) { return false; }
+
+extern "C" void io_darwin_close_machport(unsigned port) {}
 
 #endif

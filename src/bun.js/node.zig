@@ -2,25 +2,24 @@
 comptime {
     _ = process.getTitle;
     _ = process.setTitle;
-    _ = @import("node/util/parse_args.zig");
+    _ = @import("./node/util/parse_args.zig");
 }
 
 /// node:fs
-pub const fs = @import("node/node_fs.zig");
+pub const fs = @import("./node/node_fs.zig");
 /// node:path
-pub const path = @import("node/path.zig");
+pub const path = @import("./node/path.zig");
 /// node:crypto
-pub const crypto = @import("node/node_crypto_binding.zig");
+pub const crypto = @import("./node/node_crypto_binding.zig");
 /// node:os
-pub const os = @import("node/node_os.zig");
+pub const os = @import("./node/node_os.zig");
 /// node:process
-pub const process = @import("node/node_process.zig");
-pub const validators = @import("node/util/validators.zig");
-pub const ErrorCode = @import("node/nodejs_error_code.zig").Code;
+pub const process = @import("./node/node_process.zig");
+pub const validators = @import("./node/util/validators.zig");
+pub const ErrorCode = @import("./node/nodejs_error_code.zig").Code;
 
-pub const Buffer = JSC.MarkedArrayBuffer;
+pub const Buffer = jsc.MarkedArrayBuffer;
 
-const types = @import("node/types.zig");
 pub const PathOrBlob = types.PathOrBlob;
 pub const Dirent = types.Dirent;
 pub const FileSystemFlags = types.FileSystemFlags;
@@ -36,12 +35,11 @@ pub const Encoding = types.Encoding;
 pub const StringOrBuffer = types.StringOrBuffer;
 pub const BlobOrStringOrBuffer = types.BlobOrStringOrBuffer;
 
-const stat = @import("node/Stat.zig");
+pub const FSEvents = @import("./node/fs_events.zig");
 pub const Stats = stat.Stats;
 pub const StatsBig = stat.StatsBig;
 pub const StatsSmall = stat.StatsSmall;
 
-const statfs = @import("node/StatFS.zig");
 pub const StatFSSmall = statfs.StatFSSmall;
 pub const StatFSBig = statfs.StatFSBig;
 pub const StatFS = statfs.StatFS;
@@ -49,7 +47,7 @@ pub const StatFS = statfs.StatFS;
 pub const uid_t = if (Environment.isPosix) std.posix.uid_t else bun.windows.libuv.uv_uid_t;
 pub const gid_t = if (Environment.isPosix) std.posix.gid_t else bun.windows.libuv.uv_gid_t;
 
-pub const time_like = @import("node/time_like.zig");
+pub const time_like = @import("./node/time_like.zig");
 pub const TimeLike = time_like.TimeLike;
 pub const timeLikeFromJS = time_like.fromJS;
 
@@ -86,15 +84,6 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             .errno = @intFromEnum(posix.E.INTR),
             .syscall = .access,
         } };
-
-        pub fn assert(this: @This()) ReturnType {
-            switch (this) {
-                .err => |err| {
-                    bun.Output.panic("Unexpected error\n{}", .{err});
-                },
-                .result => |result| return result,
-            }
-        }
 
         pub inline fn todo() @This() {
             if (Environment.allow_assert) {
@@ -192,36 +181,36 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
             };
         }
 
-        pub fn toJS(this: @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn toJS(this: @This(), globalObject: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
             return switch (this) {
                 .result => |r| switch (ReturnType) {
-                    JSC.JSValue => r,
+                    jsc.JSValue => r,
 
-                    void => .undefined,
-                    bool => JSC.JSValue.jsBoolean(r),
+                    void => .js_undefined,
+                    bool => jsc.JSValue.jsBoolean(r),
 
-                    JSC.ArrayBuffer => r.toJS(globalObject, null),
-                    []u8 => JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalObject, null),
+                    jsc.ArrayBuffer => r.toJS(globalObject),
+                    []u8 => jsc.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalObject),
 
                     else => switch (@typeInfo(ReturnType)) {
-                        .int, .float, .comptime_int, .comptime_float => JSC.JSValue.jsNumber(r),
+                        .int, .float, .comptime_int, .comptime_float => jsc.JSValue.jsNumber(r),
                         .@"struct", .@"enum", .@"opaque", .@"union" => r.toJS(globalObject),
                         .pointer => {
                             if (bun.trait.isZigString(ReturnType))
-                                JSC.ZigString.init(bun.asByteSlice(r)).withEncoding().toJS(globalObject);
+                                jsc.ZigString.init(bun.asByteSlice(r)).withEncoding().toJS(globalObject);
 
                             return r.toJS(globalObject);
                         },
                     },
                 },
-                .err => |e| e.toJSC(globalObject),
+                .err => |e| e.toJS(globalObject),
             };
         }
 
-        pub fn toArrayBuffer(this: @This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        pub fn toArrayBuffer(this: @This(), globalObject: *jsc.JSGlobalObject) jsc.JSValue {
             return switch (this) {
-                .result => |r| JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalObject, null),
-                .err => |e| e.toJSC(globalObject),
+                .result => |r| jsc.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalObject, null),
+                .err => |e| e.toJS(globalObject),
             };
         }
 
@@ -343,6 +332,13 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                 },
             };
         }
+
+        pub fn format(this: @This(), writer: *std.Io.Writer) !void {
+            return switch (this) {
+                .result => try writer.print("Result(...)", .{}),
+                .err => |e| try writer.print("Error(" ++ bun.deprecated.autoFormatLabelFallback(ErrorType, "{any}") ++ ")", .{e}),
+            };
+        }
     };
 }
 
@@ -353,11 +349,16 @@ fn translateToErrInt(err: anytype) bun.sys.Error.Int {
     };
 }
 
-const std = @import("std");
+const stat = @import("./node/Stat.zig");
+const statfs = @import("./node/StatFS.zig");
+const types = @import("./node/types.zig");
+
 const bun = @import("bun");
-const sys = bun.sys;
 const Environment = bun.Environment;
+const jsc = bun.jsc;
 const meta = bun.meta;
+const sys = bun.sys;
 const windows = bun.windows;
+
+const std = @import("std");
 const posix = std.posix;
-const JSC = bun.JSC;

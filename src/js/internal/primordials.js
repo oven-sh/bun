@@ -83,7 +83,7 @@ const ArrayIteratorPrototypeNext = uncurryThis(Array.prototype[Symbol.iterator](
 const SafeArrayIterator = createSafeIterator(ArrayPrototypeSymbolIterator, ArrayIteratorPrototypeNext);
 
 const ArrayPrototypeMap = Array.prototype.map;
-const PromisePrototypeThen = Promise.prototype.then;
+const PromisePrototypeThen = $Promise.prototype.$then;
 
 const arrayToSafePromiseIterable = (promises, mapFn) =>
   new SafeArrayIterator(
@@ -94,7 +94,7 @@ const arrayToSafePromiseIterable = (promises, mapFn) =>
     ),
   );
 const PromiseAll = Promise.all;
-const PromiseResolve = Promise.resolve.bind(Promise);
+const PromiseResolve = Promise.$resolve.bind(Promise);
 const SafePromiseAll = (promises, mapFn) => PromiseAll(arrayToSafePromiseIterable(promises, mapFn));
 const SafePromiseAllReturnArrayLike = (promises, mapFn) =>
   new Promise((resolve, reject) => {

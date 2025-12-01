@@ -38,6 +38,56 @@
 
 
 namespace uWS {
+
+namespace detail {
+
+template <typename T, typename... Args>
+[[nodiscard]] constexpr auto makeArray(T&& el0, Args&&... values) noexcept {
+    return std::array<std::decay_t<T>, 1 + sizeof...(Args)>{
+        std::forward<T>(el0), std::forward<Args>(values)...
+    };
+}
+
+static constexpr auto supportedHttpMethods = makeArray<std::string_view>(
+    "ACL",
+    "BIND",
+    "CHECKOUT",
+    "CONNECT",
+    "COPY",
+    "DELETE",
+    "GET",
+    "HEAD",
+    "LINK",
+    "LOCK",
+    "M-SEARCH",
+    "MERGE",
+    "MKACTIVITY",
+    "MKCALENDAR",
+    "MKCOL",
+    "MOVE",
+    "NOTIFY",
+    "OPTIONS",
+    "PATCH",
+    "POST",
+    "PROPFIND",
+    "PROPPATCH",
+    "PURGE",
+    "PUT",
+    "QUERY",
+    "REBIND",
+    "REPORT",
+    "SEARCH",
+    "SOURCE",
+    "SUBSCRIBE",
+    "TRACE",
+    "UNBIND",
+    "UNLINK",
+    "UNLOCK",
+    "UNSUBSCRIBE"
+);
+
+} // namespace detail
+
 template<bool> struct HttpResponse;
 
 template <bool SSL>
@@ -53,78 +103,6 @@ private:
     /* Minimum allowed receive throughput per second (clients uploading less than 16kB/sec get dropped) */
     static constexpr int HTTP_RECEIVE_THROUGHPUT_BYTES = 16 * 1024;
 
-
-#define FOR_EACH_HTTP_METHOD(MACRO) \
-        MACRO("ACL") \
-        MACRO("BIND") \
-        MACRO("CHECKOUT") \
-        MACRO("CONNECT") \
-        MACRO("COPY") \
-        MACRO("DELETE") \
-        MACRO("GET") \
-        MACRO("HEAD") \
-        MACRO("LINK") \
-        MACRO("LOCK") \
-        MACRO("M-SEARCH") \
-        MACRO("MERGE") \
-        MACRO("MKACTIVITY") \
-        MACRO("MKCALENDAR") \
-        MACRO("MKCOL") \
-        MACRO("MOVE") \
-        MACRO("NOTIFY") \
-        MACRO("OPTIONS") \
-        MACRO("PATCH") \
-        MACRO("POST") \
-        MACRO("PROPFIND") \
-        MACRO("PROPPATCH") \
-        MACRO("PURGE") \
-        MACRO("PUT") \
-        MACRO("QUERY") \
-        MACRO("REBIND") \
-        MACRO("REPORT") \
-        MACRO("SEARCH") \
-        MACRO("SOURCE") \
-        MACRO("SUBSCRIBE") \
-        MACRO("TRACE") \
-        MACRO("UNBIND") \
-        MACRO("UNLINK") \
-        MACRO("UNLOCK") \
-        MACRO("UNSUBSCRIBE") \
-    
-
-#ifndef _WIN32
-    static constexpr std::array<const std::string, 35> HTTP_METHODS = {
-        #define MACRO(name) std::string {name},
-        FOR_EACH_HTTP_METHOD(MACRO)
-        #undef MACRO
-    };
-    static std::span<const std::string> getAllHttpMethods() {
-        return {HTTP_METHODS.data(), HTTP_METHODS.size()};
-    }
-#else
-    // Windows, and older C++ can't do constexpr std::array<const std::string, 35>
-    static constexpr std::array<const char*, 35> HTTP_METHODS = {
-        #define MACRO(name) name,
-        FOR_EACH_HTTP_METHOD(MACRO)
-        #undef MACRO
-    };
-    
-    static std::span<const std::string> getAllHttpMethods() {
-        static std::once_flag flag;
-        static std::array<std::string, 35> methods;
-        std::call_once(flag, []() {
-            methods = { 
-                #define MACRO(name) std::string {name},
-                FOR_EACH_HTTP_METHOD(MACRO)
-                #undef MACRO
-            };
-        });
-        return {methods.data(), methods.size()};
-    }
-#endif
-#undef FOR_EACH_HTTP_METHOD
-
-
     us_socket_context_t *getSocketContext() {
         return (us_socket_context_t *) this;
     }
@@ -135,10 +113,6 @@ private:
 
     HttpContextData<SSL> *getSocketContextData() {
         return (HttpContextData<SSL> *) us_socket_context_ext(SSL, getSocketContext());
-    }
-
-    static HttpContextData<SSL> *getSocketContextDataS(us_socket_t *s) {
-        return (HttpContextData<SSL> *) us_socket_context_ext(SSL, getSocketContext(s));
     }
 
     /* Init the HttpContext by registering libusockets event handlers */
@@ -197,23 +171,32 @@ private:
             auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(SSL, s));
 
 
-
             /* Call filter */
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
 
-            
-            for (auto &f : httpContextData->filterHandlers) {
-                f((HttpResponse<SSL> *) s, -1);
+            if(httpResponseData && httpResponseData->isConnectRequest) {
+                if (httpResponseData->socketData && httpContextData->onSocketData) {
+                    httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
+                }
+                if(httpResponseData->inStream) {
+                    httpResponseData->inStream(reinterpret_cast<HttpResponse<SSL> *>(s), "", 0, true, httpResponseData->userData);
+                    httpResponseData->inStream = nullptr;
+                }
             }
 
-            /* Signal broken HTTP request only if we have a pending request */
-            if (httpResponseData->onAborted != nullptr && httpResponseData->userData != nullptr) {
-                httpResponseData->onAborted((HttpResponse<SSL> *)s, httpResponseData->userData);
+
+            for (auto &f : httpContextData->filterHandlers) {
+                f((HttpResponse<SSL> *) s, -1);
             }
 
             if (httpResponseData->socketData && httpContextData->onSocketClosed) {
                 httpContextData->onSocketClosed(httpResponseData->socketData, SSL, s);
             }
+            /* Signal broken HTTP request only if we have a pending request */
+            if (httpResponseData->onAborted != nullptr && httpResponseData->userData != nullptr) {
+                httpResponseData->onAborted((HttpResponse<SSL> *)s, httpResponseData->userData);
+            }
+
 
             /* Destruct socket ext */
             httpResponseData->~HttpResponseData<SSL>();
@@ -247,6 +230,8 @@ private:
 
             /* Mark that we are inside the parser now */
             httpContextData->flags.isParsingHttp = true;
+            httpResponseData->isIdle = false;
+
             // clients need to know the cursor after http parse, not servers!
             // how far did we read then? we need to know to continue with websocket parsing data? or?
 
@@ -257,7 +242,9 @@ private:
 
             /* The return value is entirely up to us to interpret. The HttpParser cares only for whether the returned value is DIFFERENT from passed user */
 
-            auto result = httpResponseData->consumePostPadded(httpContextData->maxHeaderSize, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+            auto result = httpResponseData->consumePostPadded(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
+
+
                 /* For every request we reset the timeout and hang until user makes action */
                 /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
                 us_socket_timeout(SSL, (us_socket_t *) s, 0);
@@ -276,7 +263,7 @@ private:
 
                 /* Mark pending request and emit it */
                 httpResponseData->state = HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
-                
+
 
                 /* Mark this response as connectionClose if ancient or connection: close */
                 if (httpRequest->isAncient() || httpRequest->getHeader("connection").length() == 5) {
@@ -333,10 +320,15 @@ private:
                 /* Continue parsing */
                 return s;
 
-            }, [httpResponseData](void *user, std::string_view data, bool fin) -> void * {
+            }, [httpResponseData, httpContextData](void *user, std::string_view data, bool fin) -> void * {
+
+
+                if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketData) {
+                    httpContextData->onSocketData(httpResponseData->socketData, SSL, (struct us_socket_t *) user, data.data(), data.length(), fin);
+                }
                 /* We always get an empty chunk even if there is no data */
                 if (httpResponseData->inStream) {
-                    
+
                     /* Todo: can this handle timeout for non-post as well? */
                     if (fin) {
                         /* If we just got the last chunk (or empty chunk), disable timeout */
@@ -374,7 +366,7 @@ private:
             });
 
             auto httpErrorStatusCode = result.httpErrorStatusCode();
-            
+
             /* Mark that we are no longer parsing Http */
             httpContextData->flags.isParsingHttp = false;
             /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
@@ -383,12 +375,12 @@ private:
                     httpContextData->onClientError(SSL, s, result.parserError, data, length);
                 }
                 /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
-                us_socket_write(SSL, s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length(), false);
+                us_socket_write(SSL, s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length());
                 us_socket_shutdown(SSL, s);
                 /* Close any socket on HTTP errors */
                 us_socket_close(SSL, s, 0, nullptr);
             }
-        
+
             auto returnedData = result.returnedData;
             /* We need to uncork in all cases, except for nullptr (closed socket, or upgraded socket) */
             if (returnedData != nullptr) {
@@ -456,10 +448,9 @@ private:
             size_t bufferedAmount = asyncSocket->getBufferedAmount();
             if (bufferedAmount > 0) {
                 /* Try to flush pending data from the socket's buffer to the network */
-                bufferedAmount -= asyncSocket->flush();
-                
+                asyncSocket->flush();
                 /* Check if there's still data waiting to be sent after flush attempt */
-                if (bufferedAmount > 0) {
+                if (asyncSocket->getBufferedAmount() > 0) {
                     /* Socket buffer is not completely empty yet
                     * - Reset the timeout to prevent premature connection closure
                     * - This allows time for another writable event or new request
@@ -472,12 +463,18 @@ private:
                 * and will fall through to the next section of code
                 */
             }
-            
+
+            auto *httpContextData = getSocketContextDataS(s);
+
+
+            if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketDrain) {
+                httpContextData->onSocketDrain(httpResponseData->socketData, SSL, (struct us_socket_t *) s);
+            }
             /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */
             if (httpResponseData->onWritable) {
                 /* We are now writable, so hang timeout again, the user does not have to do anything so we should hang until end or tryEnd rearms timeout */
                 us_socket_timeout(SSL, s, 0);
-                
+
                 /* We expect the developer to return whether or not write was successful (true).
                  * If write was never called, the developer should still return true so that we may drain. */
                 bool success = httpResponseData->callOnWritable(reinterpret_cast<HttpResponse<SSL> *>(asyncSocket), httpResponseData->offset);
@@ -498,6 +495,7 @@ private:
             if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
                     if (asyncSocket->getBufferedAmount() == 0) {
+
                         asyncSocket->shutdown();
                         /* We need to force close after sending FIN since we want to hinder
                          * clients from keeping to send their huge data */
@@ -516,6 +514,7 @@ private:
         us_socket_context_on_end(SSL, getSocketContext(), [](us_socket_t *s) {
             auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
             asyncSocket->uncorkWithoutSending();
+
             /* We do not care for half closed sockets */
             return asyncSocket->close();
         });
@@ -581,14 +580,16 @@ public:
     void onHttp(std::string_view method, std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler, bool upgrade = false) {
         HttpContextData<SSL> *httpContextData = getSocketContextData();
 
-        std::span<const std::string> methods;
-        std::array<std::string, 1> methods_buffer;
+        std::span<const std::string_view> methods;
+        std::string method_buffer;
+        std::string_view method_sv_buffer;
         // When it's NOT node:http, allow the uWS default precedence ordering.
         if (method == "*" && !httpContextData->flags.useStrictMethodValidation) {
-            methods = getAllHttpMethods();
+            methods = detail::supportedHttpMethods;
         } else {
-            methods_buffer[0] = std::string(method);
-            methods = {methods_buffer.data(), 1};   
+            method_buffer = std::string(method);
+            method_sv_buffer = std::string_view(method_buffer);
+            methods = {&method_sv_buffer, 1};
         }
 
         uint32_t priority = method == "*" ? httpContextData->currentRouter->LOW_PRIORITY : (upgrade ? httpContextData->currentRouter->HIGH_PRIORITY : httpContextData->currentRouter->MEDIUM_PRIORITY);
@@ -616,7 +617,7 @@ public:
             }
         }
 
-        
+
 
         httpContextData->currentRouter->add(methods, pattern, [handler = std::move(handler), parameterOffsets = std::move(parameterOffsets), httpContextData](auto *r) mutable {
             auto user = r->getUserData();
@@ -640,6 +641,10 @@ public:
             }
             return true;
         }, priority);
+    }
+
+    static HttpContextData<SSL> *getSocketContextDataS(us_socket_t *s) {
+        return (HttpContextData<SSL> *) us_socket_context_ext(SSL, getSocketContext(s));
     }
 
     /* Listen to port using this HttpContext */
@@ -667,5 +672,3 @@ public:
 };
 
 }
-
-

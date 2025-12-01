@@ -331,7 +331,7 @@ describe("process.stdin", () => {
     await stdin.end();
 
     expect(await exited).toBe(0);
-    expect(await new Response(stdout).text()).toBe(`${ARRAY_SIZE}\n`);
+    expect(await stdout.text()).toBe(`${ARRAY_SIZE}\n`);
   });
 });
 
@@ -452,9 +452,9 @@ it("should send Readable events in the right order", async () => {
     stderr: "pipe",
     env: bunEnv,
   });
-  const err = await new Response(stderr).text();
+  const err = await stderr.text();
   expect(err).toBeEmpty();
-  const out = await new Response(stdout).text();
+  const out = await stdout.text();
   expect(out.split("\n")).toEqual([
     `[ "readable", "pause" ]`,
     `[ "readable", "resume" ]`,

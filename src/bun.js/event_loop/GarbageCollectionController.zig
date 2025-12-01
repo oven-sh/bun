@@ -17,6 +17,7 @@
 //!
 //! Thread Safety: This type must be unique per JavaScript thread and is not
 //! thread-safe. Each VirtualMachine instance should have its own controller.
+
 const GarbageCollectionController = @This();
 
 gc_timer: *uws.Timer = undefined,
@@ -33,10 +34,10 @@ pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
     const actual = uws.Loop.get();
     this.gc_timer = uws.Timer.createFallthrough(actual, this);
     this.gc_repeating_timer = uws.Timer.createFallthrough(actual, this);
-    actual.internal_loop_data.jsc_vm = vm.jsc;
+    actual.internal_loop_data.jsc_vm = vm.jsc_vm;
 
     if (comptime Environment.isDebug) {
-        if (bun.getenvZ("BUN_TRACK_LAST_FN_NAME") != null) {
+        if (bun.env_var.BUN_TRACK_LAST_FN_NAME.get()) {
             vm.eventLoop().debug.track_last_fn_name = true;
         }
     }
@@ -57,6 +58,11 @@ pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
         this.gc_repeating_timer.set(this, onGCRepeatingTimer, gc_timer_interval, gc_timer_interval);
 }
 
+pub fn deinit(this: *GarbageCollectionController) void {
+    this.gc_timer.deinit(true);
+    this.gc_repeating_timer.deinit(true);
+}
+
 pub fn scheduleGCTimer(this: *GarbageCollectionController) void {
     this.gc_timer_state = .scheduled;
     this.gc_timer.set(this, onGCTimer, 16, 0);
@@ -66,7 +72,7 @@ pub fn bunVM(this: *GarbageCollectionController) *VirtualMachine {
     return @alignCast(@fieldParentPtr("gc_controller", this));
 }
 
-pub fn onGCTimer(timer: *uws.Timer) callconv(.C) void {
+pub fn onGCTimer(timer: *uws.Timer) callconv(.c) void {
     var this = timer.as(*GarbageCollectionController);
     if (this.disabled) return;
     this.gc_timer_state = .run_on_next_tick;
@@ -95,7 +101,7 @@ pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime setting:
     }
 }
 
-pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.C) void {
+pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.c) void {
     var this = timer.as(*GarbageCollectionController);
     const prev_heap_size = this.gc_last_heap_size_on_repeating_timer;
     this.performGC();
@@ -114,11 +120,11 @@ pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.C) void {
 
 pub fn processGCTimer(this: *GarbageCollectionController) void {
     if (this.disabled) return;
-    var vm = this.bunVM().jsc;
+    var vm = this.bunVM().jsc_vm;
     this.processGCTimerWithHeapSize(vm, vm.blockBytesAllocated());
 }
 
-fn processGCTimerWithHeapSize(this: *GarbageCollectionController, vm: *JSC.VM, this_heap_size: usize) void {
+fn processGCTimerWithHeapSize(this: *GarbageCollectionController, vm: *jsc.VM, this_heap_size: usize) void {
     const prev = this.gc_last_heap_size;
 
     switch (this.gc_timer_state) {
@@ -155,7 +161,7 @@ fn processGCTimerWithHeapSize(this: *GarbageCollectionController, vm: *JSC.VM, t
 
 pub fn performGC(this: *GarbageCollectionController) void {
     if (this.disabled) return;
-    var vm = this.bunVM().jsc;
+    var vm = this.bunVM().jsc_vm;
     vm.collectAsync();
     this.gc_last_heap_size = vm.blockBytesAllocated();
 }
@@ -167,8 +173,10 @@ pub const GCTimerState = enum {
 };
 
 const std = @import("std");
+
 const bun = @import("bun");
-const JSC = bun.JSC;
-const VirtualMachine = JSC.VirtualMachine;
-const uws = bun.uws;
 const Environment = bun.Environment;
+const uws = bun.uws;
+
+const jsc = bun.jsc;
+const VirtualMachine = jsc.VirtualMachine;

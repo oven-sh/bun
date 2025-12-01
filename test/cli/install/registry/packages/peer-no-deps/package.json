@@ -1,0 +1,74 @@
+{
+	"name": "peer-no-deps",
+	"versions": {
+		"1.0.0": {
+			"name": "peer-no-deps",
+			"version": "1.0.0",
+			"_id": "peer-no-deps@1.0.0",
+			"_nodeVersion": "23.10.0",
+			"_npmVersion": "10.9.2",
+			"dist": {
+				"integrity": "sha512-SfaNgbuAdCAj30SPPmdUNQLMFYoQcBD2dS7cxyv+dutkDyCY/ZzxGwK2syEkzN7QuZNdXouiNRx43mdxC/YpfA==",
+				"shasum": "508a718b20f2e452919a86fc2add84c008f120d2",
+				"tarball": "http://localhost:4873/peer-no-deps/-/peer-no-deps-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.1": {
+			"name": "peer-no-deps",
+			"version": "1.0.1",
+			"_id": "peer-no-deps@1.0.1",
+			"_nodeVersion": "23.10.0",
+			"_npmVersion": "10.9.2",
+			"dist": {
+				"integrity": "sha512-V/R/oUJEjX8GWwGs6Ayye+6alHjRj0eKkpDJPzywgUjTt0iQIaTDSRCgieMfHLgB1JSFs2ogyppAXX5cwQ7lWw==",
+				"shasum": "7f21c80e4f2ec05c453a73aa78f995e21d8008d1",
+				"tarball": "http://localhost:4873/peer-no-deps/-/peer-no-deps-1.0.1.tgz"
+			},
+			"contributors": []
+		},
+		"2.0.0": {
+			"name": "peer-no-deps",
+			"version": "2.0.0",
+			"_id": "peer-no-deps@2.0.0",
+			"_nodeVersion": "23.10.0",
+			"_npmVersion": "10.9.2",
+			"dist": {
+				"integrity": "sha512-CR+AY66qH9+QUbKt7dxuH4iw36/mFIkpk1I8Lf+2DfucwGRcc0qwYswXQy+70jtz7ylHkmUMbhhgcMsIdsfK+w==",
+				"shasum": "5ae71b940adc2f9a1b346897183e7042591735c0",
+				"tarball": "http://localhost:4873/peer-no-deps/-/peer-no-deps-2.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2025-06-08T22:04:06.599Z",
+		"created": "2025-06-08T19:50:19.891Z",
+		"1.0.0": "2025-06-08T19:50:19.891Z",
+		"1.0.1": "2025-06-08T19:50:23.698Z",
+		"2.0.0": "2025-06-08T22:04:06.599Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "2.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"peer-no-deps-1.0.0.tgz": {
+			"shasum": "508a718b20f2e452919a86fc2add84c008f120d2",
+			"version": "1.0.0"
+		},
+		"peer-no-deps-1.0.1.tgz": {
+			"shasum": "7f21c80e4f2ec05c453a73aa78f995e21d8008d1",
+			"version": "1.0.1"
+		},
+		"peer-no-deps-2.0.0.tgz": {
+			"shasum": "5ae71b940adc2f9a1b346897183e7042591735c0",
+			"version": "2.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "peer-no-deps",
+	"readme": "ERROR: No README data found!"
+}

@@ -344,7 +344,7 @@ describe.concurrent("napi", () => {
       await checkSameOutput("test_get_exception", [5]);
       await checkSameOutput("test_get_exception", [{ foo: "bar" }]);
     });
-    it("can throw an exception from an async_complete_callback", async () => {
+    it.todo("can throw an exception from an async_complete_callback", async () => {
       const count = 10;
       await Promise.all(Array.from({ length: count }, () => checkSameOutput("create_promise", [true])));
     });

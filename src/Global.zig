@@ -60,7 +60,7 @@ pub inline fn getStartTime() i128 {
     return bun.start_time;
 }
 
-extern "kernel32" fn SetThreadDescription(thread: std.os.windows.HANDLE, name: [*:0]const u16) callconv(std.os.windows.WINAPI) std.os.windows.HRESULT;
+extern "kernel32" fn SetThreadDescription(thread: std.os.windows.HANDLE, name: [*:0]const u16) callconv(.winapi) std.os.windows.HRESULT;
 
 pub fn setThreadName(name: [:0]const u8) void {
     if (Environment.isLinux) {
@@ -73,7 +73,7 @@ pub fn setThreadName(name: [:0]const u8) void {
     }
 }
 
-const ExitFn = *const fn () callconv(.C) void;
+const ExitFn = *const fn () callconv(.c) void;
 
 var on_exit_callbacks = std.ArrayListUnmanaged(ExitFn){};
 export fn Bun__atexit(function: ExitFn) void {
@@ -114,6 +114,9 @@ pub fn exit(code: u32) noreturn {
         bun.debug_allocator_data.backing = null;
     }
 
+    // Flush output before exiting to ensure all messages are visible
+    Output.flush();
+
     switch (Environment.os) {
         .mac => std.c.exit(@bitCast(code)),
         .windows => {
@@ -121,6 +124,10 @@ pub fn exit(code: u32) noreturn {
             std.os.windows.kernel32.ExitProcess(code);
         },
         else => {
+            if (Environment.enable_asan) {
+                std.c.exit(@bitCast(code));
+                std.c.abort(); // exit should be noreturn
+            }
             bun.c.quick_exit(@bitCast(code));
             std.c.abort(); // quick_exit should be noreturn
         },
@@ -138,7 +145,7 @@ pub fn raiseIgnoringPanicHandler(sig: bun.SignalCode) noreturn {
     if (bun.Environment.os != .windows) {
         var sa: std.c.Sigaction = .{
             .handler = .{ .handler = std.posix.SIG.DFL },
-            .mask = std.posix.empty_sigset,
+            .mask = std.posix.sigemptyset(),
             .flags = std.posix.SA.RESETHAND,
         };
         _ = std.c.sigaction(@intFromEnum(sig), &sa, null);
@@ -159,19 +166,13 @@ pub inline fn mimalloc_cleanup(force: bool) void {
         Mimalloc.mi_collect(force);
     }
 }
-pub const versions = @import("./generated_versions_list.zig");
+// Versions are now handled by CMake-generated header (bun_dependency_versions.h)
 
 // Enabling huge pages slows down bun by 8x or so
 // Keeping this code for:
 // 1. documentation that an attempt was made
 // 2. if I want to configure allocator later
-pub inline fn configureAllocator(_: AllocatorConfiguration) void {
-    // if (comptime !use_mimalloc) return;
-    // const mimalloc = bun.mimalloc;
-    // mimalloc.mi_option_set_enabled(mimalloc.mi_option_verbose, config.verbose);
-    // mimalloc.mi_option_set_enabled(mimalloc.mi_option_large_os_pages, config.long_running);
-    // if (!config.long_running) mimalloc.mi_option_set(mimalloc.mi_option_reset_delay, 0);
-}
+pub inline fn configureAllocator(_: AllocatorConfiguration) void {}
 
 pub fn notimpl() noreturn {
     @branchHint(.cold);

@@ -1,6 +1,6 @@
 pub const Stdio = union(enum) {
     inherit,
-    capture: struct { fd: bun.FileDescriptor, buf: *bun.ByteList },
+    capture: struct { buf: *bun.ByteList },
     ignore,
     fd: bun.FileDescriptor,
     dup2: struct {
@@ -235,10 +235,10 @@ pub const Stdio = union(enum) {
                         return .{ .err = .blob_used_as_out };
                     }
 
-                    break :brk .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() };
+                    break :brk .{ .buffer = bun.handleOom(bun.default_allocator.create(uv.Pipe)) };
                 },
-                .ipc => .{ .ipc = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
-                .capture, .pipe, .array_buffer, .readable_stream => .{ .buffer = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory() },
+                .ipc => .{ .ipc = bun.handleOom(bun.default_allocator.create(uv.Pipe)) },
+                .capture, .pipe, .array_buffer, .readable_stream => .{ .buffer = bun.handleOom(bun.default_allocator.create(uv.Pipe)) },
                 .fd => |fd| .{ .pipe = fd },
                 .dup2 => .{ .dup2 = .{ .out = stdio.dup2.out, .to = stdio.dup2.to } },
                 .path => |pathlike| .{ .path = pathlike.slice() },
@@ -360,7 +360,7 @@ pub const Stdio = union(enum) {
             if (file_fd >= std.math.maxInt(i32)) {
                 var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
                 defer formatter.deinit();
-                return globalThis.throwInvalidArguments("file descriptor must be a valid integer, received: {}", .{value.toFmt(&formatter)});
+                return globalThis.throwInvalidArguments("file descriptor must be a valid integer, received: {f}", .{value.toFmt(&formatter)});
             }
 
             if (fd.stdioTag()) |tag| switch (tag) {

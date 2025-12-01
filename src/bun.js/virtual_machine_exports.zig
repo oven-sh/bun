@@ -4,7 +4,7 @@ comptime {
     }
 }
 
-pub export fn Bun__VirtualMachine__isShuttingDown(this: *const VirtualMachine) callconv(.C) bool {
+pub export fn Bun__VirtualMachine__isShuttingDown(this: *const VirtualMachine) callconv(.c) bool {
     return this.isShuttingDown();
 }
 
@@ -78,13 +78,7 @@ pub export fn Bun__queueTask(global: *JSGlobalObject, task: *jsc.CppTask) void {
     global.bunVM().eventLoop().enqueueTask(jsc.Task.init(task));
 }
 
-pub export fn Bun__queueTaskWithTimeout(global: *JSGlobalObject, task: *jsc.CppTask, milliseconds: i32) void {
-    jsc.markBinding(@src());
-
-    global.bunVM().eventLoop().enqueueTaskWithTimeout(jsc.Task.init(task), milliseconds);
-}
-
-pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.C) JSValue {
+pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.c) JSValue {
     jsc.markBinding(@src());
 
     if (!value.isTerminationException()) {
@@ -131,7 +125,7 @@ pub export fn Bun__handleHandledPromise(global: *JSGlobalObject, promise: *jsc.J
     jsc.markBinding(@src());
     const promise_js = promise.toJS();
     promise_js.protect();
-    const context = bun.default_allocator.create(Context) catch bun.outOfMemory();
+    const context = bun.handleOom(bun.default_allocator.create(Context));
     context.* = .{ .globalThis = global, .promise = promise_js };
     global.bunVM().eventLoop().enqueueTask(jsc.ManagedTask.New(Context, Context.callback).init(context));
 }
@@ -148,7 +142,7 @@ pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSG
     jsc_vm.transpiler.linker.plugin_runner = &jsc_vm.plugin_runner.?;
 }
 
-pub fn Bun__ZigGlobalObject__uvLoop(jsc_vm: *VirtualMachine) callconv(.C) *bun.windows.libuv.Loop {
+pub fn Bun__ZigGlobalObject__uvLoop(jsc_vm: *VirtualMachine) callconv(.c) *bun.windows.libuv.Loop {
     return jsc_vm.uvLoop();
 }
 
@@ -177,6 +171,20 @@ export fn Bun__addBakeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source
     const slice = specifier.toUTF8(sfb.get());
     defer slice.deinit();
     vm.source_mappings.putBakeSourceProvider(@as(*BakeSourceProvider, @ptrCast(opaque_source_provider)), slice.slice());
+}
+
+export fn Bun__addDevServerSourceProvider(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
+    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    const slice = specifier.toUTF8(sfb.get());
+    defer slice.deinit();
+    vm.source_mappings.putDevServerSourceProvider(@as(*DevServerSourceProvider, @ptrCast(opaque_source_provider)), slice.slice());
+}
+
+export fn Bun__removeDevServerSourceProvider(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
+    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    const slice = specifier.toUTF8(sfb.get());
+    defer slice.deinit();
+    vm.source_mappings.removeDevServerSourceProvider(@as(*DevServerSourceProvider, @ptrCast(opaque_source_provider)), slice.slice());
 }
 
 export fn Bun__addSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_provider: *anyopaque, specifier: *bun.String) void {
@@ -214,8 +222,10 @@ const IPC = @import("./ipc.zig");
 const std = @import("std");
 
 const bun = @import("bun");
-const BakeSourceProvider = bun.sourcemap.BakeSourceProvider;
 const PluginRunner = bun.transpiler.PluginRunner;
+
+const BakeSourceProvider = bun.SourceMap.BakeSourceProvider;
+const DevServerSourceProvider = bun.SourceMap.DevServerSourceProvider;
 
 const jsc = bun.jsc;
 const JSGlobalObject = jsc.JSGlobalObject;

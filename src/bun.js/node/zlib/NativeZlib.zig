@@ -100,7 +100,7 @@ pub fn params(this: *@This(), globalThis: *jsc.JSGlobalObject, callframe: *jsc.C
 
     const err = this.stream.setParams(level, strategy);
     if (err.isError()) {
-        try impl.emitError(this, globalThis, callframe.this(), err);
+        impl.emitError(this, globalThis, callframe.this(), err);
     }
     return .js_undefined;
 }

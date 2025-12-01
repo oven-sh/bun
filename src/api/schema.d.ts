@@ -21,46 +21,58 @@ export const enum Loader {
   css = 5,
   file = 6,
   json = 7,
-  toml = 8,
-  wasm = 9,
-  napi = 10,
-  base64 = 11,
-  dataurl = 12,
-  text = 13,
-  sqlite = 14,
-  html = 15,
+  jsonc = 8,
+  toml = 9,
+  wasm = 10,
+  napi = 11,
+  base64 = 12,
+  dataurl = 13,
+  text = 14,
+  bunsh = 15,
+  sqlite = 16,
+  sqlite_embedded = 17,
+  html = 18,
+  yaml = 19,
 }
 export const LoaderKeys: {
   1: "jsx";
-  jsx: "jsx";
   2: "js";
-  js: "js";
   3: "ts";
-  ts: "ts";
   4: "tsx";
-  tsx: "tsx";
   5: "css";
-  css: "css";
   6: "file";
-  file: "file";
   7: "json";
-  json: "json";
-  8: "toml";
-  toml: "toml";
-  9: "wasm";
-  wasm: "wasm";
-  10: "napi";
-  napi: "napi";
-  11: "base64";
-  base64: "base64";
-  12: "dataurl";
-  dataurl: "dataurl";
-  13: "text";
-  text: "text";
-  14: "sqlite";
-  sqlite: "sqlite";
-  15: "html";
-  "html": "html";
+  8: "jsonc";
+  9: "toml";
+  10: "wasm";
+  11: "napi";
+  12: "base64";
+  13: "dataurl";
+  14: "text";
+  15: "bunsh";
+  16: "sqlite";
+  17: "sqlite_embedded";
+  18: "html";
+  19: "yaml";
+  jsx: 1;
+  js: 2;
+  ts: 3;
+  tsx: 4;
+  css: 5;
+  file: 6;
+  json: 7;
+  jsonc: 8;
+  toml: 9;
+  wasm: 10;
+  napi: 11;
+  base64: 12;
+  dataurl: 13;
+  text: 14;
+  bunsh: 15;
+  sqlite: 16;
+  sqlite_embedded: 17;
+  html: 18;
+  yaml: 19;
 };
 export const enum FrameworkEntryPointType {
   client = 1,

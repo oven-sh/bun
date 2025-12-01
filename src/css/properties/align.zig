@@ -102,7 +102,7 @@ pub const BaselinePosition = enum {
             return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
     }
 
-    pub fn toCss(this: *const BaselinePosition, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const BaselinePosition, dest: *css.Printer) css.PrintErr!void {
         return switch (this.*) {
             .first => try dest.writeStr("baseline"),
             .last => try dest.writeStr("last baseline"),
@@ -213,27 +213,27 @@ pub const JustifyContent = union(enum) {
             return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *css.Printer) css.PrintErr!void {
         return switch (this.*) {
             .normal => dest.writeStr("normal"),
-            .content_distribution => |value| value.toCss(W, dest),
+            .content_distribution => |value| value.toCss(dest),
             .content_position => |*cp| {
                 if (cp.overflow) |*overflow| {
-                    try overflow.toCss(W, dest);
+                    try overflow.toCss(dest);
                     try dest.writeStr(" ");
                 }
-                return cp.value.toCss(W, dest);
+                return cp.value.toCss(dest);
             },
             .left => |*l| {
                 if (l.overflow) |*overflow| {
-                    try overflow.toCss(W, dest);
+                    try overflow.toCss(dest);
                     try dest.writeStr(" ");
                 }
                 return dest.writeStr("left");
             },
             .right => |*r| {
                 if (r.overflow) |*overflow| {
-                    try overflow.toCss(W, dest);
+                    try overflow.toCss(dest);
                     try dest.writeStr(" ");
                 }
                 return dest.writeStr("right");
@@ -402,30 +402,30 @@ pub const JustifySelf = union(enum) {
         return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
     }
 
-    pub fn toCss(this: *const JustifySelf, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const JustifySelf, dest: *css.Printer) css.PrintErr!void {
         return switch (this.*) {
             .auto => try dest.writeStr("auto"),
             .normal => try dest.writeStr("normal"),
             .stretch => try dest.writeStr("stretch"),
-            .baseline_position => |*baseline_position| baseline_position.toCss(W, dest),
+            .baseline_position => |*baseline_position| baseline_position.toCss(dest),
             .self_position => |*self_position| {
                 if (self_position.overflow) |*overflow| {
-                    try overflow.toCss(W, dest);
+                    try overflow.toCss(dest);
                     try dest.writeStr(" ");
                 }
 
-                try self_position.value.toCss(W, dest);
+                try self_position.value.toCss(dest);
             },
             .left => |*left| {
                 if (left.overflow) |*overflow| {
-                    try overflow.toCss(W, dest);
+                    try overflow.toCss(dest);
                     try dest.writeStr(" ");
                 }
                 try dest.writeStr("left");
             },
             .right => |*right| {
                 if (right.overflow) |*overflow| {
-                    try overflow.toCss(W, dest);
+                    try overflow.toCss(dest);
                     try dest.writeStr(" ");
                 }
                 try dest.writeStr("right");
@@ -597,33 +597,33 @@ pub const JustifyItems = union(enum) {
         return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
     }
 
-    pub fn toCss(this: *const JustifyItems, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const JustifyItems, dest: *css.Printer) css.PrintErr!void {
         switch (this.*) {
             .normal => try dest.writeStr("normal"),
             .stretch => try dest.writeStr("stretch"),
-            .baseline_position => |*val| try val.toCss(W, dest),
+            .baseline_position => |*val| try val.toCss(dest),
             .self_position => |*sp| {
                 if (sp.overflow) |*overflow| {
-                    try overflow.toCss(W, dest);
+                    try overflow.toCss(dest);
                     try dest.writeStr(" ");
                 }
-                try sp.value.toCss(W, dest);
+                try sp.value.toCss(dest);
             },
             .left => |*l| {
                 if (l.overflow) |*overflow| {
-                    try overflow.toCss(W, dest);
+                    try overflow.toCss(dest);
                     try dest.writeStr(" ");
                 }
                 try dest.writeStr("left");
             },
             .right => |*r| {
                 if (r.overflow) |*overflow| {
-                    try overflow.toCss(W, dest);
+                    try overflow.toCss(dest);
                     try dest.writeStr(" ");
                 }
                 try dest.writeStr("right");
             },
-            .legacy => |l| try l.toCss(W, dest),
+            .legacy => |l| try l.toCss(dest),
         }
     }
 
@@ -697,7 +697,7 @@ pub const LegacyJustify = enum {
         return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
     }
 
-    pub fn toCss(this: *const @This(), comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const @This(), dest: *css.Printer) css.PrintErr!void {
         try dest.writeStr("legacy ");
         switch (this.*) {
             .left => try dest.writeStr("left"),
@@ -759,11 +759,11 @@ pub const Gap = struct {
         return .{ .result = .{ .row = row, .column = column } };
     }
 
-    pub fn toCss(this: *const Gap, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-        try this.row.toCss(W, dest);
+    pub fn toCss(this: *const Gap, dest: *css.Printer) css.PrintErr!void {
+        try this.row.toCss(dest);
         if (!this.column.eql(&this.row)) {
             try dest.writeStr(" ");
-            try this.column.toCss(W, dest);
+            try this.column.toCss(dest);
         }
     }
 
@@ -815,8 +815,8 @@ pub const PlaceItems = struct {
         return .{ .result = .{ .@"align" = @"align", .justify = justify } };
     }
 
-    pub fn toCss(this: *const PlaceItems, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-        try this.@"align".toCss(W, dest);
+    pub fn toCss(this: *const PlaceItems, dest: *css.Printer) css.PrintErr!void {
+        try this.@"align".toCss(dest);
         const is_equal = switch (this.justify) {
             .normal => this.@"align".eql(&AlignItems{ .normal = {} }),
             .stretch => this.@"align".eql(&AlignItems{ .stretch = {} }),
@@ -833,7 +833,7 @@ pub const PlaceItems = struct {
 
         if (!is_equal) {
             try dest.writeStr(" ");
-            try this.justify.toCss(W, dest);
+            try this.justify.toCss(dest);
         }
     }
 
@@ -886,8 +886,8 @@ pub const PlaceSelf = struct {
         return .{ .result = .{ .@"align" = @"align", .justify = justify } };
     }
 
-    pub fn toCss(this: *const PlaceSelf, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-        try this.@"align".toCss(W, dest);
+    pub fn toCss(this: *const PlaceSelf, dest: *css.Printer) css.PrintErr!void {
+        try this.@"align".toCss(dest);
         const is_equal = switch (this.justify) {
             .auto => true,
             .normal => this.@"align" == .normal,
@@ -905,7 +905,7 @@ pub const PlaceSelf = struct {
 
         if (!is_equal) {
             try dest.writeStr(" ");
-            try this.justify.toCss(W, dest);
+            try this.justify.toCss(dest);
         }
     }
 
@@ -984,8 +984,8 @@ pub const PlaceContent = struct {
         return .{ .result = .{ .@"align" = @"align", .justify = justify } };
     }
 
-    pub fn toCss(this: *const PlaceContent, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-        try this.@"align".toCss(W, dest);
+    pub fn toCss(this: *const PlaceContent, dest: *css.Printer) css.PrintErr!void {
+        try this.@"align".toCss(dest);
         const is_equal = switch (this.justify) {
             .normal => brk: {
                 if (this.@"align" == .normal) break :brk true;
@@ -1004,7 +1004,7 @@ pub const PlaceContent = struct {
 
         if (!is_equal) {
             try dest.writeStr(" ");
-            try this.justify.toCss(W, dest);
+            try this.justify.toCss(dest);
         }
     }
 
@@ -1190,7 +1190,7 @@ pub const AlignHandler = struct {
             .unparsed => |*val| {
                 if (isAlignProperty(val.property_id)) {
                     this.flush(dest, context);
-                    dest.append(context.allocator, property.*) catch bun.outOfMemory();
+                    bun.handleOom(dest.append(context.allocator, property.*));
                 } else {
                     return false;
                 }
@@ -1271,14 +1271,14 @@ pub const AlignHandler = struct {
             dest.append(context.allocator, Property{ .gap = Gap{
                 .row = row_gap.?,
                 .column = column_gap.?,
-            } }) catch bun.outOfMemory();
+            } }) catch |err| bun.handleOom(err);
         } else {
             if (row_gap != null) {
-                dest.append(context.allocator, Property{ .@"row-gap" = row_gap.? }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(context.allocator, Property{ .@"row-gap" = row_gap.? }));
             }
 
             if (column_gap != null) {
-                dest.append(context.allocator, Property{ .@"column-gap" = column_gap.? }) catch bun.outOfMemory();
+                bun.handleOom(dest.append(context.allocator, Property{ .@"column-gap" = column_gap.? }));
             }
         }
     }
@@ -1321,7 +1321,7 @@ pub const AlignHandler = struct {
             var prefix = v[1];
             // If we have an unprefixed property, override necessary prefixes.
             prefix = if (prefix.none) flushPrefixesHelper(this, context, feature) else prefix;
-            dest.append(context.allocator, @unionInit(Property, prop, .{ val, prefix })) catch bun.outOfMemory();
+            bun.handleOom(dest.append(context.allocator, @unionInit(Property, prop, .{ val, prefix })));
         }
     }
 
@@ -1362,7 +1362,7 @@ pub const AlignHandler = struct {
                                 dest.append(context.allocator, @unionInit(Property, p2009[1], .{
                                     a,
                                     prefixes_2009,
-                                })) catch bun.outOfMemory();
+                                })) catch |err| bun.handleOom(err);
                             }
                         }
                     }
@@ -1381,7 +1381,7 @@ pub const AlignHandler = struct {
                         dest.append(context.allocator, @unionInit(Property, p2012[1], .{
                             q,
                             VendorPrefix.MS,
-                        })) catch bun.outOfMemory();
+                        })) catch |err| bun.handleOom(err);
                     }
                 }
             }
@@ -1397,7 +1397,7 @@ pub const AlignHandler = struct {
         if (key) |v| {
             const val = v[0];
             const prefix = v[1];
-            dest.append(context.allocator, @unionInit(Property, prop, .{ val, prefix })) catch bun.outOfMemory();
+            bun.handleOom(dest.append(context.allocator, @unionInit(Property, prop, .{ val, prefix })));
         }
     }
 
@@ -1405,7 +1405,7 @@ pub const AlignHandler = struct {
         _ = this; // autofix
         if (key) |v| {
             const val = v;
-            dest.append(context.allocator, @unionInit(Property, prop, val)) catch bun.outOfMemory();
+            bun.handleOom(dest.append(context.allocator, @unionInit(Property, prop, val)));
         }
     }
 
@@ -1442,7 +1442,7 @@ pub const AlignHandler = struct {
                         dest.append(
                             context.allocator,
                             @unionInit(Property, align_prop.prop, .{ css.generic.deepClone(@TypeOf(@"align".*), @"align", context.allocator), align_prefix.* }),
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     }
 
                     if (comptime justify_prop != null) {
@@ -1455,7 +1455,7 @@ pub const AlignHandler = struct {
                             dest.append(
                                 context.allocator,
                                 @unionInit(Property, justify_prop.?.prop, .{ css.generic.deepClone(@TypeOf(justify_actual.*), justify_actual, context.allocator), justify_prefix.* }),
-                            ) catch bun.outOfMemory();
+                            ) catch |err| bun.handleOom(err);
                         }
 
                         // Add shorthand.
@@ -1465,7 +1465,7 @@ pub const AlignHandler = struct {
                                 .@"align" = css.generic.deepClone(@TypeOf(@"align".*), @"align", context.allocator),
                                 .justify = css.generic.deepClone(@TypeOf(justify_actual.*), justify_actual, context.allocator),
                             }),
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     } else {
 
                         // Add shorthand.
@@ -1475,7 +1475,7 @@ pub const AlignHandler = struct {
                                 .@"align" = css.generic.deepClone(@TypeOf(@"align".*), @"align", context.allocator),
                                 .justify = css.generic.deepClone(@TypeOf(justify.*), justify, context.allocator),
                             }),
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     }
 
                     align_val.* = null;

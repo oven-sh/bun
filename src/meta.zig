@@ -195,6 +195,8 @@ fn CreateUniqueTuple(comptime N: comptime_int, comptime types: [N]type) type {
     });
 }
 
+pub const TaggedUnion = @import("./meta/tagged_union.zig").TaggedUnion;
+
 pub fn hasStableMemoryLayout(comptime T: type) bool {
     const tyinfo = @typeInfo(T);
     return switch (tyinfo) {
@@ -294,29 +296,23 @@ pub const ListContainerType = enum {
 pub fn looksLikeListContainerType(comptime T: type) ?struct { list: ListContainerType, child: type } {
     const tyinfo = @typeInfo(T);
     if (tyinfo == .@"struct") {
+        const fields = tyinfo.@"struct".fields;
+
         // Looks like array list
-        if (tyinfo.@"struct".fields.len == 2 and
-            std.mem.eql(u8, tyinfo.@"struct".fields[0].name, "items") and
-            std.mem.eql(u8, tyinfo.@"struct".fields[1].name, "capacity"))
-            return .{ .list = .array_list, .child = std.meta.Child(tyinfo.@"struct".fields[0].type) };
+        if (fields.len == 2 and
+            std.mem.eql(u8, fields[0].name, "items") and
+            std.mem.eql(u8, fields[1].name, "capacity"))
+            return .{ .list = .array_list, .child = std.meta.Child(fields[0].type) };
 
         // Looks like babylist
-        if (tyinfo.@"struct".fields.len == 4 and
-            std.mem.eql(u8, tyinfo.@"struct".fields[0].name, "ptr") and
-            std.mem.eql(u8, tyinfo.@"struct".fields[1].name, "len") and
-            std.mem.eql(u8, tyinfo.@"struct".fields[2].name, "cap") and
-            std.mem.eql(u8, tyinfo.@"struct".fields[3].name, "alloc_ptr"))
-            return .{ .list = .baby_list, .child = std.meta.Child(tyinfo.@"struct".fields[0].type) };
+        if (@hasDecl(T, "looksLikeContainerTypeBabyList")) {
+            return .{ .list = .baby_list, .child = T.looksLikeContainerTypeBabyList };
+        }
 
         // Looks like SmallList
-        if (tyinfo.@"struct".fields.len == 2 and
-            std.mem.eql(u8, tyinfo.@"struct".fields[0].name, "capacity") and
-            std.mem.eql(u8, tyinfo.@"struct".fields[1].name, "data")) return .{
-            .list = .small_list,
-            .child = std.meta.Child(
-                @typeInfo(tyinfo.@"struct".fields[1].type).@"union".fields[0].type,
-            ),
-        };
+        if (@hasDecl(T, "looksLikeContainerTypeSmallList")) {
+            return .{ .list = .small_list, .child = T.looksLikeContainerTypeSmallList };
+        }
     }
 
     return null;
@@ -326,6 +322,7 @@ pub fn Tagged(comptime U: type, comptime T: type) type {
     var info: std.builtin.Type.Union = @typeInfo(U).@"union";
     info.tag_type = T;
     info.decls = &.{};
+    info.layout = .auto;
     return @Type(.{ .@"union" = info });
 }
 
@@ -338,7 +335,9 @@ pub fn SliceChild(comptime T: type) type {
 }
 
 /// userland implementation of https://github.com/ziglang/zig/issues/21879
-pub fn VoidFieldTypes(comptime T: type) type {
+pub fn useAllFields(comptime T: type, _: VoidFields(T)) void {}
+
+fn VoidFields(comptime T: type) type {
     const fields = @typeInfo(T).@"struct".fields;
     var new_fields = fields[0..fields.len].*;
     for (&new_fields) |*field| {
@@ -355,6 +354,20 @@ pub fn VoidFieldTypes(comptime T: type) type {
 
 pub fn voidFieldTypeDiscardHelper(data: anytype) void {
     _ = data;
+}
+
+pub fn hasDecl(comptime T: type, comptime name: []const u8) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct", .@"union", .@"enum", .@"opaque" => @hasDecl(T, name),
+        else => false,
+    };
+}
+
+pub fn hasField(comptime T: type, comptime name: []const u8) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct", .@"union", .@"enum" => @hasField(T, name),
+        else => false,
+    };
 }
 
 const bun = @import("bun");

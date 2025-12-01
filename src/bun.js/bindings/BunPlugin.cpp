@@ -150,9 +150,14 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
 
     virtualModules->set(moduleId, JSC::Strong<JSC::JSObject> { vm, jsCast<JSC::JSObject*>(functionValue) });
 
-    global->requireMap()->remove(globalObject, moduleIdValue);
+    auto* requireMap = global->requireMap();
     RETURN_IF_EXCEPTION(scope, {});
-    global->esmRegistryMap()->remove(globalObject, moduleIdValue);
+    requireMap->remove(globalObject, moduleIdValue);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto* esmRegistry = global->esmRegistryMap();
+    RETURN_IF_EXCEPTION(scope, {});
+    esmRegistry->remove(globalObject, moduleIdValue);
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(callframe->thisValue());
@@ -298,6 +303,7 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
             String targetString = targetJSString->value(globalObject);
             if (!(targetString == "node"_s || targetString == "bun"_s || targetString == "browser"_s)) {
                 JSC::throwTypeError(globalObject, throwScope, "plugin target must be one of 'node', 'bun' or 'browser'"_s);
+                return {};
             }
         }
     }
@@ -421,29 +427,29 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForJSModuleMock = std::forward<decltype(space)>(space); });
     }
 
-    void finishCreation(JSC::VM&, JSC::JSObject* callback);
+    void finishCreation(JSC::VM&);
 
 private:
-    JSModuleMock(JSC::VM&, JSC::Structure*);
+    JSModuleMock(JSC::VM&, JSC::Structure*, JSC::JSObject* callback);
 };
 
 const JSC::ClassInfo JSModuleMock::s_info = { "ModuleMock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSModuleMock) };
 
 JSModuleMock* JSModuleMock::create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback)
 {
-    JSModuleMock* ptr = new (NotNull, JSC::allocateCell<JSModuleMock>(vm)) JSModuleMock(vm, structure);
-    ptr->finishCreation(vm, callback);
+    JSModuleMock* ptr = new (NotNull, JSC::allocateCell<JSModuleMock>(vm)) JSModuleMock(vm, structure, callback);
+    ptr->finishCreation(vm);
     return ptr;
 }
 
-void JSModuleMock::finishCreation(JSC::VM& vm, JSObject* callback)
+void JSModuleMock::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    callbackFunctionOrCachedResult.set(vm, this, callback);
 }
 
-JSModuleMock::JSModuleMock(JSC::VM& vm, JSC::Structure* structure)
+JSModuleMock::JSModuleMock(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback)
     : Base(vm, structure)
+    , callbackFunctionOrCachedResult(callback, JSC::WriteBarrierEarlyInit)
 {
 }
 
@@ -684,6 +690,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     if (removeFromCJS) {
         globalObject->requireMap()->remove(globalObject, specifierString);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     globalObject->onLoadPlugins.addModuleMock(vm, specifier, mock);
@@ -837,6 +844,11 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
             }
         }
 
+        // Check again after promise resolution
+        if (result.isUndefinedOrNull()) {
+            continue;
+        }
+
         if (!result.isObject()) {
             JSC::throwTypeError(globalObject, scope, "onResolve() expects an object returned"_s);
             return {};
@@ -929,7 +941,7 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    Zig::GlobalObject* global = static_cast<Zig::GlobalObject*>(globalObject);
     global->onLoadPlugins.fileNamespace.clear();
     global->onResolvePlugins.fileNamespace.clear();
     global->onLoadPlugins.groups.clear();

@@ -1,13 +1,13 @@
 const Walker = @This();
 
-stack: std.ArrayList(StackItem),
+stack: std.array_list.Managed(StackItem),
 name_buffer: NameBufferList,
 skip_filenames: []const u64 = &[_]u64{},
 skip_dirnames: []const u64 = &[_]u64{},
 skip_all: []const u64 = &[_]u64{},
 seed: u64 = 0,
 
-const NameBufferList = std.ArrayList(bun.OSPathChar);
+const NameBufferList = std.array_list.Managed(bun.OSPathChar);
 
 const WrappedIterator = DirIterator.NewWrappedIterator(if (Environment.isWindows) .u16 else .u8);
 
@@ -71,12 +71,12 @@ pub fn next(self: *Walker) bun.sys.Maybe(?WalkerEntry) {
 
                     self.name_buffer.shrinkRetainingCapacity(dirname_len);
                     if (self.name_buffer.items.len != 0) {
-                        self.name_buffer.append(path.sep) catch bun.outOfMemory();
+                        bun.handleOom(self.name_buffer.append(path.sep));
                         dirname_len += 1;
                     }
-                    self.name_buffer.appendSlice(base.name.slice()) catch bun.outOfMemory();
+                    bun.handleOom(self.name_buffer.appendSlice(base.name.slice()));
                     const cur_len = self.name_buffer.items.len;
-                    self.name_buffer.append(0) catch bun.outOfMemory();
+                    bun.handleOom(self.name_buffer.append(0));
 
                     if (base.kind == .directory) {
                         const new_dir = switch (bun.openDirForIterationOSPath(top.iter.iter.dir, base.name.slice())) {
@@ -87,7 +87,7 @@ pub fn next(self: *Walker) bun.sys.Maybe(?WalkerEntry) {
                             self.stack.append(StackItem{
                                 .iter = DirIterator.iterate(new_dir, if (Environment.isWindows) .u16 else .u8),
                                 .dirname_len = cur_len,
-                            }) catch bun.outOfMemory();
+                            }) catch |err| bun.handleOom(err);
                             top = &self.stack.items[self.stack.items.len - 1];
                         }
                     }
@@ -137,7 +137,7 @@ pub fn walk(
     var name_buffer = NameBufferList.init(allocator);
     errdefer name_buffer.deinit();
 
-    var stack = std.ArrayList(Walker.StackItem).init(allocator);
+    var stack = std.array_list.Managed(Walker.StackItem).init(allocator);
     errdefer stack.deinit();
 
     var skip_names = try allocator.alloc(u64, skip_filenames.len + skip_dirnames.len);

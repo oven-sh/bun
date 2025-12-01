@@ -38,10 +38,10 @@ pub fn validatePath(
     return out;
 }
 
-pub fn stringHashMapFromArrays(comptime t: type, allocator: std.mem.Allocator, keys: anytype, values: anytype) !t {
+pub fn stringHashMapFromArrays(comptime t: type, allocator: std.mem.Allocator, total_capacity: usize, keys: anytype, values: anytype) !t {
     var hash_map = t.init(allocator);
     if (keys.len > 0) {
-        try hash_map.ensureTotalCapacity(@as(u32, @intCast(keys.len)));
+        try hash_map.ensureTotalCapacity(@as(u32, @intCast(total_capacity)));
         for (keys, 0..) |key, i| {
             hash_map.putAssumeCapacity(key, values[i]);
         }
@@ -61,7 +61,7 @@ pub const ExternalModules = struct {
     };
 
     pub fn isNodeBuiltin(str: string) bool {
-        return bun.jsc.ModuleLoader.HardcodedModule.Alias.has(str, .node);
+        return bun.jsc.ModuleLoader.HardcodedModule.Alias.has(str, .node, .{});
     }
 
     const default_wildcard_patterns = &[_]WildcardPattern{
@@ -116,7 +116,7 @@ pub const ExternalModules = struct {
             return result;
         }
 
-        var patterns = std.ArrayList(WildcardPattern).initCapacity(allocator, default_wildcard_patterns.len) catch unreachable;
+        var patterns = std.array_list.Managed(WildcardPattern).initCapacity(allocator, default_wildcard_patterns.len) catch unreachable;
         patterns.appendSliceAssumeCapacity(default_wildcard_patterns[0..]);
 
         for (externals) |external| {
@@ -142,7 +142,7 @@ pub const ExternalModules = struct {
             }
         }
 
-        result.patterns = patterns.toOwnedSlice() catch bun.outOfMemory();
+        result.patterns = bun.handleOom(patterns.toOwnedSlice());
 
         return result;
     }
@@ -600,31 +600,54 @@ pub const Format = enum {
     }
 };
 
+pub const WindowsOptions = struct {
+    hide_console: bool = false,
+    icon: ?[]const u8 = null,
+    title: ?[]const u8 = null,
+    publisher: ?[]const u8 = null,
+    version: ?[]const u8 = null,
+    description: ?[]const u8 = null,
+    copyright: ?[]const u8 = null,
+};
+
+// The max integer value in this enum can only be appended to.
+// It has dependencies in several places:
+// - bun-native-bundler-plugin-api/bundler_plugin.h
+// - src/bun.js/bindings/headers-handwritten.h
 pub const Loader = enum(u8) {
-    jsx,
-    js,
-    ts,
-    tsx,
-    css,
-    file,
-    json,
-    jsonc,
-    toml,
-    wasm,
-    napi,
-    base64,
-    dataurl,
-    text,
-    bunsh,
-    sqlite,
-    sqlite_embedded,
-    html,
+    jsx = 0,
+    js = 1,
+    ts = 2,
+    tsx = 3,
+    css = 4,
+    file = 5,
+    json = 6,
+    jsonc = 7,
+    toml = 8,
+    wasm = 9,
+    napi = 10,
+    base64 = 11,
+    dataurl = 12,
+    text = 13,
+    bunsh = 14,
+    sqlite = 15,
+    sqlite_embedded = 16,
+    html = 17,
+    yaml = 18,
 
     pub const Optional = enum(u8) {
         none = 254,
         _,
         pub fn unwrap(opt: Optional) ?Loader {
             return if (opt == .none) null else @enumFromInt(@intFromEnum(opt));
+        }
+
+        pub fn fromAPI(loader: bun.schema.api.Loader) Optional {
+            if (loader == ._none) {
+                return .none;
+            }
+            const l: Loader = .fromAPI(loader);
+            return @enumFromInt(@intFromEnum(l));
         }
     };
 
@@ -679,7 +702,7 @@ pub const Loader = enum(u8) {
         return switch (this) {
             .jsx, .js, .ts, .tsx => bun.http.MimeType.javascript,
             .css => bun.http.MimeType.css,
-            .toml, .json, .jsonc => bun.http.MimeType.json,
+            .toml, .yaml, .json, .jsonc => bun.http.MimeType.json,
             .wasm => bun.http.MimeType.wasm,
             .html => bun.http.MimeType.html,
             else => {
@@ -727,6 +750,7 @@ pub const Loader = enum(u8) {
         map.set(.file, "input");
         map.set(.json, "input.json");
         map.set(.toml, "input.toml");
+        map.set(.yaml, "input.yaml");
         map.set(.wasm, "input.wasm");
         map.set(.napi, "input.node");
         map.set(.text, "input.txt");
@@ -751,7 +775,7 @@ pub const Loader = enum(u8) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, wasm, bunsh, or json", .{});
+            return global.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, or json", .{});
         };
     }
 
@@ -769,6 +793,7 @@ pub const Loader = enum(u8) {
         .{ "json", .json },
         .{ "jsonc", .jsonc },
         .{ "toml", .toml },
+        .{ "yaml", .yaml },
         .{ "wasm", .wasm },
         .{ "napi", .napi },
         .{ "node", .napi },
@@ -796,6 +821,7 @@ pub const Loader = enum(u8) {
         .{ "json", .json },
         .{ "jsonc", .json },
         .{ "toml", .toml },
+        .{ "yaml", .yaml },
         .{ "wasm", .wasm },
         .{ "node", .napi },
         .{ "dataurl", .dataurl },
@@ -835,6 +861,7 @@ pub const Loader = enum(u8) {
             .json => .json,
             .jsonc => .json,
             .toml => .toml,
+            .yaml => .yaml,
             .wasm => .wasm,
             .napi => .napi,
             .base64 => .base64,
@@ -854,14 +881,18 @@ pub const Loader = enum(u8) {
             .css => .css,
             .file => .file,
             .json => .json,
+            .jsonc => .jsonc,
             .toml => .toml,
+            .yaml => .yaml,
             .wasm => .wasm,
             .napi => .napi,
             .base64 => .base64,
             .dataurl => .dataurl,
             .text => .text,
+            .bunsh => .bunsh,
             .html => .html,
             .sqlite => .sqlite,
+            .sqlite_embedded => .sqlite_embedded,
             _ => .file,
         };
     }
@@ -885,8 +916,8 @@ pub const Loader = enum(u8) {
         return switch (loader) {
             .jsx, .js, .ts, .tsx, .json, .jsonc => true,
 
-            // toml is included because we can serialize to the same AST as JSON
-            .toml => true,
+            // toml and yaml are included because we can serialize to the same AST as JSON
+            .toml, .yaml => true,
 
             else => false,
         };
@@ -901,7 +932,7 @@ pub const Loader = enum(u8) {
 
     pub fn sideEffects(this: Loader) bun.resolver.SideEffects {
         return switch (this) {
-            .text, .json, .jsonc, .toml, .file => bun.resolver.SideEffects.no_side_effects__pure_data,
+            .text, .json, .jsonc, .toml, .yaml, .file => bun.resolver.SideEffects.no_side_effects__pure_data,
             else => bun.resolver.SideEffects.has_side_effects,
         };
     }
@@ -1072,6 +1103,8 @@ const default_loaders_posix = .{
     .{ ".cts", .ts },
 
     .{ ".toml", .toml },
+    .{ ".yaml", .yaml },
+    .{ ".yml", .yaml },
     .{ ".wasm", .wasm },
     .{ ".node", .napi },
     .{ ".txt", .text },
@@ -1093,27 +1126,41 @@ pub const ESMConditions = struct {
     require: ConditionsMap,
     style: ConditionsMap,
 
-    pub fn init(allocator: std.mem.Allocator, defaults: []const string) bun.OOM!ESMConditions {
+    pub fn init(allocator: std.mem.Allocator, defaults: []const string, allow_addons: bool, conditions: []const string) bun.OOM!ESMConditions {
         var default_condition_amp = ConditionsMap.init(allocator);
 
         var import_condition_map = ConditionsMap.init(allocator);
         var require_condition_map = ConditionsMap.init(allocator);
         var style_condition_map = ConditionsMap.init(allocator);
 
-        try default_condition_amp.ensureTotalCapacity(defaults.len + 2);
-        try import_condition_map.ensureTotalCapacity(defaults.len + 2);
-        try require_condition_map.ensureTotalCapacity(defaults.len + 2);
-        try style_condition_map.ensureTotalCapacity(defaults.len + 2);
+        try default_condition_amp.ensureTotalCapacity(defaults.len + 2 + if (allow_addons) 1 else 0 + conditions.len);
+        try import_condition_map.ensureTotalCapacity(defaults.len + 2 + if (allow_addons) 1 else 0 + conditions.len);
+        try require_condition_map.ensureTotalCapacity(defaults.len + 2 + if (allow_addons) 1 else 0 + conditions.len);
+        try style_condition_map.ensureTotalCapacity(defaults.len + 2 + conditions.len);
 
         import_condition_map.putAssumeCapacity("import", {});
         require_condition_map.putAssumeCapacity("require", {});
         style_condition_map.putAssumeCapacity("style", {});
 
+        for (conditions) |condition| {
+            import_condition_map.putAssumeCapacity(condition, {});
+            require_condition_map.putAssumeCapacity(condition, {});
+            default_condition_amp.putAssumeCapacity(condition, {});
+        }
+
         for (defaults) |default| {
-            default_condition_amp.putAssumeCapacityNoClobber(default, {});
-            import_condition_map.putAssumeCapacityNoClobber(default, {});
-            require_condition_map.putAssumeCapacityNoClobber(default, {});
-            style_condition_map.putAssumeCapacityNoClobber(default, {});
+            default_condition_amp.putAssumeCapacity(default, {});
+            import_condition_map.putAssumeCapacity(default, {});
+            require_condition_map.putAssumeCapacity(default, {});
+            style_condition_map.putAssumeCapacity(default, {});
+        }
+
+        if (allow_addons) {
+            default_condition_amp.putAssumeCapacity("node-addons", {});
+            import_condition_map.putAssumeCapacity("node-addons", {});
+            require_condition_map.putAssumeCapacity("node-addons", {});
+
+            // style is not here because you don't import N-API addons inside css files.
         }
 
         default_condition_amp.putAssumeCapacity("default", {});
@@ -1181,7 +1228,6 @@ pub const JSX = struct {
         .{ "react", RuntimeDevelopmentPair{ .runtime = .classic, .development = null } },
         .{ "react-jsx", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
         .{ "react-jsxdev", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
-        .{ "solid", RuntimeDevelopmentPair{ .runtime = .solid, .development = null } },
     });
 
     pub const Pragma = struct {
@@ -1203,6 +1249,7 @@ pub const JSX = struct {
         /// - tsconfig.json's `compilerOptions.jsx` (`react-jsx` or `react-jsxdev`)
         development: bool = true,
         parse: bool = true,
+        side_effects: bool = false,
 
         pub const ImportSource = struct {
             development: string = "react/jsx-dev-runtime",
@@ -1341,6 +1388,7 @@ pub const JSX = struct {
             }
 
             pragma.runtime = jsx.runtime;
+            pragma.side_effects = jsx.side_effects;
 
             if (jsx.import_source.len > 0) {
                 pragma.package_name = jsx.import_source;
@@ -1385,9 +1433,11 @@ pub fn definesFromTransformOptions(
     var user_defines = try stringHashMapFromArrays(
         defines.RawDefines,
         allocator,
+        input_user_define.keys.len + 4,
         input_user_define.keys,
         input_user_define.values,
     );
+    defer user_defines.deinit();
 
     var environment_defines = defines.UserDefinesArray.init(allocator);
     defer environment_defines.deinit();
@@ -1494,7 +1544,8 @@ const default_loader_ext = [_]string{
     ".ts",    ".tsx",
     ".mts",   ".cts",
 
-    ".toml",  ".wasm",
+    ".toml",  ".yaml",
+    ".yml",   ".wasm",
     ".txt",   ".text",
 
     ".jsonc",
@@ -1513,6 +1564,8 @@ const node_modules_default_loader_ext = [_]string{
     ".ts",
     ".mts",
     ".toml",
+    ".yaml",
+    ".yml",
     ".txt",
     ".json",
     ".jsonc",
@@ -1554,6 +1607,7 @@ pub const ResolveFileExtensions = struct {
 pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?api.LoaderMap, target: Target) std.mem.Allocator.Error!bun.StringArrayHashMap(Loader) {
     const input_loaders = _loaders orelse std.mem.zeroes(api.LoaderMap);
     const loader_values = try allocator.alloc(Loader, input_loaders.loaders.len);
+    defer allocator.free(loader_values);
 
     for (loader_values, input_loaders.loaders) |*loader, input| {
         loader.* = Loader.fromAPI(input);
@@ -1562,9 +1616,14 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?api.
     var loaders = try stringHashMapFromArrays(
         bun.StringArrayHashMap(Loader),
         allocator,
+        input_loaders.extensions.len +
+            if (target.isBun()) default_loader_ext_bun.len else 0 +
+                if (target == .browser) default_loader_ext_browser.len else 0 +
+                    default_loader_ext.len,
         input_loaders.extensions,
         loader_values,
     );
+    errdefer loaders.deinit();
 
     inline for (default_loader_ext) |ext| {
         _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
@@ -1737,6 +1796,7 @@ pub const BundleOptions = struct {
     minify_whitespace: bool = false,
     minify_syntax: bool = false,
     minify_identifiers: bool = false,
+    keep_names: bool = false,
     dead_code_elimination: bool = true,
     css_chunking: bool,
 
@@ -1844,6 +1904,10 @@ pub const BundleOptions = struct {
             this.dead_code_elimination and this.minify_syntax,
         );
         this.defines_loaded = true;
+    }
+
+    pub fn deinit(this: *const BundleOptions) void {
+        this.define.deinit();
     }
 
     pub fn loader(this: *const BundleOptions, ext: string) Loader {
@@ -1956,6 +2020,8 @@ pub const BundleOptions = struct {
             opts.env.files = transform.env_files;
         }
 
+        opts.env.disable_default_env_files = transform.disable_default_env_files;
+
         if (transform.origin) |origin| {
             opts.origin = URL.parse(origin);
         }
@@ -1978,21 +2044,12 @@ pub const BundleOptions = struct {
             // 1. defaults
             // 2. node-addons
             // 3. user conditions
-            opts.conditions = try ESMConditions.init(allocator, opts.target.defaultConditions());
-
-            dont_append_node_addons: {
-                if (transform.allow_addons) |allow_addons| {
-                    if (!allow_addons) {
-                        break :dont_append_node_addons;
-                    }
-                }
-
-                try opts.conditions.append("node-addons");
-            }
-
-            if (transform.conditions.len > 0) {
-                try opts.conditions.appendSlice(transform.conditions);
-            }
+            opts.conditions = try ESMConditions.init(
+                allocator,
+                opts.target.defaultConditions(),
+                transform.allow_addons orelse true,
+                transform.conditions,
+            );
         }
 
         switch (opts.target) {
@@ -2132,8 +2189,8 @@ pub const TransformResult = struct {
         log: *logger.Log,
         allocator: std.mem.Allocator,
     ) !TransformResult {
-        var errors = try std.ArrayList(logger.Msg).initCapacity(allocator, log.errors);
-        var warnings = try std.ArrayList(logger.Msg).initCapacity(allocator, log.warnings);
+        var errors = try std.array_list.Managed(logger.Msg).initCapacity(allocator, log.errors);
+        var warnings = try std.array_list.Managed(logger.Msg).initCapacity(allocator, log.warnings);
         for (log.msgs.items) |msg| {
             switch (msg.kind) {
                 logger.Kind.err => {
@@ -2169,6 +2226,9 @@ pub const Env = struct {
 
     /// List of explicit env files to load (e..g specified by --env-file args)
     files: []const []const u8 = &[_][]u8{},
+
+    /// If true, disable loading of default .env files (from --no-env-file flag or bunfig)
+    disable_default_env_files: bool = false,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -2480,7 +2540,7 @@ pub const PathTemplate = struct {
         }
     }
 
-    pub fn format(self: PathTemplate, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: PathTemplate, writer: *std.Io.Writer) !void {
         var remain = self.data;
         while (strings.indexOfChar(remain, '[')) |j| {
             try writeReplacingSlashesOnWindows(writer, remain[0..j]);
@@ -2521,7 +2581,7 @@ pub const PathTemplate = struct {
                 .ext => try writeReplacingSlashesOnWindows(writer, self.placeholder.ext),
                 .hash => {
                     if (self.placeholder.hash) |hash| {
-                        try writer.print("{any}", .{bun.fmt.truncatedHash32(hash)});
+                        try writer.print("{f}", .{bun.fmt.truncatedHash32(hash)});
                     }
                 },
                 .target => try writeReplacingSlashesOnWindows(writer, self.placeholder.target),

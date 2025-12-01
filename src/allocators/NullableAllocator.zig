@@ -4,8 +4,7 @@ const NullableAllocator = @This();
 
 ptr: *anyopaque = undefined,
 // Utilize the null pointer optimization on the vtable instead of
-// the regular ptr because some allocator implementations might tag their
-// `ptr` property.
+// the regular `ptr` because `ptr` may be undefined.
 vtable: ?*const std.mem.Allocator.VTable = null,
 
 pub inline fn init(allocator: ?std.mem.Allocator) NullableAllocator {
@@ -30,8 +29,8 @@ pub inline fn get(this: NullableAllocator) ?std.mem.Allocator {
 pub fn free(this: *const NullableAllocator, bytes: []const u8) void {
     if (this.get()) |allocator| {
         if (bun.String.isWTFAllocator(allocator)) {
-            // workaround for https://github.com/ziglang/zig/issues/4298
-            bun.String.StringImplAllocator.free(allocator.ptr, @constCast(bytes), .fromByteUnits(1), 0);
+            // avoid calling `std.mem.Allocator.free` as it sets the memory to undefined
+            allocator.rawFree(@constCast(bytes), .@"1", 0);
             return;
         }
 

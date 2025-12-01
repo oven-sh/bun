@@ -391,13 +391,12 @@ pub fn fromPipe(
 
 pub fn empty(globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
     jsc.markBinding(@src());
-    return bun.jsc.fromJSHostCall(globalThis, @src(), ReadableStream__empty, .{globalThis});
+    return bun.cpp.ReadableStream__empty(globalThis);
 }
 
-pub fn used(globalThis: *JSGlobalObject) jsc.JSValue {
+pub fn used(globalThis: *JSGlobalObject) bun.JSError!jsc.JSValue {
     jsc.markBinding(@src());
-
-    return ReadableStream__used(globalThis);
+    return bun.cpp.ReadableStream__used(globalThis);
 }
 
 pub const StreamTag = enum(usize) {
@@ -577,6 +576,19 @@ pub fn NewSource(
             @compileError("setRawMode is not implemented on " ++ @typeName(Context));
         }
 
+        pub fn setFlowingFromJS(this: *ReadableStreamSourceType, _: *jsc.JSGlobalObject, call_frame: *jsc.CallFrame) bun.JSError!JSValue {
+            if (@hasDecl(Context, "setFlowing")) {
+                const flag = call_frame.argument(0);
+                if (Environment.allow_assert) {
+                    bun.assert(flag.isBoolean());
+                }
+                this.context.setFlowing(flag == .true);
+                return .js_undefined;
+            }
+
+            return .js_undefined;
+        }
+
         const supports_ref = setRefUnrefFn != null;
 
         pub const js = @field(jsc.Codegen, "JS" ++ name_ ++ "InternalReadableStreamSource");
@@ -666,7 +678,8 @@ pub fn NewSource(
                         return out;
                     },
                     .temporary_and_done, .owned_and_done, .into_array_and_done => {
-                        jsc.C.JSObjectSetPropertyAtIndex(globalThis, flags.asObjectRef(), 0, JSValue.jsBoolean(true).asObjectRef(), null);
+                        const value: JSValue = .true;
+                        jsc.C.JSObjectSetPropertyAtIndex(globalThis, flags.asObjectRef(), 0, value.asObjectRef(), null);
                         return result.toJS(globalThis);
                     },
                     else => return result.toJS(globalThis),

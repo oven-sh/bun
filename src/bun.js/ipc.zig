@@ -1,4 +1,4 @@
-pub const log = Output.scoped(.IPC, false);
+pub const log = Output.scoped(.IPC, .visible);
 
 const IsInternal = enum { internal, external };
 const SerializeAndSendResult = enum {
@@ -117,7 +117,12 @@ const advanced = struct {
     }
 
     pub fn serialize(writer: *bun.io.StreamBuffer, global: *jsc.JSGlobalObject, value: JSValue, is_internal: IsInternal) !usize {
-        const serialized = try value.serialize(global, true);
+        const serialized = try value.serialize(global, .{
+            // IPC sends across process.
+            .forCrossProcessTransfer = true,
+
+            .forStorage = false,
+        });
         defer serialized.deinit();
 
         const size: u32 = @intCast(serialized.data.len);
@@ -138,7 +143,7 @@ const advanced = struct {
 };
 
 const json = struct {
-    fn jsonIPCDataStringFreeCB(context: *bool, _: *anyopaque, _: u32) callconv(.C) void {
+    fn jsonIPCDataStringFreeCB(context: *bool, _: *anyopaque, _: u32) callconv(.c) void {
         context.* = true;
     }
 
@@ -198,6 +203,10 @@ const json = struct {
 
             const deserialized = str.toJSByParseJSON(globalThis) catch |e| switch (e) {
                 error.JSError => {
+                    globalThis.clearException();
+                    return IPCDecodeError.InvalidFormat;
+                },
+                error.JSTerminated => {
                     globalThis.clearException();
                     return IPCDecodeError.InvalidFormat;
                 },
@@ -401,7 +410,7 @@ pub const WindowsWrite = struct {
     }
 };
 pub const SendQueue = struct {
-    queue: std.ArrayList(SendHandle),
+    queue: std.array_list.Managed(SendHandle),
     waiting_for_ack: ?SendHandle = null,
 
     retry_count: u32 = 0,
@@ -454,7 +463,7 @@ pub const SendQueue = struct {
         for (self.queue.items) |*item| item.deinit();
         self.queue.deinit();
         self.internal_msg_queue.deinit();
-        self.incoming.deinitWithAllocator(bun.default_allocator);
+        self.incoming.deinit(bun.default_allocator);
         if (self.waiting_for_ack) |*waiting| waiting.deinit();
 
         // if there is a close next tick task, cancel it so it doesn't get called and then UAF
@@ -510,7 +519,7 @@ pub const SendQueue = struct {
         }
         this.keep_alive.disable();
         this.socket = .closed;
-        this._onAfterIPCClosed();
+        this.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, _onAfterIPCClosed).init(this));
     }
     fn _windowsClose(this: *SendQueue) void {
         log("SendQueue#_windowsClose", .{});
@@ -519,9 +528,9 @@ pub const SendQueue = struct {
         pipe.data = pipe;
         pipe.close(&_windowsOnClosed);
         this._socketClosed();
-        this._onAfterIPCClosed();
+        this.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, _onAfterIPCClosed).init(this));
     }
-    fn _windowsOnClosed(windows: *uv.Pipe) callconv(.C) void {
+    fn _windowsOnClosed(windows: *uv.Pipe) callconv(.c) void {
         log("SendQueue#_windowsOnClosed", .{});
         bun.default_allocator.destroy(windows);
     }
@@ -578,7 +587,7 @@ pub const SendQueue = struct {
         }
 
         // fallback case: append a new message to the queue
-        self.queue.append(.{ .handle = handle, .callbacks = .init(callback) }) catch bun.outOfMemory();
+        bun.handleOom(self.queue.append(.{ .handle = handle, .callbacks = .init(callback) }));
         return &self.queue.items[self.queue.items.len - 1];
     }
     /// returned pointer is invalidated if the queue is modified
@@ -587,11 +596,11 @@ pub const SendQueue = struct {
         if (Environment.allow_assert) bun.debugAssert(this.has_written_version == 1);
         if ((this.queue.items.len == 0 or this.queue.items[0].data.cursor == 0) and !this.write_in_progress) {
             // prepend (we have not started sending the next message yet because we are waiting for the ack/nack)
-            this.queue.insert(0, message) catch bun.outOfMemory();
+            bun.handleOom(this.queue.insert(0, message));
         } else {
             // insert at index 1 (we are in the middle of sending a message to the other process)
             bun.debugAssert(this.queue.items[0].isAckNack());
-            this.queue.insert(1, message) catch bun.outOfMemory();
+            bun.handleOom(this.queue.insert(1, message));
         }
     }
 
@@ -684,7 +693,7 @@ pub const SendQueue = struct {
             log("IPC call continueSend() from empty item", .{});
             return continueSend(this, global, reason);
         }
-        // log("sending ipc message: '{'}' (has_handle={})", .{ std.zig.fmtEscapes(to_send), first.handle != null });
+        // log("sending ipc message: '{'}' (has_handle={})", .{ std.zig.fmtString(to_send), first.handle != null });
         bun.assert(!this.write_in_progress);
         this.write_in_progress = true;
         this._write(to_send, if (first.handle) |handle| handle.fd else null);
@@ -740,8 +749,8 @@ pub const SendQueue = struct {
         bun.debugAssert(this.waiting_for_ack == null);
         const bytes = getVersionPacket(this.mode);
         if (bytes.len > 0) {
-            this.queue.append(.{ .handle = null, .callbacks = .none }) catch bun.outOfMemory();
-            this.queue.items[this.queue.items.len - 1].data.write(bytes) catch bun.outOfMemory();
+            bun.handleOom(this.queue.append(.{ .handle = null, .callbacks = .none }));
+            bun.handleOom(this.queue.items[this.queue.items.len - 1].data.write(bytes));
             log("IPC call continueSend() from version packet", .{});
             this.continueSend(global, .new_message_appended);
         }
@@ -755,7 +764,7 @@ pub const SendQueue = struct {
 
         const payload_length = serialize(self.mode, &msg.data, global, value, is_internal) catch return .failure;
         bun.assert(msg.data.list.items.len == start_offset + payload_length);
-        // log("enqueueing ipc message: '{'}'", .{std.zig.fmtEscapes(msg.data.list.items[start_offset..])});
+        // log("enqueueing ipc message: '{'}'", .{std.zig.fmtString(msg.data.list.items[start_offset..])});
 
         log("IPC call continueSend() from serializeAndSend", .{});
         self.continueSend(global, .new_message_appended);
@@ -770,7 +779,7 @@ pub const SendQueue = struct {
             if (item.data.list.items.len > 100) {
                 log(" {d}|{d}", .{ item.data.cursor, item.data.list.items.len - item.data.cursor });
             } else {
-                log("  '{'}'|'{'}'", .{ std.zig.fmtEscapes(item.data.list.items[0..item.data.cursor]), std.zig.fmtEscapes(item.data.list.items[item.data.cursor..]) });
+                log("  \"{f}\"|\"{f}\"", .{ std.zig.fmtString(item.data.list.items[0..item.data.cursor]), std.zig.fmtString(item.data.list.items[item.data.cursor..]) });
             }
         }
     }
@@ -799,7 +808,7 @@ pub const SendQueue = struct {
                 const write_len = @min(data.len, std.math.maxInt(i32));
 
                 // create write request
-                const write_req_slice = bun.default_allocator.dupe(u8, data[0..write_len]) catch bun.outOfMemory();
+                const write_req_slice = bun.handleOom(bun.default_allocator.dupe(u8, data[0..write_len]));
                 const write_req = bun.new(WindowsWrite, .{
                     .owner = this,
                     .write_slice = write_req_slice,
@@ -854,7 +863,7 @@ pub const SendQueue = struct {
         };
     }
 
-    fn onServerPipeClose(this: *uv.Pipe) callconv(.C) void {
+    fn onServerPipeClose(this: *uv.Pipe) callconv(.c) void {
         // safely free the pipes
         bun.default_allocator.destroy(this);
     }
@@ -880,7 +889,7 @@ pub const SendQueue = struct {
 
     pub fn windowsConfigureClient(this: *SendQueue, pipe_fd: bun.FileDescriptor) !void {
         log("configureClient", .{});
-        const ipc_pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
+        const ipc_pipe = bun.handleOom(bun.default_allocator.create(uv.Pipe));
         ipc_pipe.init(uv.Loop.get(), true).unwrap() catch |err| {
             bun.default_allocator.destroy(ipc_pipe);
             return err;
@@ -1024,8 +1033,8 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
         defer formatter.deinit();
         switch (message) {
             .version => |version| log("received ipc message: version: {}", .{version}),
-            .data => |jsvalue| log("received ipc message: {}", .{jsvalue.toFmt(&formatter)}),
-            .internal => |jsvalue| log("received ipc message: internal: {}", .{jsvalue.toFmt(&formatter)}),
+            .data => |jsvalue| log("received ipc message: {f}", .{jsvalue.toFmt(&formatter)}),
+            .internal => |jsvalue| log("received ipc message: internal: {f}", .{jsvalue.toFmt(&formatter)}),
         }
     }
     var internal_command: ?IPCCommand = null;
@@ -1063,7 +1072,7 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
 
                 const packet = if (ack) getAckPacket(send_queue.mode) else getNackPacket(send_queue.mode);
                 var handle = SendHandle{ .data = .{}, .handle = null, .callbacks = .ack_nack };
-                handle.data.write(packet) catch bun.outOfMemory();
+                bun.handleOom(handle.data.write(packet));
 
                 // Insert at appropriate position in send queue
                 send_queue.insertMessage(handle);
@@ -1075,11 +1084,10 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
                 if (!ack) return;
 
                 // Get file descriptor and clear it
-                const fd = send_queue.incoming_fd.?;
-                send_queue.incoming_fd = null;
+                const fd: bun.FD = bun.take(&send_queue.incoming_fd).?;
 
                 const target: bun.jsc.JSValue = switch (send_queue.owner) {
-                    .subprocess => |subprocess| subprocess.this_jsvalue,
+                    .subprocess => |subprocess| subprocess.this_value.tryGet() orelse .zero,
                     .virtual_machine => bun.jsc.JSValue.null,
                 };
 
@@ -1118,7 +1126,7 @@ fn handleIPCMessage(send_queue: *SendQueue, message: DecodedIPCMessage, globalTh
 
 fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
     var data = all_data;
-    // log("onData '{'}'", .{std.zig.fmtEscapes(data)});
+    // log("onData '{'}'", .{std.zig.fmtString(data)});
 
     // In the VirtualMachine case, `globalThis` is an optional, in case
     // the vm is freed before the socket closes.
@@ -1130,11 +1138,11 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
         while (true) {
             const result = decodeIPCMessage(send_queue.mode, data, globalThis) catch |e| switch (e) {
                 error.NotEnoughBytes => {
-                    _ = send_queue.incoming.write(bun.default_allocator, data) catch bun.outOfMemory();
+                    _ = bun.handleOom(send_queue.incoming.write(bun.default_allocator, data));
                     log("hit NotEnoughBytes", .{});
                     return;
                 },
-                error.InvalidFormat, error.JSError => {
+                error.InvalidFormat, error.JSError, error.JSTerminated => {
                     send_queue.closeSocket(.failure, .user);
                     return;
                 },
@@ -1155,7 +1163,7 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
         }
     }
 
-    _ = send_queue.incoming.write(bun.default_allocator, data) catch bun.outOfMemory();
+    _ = bun.handleOom(send_queue.incoming.write(bun.default_allocator, data));
 
     var slice = send_queue.incoming.slice();
     while (true) {
@@ -1167,7 +1175,7 @@ fn onData2(send_queue: *SendQueue, all_data: []const u8) void {
                 log("hit NotEnoughBytes2", .{});
                 return;
             },
-            error.InvalidFormat, error.JSError => {
+            error.InvalidFormat, error.JSError, error.JSTerminated => {
                 send_queue.closeSocket(.failure, .user);
                 return;
             },
@@ -1293,10 +1301,10 @@ pub const IPCHandlers = struct {
 
     pub const WindowsNamedPipe = struct {
         fn onReadAlloc(send_queue: *SendQueue, suggested_size: usize) []u8 {
-            var available = send_queue.incoming.available();
+            var available = send_queue.incoming.unusedCapacitySlice();
             if (available.len < suggested_size) {
-                send_queue.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size) catch bun.outOfMemory();
-                available = send_queue.incoming.available();
+                bun.handleOom(send_queue.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size));
+                available = send_queue.incoming.unusedCapacitySlice();
             }
             log("NewNamedPipeIPCHandler#onReadAlloc {d}", .{suggested_size});
             return available.ptr[0..suggested_size];
@@ -1328,7 +1336,7 @@ pub const IPCHandlers = struct {
                         log("hit NotEnoughBytes3", .{});
                         return;
                     },
-                    error.InvalidFormat, error.JSError => {
+                    error.InvalidFormat, error.JSError, error.JSTerminated => {
                         send_queue.closeSocket(.failure, .user);
                         return;
                     },
@@ -1353,7 +1361,7 @@ pub const IPCHandlers = struct {
 
         pub fn onClose(send_queue: *SendQueue) void {
             log("NewNamedPipeIPCHandler#onClose\n", .{});
-            send_queue._onAfterIPCClosed();
+            send_queue.getGlobalThis().bunVM().enqueueTask(jsc.ManagedTask.New(SendQueue, SendQueue._onAfterIPCClosed).init(send_queue));
         }
     };
 };

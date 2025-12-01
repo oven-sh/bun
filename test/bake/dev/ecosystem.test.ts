@@ -12,6 +12,7 @@ import { devTest } from "../bake-harness";
 devTest("svelte component islands example", {
   fixture: "svelte-component-islands",
   timeoutMultiplier: 2,
+  skip: ["win32"],
   async test(dev) {
     const html = await dev.fetch("/").text();
     if (html.includes("Bun__renderFallbackError")) throw new Error("failed");

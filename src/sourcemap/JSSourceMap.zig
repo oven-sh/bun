@@ -2,14 +2,26 @@
 ///
 const JSSourceMap = @This();
 
-sourcemap: *bun.sourcemap.ParsedSourceMap,
+sourcemap: *bun.SourceMap.ParsedSourceMap,
 sources: []bun.String = &.{},
 names: []bun.String = &.{},
+
+/// TODO: when we implement --enable-source-map CLI flag, set this to true.
+pub var @"--enable-source-maps" = false;
 
 fn findSourceMap(
     globalObject: *JSGlobalObject,
     callFrame: *CallFrame,
 ) bun.JSError!JSValue {
+    // Node.js doesn't enable source maps by default.
+    // In Bun, we do use them for almost all files since we transpile almost all files
+    // If we enable this by default, we don't have a `payload` object since we don't internally create one.
+    // This causes Next.js to emit errors like the below on start:
+    //       .next/server/chunks/ssr/[root-of-the-server]__012ba519._.js: Invalid source map. Only conformant source maps can be used to filter stack frames. Cause: TypeError: payload is not an Object. (evaluating '"sections" in payload')
+    if (!@"--enable-source-maps") {
+        return .js_undefined;
+    }
+
     const source_url_value = callFrame.argument(0);
     if (!source_url_value.isString()) {
         return .js_undefined;
@@ -91,7 +103,7 @@ pub fn constructor(
     const mappings_str = mappings_value.toUTF8(arena_allocator);
     defer mappings_str.deinit();
 
-    var names = std.ArrayList(bun.String).init(bun.default_allocator);
+    var names = std.array_list.Managed(bun.String).init(bun.default_allocator);
     errdefer {
         for (names.items) |*str| {
             str.deref();
@@ -99,7 +111,7 @@ pub fn constructor(
         names.deinit();
     }
 
-    var sources = std.ArrayList(bun.String).init(bun.default_allocator);
+    var sources = std.array_list.Managed(bun.String).init(bun.default_allocator);
     errdefer {
         for (sources.items) |*str| {
             str.deref();
@@ -124,7 +136,7 @@ pub fn constructor(
     }
 
     // Parse the VLQ mappings
-    const parse_result = bun.sourcemap.Mapping.parse(
+    const parse_result = bun.SourceMap.Mapping.parse(
         bun.default_allocator,
         mappings_str.slice(),
         null, // estimated_mapping_count
@@ -144,7 +156,7 @@ pub fn constructor(
     };
 
     const source_map = bun.new(JSSourceMap, .{
-        .sourcemap = bun.new(bun.sourcemap.ParsedSourceMap, mapping_list),
+        .sourcemap = bun.new(bun.SourceMap.ParsedSourceMap, mapping_list),
         .sources = sources.items,
         .names = names.items,
     });
@@ -188,7 +200,7 @@ fn getLineColumn(globalObject: *JSGlobalObject, callFrame: *CallFrame) bun.JSErr
     };
 }
 
-fn mappingNameToJS(this: *const JSSourceMap, globalObject: *JSGlobalObject, mapping: *const bun.sourcemap.Mapping) bun.JSError!JSValue {
+fn mappingNameToJS(this: *const JSSourceMap, globalObject: *JSGlobalObject, mapping: *const bun.SourceMap.Mapping) bun.JSError!JSValue {
     const name_index = mapping.nameIndex();
     if (name_index >= 0) {
         if (this.sourcemap.mappings.getName(name_index)) |name| {
@@ -203,7 +215,7 @@ fn mappingNameToJS(this: *const JSSourceMap, globalObject: *JSGlobalObject, mapp
     return .js_undefined;
 }
 
-fn sourceNameToJS(this: *const JSSourceMap, globalObject: *JSGlobalObject, mapping: *const bun.sourcemap.Mapping) bun.JSError!JSValue {
+fn sourceNameToJS(this: *const JSSourceMap, globalObject: *JSGlobalObject, mapping: *const bun.SourceMap.Mapping) bun.JSError!JSValue {
     const source_index = mapping.sourceIndex();
     if (source_index >= 0 and source_index < @as(i32, @intCast(this.sources.len))) {
         return this.sources[@intCast(source_index)].toJS(globalObject);
@@ -233,7 +245,7 @@ extern fn Bun__createNodeModuleSourceMapEntryObject(
 pub fn findOrigin(this: *JSSourceMap, globalObject: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
     const line_number, const column_number = try getLineColumn(globalObject, callFrame);
 
-    const mapping = this.sourcemap.mappings.find(line_number, column_number) orelse return jsc.JSValue.createEmptyObject(globalObject, 0);
+    const mapping = this.sourcemap.mappings.find(.fromZeroBased(line_number), .fromZeroBased(column_number)) orelse return jsc.JSValue.createEmptyObject(globalObject, 0);
     const name = try mappingNameToJS(this, globalObject, &mapping);
     const source = try sourceNameToJS(this, globalObject, &mapping);
     return Bun__createNodeModuleSourceMapOriginObject(
@@ -248,7 +260,7 @@ pub fn findOrigin(this: *JSSourceMap, globalObject: *JSGlobalObject, callFrame: 
 pub fn findEntry(this: *JSSourceMap, globalObject: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
     const line_number, const column_number = try getLineColumn(globalObject, callFrame);
 
-    const mapping = this.sourcemap.mappings.find(line_number, column_number) orelse return jsc.JSValue.createEmptyObject(globalObject, 0);
+    const mapping = this.sourcemap.mappings.find(.fromZeroBased(line_number), .fromZeroBased(column_number)) orelse return jsc.JSValue.createEmptyObject(globalObject, 0);
 
     const name = try mappingNameToJS(this, globalObject, &mapping);
     const source = try sourceNameToJS(this, globalObject, &mapping);

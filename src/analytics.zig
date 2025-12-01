@@ -12,43 +12,16 @@ pub fn isEnabled() bool {
         .no => false,
         .unknown => {
             enabled = detect: {
-                if (bun.getenvZ("DO_NOT_TRACK")) |x| {
-                    if (x.len == 1 and x[0] == '1') {
-                        break :detect .no;
-                    }
+                if (bun.env_var.DO_NOT_TRACK.get()) {
+                    break :detect .no;
                 }
-                if (bun.getenvZ("HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET") != null) {
+                if (bun.env_var.HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET.get() != null) {
                     break :detect .no;
                 }
                 break :detect .yes;
             };
             bun.assert(enabled == .yes or enabled == .no);
             return enabled == .yes;
-        },
-    };
-}
-
-pub fn isCI() bool {
-    return switch (is_ci) {
-        .yes => true,
-        .no => false,
-        .unknown => {
-            is_ci = detect: {
-                inline for (.{
-                    "CI",
-                    "TDDIUM",
-                    "GITHUB_ACTIONS",
-                    "JENKINS_URL",
-                    "bamboo.buildKey",
-                }) |key| {
-                    if (bun.getenvZ(key) != null) {
-                        break :detect .yes;
-                    }
-                }
-                break :detect .no;
-            };
-            bun.assert(is_ci == .yes or is_ci == .no);
-            return is_ci == .yes;
         },
     };
 }
@@ -66,6 +39,7 @@ pub const Features = struct {
     pub var bunfig: usize = 0;
     pub var define: usize = 0;
     pub var dotenv: usize = 0;
+    pub var debugger: usize = 0;
     pub var external: usize = 0;
     pub var extracted_packages: usize = 0;
     pub var fetch: usize = 0;
@@ -77,6 +51,7 @@ pub const Features = struct {
     pub var tls_server: usize = 0;
     pub var http_server: usize = 0;
     pub var https_server: usize = 0;
+    pub var http_client_proxy: usize = 0;
     /// Set right before JSC::initialize is called
     pub var jsc: usize = 0;
     /// Set when bake.DevServer is initialized
@@ -111,10 +86,16 @@ pub const Features = struct {
     pub var csrf_generate: usize = 0;
     pub var unsupported_uv_function: usize = 0;
     pub var exited: usize = 0;
+    pub var yarn_migration: usize = 0;
+    pub var pnpm_migration: usize = 0;
+    pub var yaml_parse: usize = 0;
+    pub var cpu_profile: usize = 0;
+    pub var heap_snapshot: usize = 0;
 
     comptime {
         @export(&napi_module_register, .{ .name = "Bun__napi_module_register_count" });
         @export(&process_dlopen, .{ .name = "Bun__process_dlopen_count" });
+        @export(&heap_snapshot, .{ .name = "Bun__Feature__heap_snapshot" });
     }
 
     pub fn formatter() Formatter {
@@ -122,7 +103,7 @@ pub const Features = struct {
     }
 
     pub const Formatter = struct {
-        pub fn format(_: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(_: Formatter, writer: *std.Io.Writer) !void {
             const fields = comptime brk: {
                 const info: std.builtin.Type = @typeInfo(Features);
                 var buffer: [info.@"struct".decls.len][]const u8 = .{""} ** info.@"struct".decls.len;

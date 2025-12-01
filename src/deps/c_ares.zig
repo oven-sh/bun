@@ -1,7 +1,7 @@
 pub const socklen_t = c.socklen_t;
 pub const ares_ssize_t = isize;
 pub const ares_socket_t = if (bun.Environment.isWindows) std.os.windows.ws2_32.SOCKET else c_int;
-pub const ares_sock_state_cb = ?*const fn (?*anyopaque, ares_socket_t, c_int, c_int) callconv(.C) void;
+pub const ares_sock_state_cb = ?*const fn (?*anyopaque, ares_socket_t, c_int, c_int) callconv(.c) void;
 pub const struct_apattern = opaque {};
 
 pub const AF = std.posix.AF;
@@ -232,7 +232,7 @@ pub const struct_hostent = extern struct {
         comptime function: Callback(Type),
     ) ares_host_callback {
         return &struct {
-            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, hostent: ?*struct_hostent) callconv(.C) void {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, hostent: ?*struct_hostent) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -249,7 +249,7 @@ pub const struct_hostent = extern struct {
         comptime function: Callback(Type),
     ) ares_callback {
         return &struct {
-            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -340,7 +340,7 @@ pub const hostent_with_ttls = struct {
         comptime function: Callback(Type),
     ) ares_host_callback {
         return &struct {
-            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, hostent: ?*hostent_with_ttls) callconv(.C) void {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, hostent: ?*hostent_with_ttls) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -357,7 +357,7 @@ pub const hostent_with_ttls = struct {
         comptime function: Callback(Type),
     ) ares_callback {
         return &struct {
-            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -383,7 +383,7 @@ pub const hostent_with_ttls = struct {
             if (result != ARES_SUCCESS) {
                 return .{ .err = Error.get(result).? };
             }
-            var with_ttls = bun.default_allocator.create(hostent_with_ttls) catch bun.outOfMemory();
+            var with_ttls = bun.handleOom(bun.default_allocator.create(hostent_with_ttls));
             with_ttls.hostent = start.?;
             for (addrttls[0..@intCast(naddrttls)], 0..) |ttl, i| {
                 with_ttls.ttls[i] = ttl.ttl;
@@ -399,7 +399,7 @@ pub const hostent_with_ttls = struct {
             if (result != ARES_SUCCESS) {
                 return .{ .err = Error.get(result).? };
             }
-            var with_ttls = bun.default_allocator.create(hostent_with_ttls) catch bun.outOfMemory();
+            var with_ttls = bun.handleOom(bun.default_allocator.create(hostent_with_ttls));
             with_ttls.hostent = start.?;
             for (addr6ttls[0..@intCast(naddr6ttls)], 0..) |ttl, i| {
                 with_ttls.ttls[i] = ttl.ttl;
@@ -451,7 +451,7 @@ pub const struct_nameinfo = extern struct {
         comptime function: Callback(Type),
     ) ares_nameinfo_callback {
         return &struct {
-            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, node: [*c]u8, service: [*c]u8) callconv(.C) void {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, node: [*c]u8, service: [*c]u8) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -508,7 +508,7 @@ pub const AddrInfo = extern struct {
                 try array.putIndex(
                     globalThis,
                     j,
-                    GetAddrInfo.Result.toJS(
+                    try GetAddrInfo.Result.toJS(
                         &.{
                             .address = switch (this_node.family) {
                                 AF.INET => std.net.Address{ .in = .{ .sa = bun.cast(*const std.posix.sockaddr.in, this_node.addr.?).* } },
@@ -546,7 +546,7 @@ pub const AddrInfo = extern struct {
         comptime function: Callback(Type),
     ) ares_addrinfo_callback {
         return &struct {
-            pub fn handleAddrInfo(ctx: ?*anyopaque, status: c_int, timeouts: c_int, addr_info: ?*AddrInfo) callconv(.C) void {
+            pub fn handleAddrInfo(ctx: ?*anyopaque, status: c_int, timeouts: c_int, addr_info: ?*AddrInfo) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
 
                 function(this, Error.get(status), timeouts, addr_info);
@@ -584,7 +584,7 @@ pub const Channel = opaque {
             return err;
         }
         const SockStateWrap = struct {
-            pub fn onSockState(ctx: ?*anyopaque, socket: ares_socket_t, readable: c_int, writable: c_int) callconv(.C) void {
+            pub fn onSockState(ctx: ?*anyopaque, socket: ares_socket_t, readable: c_int, writable: c_int) callconv(.c) void {
                 const container = bun.cast(*Container, ctx.?);
                 Container.onDNSSocketState(container, socket, readable != 0, writable != 0);
             }
@@ -780,19 +780,19 @@ fn libraryInit() void {
         bun.mimalloc.mi_realloc,
     );
     if (rc != ARES_SUCCESS) {
-        std.debug.panic("ares_library_init_mem failed: {any}", .{rc});
+        std.debug.panic("ares_library_init_mem failed: {d}", .{rc});
         unreachable;
     }
 }
 
-pub const ares_callback = ?*const fn (?*anyopaque, c_int, c_int, [*c]u8, c_int) callconv(.C) void;
-pub const ares_host_callback = ?*const fn (?*anyopaque, c_int, c_int, ?*struct_hostent) callconv(.C) void;
-pub const ares_nameinfo_callback = ?*const fn (?*anyopaque, c_int, c_int, [*c]u8, [*c]u8) callconv(.C) void;
-pub const ares_sock_create_callback = ?*const fn (ares_socket_t, c_int, ?*anyopaque) callconv(.C) c_int;
-pub const ares_sock_config_callback = ?*const fn (ares_socket_t, c_int, ?*anyopaque) callconv(.C) c_int;
-pub const ares_addrinfo_callback = *const fn (?*anyopaque, c_int, c_int, ?*AddrInfo) callconv(.C) void;
+pub const ares_callback = ?*const fn (?*anyopaque, c_int, c_int, [*c]u8, c_int) callconv(.c) void;
+pub const ares_host_callback = ?*const fn (?*anyopaque, c_int, c_int, ?*struct_hostent) callconv(.c) void;
+pub const ares_nameinfo_callback = ?*const fn (?*anyopaque, c_int, c_int, [*c]u8, [*c]u8) callconv(.c) void;
+pub const ares_sock_create_callback = ?*const fn (ares_socket_t, c_int, ?*anyopaque) callconv(.c) c_int;
+pub const ares_sock_config_callback = ?*const fn (ares_socket_t, c_int, ?*anyopaque) callconv(.c) c_int;
+pub const ares_addrinfo_callback = *const fn (?*anyopaque, c_int, c_int, ?*AddrInfo) callconv(.c) void;
 pub extern fn ares_library_init(flags: c_int) c_int;
-pub extern fn ares_library_init_mem(flags: c_int, amalloc: ?*const fn (usize) callconv(.C) ?*anyopaque, afree: ?*const fn (?*anyopaque) callconv(.C) void, arealloc: ?*const fn (?*anyopaque, usize) callconv(.C) ?*anyopaque) c_int;
+pub extern fn ares_library_init_mem(flags: c_int, amalloc: ?*const fn (usize) callconv(.c) ?*anyopaque, afree: ?*const fn (?*anyopaque) callconv(.c) void, arealloc: ?*const fn (?*anyopaque, usize) callconv(.c) ?*anyopaque) c_int;
 pub extern fn ares_library_initialized() c_int;
 pub extern fn ares_library_cleanup() void;
 pub extern fn ares_version(version: [*c]c_int) [*c]const u8;
@@ -812,11 +812,11 @@ pub extern fn ares_set_sortlist(channel: *Channel, sortstr: [*c]const u8) c_int;
 pub extern fn ares_getaddrinfo(channel: *Channel, node: ?[*:0]const u8, service: ?[*:0]const u8, hints: [*c]const AddrInfo_hints, callback: ares_addrinfo_callback, arg: ?*anyopaque) void;
 pub extern fn ares_freeaddrinfo(ai: *AddrInfo) void;
 pub const ares_socket_functions = extern struct {
-    socket: ?*const fn (c_int, c_int, c_int, ?*anyopaque) callconv(.C) ares_socket_t = null,
-    close: ?*const fn (ares_socket_t, ?*anyopaque) callconv(.C) c_int = null,
-    connect: ?*const fn (ares_socket_t, [*c]const struct_sockaddr, ares_socklen_t, ?*anyopaque) callconv(.C) c_int = null,
-    recvfrom: ?*const fn (ares_socket_t, ?*anyopaque, usize, c_int, [*c]struct_sockaddr, [*c]ares_socklen_t, ?*anyopaque) callconv(.C) ares_ssize_t = null,
-    sendv: ?*const fn (ares_socket_t, [*c]const iovec, c_int, ?*anyopaque) callconv(.C) ares_ssize_t = null,
+    socket: ?*const fn (c_int, c_int, c_int, ?*anyopaque) callconv(.c) ares_socket_t = null,
+    close: ?*const fn (ares_socket_t, ?*anyopaque) callconv(.c) c_int = null,
+    connect: ?*const fn (ares_socket_t, [*c]const struct_sockaddr, ares_socklen_t, ?*anyopaque) callconv(.c) c_int = null,
+    recvfrom: ?*const fn (ares_socket_t, ?*anyopaque, usize, c_int, [*c]struct_sockaddr, [*c]ares_socklen_t, ?*anyopaque) callconv(.c) ares_ssize_t = null,
+    sendv: ?*const fn (ares_socket_t, [*c]const iovec, c_int, ?*anyopaque) callconv(.c) ares_ssize_t = null,
 };
 pub extern fn ares_set_socket_functions(channel: *Channel, funcs: ?*const ares_socket_functions, user_data: ?*anyopaque) void;
 pub extern fn ares_send(channel: *Channel, qbuf: [*c]const u8, qlen: c_int, callback: ares_callback, arg: ?*anyopaque) void;
@@ -907,7 +907,7 @@ pub const struct_ares_caa_reply = extern struct {
         comptime function: Callback(Type),
     ) ares_callback {
         return &struct {
-            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -992,7 +992,7 @@ pub const struct_ares_srv_reply = extern struct {
         comptime function: Callback(Type),
     ) ares_callback {
         return &struct {
-            pub fn handleSrv(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+            pub fn handleSrv(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -1066,7 +1066,7 @@ pub const struct_ares_mx_reply = extern struct {
         comptime function: Callback(Type),
     ) ares_callback {
         return &struct {
-            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+            pub fn handle(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -1158,7 +1158,7 @@ pub const struct_ares_txt_reply = extern struct {
         comptime function: Callback(Type),
     ) ares_callback {
         return &struct {
-            pub fn handleTxt(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+            pub fn handleTxt(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -1256,7 +1256,7 @@ pub const struct_ares_naptr_reply = extern struct {
         comptime function: Callback(Type),
     ) ares_callback {
         return &struct {
-            pub fn handleNaptr(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+            pub fn handleNaptr(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -1327,7 +1327,7 @@ pub const struct_ares_soa_reply = extern struct {
         comptime function: Callback(Type),
     ) ares_callback {
         return &struct {
-            pub fn handleSoa(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+            pub fn handleSoa(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -1451,7 +1451,7 @@ pub const struct_any_reply = struct {
         comptime function: Callback(Type),
     ) ares_callback {
         return &struct {
-            pub fn handleAny(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.C) void {
+            pub fn handleAny(ctx: ?*anyopaque, status: c_int, timeouts: c_int, buffer: [*c]u8, buffer_length: c_int) callconv(.c) void {
                 const this = bun.cast(*Type, ctx.?);
                 if (status != ARES_SUCCESS) {
                     function(this, Error.get(status), timeouts, null);
@@ -1460,7 +1460,7 @@ pub const struct_any_reply = struct {
 
                 var any_success = false;
                 var last_error: ?c_int = null;
-                var reply = bun.default_allocator.create(struct_any_reply) catch bun.outOfMemory();
+                var reply = bun.handleOom(bun.default_allocator.create(struct_any_reply));
                 reply.* = .{};
 
                 switch (hostent_with_ttls.parse("a", buffer, buffer_length)) {
@@ -1682,14 +1682,14 @@ pub const Error = enum(i32) {
             });
         }
 
-        pub fn reject(this: *Deferred, globalThis: *jsc.JSGlobalObject) void {
+        pub fn reject(this: *Deferred, globalThis: *jsc.JSGlobalObject) bun.JSTerminated!void {
             const system_error = jsc.SystemError{
                 .errno = @intFromEnum(this.errno),
                 .code = bun.String.static(this.errno.code()),
                 .message = if (this.hostname) |hostname|
-                    bun.String.createFormat("{s} {s} {s}", .{ this.syscall, this.errno.code()[4..], hostname }) catch bun.outOfMemory()
+                    bun.handleOom(bun.String.createFormat("{s} {s} {f}", .{ this.syscall, this.errno.code()[4..], hostname }))
                 else
-                    bun.String.createFormat("{s} {s}", .{ this.syscall, this.errno.code()[4..] }) catch bun.outOfMemory(),
+                    bun.handleOom(bun.String.createFormat("{s} {s}", .{ this.syscall, this.errno.code()[4..] })),
                 .syscall = bun.String.cloneUTF8(this.syscall),
                 .hostname = this.hostname orelse bun.String.empty,
             };
@@ -1697,22 +1697,22 @@ pub const Error = enum(i32) {
             const instance = system_error.toErrorInstance(globalThis);
             instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
 
-            this.promise.reject(globalThis, instance);
-            this.hostname = null;
-            this.deinit();
+            defer this.deinit();
+            defer this.hostname = null;
+            return this.promise.reject(globalThis, instance);
         }
 
         pub fn rejectLater(this: *Deferred, globalThis: *jsc.JSGlobalObject) void {
             const Context = struct {
                 deferred: *Deferred,
                 globalThis: *jsc.JSGlobalObject,
-                pub fn callback(context: *@This()) void {
-                    context.deferred.reject(context.globalThis);
-                    bun.default_allocator.destroy(context);
+                pub fn callback(context: *@This()) bun.JSTerminated!void {
+                    defer bun.default_allocator.destroy(context);
+                    try context.deferred.reject(context.globalThis);
                 }
             };
 
-            const context = bun.default_allocator.create(Context) catch bun.outOfMemory();
+            const context = bun.handleOom(bun.default_allocator.create(Context));
             context.deferred = this;
             context.globalThis = globalThis;
             // TODO(@heimskr): new custom Task type
@@ -1742,7 +1742,7 @@ pub const Error = enum(i32) {
             .errno = @intFromEnum(this),
             .code = bun.String.static(this.code()[4..]),
             .syscall = bun.String.static(syscall),
-            .message = bun.String.createFormat("{s} {s}", .{ syscall, this.code()[4..] }) catch bun.outOfMemory(),
+            .message = bun.handleOom(bun.String.createFormat("{s} {s}", .{ syscall, this.code()[4..] })),
         }).toErrorInstance(globalThis);
         instance.put(globalThis, "name", bun.String.static("DNSException").toJS(globalThis));
         return instance;
@@ -1752,7 +1752,7 @@ pub const Error = enum(i32) {
         const instance = (jsc.SystemError{
             .errno = @intFromEnum(this),
             .code = bun.String.static(this.code()[4..]),
-            .message = bun.String.createFormat("{s} {s} {s}", .{ syscall, this.code()[4..], hostname }) catch bun.outOfMemory(),
+            .message = bun.handleOom(bun.String.createFormat("{s} {s} {s}", .{ syscall, this.code()[4..], hostname })),
             .syscall = bun.String.static(syscall),
             .hostname = bun.String.cloneUTF8(hostname),
         }).toErrorInstance(globalThis);
@@ -1987,7 +1987,7 @@ comptime {
 pub fn Bun__canonicalizeIP_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!jsc.JSValue {
     jsc.markBinding(@src());
 
-    const arguments = callframe.arguments_old(1);
+    const arguments = callframe.arguments();
 
     if (arguments.len == 0) {
         return globalThis.throwInvalidArguments("canonicalizeIP() expects a string but received no arguments.", .{});
@@ -1995,42 +1995,42 @@ pub fn Bun__canonicalizeIP_(globalThis: *jsc.JSGlobalObject, callframe: *jsc.Cal
     // windows uses 65 bytes for ipv6 addresses and linux/macos uses 46
     const INET6_ADDRSTRLEN = if (comptime bun.Environment.isWindows) 65 else 46;
 
-    const script_ctx = globalThis.bunVM();
-    var args = jsc.CallFrame.ArgumentsSlice.init(script_ctx, arguments.slice());
-    const addr_arg = args.nextEat().?;
+    const addr_arg = try arguments[0].toSlice(globalThis, bun.default_allocator);
+    defer addr_arg.deinit();
+    const addr_str = addr_arg.slice();
+    if (addr_str.len >= INET6_ADDRSTRLEN)
+        return .js_undefined;
 
-    const addr = try bun.String.fromJS(addr_arg, globalThis);
-    {
-        defer addr.deref();
-        const addr_slice = addr.toSlice(bun.default_allocator);
-        const addr_str = addr_slice.slice();
-        if (addr_str.len >= INET6_ADDRSTRLEN) {
+    // CIDR not allowed
+    if (strings.containsChar(addr_str, '/'))
+        return .js_undefined;
+
+    var ip_binary: [16]u8 = undefined; // 16 bytes is enough for both IPv4 and IPv6
+
+    // we need a null terminated string as input
+    var ip_addr: [INET6_ADDRSTRLEN + 1]u8 = undefined;
+    bun.copy(u8, &ip_addr, addr_str);
+    ip_addr[addr_str.len] = 0;
+
+    var af: c_int = AF.INET;
+    // get the binary representation of the IP
+    if (ares_inet_pton(af, &ip_addr, &ip_binary) != 1) {
+        af = AF.INET6;
+        if (ares_inet_pton(af, &ip_addr, &ip_binary) != 1) {
             return .js_undefined;
         }
-        for (addr_str) |char| if (char == '/') return .js_undefined; // CIDR not allowed
-
-        var ip_std_text: [INET6_ADDRSTRLEN + 1]u8 = undefined;
-        // we need a null terminated string as input
-        var ip_addr: [INET6_ADDRSTRLEN + 1]u8 = undefined;
-        bun.copy(u8, &ip_addr, addr_str);
-        ip_addr[addr_str.len] = 0;
-
-        var af: c_int = AF.INET;
-        // get the standard text representation of the IP
-        if (ares_inet_pton(af, &ip_addr, &ip_std_text) != 1) {
-            af = AF.INET6;
-            if (ares_inet_pton(af, &ip_addr, &ip_std_text) != 1) {
-                return .js_undefined;
-            }
-        }
-        // ip_addr will contain the null-terminated string of the cannonicalized IP
-        if (ares_inet_ntop(af, &ip_std_text, &ip_addr, @sizeOf(@TypeOf(ip_addr))) == null) {
-            return .js_undefined;
-        }
-        // use the null-terminated size to return the string
-        const size = bun.len(bun.cast([*:0]u8, &ip_addr));
-        return jsc.ZigString.init(ip_addr[0..size]).toJS(globalThis);
     }
+    // ip_addr will contain the null-terminated string of the canonicalized IP
+    if (ares_inet_ntop(af, &ip_binary, &ip_addr, @sizeOf(@TypeOf(ip_addr))) == null) {
+        return .js_undefined;
+    }
+    // use the null-terminated size to return the string
+    const slice = bun.sliceTo(ip_addr[0..], 0);
+    if (bun.strings.eql(addr_str, slice)) {
+        return arguments[0];
+    }
+
+    return bun.String.createUTF8ForJS(globalThis, slice);
 }
 
 /// Creates a sockaddr structure from an address, port.
@@ -2059,7 +2059,7 @@ pub fn getSockaddr(addr: []const u8, port: u16, sa: *std.posix.sockaddr) c_int {
     };
 
     {
-        const in: *std.posix.sockaddr.in = @alignCast(@ptrCast(sa));
+        const in: *std.posix.sockaddr.in = @ptrCast(@alignCast(sa));
         if (ares_inet_pton(AF.INET, addr_ptr, &in.addr) == 1) {
             in.*.family = AF.INET;
             in.*.port = std.mem.nativeToBig(u16, port);
@@ -2067,7 +2067,7 @@ pub fn getSockaddr(addr: []const u8, port: u16, sa: *std.posix.sockaddr) c_int {
         }
     }
     {
-        const in6: *std.posix.sockaddr.in6 = @alignCast(@ptrCast(sa));
+        const in6: *std.posix.sockaddr.in6 = @ptrCast(@alignCast(sa));
         if (ares_inet_pton(AF.INET6, addr_ptr, &in6.addr) == 1) {
             in6.*.family = AF.INET6;
             in6.*.port = std.mem.nativeToBig(u16, port);

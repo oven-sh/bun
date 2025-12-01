@@ -43,13 +43,13 @@ pub fn start(this: *Export) Yield {
     if (args.len == 0) {
         var arena = this.bltn().arena;
 
-        var keys = std.ArrayList(Entry).init(arena.allocator());
+        var keys = std.array_list.Managed(Entry).init(arena.allocator());
         var iter = this.bltn().export_env.iterator();
         while (iter.next()) |entry| {
             keys.append(.{
                 .key = entry.key_ptr.*,
                 .value = entry.value_ptr.*,
-            }) catch bun.outOfMemory();
+            }) catch |err| bun.handleOom(err);
         }
 
         std.mem.sort(Entry, keys.items[0..], {}, Entry.compare);
@@ -61,7 +61,7 @@ pub fn start(this: *Export) Yield {
             }
             break :brk len;
         };
-        var buf = arena.allocator().alloc(u8, len) catch bun.outOfMemory();
+        var buf = bun.handleOom(arena.allocator().alloc(u8, len));
         {
             var i: usize = 0;
             for (keys.items) |entry| {
@@ -123,7 +123,7 @@ pub inline fn bltn(this: *Export) *Builtin {
 }
 
 // --
-const debug = bun.Output.scoped(.ShellExport, true);
+const debug = bun.Output.scoped(.ShellExport, .hidden);
 const log = debug;
 
 const std = @import("std");

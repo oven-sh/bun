@@ -28,7 +28,7 @@
 //!    file for a chunk.
 pub const OutputFileList = @This();
 
-output_files: std.ArrayList(options.OutputFile),
+output_files: std.array_list.Managed(options.OutputFile),
 index_for_chunk: u32,
 index_for_sourcemaps_and_bytecode: ?u32,
 additional_output_files_start: u32,
@@ -42,7 +42,7 @@ pub fn init(
     _: usize,
 ) !@This() {
     const length, const source_map_and_bytecode_count = OutputFileList.calculateOutputFileListCapacity(c, chunks);
-    var output_files = try std.ArrayList(options.OutputFile).initCapacity(
+    var output_files = try std.array_list.Managed(options.OutputFile).initCapacity(
         allocator,
         length,
     );
@@ -57,11 +57,13 @@ pub fn init(
     };
 }
 
-pub fn take(this: *@This()) std.ArrayList(options.OutputFile) {
+pub fn take(this: *@This()) std.array_list.Managed(options.OutputFile) {
     // TODO: should this return an error
     bun.assertf(this.total_insertions == this.output_files.items.len, "total_insertions ({d}) != output_files.items.len ({d})", .{ this.total_insertions, this.output_files.items.len });
+    // Set the length just in case so the list doesn't have undefined memory
+    this.output_files.items.len = this.total_insertions;
     const list = this.output_files;
-    this.output_files = std.ArrayList(options.OutputFile).init(bun.default_allocator);
+    this.output_files = std.array_list.Managed(options.OutputFile).init(bun.default_allocator);
     return list;
 }
 
@@ -78,21 +80,14 @@ pub fn calculateOutputFileListCapacity(c: *const bun.bundle_v2.LinkerContext, ch
     const bytecode_count = if (c.options.generate_bytecode_cache) bytecode_count: {
         var bytecode_count: usize = 0;
         for (chunks) |*chunk| {
-            // TODO: this was the original logic, but it seems like it is
-            //       incorrect / does unnecessary work? Leaving it here just in-case,
-            //       as it moved from a different file and is not git blame-able.
-            //
-            // const loader: Loader = if (chunk.entry_point.is_entry_point)
-            //     c.parse_graph.input_files.items(.loader)[
-            //         chunk.entry_point.source_index
-            //     ]
-            // else
-            //     .js;
-            // if (loader.isJavaScriptLike()) {
-            //     bytecode_count += 1;
-            // }
+            const loader: bun.options.Loader = if (chunk.entry_point.is_entry_point)
+                c.parse_graph.input_files.items(.loader)[
+                    chunk.entry_point.source_index
+                ]
+            else
+                .js;
 
-            if (chunk.content == .javascript) {
+            if (chunk.content == .javascript and loader.isJavaScriptLike()) {
                 bytecode_count += 1;
             }
         }

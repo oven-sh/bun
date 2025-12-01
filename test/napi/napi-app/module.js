@@ -2,6 +2,8 @@ const assert = require("node:assert");
 const nativeTests = require("./build/Debug/napitests.node");
 const secondAddon = require("./build/Debug/second_addon.node");
 const asyncFinalizeAddon = require("./build/Debug/async_finalize_addon.node");
+const testReferenceUnrefInFinalizer = require("./build/Debug/test_reference_unref_in_finalizer.node");
+const testReferenceUnrefInFinalizerExperimental = require("./build/Debug/test_reference_unref_in_finalizer_experimental.node");
 
 async function gcUntil(fn) {
   const MAX = 100;
@@ -648,8 +650,118 @@ nativeTests.test_ref_deleted_in_async_finalize = () => {
   asyncFinalizeAddon.create_ref();
 };
 
+nativeTests.test_reference_unref_in_finalizer = async (gc) => {
+  // Create objects with finalizers that will call napi_reference_unref when GC'd
+  let objects = testReferenceUnrefInFinalizer.test_reference_unref_in_finalizer();
+  
+  // Clear the reference to allow GC
+  objects = null;
+  
+  // Force GC multiple times to ensure finalizers run
+  if (gc) {
+    gc();
+    gc();
+  }
+  
+  // Allocate large ArrayBuffers to trigger GC pressure
+  const buffers = [];
+  for (let i = 0; i < 100; i++) {
+    buffers.push(new ArrayBuffer(10 * 1024 * 1024)); // 10MB each
+    if (gc && i % 10 === 0) {
+      gc();
+    }
+  }
+  
+  // Wait for async operations
+  await new Promise(resolve => setTimeout(resolve, 50));
+  
+  // Force final GC
+  if (gc) {
+    gc();
+    gc();
+  }
+  
+  // Get stats to verify finalizers were called
+  const stats = testReferenceUnrefInFinalizer.get_stats();
+  console.log(`Finalizers called: ${stats.finalizersCalled}, Unrefs succeeded: ${stats.unrefsSucceeded}`);
+  
+  if (stats.finalizersCalled === 0) {
+    throw new Error("No finalizers were called - test did not properly trigger GC");
+  }
+  
+  if (stats.unrefsSucceeded === 0) {
+    throw new Error("No napi_reference_unref calls succeeded");
+  }
+  
+  console.log("SUCCESS: napi_reference_unref worked in finalizers without crashing");
+};
+
+nativeTests.test_reference_unref_in_finalizer_experimental = async (gc) => {
+  // This test is expected to CRASH when the finalizer runs
+  // The experimental NAPI module enforces GC checks and will abort the process
+  console.log("WARNING: This test will crash the process - this is expected behavior!");
+  
+  // Create objects with finalizers that will call napi_reference_unref when GC'd
+  let objects = testReferenceUnrefInFinalizerExperimental.test_reference_unref_in_finalizer_experimental();
+  
+  // Clear the reference to allow GC
+  objects = null;
+  
+  // Force GC to trigger the finalizers - this should crash the process
+  if (gc) {
+    gc();
+    gc();
+  }
+  
+  // Allocate memory to ensure GC runs
+  for (let i = 0; i < 5; i++) {
+    new ArrayBuffer(10 * 1024 * 1024);
+    if (gc) gc();
+  }
+  
+  // If we get here, the test has FAILED - the process should have crashed
+  console.log("ERROR: Process did not crash as expected!");
+  console.log("ERROR: The GC check for experimental modules is NOT working!");
+  throw new Error("Test FAILED: napi_reference_unref should have aborted for experimental module");
+};
+
 nativeTests.test_create_bigint_words = () => {
   console.log(nativeTests.create_weird_bigints());
+};
+
+nativeTests.test_bigint_word_count = () => {
+  // Test with a 2-word BigInt
+  const bigint = 0x123456789ABCDEF0123456789ABCDEFn;
+  const result = nativeTests.test_bigint_actual_word_count(bigint);
+  
+  console.log(`BigInt: ${bigint.toString(16)}`);
+  console.log(`Queried word count: ${result.queriedWordCount}`);
+  console.log(`Actual word count: ${result.actualWordCount}`);
+  console.log(`Sign bit: ${result.signBit}`);
+  
+  // Both counts should be 2 for this BigInt
+  if (result.queriedWordCount === 2 && result.actualWordCount === 2) {
+    console.log("✅ PASS: Word count correctly returns 2");
+  } else {
+    console.log(`❌ FAIL: Expected word count 2, got queried=${result.queriedWordCount}, actual=${result.actualWordCount}`);
+  }
+};
+
+nativeTests.test_ref_unref_underflow = () => {
+  // Test that napi_reference_unref properly handles refCount == 0
+  const obj = { test: "value" };
+  const result = nativeTests.test_reference_unref_underflow(obj);
+  
+  console.log(`First unref count: ${result.firstUnrefCount}`);
+  console.log(`Second unref status: ${result.secondUnrefStatus}`);
+  
+  // First unref should succeed and return count of 0
+  // Second unref should fail with napi_generic_failure (status = 1)
+  if (result.firstUnrefCount === 0 && result.secondUnrefStatus === 1) {
+    console.log("✅ PASS: Reference unref correctly prevents underflow");
+  } else {
+    console.log(`❌ FAIL: Expected firstUnrefCount=0, secondUnrefStatus=1, got ${result.firstUnrefCount}, ${result.secondUnrefStatus}`);
+  }
 };
 
 nativeTests.test_get_value_string = () => {
@@ -696,6 +808,37 @@ nativeTests.test_get_value_string = () => {
 
 nativeTests.test_constructor_order = () => {
   require("./build/Debug/constructor_order_addon.node");
+};
+
+// Cleanup hook tests
+nativeTests.test_cleanup_hook_order = () => {
+  const addon = require("./build/Debug/test_cleanup_hook_order.node");
+  addon.test();
+};
+
+nativeTests.test_cleanup_hook_remove_nonexistent = () => {
+  const addon = require("./build/Debug/test_cleanup_hook_remove_nonexistent.node");
+  addon.test();
+};
+
+nativeTests.test_async_cleanup_hook_remove_nonexistent = () => {
+  const addon = require("./build/Debug/test_async_cleanup_hook_remove_nonexistent.node");
+  addon.test();
+};
+
+nativeTests.test_cleanup_hook_duplicates = () => {
+  const addon = require("./build/Debug/test_cleanup_hook_duplicates.node");
+  addon.test();
+};
+
+nativeTests.test_cleanup_hook_mixed_order = () => {
+  const addon = require("./build/Debug/test_cleanup_hook_mixed_order.node");
+  addon.test();
+};
+
+nativeTests.test_cleanup_hook_modification_during_iteration = () => {
+  const addon = require("./build/Debug/test_cleanup_hook_modification_during_iteration.node");
+  addon.test();
 };
 
 module.exports = nativeTests;

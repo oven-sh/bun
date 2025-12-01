@@ -1,10 +1,11 @@
-const { isIP, isIPv6 } = require("node:net");
+const { isIP, isIPv6 } = require("internal/net/isIP");
 
 const { checkIsHttpToken, validateFunction, validateInteger, validateBoolean } = require("internal/validators");
 const { urlToHttpOptions } = require("internal/url");
 const { isValidTLSArray } = require("internal/tls");
 const { validateHeaderName } = require("node:_http_common");
 const { getTimerDuration } = require("internal/timers");
+const { ConnResetException } = require("internal/shared");
 const {
   kBodyChunks,
   abortedSymbol,
@@ -41,10 +42,9 @@ const {
   reqSymbol,
   callCloseCallback,
   emitCloseNTAndComplete,
-  ConnResetException,
 } = require("internal/http");
 
-const { Agent, NODE_HTTP_WARNING } = require("node:_http_agent");
+const { globalAgent } = require("node:_http_agent");
 const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
 
@@ -250,7 +250,7 @@ function ClientRequest(input, options, cb) {
   const onAbort = (_err?: Error) => {
     this[kClearTimeout]?.();
     socketCloseListener();
-    if (!this[abortedSymbol]) {
+    if (!this[abortedSymbol] && !this?.res?.complete) {
       process.nextTick(emitAbortNextTick, this);
       this[abortedSymbol] = true;
     }
@@ -639,7 +639,7 @@ function ClientRequest(input, options, cb) {
   this[kAbortController] = null;
 
   let agent = options.agent;
-  const defaultAgent = options._defaultAgent || Agent.globalAgent;
+  const defaultAgent = options._defaultAgent || globalAgent;
   if (agent === false) {
     agent = new defaultAgent.constructor();
   } else if (agent == null) {
@@ -909,13 +909,9 @@ function ClientRequest(input, options, cb) {
 
   this[kEmitState] = 0;
 
-  this.setSocketKeepAlive = (_enable = true, _initialDelay = 0) => {
-    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
-  };
+  this.setSocketKeepAlive = (_enable = true, _initialDelay = 0) => {};
 
-  this.setNoDelay = (_noDelay = true) => {
-    $debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setNoDelay is a no-op");
-  };
+  this.setNoDelay = (_noDelay = true) => {};
 
   this[kClearTimeout] = () => {
     const timeoutTimer = this[kTimeoutTimer];

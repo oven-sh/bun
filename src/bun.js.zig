@@ -1,6 +1,7 @@
 pub const jsc = @import("./bun.js/jsc.zig");
 pub const webcore = @import("./bun.js/webcore.zig");
 pub const api = @import("./bun.js/api.zig");
+pub const bindgen = @import("./bun.js/bindgen.zig");
 
 pub const Run = struct {
     ctx: Command.Context,
@@ -23,9 +24,10 @@ pub const Run = struct {
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
-        var arena = try Arena.init();
+        const arena = Arena.init();
 
-        if (!ctx.debug.loaded_bunfig) {
+        // Load bunfig.toml unless disabled by compile flags
+        if (!ctx.debug.loaded_bunfig and !graph.flags.disable_autoload_bunfig) {
             try bun.cli.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
         }
 
@@ -36,7 +38,6 @@ pub const Run = struct {
                 .args = ctx.args,
                 .graph = graph_ptr,
                 .is_main_thread = true,
-                .destruct_main_thread_on_exit = bun.getRuntimeFeatureFlag(.BUN_DESTRUCT_VM_ON_EXIT),
             }),
             .arena = arena,
             .ctx = ctx,
@@ -48,7 +49,7 @@ pub const Run = struct {
         vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
-        vm.allocator = arena.allocator();
+        vm.allocator = vm.arena.allocator();
 
         b.options.install = ctx.install;
         b.resolver.opts.install = ctx.install;
@@ -81,7 +82,13 @@ pub const Run = struct {
             .unspecified => {},
         }
 
-        b.options.env.behavior = .load_all_without_inlining;
+        // If .env loading is disabled, only load process env vars
+        // Otherwise, load all .env files
+        if (graph.flags.disable_default_env_files) {
+            b.options.env.behavior = .disable;
+        } else {
+            b.options.env.behavior = .load_all_without_inlining;
+        }
 
         b.configureDefines() catch {
             failWithBuildError(vm);
@@ -107,17 +114,17 @@ pub const Run = struct {
             const url = bun.URL.parse(url_str);
 
             if (!url.isHTTP() and !url.isHTTPS()) {
-                Output.errGeneric("preconnect URL must be HTTP or HTTPS: {}", .{bun.fmt.quote(url_str)});
+                Output.errGeneric("preconnect URL must be HTTP or HTTPS: {f}", .{bun.fmt.quote(url_str)});
                 Global.exit(1);
             }
 
             if (url.hostname.len == 0) {
-                Output.errGeneric("preconnect URL must have a hostname: {}", .{bun.fmt.quote(url_str)});
+                Output.errGeneric("preconnect URL must have a hostname: {f}", .{bun.fmt.quote(url_str)});
                 Global.exit(1);
             }
 
             if (!url.hasValidPort()) {
-                Output.errGeneric("preconnect URL must have a valid port: {}", .{bun.fmt.quote(url_str)});
+                Output.errGeneric("preconnect URL must have a valid port: {f}", .{bun.fmt.quote(url_str)});
                 Global.exit(1);
             }
 
@@ -135,8 +142,8 @@ pub const Run = struct {
             try @import("./bun.js/config.zig").configureTransformOptionsForBunVM(ctx.allocator, ctx.args),
             null,
         );
-        try bundle.runEnvLoader(false);
-        const mini = jsc.MiniEventLoop.initGlobal(bundle.env);
+        try bundle.runEnvLoader(bundle.options.env.disable_default_env_files);
+        const mini = jsc.MiniEventLoop.initGlobal(bundle.env, null);
         mini.top_level_dir = ctx.args.absolute_working_dir orelse "";
         return bun.shell.Interpreter.initAndRunFromFile(ctx, mini, entry_path);
     }
@@ -160,7 +167,7 @@ pub const Run = struct {
 
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
-        var arena = try Arena.init();
+        const arena = Arena.init();
 
         run = .{
             .vm = try VirtualMachine.init(
@@ -174,7 +181,6 @@ pub const Run = struct {
                     .debugger = ctx.runtime_options.debugger,
                     .dns_result_order = DNSResolver.Order.fromStringOrDie(ctx.runtime_options.dns_result_order),
                     .is_main_thread = true,
-                    .destruct_main_thread_on_exit = bun.getRuntimeFeatureFlag(.BUN_DESTRUCT_VM_ON_EXIT),
                 },
             ),
             .arena = arena,
@@ -187,7 +193,7 @@ pub const Run = struct {
         vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
-        vm.allocator = arena.allocator();
+        vm.allocator = vm.arena.allocator();
 
         if (ctx.runtime_options.eval.script.len > 0) {
             const script_source = try bun.default_allocator.create(logger.Source);
@@ -265,6 +271,18 @@ pub const Run = struct {
         vm.hot_reload = this.ctx.debug.hot_reload;
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
 
+        // Start CPU profiler if enabled
+        if (this.ctx.runtime_options.cpu_prof.enabled) {
+            const cpu_prof_opts = this.ctx.runtime_options.cpu_prof;
+
+            vm.cpu_profiler_config = CPUProfiler.CPUProfilerConfig{
+                .name = cpu_prof_opts.name,
+                .dir = cpu_prof_opts.dir,
+            };
+            CPUProfiler.startCPUProfiler(vm.jsc_vm);
+            bun.analytics.Features.cpu_profile += 1;
+        }
+
         this.addConditionalGlobals();
         do_redis_preconnect: {
             // This must happen within the API lock, which is why it's not in the "doPreconnect" function
@@ -312,8 +330,8 @@ pub const Run = struct {
         }
 
         switch (this.ctx.debug.hot_reload) {
-            .hot => jsc.hot_reloader.HotReloader.enableHotModuleReloading(vm),
-            .watch => jsc.hot_reloader.WatchReloader.enableHotModuleReloading(vm),
+            .hot => jsc.hot_reloader.HotReloader.enableHotModuleReloading(vm, this.entry_path),
+            .watch => jsc.hot_reloader.WatchReloader.enableHotModuleReloading(vm, this.entry_path),
             else => {},
         }
 
@@ -329,6 +347,7 @@ pub const Run = struct {
                 promise.setHandled(vm.global.vm());
 
                 if (vm.hot_reload != .none or handled) {
+                    vm.addMainToWatcherIfNeeded();
                     vm.eventLoop().tick();
                     vm.eventLoop().tickPossiblyForever();
                 } else {
@@ -390,21 +409,21 @@ pub const Run = struct {
 
         {
             if (this.vm.isWatcherEnabled()) {
-                vm.handlePendingInternalPromiseRejection();
+                vm.reportExceptionInHotReloadedModuleIfNeeded();
 
                 while (true) {
                     while (vm.isEventLoopAlive()) {
                         vm.tick();
 
                         // Report exceptions in hot-reloaded modules
-                        vm.handlePendingInternalPromiseRejection();
+                        vm.reportExceptionInHotReloadedModuleIfNeeded();
 
                         vm.eventLoop().autoTickActive();
                     }
 
                     vm.onBeforeExit();
 
-                    vm.handlePendingInternalPromiseRejection();
+                    vm.reportExceptionInHotReloadedModuleIfNeeded();
 
                     vm.eventLoop().tickPossiblyForever();
                 }
@@ -420,7 +439,7 @@ pub const Run = struct {
                         if (result.asAnyPromise()) |promise| {
                             switch (promise.status(vm.jsc_vm)) {
                                 .pending => {
-                                    result._then2(vm.global, .js_undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
+                                    result.then2(vm.global, .js_undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult) catch {}; // TODO: properly propagate exception upwards
 
                                     vm.tick();
                                     vm.eventLoop().autoTickActive();
@@ -467,7 +486,9 @@ pub const Run = struct {
         }
 
         bun.api.napi.fixDeadCodeElimination();
+        bun.webcore.BakeResponse.fixDeadCodeElimination();
         bun.crash_handler.fixDeadCodeElimination();
+        @import("./bun.js/bindings/JSSecrets.zig").fixDeadCodeElimination();
         vm.globalExit();
     }
 
@@ -505,13 +526,8 @@ noinline fn dumpBuildError(vm: *jsc.VirtualMachine) void {
 
     Output.flush();
 
-    const error_writer = Output.errorWriter();
-    var buffered_writer = std.io.bufferedWriter(error_writer);
-    defer {
-        buffered_writer.flush() catch {};
-    }
-
-    const writer = buffered_writer.writer();
+    const writer = Output.errorWriterBuffered();
+    defer Output.flush();
 
     vm.log.print(writer) catch {};
 }
@@ -527,6 +543,7 @@ const VirtualMachine = jsc.VirtualMachine;
 
 const string = []const u8;
 
+const CPUProfiler = @import("./bun.js/bindings/BunCPUProfiler.zig");
 const options = @import("./options.zig");
 const std = @import("std");
 const Command = @import("./cli.zig").Command;

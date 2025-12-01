@@ -17,14 +17,12 @@ state: union(enum) {
     done,
 } = .idle,
 
-pub fn format(this: *const Touch, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-    _ = fmt; // autofix
-    _ = opts; // autofix
+pub fn format(this: *const Touch, writer: *std.Io.Writer) !void {
     try writer.print("Touch(0x{x}, state={s})", .{ @intFromPtr(this), @tagName(this.state) });
 }
 
 pub fn deinit(this: *Touch) void {
-    log("{} deinit", .{this});
+    log("{f} deinit", .{this});
 }
 
 pub fn start(this: *Touch) Yield {
@@ -103,7 +101,7 @@ pub fn writeFailingError(this: *Touch, buf: []const u8, exit_code: ExitCode) Yie
 }
 
 pub fn onShellTouchTaskDone(this: *Touch, task: *ShellTouchTask) void {
-    log("{} onShellTouchTaskDone {} tasks_done={d} tasks_count={d}", .{ this, task, this.state.exec.tasks_done, this.state.exec.tasks_count });
+    log("{f} onShellTouchTaskDone {f} tasks_done={d} tasks_count={d}", .{ this, task, this.state.exec.tasks_done, this.state.exec.tasks_count });
 
     defer bun.default_allocator.destroy(task);
     this.state.exec.tasks_done += 1;
@@ -178,9 +176,7 @@ pub const ShellTouchTask = struct {
     event_loop: jsc.EventLoopHandle,
     concurrent_task: jsc.EventLoopTask,
 
-    pub fn format(this: *const ShellTouchTask, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt; // autofix
-        _ = opts; // autofix
+    pub fn format(this: *const ShellTouchTask, writer: *std.Io.Writer) !void {
         try writer.print("ShellTouchTask(0x{x}, filepath={s})", .{ @intFromPtr(this), this.filepath });
     }
 
@@ -192,7 +188,7 @@ pub const ShellTouchTask = struct {
     }
 
     pub fn create(touch: *Touch, opts: Opts, filepath: [:0]const u8, cwd_path: [:0]const u8) *ShellTouchTask {
-        const task = bun.default_allocator.create(ShellTouchTask) catch bun.outOfMemory();
+        const task = bun.handleOom(bun.default_allocator.create(ShellTouchTask));
         task.* = ShellTouchTask{
             .touch = touch,
             .opts = opts,
@@ -205,12 +201,12 @@ pub const ShellTouchTask = struct {
     }
 
     pub fn schedule(this: *@This()) void {
-        debug("{} schedule", .{this});
+        debug("{f} schedule", .{this});
         WorkPool.schedule(&this.task);
     }
 
     pub fn runFromMainThread(this: *@This()) void {
-        debug("{} runFromJS", .{this});
+        debug("{f} runFromJS", .{this});
         this.touch.onShellTouchTaskDone(this);
     }
 
@@ -220,7 +216,7 @@ pub const ShellTouchTask = struct {
 
     fn runFromThreadPool(task: *jsc.WorkPoolTask) void {
         var this: *ShellTouchTask = @fieldParentPtr("task", task);
-        debug("{} runFromThreadPool", .{this});
+        debug("{f} runFromThreadPool", .{this});
 
         // We have to give an absolute path
         const filepath: [:0]const u8 = brk: {
@@ -253,12 +249,12 @@ pub const ShellTouchTask = struct {
                         break :out;
                     },
                     .err => |e| {
-                        this.err = e.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
+                        this.err = e.withPath(bun.handleOom(bun.default_allocator.dupe(u8, filepath))).toShellSystemError();
                         break :out;
                     },
                 }
             }
-            this.err = err.withPath(bun.default_allocator.dupe(u8, filepath) catch bun.outOfMemory()).toShellSystemError();
+            this.err = err.withPath(bun.handleOom(bun.default_allocator.dupe(u8, filepath))).toShellSystemError();
         }
 
         if (this.event_loop == .js) {
@@ -387,7 +383,7 @@ pub inline fn bltn(this: *Touch) *Builtin {
 }
 
 // --
-const debug = bun.Output.scoped(.ShellTouch, true);
+const debug = bun.Output.scoped(.ShellTouch, .hidden);
 const log = debug;
 
 const std = @import("std");

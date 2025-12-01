@@ -38,7 +38,7 @@ InspectorHTTPServerAgent::~InspectorHTTPServerAgent()
     }
 }
 
-void InspectorHTTPServerAgent::didCreateFrontendAndBackend(FrontendRouter*, BackendDispatcher*)
+void InspectorHTTPServerAgent::didCreateFrontendAndBackend()
 {
 }
 

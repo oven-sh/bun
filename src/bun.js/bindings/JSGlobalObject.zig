@@ -3,8 +3,9 @@ pub const JSGlobalObject = opaque {
         return this.bunVM().allocator;
     }
     extern fn JSGlobalObject__throwStackOverflow(this: *JSGlobalObject) void;
-    pub fn throwStackOverflow(this: *JSGlobalObject) void {
+    pub fn throwStackOverflow(this: *JSGlobalObject) bun.JSError {
         JSGlobalObject__throwStackOverflow(this);
+        return error.JSError;
     }
     extern fn JSGlobalObject__throwOutOfMemoryError(this: *JSGlobalObject) void;
     pub fn throwOutOfMemory(this: *JSGlobalObject) bun.JSError {
@@ -20,6 +21,10 @@ pub const JSGlobalObject = opaque {
     pub fn throwOutOfMemoryValue(this: *JSGlobalObject) JSValue {
         JSGlobalObject__throwOutOfMemoryError(this);
         return .zero;
+    }
+    pub fn gregorianDateTimeToMS(this: *jsc.JSGlobalObject, year: i32, month: i32, day: i32, hour: i32, minute: i32, second: i32, millisecond: i32) bun.JSError!f64 {
+        jsc.markBinding(@src());
+        return bun.cpp.Bun__gregorianDateTimeToMS(this, year, month, day, hour, minute, second, millisecond);
     }
 
     pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) bun.JSError {
@@ -86,7 +91,7 @@ pub const JSGlobalObject = opaque {
     ) bun.JSError {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
-        return this.ERR(.INVALID_ARG_VALUE, "The \"{s}\" argument is invalid. Received {}", .{ argname, actual_string_value }).throw();
+        return this.ERR(.INVALID_ARG_VALUE, "The \"{s}\" argument is invalid. Received {f}", .{ argname, actual_string_value }).throw();
     }
 
     pub fn throwInvalidArgumentValueCustom(
@@ -97,7 +102,7 @@ pub const JSGlobalObject = opaque {
     ) bun.JSError {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
-        return this.ERR(.INVALID_ARG_VALUE, "The \"{s}\" argument {s}. Received {}", .{ argname, message, actual_string_value }).throw();
+        return this.ERR(.INVALID_ARG_VALUE, "The \"{s}\" argument {s}. Received {f}", .{ argname, message, actual_string_value }).throw();
     }
 
     /// Throw an `ERR_INVALID_ARG_VALUE` when the invalid value is a property of an object.
@@ -113,9 +118,9 @@ pub const JSGlobalObject = opaque {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
         if (comptime expected) |_expected| {
-            return this.ERR(.INVALID_ARG_VALUE, "The property \"{s}\" is invalid. Expected {s}, received {}", .{ argname, _expected, actual_string_value }).throw();
+            return this.ERR(.INVALID_ARG_VALUE, "The property \"{s}\" is invalid. Expected {s}, received {f}", .{ argname, _expected, actual_string_value }).throw();
         } else {
-            return this.ERR(.INVALID_ARG_VALUE, "The property \"{s}\" is invalid. Received {}", .{ argname, actual_string_value }).throw();
+            return this.ERR(.INVALID_ARG_VALUE, "The property \"{s}\" is invalid. Received {f}", .{ argname, actual_string_value }).throw();
         }
     }
 
@@ -160,7 +165,7 @@ pub const JSGlobalObject = opaque {
     ) bun.JSError {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
-        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be of type {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
+        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be of type {s}. Received {f}", .{ argname, typename, actual_string_value }).throw();
     }
 
     pub fn throwInvalidArgumentTypeValue2(
@@ -171,7 +176,7 @@ pub const JSGlobalObject = opaque {
     ) JSError {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
-        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
+        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be {s}. Received {f}", .{ argname, typename, actual_string_value }).throw();
     }
 
     /// "The <argname> argument must be one of type <typename>. Received <value>"
@@ -183,7 +188,7 @@ pub const JSGlobalObject = opaque {
     ) bun.JSError {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
-        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be one of type {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
+        return this.ERR(.INVALID_ARG_TYPE, "The \"{s}\" argument must be one of type {s}. Received {f}", .{ argname, typename, actual_string_value }).throw();
     }
 
     pub fn throwInvalidArgumentRangeValue(
@@ -192,7 +197,7 @@ pub const JSGlobalObject = opaque {
         typename: []const u8,
         value: i64,
     ) bun.JSError {
-        return this.ERR(.OUT_OF_RANGE, "The \"{s}\" is out of range. {s}. Received {}", .{ argname, typename, value }).throw();
+        return this.ERR(.OUT_OF_RANGE, "The \"{s}\" is out of range. {s}. Received {f}", .{ argname, typename, value }).throw();
     }
 
     pub fn throwInvalidPropertyTypeValue(
@@ -225,12 +230,10 @@ pub const JSGlobalObject = opaque {
         return this.throwValue(this.createNotEnoughArguments(name_, expected, got));
     }
 
-    extern fn JSC__JSGlobalObject__reload(JSC__JSGlobalObject__ptr: *JSGlobalObject) void;
-    pub fn reload(this: *jsc.JSGlobalObject) void {
+    pub fn reload(this: *jsc.JSGlobalObject) !void {
         this.vm().drainMicrotasks();
         this.vm().collectAsync();
-
-        JSC__JSGlobalObject__reload(this);
+        try bun.cpp.JSC__JSGlobalObject__reload(this);
     }
 
     pub const BunPluginTarget = enum(u8) {
@@ -258,15 +261,15 @@ pub const JSGlobalObject = opaque {
     pub fn createErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
             var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
-            var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
+            var buf = std.Io.Writer.Allocating.initCapacity(stack_fallback.get(), 2048) catch unreachable;
             defer buf.deinit();
-            var writer = buf.writer();
+            var writer = &buf.writer;
             writer.print(fmt, args) catch
                 // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error
                 return ZigString.static(fmt).toErrorInstance(this);
 
             // Ensure we clone it.
-            var str = ZigString.initUTF8(buf.slice());
+            var str = ZigString.initUTF8(buf.written());
 
             return str.toErrorInstance(this);
         } else {
@@ -362,6 +365,10 @@ pub const JSGlobalObject = opaque {
         return this.throwValue(err);
     }
 
+    /// Throw an Error from a formatted string.
+    ///
+    /// Note: If you are throwing an error within somewhere in the Bun API,
+    /// chances are you should be using `.ERR(...).throw()` instead.
     pub fn throw(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSError {
         const instance = this.createErrorInstance(fmt, args);
         bun.assert(instance != .zero);
@@ -369,14 +376,14 @@ pub const JSGlobalObject = opaque {
     }
 
     pub fn throwPretty(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
-        const instance = switch (Output.enable_ansi_colors) {
+        const instance = switch (Output.enable_ansi_colors_stderr) {
             inline else => |enabled| this.createErrorInstance(Output.prettyFmt(fmt, enabled), args),
         };
         bun.assert(instance != .zero);
         return this.throwValue(instance);
     }
 
-    extern fn JSC__JSGlobalObject__queueMicrotaskCallback(*JSGlobalObject, *anyopaque, Function: *const (fn (*anyopaque) callconv(.C) void)) void;
+    extern fn JSC__JSGlobalObject__queueMicrotaskCallback(*JSGlobalObject, *anyopaque, Function: *const (fn (*anyopaque) callconv(.c) void)) void;
     pub fn queueMicrotaskCallback(
         this: *JSGlobalObject,
         ctx_val: anytype,
@@ -386,7 +393,7 @@ pub const JSGlobalObject = opaque {
         const Fn = Function;
         const ContextType = @TypeOf(ctx_val);
         const Wrapper = struct {
-            pub fn call(p: *anyopaque) callconv(.C) void {
+            pub fn call(p: *anyopaque) callconv(.c) void {
                 Fn(bun.cast(ContextType, p));
             }
         };
@@ -499,6 +506,7 @@ pub const JSGlobalObject = opaque {
         switch (proof) {
             error.JSError => {},
             error.OutOfMemory => this.throwOutOfMemory() catch {},
+            error.JSTerminated => {},
         }
 
         return this.tryTakeException() orelse {
@@ -510,6 +518,7 @@ pub const JSGlobalObject = opaque {
         switch (proof) {
             error.JSError => {},
             error.OutOfMemory => this.throwOutOfMemory() catch {},
+            error.JSTerminated => {},
         }
 
         return (this.tryTakeException() orelse {
@@ -657,7 +666,7 @@ pub const JSGlobalObject = opaque {
     }
 
     pub fn throwRangeError(this: *JSGlobalObject, value: anytype, options: bun.fmt.OutOfRangeOptions) bun.JSError {
-        return this.ERR(.OUT_OF_RANGE, "{}", .{bun.fmt.outOfRange(value, options)}).throw();
+        return this.ERR(.OUT_OF_RANGE, "{f}", .{bun.fmt.outOfRange(value, options)}).throw();
     }
 
     pub const IntegerRange = struct {
@@ -666,6 +675,40 @@ pub const JSGlobalObject = opaque {
         field_name: []const u8 = "",
         always_allow_zero: bool = false,
     };
+
+    pub fn validateBigIntRange(this: *JSGlobalObject, value: JSValue, comptime T: type, default: T, comptime range: IntegerRange) bun.JSError!T {
+        if (value.isUndefined() or value == .zero) {
+            return 0;
+        }
+
+        const TypeInfo = @typeInfo(T);
+        if (TypeInfo != .int) {
+            @compileError("T must be an integer type");
+        }
+        const signed = TypeInfo.int.signedness == .signed;
+
+        const min_t = comptime @max(range.min, std.math.minInt(T));
+        const max_t = comptime @min(range.max, std.math.maxInt(T));
+        if (value.isBigInt()) {
+            if (signed) {
+                if (value.isBigIntInInt64Range(min_t, max_t)) {
+                    return value.toInt64();
+                }
+            } else {
+                if (value.isBigIntInUInt64Range(min_t, max_t)) {
+                    return value.toUInt64NoTruncate();
+                }
+            }
+            return this.ERR(.OUT_OF_RANGE, "The value is out of range. It must be >= {d} and <= {d}.", .{ min_t, max_t }).throw();
+        }
+
+        return try this.validateIntegerRange(value, T, default, .{
+            .min = comptime @max(min_t, jsc.MIN_SAFE_INTEGER),
+            .max = comptime @min(max_t, jsc.MAX_SAFE_INTEGER),
+            .field_name = range.field_name,
+            .always_allow_zero = range.always_allow_zero,
+        });
+    }
 
     pub fn validateIntegerRange(this: *JSGlobalObject, value: JSValue, comptime T: type, default: T, comptime range: IntegerRange) bun.JSError!T {
         if (value.isUndefined() or value == .zero) {
@@ -733,23 +776,15 @@ pub const JSGlobalObject = opaque {
         return default;
     }
 
-    pub inline fn createHostFunction(
-        global: *JSGlobalObject,
-        comptime display_name: [:0]const u8,
-        // when querying from JavaScript, 'func.name'
-        comptime function: anytype,
-        // when querying from JavaScript, 'func.len'
-        comptime argument_count: u32,
-    ) JSValue {
-        return jsc.host_fn.NewRuntimeFunction(global, ZigString.static(display_name), argument_count, jsc.toJSHostFn(function), false, false, null);
-    }
-
     /// Get a lazily-initialized `JSC::String` from `BunCommonStrings.h`.
     pub inline fn commonStrings(this: *jsc.JSGlobalObject) CommonStrings {
         jsc.markBinding(@src());
         return .{ .globalObject = this };
     }
 
+    /// Throw an error from within the Bun runtime.
+    ///
+    /// The set of errors accepted by `ERR()` is defined in `ErrorCode.ts`.
     pub fn ERR(global: *JSGlobalObject, comptime code: jsc.Error, comptime fmt: [:0]const u8, args: anytype) @import("ErrorCode").ErrorBuilder(code, fmt, @TypeOf(args)) {
         return .{ .global = global, .args = args };
     }
@@ -796,14 +831,14 @@ pub const JSGlobalObject = opaque {
         return Zig__GlobalObject__resetModuleRegistryMap(global, map);
     }
 
-    pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *ZigString) callconv(.C) void {
+    pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *ZigString) callconv(.c) void {
         jsc.markBinding(@src());
         return jsc.VirtualMachine.resolve(res, global, specifier.*, source.*, query, true) catch {
             bun.debugAssert(res.success == false);
         };
     }
 
-    pub fn reportUncaughtException(global: *JSGlobalObject, exception: *jsc.Exception) callconv(.C) JSValue {
+    pub fn reportUncaughtException(global: *JSGlobalObject, exception: *jsc.Exception) callconv(.c) JSValue {
         jsc.markBinding(@src());
         return jsc.VirtualMachine.reportUncaughtException(global, exception);
     }
@@ -813,7 +848,7 @@ pub const JSGlobalObject = opaque {
         _ = global.reportUncaughtException(global.takeException(proof).asException(global.vm()).?);
     }
 
-    pub fn onCrash() callconv(.C) void {
+    pub fn onCrash() callconv(.c) void {
         jsc.markBinding(@src());
         bun.Output.flush();
         @panic("A C++ exception occurred");
@@ -838,7 +873,7 @@ pub const JSGlobalObject = opaque {
             ZigString.static("null").*;
 
         if (!content_type.eqlComptime("application/wasm")) {
-            return this.ERR(.WEBASSEMBLY_RESPONSE, "WebAssembly response has unsupported MIME type '{}'", .{content_type}).throw();
+            return this.ERR(.WEBASSEMBLY_RESPONSE, "WebAssembly response has unsupported MIME type '{f}'", .{content_type}).throw();
         }
 
         if (!response.isOK()) {
@@ -856,6 +891,12 @@ pub const JSGlobalObject = opaque {
 
         // We're done validating. From now on, deal with extracting the body.
         body.toBlobIfPossible();
+
+        if (body.* == .Locked) {
+            if (response.getBodyReadableStream(this)) |stream| {
+                return stream.value;
+            }
+        }
 
         var any_blob = switch (body.*) {
             .Locked => body.tryUseAsAnyBlob() orelse return body.toReadableStream(this),

@@ -171,14 +171,14 @@ pub const SupportsCondition = union(enum) {
             switch (_condition) {
                 .result => |condition| {
                     if (conditions.items.len == 0) {
-                        conditions.append(input.allocator(), in_parens.deepClone(input.allocator())) catch bun.outOfMemory();
+                        bun.handleOom(conditions.append(input.allocator(), in_parens.deepClone(input.allocator())));
                         if (in_parens == .declaration) {
                             const property_id = in_parens.declaration.property_id;
                             const value = in_parens.declaration.value;
                             seen_declarations.put(
                                 .{ property_id.withPrefix(css.VendorPrefix{ .none = true }), value },
                                 0,
-                            ) catch bun.outOfMemory();
+                            ) catch |err| bun.handleOom(err);
                         }
                     }
 
@@ -195,17 +195,17 @@ pub const SupportsCondition = union(enum) {
                                 cond.declaration.property_id.addPrefix(property_id.prefix());
                             }
                         } else {
-                            seen_declarations.put(key, conditions.items.len) catch bun.outOfMemory();
+                            bun.handleOom(seen_declarations.put(key, conditions.items.len));
                             conditions.append(input.allocator(), SupportsCondition{ .declaration = .{
                                 .property_id = property_id,
                                 .value = value,
-                            } }) catch bun.outOfMemory();
+                            } }) catch |err| bun.handleOom(err);
                         }
                     } else {
                         conditions.append(
                             input.allocator(),
                             condition,
-                        ) catch bun.outOfMemory();
+                        ) catch |err| bun.handleOom(err);
                     }
                 },
                 else => break,
@@ -287,11 +287,11 @@ pub const SupportsCondition = union(enum) {
         return .{ .result = SupportsCondition{ .unknown = input.sliceFrom(pos) } };
     }
 
-    pub fn toCss(this: *const SupportsCondition, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
+    pub fn toCss(this: *const SupportsCondition, dest: *css.Printer) css.PrintErr!void {
         switch (this.*) {
             .not => |condition| {
                 try dest.writeStr(" not ");
-                try condition.toCssWithParensIfNeeded(W, dest, condition.needsParens(this));
+                try condition.toCssWithParensIfNeeded(dest, condition.needsParens(this));
             },
             .@"and" => |conditions| {
                 var first = true;
@@ -301,7 +301,7 @@ pub const SupportsCondition = union(enum) {
                     } else {
                         try dest.writeStr(" and ");
                     }
-                    try cond.toCssWithParensIfNeeded(W, dest, cond.needsParens(this));
+                    try cond.toCssWithParensIfNeeded(dest, cond.needsParens(this));
                 }
             },
             .@"or" => |conditions| {
@@ -312,7 +312,7 @@ pub const SupportsCondition = union(enum) {
                     } else {
                         try dest.writeStr(" or ");
                     }
-                    try cond.toCssWithParensIfNeeded(W, dest, cond.needsParens(this));
+                    try cond.toCssWithParensIfNeeded(dest, cond.needsParens(this));
                 }
             },
             .declaration => |decl| {
@@ -362,14 +362,11 @@ pub const SupportsCondition = union(enum) {
 
     pub fn toCssWithParensIfNeeded(
         this: *const SupportsCondition,
-        comptime W: type,
-        dest: *css.Printer(
-            W,
-        ),
+        dest: *css.Printer,
         needs_parens: bool,
     ) css.PrintErr!void {
         if (needs_parens) try dest.writeStr("(");
-        try this.toCss(W, dest);
+        try this.toCss(dest);
         if (needs_parens) try dest.writeStr(")");
     }
 };
@@ -386,17 +383,17 @@ pub fn SupportsRule(comptime R: type) type {
 
         const This = @This();
 
-        pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
+        pub fn toCss(this: *const This, dest: *Printer) PrintErr!void {
             // #[cfg(feature = "sourcemap")]
             // dest.add_mapping(self.loc);
 
             try dest.writeStr("@supports ");
-            try this.condition.toCss(W, dest);
+            try this.condition.toCss(dest);
             try dest.whitespace();
             try dest.writeChar('{');
             dest.indent();
             try dest.newline();
-            try this.rules.toCss(W, dest);
+            try this.rules.toCss(dest);
             dest.dedent();
             try dest.newline();
             try dest.writeChar('}');

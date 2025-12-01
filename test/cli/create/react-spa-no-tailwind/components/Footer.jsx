@@ -2,10 +2,10 @@ import React from "react";
 import classNames from "classnames";
 
 const LINKS = [
-  { text: "Documentation", url: "https://bun.sh/docs" },
+  { text: "Documentation", url: "https://bun.com/docs" },
   { text: "GitHub", url: "https://github.com/oven-sh/bun" },
-  { text: "Discord", url: "https://bun.sh/discord" },
-  { text: "Blog", url: "https://bun.sh/blog" },
+  { text: "Discord", url: "https://bun.com/discord" },
+  { text: "Blog", url: "https://bun.com/blog" },
 ];
 
 export default function Footer() {

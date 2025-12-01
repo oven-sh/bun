@@ -1,6 +1,6 @@
 import { beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles, tmpdirSync } from "harness";
 import { join } from "path";
 
 beforeAll(() => {
@@ -131,3 +131,38 @@ test("npm lockfile with relative workspaces", async () => {
 
   expect(exitCode).toBe(0);
 });
+
+const lockfiles = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml"];
+
+for (const lockfile of lockfiles) {
+  test(`should create bun.lock if ${lockfile} migration fails`, async () => {
+    const testDir = tempDirWithFiles("migration-failure", {
+      "package.json": JSON.stringify({
+        name: "pkg",
+        dependencies: {
+          "dep-1": "file:dep-1",
+        },
+      }),
+      [lockfile]: "{}",
+      "dep-1/package.json": JSON.stringify({
+        name: "dep-1",
+      }),
+    });
+
+    const { exited } = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: testDir,
+      stderr: "ignore",
+      stdout: "ignore",
+    });
+
+    expect(await exited).toBe(0);
+
+    expect(
+      await Promise.all([
+        fs.promises.exists(join(testDir, "bun.lock")),
+        fs.promises.exists(join(testDir, "bun.lockb")),
+      ]),
+    ).toEqual([true, false]);
+  });
+}

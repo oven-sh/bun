@@ -27,9 +27,6 @@ pub const UserOptions = struct {
 
     /// Currently, this function must run at the top of the event loop.
     pub fn fromJS(config: JSValue, global: *jsc.JSGlobalObject) !UserOptions {
-        if (!config.isObject()) {
-            return global.throwInvalidArguments("'" ++ api_name ++ "' is not an object", .{});
-        }
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         errdefer arena.deinit();
         const alloc = arena.allocator();
@@ -37,6 +34,38 @@ pub const UserOptions = struct {
         var allocations = StringRefList.empty;
         errdefer allocations.free();
         var bundler_options = SplitBundlerOptions.empty;
+
+        if (!config.isObject()) {
+            // Allow users to do `export default { app: 'react' }` for convenience
+            if (config.isString()) {
+                const bunstr = try config.toBunString(global);
+                defer bunstr.deref();
+                const utf8_string = bunstr.toUTF8(bun.default_allocator);
+                defer utf8_string.deinit();
+
+                if (bun.strings.eql(utf8_string.byteSlice(), "react")) {
+                    const root = bun.getcwdAlloc(alloc) catch |err| switch (err) {
+                        error.OutOfMemory => {
+                            return global.throwOutOfMemory();
+                        },
+                        else => {
+                            return global.throwError(err, "while querying current working directory");
+                        },
+                    };
+
+                    const framework = try Framework.react(alloc);
+
+                    return UserOptions{
+                        .arena = arena,
+                        .allocations = allocations,
+                        .root = root,
+                        .framework = framework,
+                        .bundler_options = bundler_options,
+                    };
+                }
+            }
+            return global.throwInvalidArguments("'" ++ api_name ++ "' is not an object", .{});
+        }
 
         if (try config.getOptional(global, "bundlerOptions", JSValue)) |js_options| {
             if (try js_options.getOptional(global, "server", JSValue)) |server_options| {
@@ -93,7 +122,7 @@ pub const StringRefList = struct {
     pub const empty: StringRefList = .{ .strings = .{} };
 
     pub fn track(al: *StringRefList, str: ZigString.Slice) []const u8 {
-        al.strings.append(bun.default_allocator, str) catch bun.outOfMemory();
+        bun.handleOom(al.strings.append(bun.default_allocator, str));
         return str.slice();
     }
 
@@ -261,7 +290,7 @@ pub const Framework = struct {
                 .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/client.tsx") },
                 .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/server.tsx") },
                 .{ .code = bun.runtimeEmbedFile(.src, "bake/bun-framework-react/ssr.tsx") },
-            }) catch bun.outOfMemory(),
+            }) catch |err| bun.handleOom(err),
         };
     }
 
@@ -721,7 +750,12 @@ pub const Framework = struct {
         out.options.react_fast_refresh = mode == .development and renderer == .client and framework.react_fast_refresh != null;
         out.options.server_components = framework.server_components != null;
 
-        out.options.conditions = try bun.options.ESMConditions.init(arena, out.options.target.defaultConditions());
+        out.options.conditions = try bun.options.ESMConditions.init(
+            arena,
+            out.options.target.defaultConditions(),
+            out.options.target.isServerSide(),
+            bundler_options.conditions.keys(),
+        );
         if (renderer == .server and framework.server_components != null) {
             try out.options.conditions.appendSlice(&.{"react-server"});
         }
@@ -733,9 +767,6 @@ pub const Framework = struct {
         // This helps with package.json imports field resolution
         if (renderer == .server or renderer == .ssr) {
             try out.options.conditions.appendSlice(&.{"node"});
-        }
-        if (bundler_options.conditions.count() > 0) {
-            try out.options.conditions.appendSlice(bundler_options.conditions.keys());
         }
 
         out.options.production = mode != .development;
@@ -953,7 +984,7 @@ pub const PatternBuffer = struct {
 
 pub fn printWarning() void {
     // Silence this for the test suite
-    if (bun.getenvZ("BUN_DEV_SERVER_TEST_RUNNER") == null) {
+    if (bun.env_var.BUN_DEV_SERVER_TEST_RUNNER.get() == null) {
         bun.Output.warn(
             \\Be advised that Bun Bake is highly experimental, and its API
             \\will have breaking changes. Join the <magenta>#bake<r> Discord

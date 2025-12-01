@@ -1,9 +1,11 @@
 import { expectType } from "./utilities";
 
-new ReadableStream({
+new ReadableStream<string>({
   start(controller) {
     controller.enqueue("hello");
     controller.enqueue("world");
+    // @ts-expect-error
+    controller.enqueue(2);
     controller.close();
   },
 });
@@ -42,11 +44,22 @@ for await (const chunk of uint8Transform.readable) {
 declare const stream: ReadableStream<Uint8Array>;
 
 expectType(stream.json()).is<Promise<any>>();
-expectType(stream.bytes()).is<Promise<Uint8Array>>();
+expectType(stream.bytes()).is<Promise<Uint8Array<ArrayBuffer>>>();
 expectType(stream.text()).is<Promise<string>>();
 expectType(stream.blob()).is<Promise<Blob>>();
 
+import { ReadableStream as NodeStreamReadableStream } from "node:stream/web";
+
+declare const node_stream: NodeStreamReadableStream<Uint8Array>;
+
+expectType(node_stream.json()).is<Promise<any>>();
+expectType(node_stream.bytes()).is<Promise<Uint8Array<ArrayBuffer>>>();
+expectType(node_stream.text()).is<Promise<string>>();
+expectType(node_stream.blob()).is<Promise<Blob>>();
+
 Bun.file("./foo.csv").stream().pipeThrough(new TextDecoderStream()).pipeThrough(new TextEncoderStream());
+
+Bun.file("./foo.csv").stream().pipeThrough(new CompressionStream("gzip")).pipeThrough(new DecompressionStream("gzip"));
 
 Bun.file("./foo.csv")
   .stream()
@@ -58,3 +71,15 @@ Bun.file("./foo.csv")
       },
     }),
   );
+
+// @ts-expect-error These properties do not exist right now
+expectType(new ReadableStream().arrayBuffer());
+// @ts-expect-error These properties do not exist right now
+expectType(new ReadableStream().formData());
+
+expectType(new Blob([]).text()).is<Promise<string>>();
+expectType(new Blob([]).arrayBuffer()).is<Promise<ArrayBuffer>>();
+expectType(new Blob([]).bytes()).is<Promise<Uint8Array<ArrayBuffer>>>();
+expectType(new Blob([]).json()).is<Promise<any>>();
+expectType(new Blob([]).formData()).is<Promise<FormData>>();
+expectType(new Blob([]).stream()).is<ReadableStream<Uint8Array<ArrayBuffer>>>();

@@ -129,17 +129,17 @@ pub const Background = struct {
         } };
     }
 
-    pub fn toCss(this: *const Background, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const Background, dest: *Printer) PrintErr!void {
         var has_output = false;
 
         if (!this.color.eql(&CssColor.default())) {
-            try this.color.toCss(W, dest);
+            try this.color.toCss(dest);
             has_output = true;
         }
 
         if (!this.image.eql(&Image.default())) {
             if (has_output) try dest.writeStr(" ");
-            try this.image.toCss(W, dest);
+            try this.image.toCss(dest);
             has_output = true;
         }
 
@@ -148,11 +148,11 @@ pub const Background = struct {
             if (has_output) {
                 try dest.writeStr(" ");
             }
-            try position.toCss(W, dest);
+            try position.toCss(dest);
 
             if (!this.size.eql(&BackgroundSize.default())) {
                 try dest.delim('/', true);
-                try this.size.toCss(W, dest);
+                try this.size.toCss(dest);
             }
 
             has_output = true;
@@ -160,13 +160,13 @@ pub const Background = struct {
 
         if (!this.repeat.eql(&BackgroundRepeat.default())) {
             if (has_output) try dest.writeStr(" ");
-            try this.repeat.toCss(W, dest);
+            try this.repeat.toCss(dest);
             has_output = true;
         }
 
         if (!this.attachment.eql(&BackgroundAttachment.default())) {
             if (has_output) try dest.writeStr(" ");
-            try this.attachment.toCss(W, dest);
+            try this.attachment.toCss(dest);
             has_output = true;
         }
 
@@ -175,7 +175,7 @@ pub const Background = struct {
 
         if (output_padding_box) {
             if (has_output) try dest.writeStr(" ");
-            try this.origin.toCss(W, dest);
+            try this.origin.toCss(dest);
             has_output = true;
         }
 
@@ -184,7 +184,7 @@ pub const Background = struct {
         {
             if (has_output) try dest.writeStr(" ");
 
-            try this.clip.toCss(W, dest);
+            try this.clip.toCss(dest);
             has_output = true;
         }
 
@@ -192,7 +192,7 @@ pub const Background = struct {
         if (!has_output) {
             if (dest.minify) {
                 // `0 0` is the shortest valid background value
-                try this.position.toCss(W, dest);
+                try this.position.toCss(dest);
             } else {
                 try dest.writeStr("none");
             }
@@ -282,15 +282,15 @@ pub const BackgroundSize = union(enum) {
         }
     }
 
-    pub fn toCss(this: *const BackgroundSize, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const BackgroundSize, dest: *Printer) PrintErr!void {
         return switch (this.*) {
             .cover => dest.writeStr("cover"),
             .contain => dest.writeStr("contain"),
             .explicit => |explicit| {
-                try explicit.width.toCss(W, dest);
+                try explicit.width.toCss(dest);
                 if (explicit.height != .auto) {
                     try dest.writeStr(" ");
-                    try explicit.height.toCss(W, dest);
+                    try explicit.height.toCss(dest);
                 }
                 return;
             },
@@ -333,9 +333,9 @@ pub const BackgroundPosition = struct {
         return .{ .result = BackgroundPosition.fromPosition(pos) };
     }
 
-    pub fn toCss(this: *const BackgroundPosition, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const BackgroundPosition, dest: *Printer) PrintErr!void {
         const pos = this.intoPosition();
-        return pos.toCss(W, dest);
+        return pos.toCss(dest);
     }
 
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
@@ -398,7 +398,7 @@ pub const BackgroundRepeat = struct {
         return .{ .result = .{ .x = x, .y = y } };
     }
 
-    pub fn toCss(this: *const BackgroundRepeat, comptime W: type, dest: *Printer(W)) PrintErr!void {
+    pub fn toCss(this: *const BackgroundRepeat, dest: *Printer) PrintErr!void {
         const Repeat = BackgroundRepeatKeyword.repeat;
         const NoRepeat = BackgroundRepeatKeyword.@"no-repeat";
 
@@ -407,10 +407,10 @@ pub const BackgroundRepeat = struct {
         } else if (this.x == NoRepeat and this.y == Repeat) {
             return dest.writeStr("repeat-y");
         } else {
-            try this.x.toCss(W, dest);
+            try this.x.toCss(dest);
             if (this.y != this.x) {
                 try dest.writeStr(" ");
-                try this.y.toCss(W, dest);
+                try this.y.toCss(dest);
             }
         }
     }
@@ -734,7 +734,7 @@ pub const BackgroundHandler = struct {
                         bun.bits.insert(BackgroundProperty, &this.flushed_properties, prop);
                     }
 
-                    dest.append(allocator, Property{ .unparsed = unparsed }) catch bun.outOfMemory();
+                    bun.handleOom(dest.append(allocator, Property{ .unparsed = unparsed }));
                 } else return false;
             },
             else => return false,
@@ -784,7 +784,7 @@ pub const BackgroundHandler = struct {
             }
         }.predicate);
         if (this.has_prefix) {
-            this.decls.append(allocator, property.deepClone(allocator)) catch bun.outOfMemory();
+            bun.handleOom(this.decls.append(allocator, property.deepClone(allocator)));
         } else if (context.targets.browsers != null) {
             this.decls.clearRetainingCapacity();
         }
@@ -812,7 +812,7 @@ pub const BackgroundHandler = struct {
         this.has_any = false;
         const push = struct {
             fn push(self: *BackgroundHandler, alloc: Allocator, d: *css.DeclarationList, comptime property_field_name: []const u8, val: anytype) void {
-                d.append(alloc, @unionInit(Property, property_field_name, val)) catch bun.outOfMemory();
+                bun.handleOom(d.append(alloc, @unionInit(Property, property_field_name, val)));
                 const prop = @field(BackgroundProperty, property_field_name);
                 bun.bits.insert(BackgroundProperty, &self.flushed_properties, prop);
             }
@@ -919,7 +919,7 @@ pub const BackgroundHandler = struct {
                 push(this, allocator, dest, "background", backgrounds);
 
                 if (clip_property) |clip| {
-                    dest.append(allocator, clip) catch bun.outOfMemory();
+                    bun.handleOom(dest.append(allocator, clip));
                     this.flushed_properties.clip = true;
                 }
 
@@ -994,7 +994,7 @@ pub const BackgroundHandler = struct {
                 Property{
                     .@"background-clip" = .{ clips.deepClone(allocator), prefixes },
                 },
-            ) catch bun.outOfMemory();
+            ) catch |err| bun.handleOom(err);
             this.flushed_properties.clip = true;
         }
 
@@ -1033,7 +1033,7 @@ pub const BackgroundHandler = struct {
             }
         }
 
-        dest.appendSlice(allocator, this.decls.items) catch bun.outOfMemory();
+        bun.handleOom(dest.appendSlice(allocator, this.decls.items));
         this.decls.clearRetainingCapacity();
 
         this.flush(allocator, dest, context);

@@ -2,10 +2,12 @@ import { describe } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
-  itBundled("compile/HTMLServerBasic", {
-    compile: true,
-    files: {
-      "/entry.ts": /* js */ `
+  for (const backend of ["api", "cli"] as const) {
+    itBundled(`compile/${backend}/HTMLServerBasic`, {
+      compile: true,
+      backend: backend,
+      files: {
+        "/entry.ts": /* js */ `
         import index from "./index.html";
         
         using server = Bun.serve({
@@ -24,7 +26,7 @@ describe("bundler", () => {
         console.log("Has h1:", html.includes("Hello HTML"));
       
       `,
-      "/index.html": /* html */ `
+        "/index.html": /* html */ `
         <!DOCTYPE html>
         <html>
           <head>
@@ -37,24 +39,25 @@ describe("bundler", () => {
           </body>
         </html>
       `,
-      "/styles.css": /* css */ `
+        "/styles.css": /* css */ `
         body {
           background: blue;
         }
       `,
-      "/app.js": /* js */ `
+        "/app.js": /* js */ `
         console.log("Client app loaded");
       `,
-    },
-    run: {
-      stdout: "Status: 200\nContent-Type: text/html;charset=utf-8\nHas HTML tag: true\nHas h1: true",
-    },
-  });
+      },
+      run: {
+        stdout: "Status: 200\nContent-Type: text/html;charset=utf-8\nHas HTML tag: true\nHas h1: true",
+      },
+    });
 
-  itBundled("compile/HTMLServerMultipleRoutes", {
-    compile: true,
-    files: {
-      "/entry.ts": /* js */ `
+    itBundled(`compile/${backend}/HTMLServerMultipleRoutes`, {
+      compile: true,
+      backend: backend,
+      files: {
+        "/entry.ts": /* js */ `
         import home from "./home.html";
         import about from "./about.html";
         
@@ -78,7 +81,7 @@ describe("bundler", () => {
         const aboutHtml = await aboutRes.text();
         console.log("About has content:", aboutHtml.includes("About Page"));
       `,
-      "/home.html": /* html */ `
+        "/home.html": /* html */ `
         <!DOCTYPE html>
         <html>
           <head>
@@ -91,7 +94,7 @@ describe("bundler", () => {
           </body>
         </html>
       `,
-      "/about.html": /* html */ `
+        "/about.html": /* html */ `
         <!DOCTYPE html>
         <html>
           <head>
@@ -104,18 +107,19 @@ describe("bundler", () => {
           </body>
         </html>
       `,
-      "/styles.css": /* css */ `
+        "/styles.css": /* css */ `
         body {
           margin: 0;
           font-family: sans-serif;
         }
       `,
-      "/app.js": /* js */ `
+        "/app.js": /* js */ `
         console.log("App loaded");
       `,
-    },
-    run: {
-      stdout: "Home status: 200\nHome has content: true\nAbout status: 200\nAbout has content: true",
-    },
-  });
+      },
+      run: {
+        stdout: "Home status: 200\nHome has content: true\nAbout status: 200\nAbout has content: true",
+      },
+    });
+  }
 });

@@ -11,7 +11,7 @@ pub fn clone(self: *MutableString) Allocator.Error!MutableString {
     return MutableString.initCopy(self.allocator, self.list.items);
 }
 
-pub const Writer = std.io.Writer(*@This(), Allocator.Error, MutableString.writeAll);
+pub const Writer = std.Io.GenericWriter(*@This(), Allocator.Error, MutableString.writeAll);
 pub fn writer(self: *MutableString) Writer {
     return Writer{
         .context = self,
@@ -228,7 +228,7 @@ pub inline fn appendInt(self: *MutableString, int: u64) Allocator.Error!void {
     try self.list.ensureUnusedCapacity(self.allocator, count);
     const old = self.list.items.len;
     self.list.items.len += count;
-    bun.assert(count == std.fmt.formatIntBuf(self.list.items.ptr[old .. old + count], int, 10, .lower, .{}));
+    bun.assert(count == std.fmt.printInt(self.list.items.ptr[old .. old + count], int, 10, .lower, .{}));
 }
 
 pub inline fn appendAssumeCapacity(self: *MutableString, char: []const u8) void {
@@ -240,36 +240,41 @@ pub inline fn lenI(self: *MutableString) i32 {
     return @as(i32, @intCast(self.list.items.len));
 }
 
-pub fn toOwnedSlice(self: *MutableString) string {
-    return self.list.toOwnedSlice(self.allocator) catch bun.outOfMemory(); // TODO
+pub fn takeSlice(self: *MutableString) []u8 {
+    const out = self.list.items;
+    self.list = .{};
+    return out;
+}
+
+pub fn toOwnedSlice(self: *MutableString) []u8 {
+    return bun.handleOom(self.list.toOwnedSlice(self.allocator)); // TODO
+}
+
+pub fn toDynamicOwned(self: *MutableString) DynamicOwned([]u8) {
+    return .fromRawIn(self.toOwnedSlice(), self.allocator);
+}
+
+/// `self.allocator` must be `bun.default_allocator`.
+pub fn toDefaultOwned(self: *MutableString) Owned([]u8) {
+    bun.safety.alloc.assertEq(self.allocator, bun.default_allocator);
+    return .fromRaw(self.toOwnedSlice());
 }
 
 pub fn slice(self: *MutableString) []u8 {
     return self.list.items;
 }
 
-/// Clear the existing value without freeing the memory or shrinking the capacity.
-pub fn move(self: *MutableString) []u8 {
-    const out = self.list.items;
-    self.list = .{};
-    return out;
-}
-
 /// Appends `0` if needed
 pub fn sliceWithSentinel(self: *MutableString) [:0]u8 {
     if (self.list.items.len > 0 and self.list.items[self.list.items.len - 1] != 0) {
-        self.list.append(
-            self.allocator,
-            0,
-        ) catch unreachable;
+        bun.handleOom(self.list.append(self.allocator, 0));
     }
-
     return self.list.items[0 .. self.list.items.len - 1 :0];
 }
 
 pub fn toOwnedSliceLength(self: *MutableString, length: usize) string {
     self.list.items.len = length;
-    return self.list.toOwnedSlice(self.allocator) catch bun.outOfMemory(); // TODO
+    return self.toOwnedSlice();
 }
 
 pub fn containsChar(self: *const MutableString, char: u8) bool {
@@ -314,7 +319,7 @@ pub const BufferedWriter = struct {
 
     const max = 2048;
 
-    pub const Writer = std.io.Writer(*BufferedWriter, Allocator.Error, BufferedWriter.writeAll);
+    pub const Writer = std.Io.GenericWriter(*BufferedWriter, Allocator.Error, BufferedWriter.writeAll);
 
     inline fn remain(this: *BufferedWriter) []u8 {
         return this.buffer[this.pos..];
@@ -463,3 +468,6 @@ const Allocator = std.mem.Allocator;
 const bun = @import("bun");
 const js_lexer = bun.js_lexer;
 const strings = bun.strings;
+
+const DynamicOwned = bun.ptr.DynamicOwned;
+const Owned = bun.ptr.Owned;

@@ -11,7 +11,7 @@ pub const EnvStr = packed struct(u128) {
     tag: Tag = .empty,
     len: usize = 0,
 
-    const debug = bun.Output.scoped(.EnvStr, true);
+    const debug = bun.Output.scoped(.EnvStr, .hidden);
 
     const Tag = enum(u16) {
         /// no value
@@ -46,7 +46,7 @@ pub const EnvStr = packed struct(u128) {
         if (old_str.len == 0)
             return .{ .tag = .empty, .ptr = 0, .len = 0 };
 
-        const str = bun.default_allocator.dupe(u8, old_str) catch bun.outOfMemory();
+        const str = bun.handleOom(bun.default_allocator.dupe(u8, old_str));
         return .{
             .ptr = toPtr(RefCountedStr.init(str)),
             .len = str.len,
@@ -70,6 +70,21 @@ pub const EnvStr = packed struct(u128) {
             .slice => this.castSlice(),
             .refcounted => this.castRefCounted().byteSlice(),
         };
+    }
+
+    pub fn memoryCost(this: EnvStr) usize {
+        const divisor: usize = brk: {
+            if (this.asRefCounted()) |refc| {
+                break :brk refc.refcount;
+            }
+            break :brk 1;
+        };
+        if (divisor == 0) {
+            @branchHint(.unlikely);
+            return 0;
+        }
+
+        return this.len / divisor;
     }
 
     pub fn ref(this: EnvStr) void {

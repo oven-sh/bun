@@ -61,7 +61,7 @@ pub fn writeBind(
     // must match the number of parameters needed by the query.
     try writer.short(len);
 
-    debug("Bind: {} ({d} args)", .{ bun.fmt.quote(name), len });
+    debug("Bind: {f} ({d} args)", .{ bun.fmt.quote(name), len });
     iter.to(0);
     var i: usize = 0;
     while (try iter.next()) |value| : (i += 1) {
@@ -194,7 +194,7 @@ pub fn writeQuery(
             .query = query,
         };
         try q.writeInternal(Context, writer);
-        debug("Parse: {}", .{bun.fmt.quote(query)});
+        debug("Parse: {f}", .{bun.fmt.quote(query)});
     }
 
     {
@@ -204,7 +204,7 @@ pub fn writeQuery(
             },
         };
         try d.writeInternal(Context, writer);
-        debug("Describe: {}", .{bun.fmt.quote(name)});
+        debug("Describe: {f}", .{bun.fmt.quote(name)});
     }
 }
 
@@ -322,9 +322,9 @@ pub fn onData(
     }
 }
 
-pub const Queue = std.fifo.LinearFifo(*PostgresSQLQuery, .Dynamic);
+pub const Queue = bun.LinearFifo(*PostgresSQLQuery, .Dynamic);
 
-const debug = bun.Output.scoped(.Postgres, false);
+const debug = bun.Output.scoped(.Postgres, .visible);
 
 const PostgresSQLConnection = @import("./PostgresSQLConnection.zig");
 const PostgresSQLQuery = @import("./PostgresSQLQuery.zig");
@@ -332,7 +332,7 @@ const PostgresSQLStatement = @import("./PostgresSQLStatement.zig");
 const Signature = @import("./Signature.zig");
 const protocol = @import("./PostgresProtocol.zig");
 const std = @import("std");
-const QueryBindingIterator = @import("./QueryBindingIterator.zig").QueryBindingIterator;
+const QueryBindingIterator = @import("../shared/QueryBindingIterator.zig").QueryBindingIterator;
 
 const types = @import("./PostgresTypes.zig");
 const AnyPostgresError = @import("./PostgresTypes.zig").AnyPostgresError;

@@ -69,6 +69,17 @@ pub const create_bun_socket_error_t = enum(c_int) {
     load_ca_file,
     invalid_ca_file,
     invalid_ca,
+    invalid_ciphers,
+
+    pub fn message(this: create_bun_socket_error_t) ?[]const u8 {
+        return switch (this) {
+            .none => null,
+            .load_ca_file => "Failed to load CA file",
+            .invalid_ca_file => "Invalid CA file",
+            .invalid_ca => "Invalid CA",
+            .invalid_ciphers => "Invalid ciphers",
+        };
+    }
 
     pub fn toJS(this: create_bun_socket_error_t, globalObject: *jsc.JSGlobalObject) jsc.JSValue {
         return switch (this) {
@@ -79,6 +90,7 @@ pub const create_bun_socket_error_t = enum(c_int) {
             .load_ca_file => globalObject.ERR(.BORINGSSL, "Failed to load CA file", .{}).toJS(),
             .invalid_ca_file => globalObject.ERR(.BORINGSSL, "Invalid CA file", .{}).toJS(),
             .invalid_ca => globalObject.ERR(.BORINGSSL, "Invalid CA", .{}).toJS(),
+            .invalid_ciphers => globalObject.ERR(.BORINGSSL, "Invalid ciphers", .{}).toJS(),
         };
     }
 };
@@ -143,6 +155,14 @@ pub const LIBUS_SOCKET_DESCRIPTOR = switch (bun.Environment.isWindows) {
     true => *anyopaque,
     false => i32,
 };
+
+const c = struct {
+    pub extern fn us_get_default_ciphers() [*:0]const u8;
+};
+
+pub fn get_default_ciphers() [:0]const u8 {
+    return c.us_get_default_ciphers()[0..bun.len(c.us_get_default_ciphers()) :0];
+}
 
 const bun = @import("bun");
 const Environment = bun.Environment;

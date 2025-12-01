@@ -480,7 +480,7 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_deleteBody(JSC::J
         }
     }
 
-    if (nameValue.isString()) {
+    if (nameValue && nameValue.isString()) {
         RETURN_IF_EXCEPTION(throwScope, {});
 
         if (!nameValue.isUndefined() && !nameValue.isNull()) {

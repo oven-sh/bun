@@ -58,6 +58,8 @@
 #endif
 #endif
 
+extern "C" size_t Bun__Feature__heap_snapshot;
+
 using namespace JSC;
 using namespace WTF;
 using namespace WebCore;
@@ -225,10 +227,10 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
     }
 
     const auto createdSortedTypeCounts =
-        [&](JSC::TypeCountSet* typeCounts) -> JSC::JSValue {
+        [&](JSC::TypeCountSet const& typeCounts) -> JSC::JSValue {
         WTF::Vector<std::pair<Identifier, unsigned>> counts;
-        counts.reserveInitialCapacity(typeCounts->size());
-        for (auto& it : *typeCounts) {
+        counts.reserveInitialCapacity(typeCounts.size());
+        for (auto& it : typeCounts) {
             if (it.value > 0)
                 counts.append(
                     std::make_pair(Identifier::fromString(vm, it.key), it.value));
@@ -264,8 +266,8 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
         return objectTypeCounts;
     };
 
-    JSValue objectTypeCounts = createdSortedTypeCounts(vm.heap.objectTypeCounts().get());
-    JSValue protectedCounts = createdSortedTypeCounts(vm.heap.protectedObjectTypeCounts().get());
+    JSValue objectTypeCounts = createdSortedTypeCounts(vm.heap.objectTypeCounts());
+    JSValue protectedCounts = createdSortedTypeCounts(vm.heap.protectedObjectTypeCounts());
 
     JSObject* object = constructEmptyObject(globalObject);
     object->putDirect(vm, Identifier::fromString(vm, "objectTypeCounts"_s),
@@ -343,7 +345,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
 
         auto* zoneSizesObject = constructEmptyObject(globalObject);
         for (auto& it : zoneSizes) {
-            zoneSizesObject->putDirect(vm, it.first, jsDoubleNumber(it.second));
+            zoneSizesObject->putDirect(vm, it.first, jsNumber(it.second));
         }
 
         object->putDirect(vm, Identifier::fromString(vm, "zones"_s),
@@ -732,6 +734,9 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging,
     JSLockHolder lock(vm);
     DeferTermination deferScope(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Bun__Feature__heap_snapshot += 1;
+
     String jsonString;
     {
         DeferGCForAWhile deferGC(vm); // Prevent concurrent GC from interfering with
@@ -777,7 +782,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
 
     Vector<JSC::Strong<JSC::JSObject>> transferList;
     Vector<RefPtr<MessagePort>> dummyPorts;
-    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts);
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), dummyPorts, SerializationForStorage::Yes);
     EXCEPTION_ASSERT(serialized.hasException() == !!throwScope.exception());
     if (serialized.hasException()) {
         WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
@@ -882,7 +887,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEstimateDirectMemoryUsageOf, (JSGlobalObject * 
     if (value.isCell()) {
         auto& vm = JSC::getVM(globalObject);
         EnsureStillAliveScope alive = value;
-        return JSValue::encode(jsDoubleNumber(alive.value().asCell()->estimatedSizeInBytes(vm)));
+        return JSValue::encode(jsNumber(alive.value().asCell()->estimatedSizeInBytes(vm)));
     }
 
     return JSValue::encode(jsNumber(0));

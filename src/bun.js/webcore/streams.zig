@@ -207,8 +207,8 @@ pub const Result = union(Tag) {
 
     pub fn deinit(this: *Result) void {
         switch (this.*) {
-            .owned => |*owned| owned.deinitWithAllocator(bun.default_allocator),
-            .owned_and_done => |*owned_and_done| owned_and_done.deinitWithAllocator(bun.default_allocator),
+            .owned => |*owned| owned.clearAndFree(bun.default_allocator),
+            .owned_and_done => |*owned_and_done| owned_and_done.clearAndFree(bun.default_allocator),
             .err => |err| {
                 if (err == .JSValue) {
                     err.JSValue.unprotect();
@@ -373,21 +373,17 @@ pub const Result = union(Tag) {
             };
         }
 
-        pub fn fulfillPromise(
-            result: Writable,
-            promise: *JSPromise,
-            globalThis: *JSGlobalObject,
-        ) void {
+        pub fn fulfillPromise(result: Writable, promise: *JSPromise, globalThis: *JSGlobalObject) void {
             defer promise.toJS().unprotect();
             switch (result) {
                 .err => |err| {
-                    promise.reject(globalThis, err.toJS(globalThis));
+                    promise.reject(globalThis, err.toJS(globalThis)) catch {}; // TODO: properly propagate exception upwards
                 },
                 .done => {
-                    promise.resolve(globalThis, JSValue.jsBoolean(false));
+                    promise.resolve(globalThis, .false) catch {}; // TODO: properly propagate exception upwards
                 },
                 else => {
-                    promise.resolve(globalThis, result.toJS(globalThis));
+                    promise.resolve(globalThis, result.toJS(globalThis)) catch {}; // TODO: properly propagate exception upwards
                 },
             }
         }
@@ -405,7 +401,7 @@ pub const Result = union(Tag) {
 
                 // false == controller.close()
                 // undefined == noop, but we probably won't send it
-                .done => jsc.JSValue.jsBoolean(true),
+                .done => .true,
 
                 .pending => |pending| pending.promise(globalThis).toJS(),
             };
@@ -537,21 +533,21 @@ pub const Result = union(Tag) {
                     break :brk js_err;
                 };
                 result.* = .{ .temporary = .{} };
-                promise.reject(globalThis, value);
+                promise.reject(globalThis, value) catch {}; // TODO: properly propagate exception upwards
             },
             .done => {
-                promise.resolve(globalThis, JSValue.jsBoolean(false));
+                promise.resolve(globalThis, .false) catch {}; // TODO: properly propagate exception upwards
             },
             else => {
                 const value = result.toJS(globalThis) catch |err| {
                     result.* = .{ .temporary = .{} };
-                    promise.reject(globalThis, err);
+                    promise.reject(globalThis, err) catch {}; // TODO: properly propagate exception upwards
                     return;
                 };
                 value.ensureStillAlive();
 
                 result.* = .{ .temporary = .{} };
-                promise.resolve(globalThis, value);
+                promise.resolve(globalThis, value) catch {}; // TODO: properly propagate exception upwards
             },
         }
     }
@@ -608,7 +604,7 @@ pub const Result = union(Tag) {
             // false == controller.close()
             // undefined == noop, but we probably won't send it
             .done => {
-                return jsc.JSValue.jsBoolean(false);
+                return .false;
             },
         }
     }
@@ -702,7 +698,7 @@ pub const Signal = struct {
 pub fn HTTPServerWritable(comptime ssl: bool) type {
     return struct {
         const UWSResponse = uws.NewApp(ssl).Response;
-        res: *UWSResponse,
+        res: ?*UWSResponse,
         buffer: bun.ByteList,
         pooled_buffer: ?*WebCore.ByteListPool.Node = null,
         offset: Blob.SizeType = 0,
@@ -729,7 +725,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         auto_flusher: WebCore.AutoFlusher = .{},
 
-        const log = Output.scoped(.HTTPServerWritable, false);
+        const log = Output.scoped(.HTTPServerWritable, .visible);
 
         pub fn connect(this: *@This(), signal: Signal) void {
             this.signal = signal;
@@ -772,24 +768,28 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
         fn sendWithoutAutoFlusher(this: *@This(), buf: []const u8) bool {
             bun.assert(!this.done);
-            defer log("send: {d} bytes (backpressure: {any})", .{ buf.len, this.has_backpressure });
+            defer log("send: {d} bytes (backpressure: {})", .{ buf.len, this.has_backpressure });
 
-            if (this.requested_end and !this.res.state().isHttpWriteCalled()) {
+            const res = this.res orelse {
+                return false;
+            };
+
+            if (this.requested_end and !res.state().isHttpWriteCalled()) {
                 this.handleFirstWriteIfNecessary();
-                const success = this.res.tryEnd(buf, this.end_len, false);
+                const success = res.tryEnd(buf, this.end_len, false);
                 if (success) {
                     this.has_backpressure = false;
                     this.handleWrote(this.end_len);
-                } else {
+                } else if (this.res != null) {
                     this.has_backpressure = true;
-                    this.res.onWritable(*@This(), onWritable, this);
+                    res.onWritable(*@This(), onWritable, this);
                 }
                 return success;
             }
             // clean this so we know when its relevant or not
             this.end_len = 0;
             // we clear the onWritable handler so uWS can handle the backpressure for us
-            this.res.clearOnWritable();
+            res.clearOnWritable();
             this.handleFirstWriteIfNecessary();
             // uWebSockets lacks a tryWrite() function
             // This means that backpressure will be handled by appending to an "infinite" memory buffer
@@ -797,10 +797,10 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             // so in this scenario, we just append to the buffer
             // and report success
             if (this.requested_end) {
-                this.res.end(buf, false);
+                res.end(buf, false);
                 this.has_backpressure = false;
             } else {
-                this.has_backpressure = this.res.write(buf) == .backpressure;
+                this.has_backpressure = res.write(buf) == .backpressure;
             }
             this.handleWrote(buf.len);
             return true;
@@ -821,9 +821,8 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             // onWritable reset backpressure state to allow flushing
             this.has_backpressure = false;
             if (this.aborted) {
-                this.res.clearOnWritable();
                 this.signal.close(null);
-                this.flushPromise();
+                this.flushPromise() catch {}; // TODO: properly propagate exception upwards
                 this.finalize();
                 return false;
             }
@@ -837,9 +836,8 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             // if we have nothing to write, we are done
             if (chunk.len == 0) {
                 if (this.done) {
-                    this.res.clearOnWritable();
                     this.signal.close(null);
-                    this.flushPromise();
+                    this.flushPromise() catch {}; // TODO: properly propagate exception upwards
                     this.finalize();
                     return true;
                 }
@@ -851,16 +849,18 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 total_written = chunk.len;
 
                 if (this.requested_end) {
-                    this.res.clearOnWritable();
+                    if (this.res) |res| {
+                        res.clearOnWritable();
+                    }
                     this.signal.close(null);
-                    this.flushPromise();
+                    this.flushPromise() catch {}; // TODO: properly propagate exception upwards
                     this.finalize();
                     return true;
                 }
             }
 
             // flush the javascript promise from calling .flush()
-            this.flushPromise();
+            this.flushPromise() catch {}; // TODO: properly propagate exception upwards
 
             // pending_flush or callback could have caused another send()
             // so we check again if we should report readiness
@@ -875,7 +875,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         pub fn start(this: *@This(), stream_start: Start) bun.sys.Maybe(void) {
-            if (this.aborted or this.res.hasResponded()) {
+            if (this.aborted or this.res == null or this.res.?.hasResponded()) {
                 this.markDone();
                 this.signal.close(null);
                 return .success;
@@ -883,7 +883,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             this.wrote = 0;
             this.wrote_at_start_of_flush = 0;
-            this.flushPromise();
+            this.flushPromise() catch {}; // TODO: properly propagate exception upwards
 
             if (this.buffer.cap == 0) {
                 bun.assert(this.pooled_buffer == null);
@@ -906,17 +906,13 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 else => {},
             }
 
-            var list = this.buffer.listManaged(this.allocator);
-            list.clearRetainingCapacity();
-            list.ensureTotalCapacityPrecise(this.highWaterMark) catch return .{ .err = Syscall.Error.oom };
-            this.buffer.update(list);
+            this.buffer.clearRetainingCapacity();
+            this.buffer.ensureTotalCapacityPrecise(this.allocator, this.highWaterMark) catch
+                return .{ .err = Syscall.Error.oom };
 
             this.done = false;
-
             this.signal.start();
-
             log("start({d})", .{this.highWaterMark});
-
             return .success;
         }
 
@@ -945,7 +941,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         pub fn flushFromJS(this: *@This(), globalThis: *JSGlobalObject, wait: bool) bun.sys.Maybe(JSValue) {
-            log("flushFromJS({any})", .{wait});
+            log("flushFromJS({})", .{wait});
             this.unregisterAutoFlusher();
 
             if (!wait) {
@@ -985,7 +981,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 return .success;
             }
 
-            if (this.res.hasResponded()) {
+            if (this.res == null or this.res.?.hasResponded()) {
                 this.markDone();
                 this.signal.close(null);
             }
@@ -1040,7 +1036,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 return .{ .owned = 0 };
             }
 
-            if (this.res.hasResponded()) {
+            if (this.res == null or this.res.?.hasResponded()) {
                 this.signal.close(null);
                 this.markDone();
                 return .{ .done = {} };
@@ -1098,7 +1094,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 return .{ .owned = 0 };
             }
 
-            if (this.res.hasResponded()) {
+            if (this.res == null or this.res.?.hasResponded()) {
                 this.signal.close(null);
                 this.markDone();
                 return .{ .done = {} };
@@ -1132,13 +1128,13 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         // In this case, it's always an error
         pub fn end(this: *@This(), err: ?Syscall.Error) bun.sys.Maybe(void) {
-            log("end({any})", .{err});
+            log("end({?f})", .{err});
 
             if (this.requested_end) {
                 return .success;
             }
 
-            if (this.done or this.res.hasResponded()) {
+            if (this.done or this.res == null or this.res.?.hasResponded()) {
                 this.signal.close(err);
                 this.markDone();
                 this.finalize();
@@ -1167,7 +1163,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 return .{ .result = jsc.JSValue.jsNumber(0) };
             }
 
-            if (this.done or this.res.hasResponded()) {
+            if (this.done or this.res == null or this.res.?.hasResponded()) {
                 this.requested_end = true;
                 this.signal.close(null);
                 this.markDone();
@@ -1188,11 +1184,13 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                     return .{ .result = value };
                 }
             } else {
-                this.res.end("", false);
+                if (this.res) |res| {
+                    res.end("", false);
+                }
             }
 
             this.markDone();
-            this.flushPromise();
+            this.flushPromise() catch {}; // TODO: properly propagate exception upwards
             this.signal.close(null);
             this.finalize();
 
@@ -1206,13 +1204,14 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         pub fn abort(this: *@This()) void {
             log("onAborted()", .{});
             this.done = true;
+            this.res = null;
             this.unregisterAutoFlusher();
 
             this.aborted = true;
 
             this.signal.close(null);
 
-            this.flushPromise();
+            this.flushPromise() catch {}; // TODO: properly propagate exception upwards
             this.finalize();
         }
 
@@ -1222,8 +1221,9 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         fn registerAutoFlusher(this: *@This()) void {
+            const res = this.res orelse return;
             // if we enqueue data we should reset the timeout
-            this.res.resetTimeout();
+            res.resetTimeout();
             if (!this.auto_flusher.registered)
                 AutoFlusher.registerDeferredMicrotaskWithTypeUnchecked(@This(), this, this.globalThis.bunVM());
         }
@@ -1252,12 +1252,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         pub fn destroy(this: *@This()) void {
             log("destroy()", .{});
-            var bytes = this.buffer.listManaged(this.allocator);
-            if (bytes.capacity > 0) {
-                this.buffer = bun.ByteList.init("");
-                bytes.deinit();
-            }
-
+            this.buffer.deinit(this.allocator);
             this.unregisterAutoFlusher();
             this.allocator.destroy(this);
         }
@@ -1268,14 +1263,19 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             log("finalize()", .{});
             if (!this.done) {
                 this.unregisterAutoFlusher();
-                // make sure we detached the handlers before flushing inside the finalize function
-                this.res.clearOnWritable();
-                this.res.clearAborted();
-                this.res.clearOnData();
+                if (this.res) |res| {
+                    // make sure we detached the handlers before flushing inside the finalize function
+                    res.clearOnWritable();
+                    res.clearAborted();
+                    res.clearOnData();
+                }
                 _ = this.flushNoWait();
                 this.done = true;
-                // is actually fine to call this if the socket is closed because of flushNoWait, the free will be defered by usockets
-                this.res.endStream(false);
+
+                if (this.res) |res| {
+                    // is actually fine to call this if the socket is closed because of flushNoWait, the free will be defered by usockets
+                    res.endStream(false);
+                }
             }
 
             if (comptime !FeatureFlags.http_buffer_pooling) {
@@ -1285,19 +1285,18 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             if (this.pooled_buffer) |pooled| {
                 this.buffer.len = 0;
                 if (this.buffer.cap > 64 * 1024) {
-                    this.buffer.deinitWithAllocator(bun.default_allocator);
-                    this.buffer = bun.ByteList.init("");
+                    this.buffer.clearAndFree(bun.default_allocator);
                 }
                 pooled.data = this.buffer;
 
-                this.buffer = bun.ByteList.init("");
+                this.buffer = bun.ByteList.empty;
                 this.pooled_buffer = null;
                 pooled.release();
             } else if (this.buffer.cap == 0) {
                 //
             } else if (FeatureFlags.http_buffer_pooling and !WebCore.ByteListPool.full()) {
                 const buffer = this.buffer;
-                this.buffer = bun.ByteList.init("");
+                this.buffer = bun.ByteList.empty;
                 WebCore.ByteListPool.push(this.allocator, buffer);
             } else {
                 // Don't release this buffer until destroy() is called
@@ -1305,15 +1304,15 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
         }
 
-        pub fn flushPromise(this: *@This()) void {
+        pub fn flushPromise(this: *@This()) bun.JSTerminated!void {
             if (this.pending_flush) |prom| {
                 log("flushPromise()", .{});
 
                 this.pending_flush = null;
                 const globalThis = this.globalThis;
                 prom.toJS().unprotect();
-                prom.resolve(globalThis, jsc.JSValue.jsNumber(this.wrote -| this.wrote_at_start_of_flush));
-                this.wrote_at_start_of_flush = this.wrote;
+                defer this.wrote_at_start_of_flush = this.wrote;
+                try prom.resolve(globalThis, jsc.JSValue.jsNumber(this.wrote -| this.wrote_at_start_of_flush));
             }
         }
 
@@ -1337,7 +1336,7 @@ pub const NetworkSink = struct {
     done: bool = false,
     cancel: bool = false,
 
-    const log = bun.Output.scoped(.NetworkSink, false);
+    const log = bun.Output.scoped(.NetworkSink, .visible);
 
     fn getHighWaterMark(this: *@This()) Blob.SizeType {
         if (this.task) |task| {
@@ -1391,10 +1390,10 @@ pub const NetworkSink = struct {
         }
     }
 
-    pub fn onWritable(task: *bun.S3.MultiPartUpload, this: *@This(), flushed: u64) void {
+    pub fn onWritable(task: *bun.S3.MultiPartUpload, this: *@This(), flushed: u64) bun.JSTerminated!void {
         log("onWritable flushed: {d} state: {s}", .{ flushed, @tagName(task.state) });
         if (this.flushPromise.hasValue()) {
-            this.flushPromise.resolve(this.globalThis, jsc.JSValue.jsNumber(flushed));
+            try this.flushPromise.resolve(this.globalThis, jsc.JSValue.jsNumber(flushed));
         }
     }
 
@@ -1492,7 +1491,7 @@ pub const NetworkSink = struct {
         this.ended = true;
         // flush everything and send EOF
         if (this.task) |task| {
-            _ = task.writeBytes("", true) catch bun.outOfMemory();
+            _ = bun.handleOom(task.writeBytes("", true));
         }
 
         this.signal.close(err);
@@ -1511,7 +1510,7 @@ pub const NetworkSink = struct {
             if (!this.ended) {
                 this.ended = true;
                 // we need to send EOF
-                _ = task.writeBytes("", true) catch bun.outOfMemory();
+                _ = bun.handleOom(task.writeBytes("", true));
                 this.signal.close(null);
             }
             return .{ .result = value };
@@ -1545,16 +1544,16 @@ pub const BufferAction = union(enum) {
 
     pub const Tag = @typeInfo(BufferAction).@"union".tag_type.?;
 
-    pub fn fulfill(this: *BufferAction, global: *jsc.JSGlobalObject, blob: *AnyBlob) void {
-        blob.wrap(.{ .normal = this.swap() }, global, this.*);
+    pub fn fulfill(this: *BufferAction, global: *jsc.JSGlobalObject, blob: *AnyBlob) bun.JSTerminated!void {
+        return blob.wrap(.{ .normal = this.swap() }, global, this.*);
     }
 
-    pub fn reject(this: *BufferAction, global: *jsc.JSGlobalObject, err: Result.StreamError) void {
-        this.swap().reject(global, err.toJSWeak(global)[0]);
+    pub fn reject(this: *BufferAction, global: *jsc.JSGlobalObject, err: Result.StreamError) bun.JSTerminated!void {
+        return this.swap().reject(global, err.toJSWeak(global)[0]);
     }
 
-    pub fn resolve(this: *BufferAction, global: *jsc.JSGlobalObject, result: jsc.JSValue) void {
-        this.swap().resolve(global, result);
+    pub fn resolve(this: *BufferAction, global: *jsc.JSGlobalObject, result: jsc.JSValue) bun.JSTerminated!void {
+        return this.swap().resolve(global, result);
     }
 
     pub fn value(this: *BufferAction) jsc.JSValue {
@@ -1608,9 +1607,9 @@ pub const ReadResult = union(enum) {
                 const done = is_done or (close_on_empty and slice.len == 0);
 
                 break :brk if (owned and done)
-                    Result{ .owned_and_done = bun.ByteList.init(slice) }
+                    Result{ .owned_and_done = bun.ByteList.fromOwnedSlice(slice) }
                 else if (owned)
-                    Result{ .owned = bun.ByteList.init(slice) }
+                    Result{ .owned = bun.ByteList.fromOwnedSlice(slice) }
                 else if (done)
                     Result{ .into_array_and_done = .{ .len = @as(Blob.SizeType, @truncate(slice.len)), .value = view } }
                 else
@@ -1619,28 +1618,6 @@ pub const ReadResult = union(enum) {
         };
     }
 };
-
-pub const AutoSizer = struct {
-    buffer: *bun.ByteList,
-    allocator: std.mem.Allocator,
-    max: usize,
-
-    pub fn resize(this: *AutoSizer, size: usize) ![]u8 {
-        const available = this.buffer.cap - this.buffer.len;
-        if (available >= size) return this.buffer.ptr[this.buffer.len..this.buffer.cap][0..size];
-        const to_grow = size -| available;
-        if (to_grow + @as(usize, this.buffer.cap) > this.max)
-            return this.buffer.ptr[this.buffer.len..this.buffer.cap];
-
-        var list = this.buffer.listManaged(this.allocator);
-        const prev_len = list.items.len;
-        try list.ensureTotalCapacity(to_grow + @as(usize, this.buffer.cap));
-        this.buffer.update(list);
-        return this.buffer.ptr[prev_len..@as(usize, this.buffer.cap)];
-    }
-};
-
-const string = []const u8;
 
 const std = @import("std");
 

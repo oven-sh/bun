@@ -76,7 +76,7 @@ pub const Yield = union(enum) {
         bun.debugAssert(_dbg_catch_exec_within_exec <= MAX_DEPTH);
         if (comptime Environment.isDebug) _dbg_catch_exec_within_exec += 1;
         defer {
-            if (comptime Environment.isDebug) log("Yield({s}) _dbg_catch_exec_within_exec = {d} - 1 = {d}", .{ @tagName(this), _dbg_catch_exec_within_exec, _dbg_catch_exec_within_exec + 1 });
+            if (comptime Environment.isDebug) log("Yield({s}) _dbg_catch_exec_within_exec = {d} - 1 = {d}", .{ @tagName(this), _dbg_catch_exec_within_exec, _dbg_catch_exec_within_exec - 1 });
             if (comptime Environment.isDebug) _dbg_catch_exec_within_exec -= 1;
         }
 
@@ -93,7 +93,7 @@ pub const Yield = union(enum) {
         // there can be nested pipelines, so we need a stack.
         var sfb = std.heap.stackFallback(@sizeOf(*Pipeline) * 4, bun.default_allocator);
         const alloc = sfb.get();
-        var pipeline_stack = std.ArrayList(*Pipeline).initCapacity(alloc, 4) catch bun.outOfMemory();
+        var pipeline_stack = bun.handleOom(std.array_list.Managed(*Pipeline).initCapacity(alloc, 4));
         defer pipeline_stack.deinit();
 
         // Note that we're using labelled switch statements but _not_
@@ -101,7 +101,15 @@ pub const Yield = union(enum) {
         // execution. Don't touch it.
         state: switch (this) {
             .pipeline => |x| {
-                pipeline_stack.append(x) catch bun.outOfMemory();
+                if (x.state == .done) {
+                    // remove it from the pipeline stack as calling `.next()` will now deinit it
+                    if (std.mem.indexOfScalar(*Pipeline, pipeline_stack.items, x)) |idx| {
+                        _ = pipeline_stack.orderedRemove(idx);
+                    }
+                    continue :state x.next();
+                }
+                bun.assert_eql(std.mem.indexOfScalar(*Pipeline, pipeline_stack.items, x), null);
+                bun.handleOom(pipeline_stack.append(x));
                 continue :state x.next();
             },
             .cmd => |x| continue :state x.next(),
@@ -125,7 +133,7 @@ pub const Yield = union(enum) {
         }
     }
 
-    pub fn drainPipelines(pipeline_stack: *std.ArrayList(*Pipeline)) ?Yield {
+    pub fn drainPipelines(pipeline_stack: *std.array_list.Managed(*Pipeline)) ?Yield {
         if (pipeline_stack.items.len == 0) return null;
         var i: i64 = @as(i64, @intCast(pipeline_stack.items.len)) - 1;
         while (i >= 0 and i < pipeline_stack.items.len) : (i -= 1) {

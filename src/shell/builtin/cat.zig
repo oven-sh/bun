@@ -118,7 +118,7 @@ pub fn next(this: *Cat) Yield {
 }
 
 pub fn onIOWriterChunk(this: *Cat, _: usize, err: ?jsc.SystemError) Yield {
-    debug("onIOWriterChunk(0x{x}, {s}, had_err={any})", .{ @intFromPtr(this), @tagName(this.state), err != null });
+    debug("onIOWriterChunk(0x{x}, {s}, had_err={})", .{ @intFromPtr(this), @tagName(this.state), err != null });
     const errno: ExitCode = if (err) |e| brk: {
         defer e.deref();
         break :brk @as(ExitCode, @intCast(@intFromEnum(e.getErrno())));
@@ -331,7 +331,7 @@ const Opts = struct {
     }
 };
 
-const debug = bun.Output.scoped(.ShellCat, true);
+const debug = bun.Output.scoped(.ShellCat, .hidden);
 
 const std = @import("std");
 

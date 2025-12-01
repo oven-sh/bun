@@ -28,21 +28,20 @@ pub const InitFromBytesOptions = struct {
 
 /// Ownership of `blob` is transferred to this function.
 pub fn initFromAnyBlob(blob: *const AnyBlob, options: InitFromBytesOptions) *StaticRoute {
-    var headers = Headers.from(options.headers, bun.default_allocator, .{ .body = blob }) catch bun.outOfMemory();
-    if (options.mime_type) |mime_type| {
-        if (headers.getContentType() == null) {
-            headers.append("Content-Type", mime_type.value) catch bun.outOfMemory();
+    var headers = bun.handleOom(Headers.from(options.headers, bun.default_allocator, .{ .body = blob }));
+    if (headers.getContentType() == null) {
+        if (options.mime_type) |mime_type| {
+            bun.handleOom(headers.append("Content-Type", mime_type.value));
+        } else if (blob.hasContentTypeFromUser()) {
+            bun.handleOom(headers.append("Content-Type", blob.contentType()));
         }
     }
 
     // Generate ETag if not already present
     if (headers.get("etag") == null) {
-        const slice = blob.slice();
-        const hash = std.hash.XxHash64.hash(0, slice);
-
-        var etag_buf: [32]u8 = undefined;
-        const etag_str = std.fmt.bufPrint(&etag_buf, "\"{x}\"", .{hash}) catch bun.outOfMemory();
-        headers.append("ETag", etag_str) catch bun.outOfMemory();
+        if (blob.slice().len > 0) {
+            bun.handleOom(ETag.appendToHeaders(blob.slice(), &headers));
+        }
     }
 
     return bun.new(StaticRoute, .{
@@ -94,10 +93,12 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
 
         // The user may want to pass in the same Response object multiple endpoints
         // Let's let them do that.
-        response.body.value.toBlobIfPossible();
+        const bodyValue = response.getBodyValue();
+        const was_string = bodyValue.wasString();
+        bodyValue.toBlobIfPossible();
 
         const blob: AnyBlob = brk: {
-            switch (response.body.value) {
+            switch (bodyValue.*) {
                 .Used => {
                     return globalThis.throwInvalidArguments("Response body has already been used", .{});
                 },
@@ -105,19 +106,23 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
                 .Null, .Empty => {
                     break :brk .{
                         .InternalBlob = .{
-                            .bytes = std.ArrayList(u8).init(bun.default_allocator),
+                            .bytes = std.array_list.Managed(u8).init(bun.default_allocator),
                         },
                     };
                 },
 
                 .Blob, .InternalBlob, .WTFStringImpl => {
-                    if (response.body.value == .Blob and response.body.value.Blob.needsToReadFile()) {
+                    if (bodyValue.* == .Blob and bodyValue.Blob.needsToReadFile()) {
                         return globalThis.throwTODO("TODO: support Bun.file(path) in static routes");
                     }
-                    var blob = response.body.value.use();
+                    var blob = bodyValue.use();
                     blob.globalThis = globalThis;
-                    blob.allocator = null;
-                    response.body.value = .{ .Blob = blob.dupe() };
+                    bun.assertf(
+                        !blob.isHeapAllocated(),
+                        "expected blob not to be heap-allocated",
+                        .{},
+                    );
+                    bodyValue.* = .{ .Blob = blob.dupe() };
 
                     break :brk .{ .Blob = blob };
                 },
@@ -130,13 +135,13 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
 
         var has_content_disposition = false;
 
-        if (response.init.headers) |headers| {
+        if (response.getInitHeaders()) |headers| {
             has_content_disposition = headers.fastHas(.ContentDisposition);
             headers.fastRemove(.TransferEncoding);
             headers.fastRemove(.ContentLength);
         }
 
-        var headers: Headers = if (response.init.headers) |h|
+        var headers: Headers = if (response.getInitHeaders()) |h|
             Headers.from(h, bun.default_allocator, .{
                 .body = &blob,
             }) catch {
@@ -149,18 +154,15 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
                 .allocator = bun.default_allocator,
             };
 
+        if (was_string and headers.getContentType() == null) {
+            bun.handleOom(headers.append("Content-Type", bun.http.MimeType.Table.@"text/plain; charset=utf-8".slice()));
+        }
+
         // Generate ETag if not already present
         if (headers.get("etag") == null) {
-            const slice = blob.slice();
-            const hash = std.hash.XxHash64.hash(0, slice);
-
-            var etag_buf: [32]u8 = undefined;
-            const etag_str = std.fmt.bufPrint(&etag_buf, "\"{x}\"", .{hash}) catch bun.outOfMemory();
-            headers.append("ETag", etag_str) catch {
-                var mutable_blob = blob;
-                mutable_blob.detach();
-                return globalThis.throwOutOfMemory();
-            };
+            if (blob.slice().len > 0) {
+                try ETag.appendToHeaders(blob.slice(), &headers);
+            }
         }
 
         return bun.new(StaticRoute, .{
@@ -181,18 +183,7 @@ pub fn fromJS(globalThis: *jsc.JSGlobalObject, argument: jsc.JSValue) bun.JSErro
 pub fn onHEADRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
     // Check If-None-Match for HEAD requests with 200 status
     if (this.status_code == 200) {
-        if (evaluateIfNoneMatch(this, req)) {
-            // Return 304 Not Modified
-            req.setYield(false);
-            this.ref();
-            if (this.server) |server| {
-                server.onPendingRequest();
-                resp.timeout(server.config().idleTimeout);
-            }
-            this.doWriteStatus(304, resp);
-            this.doWriteHeaders(resp);
-            resp.endWithoutBody(resp.shouldCloseConnection());
-            this.onResponseComplete(resp);
+        if (this.render304NotModifiedIfNoneMatch(req, resp)) {
             return;
         }
     }
@@ -235,18 +226,7 @@ pub fn onRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void 
 pub fn onGET(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
     // Check If-None-Match for GET requests with 200 status
     if (this.status_code == 200) {
-        if (evaluateIfNoneMatch(this, req)) {
-            // Return 304 Not Modified
-            req.setYield(false);
-            this.ref();
-            if (this.server) |server| {
-                server.onPendingRequest();
-                resp.timeout(server.config().idleTimeout);
-            }
-            this.doWriteStatus(304, resp);
-            this.doWriteHeaders(resp);
-            resp.endWithoutBody(resp.shouldCloseConnection());
-            this.onResponseComplete(resp);
+        if (this.render304NotModifiedIfNoneMatch(req, resp)) {
             return;
         }
     }
@@ -292,7 +272,7 @@ fn onResponseComplete(this: *StaticRoute, resp: AnyResponse) void {
     this.deref();
 }
 
-pub fn doRenderBlob(this: *StaticRoute, resp: AnyResponse, did_finish: *bool) void {
+fn doRenderBlob(this: *StaticRoute, resp: AnyResponse, did_finish: *bool) void {
     // We are not corked
     // The body is small
     // Faster to do the memcpy than to do the two network calls
@@ -305,7 +285,7 @@ pub fn doRenderBlob(this: *StaticRoute, resp: AnyResponse, did_finish: *bool) vo
     }
 }
 
-pub fn doRenderBlobCorked(this: *StaticRoute, resp: AnyResponse, did_finish: *bool) void {
+fn doRenderBlobCorked(this: *StaticRoute, resp: AnyResponse, did_finish: *bool) void {
     this.renderMetadata(resp);
     this.renderBytes(resp, did_finish);
 }
@@ -382,68 +362,42 @@ pub fn onWithMethod(this: *StaticRoute, method: bun.http.Method, resp: AnyRespon
     }
 }
 
-/// Parse a single entity tag from a string, returns the tag without quotes and whether it's weak
-fn parseEntityTag(tag_str: []const u8) struct { tag: []const u8, is_weak: bool } {
-    var str = std.mem.trim(u8, tag_str, " \t");
-
-    // Check for weak indicator
-    var is_weak = false;
-    if (std.mem.startsWith(u8, str, "W/")) {
-        is_weak = true;
-        str = str[2..];
-        str = std.mem.trimLeft(u8, str, " \t");
-    }
-
-    // Remove surrounding quotes
-    if (str.len >= 2 and str[0] == '"' and str[str.len - 1] == '"') {
-        str = str[1 .. str.len - 1];
-    }
-
-    return .{ .tag = str, .is_weak = is_weak };
-}
-
-/// Perform weak comparison between two entity tags according to RFC 9110 Section 8.8.3.2
-fn weakEntityTagMatch(tag1: []const u8, is_weak1: bool, tag2: []const u8, is_weak2: bool) bool {
-    _ = is_weak1;
-    _ = is_weak2;
-    // For weak comparison, we only compare the opaque tag values, ignoring weak indicators
-    return std.mem.eql(u8, tag1, tag2);
-}
-
-/// Evaluate If-None-Match condition according to RFC 9110 Section 13.1.2
-fn evaluateIfNoneMatch(this: *StaticRoute, req: *uws.Request) bool {
+fn render304NotModifiedIfNoneMatch(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) bool {
     const if_none_match = req.header("if-none-match") orelse return false;
-
-    // Get the ETag from our headers
-    const our_etag = this.headers.get("etag") orelse return false;
-    const our_parsed = parseEntityTag(our_etag);
-
-    // Handle "*" case
-    if (std.mem.eql(u8, std.mem.trim(u8, if_none_match, " \t"), "*")) {
-        return true; // Condition is false, so we should return 304
+    const etag = this.headers.get("etag") orelse return false;
+    if (if_none_match.len == 0 or etag.len == 0) {
+        return false;
     }
 
-    // Parse comma-separated list of entity tags
-    var iter = std.mem.splitScalar(u8, if_none_match, ',');
-    while (iter.next()) |tag_str| {
-        const parsed = parseEntityTag(tag_str);
-        if (weakEntityTagMatch(our_parsed.tag, our_parsed.is_weak, parsed.tag, parsed.is_weak)) {
-            return true; // Condition is false, so we should return 304
-        }
+    if (!ETag.ifNoneMatch(etag, if_none_match)) {
+        return false;
     }
 
-    return false; // Condition is true, continue with normal processing
+    // Return 304 Not Modified
+    req.setYield(false);
+    this.ref();
+    if (this.server) |server| {
+        server.onPendingRequest();
+        resp.timeout(server.config().idleTimeout);
+    }
+    this.doWriteStatus(304, resp);
+    this.doWriteHeaders(resp);
+    resp.endWithoutBody(resp.shouldCloseConnection());
+    this.onResponseComplete(resp);
+    return true;
 }
 
 const std = @import("std");
 
 const bun = @import("bun");
 const jsc = bun.jsc;
-const Headers = bun.http.Headers;
 const api = bun.schema.api;
 const AnyServer = jsc.API.AnyServer;
 const writeStatus = bun.api.server.writeStatus;
 const AnyBlob = jsc.WebCore.Blob.Any;
+
+const ETag = bun.http.ETag;
+const Headers = bun.http.Headers;
 
 const uws = bun.uws;
 const AnyResponse = uws.AnyResponse;

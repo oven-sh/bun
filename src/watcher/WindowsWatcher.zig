@@ -61,8 +61,8 @@ const EventIterator = struct {
     pub fn next(this: *EventIterator) ?FileEvent {
         if (!this.hasNext) return null;
         const info_size = @sizeOf(w.FILE_NOTIFY_INFORMATION);
-        const info: *w.FILE_NOTIFY_INFORMATION = @alignCast(@ptrCast(this.watcher.buf[this.offset..].ptr));
-        const name_ptr: [*]u16 = @alignCast(@ptrCast(this.watcher.buf[this.offset + info_size ..]));
+        const info: *w.FILE_NOTIFY_INFORMATION = @ptrCast(@alignCast(this.watcher.buf[this.offset..].ptr));
+        const name_ptr: [*]u16 = @ptrCast(@alignCast(this.watcher.buf[this.offset + info_size ..]));
         const filename: []u16 = name_ptr[0 .. info.FileNameLength / @sizeOf(u16)];
 
         const action: Action = @enumFromInt(info.Action);
@@ -217,7 +217,7 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.sys.Maybe(void) {
         const item_paths = this.watchlist.items(.file_path);
         log("number of watched items: {d}", .{item_paths.len});
         while (iter.next()) |event| {
-            const convert_res = bun.strings.copyUTF16IntoUTF8(buf[base_idx..], []const u16, event.filename);
+            const convert_res = bun.strings.copyUTF16IntoUTF8(buf[base_idx..], event.filename);
             const eventpath = buf[0 .. base_idx + convert_res.written];
 
             log("watcher update event: (filename: {s}, action: {s}", .{ eventpath, @tagName(event.action) });
@@ -293,6 +293,7 @@ fn processWatchEventBatch(this: *bun.Watcher, event_count: usize) bun.sys.Maybe(
 
     log("calling onFileUpdate (all_events.len = {d})", .{all_events.len});
 
+    this.writeTraceEvents(all_events, this.changed_filepaths[0 .. last_event_index + 1]);
     this.onFileUpdate(this.ctx, all_events, this.changed_filepaths[0 .. last_event_index + 1], this.watchlist);
 
     return .success;
@@ -309,7 +310,7 @@ pub fn createWatchEvent(event: FileEvent, index: WatchItemIndex) WatchEvent {
     };
 }
 
-const log = Output.scoped(.watcher, false);
+const log = Output.scoped(.watcher, .visible);
 
 const std = @import("std");
 const w = std.os.windows;

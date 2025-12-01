@@ -86,9 +86,10 @@ pub const BlobOrStringOrBuffer = union(enum) {
                 }
                 if (allow_request_response) {
                     if (value.as(jsc.WebCore.Request)) |request| {
-                        request.body.value.toBlobIfPossible();
+                        const bodyValue = request.getBodyValue();
+                        bodyValue.toBlobIfPossible();
 
-                        if (request.body.value.tryUseAsAnyBlob()) |any_blob_| {
+                        if (bodyValue.tryUseAsAnyBlob()) |any_blob_| {
                             var any_blob = any_blob_;
                             defer any_blob.detach();
                             return .{ .blob = any_blob.toBlob(global) };
@@ -98,9 +99,10 @@ pub const BlobOrStringOrBuffer = union(enum) {
                     }
 
                     if (value.as(jsc.WebCore.Response)) |response| {
-                        response.body.value.toBlobIfPossible();
+                        const bodyValue = response.getBodyValue();
+                        bodyValue.toBlobIfPossible();
 
-                        if (response.body.value.tryUseAsAnyBlob()) |any_blob_| {
+                        if (bodyValue.tryUseAsAnyBlob()) |any_blob_| {
                             var any_blob = any_blob_;
                             defer any_blob.detach();
                             return .{ .blob = any_blob.toBlob(global) };
@@ -130,8 +132,9 @@ pub const StringOrBuffer = union(enum) {
         switch (this.*) {
             .string => {
                 this.string.toThreadSafe();
+                const str = this.string;
                 this.* = .{
-                    .threadsafe_string = this.string,
+                    .threadsafe_string = str,
                 };
             },
             .threadsafe_string => {},
@@ -221,12 +224,11 @@ pub const StringOrBuffer = union(enum) {
                 if (!allow_string_object and str_type != .String) {
                     return null;
                 }
-                const str = try bun.String.fromJS(value, global);
-
+                var str = try bun.String.fromJS(value, global);
+                defer str.deref();
                 if (is_async) {
-                    defer str.deref();
                     var possible_clone = str;
-                    var sliced = possible_clone.toThreadSafeSlice(allocator);
+                    var sliced = try possible_clone.toThreadSafeSlice(allocator);
                     sliced.reportExtraMemory(global.vm());
 
                     if (sliced.underlying.isEmpty()) {
@@ -381,7 +383,7 @@ pub const Encoding = enum(u8) {
     }
 
     pub fn throwEncodingError(globalObject: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError {
-        return globalObject.ERR(.INVALID_ARG_VALUE, "encoding '{}' is an invalid encoding", .{value.fmtString(globalObject)}).throw();
+        return globalObject.ERR(.INVALID_ARG_VALUE, "encoding '{f}' is an invalid encoding", .{value.fmtString(globalObject)}).throw();
     }
 
     pub fn encodeWithSize(encoding: Encoding, globalObject: *jsc.JSGlobalObject, comptime size: usize, input: *const [size]u8) bun.JSError!jsc.JSValue {
@@ -399,7 +401,13 @@ pub const Encoding = enum(u8) {
             },
             .hex => {
                 var buf: [size * 4]u8 = undefined;
-                const out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch bun.outOfMemory();
+                const out = std.fmt.bufPrint(
+                    &buf,
+                    "{x}",
+                    .{input},
+                ) catch |err| switch (err) {
+                    error.NoSpaceLeft => unreachable,
+                };
                 const result = jsc.ZigString.init(out).toJS(globalObject);
                 return result;
             },
@@ -417,6 +425,11 @@ pub const Encoding = enum(u8) {
     }
 
     pub fn encodeWithMaxSize(encoding: Encoding, globalObject: *jsc.JSGlobalObject, comptime max_size: usize, input: []const u8) bun.JSError!jsc.JSValue {
+        bun.assertf(
+            input.len <= max_size,
+            "input length ({}) should not exceed max_size ({})",
+            .{ input.len, max_size },
+        );
         switch (encoding) {
             .base64 => {
                 var base64_buf: [std.base64.standard.Encoder.calcSize(max_size * 4)]u8 = undefined;
@@ -433,7 +446,13 @@ pub const Encoding = enum(u8) {
             },
             .hex => {
                 var buf: [max_size * 4]u8 = undefined;
-                const out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch bun.outOfMemory();
+                const out = std.fmt.bufPrint(
+                    &buf,
+                    "{x}",
+                    .{input},
+                ) catch |err| switch (err) {
+                    error.NoSpaceLeft => unreachable,
+                };
                 const result = jsc.ZigString.init(out).toJS(globalObject);
                 return result;
             },
@@ -517,9 +536,8 @@ pub const PathLike = union(enum) {
         switch (this.*) {
             .slice_with_underlying_string => {
                 this.slice_with_underlying_string.toThreadSafe();
-                this.* = .{
-                    .threadsafe_string = this.slice_with_underlying_string,
-                };
+                const slice_with_underlying_string = this.slice_with_underlying_string;
+                this.* = .{ .threadsafe_string = slice_with_underlying_string };
             },
             .buffer => {
                 this.buffer.buffer.value.protect();
@@ -605,6 +623,11 @@ pub const PathLike = union(enum) {
             const s = this.slice();
             const b = bun.path_buffer_pool.get();
             defer bun.path_buffer_pool.put(b);
+            // Device paths (\\.\, \\?\) and NT object paths (\??\) should not be normalized
+            // because the "." in \\.\pipe\name would be incorrectly stripped as a "current directory" component.
+            if (s.len >= 4 and bun.path.isSepAny(s[0]) and bun.path.isSepAny(s[1]) and (s[2] == '.' or s[2] == '?') and bun.path.isSepAny(s[3])) {
+                return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), s);
+            }
             if (s.len > 0 and bun.path.isSepAny(s[0])) {
                 const resolve = path_handler.PosixToWinNormalizer.resolveCWDWithExternalBuf(buf, s) catch @panic("Error while resolving path.");
                 const normal = path_handler.normalizeBuf(resolve, b, .windows);
@@ -653,7 +676,7 @@ pub const PathLike = union(enum) {
 
                 arguments.eat();
 
-                return try fromBunString(ctx, str, arguments.will_be_async, allocator);
+                return try fromBunString(ctx, &str, arguments.will_be_async, allocator);
             },
             else => {
                 if (arg.as(jsc.DOMURL)) |domurl| {
@@ -674,7 +697,7 @@ pub const PathLike = union(enum) {
                     }
                     arguments.eat();
 
-                    return try fromBunString(ctx, str, arguments.will_be_async, allocator);
+                    return try fromBunString(ctx, &str, arguments.will_be_async, allocator);
                 }
 
                 return null;
@@ -682,11 +705,11 @@ pub const PathLike = union(enum) {
         }
     }
 
-    pub fn fromBunString(global: *jsc.JSGlobalObject, str: bun.String, will_be_async: bool, allocator: std.mem.Allocator) !PathLike {
+    pub fn fromBunString(global: *jsc.JSGlobalObject, str: *bun.String, will_be_async: bool, allocator: std.mem.Allocator) !PathLike {
         try Valid.pathStringLength(str.length(), global);
 
         if (will_be_async) {
-            var sliced = str.toThreadSafeSlice(allocator);
+            var sliced = try str.toThreadSafeSlice(allocator);
             errdefer sliced.deinit();
 
             try Valid.pathNullBytes(sliced.slice(), global);
@@ -699,13 +722,12 @@ pub const PathLike = union(enum) {
             return .{ .threadsafe_string = sliced };
         } else {
             var sliced = str.toSlice(allocator);
-            errdefer if (!sliced.isWTFAllocated()) sliced.deinit();
+            errdefer sliced.deinit();
 
             try Valid.pathNullBytes(sliced.slice(), global);
 
             // Costs nothing to keep both around.
             if (sliced.isWTFAllocated()) {
-                str.ref();
                 return .{ .slice_with_underlying_string = sliced };
             }
 
@@ -764,14 +786,14 @@ pub const Valid = struct {
 
     pub fn pathNullBytes(slice: []const u8, global: *jsc.JSGlobalObject) bun.JSError!void {
         if (bun.strings.indexOfChar(slice, 0) != null) {
-            return global.ERR(.INVALID_ARG_VALUE, "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received {}", .{bun.fmt.quote(slice)}).throw();
+            return global.ERR(.INVALID_ARG_VALUE, "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received {f}", .{bun.fmt.quote(slice)}).throw();
         }
     }
 };
 
 pub const VectorArrayBuffer = struct {
     value: jsc.JSValue,
-    buffers: std.ArrayList(bun.PlatformIOVec),
+    buffers: std.array_list.Managed(bun.PlatformIOVec),
 
     pub fn toJS(this: VectorArrayBuffer, _: *jsc.JSGlobalObject) jsc.JSValue {
         return this.value;
@@ -782,10 +804,10 @@ pub const VectorArrayBuffer = struct {
             return globalObject.throwInvalidArguments("Expected ArrayBufferView[]", .{});
         }
 
-        var bufferlist = std.ArrayList(bun.PlatformIOVec).init(allocator);
+        var bufferlist = std.array_list.Managed(bun.PlatformIOVec).init(allocator);
         var i: usize = 0;
         const len = try val.getLength(globalObject);
-        bufferlist.ensureTotalCapacityPrecise(len) catch bun.outOfMemory();
+        bun.handleOom(bufferlist.ensureTotalCapacityPrecise(len));
 
         while (i < len) {
             const element = try val.getIndex(globalObject, @as(u32, @truncate(i)));
@@ -799,7 +821,7 @@ pub const VectorArrayBuffer = struct {
             };
 
             const buf = array_buffer.byteSlice();
-            bufferlist.append(bun.platformIOVecCreate(buf)) catch bun.outOfMemory();
+            bun.handleOom(bufferlist.append(bun.platformIOVecCreate(buf)));
             i += 1;
         }
 
@@ -833,7 +855,7 @@ pub fn modeFromJS(ctx: *jsc.JSGlobalObject, value: jsc.JSValue) bun.JSError!?Mod
         break :brk std.fmt.parseInt(Mode, slice, 8) catch {
             var formatter = bun.jsc.ConsoleObject.Formatter{ .globalThis = ctx };
             defer formatter.deinit();
-            return ctx.throwValue(ctx.ERR(.INVALID_ARG_VALUE, "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}", .{value.toFmt(&formatter)}).toJS());
+            return ctx.throwValue(ctx.ERR(.INVALID_ARG_VALUE, "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {f}", .{value.toFmt(&formatter)}).toJS());
         };
     };
 
@@ -881,10 +903,7 @@ pub const PathOrFileDescriptor = union(Tag) {
         };
     }
 
-    pub fn format(this: jsc.Node.PathOrFileDescriptor, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        if (fmt.len != 0 and fmt[0] != 's') {
-            @compileError("Unsupported format argument: '" ++ fmt ++ "'.");
-        }
+    pub fn format(this: jsc.Node.PathOrFileDescriptor, writer: *std.Io.Writer) !void {
         switch (this) {
             .path => |p| try writer.writeAll(p.slice()),
             .fd => |fd| try writer.print("{}", .{fd}),
@@ -1013,7 +1032,7 @@ pub const FileSystemFlags = enum(c_int) {
             }
             // it's definitely wrong when the string is super long
             else if (str.len > 12) {
-                return ctx.throwInvalidArguments("Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
+                return ctx.throwInvalidArguments("Invalid flag '{f}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
             }
 
             const flags: i32 = brk: {
@@ -1037,7 +1056,7 @@ pub const FileSystemFlags = enum(c_int) {
 
                 break :brk map.getWithEql(str, jsc.ZigString.eqlComptime) orelse break :brk null;
             } orelse {
-                return ctx.throwInvalidArguments("Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
+                return ctx.throwInvalidArguments("Invalid flag '{f}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{str});
             };
 
             return @enumFromInt(flags);

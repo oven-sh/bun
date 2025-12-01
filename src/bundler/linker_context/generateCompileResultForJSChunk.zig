@@ -28,15 +28,12 @@ fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCon
     const trace = bun.perf.trace("Bundler.generateCodeForFileInChunkJS");
     defer trace.end();
 
-    // Client bundles for Bake must be globally allocated,
-    // as it must outlive the bundle task.
-    const allocator = if (c.dev_server) |dev|
-        if (c.parse_graph.ast.items(.target)[part_range.source_index.get()].bakeGraph() == .client)
-            dev.allocator
-        else
-            default_allocator
-    else
-        default_allocator;
+    // Client and server bundles for Bake must be globally allocated, as they
+    // must outlive the bundle task.
+    const allocator = blk: {
+        const dev = c.dev_server orelse break :blk default_allocator;
+        break :blk dev.allocator();
+    };
 
     var arena = &worker.temporary_arena;
     var buffer_writer = js_printer.BufferWriter.init(allocator);
@@ -64,8 +61,8 @@ fn generateCompileResultForJSChunkImpl(worker: *ThreadPool.Worker, c: *LinkerCon
 
     return .{
         .javascript = .{
-            .result = result,
             .source_index = part_range.source_index.get(),
+            .result = result,
         },
     };
 }

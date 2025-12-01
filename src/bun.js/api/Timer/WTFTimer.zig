@@ -14,6 +14,7 @@ event_loop_timer: EventLoopTimer,
 imminent: *std.atomic.Value(?*WTFTimer),
 repeat: bool,
 lock: bun.Mutex = .{},
+script_execution_context_id: bun.webcore.ScriptExecutionContext.Identifier,
 
 const new = bun.TrivialNew(WTFTimer);
 
@@ -34,10 +35,13 @@ inline fn runWithoutRemoving(this: *const WTFTimer) void {
 
 pub fn update(this: *WTFTimer, seconds: f64, repeat: bool) void {
     // There's only one of these per VM, and each VM has its own imminent_gc_timer
-    this.imminent.store(if (seconds == 0) this else null, .seq_cst);
-
-    if (seconds == 0.0) {
+    // Only set imminent if it's not already set to avoid overwriting another timer
+    if (seconds == 0) {
+        _ = this.imminent.cmpxchgStrong(null, this, .seq_cst, .seq_cst);
         return;
+    } else {
+        // Clear imminent if this timer was the one that set it
+        _ = this.imminent.cmpxchgStrong(this, null, .seq_cst, .seq_cst);
     }
 
     const modf = std.math.modf(seconds);
@@ -56,20 +60,22 @@ pub fn update(this: *WTFTimer, seconds: f64, repeat: bool) void {
 pub fn cancel(this: *WTFTimer) void {
     this.lock.lock();
     defer this.lock.unlock();
-    this.imminent.store(null, .seq_cst);
-    if (this.event_loop_timer.state == .ACTIVE) {
-        this.vm.timer.remove(&this.event_loop_timer);
+
+    if (this.script_execution_context_id.valid()) {
+        // Only clear imminent if this timer was the one that set it
+        _ = this.imminent.cmpxchgStrong(this, null, .seq_cst, .seq_cst);
+
+        if (this.event_loop_timer.state == .ACTIVE) {
+            this.vm.timer.remove(&this.event_loop_timer);
+        }
     }
 }
 
-pub fn fire(this: *WTFTimer, _: *const bun.timespec, _: *VirtualMachine) EventLoopTimer.Arm {
+pub fn fire(this: *WTFTimer, _: *const bun.timespec, _: *VirtualMachine) void {
     this.event_loop_timer.state = .FIRED;
-    this.imminent.store(null, .seq_cst);
+    // Only clear imminent if this timer was the one that set it
+    _ = this.imminent.cmpxchgStrong(this, null, .seq_cst, .seq_cst);
     this.runWithoutRemoving();
-    return if (this.repeat)
-        .{ .rearm = this.event_loop_timer.next }
-    else
-        .disarm;
 }
 
 pub fn deinit(this: *WTFTimer) void {
@@ -97,6 +103,7 @@ export fn WTFTimer__create(run_loop_timer: *RunLoopTimer) ?*anyopaque {
         },
         .run_loop_timer = run_loop_timer,
         .repeat = false,
+        .script_execution_context_id = @enumFromInt(vm.initial_script_execution_context_identifier),
     });
 
     return this;

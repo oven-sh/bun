@@ -46,14 +46,14 @@ pub const X_OK = 1;
 pub const W_OK = 2;
 pub const R_OK = 4;
 
-const log = bun.Output.scoped(.SYS, false);
+const log = bun.Output.scoped(.SYS, .visible);
 pub const syslog = log;
 
 pub const syscall = switch (Environment.os) {
     .linux => std.os.linux,
     // macOS requires using libc
     .mac => std.c,
-    else => @compileError("not implemented"),
+    .windows, .wasm => @compileError("not implemented"),
 };
 
 fn toPackedO(number: anytype) std.posix.O {
@@ -299,332 +299,8 @@ pub const Tag = enum(u8) {
     pub var strings = std.EnumMap(Tag, jsc.C.JSStringRef).initFull(null);
 };
 
-pub const Error = struct {
-    const retry_errno = if (Environment.isLinux)
-        @as(Int, @intCast(@intFromEnum(E.AGAIN)))
-    else if (Environment.isMac)
-        @as(Int, @intCast(@intFromEnum(E.AGAIN)))
-    else
-        @as(Int, @intCast(@intFromEnum(E.INTR)));
-
-    const todo_errno = std.math.maxInt(Int) - 1;
-
-    pub const Int = u16;
-
-    /// TODO: convert to function
-    pub const oom = fromCode(E.NOMEM, .read);
-
-    errno: Int = todo_errno,
-    fd: bun.FileDescriptor = bun.invalid_fd,
-    from_libuv: if (Environment.isWindows) bool else void = if (Environment.isWindows) false else undefined,
-    path: []const u8 = "",
-    syscall: sys.Tag = sys.Tag.TODO,
-    dest: []const u8 = "",
-
-    pub fn clone(this: *const Error, allocator: std.mem.Allocator) Error {
-        var copy = this.*;
-        copy.path = allocator.dupe(u8, copy.path) catch bun.outOfMemory();
-        copy.dest = allocator.dupe(u8, copy.dest) catch bun.outOfMemory();
-        return copy;
-    }
-
-    pub fn fromCode(errno: E, syscall_tag: sys.Tag) Error {
-        return .{
-            .errno = @as(Int, @intCast(@intFromEnum(errno))),
-            .syscall = syscall_tag,
-        };
-    }
-
-    pub fn fromCodeInt(errno: anytype, syscall_tag: sys.Tag) Error {
-        return .{
-            .errno = @as(Int, @intCast(if (Environment.isWindows) @abs(errno) else errno)),
-            .syscall = syscall_tag,
-        };
-    }
-
-    pub fn format(self: Error, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-        // We want to reuse the code from SystemError for formatting.
-        // But, we do not want to call String.createUTF8 on the path/dest strings
-        // because we're intending to pass them to writer.print()
-        // which will convert them back into UTF*.
-        var that = self.withoutPath().toShellSystemError();
-        bun.debugAssert(that.path.tag != .WTFStringImpl);
-        bun.debugAssert(that.dest.tag != .WTFStringImpl);
-        that.path = bun.String.borrowUTF8(self.path);
-        that.dest = bun.String.borrowUTF8(self.dest);
-        bun.debugAssert(that.path.tag != .WTFStringImpl);
-        bun.debugAssert(that.dest.tag != .WTFStringImpl);
-
-        return that.format(fmt, opts, writer);
-    }
-
-    pub inline fn getErrno(this: Error) E {
-        return @as(E, @enumFromInt(this.errno));
-    }
-
-    pub inline fn isRetry(this: *const Error) bool {
-        return this.getErrno() == .AGAIN;
-    }
-
-    pub const retry = Error{
-        .errno = retry_errno,
-        .syscall = .read,
-    };
-
-    pub inline fn withFd(this: Error, fd: anytype) Error {
-        if (Environment.allow_assert) bun.assert(fd != bun.invalid_fd);
-        return Error{
-            .errno = this.errno,
-            .syscall = this.syscall,
-            .fd = fd,
-        };
-    }
-
-    pub inline fn withPath(this: Error, path: anytype) Error {
-        if (std.meta.Child(@TypeOf(path)) == u16) {
-            @compileError("Do not pass WString path to withPath, it needs the path encoded as utf8");
-        }
-        return Error{
-            .errno = this.errno,
-            .syscall = this.syscall,
-            .path = bun.span(path),
-        };
-    }
-
-    pub inline fn withPathAndSyscall(this: Error, path: anytype, syscall_: sys.Tag) Error {
-        if (std.meta.Child(@TypeOf(path)) == u16) {
-            @compileError("Do not pass WString path to withPath, it needs the path encoded as utf8");
-        }
-        return Error{
-            .errno = this.errno,
-            .syscall = syscall_,
-            .path = bun.span(path),
-        };
-    }
-
-    pub fn deinit(this: *Error) void {
-        this.deinitWithAllocator(bun.default_allocator);
-    }
-
-    /// Only call this after it's been .clone()'d
-    pub fn deinitWithAllocator(this: *Error, allocator: std.mem.Allocator) void {
-        if (this.path.len > 0) {
-            allocator.free(this.path);
-            this.path = "";
-        }
-        if (this.dest.len > 0) {
-            allocator.free(this.dest);
-            this.dest = "";
-        }
-    }
-
-    pub inline fn withPathDest(this: Error, path: anytype, dest: anytype) Error {
-        if (std.meta.Child(@TypeOf(path)) == u16) {
-            @compileError("Do not pass WString path to withPathDest, it needs the path encoded as utf8 (path)");
-        }
-        if (std.meta.Child(@TypeOf(dest)) == u16) {
-            @compileError("Do not pass WString path to withPathDest, it needs the path encoded as utf8 (dest)");
-        }
-        return Error{
-            .errno = this.errno,
-            .syscall = this.syscall,
-            .path = bun.span(path),
-            .dest = bun.span(dest),
-        };
-    }
-
-    pub inline fn withPathLike(this: Error, pathlike: anytype) Error {
-        return switch (pathlike) {
-            .fd => |fd| this.withFd(fd),
-            .path => |path| this.withPath(path.slice()),
-        };
-    }
-
-    /// When the memory of the path/dest buffer is unsafe to use, call this function to clone the error without the path/dest.
-    pub fn withoutPath(this: *const Error) Error {
-        var copy = this.*;
-        copy.path = "";
-        copy.dest = "";
-        return copy;
-    }
-
-    pub fn name(this: *const Error) []const u8 {
-        if (comptime Environment.isWindows) {
-            const system_errno = brk: {
-                // setRuntimeSafety(false) because we use tagName function, which will be null on invalid enum value.
-                @setRuntimeSafety(false);
-                if (this.from_libuv) {
-                    break :brk @as(SystemErrno, @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(this.errno))));
-                }
-
-                break :brk @as(SystemErrno, @enumFromInt(this.errno));
-            };
-            if (bun.tagName(SystemErrno, system_errno)) |errname| {
-                return errname;
-            }
-        } else if (this.errno > 0 and this.errno < SystemErrno.max) {
-            const system_errno = @as(SystemErrno, @enumFromInt(this.errno));
-            if (bun.tagName(SystemErrno, system_errno)) |errname| {
-                return errname;
-            }
-        }
-
-        return "UNKNOWN";
-    }
-
-    pub fn toZigErr(this: Error) anyerror {
-        return bun.errnoToZigErr(this.errno);
-    }
-
-    /// 1. Convert libuv errno values into libc ones.
-    /// 2. Get the tag name as a string for printing.
-    pub fn getErrorCodeTagName(err: *const Error) ?struct { [:0]const u8, SystemErrno } {
-        if (!Environment.isWindows) {
-            if (err.errno > 0 and err.errno < SystemErrno.max) {
-                const system_errno = @as(SystemErrno, @enumFromInt(err.errno));
-                return .{ @tagName(system_errno), system_errno };
-            }
-        } else {
-            const system_errno: SystemErrno = brk: {
-                // setRuntimeSafety(false) because we use tagName function, which will be null on invalid enum value.
-                @setRuntimeSafety(false);
-                if (err.from_libuv) {
-                    break :brk @enumFromInt(@intFromEnum(bun.windows.libuv.translateUVErrorToE(@as(c_int, err.errno) * -1)));
-                }
-
-                break :brk @enumFromInt(err.errno);
-            };
-            if (bun.tagName(SystemErrno, system_errno)) |errname| {
-                return .{ errname, system_errno };
-            }
-        }
-        return null;
-    }
-
-    pub fn msg(this: Error) ?[]const u8 {
-        if (this.getErrorCodeTagName()) |resolved_errno| {
-            const code, const system_errno = resolved_errno;
-            if (coreutils_error_map.get(system_errno)) |label| {
-                return label;
-            }
-            return code;
-        }
-        return null;
-    }
-
-    /// Simpler formatting which does not allocate a message
-    pub fn toShellSystemError(this: Error) SystemError {
-        @setEvalBranchQuota(1_000_000);
-        var err = SystemError{
-            .errno = @as(c_int, this.errno) * -1,
-            .syscall = bun.String.static(@tagName(this.syscall)),
-            .message = .empty,
-        };
-
-        // errno label
-        if (this.getErrorCodeTagName()) |resolved_errno| {
-            const code, const system_errno = resolved_errno;
-            err.code = bun.String.static(code);
-            if (coreutils_error_map.get(system_errno)) |label| {
-                err.message = bun.String.static(label);
-            }
-        }
-
-        if (this.path.len > 0) {
-            err.path = bun.String.cloneUTF8(this.path);
-        }
-
-        if (this.dest.len > 0) {
-            err.dest = bun.String.cloneUTF8(this.dest);
-        }
-
-        if (this.fd.unwrapValid()) |valid| {
-            // When the FD is a windows handle, there is no sane way to report this.
-            if (!Environment.isWindows or valid.kind == .uv) {
-                err.fd = valid.uv();
-            }
-        }
-
-        return err;
-    }
-
-    /// More complex formatting to precisely match the printing that Node.js emits.
-    /// Use this whenever the error will be sent to JavaScript instead of the shell variant above.
-    pub fn toSystemError(this: Error) SystemError {
-        var err = SystemError{
-            .errno = -%@as(c_int, this.errno),
-            .syscall = bun.String.static(@tagName(this.syscall)),
-            .message = .empty,
-        };
-
-        // errno label
-        var maybe_code: ?[:0]const u8 = null;
-        var label: ?[]const u8 = null;
-        if (this.getErrorCodeTagName()) |resolved_errno| {
-            maybe_code, const system_errno = resolved_errno;
-            err.code = bun.String.static(maybe_code.?);
-            label = libuv_error_map.get(system_errno);
-        }
-
-        // format taken from Node.js 'exceptions.cc'
-        // search keyword: `Local<Value> UVException(Isolate* isolate,`
-        var message_buf: [4096]u8 = @splat(0);
-        const message = message: {
-            var stream = std.io.fixedBufferStream(&message_buf);
-            const writer = stream.writer();
-            brk: {
-                if (maybe_code) |code| {
-                    writer.writeAll(code) catch break :brk;
-                    writer.writeAll(": ") catch break :brk;
-                }
-                writer.writeAll(label orelse "Unknown Error") catch break :brk;
-                writer.writeAll(", ") catch break :brk;
-                writer.writeAll(@tagName(this.syscall)) catch break :brk;
-                if (this.path.len > 0) {
-                    writer.writeAll(" '") catch break :brk;
-                    writer.writeAll(this.path) catch break :brk;
-                    writer.writeAll("'") catch break :brk;
-
-                    if (this.dest.len > 0) {
-                        writer.writeAll(" -> '") catch break :brk;
-                        writer.writeAll(this.dest) catch break :brk;
-                        writer.writeAll("'") catch break :brk;
-                    }
-                }
-            }
-            break :message stream.getWritten();
-        };
-        err.message = bun.String.cloneUTF8(message);
-
-        if (this.path.len > 0) {
-            err.path = bun.String.cloneUTF8(this.path);
-        }
-
-        if (this.dest.len > 0) {
-            err.dest = bun.String.cloneUTF8(this.dest);
-        }
-
-        if (this.fd.unwrapValid()) |valid| {
-            // When the FD is a windows handle, there is no sane way to report this.
-            if (!Environment.isWindows or valid.kind == .uv) {
-                err.fd = valid.uv();
-            }
-        }
-
-        return err;
-    }
-
-    pub inline fn todo() Error {
-        if (Environment.isDebug) {
-            @panic("Error.todo() was called");
-        }
-        return Error{ .errno = todo_errno, .syscall = .TODO };
-    }
-
-    pub fn toJS(this: Error, ptr: *jsc.JSGlobalObject) jsc.JSValue {
-        return this.toSystemError().toErrorInstance(ptr);
-    }
-};
+pub const Error = @import("./sys/Error.zig");
+pub const PosixStat = @import("./sys/PosixStat.zig").PosixStat;
 
 pub fn Maybe(comptime ReturnTypeT: type) type {
     return bun.api.node.Maybe(ReturnTypeT, Error);
@@ -826,6 +502,7 @@ pub fn stat(path: [:0]const u8) Maybe(bun.Stat) {
             log("stat({s}) = {d}", .{ bun.asByteSlice(path), rc });
 
         if (Maybe(bun.Stat).errnoSysP(rc, .stat, path)) |err| return err;
+
         return Maybe(bun.Stat){ .result = stat_ };
     }
 }
@@ -873,11 +550,136 @@ pub fn fstat(fd: bun.FileDescriptor) Maybe(bun.Stat) {
     const rc = workaround_symbols.fstat(fd.cast(), &stat_);
 
     if (comptime Environment.allow_assert)
-        log("fstat({}) = {d}", .{ fd, rc });
+        log("fstat({f}) = {d}", .{ fd, rc });
 
     if (Maybe(bun.Stat).errnoSysFd(rc, .fstat, fd)) |err| return err;
+
     return Maybe(bun.Stat){ .result = stat_ };
 }
+
+pub const StatxField = enum(comptime_int) {
+    type = linux.STATX_TYPE,
+    mode = linux.STATX_MODE,
+    nlink = linux.STATX_NLINK,
+    uid = linux.STATX_UID,
+    gid = linux.STATX_GID,
+    atime = linux.STATX_ATIME,
+    mtime = linux.STATX_MTIME,
+    ctime = linux.STATX_CTIME,
+    btime = linux.STATX_BTIME,
+    ino = linux.STATX_INO,
+    size = linux.STATX_SIZE,
+    blocks = linux.STATX_BLOCKS,
+};
+
+// Linux Kernel v4.11
+pub var supports_statx_on_linux = std.atomic.Value(bool).init(true);
+
+/// Linux kernel makedev encoding for device numbers
+/// From glibc sys/sysmacros.h and Linux kernel <linux/kdev_t.h>
+/// dev_t layout (64 bits):
+///   Bits 31-20: major high (12 bits)
+///   Bits 19-8:  minor high (12 bits)
+///   Bits 7-0:   minor low (8 bits)
+inline fn makedev(major: u32, minor: u32) u64 {
+    const maj: u64 = major & 0xFFF;
+    const min: u64 = minor & 0xFFFFF;
+    return (maj << 8) | (min & 0xFF) | ((min & 0xFFF00) << 12);
+}
+
+fn statxImpl(fd: bun.FileDescriptor, path: ?[*:0]const u8, flags: u32, mask: u32) Maybe(PosixStat) {
+    if (comptime !Environment.isLinux) {
+        @compileError("statx is only supported on Linux");
+    }
+
+    var buf: linux.Statx = undefined;
+
+    while (true) {
+        const rc = linux.statx(@intCast(fd.cast()), if (path) |p| p else "", flags, mask, &buf);
+
+        if (Maybe(PosixStat).errnoSys(rc, .statx)) |err| {
+            // Retry on EINTR
+            if (err.getErrno() == .INTR) continue;
+
+            // Handle unsupported statx by setting flag and falling back
+            if (err.getErrno() == .NOSYS or err.getErrno() == .OPNOTSUPP) {
+                supports_statx_on_linux.store(false, .monotonic);
+                if (path) |p| {
+                    const path_span = bun.span(p);
+                    const fallback = if (flags & linux.AT.SYMLINK_NOFOLLOW != 0) lstat(path_span) else stat(path_span);
+                    return switch (fallback) {
+                        .result => |s| .{ .result = PosixStat.init(&s) },
+                        .err => |e| .{ .err = e },
+                    };
+                } else {
+                    return switch (fstat(fd)) {
+                        .result => |s| .{ .result = PosixStat.init(&s) },
+                        .err => |e| .{ .err = e },
+                    };
+                }
+            }
+
+            return err;
+        }
+
+        // Convert statx buffer to PosixStat structure
+        const stat_ = PosixStat{
+            .dev = makedev(buf.dev_major, buf.dev_minor),
+            .ino = buf.ino,
+            .mode = buf.mode,
+            .nlink = buf.nlink,
+            .uid = buf.uid,
+            .gid = buf.gid,
+            .rdev = makedev(buf.rdev_major, buf.rdev_minor),
+            .size = @bitCast(buf.size),
+            .blksize = @intCast(buf.blksize),
+            .blocks = @bitCast(buf.blocks),
+            .atim = .{ .sec = buf.atime.sec, .nsec = buf.atime.nsec },
+            .mtim = .{ .sec = buf.mtime.sec, .nsec = buf.mtime.nsec },
+            .ctim = .{ .sec = buf.ctime.sec, .nsec = buf.ctime.nsec },
+            .birthtim = if (buf.mask & linux.STATX_BTIME != 0)
+                .{ .sec = buf.btime.sec, .nsec = buf.btime.nsec }
+            else
+                .{ .sec = 0, .nsec = 0 },
+        };
+
+        return .{ .result = stat_ };
+    }
+}
+
+pub fn fstatx(fd: bun.FileDescriptor, comptime fields: []const StatxField) Maybe(PosixStat) {
+    const mask: u32 = comptime brk: {
+        var i: u32 = 0;
+        for (fields) |field| {
+            i |= @intFromEnum(field);
+        }
+        break :brk i;
+    };
+    return statxImpl(fd, null, linux.AT.EMPTY_PATH, mask);
+}
+
+pub fn statx(path: [*:0]const u8, comptime fields: []const StatxField) Maybe(PosixStat) {
+    const mask: u32 = comptime brk: {
+        var i: u32 = 0;
+        for (fields) |field| {
+            i |= @intFromEnum(field);
+        }
+        break :brk i;
+    };
+    return statxImpl(bun.FD.fromNative(std.posix.AT.FDCWD), path, 0, mask);
+}
+
+pub fn lstatx(path: [*:0]const u8, comptime fields: []const StatxField) Maybe(PosixStat) {
+    const mask: u32 = comptime brk: {
+        var i: u32 = 0;
+        for (fields) |field| {
+            i |= @intFromEnum(field);
+        }
+        break :brk i;
+    };
+    return statxImpl(bun.FD.fromNative(std.posix.AT.FDCWD), path, linux.AT.SYMLINK_NOFOLLOW, mask);
+}
+
 pub fn lutimes(path: [:0]const u8, atime: jsc.Node.TimeLike, mtime: jsc.Node.TimeLike) Maybe(void) {
     if (comptime Environment.isWindows) {
         return sys_uv.lutimes(path, atime, mtime);
@@ -896,7 +698,7 @@ pub fn mkdiratZ(dir_fd: bun.FileDescriptor, file_path: [*:0]const u8, mode: mode
     return switch (Environment.os) {
         .mac => Maybe(void).errnoSysP(syscall.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse .success,
         .linux => Maybe(void).errnoSysP(linux.mkdirat(@intCast(dir_fd.cast()), file_path, mode), .mkdir, file_path) orelse .success,
-        else => @compileError("mkdir is not implemented on this platform"),
+        .windows, .wasm => @compileError("mkdir is not implemented on this platform"),
     };
 }
 
@@ -914,7 +716,7 @@ else
     mkdiratPosix;
 
 pub fn mkdiratW(dir_fd: bun.FileDescriptor, file_path: [:0]const u16, _: i32) Maybe(void) {
-    const dir_to_make = openDirAtWindowsNtPath(dir_fd, file_path, .{ .iterable = false, .can_rename_or_delete = true, .create = true });
+    const dir_to_make = openDirAtWindowsNtPath(dir_fd, file_path, .{ .iterable = false, .can_rename_or_delete = true, .op = .only_create });
     if (dir_to_make == .err) {
         return .{ .err = dir_to_make.err };
     }
@@ -935,10 +737,10 @@ pub fn fstatat(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
     var stat_buf = mem.zeroes(bun.Stat);
     const fd_valid = if (fd == bun.invalid_fd) std.posix.AT.FDCWD else fd.native();
     if (Maybe(bun.Stat).errnoSysFP(syscall.fstatat(fd_valid, path, &stat_buf, 0), .fstatat, fd, path)) |err| {
-        log("fstatat({}, {s}) = {s}", .{ fd, path, @tagName(err.getErrno()) });
+        log("fstatat({f}, {s}) = {s}", .{ fd, path, @tagName(err.getErrno()) });
         return err;
     }
-    log("fstatat({}, {s}) = 0", .{ fd, path });
+    log("fstatat({f}, {s}) = 0", .{ fd, path });
     return Maybe(bun.Stat){ .result = stat_buf };
 }
 
@@ -958,7 +760,7 @@ pub fn mkdir(file_path: [:0]const u8, flags: mode_t) Maybe(void) {
             ) orelse .success;
         },
 
-        else => @compileError("mkdir is not implemented on this platform"),
+        .wasm => @compileError("mkdir is not implemented on this platform"),
     };
 }
 
@@ -985,7 +787,7 @@ pub fn mkdirA(file_path: []const u8, flags: mode_t) Maybe(void) {
         const wbuf = bun.w_path_buffer_pool.get();
         defer bun.w_path_buffer_pool.put(wbuf);
         const wpath = bun.strings.toKernel32Path(wbuf, file_path);
-        assertIsValidWindowsPath(u16, wpath);
+
         return Maybe(void).errnoSysP(
             kernel32.CreateDirectoryW(wpath.ptr, null),
             .mkdir,
@@ -1003,11 +805,11 @@ pub fn mkdirOSPath(file_path: bun.OSPathSliceZ, flags: mode_t) Maybe(void) {
                 rc,
                 .mkdir,
             )) |err| {
-                log("CreateDirectoryW({}) = {s}", .{ bun.fmt.fmtOSPath(file_path, .{}), err.err.name() });
+                log("CreateDirectoryW({f}) = {s}", .{ bun.fmt.fmtOSPath(file_path, .{}), err.err.name() });
                 return err;
             }
 
-            log("CreateDirectoryW({}) = 0", .{bun.fmt.fmtOSPath(file_path, .{})});
+            log("CreateDirectoryW({f}) = 0", .{bun.fmt.fmtOSPath(file_path, .{})});
             return .success;
         },
     };
@@ -1136,7 +938,7 @@ fn openDirAtWindowsNtPath(
     const no_follow = options.no_follow;
     const can_rename_or_delete = options.can_rename_or_delete;
     const read_only = options.read_only;
-    assertIsValidWindowsPath(u16, path);
+
     const base_flags = w.STANDARD_RIGHTS_READ | w.FILE_READ_ATTRIBUTES | w.FILE_READ_EA |
         w.SYNCHRONIZE | w.FILE_TRAVERSE;
     const iterable_flag: u32 = if (iterable) w.FILE_LIST_DIRECTORY else 0;
@@ -1151,7 +953,7 @@ fn openDirAtWindowsNtPath(
         return openWindowsDevicePath(
             path,
             flags,
-            if (options.create) w.FILE_OPEN_IF else w.FILE_OPEN,
+            if (options.op != .only_open) w.FILE_OPEN_IF else w.FILE_OPEN,
             w.FILE_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_FOR_BACKUP_INTENT | open_reparse_point,
         );
 
@@ -1185,7 +987,11 @@ fn openDirAtWindowsNtPath(
         null,
         0,
         FILE_SHARE,
-        if (options.create) w.FILE_OPEN_IF else w.FILE_OPEN,
+        switch (options.op) {
+            .only_open => w.FILE_OPEN,
+            .only_create => w.FILE_CREATE,
+            .open_or_create => w.FILE_OPEN_IF,
+        },
         w.FILE_DIRECTORY_FILE | w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_FOR_BACKUP_INTENT | open_reparse_point,
         null,
         0,
@@ -1198,11 +1004,11 @@ fn openDirAtWindowsNtPath(
             // - access_mask probably needs w.SYNCHRONIZE,
             // - options probably needs w.FILE_SYNCHRONOUS_IO_NONALERT
             // - disposition probably needs w.FILE_OPEN
-            bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (dir) = {d}\nYou are calling this function with the wrong flags!!!", .{ dirFd, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(fd) });
+            bun.Output.debugWarn("NtCreateFile({f}, {f}) = {s} (dir) = {d}\nYou are calling this function with the wrong flags!!!", .{ dirFd, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(fd) });
         } else if (rc == .OBJECT_PATH_SYNTAX_BAD or rc == .OBJECT_NAME_INVALID) {
-            bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (dir) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dirFd, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(fd) });
+            bun.Output.debugWarn("NtCreateFile({f}, {f}) = {s} (dir) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dirFd, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(fd) });
         } else {
-            log("NtCreateFile({}, {}) = {s} (dir) = {d}", .{ dirFd, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(fd) });
+            log("NtCreateFile({f}, {f}) = {s} (dir) = {d}", .{ dirFd, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(fd) });
         }
     }
 
@@ -1257,12 +1063,18 @@ fn openWindowsDevicePath(
     return .{ .result = .fromNative(rc) };
 }
 
-pub const WindowsOpenDirOptions = packed struct {
+pub const WindowsOpenDirOptions = struct {
     iterable: bool = false,
     no_follow: bool = false,
     can_rename_or_delete: bool = false,
-    create: bool = false,
+    op: Op = .only_open,
     read_only: bool = false,
+
+    const Op = enum {
+        only_open,
+        only_create,
+        open_or_create,
+    };
 };
 
 fn openDirAtWindowsT(
@@ -1280,9 +1092,9 @@ fn openDirAtWindowsT(
     };
 
     if (comptime T == u8) {
-        log("openDirAtWindows({s}) = {s}", .{ path, bun.fmt.utf16(norm) });
+        log("openDirAtWindows({s}) = {f}", .{ path, bun.fmt.utf16(norm) });
     } else {
-        log("openDirAtWindowsT({s}) = {s}", .{ bun.fmt.utf16(path), bun.fmt.utf16(norm) });
+        log("openDirAtWindowsT({f}) = {f}", .{ bun.fmt.utf16(path), bun.fmt.utf16(norm) });
     }
     return openDirAtWindowsNtPath(dirFd, norm, options);
 }
@@ -1335,7 +1147,6 @@ pub fn openFileAtWindowsNtPath(
     // this path is probably already backslash normalized so we're only going to check for '.\'
     // const path = if (bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, ".\\")) path_maybe_leading_dot[2..] else path_maybe_leading_dot;
     // bun.assert(!bun.strings.hasPrefixComptimeUTF16(path_maybe_leading_dot, "./"));
-    assertIsValidWindowsPath(u16, path);
 
     var result: windows.HANDLE = undefined;
 
@@ -1395,15 +1206,15 @@ pub fn openFileAtWindowsNtPath(
                 // - access_mask probably needs w.SYNCHRONIZE,
                 // - options probably needs w.FILE_SYNCHRONOUS_IO_NONALERT
                 // - disposition probably needs w.FILE_OPEN
-                bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (file) = {d}\nYou are calling this function with the wrong flags!!!", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
+                bun.Output.debugWarn("NtCreateFile({f}, {f}) = {s} (file) = {d}\nYou are calling this function with the wrong flags!!!", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
             } else if (rc == .OBJECT_PATH_SYNTAX_BAD or rc == .OBJECT_NAME_INVALID) {
                 // See above comment. For absolute paths you must have \??\ at the start.
-                bun.Output.debugWarn("NtCreateFile({}, {}) = {s} (file) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
+                bun.Output.debugWarn("NtCreateFile({f}, {f}) = {s} (file) = {d}\nYou are calling this function without normalizing the path correctly!!!", .{ dir, bun.fmt.utf16(path), @tagName(rc), @intFromPtr(result) });
             } else {
                 if (rc == .SUCCESS) {
-                    log("NtCreateFile({}, {}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), bun.FD.fromNative(result) });
+                    log("NtCreateFile({f}, {f}) = {s} (file) = {f}", .{ dir, bun.fmt.utf16(path), @tagName(rc), bun.FD.fromNative(result) });
                 } else {
-                    log("NtCreateFile({}, {}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), rc });
+                    log("NtCreateFile({f}, {f}) = {s} (file) = {}", .{ dir, bun.fmt.utf16(path), @tagName(rc), rc });
                 }
             }
         }
@@ -1621,7 +1432,7 @@ pub fn openatWindowsT(comptime T: type, dir: bun.FileDescriptor, path: []const T
     return openatWindowsTMaybeNormalize(T, dir, path, flags, perm, true);
 }
 
-fn openatWindowsTMaybeNormalize(comptime T: type, dir: bun.FileDescriptor, path: []const T, flags: i32, perm: bun.Mode, comptime normalize: bool) Maybe(bun.FileDescriptor) {
+pub fn openatWindowsTMaybeNormalize(comptime T: type, dir: bun.FileDescriptor, path: []const T, flags: i32, perm: bun.Mode, comptime normalize: bool) Maybe(bun.FileDescriptor) {
     if (flags & O.DIRECTORY != 0) {
         const windows_options: WindowsOpenDirOptions = .{
             .iterable = flags & O.PATH == 0,
@@ -1717,7 +1528,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
         // https://opensource.apple.com/source/xnu/xnu-7195.81.3/libsyscall/wrappers/open-base.c
         const rc = darwin_nocancel.@"openat$NOCANCEL"(dirfd.cast(), file_path.ptr, @bitCast(bun.O.toPacked(flags)), perm);
         if (comptime Environment.allow_assert)
-            log("openat({}, {s}, {d}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), flags, rc });
+            log("openat({f}, {s}, {d}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), flags, rc });
 
         return Maybe(bun.FileDescriptor).errnoSysFP(rc, .open, dirfd, file_path) orelse .{ .result = .fromNative(rc) };
     } else if (comptime Environment.isWindows) {
@@ -1727,7 +1538,7 @@ pub fn openatOSPath(dirfd: bun.FileDescriptor, file_path: bun.OSPathSliceZ, flag
     while (true) {
         const rc = syscall.openat(dirfd.cast(), file_path, bun.O.toPacked(flags), perm);
         if (comptime Environment.allow_assert)
-            log("openat({}, {s}, {d}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), flags, rc });
+            log("openat({f}, {s}, {d}) = {d}", .{ dirfd, bun.sliceTo(file_path, 0), flags, rc });
 
         return switch (sys.getErrno(rc)) {
             .SUCCESS => .{ .result = .fromNative(@intCast(rc)) },
@@ -1842,7 +1653,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
     defer {
         if (Environment.isDebug) {
             if (debug_timer.timer.read() > std.time.ns_per_ms) {
-                log("write({}, {d}) blocked for {}", .{ fd, bytes.len, debug_timer });
+                log("write({f}, {d}) blocked for {f}", .{ fd, bytes.len, debug_timer });
             }
         }
     }
@@ -1850,7 +1661,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
     return switch (Environment.os) {
         .mac => {
             const rc = darwin_nocancel.@"write$NOCANCEL"(fd.cast(), bytes.ptr, adjusted_len);
-            log("write({}, {d}) = {d} ({})", .{ fd, adjusted_len, rc, debug_timer });
+            log("write({f}, {d}) = {d} ({f})", .{ fd, adjusted_len, rc, debug_timer });
 
             if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
                 return err;
@@ -1861,7 +1672,7 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
         .linux => {
             while (true) {
                 const rc = syscall.write(fd.cast(), bytes.ptr, adjusted_len);
-                log("write({}, {d}) = {d} {}", .{ fd, adjusted_len, rc, debug_timer });
+                log("write({f}, {d}) = {d} {f}", .{ fd, adjusted_len, rc, debug_timer });
 
                 if (Maybe(usize).errnoSysFd(rc, .write, fd)) |err| {
                     if (err.getErrno() == .INTR) continue;
@@ -1878,12 +1689,12 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
             const rc = kernel32.WriteFile(
                 fd.cast(),
                 bytes.ptr,
-                adjusted_len,
+                @as(u32, @truncate(adjusted_len)),
                 &bytes_written,
                 null,
             );
             if (rc == 0) {
-                log("WriteFile({}, {d}) = {s}", .{ fd, adjusted_len, @tagName(bun.windows.getLastErrno()) });
+                log("WriteFile({f}, {d}) = {s}", .{ fd, adjusted_len, @tagName(bun.windows.getLastErrno()) });
                 const er = std.os.windows.kernel32.GetLastError();
                 if (er == .ACCESS_DENIED) {
                     // file is not writable
@@ -1903,11 +1714,11 @@ pub fn write(fd: bun.FileDescriptor, bytes: []const u8) Maybe(usize) {
                 };
             }
 
-            log("WriteFile({}, {d}) = {d}", .{ fd, adjusted_len, bytes_written });
+            log("WriteFile({f}, {d}) = {d}", .{ fd, adjusted_len, bytes_written });
 
             return Maybe(usize){ .result = bytes_written };
         },
-        else => @compileError("Not implemented yet"),
+        .wasm => @compileError("Not implemented yet"),
     };
 }
 
@@ -1923,7 +1734,7 @@ pub fn writev(fd: bun.FileDescriptor, buffers: []std.posix.iovec) Maybe(usize) {
     if (comptime Environment.isMac) {
         const rc = writev_sym(fd.cast(), @as([*]std.posix.iovec_const, @ptrCast(buffers.ptr)), @as(i32, @intCast(buffers.len)));
         if (comptime Environment.allow_assert)
-            log("writev({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+            log("writev({f}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
         if (Maybe(usize).errnoSysFd(rc, .writev, fd)) |err| {
             return err;
@@ -1934,7 +1745,7 @@ pub fn writev(fd: bun.FileDescriptor, buffers: []std.posix.iovec) Maybe(usize) {
         while (true) {
             const rc = writev_sym(fd.cast(), @as([*]std.posix.iovec_const, @ptrCast(buffers.ptr)), buffers.len);
             if (comptime Environment.allow_assert)
-                log("writev({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+                log("writev({f}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
             if (Maybe(usize).errnoSysFd(rc, .writev, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
@@ -1954,7 +1765,7 @@ pub fn pwritev(fd: bun.FileDescriptor, buffers: []const bun.PlatformIOVecConst, 
     if (comptime Environment.isMac) {
         const rc = pwritev_sym(fd.cast(), buffers.ptr, @as(i32, @intCast(buffers.len)), position);
         if (comptime Environment.allow_assert)
-            log("pwritev({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+            log("pwritev({f}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
         if (Maybe(usize).errnoSysFd(rc, .pwritev, fd)) |err| {
             return err;
@@ -1965,7 +1776,7 @@ pub fn pwritev(fd: bun.FileDescriptor, buffers: []const bun.PlatformIOVecConst, 
         while (true) {
             const rc = pwritev_sym(fd.cast(), buffers.ptr, buffers.len, position);
             if (comptime Environment.allow_assert)
-                log("pwritev({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+                log("pwritev({f}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
             if (Maybe(usize).errnoSysFd(rc, .pwritev, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
@@ -1988,7 +1799,7 @@ pub fn readv(fd: bun.FileDescriptor, buffers: []std.posix.iovec) Maybe(usize) {
     if (comptime Environment.isMac) {
         const rc = readv_sym(fd.cast(), buffers.ptr, @as(i32, @intCast(buffers.len)));
         if (comptime Environment.allow_assert)
-            log("readv({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+            log("readv({f}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
         if (Maybe(usize).errnoSysFd(rc, .readv, fd)) |err| {
             return err;
@@ -1999,7 +1810,7 @@ pub fn readv(fd: bun.FileDescriptor, buffers: []std.posix.iovec) Maybe(usize) {
         while (true) {
             const rc = readv_sym(fd.cast(), buffers.ptr, buffers.len);
             if (comptime Environment.allow_assert)
-                log("readv({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+                log("readv({f}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
             if (Maybe(usize).errnoSysFd(rc, .readv, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
@@ -2022,7 +1833,7 @@ pub fn preadv(fd: bun.FileDescriptor, buffers: []std.posix.iovec, position: isiz
     if (comptime Environment.isMac) {
         const rc = preadv_sym(fd.cast(), buffers.ptr, @as(i32, @intCast(buffers.len)), position);
         if (comptime Environment.allow_assert)
-            log("preadv({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+            log("preadv({f}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
         if (Maybe(usize).errnoSysFd(rc, .preadv, fd)) |err| {
             return err;
@@ -2033,7 +1844,7 @@ pub fn preadv(fd: bun.FileDescriptor, buffers: []std.posix.iovec, position: isiz
         while (true) {
             const rc = preadv_sym(fd.cast(), buffers.ptr, buffers.len, position);
             if (comptime Environment.allow_assert)
-                log("preadv({}, {d}) = {d}", .{ fd, veclen(buffers), rc });
+                log("preadv({f}, {d}) = {d}", .{ fd, veclen(buffers), rc });
 
             if (Maybe(usize).errnoSysFd(rc, .preadv, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
@@ -2138,17 +1949,17 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
             const rc = darwin_nocancel.@"read$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len);
 
             if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
-                log("read({}, {d}) = {s} ({any})", .{ fd, adjusted_len, err.err.name(), debug_timer });
+                log("read({f}, {d}) = {s} ({f})", .{ fd, adjusted_len, err.err.name(), debug_timer });
                 return err;
             }
-            log("read({}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
+            log("read({f}, {d}) = {d} ({f})", .{ fd, adjusted_len, rc, debug_timer });
 
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         },
         .linux => {
             while (true) {
                 const rc = syscall.read(fd.cast(), buf.ptr, adjusted_len);
-                log("read({}, {d}) = {d} ({any})", .{ fd, adjusted_len, rc, debug_timer });
+                log("read({f}, {d}) = {d} ({f})", .{ fd, adjusted_len, rc, debug_timer });
 
                 if (Maybe(usize).errnoSysFd(rc, .read, fd)) |err| {
                     if (err.getErrno() == .INTR) continue;
@@ -2161,7 +1972,7 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
             sys_uv.read(fd, buf)
         else {
             var amount_read: u32 = 0;
-            const rc = kernel32.ReadFile(fd.native(), buf.ptr, @as(u32, @intCast(adjusted_len)), &amount_read, null);
+            const rc = kernel32.ReadFile(fd.native(), buf.ptr, @as(u32, @truncate(adjusted_len)), &amount_read, null);
             if (rc == windows.FALSE) {
                 const ret: Maybe(usize) = .{
                     .err = sys.Error{
@@ -2172,16 +1983,16 @@ pub fn read(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
                 };
 
                 if (comptime Environment.isDebug) {
-                    log("ReadFile({}, {d}) = {s} ({})", .{ fd, adjusted_len, ret.err.name(), debug_timer });
+                    log("ReadFile({f}, {d}) = {s} ({f})", .{ fd, adjusted_len, ret.err.name(), debug_timer });
                 }
 
                 return ret;
             }
-            log("ReadFile({}, {d}) = {d} ({})", .{ fd, adjusted_len, amount_read, debug_timer });
+            log("ReadFile({f}, {d}) = {d} ({f})", .{ fd, adjusted_len, amount_read, debug_timer });
 
             return Maybe(usize){ .result = amount_read };
         },
-        else => @compileError("read is not implemented on this platform"),
+        .wasm => @compileError("read is not implemented on this platform"),
     };
 }
 
@@ -2212,7 +2023,7 @@ pub fn poll(fds: []std.posix.pollfd, timeout: i32) Maybe(usize) {
         const rc = switch (Environment.os) {
             .mac => darwin_nocancel.@"poll$NOCANCEL"(fds.ptr, fds.len, timeout),
             .linux => linux.poll(fds.ptr, fds.len, timeout),
-            else => @compileError("poll is not implemented on this platform"),
+            .wasm => @compileError("poll is not implemented on this platform"),
         };
         if (Maybe(usize).errnoSys(rc, .poll)) |err| {
             if (err.getErrno() == .INTR) continue;
@@ -2227,7 +2038,7 @@ pub fn ppoll(fds: []std.posix.pollfd, timeout: ?*std.posix.timespec, sigmask: ?*
         const rc = switch (Environment.os) {
             .mac => darwin_nocancel.@"ppoll$NOCANCEL"(fds.ptr, fds.len, timeout, sigmask),
             .linux => linux.ppoll(fds.ptr, fds.len, timeout, sigmask),
-            else => @compileError("ppoll is not implemented on this platform"),
+            .wasm => @compileError("ppoll is not implemented on this platform"),
         };
         if (Maybe(usize).errnoSys(rc, .ppoll)) |err| {
             if (err.getErrno() == .INTR) continue;
@@ -2250,11 +2061,11 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
         const rc = darwin_nocancel.@"recvfrom$NOCANCEL"(fd.cast(), buf.ptr, adjusted_len, flag, null, null);
 
         if (Maybe(usize).errnoSysFd(rc, .recv, fd)) |err| {
-            log("recv({}, {d}) = {s} {}", .{ fd, adjusted_len, err.err.name(), debug_timer });
+            log("recv({f}, {d}) = {s} {f}", .{ fd, adjusted_len, err.err.name(), debug_timer });
             return err;
         }
 
-        log("recv({}, {d}) = {d} {}", .{ fd, adjusted_len, rc, debug_timer });
+        log("recv({f}, {d}) = {d} {f}", .{ fd, adjusted_len, rc, debug_timer });
 
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
@@ -2263,10 +2074,10 @@ pub fn recv(fd: bun.FileDescriptor, buf: []u8, flag: u32) Maybe(usize) {
 
             if (Maybe(usize).errnoSysFd(rc, .recv, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
-                log("recv({}, {d}) = {s} {}", .{ fd, adjusted_len, err.err.name(), debug_timer });
+                log("recv({f}, {d}) = {s} {f}", .{ fd, adjusted_len, err.err.name(), debug_timer });
                 return err;
             }
-            log("recv({}, {d}) = {d} {}", .{ fd, adjusted_len, rc, debug_timer });
+            log("recv({f}, {d}) = {d} {f}", .{ fd, adjusted_len, rc, debug_timer });
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
     }
@@ -2290,27 +2101,29 @@ pub fn sendNonBlock(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
 
 pub fn send(fd: bun.FileDescriptor, buf: []const u8, flag: u32) Maybe(usize) {
     if (comptime Environment.isMac) {
+        const debug_timer = bun.Output.DebugTimer.start();
         const rc = darwin_nocancel.@"sendto$NOCANCEL"(fd.cast(), buf.ptr, buf.len, flag, null, 0);
 
         if (Maybe(usize).errnoSysFd(rc, .send, fd)) |err| {
-            syslog("send({}, {d}) = {s}", .{ fd, buf.len, err.err.name() });
+            syslog("send({f}, {d}) = {s} ({f})", .{ fd, buf.len, err.err.name(), debug_timer });
             return err;
         }
 
-        syslog("send({}, {d}) = {d}", .{ fd, buf.len, rc });
+        syslog("send({f}, {d}) = {d} ({f})", .{ fd, buf.len, rc, debug_timer });
 
         return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
     } else {
+        const debug_timer = bun.Output.DebugTimer.start();
         while (true) {
             const rc = linux.sendto(fd.cast(), buf.ptr, buf.len, flag, null, 0);
 
             if (Maybe(usize).errnoSysFd(rc, .send, fd)) |err| {
                 if (err.getErrno() == .INTR) continue;
-                syslog("send({}, {d}) = {s}", .{ fd, buf.len, err.err.name() });
+                syslog("send({f}, {d}) = {s} ({f})", .{ fd, buf.len, err.err.name(), debug_timer });
                 return err;
             }
 
-            syslog("send({}, {d}) = {d}", .{ fd, buf.len, rc });
+            syslog("send({f}, {d}) = {d} ({f})", .{ fd, buf.len, rc, debug_timer });
             return Maybe(usize){ .result = @as(usize, @intCast(rc)) };
         }
     }
@@ -2517,17 +2330,17 @@ pub fn renameat2(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.F
         const rc = switch (comptime Environment.os) {
             .linux => std.os.linux.renameat2(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
             .mac => bun.c.renameatx_np(@intCast(from_dir.cast()), from.ptr, @intCast(to_dir.cast()), to.ptr, flags.int()),
-            else => @compileError("renameat2() is not implemented on this platform"),
+            .windows, .wasm => @compileError("renameat2() is not implemented on this platform"),
         };
 
         if (Maybe(void).errnoSys(rc, .rename)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
-                log("renameat2({}, {s}, {}, {s}) = {d}", .{ from_dir, from, to_dir, to, @intFromEnum(err.getErrno()) });
+                log("renameat2({f}, {s}, {f}, {s}) = {d}", .{ from_dir, from, to_dir, to, @intFromEnum(err.getErrno()) });
             return err;
         }
         if (comptime Environment.allow_assert)
-            log("renameat2({}, {s}, {}, {s}) = {d}", .{ from_dir, from, to_dir, to, 0 });
+            log("renameat2({f}, {s}, {f}, {s}) = {d}", .{ from_dir, from, to_dir, to, 0 });
         return .success;
     }
 }
@@ -2555,11 +2368,11 @@ pub fn renameat(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.Fi
         if (Maybe(void).errnoSys(syscall.renameat(from_dir.cast(), from, to_dir.cast(), to), .rename)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
-                log("renameat({}, {s}, {}, {s}) = {d}", .{ from_dir, from, to_dir, to, @intFromEnum(err.getErrno()) });
+                log("renameat({f}, {s}, {f}, {s}) = {d}", .{ from_dir, from, to_dir, to, @intFromEnum(err.getErrno()) });
             return err;
         }
         if (comptime Environment.allow_assert)
-            log("renameat({}, {s}, {}, {s}) = {d}", .{ from_dir, from, to_dir, to, 0 });
+            log("renameat({f}, {s}, {f}, {s}) = {d}", .{ from_dir, from, to_dir, to, 0 });
         return .success;
     }
 }
@@ -2572,6 +2385,21 @@ pub fn chown(path: [:0]const u8, uid: posix.uid_t, gid: posix.gid_t) Maybe(void)
         }
         return .success;
     }
+}
+
+/// Same as symlink, except it handles ETXTBUSY by unlinking and retrying.
+pub fn symlinkRunningExecutable(target: [:0]const u8, dest: [:0]const u8) Maybe(void) {
+    return switch (symlink(target, dest)) {
+        .err => |err| switch (err.getErrno()) {
+            // If we get ETXTBUSY or BUSY, try deleting it and then symlinking.
+            .BUSY, .TXTBSY => {
+                _ = unlink(dest);
+                return symlink(target, dest);
+            },
+            else => .{ .err = err },
+        },
+        .result => .{ .result = {} },
+    };
 }
 
 pub fn symlink(target: [:0]const u8, dest: [:0]const u8) Maybe(void) {
@@ -2590,10 +2418,10 @@ pub fn symlinkat(target: [:0]const u8, dirfd: bun.FileDescriptor, dest: [:0]cons
     while (true) {
         if (Maybe(void).errnoSys(syscall.symlinkat(target, dirfd.cast(), dest), .symlinkat)) |err| {
             if (err.getErrno() == .INTR) continue;
-            log("symlinkat({s}, {}, {s}) = {s}", .{ target, dirfd, dest, @tagName(err.getErrno()) });
+            log("symlinkat({s}, {f}, {s}) = {s}", .{ target, dirfd, dest, @tagName(err.getErrno()) });
             return err;
         }
-        log("symlinkat({s}, {}, {s}) = 0", .{ target, dirfd, dest });
+        log("symlinkat({s}, {f}, {s}) = 0", .{ target, dirfd, dest });
         return .success;
     }
 }
@@ -2668,7 +2496,7 @@ pub fn symlinkW(dest: [:0]const u16, target: [:0]const u16, options: WindowsSyml
 
         if (windows.CreateSymbolicLinkW(dest, target, flags) == 0) {
             const errno = bun.windows.Win32Error.get();
-            log("CreateSymbolicLinkW({}, {}, {any}) = {s}", .{
+            log("CreateSymbolicLinkW({f}, {f}, {}) = {s}", .{
                 bun.fmt.fmtPath(u16, dest, .{}),
                 bun.fmt.fmtPath(u16, target, .{}),
                 flags,
@@ -2709,7 +2537,7 @@ pub fn symlinkW(dest: [:0]const u16, target: [:0]const u16, options: WindowsSyml
             }
         }
 
-        log("CreateSymbolicLinkW({}, {}, {any}) = 0", .{
+        log("CreateSymbolicLinkW({f}, {f}, {}) = 0", .{
             bun.fmt.fmtPath(u16, dest, .{}),
             bun.fmt.fmtPath(u16, target, .{}),
             flags,
@@ -2745,9 +2573,9 @@ pub fn clonefileat(from: FD, from_path: [:0]const u8, to: FD, to_path: [:0]const
             if (err.getErrno() == .INTR) continue;
             log(
                 \\clonefileat(
-                \\  {},
+                \\  {f},
                 \\  {s},
-                \\  {},
+                \\  {f},
                 \\  {s},
                 \\) = {s}
                 \\
@@ -2756,9 +2584,9 @@ pub fn clonefileat(from: FD, from_path: [:0]const u8, to: FD, to_path: [:0]const
         }
         log(
             \\clonefileat(
-            \\  {},
+            \\  {f},
             \\  {s},
-            \\  {},
+            \\  {f},
             \\  {s},
             \\) = 0
             \\
@@ -2794,11 +2622,11 @@ pub fn fcopyfile(fd_in: bun.FileDescriptor, fd_out: bun.FileDescriptor, flags: p
 pub fn unlinkW(from: [:0]const u16) Maybe(void) {
     const ret = windows.DeleteFileW(from);
     if (Maybe(void).errnoSys(ret, .unlink)) |err| {
-        log("DeleteFileW({s}) = {s}", .{ bun.fmt.fmtPath(u16, from, .{}), @tagName(err.getErrno()) });
+        log("DeleteFileW({f}) = {s}", .{ bun.fmt.fmtPath(u16, from, .{}), @tagName(err.getErrno()) });
         return err;
     }
 
-    log("DeleteFileW({s}) = 0", .{bun.fmt.fmtPath(u16, from, .{})});
+    log("DeleteFileW({f}) = 0", .{bun.fmt.fmtPath(u16, from, .{})});
     return .success;
 }
 
@@ -2847,11 +2675,11 @@ pub fn unlinkatWithFlags(dirfd: bun.FileDescriptor, to: anytype, flags: c_uint) 
         if (Maybe(void).errnoSysFP(syscall.unlinkat(dirfd.cast(), to, flags), .unlink, dirfd, to)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
-                log("unlinkat({}, {s}) = {s}", .{ dirfd, bun.sliceTo(to, 0), @tagName(err.getErrno()) });
+                log("unlinkat({f}, {s}) = {s}", .{ dirfd, bun.sliceTo(to, 0), @tagName(err.getErrno()) });
             return err;
         }
         if (comptime Environment.allow_assert)
-            log("unlinkat({}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
+            log("unlinkat({f}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
         return .success;
     }
     unreachable;
@@ -2865,17 +2693,17 @@ pub fn unlinkat(dirfd: bun.FileDescriptor, to: anytype) Maybe(void) {
         if (Maybe(void).errnoSysFP(syscall.unlinkat(dirfd.cast(), to, 0), .unlink, dirfd, to)) |err| {
             if (err.getErrno() == .INTR) continue;
             if (comptime Environment.allow_assert)
-                log("unlinkat({}, {s}) = {s}", .{ dirfd, bun.sliceTo(to, 0), @tagName(err.getErrno()) });
+                log("unlinkat({f}, {s}) = {s}", .{ dirfd, bun.sliceTo(to, 0), @tagName(err.getErrno()) });
             return err;
         }
         if (comptime Environment.allow_assert)
-            log("unlinkat({}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
+            log("unlinkat({f}, {s}) = 0", .{ dirfd, bun.sliceTo(to, 0) });
         return .success;
     }
 }
 
 pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8) {
-    switch (comptime builtin.os.tag) {
+    switch (Environment.os) {
         .windows => {
             var wide_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
             const wide_slice = bun.windows.GetFinalPathNameByHandle(fd.cast(), .{}, wide_buf[0..]) catch {
@@ -2885,7 +2713,7 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8
             // Trust that Windows gives us valid UTF-16LE.
             return .{ .result = @constCast(bun.strings.fromWPath(out_buffer, wide_slice)) };
         },
-        .macos, .ios, .watchos, .tvos => {
+        .mac => {
             // On macOS, we can use F.GETPATH fcntl command to query the OS for
             // the path to the file descriptor.
             @memset(out_buffer[0..out_buffer.*.len], 0);
@@ -2905,7 +2733,7 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *bun.PathBuffer) Maybe([]u8
                 .result => |result| .{ .result = result },
             };
         },
-        else => @compileError("querying for canonical path of a handle is unsupported on this host"),
+        .wasm => @compileError("querying for canonical path of a handle is unsupported on this host"),
     }
 }
 
@@ -2934,7 +2762,6 @@ pub fn mmap(
 }
 
 pub fn mmapFile(path: [:0]const u8, flags: std.c.MAP, wanted_size: ?usize, offset: usize) Maybe([]align(page_size_min) u8) {
-    assertIsValidWindowsPath(u8, path);
     const fd = switch (open(path, bun.O.RDWR, 0)) {
         .result => |fd| fd,
         .err => |err| return .{ .err = err },
@@ -2992,7 +2819,7 @@ pub fn setsockopt(fd: bun.FileDescriptor, level: c_int, optname: u32, value: i32
 
 pub fn setNoSigpipe(fd: bun.FileDescriptor) Maybe(void) {
     if (comptime Environment.isMac) {
-        log("setNoSigpipe({})", .{fd});
+        log("setNoSigpipe({f})", .{fd});
         return switch (setsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.NOSIGPIPE, 1)) {
             .result => .success,
             .err => |err| .{ .err = err },
@@ -3089,7 +2916,16 @@ pub fn socketpairImpl(domain: socketpair_t, socktype: socketpair_t, protocol: so
             if (comptime Environment.isMac) {
                 if (for_shell) {
                     // see the comment on `socketpairForShell` for why we don't
-                    // set SO_NOSIGPIPE here
+                    // set SO_NOSIGPIPE here.
+
+                    // macOS seems to default to around 8
+                    // KB for the buffer size this is comically small. for
+                    // processes normally, we do about 512 KB. for this we do
+                    // 128 KB since you might have a lot of them at once.
+                    const so_recvbuf: c_int = 1024 * 128;
+                    const so_sendbuf: c_int = 1024 * 128;
+                    _ = std.c.setsockopt(fds_i[1], std.posix.SOL.SOCKET, std.posix.SO.RCVBUF, &so_recvbuf, @sizeOf(c_int));
+                    _ = std.c.setsockopt(fds_i[0], std.posix.SOL.SOCKET, std.posix.SO.SNDBUF, &so_sendbuf, @sizeOf(c_int));
                 } else {
                     inline for (0..2) |i| {
                         switch (setNoSigpipe(.fromNative(fds_i[i]))) {
@@ -3197,7 +3033,7 @@ pub fn getMaxPipeSizeOnLinux() usize {
                 var max_pipe_size_buf: [128]u8 = undefined;
                 const max_pipe_size = switch (read(pipe_max_size_fd, max_pipe_size_buf[0..])) {
                     .result => |bytes_read| std.fmt.parseInt(i64, strings.trim(max_pipe_size_buf[0..bytes_read], "\n"), 10) catch |err| {
-                        log("Failed to parse /proc/sys/fs/pipe-max-size: {any}\n", .{@errorName(err)});
+                        log("Failed to parse /proc/sys/fs/pipe-max-size: {s}\n", .{@errorName(err)});
                         return default_out_size;
                     },
                     .err => |err| {
@@ -3281,7 +3117,7 @@ pub fn getFileAttributes(path: anytype) ?WindowsFileAttributes {
         // Win32 API does file path normalization, so we do not need the valid path assertion here.
         const dword = kernel32.GetFileAttributesW(path.ptr);
         if (comptime Environment.isDebug) {
-            log("GetFileAttributesW({}) = {d}", .{ bun.fmt.utf16(path), dword });
+            log("GetFileAttributesW({f}) = {d}", .{ bun.fmt.utf16(path), dword });
         }
         if (dword == windows.INVALID_FILE_ATTRIBUTES) {
             return null;
@@ -3357,14 +3193,14 @@ pub fn faccessat(dir_fd: bun.FileDescriptor, subpath: anytype) bun.sys.Maybe(boo
     const has_sentinel = std.meta.sentinel(@TypeOf(subpath)) != null;
 
     if (comptime !has_sentinel) {
-        const path = std.os.toPosixPath(subpath) catch return bun.sys.Maybe(bool){ .err = Error.fromCode(.NAMETOOLONG, .access) };
-        return faccessat(dir_fd, path);
+        const path = std.posix.toPosixPath(subpath) catch return bun.sys.Maybe(bool){ .err = Error.fromCode(.NAMETOOLONG, .access) };
+        return faccessat(dir_fd, &path);
     }
 
     if (comptime Environment.isLinux) {
         // avoid loading the libc symbol for this to reduce chances of GLIBC minimum version requirements
         const rc = linux.faccessat(dir_fd.cast(), subpath, linux.F_OK, 0);
-        syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(getErrno(rc)) });
+        syslog("faccessat({f}, {f}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(getErrno(rc)) });
         if (rc == 0) {
             return bun.sys.Maybe(bool){ .result = true };
         }
@@ -3374,7 +3210,7 @@ pub fn faccessat(dir_fd: bun.FileDescriptor, subpath: anytype) bun.sys.Maybe(boo
 
     // on other platforms use faccessat from libc
     const rc = std.c.faccessat(dir_fd.cast(), subpath, std.posix.F_OK, 0);
-    syslog("faccessat({}, {}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(getErrno(rc)) });
+    syslog("faccessat({f}, {f}, O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(subpath, .{}), if (rc == 0) 0 else @intFromEnum(getErrno(rc)) });
     if (rc == 0) {
         return bun.sys.Maybe(bool){ .result = true };
     }
@@ -3402,7 +3238,7 @@ pub fn futimens(fd: bun.FileDescriptor, atime: jsc.Node.TimeLike, mtime: jsc.Nod
             .{ .sec = @intCast(mtime.sec), .nsec = mtime.nsec },
         });
 
-        log("futimens({}, accessed=({d}, {d}), modified=({d}, {d})) = {d}", .{ fd, atime.sec, atime.nsec, mtime.sec, mtime.nsec, rc });
+        log("futimens({f}, accessed=({d}, {d}), modified=({d}, {d})) = {d}", .{ fd, atime.sec, atime.nsec, mtime.sec, mtime.nsec, rc });
 
         if (rc == 0) {
             return .success;
@@ -3526,7 +3362,7 @@ pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType
         var basic_info: w.FILE_BASIC_INFORMATION = undefined;
         const rc = ntdll.NtQueryAttributesFile(&attr, &basic_info);
         if (bun.sys.Maybe(bool).errnoSys(rc, .access)) |err| {
-            syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {}", .{ bun.fmt.fmtOSPath(path, .{}), err });
+            syslog("NtQueryAttributesFile({f}, O_RDONLY, 0) = {f}", .{ bun.fmt.fmtOSPath(path, .{}), err });
             return .{ .err = err.err };
         }
 
@@ -3541,13 +3377,13 @@ pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType
             basic_info.FileAttributes & c.FILE_ATTRIBUTE_READONLY == 0;
 
         return if (is_dir) {
-            syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = directory", .{bun.fmt.fmtOSPath(path, .{})});
+            syslog("NtQueryAttributesFile({f}, O_RDONLY, 0) = directory", .{bun.fmt.fmtOSPath(path, .{})});
             return .{ .result = .directory };
         } else if (is_regular_file) {
-            syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = file", .{bun.fmt.fmtOSPath(path, .{})});
+            syslog("NtQueryAttributesFile({f}, O_RDONLY, 0) = file", .{bun.fmt.fmtOSPath(path, .{})});
             return .{ .result = .file };
         } else {
-            syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {d}", .{ bun.fmt.fmtOSPath(path, .{}), basic_info.FileAttributes });
+            syslog("NtQueryAttributesFile({f}, O_RDONLY, 0) = {d}", .{ bun.fmt.fmtOSPath(path, .{}), basic_info.FileAttributes });
             return .{ .err = Error.fromCode(.UNKNOWN, .access) };
         };
     }
@@ -3594,29 +3430,23 @@ pub fn isExecutableFileOSPath(path: bun.OSPathSliceZ) bool {
 
     if (comptime Environment.isWindows) {
         // Rationale: `GetBinaryTypeW` does not work on .cmd files.
-        // Windows does not have executable permission like posix does, instead we
-        // can just look at the file extension to determine executable status.
-        @compileError("Do not use isExecutableFilePath on Windows");
+        // SaferiIsExecutableFileType works on .cmd files.
+        // The following file name extensions are examples of executable file types. This is not a complete list.
+        // .bat
+        // .cmd
+        // .com
+        // .exe
+        // .js
+        // .lnk
+        // .pif
+        // .pl
+        // .shs
+        // .url
+        // .vbs
+        // The security policy Microsoft Management Console (MMC) snap-in (Secpol.msc) controls which extensions are considered executable file types.
 
-        // var out: windows.DWORD = 0;
-        // const rc = kernel32.GetBinaryTypeW(path, &out);
-
-        // const result = if (rc == windows.FALSE)
-        //     false
-        // else switch (out) {
-        //     kernel32.SCS_32BIT_BINARY,
-        //     kernel32.SCS_64BIT_BINARY,
-        //     kernel32.SCS_DOS_BINARY,
-        //     kernel32.SCS_OS216_BINARY,
-        //     kernel32.SCS_PIF_BINARY,
-        //     kernel32.SCS_POSIX_BINARY,
-        //     => true,
-        //     else => false,
-        // };
-
-        // log("GetBinaryTypeW({}) = {d}. isExecutable={}", .{ bun.fmt.utf16(path), out, result });
-
-        // return result;
+        // we pass false to include .exe files (see https://learn.microsoft.com/en-us/windows/win32/api/winsafer/nf-winsafer-saferiisexecutablefiletype)
+        return bun.windows.SaferiIsExecutableFileType(path, w.FALSE) != w.FALSE;
     }
 
     @compileError("TODO: isExecutablePath");
@@ -3696,12 +3526,24 @@ pub fn disableLinger(fd: bun.FileDescriptor) void {
 
 pub fn pipe() Maybe([2]bun.FileDescriptor) {
     if (comptime Environment.isWindows) {
-        @panic("TODO: Implement `pipe()` for Windows");
+        const uv = bun.windows.libuv;
+        var out: [2]bun.FileDescriptor = undefined;
+        var fds: [2]uv.uv_file = undefined;
+        if (uv.uv_pipe(&fds, 0, 0).errEnum()) |e| {
+            const err = Error.fromCode(e, .pipe);
+            log("pipe() = {f}", .{err});
+            return .{ .err = err };
+        }
+        out[0] = .fromUV(fds[0]);
+        out[1] = .fromUV(fds[1]);
+        log("pipe() = [{f}, {f}]", .{ out[0], out[1] });
+        return .{ .result = out };
     }
 
     var fds: [2]i32 = undefined;
     const rc = syscall.pipe(&fds);
     if (Maybe([2]bun.FileDescriptor).errnoSys(rc, .pipe)) |err| {
+        log("pipe() = {f}", .{err});
         return err;
     }
     log("pipe() = [{d}, {d}]", .{ fds[0], fds[1] });
@@ -3731,12 +3573,12 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, _: i32) Maybe(bun.FileDescriptor) {
         );
         if (out == 0) {
             if (Maybe(bun.FileDescriptor).errnoSysFd(0, .dup, fd)) |err| {
-                log("dup({}) = {}", .{ fd, err });
+                log("dup({f}) = {f}", .{ fd, err });
                 return err;
             }
         }
         const duplicated_fd = bun.FD.fromNative(target);
-        log("dup({}) = {}", .{ fd, duplicated_fd });
+        log("dup({f}) = {f}", .{ fd, duplicated_fd });
         return Maybe(bun.FileDescriptor){ .result = duplicated_fd };
     }
 
@@ -3744,12 +3586,12 @@ pub fn dupWithFlags(fd: bun.FileDescriptor, _: i32) Maybe(bun.FileDescriptor) {
     const out = switch (fcntl(fd, @as(i32, bun.c.F_DUPFD_CLOEXEC), @as(ArgType, 0))) {
         .result => |result| result,
         .err => |err| {
-            log("dup({}) = {}", .{ fd, err });
+            log("dup({f}) = {f}", .{ fd, err });
             return .{ .err = err };
         },
     };
 
-    log("dup({}) = {}", .{ fd, bun.FileDescriptor.fromNative(@intCast(out)) });
+    log("dup({f}) = {f}", .{ fd, bun.FileDescriptor.fromNative(@intCast(out)) });
 
     return .initResult(.fromNative(@intCast(out)));
 }
@@ -3767,7 +3609,7 @@ pub fn link(comptime T: type, src: [:0]const T, dest: [:0]const T) Maybe(void) {
         if (bun.windows.CreateHardLinkW(dest, src, null) == 0) {
             return Maybe(void).errno(bun.windows.getLastErrno(), .link);
         }
-        log("CreateHardLinkW({s}, {s}) = 0", .{
+        log("CreateHardLinkW({f}, {f}) = 0", .{
             bun.fmt.fmtPath(T, dest, .{}),
             bun.fmt.fmtPath(T, src, .{}),
         });
@@ -3809,10 +3651,10 @@ pub fn linkat(src: bun.FileDescriptor, src_path: []const u8, dest: bun.FileDescr
 pub fn linkatZ(src: FD, src_path: [:0]const u8, dest: FD, dest_path: [:0]const u8) Maybe(void) {
     const ret = std.c.linkat(src.cast(), src_path, dest.cast(), dest_path, 0);
     if (Maybe(void).errnoSysP(ret, .link, src_path)) |err| {
-        log("linkat({}, {s}, {}, {s}) = {s}", .{ src, src_path, dest, dest_path, @tagName(err.getErrno()) });
+        log("linkat({f}, {s}, {f}, {s}) = {s}", .{ src, src_path, dest, dest_path, @tagName(err.getErrno()) });
         return err;
     }
-    log("linkat({}, {s}, {}, {s}) = 0", .{ src, src_path, dest, dest_path });
+    log("linkat({f}, {s}, {f}, {s}) = 0", .{ src, src_path, dest, dest_path });
     return .success;
 }
 
@@ -3902,10 +3744,10 @@ pub fn readNonblocking(fd: bun.FileDescriptor, buf: []u8) Maybe(usize) {
             const rc = sys_preadv2(fd.native(), &iovec, 1, -1, std.os.linux.RWF.NOWAIT);
 
             if (comptime Environment.isDebug) {
-                log("preadv2({}, {d}) = {d} ({})", .{ fd, buf.len, rc, debug_timer });
+                log("preadv2({f}, {d}) = {d} ({f})", .{ fd, buf.len, rc, debug_timer });
 
                 if (debug_timer.timer.read() > std.time.ns_per_ms) {
-                    bun.Output.debugWarn("preadv2({}, {d}) blocked for {}", .{ fd, buf.len, debug_timer });
+                    bun.Output.debugWarn("preadv2({f}, {d}) blocked for {f}", .{ fd, buf.len, debug_timer });
                 }
             }
 
@@ -3955,10 +3797,10 @@ pub fn writeNonblocking(fd: bun.FileDescriptor, buf: []const u8) Maybe(usize) {
             const rc = sys_pwritev2(fd.native(), &iovec, 1, -1, std.os.linux.RWF.NOWAIT);
 
             if (comptime Environment.isDebug) {
-                log("pwritev2({}, {d}) = {d} ({})", .{ fd, buf.len, rc, debug_timer });
+                log("pwritev2({f}, {d}) = {d} ({f})", .{ fd, buf.len, rc, debug_timer });
 
                 if (debug_timer.timer.read() > std.time.ns_per_ms) {
-                    bun.Output.debugWarn("pwritev2({}, {d}) blocked for {}", .{ fd, buf.len, debug_timer });
+                    bun.Output.debugWarn("pwritev2({f}, {d}) blocked for {f}", .{ fd, buf.len, debug_timer });
                 }
             }
 
@@ -3988,10 +3830,10 @@ pub fn getFileSize(fd: bun.FileDescriptor) Maybe(usize) {
         var size: windows.LARGE_INTEGER = undefined;
         if (windows.kernel32.GetFileSizeEx(fd.cast(), &size) == windows.FALSE) {
             const err = Error.fromCode(windows.getLastErrno(), .fstat);
-            log("GetFileSizeEx({}) = {s}", .{ fd, err.name() });
+            log("GetFileSizeEx({f}) = {s}", .{ fd, err.name() });
             return .{ .err = err };
         }
-        log("GetFileSizeEx({}) = {d}", .{ fd, size });
+        log("GetFileSizeEx({f}) = {d}", .{ fd, size });
         return .{ .result = @intCast(@max(size, 0)) };
     }
 
@@ -4010,803 +3852,11 @@ pub fn isPollable(mode: mode_t) bool {
     return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode);
 }
 
-/// TODO: make these all methods on `bun.FD`, and define them as methods `bun.FD`
-pub const File = struct {
-    // "handle" matches std.fs.File
-    handle: bun.FileDescriptor,
-
-    pub fn openat(dir: bun.FileDescriptor, path: [:0]const u8, flags: i32, mode: bun.Mode) Maybe(File) {
-        return switch (This.openat(dir, path, flags, mode)) {
-            .result => |fd| .{ .result = .{ .handle = fd } },
-            .err => |err| .{ .err = err },
-        };
-    }
-
-    pub fn open(path: [:0]const u8, flags: i32, mode: bun.Mode) Maybe(File) {
-        return File.openat(bun.FD.cwd(), path, flags, mode);
-    }
-
-    pub fn makeOpen(path: [:0]const u8, flags: i32, mode: bun.Mode) Maybe(File) {
-        return File.makeOpenat(bun.FD.cwd(), path, flags, mode);
-    }
-
-    pub fn makeOpenat(other: bun.FD, path: [:0]const u8, flags: i32, mode: bun.Mode) Maybe(File) {
-        const fd = switch (This.openat(other, path, flags, mode)) {
-            .result => |fd| fd,
-            .err => |err| fd: {
-                if (std.fs.path.dirname(path)) |dir_path| {
-                    bun.makePath(other.stdDir(), dir_path) catch {};
-                    break :fd switch (This.openat(other, path, flags, mode)) {
-                        .result => |fd| fd,
-                        .err => |err2| return .{ .err = err2 },
-                    };
-                }
-
-                return .{ .err = err };
-            },
-        };
-
-        return .{ .result = .{ .handle = fd } };
-    }
-
-    pub fn openatOSPath(other: bun.FD, path: bun.OSPathSliceZ, flags: i32, mode: bun.Mode) Maybe(File) {
-        return switch (This.openatOSPath(other, path, flags, mode)) {
-            .result => |fd| .{ .result = .{ .handle = fd } },
-            .err => |err| .{ .err = err },
-        };
-    }
-
-    pub fn from(other: anytype) File {
-        const T = @TypeOf(other);
-
-        if (T == File) {
-            return other;
-        }
-
-        if (T == std.posix.fd_t) {
-            return .{ .handle = .fromNative(other) };
-        }
-
-        if (T == bun.FileDescriptor) {
-            return .{ .handle = other };
-        }
-
-        if (T == std.fs.File) {
-            return .{ .handle = .fromStdFile(other) };
-        }
-
-        if (T == std.fs.Dir) {
-            return File{ .handle = .fromStdDir(other) };
-        }
-
-        if (comptime Environment.isLinux) {
-            if (T == u64) {
-                return File{ .handle = .fromNative(@intCast(other)) };
-            }
-        }
-
-        @compileError("Unsupported type " ++ bun.meta.typeName(T));
-    }
-
-    pub fn write(self: File, buf: []const u8) Maybe(usize) {
-        return This.write(self.handle, buf);
-    }
-
-    pub fn read(self: File, buf: []u8) Maybe(usize) {
-        return This.read(self.handle, buf);
-    }
-
-    pub fn readAll(self: File, buf: []u8) Maybe(usize) {
-        return This.readAll(self.handle, buf);
-    }
-
-    pub fn writeAll(self: File, buf: []const u8) Maybe(void) {
-        var remain = buf;
-        while (remain.len > 0) {
-            const rc = This.write(self.handle, remain);
-            switch (rc) {
-                .err => |err| return .{ .err = err },
-                .result => |amt| {
-                    if (amt == 0) {
-                        return .success;
-                    }
-                    remain = remain[amt..];
-                },
-            }
-        }
-
-        return .success;
-    }
-
-    pub fn writeFile(
-        relative_dir_or_cwd: anytype,
-        path: bun.OSPathSliceZ,
-        data: []const u8,
-    ) Maybe(void) {
-        const file = switch (File.openatOSPath(relative_dir_or_cwd, path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
-            .err => |err| return .{ .err = err },
-            .result => |fd| fd,
-        };
-        defer file.close();
-        switch (file.writeAll(data)) {
-            .err => |err| return .{ .err = err },
-            .result => {},
-        }
-        return .success;
-    }
-
-    pub const ReadError = anyerror;
-
-    pub fn closeAndMoveTo(this: File, src: [:0]const u8, dest: [:0]const u8) !void {
-        // On POSIX, close the file after moving it.
-        defer if (Environment.isPosix) this.close();
-        // On Windows, close the file before moving it.
-        if (Environment.isWindows) this.close();
-        const cwd = bun.FD.cwd();
-        try bun.sys.moveFileZWithHandle(this.handle, cwd, src, cwd, dest);
-    }
-
-    fn stdIoRead(this: File, buf: []u8) ReadError!usize {
-        return try this.read(buf).unwrap();
-    }
-
-    pub const Reader = std.io.Reader(File, anyerror, stdIoRead);
-
-    pub fn reader(self: File) Reader {
-        return Reader{ .context = self };
-    }
-
-    pub const WriteError = anyerror;
-    fn stdIoWrite(this: File, bytes: []const u8) WriteError!usize {
-        try this.writeAll(bytes).unwrap();
-
-        return bytes.len;
-    }
-
-    fn stdIoWriteQuietDebug(this: File, bytes: []const u8) WriteError!usize {
-        bun.Output.disableScopedDebugWriter();
-        defer bun.Output.enableScopedDebugWriter();
-        try this.writeAll(bytes).unwrap();
-
-        return bytes.len;
-    }
-
-    pub const Writer = std.io.Writer(File, anyerror, stdIoWrite);
-    pub const QuietWriter = if (Environment.isDebug) std.io.Writer(File, anyerror, stdIoWriteQuietDebug) else Writer;
-
-    pub fn writer(self: File) Writer {
-        return Writer{ .context = self };
-    }
-
-    pub fn quietWriter(self: File) QuietWriter {
-        return QuietWriter{ .context = self };
-    }
-
-    pub fn isTty(self: File) bool {
-        return std.posix.isatty(self.handle.cast());
-    }
-
-    /// Asserts in debug that this File object is valid
-    pub fn close(self: File) void {
-        self.handle.close();
-    }
-
-    pub fn getEndPos(self: File) Maybe(usize) {
-        return getFileSize(self.handle);
-    }
-
-    pub fn stat(self: File) Maybe(bun.Stat) {
-        return fstat(self.handle);
-    }
-
-    /// Be careful about using this on Linux or macOS.
-    ///
-    /// This calls stat() internally.
-    pub fn kind(self: File) Maybe(std.fs.File.Kind) {
-        if (Environment.isWindows) {
-            const rt = windows.GetFileType(self.handle.cast());
-            if (rt == windows.FILE_TYPE_UNKNOWN) {
-                switch (windows.GetLastError()) {
-                    .SUCCESS => {},
-                    else => |err| {
-                        return .{ .err = Error.fromCode((SystemErrno.init(err) orelse SystemErrno.EUNKNOWN).toE(), .fstat) };
-                    },
-                }
-            }
-
-            return .{
-                .result = switch (rt) {
-                    windows.FILE_TYPE_CHAR => .character_device,
-                    windows.FILE_TYPE_REMOTE, windows.FILE_TYPE_DISK => .file,
-                    windows.FILE_TYPE_PIPE => .named_pipe,
-                    windows.FILE_TYPE_UNKNOWN => .unknown,
-                    else => .file,
-                },
-            };
-        }
-
-        const st = switch (self.stat()) {
-            .err => |err| return .{ .err = err },
-            .result => |s| s,
-        };
-
-        const m = st.mode & posix.S.IFMT;
-        switch (m) {
-            posix.S.IFBLK => return .{ .result = .block_device },
-            posix.S.IFCHR => return .{ .result = .character_device },
-            posix.S.IFDIR => return .{ .result = .directory },
-            posix.S.IFIFO => return .{ .result = .named_pipe },
-            posix.S.IFLNK => return .{ .result = .sym_link },
-            posix.S.IFREG => return .{ .result = .file },
-            posix.S.IFSOCK => return .{ .result = .unix_domain_socket },
-            else => {
-                return .{ .result = .file };
-            },
-        }
-    }
-
-    pub const ReadToEndResult = struct {
-        bytes: std.ArrayList(u8) = std.ArrayList(u8).init(default_allocator),
-        err: ?Error = null,
-
-        pub fn unwrap(self: *const ReadToEndResult) ![]u8 {
-            if (self.err) |err| {
-                try (bun.sys.Maybe(void){ .err = err }).unwrap();
-            }
-            return self.bytes.items;
-        }
-    };
-
-    pub fn readFillBuf(this: File, buf: []u8) Maybe([]u8) {
-        var read_amount: usize = 0;
-        while (read_amount < buf.len) {
-            switch (if (comptime Environment.isPosix)
-                pread(this.handle, buf[read_amount..], @intCast(read_amount))
-            else
-                sys.read(this.handle, buf[read_amount..])) {
-                .err => |err| {
-                    return .{ .err = err };
-                },
-                .result => |bytes_read| {
-                    if (bytes_read == 0) {
-                        break;
-                    }
-
-                    read_amount += bytes_read;
-                },
-            }
-        }
-
-        return .{ .result = buf[0..read_amount] };
-    }
-
-    pub fn readToEndWithArrayList(this: File, list: *std.ArrayList(u8), probably_small: bool) Maybe(usize) {
-        if (probably_small) {
-            list.ensureUnusedCapacity(64) catch bun.outOfMemory();
-        } else {
-            list.ensureTotalCapacityPrecise(
-                switch (this.getEndPos()) {
-                    .err => |err| {
-                        return .{ .err = err };
-                    },
-                    .result => |s| s,
-                } + 16,
-            ) catch bun.outOfMemory();
-        }
-
-        var total: i64 = 0;
-        while (true) {
-            if (list.unusedCapacitySlice().len == 0) {
-                list.ensureUnusedCapacity(16) catch bun.outOfMemory();
-            }
-
-            switch (if (comptime Environment.isPosix)
-                pread(this.handle, list.unusedCapacitySlice(), total)
-            else
-                sys.read(this.handle, list.unusedCapacitySlice())) {
-                .err => |err| {
-                    return .{ .err = err };
-                },
-                .result => |bytes_read| {
-                    if (bytes_read == 0) {
-                        break;
-                    }
-
-                    list.items.len += bytes_read;
-                    total += @intCast(bytes_read);
-                },
-            }
-        }
-
-        return .{ .result = @intCast(total) };
-    }
-
-    /// Use this function on potentially large files.
-    /// Calls fstat() on the file to get the size of the file and avoids reallocations + extra read() calls.
-    pub fn readToEnd(this: File, allocator: std.mem.Allocator) ReadToEndResult {
-        var list = std.ArrayList(u8).init(allocator);
-        return switch (readToEndWithArrayList(this, &list, false)) {
-            .err => |err| .{ .err = err, .bytes = list },
-            .result => .{ .err = null, .bytes = list },
-        };
-    }
-
-    /// Use this function on small files <= 1024 bytes.
-    /// This will skip the fstat() call, preallocating 64 bytes instead of the file's size.
-    pub fn readToEndSmall(this: File, allocator: std.mem.Allocator) ReadToEndResult {
-        var list = std.ArrayList(u8).init(allocator);
-        return switch (readToEndWithArrayList(this, &list, true)) {
-            .err => |err| .{ .err = err, .bytes = list },
-            .result => .{ .err = null, .bytes = list },
-        };
-    }
-
-    pub fn getPath(this: File, out_buffer: *bun.PathBuffer) Maybe([]u8) {
-        return getFdPath(this.handle, out_buffer);
-    }
-
-    /// 1. Normalize the file path
-    /// 2. Open a file for reading
-    /// 2. Read the file to a buffer
-    /// 3. Return the File handle and the buffer
-    pub fn readFromUserInput(dir_fd: anytype, input_path: anytype, allocator: std.mem.Allocator) Maybe([]u8) {
-        var buf: bun.PathBuffer = undefined;
-        const normalized = bun.path.joinAbsStringBufZ(
-            bun.fs.FileSystem.instance.top_level_dir,
-            &buf,
-            &.{input_path},
-            .loose,
-        );
-        return readFrom(dir_fd, normalized, allocator);
-    }
-
-    /// 1. Open a file for reading
-    /// 2. Read the file to a buffer
-    /// 3. Return the File handle and the buffer
-    pub fn readFileFrom(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe(struct { File, []u8 }) {
-        const ElementType = std.meta.Elem(@TypeOf(path));
-
-        const rc = brk: {
-            if (comptime Environment.isWindows and ElementType == u16) {
-                break :brk openatWindowsTMaybeNormalize(u16, from(dir_fd).handle, path, O.RDONLY, false);
-            }
-
-            if (comptime ElementType == u8 and std.meta.sentinel(@TypeOf(path)) == null) {
-                break :brk sys.openatA(from(dir_fd).handle, path, O.RDONLY, 0);
-            }
-
-            break :brk sys.openat(from(dir_fd).handle, path, O.RDONLY, 0);
-        };
-
-        const this = switch (rc) {
-            .err => |err| return .{ .err = err },
-            .result => |fd| from(fd),
-        };
-
-        var result = this.readToEnd(allocator);
-
-        if (result.err) |err| {
-            this.close();
-            result.bytes.deinit();
-            return .{ .err = err };
-        }
-
-        if (result.bytes.items.len == 0) {
-            // Don't allocate an empty string.
-            // We won't be modifying an empty slice, anyway.
-            return .{ .result = .{ this, @ptrCast(@constCast("")) } };
-        }
-
-        return .{ .result = .{ this, result.bytes.items } };
-    }
-
-    /// 1. Open a file for reading relative to a directory
-    /// 2. Read the file to a buffer
-    /// 3. Close the file
-    /// 4. Return the buffer
-    pub fn readFrom(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator) Maybe([]u8) {
-        const file, const bytes = switch (readFileFrom(dir_fd, path, allocator)) {
-            .err => |err| return .{ .err = err },
-            .result => |result| result,
-        };
-
-        file.close();
-        return .{ .result = bytes };
-    }
-
-    const ToSourceOptions = struct {
-        convert_bom: bool = false,
-    };
-
-    pub fn toSourceAt(dir_fd: anytype, path: anytype, allocator: std.mem.Allocator, opts: ToSourceOptions) Maybe(bun.logger.Source) {
-        var bytes = switch (readFrom(dir_fd, path, allocator)) {
-            .err => |err| return .{ .err = err },
-            .result => |bytes| bytes,
-        };
-
-        if (opts.convert_bom) {
-            if (bun.strings.BOM.detect(bytes)) |bom| {
-                bytes = bom.removeAndConvertToUTF8AndFree(allocator, bytes) catch bun.outOfMemory();
-            }
-        }
-
-        return .{ .result = bun.logger.Source.initPathString(path, bytes) };
-    }
-
-    pub fn toSource(path: anytype, allocator: std.mem.Allocator, opts: ToSourceOptions) Maybe(bun.logger.Source) {
-        return toSourceAt(std.fs.cwd(), path, allocator, opts);
-    }
-};
-
 pub const Dir = @import("./dir.zig");
 const FILE_SHARE = w.FILE_SHARE_WRITE | w.FILE_SHARE_READ | w.FILE_SHARE_DELETE;
 
-/// This map is derived off of uv.h's definitions, and is what Node.js uses in printing errors.
-pub const libuv_error_map = brk: {
-    const entries: []const struct { [:0]const u8, [:0]const u8 } = &.{
-        .{ "E2BIG", "argument list too long" },
-        .{ "EACCES", "permission denied" },
-        .{ "EADDRINUSE", "address already in use" },
-        .{ "EADDRNOTAVAIL", "address not available" },
-        .{ "EAFNOSUPPORT", "address family not supported" },
-        .{ "EAGAIN", "resource temporarily unavailable" },
-        .{ "EAI_ADDRFAMILY", "address family not supported" },
-        .{ "EAI_AGAIN", "temporary failure" },
-        .{ "EAI_BADFLAGS", "bad ai_flags value" },
-        .{ "EAI_BADHINTS", "invalid value for hints" },
-        .{ "EAI_CANCELED", "request canceled" },
-        .{ "EAI_FAIL", "permanent failure" },
-        .{ "EAI_FAMILY", "ai_family not supported" },
-        .{ "EAI_MEMORY", "out of memory" },
-        .{ "EAI_NODATA", "no address" },
-        .{ "EAI_NONAME", "unknown node or service" },
-        .{ "EAI_OVERFLOW", "argument buffer overflow" },
-        .{ "EAI_PROTOCOL", "resolved protocol is unknown" },
-        .{ "EAI_SERVICE", "service not available for socket type" },
-        .{ "EAI_SOCKTYPE", "socket type not supported" },
-        .{ "EALREADY", "connection already in progress" },
-        .{ "EBADF", "bad file descriptor" },
-        .{ "EBUSY", "resource busy or locked" },
-        .{ "ECANCELED", "operation canceled" },
-        .{ "ECHARSET", "invalid Unicode character" },
-        .{ "ECONNABORTED", "software caused connection abort" },
-        .{ "ECONNREFUSED", "connection refused" },
-        .{ "ECONNRESET", "connection reset by peer" },
-        .{ "EDESTADDRREQ", "destination address required" },
-        .{ "EEXIST", "file already exists" },
-        .{ "EFAULT", "bad address in system call argument" },
-        .{ "EFBIG", "file too large" },
-        .{ "EHOSTUNREACH", "host is unreachable" },
-        .{ "EINTR", "interrupted system call" },
-        .{ "EINVAL", "invalid argument" },
-        .{ "EIO", "i/o error" },
-        .{ "EISCONN", "socket is already connected" },
-        .{ "EISDIR", "illegal operation on a directory" },
-        .{ "ELOOP", "too many symbolic links encountered" },
-        .{ "EMFILE", "too many open files" },
-        .{ "EMSGSIZE", "message too long" },
-        .{ "ENAMETOOLONG", "name too long" },
-        .{ "ENETDOWN", "network is down" },
-        .{ "ENETUNREACH", "network is unreachable" },
-        .{ "ENFILE", "file table overflow" },
-        .{ "ENOBUFS", "no buffer space available" },
-        .{ "ENODEV", "no such device" },
-        .{ "ENOENT", "no such file or directory" },
-        .{ "ENOMEM", "not enough memory" },
-        .{ "ENONET", "machine is not on the network" },
-        .{ "ENOPROTOOPT", "protocol not available" },
-        .{ "ENOSPC", "no space left on device" },
-        .{ "ENOSYS", "function not implemented" },
-        .{ "ENOTCONN", "socket is not connected" },
-        .{ "ENOTDIR", "not a directory" },
-        .{ "ENOTEMPTY", "directory not empty" },
-        .{ "ENOTSOCK", "socket operation on non-socket" },
-        .{ "ENOTSUP", "operation not supported on socket" },
-        .{ "EOVERFLOW", "value too large for defined data type" },
-        .{ "EPERM", "operation not permitted" },
-        .{ "EPIPE", "broken pipe" },
-        .{ "EPROTO", "protocol error" },
-        .{ "EPROTONOSUPPORT", "protocol not supported" },
-        .{ "EPROTOTYPE", "protocol wrong type for socket" },
-        .{ "ERANGE", "result too large" },
-        .{ "EROFS", "read-only file system" },
-        .{ "ESHUTDOWN", "cannot send after transport endpoint shutdown" },
-        .{ "ESPIPE", "invalid seek" },
-        .{ "ESRCH", "no such process" },
-        .{ "ETIMEDOUT", "connection timed out" },
-        .{ "ETXTBSY", "text file is busy" },
-        .{ "EXDEV", "cross-device link not permitted" },
-        .{ "UNKNOWN", "unknown error" },
-        .{ "EOF", "end of file" },
-        .{ "ENXIO", "no such device or address" },
-        .{ "EMLINK", "too many links" },
-        .{ "EHOSTDOWN", "host is down" },
-        .{ "EREMOTEIO", "remote I/O error" },
-        .{ "ENOTTY", "inappropriate ioctl for device" },
-        .{ "EFTYPE", "inappropriate file type or format" },
-        .{ "EILSEQ", "illegal byte sequence" },
-        .{ "ESOCKTNOSUPPORT", "socket type not supported" },
-        .{ "ENODATA", "no data available" },
-        .{ "EUNATCH", "protocol driver not attached" },
-    };
-    var map = std.EnumMap(SystemErrno, [:0]const u8).initFull("unknown error");
-    for (entries) |entry| {
-        const key, const text = entry;
-        if (@hasField(SystemErrno, key)) {
-            map.put(@field(SystemErrno, key), text);
-        }
-    }
-
-    // sanity check
-    bun.assert(std.mem.eql(u8, map.get(SystemErrno.ENOENT).?, "no such file or directory"));
-
-    break :brk map;
-};
-
-/// This map is derived off of what coreutils uses in printing errors. This is
-/// equivalent to `strerror`, but as strings with constant lifetime.
-pub const coreutils_error_map = brk: {
-    // macOS and Linux have slightly different error messages.
-    const entries: []const struct { [:0]const u8, [:0]const u8 } = switch (Environment.os) {
-        // Since windows is just an emulation of linux, it will derive the linux error messages.
-        .linux, .windows, .wasm => &.{
-            .{ "EPERM", "Operation not permitted" },
-            .{ "ENOENT", "No such file or directory" },
-            .{ "ESRCH", "No such process" },
-            .{ "EINTR", "Interrupted system call" },
-            .{ "EIO", "Input/output error" },
-            .{ "ENXIO", "No such device or address" },
-            .{ "E2BIG", "Argument list too long" },
-            .{ "ENOEXEC", "Exec format error" },
-            .{ "EBADF", "Bad file descriptor" },
-            .{ "ECHILD", "No child processes" },
-            .{ "EAGAIN", "Resource temporarily unavailable" },
-            .{ "ENOMEM", "Cannot allocate memory" },
-            .{ "EACCES", "Permission denied" },
-            .{ "EFAULT", "Bad address" },
-            .{ "ENOTBLK", "Block device required" },
-            .{ "EBUSY", "Device or resource busy" },
-            .{ "EEXIST", "File exists" },
-            .{ "EXDEV", "Invalid cross-device link" },
-            .{ "ENODEV", "No such device" },
-            .{ "ENOTDIR", "Not a directory" },
-            .{ "EISDIR", "Is a directory" },
-            .{ "EINVAL", "Invalid argument" },
-            .{ "ENFILE", "Too many open files in system" },
-            .{ "EMFILE", "Too many open files" },
-            .{ "ENOTTY", "Inappropriate ioctl for device" },
-            .{ "ETXTBSY", "Text file busy" },
-            .{ "EFBIG", "File too large" },
-            .{ "ENOSPC", "No space left on device" },
-            .{ "ESPIPE", "Illegal seek" },
-            .{ "EROFS", "Read-only file system" },
-            .{ "EMLINK", "Too many links" },
-            .{ "EPIPE", "Broken pipe" },
-            .{ "EDOM", "Numerical argument out of domain" },
-            .{ "ERANGE", "Numerical result out of range" },
-            .{ "EDEADLK", "Resource deadlock avoided" },
-            .{ "ENAMETOOLONG", "File name too long" },
-            .{ "ENOLCK", "No locks available" },
-            .{ "ENOSYS", "Function not implemented" },
-            .{ "ENOTEMPTY", "Directory not empty" },
-            .{ "ELOOP", "Too many levels of symbolic links" },
-            .{ "ENOMSG", "No message of desired type" },
-            .{ "EIDRM", "Identifier removed" },
-            .{ "ECHRNG", "Channel number out of range" },
-            .{ "EL2NSYNC", "Level 2 not synchronized" },
-            .{ "EL3HLT", "Level 3 halted" },
-            .{ "EL3RST", "Level 3 reset" },
-            .{ "ELNRNG", "Link number out of range" },
-            .{ "EUNATCH", "Protocol driver not attached" },
-            .{ "ENOCSI", "No CSI structure available" },
-            .{ "EL2HLT", "Level 2 halted" },
-            .{ "EBADE", "Invalid exchange" },
-            .{ "EBADR", "Invalid request descriptor" },
-            .{ "EXFULL", "Exchange full" },
-            .{ "ENOANO", "No anode" },
-            .{ "EBADRQC", "Invalid request code" },
-            .{ "EBADSLT", "Invalid slot" },
-            .{ "EBFONT", "Bad font file format" },
-            .{ "ENOSTR", "Device not a stream" },
-            .{ "ENODATA", "No data available" },
-            .{ "ETIME", "Timer expired" },
-            .{ "ENOSR", "Out of streams resources" },
-            .{ "ENONET", "Machine is not on the network" },
-            .{ "ENOPKG", "Package not installed" },
-            .{ "EREMOTE", "Object is remote" },
-            .{ "ENOLINK", "Link has been severed" },
-            .{ "EADV", "Advertise error" },
-            .{ "ESRMNT", "Srmount error" },
-            .{ "ECOMM", "Communication error on send" },
-            .{ "EPROTO", "Protocol error" },
-            .{ "EMULTIHOP", "Multihop attempted" },
-            .{ "EDOTDOT", "RFS specific error" },
-            .{ "EBADMSG", "Bad message" },
-            .{ "EOVERFLOW", "Value too large for defined data type" },
-            .{ "ENOTUNIQ", "Name not unique on network" },
-            .{ "EBADFD", "File descriptor in bad state" },
-            .{ "EREMCHG", "Remote address changed" },
-            .{ "ELIBACC", "Can not access a needed shared library" },
-            .{ "ELIBBAD", "Accessing a corrupted shared library" },
-            .{ "ELIBSCN", ".lib section in a.out corrupted" },
-            .{ "ELIBMAX", "Attempting to link in too many shared libraries" },
-            .{ "ELIBEXEC", "Cannot exec a shared library directly" },
-            .{ "EILSEQ", "Invalid or incomplete multibyte or wide character" },
-            .{ "ERESTART", "Interrupted system call should be restarted" },
-            .{ "ESTRPIPE", "Streams pipe error" },
-            .{ "EUSERS", "Too many users" },
-            .{ "ENOTSOCK", "Socket operation on non-socket" },
-            .{ "EDESTADDRREQ", "Destination address required" },
-            .{ "EMSGSIZE", "Message too long" },
-            .{ "EPROTOTYPE", "Protocol wrong type for socket" },
-            .{ "ENOPROTOOPT", "Protocol not available" },
-            .{ "EPROTONOSUPPORT", "Protocol not supported" },
-            .{ "ESOCKTNOSUPPORT", "Socket type not supported" },
-            .{ "EOPNOTSUPP", "Operation not supported" },
-            .{ "EPFNOSUPPORT", "Protocol family not supported" },
-            .{ "EAFNOSUPPORT", "Address family not supported by protocol" },
-            .{ "EADDRINUSE", "Address already in use" },
-            .{ "EADDRNOTAVAIL", "Cannot assign requested address" },
-            .{ "ENETDOWN", "Network is down" },
-            .{ "ENETUNREACH", "Network is unreachable" },
-            .{ "ENETRESET", "Network dropped connection on reset" },
-            .{ "ECONNABORTED", "Software caused connection abort" },
-            .{ "ECONNRESET", "Connection reset by peer" },
-            .{ "ENOBUFS", "No buffer space available" },
-            .{ "EISCONN", "Transport endpoint is already connected" },
-            .{ "ENOTCONN", "Transport endpoint is not connected" },
-            .{ "ESHUTDOWN", "Cannot send after transport endpoint shutdown" },
-            .{ "ETOOMANYREFS", "Too many references: cannot splice" },
-            .{ "ETIMEDOUT", "Connection timed out" },
-            .{ "ECONNREFUSED", "Connection refused" },
-            .{ "EHOSTDOWN", "Host is down" },
-            .{ "EHOSTUNREACH", "No route to host" },
-            .{ "EALREADY", "Operation already in progress" },
-            .{ "EINPROGRESS", "Operation now in progress" },
-            .{ "ESTALE", "Stale file handle" },
-            .{ "EUCLEAN", "Structure needs cleaning" },
-            .{ "ENOTNAM", "Not a XENIX named type file" },
-            .{ "ENAVAIL", "No XENIX semaphores available" },
-            .{ "EISNAM", "Is a named type file" },
-            .{ "EREMOTEIO", "Remote I/O error" },
-            .{ "EDQUOT", "Disk quota exceeded" },
-            .{ "ENOMEDIUM", "No medium found" },
-            .{ "EMEDIUMTYPE", "Wrong medium type" },
-            .{ "ECANCELED", "Operation canceled" },
-            .{ "ENOKEY", "Required key not available" },
-            .{ "EKEYEXPIRED", "Key has expired" },
-            .{ "EKEYREVOKED", "Key has been revoked" },
-            .{ "EKEYREJECTED", "Key was rejected by service" },
-            .{ "EOWNERDEAD", "Owner died" },
-            .{ "ENOTRECOVERABLE", "State not recoverable" },
-            .{ "ERFKILL", "Operation not possible due to RF-kill" },
-            .{ "EHWPOISON", "Memory page has hardware error" },
-        },
-        // Mac has slightly different messages. To keep it consistent with bash/coreutils,
-        // it will use those altered messages.
-        .mac => &.{
-            .{ "E2BIG", "Argument list too long" },
-            .{ "EACCES", "Permission denied" },
-            .{ "EADDRINUSE", "Address already in use" },
-            .{ "EADDRNOTAVAIL", "Can't assign requested address" },
-            .{ "EAFNOSUPPORT", "Address family not supported by protocol family" },
-            .{ "EAGAIN", "non-blocking and interrupt i/o. Resource temporarily unavailable" },
-            .{ "EALREADY", "Operation already in progress" },
-            .{ "EAUTH", "Authentication error" },
-            .{ "EBADARCH", "Bad CPU type in executable" },
-            .{ "EBADEXEC", "Program loading errors. Bad executable" },
-            .{ "EBADF", "Bad file descriptor" },
-            .{ "EBADMACHO", "Malformed Macho file" },
-            .{ "EBADMSG", "Bad message" },
-            .{ "EBADRPC", "RPC struct is bad" },
-            .{ "EBUSY", "Device / Resource busy" },
-            .{ "ECANCELED", "Operation canceled" },
-            .{ "ECHILD", "No child processes" },
-            .{ "ECONNABORTED", "Software caused connection abort" },
-            .{ "ECONNREFUSED", "Connection refused" },
-            .{ "ECONNRESET", "Connection reset by peer" },
-            .{ "EDEADLK", "Resource deadlock avoided" },
-            .{ "EDESTADDRREQ", "Destination address required" },
-            .{ "EDEVERR", "Device error, for example paper out" },
-            .{ "EDOM", "math software. Numerical argument out of domain" },
-            .{ "EDQUOT", "Disc quota exceeded" },
-            .{ "EEXIST", "File or folder exists" },
-            .{ "EFAULT", "Bad address" },
-            .{ "EFBIG", "File too large" },
-            .{ "EFTYPE", "Inappropriate file type or format" },
-            .{ "EHOSTDOWN", "Host is down" },
-            .{ "EHOSTUNREACH", "No route to host" },
-            .{ "EIDRM", "Identifier removed" },
-            .{ "EILSEQ", "Illegal byte sequence" },
-            .{ "EINPROGRESS", "Operation now in progress" },
-            .{ "EINTR", "Interrupted system call" },
-            .{ "EINVAL", "Invalid argument" },
-            .{ "EIO", "Input/output error" },
-            .{ "EISCONN", "Socket is already connected" },
-            .{ "EISDIR", "Is a directory" },
-            .{ "ELOOP", "Too many levels of symbolic links" },
-            .{ "EMFILE", "Too many open files" },
-            .{ "EMLINK", "Too many links" },
-            .{ "EMSGSIZE", "Message too long" },
-            .{ "EMULTIHOP", "Reserved" },
-            .{ "ENAMETOOLONG", "File name too long" },
-            .{ "ENEEDAUTH", "Need authenticator" },
-            .{ "ENETDOWN", "ipc/network software - operational errors Network is down" },
-            .{ "ENETRESET", "Network dropped connection on reset" },
-            .{ "ENETUNREACH", "Network is unreachable" },
-            .{ "ENFILE", "Too many open files in system" },
-            .{ "ENOATTR", "Attribute not found" },
-            .{ "ENOBUFS", "No buffer space available" },
-            .{ "ENODATA", "No message available on STREAM" },
-            .{ "ENODEV", "Operation not supported by device" },
-            .{ "ENOENT", "No such file or directory" },
-            .{ "ENOEXEC", "Exec format error" },
-            .{ "ENOLCK", "No locks available" },
-            .{ "ENOLINK", "Reserved" },
-            .{ "ENOMEM", "Out of memory" },
-            .{ "ENOMSG", "No message of desired type" },
-            .{ "ENOPOLICY", "No such policy registered" },
-            .{ "ENOPROTOOPT", "Protocol not available" },
-            .{ "ENOSPC", "No space left on device" },
-            .{ "ENOSR", "No STREAM resources" },
-            .{ "ENOSTR", "Not a STREAM" },
-            .{ "ENOSYS", "Function not implemented" },
-            .{ "ENOTBLK", "Block device required" },
-            .{ "ENOTCONN", "Socket is not connected" },
-            .{ "ENOTDIR", "Not a directory" },
-            .{ "ENOTEMPTY", "Directory not empty" },
-            .{ "ENOTRECOVERABLE", "State not recoverable" },
-            .{ "ENOTSOCK", "ipc/network software - argument errors. Socket operation on non-socket" },
-            .{ "ENOTSUP", "Operation not supported" },
-            .{ "ENOTTY", "Inappropriate ioctl for device" },
-            .{ "ENXIO", "Device not configured" },
-            .{ "EOVERFLOW", "Value too large to be stored in data type" },
-            .{ "EOWNERDEAD", "Previous owner died" },
-            .{ "EPERM", "Operation not permitted" },
-            .{ "EPFNOSUPPORT", "Protocol family not supported" },
-            .{ "EPIPE", "Broken pipe" },
-            .{ "EPROCLIM", "quotas & mush. Too many processes" },
-            .{ "EPROCUNAVAIL", "Bad procedure for program" },
-            .{ "EPROGMISMATCH", "Program version wrong" },
-            .{ "EPROGUNAVAIL", "RPC prog. not avail" },
-            .{ "EPROTO", "Protocol error" },
-            .{ "EPROTONOSUPPORT", "Protocol not supported" },
-            .{ "EPROTOTYPE", "Protocol wrong type for socket" },
-            .{ "EPWROFF", "Intelligent device errors. Device power is off" },
-            .{ "EQFULL", "Interface output queue is full" },
-            .{ "ERANGE", "Result too large" },
-            .{ "EREMOTE", "Too many levels of remote in path" },
-            .{ "EROFS", "Read-only file system" },
-            .{ "ERPCMISMATCH", "RPC version wrong" },
-            .{ "ESHLIBVERS", "Shared library version mismatch" },
-            .{ "ESHUTDOWN", "Can't send after socket shutdown" },
-            .{ "ESOCKTNOSUPPORT", "Socket type not supported" },
-            .{ "ESPIPE", "Illegal seek" },
-            .{ "ESRCH", "No such process" },
-            .{ "ESTALE", "Network File System. Stale NFS file handle" },
-            .{ "ETIME", "STREAM ioctl timeout" },
-            .{ "ETIMEDOUT", "Operation timed out" },
-            .{ "ETOOMANYREFS", "Too many references: can't splice" },
-            .{ "ETXTBSY", "Text file busy" },
-            .{ "EUSERS", "Too many users" },
-            .{ "EWOULDBLOCK", "Operation would block" },
-            .{ "EXDEV", "Cross-device link" },
-        },
-    };
-
-    var map = std.EnumMap(SystemErrno, [:0]const u8).initFull("unknown error");
-    for (entries) |entry| {
-        const key, const text = entry;
-        if (@hasField(SystemErrno, key)) {
-            map.put(@field(SystemErrno, key), text);
-        }
-    }
-
-    // sanity check
-    bun.assert(std.mem.eql(u8, map.get(SystemErrno.ENOENT).?, "No such file or directory"));
-
-    break :brk map;
-};
+pub const libuv_error_map = @import("./sys/libuv_error_map.zig").libuv_error_map;
+pub const coreutils_error_map = @import("./sys/coreutils_error_map.zig").coreutils_error_map;
 
 extern fn getRSS(rss: *usize) c_int;
 pub fn selfProcessMemoryUsage() ?usize {
@@ -4915,6 +3965,7 @@ pub fn moveFileZWithHandle(from_handle: bun.FileDescriptor, from_dir: bun.FileDe
             if (err.getErrno() == .XDEV) {
                 try copyFileZSlowWithHandle(from_handle, to_dir, destination).unwrap();
                 _ = unlinkat(from_dir, filename);
+                return;
             }
 
             return bun.errnoToZigErr(err.errno);
@@ -5009,7 +4060,7 @@ pub fn kindFromMode(mode: mode_t) std.fs.File.Kind {
 }
 
 pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}![][:0]u8 {
-    const List = std.ArrayList([:0]u8);
+    const List = std.array_list.Managed([:0]u8);
     switch (builtin.os.tag) {
         .linux,
         .freebsd,
@@ -5233,6 +4284,8 @@ pub const umask = switch (Environment.os) {
     .windows => @extern(*const fn (mode: u16) callconv(.c) u16, .{ .name = "_umask" }),
 };
 
+pub const File = @import("./sys/File.zig");
+
 const builtin = @import("builtin");
 const sys = @This(); // to avoid ambiguous references.
 
@@ -5241,13 +4294,9 @@ const Environment = bun.Environment;
 const FD = bun.FD;
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 const c = bun.c; // translated c headers
-const default_allocator = bun.default_allocator;
-const libc_stat = bun.Stat;
-const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
-const darwin_nocancel = bun.darwin.nocancel;
-
 const jsc = bun.jsc;
-const SystemError = jsc.SystemError;
+const libc_stat = bun.Stat;
+const darwin_nocancel = bun.darwin.nocancel;
 
 const windows = bun.windows;
 const kernel32 = bun.windows.kernel32;

@@ -190,28 +190,16 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             return null;
         }
 
-        /// Caller must ensure that the input is a string.
+        /// Throws if toString() throws.
         pub fn fromJS(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!?V {
-            if (comptime bun.Environment.allow_assert) {
-                if (!input.isString()) {
-                    @panic("ComptimeStringMap.fromJS: input is not a string");
-                }
-            }
-
             const str = try bun.String.fromJS(input, globalThis);
             bun.assert(str.tag != .Dead);
             defer str.deref();
             return getWithEql(str, bun.String.eqlComptime);
         }
 
-        /// Caller must ensure that the input is a string.
+        /// Throws if toString() throws.
         pub fn fromJSCaseInsensitive(globalThis: *jsc.JSGlobalObject, input: jsc.JSValue) bun.JSError!?V {
-            if (comptime bun.Environment.allow_assert) {
-                if (!input.isString()) {
-                    @panic("ComptimeStringMap.fromJS: input is not a string");
-                }
-            }
-
             const str = try bun.String.fromJS(input, globalThis);
             bun.assert(str.tag != .Dead);
             defer str.deref();
@@ -307,6 +295,17 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
                 if (length == i) {
                     return getWithLengthAndEqlList(input, i, eql);
                 }
+            }
+
+            return null;
+        }
+
+        /// Lookup the first-defined string key for a given value.
+        ///
+        /// Linear search.
+        pub fn getKey(value: V) ?[]const KeyType {
+            inline for (kvs) |kv| {
+                if (kv.value == value) return kv.key;
             }
 
             return null;

@@ -79,10 +79,10 @@ fn onPipeClose(this: *WindowsNamedPipe) void {
 }
 
 fn onReadAlloc(this: *WindowsNamedPipe, suggested_size: usize) []u8 {
-    var available = this.incoming.available();
+    var available = this.incoming.unusedCapacitySlice();
     if (available.len < suggested_size) {
-        this.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size) catch bun.outOfMemory();
-        available = this.incoming.available();
+        bun.handleOom(this.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size));
+        available = this.incoming.unusedCapacitySlice();
     }
     return available.ptr[0..suggested_size];
 }
@@ -155,8 +155,8 @@ fn onHandshake(this: *WindowsNamedPipe, handshake_success: bool, ssl_error: uws.
 
     this.ssl_error = .{
         .error_no = ssl_error.error_no,
-        .code = if (ssl_error.code == null or ssl_error.error_no == 0) "" else bun.default_allocator.dupeZ(u8, ssl_error.code[0..bun.len(ssl_error.code) :0]) catch bun.outOfMemory(),
-        .reason = if (ssl_error.reason == null or ssl_error.error_no == 0) "" else bun.default_allocator.dupeZ(u8, ssl_error.reason[0..bun.len(ssl_error.reason) :0]) catch bun.outOfMemory(),
+        .code = if (ssl_error.code == null or ssl_error.error_no == 0) "" else bun.handleOom(bun.default_allocator.dupeZ(u8, ssl_error.code[0..bun.len(ssl_error.code) :0])),
+        .reason = if (ssl_error.reason == null or ssl_error.error_no == 0) "" else bun.handleOom(bun.default_allocator.dupeZ(u8, ssl_error.reason[0..bun.len(ssl_error.reason) :0])),
     };
     this.handlers.onHandshake(this.handlers.ctx, handshake_success, ssl_error);
 }
@@ -179,7 +179,7 @@ fn callWriteOrEnd(this: *WindowsNamedPipe, data: ?[]const u8, msg_more: bool) vo
             }
             if (this.flags.disconnected) {
                 // enqueue to be sent after connecting
-                this.writer.outgoing.write(bytes) catch bun.outOfMemory();
+                bun.handleOom(this.writer.outgoing.write(bytes));
             } else {
                 // write will enqueue the data if it cannot be sent
                 _ = this.writer.write(bytes);
@@ -241,7 +241,7 @@ fn onInternalReceiveData(this: *WindowsNamedPipe, data: []const u8) void {
     }
 }
 
-pub fn onTimeout(this: *WindowsNamedPipe) EventLoopTimer.Arm {
+pub fn onTimeout(this: *WindowsNamedPipe) void {
     log("onTimeout", .{});
 
     const has_been_cleared = this.event_loop_timer.state == .CANCELLED or this.vm.scriptExecutionStatus() != .running;
@@ -250,12 +250,10 @@ pub fn onTimeout(this: *WindowsNamedPipe) EventLoopTimer.Arm {
     this.event_loop_timer.heap = .{};
 
     if (has_been_cleared) {
-        return .disarm;
+        return;
     }
 
     this.handlers.onTimeout(this.handlers.ctx);
-
-    return .disarm;
 }
 
 pub fn from(
@@ -459,6 +457,10 @@ pub fn isTLS(this: *WindowsNamedPipe) bool {
     return this.flags.is_ssl;
 }
 
+pub fn loop(this: *WindowsNamedPipe) *bun.Async.Loop {
+    return this.vm.uvLoop();
+}
+
 pub fn encodeAndWrite(this: *WindowsNamedPipe, data: []const u8) i32 {
     log("encodeAndWrite (len: {})", .{data.len});
     if (this.wrapper) |*wrapper| {
@@ -573,7 +575,7 @@ pub fn deinit(this: *WindowsNamedPipe) void {
 
 pub const CertError = UpgradedDuplex.CertError;
 const WrapperType = SSLWrapper(*WindowsNamedPipe);
-const log = bun.Output.scoped(.WindowsNamedPipe, false);
+const log = bun.Output.scoped(.WindowsNamedPipe, .visible);
 
 const std = @import("std");
 const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;

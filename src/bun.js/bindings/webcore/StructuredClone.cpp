@@ -30,6 +30,8 @@
 #include "JSDOMBinding.h"
 #include "JSDOMExceptionHandling.h"
 #include <JavaScriptCore/JSTypedArrays.h>
+#include "SerializedScriptValue.h"
+#include "MessagePort.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -112,6 +114,117 @@ JSC_DEFINE_HOST_FUNCTION(structuredCloneForStream, (JSGlobalObject * globalObjec
 
     throwTypeError(globalObject, scope, "structuredClone not implemented for non-ArrayBuffer / non-ArrayBufferView"_s);
     return {};
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() == 0) {
+        throwTypeError(globalObject, throwScope, "structuredClone requires 1 argument"_s);
+        return {};
+    }
+
+    JSC::JSValue value = callFrame->argument(0);
+    JSC::JSValue options = callFrame->argument(1);
+
+    Vector<JSC::Strong<JSC::JSObject>> transferList;
+
+    if (options.isObject()) {
+        JSC::JSObject* optionsObject = options.getObject();
+        JSC::JSValue transferListValue = optionsObject->get(globalObject, vm.propertyNames->transfer);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (transferListValue.isObject()) {
+            JSC::JSObject* transferListObject = transferListValue.getObject();
+            if (auto* transferListArray = jsDynamicCast<JSC::JSArray*>(transferListObject)) {
+                for (unsigned i = 0; i < transferListArray->length(); i++) {
+                    JSC::JSValue transferListValue = transferListArray->get(globalObject, i);
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                    if (transferListValue.isObject()) {
+                        JSC::JSObject* transferListObject = transferListValue.getObject();
+                        transferList.append(JSC::Strong<JSC::JSObject>(vm, transferListObject));
+                    }
+                }
+            }
+        }
+    }
+
+    Vector<RefPtr<MessagePort>> ports;
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), ports);
+    if (serialized.hasException()) {
+        WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
+        RELEASE_AND_RETURN(throwScope, {});
+    }
+    throwScope.assertNoException();
+
+    JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, ports);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    return JSValue::encode(deserialized);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredCloneAdvanced, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 4) {
+        throwTypeError(globalObject, throwScope, "structuredCloneAdvanced requires 3 arguments"_s);
+        return {};
+    }
+
+    JSC::JSValue value = callFrame->argument(0);
+    JSC::JSValue transferListValue = callFrame->argument(1);
+    bool isForTransfer = callFrame->argument(2).toBoolean(globalObject);
+    bool isForStorage = callFrame->argument(3).toBoolean(globalObject);
+    JSC::JSValue serializationContextValue = callFrame->argument(4);
+
+    SerializationContext serializationContext = SerializationContext::Default;
+    if (serializationContextValue.isString()) {
+        if (serializationContextValue.getString(globalObject) == "worker"_s) {
+            serializationContext = SerializationContext::WorkerPostMessage;
+        } else if (serializationContextValue.getString(globalObject) == "window"_s) {
+            serializationContext = SerializationContext::WindowPostMessage;
+        } else if (serializationContextValue.getString(globalObject) == "postMessage"_s) {
+            serializationContext = SerializationContext::WindowPostMessage;
+        } else if (serializationContextValue.getString(globalObject) == "default"_s) {
+            serializationContext = SerializationContext::Default;
+        } else {
+            throwTypeError(globalObject, throwScope, "invalid serialization context"_s);
+        }
+    }
+
+    SerializationForCrossProcessTransfer forTransfer = isForTransfer ? SerializationForCrossProcessTransfer::Yes : SerializationForCrossProcessTransfer::No;
+    SerializationForStorage forStorage = isForStorage ? SerializationForStorage::Yes : SerializationForStorage::No;
+
+    Vector<JSC::Strong<JSC::JSObject>> transferList;
+
+    if (transferListValue.isObject()) {
+        JSC::JSObject* transferListObject = transferListValue.getObject();
+        if (auto* transferListArray = jsDynamicCast<JSC::JSArray*>(transferListObject)) {
+            for (unsigned i = 0; i < transferListArray->length(); i++) {
+                JSC::JSValue transferListValue = transferListArray->get(globalObject, i);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                if (transferListValue.isObject()) {
+                    transferList.append(JSC::Strong<JSC::JSObject>(vm, transferListValue.getObject()));
+                }
+            }
+        }
+    }
+
+    Vector<RefPtr<MessagePort>> ports;
+    ExceptionOr<Ref<SerializedScriptValue>> serialized = SerializedScriptValue::create(*globalObject, value, WTFMove(transferList), ports, forStorage, serializationContext, forTransfer);
+    if (serialized.hasException()) {
+        WebCore::propagateException(*globalObject, throwScope, serialized.releaseException());
+        RELEASE_AND_RETURN(throwScope, {});
+    }
+    throwScope.assertNoException();
+
+    JSValue deserialized = serialized.releaseReturnValue()->deserialize(*globalObject, globalObject, ports);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    return JSValue::encode(deserialized);
 }
 
 } // namespace WebCore

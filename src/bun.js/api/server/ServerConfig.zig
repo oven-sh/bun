@@ -57,9 +57,9 @@ ipv6_only: bool = false,
 is_node_http: bool = false,
 had_routes_object: bool = false,
 
-static_routes: std.ArrayList(StaticRouteEntry) = std.ArrayList(StaticRouteEntry).init(bun.default_allocator),
-negative_routes: std.ArrayList([:0]const u8) = std.ArrayList([:0]const u8).init(bun.default_allocator),
-user_routes_to_build: std.ArrayList(UserRouteBuilder) = std.ArrayList(UserRouteBuilder).init(bun.default_allocator),
+static_routes: std.array_list.Managed(StaticRouteEntry) = std.array_list.Managed(StaticRouteEntry).init(bun.default_allocator),
+negative_routes: std.array_list.Managed([:0]const u8) = std.array_list.Managed([:0]const u8).init(bun.default_allocator),
+user_routes_to_build: std.array_list.Managed(UserRouteBuilder) = std.array_list.Managed(UserRouteBuilder).init(bun.default_allocator),
 
 bake: ?bun.bake.UserOptions = null,
 
@@ -164,7 +164,7 @@ fn normalizeStaticRoutesList(this: *ServerConfig) !void {
         }
     };
 
-    var static_routes_dedupe_list = std.ArrayList(u64).init(bun.default_allocator);
+    var static_routes_dedupe_list = std.array_list.Managed(u64).init(bun.default_allocator);
     try static_routes_dedupe_list.ensureTotalCapacity(@truncate(this.static_routes.items.len));
     defer static_routes_dedupe_list.deinit();
 
@@ -260,11 +260,11 @@ pub fn deinit(this: *ServerConfig) void {
         ssl_config.deinit();
         this.ssl_config = null;
     }
-    if (this.sni) |sni| {
+    if (this.sni) |*sni| {
         for (sni.slice()) |*ssl_config| {
             ssl_config.deinit();
         }
-        this.sni.?.deinitWithAllocator(bun.default_allocator);
+        sni.deinit(bun.default_allocator);
         this.sni = null;
     }
 
@@ -284,7 +284,7 @@ pub fn deinit(this: *ServerConfig) void {
 }
 
 pub fn computeID(this: *const ServerConfig, allocator: std.mem.Allocator) []const u8 {
-    var arraylist = std.ArrayList(u8).init(allocator);
+    var arraylist = std.array_list.Managed(u8).init(allocator);
     var writer = arraylist.writer();
 
     writer.writeAll("[http]-") catch {};
@@ -346,7 +346,7 @@ fn validateRouteName(global: *jsc.JSGlobalObject, path: []const u8) !void {
             );
         }
 
-        const entry = duped_route_names.getOrPut(route_name) catch bun.outOfMemory();
+        const entry = bun.handleOom(duped_route_names.getOrPut(route_name));
         if (entry.found_existing) {
             return global.throwTODO(
                 \\Support for duplicate route parameter names is not yet implemented.
@@ -522,7 +522,7 @@ pub fn fromJS(
             // This list is not used in the success case
             defer init_ctx.dedupe_html_bundle_map.deinit();
 
-            var framework_router_list = std.ArrayList(bun.bake.FrameworkRouter.Type).init(bun.default_allocator);
+            var framework_router_list = std.array_list.Managed(bun.bake.FrameworkRouter.Type).init(bun.default_allocator);
             errdefer framework_router_list.deinit();
 
             errdefer {
@@ -533,7 +533,7 @@ pub fn fromJS(
             }
 
             while (try iter.next()) |key| {
-                const path, const is_ascii = key.toOwnedSliceReturningAllASCII(bun.default_allocator) catch bun.outOfMemory();
+                const path, const is_ascii = bun.handleOom(key.toOwnedSliceReturningAllASCII(bun.default_allocator));
                 errdefer bun.default_allocator.free(path);
 
                 const value: jsc.JSValue = iter.value;
@@ -543,17 +543,17 @@ pub fn fromJS(
                 }
 
                 if (path.len == 0 or (path[0] != '/')) {
-                    return global.throwInvalidArguments("Invalid route {}. Path must start with '/'", .{bun.fmt.quote(path)});
+                    return global.throwInvalidArguments("Invalid route {f}. Path must start with '/'", .{bun.fmt.quote(path)});
                 }
 
                 if (!is_ascii) {
-                    return global.throwInvalidArguments("Invalid route {}. Please encode all non-ASCII characters in the path.", .{bun.fmt.quote(path)});
+                    return global.throwInvalidArguments("Invalid route {f}. Please encode all non-ASCII characters in the path.", .{bun.fmt.quote(path)});
                 }
 
                 if (value == .false) {
-                    const duped = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory();
+                    const duped = bun.handleOom(bun.default_allocator.dupeZ(u8, path));
                     defer bun.default_allocator.free(path);
-                    args.negative_routes.append(duped) catch bun.outOfMemory();
+                    bun.handleOom(args.negative_routes.append(duped));
                     continue;
                 }
 
@@ -561,11 +561,11 @@ pub fn fromJS(
                     try validateRouteName(global, path);
                     args.user_routes_to_build.append(.{
                         .route = .{
-                            .path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(),
+                            .path = bun.handleOom(bun.default_allocator.dupeZ(u8, path)),
                             .method = .any,
                         },
                         .callback = .create(value.withAsyncContextIfNeeded(global), global),
-                    }) catch bun.outOfMemory();
+                    }) catch |err| bun.handleOom(err);
                     bun.default_allocator.free(path);
                     continue;
                 } else if (value.isObject()) {
@@ -591,20 +591,20 @@ pub fn fromJS(
                             if (function.isCallable()) {
                                 args.user_routes_to_build.append(.{
                                     .route = .{
-                                        .path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(),
+                                        .path = bun.handleOom(bun.default_allocator.dupeZ(u8, path)),
                                         .method = .{ .specific = method },
                                     },
                                     .callback = .create(function.withAsyncContextIfNeeded(global), global),
-                                }) catch bun.outOfMemory();
+                                }) catch |err| bun.handleOom(err);
                             } else if (try AnyRoute.fromJS(global, path, function, init_ctx)) |html_route| {
                                 var method_set = bun.http.Method.Set.initEmpty();
                                 method_set.insert(method);
 
                                 args.static_routes.append(.{
-                                    .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
+                                    .path = bun.handleOom(bun.default_allocator.dupe(u8, path)),
                                     .route = html_route,
                                     .method = .{ .method = method_set },
-                                }) catch bun.outOfMemory();
+                                }) catch |err| bun.handleOom(err);
                             }
                         }
                     }
@@ -659,7 +659,7 @@ pub fn fromJS(
                 args.static_routes.append(.{
                     .path = path,
                     .route = route,
-                }) catch bun.outOfMemory();
+                }) catch |err| bun.handleOom(err);
             }
 
             // When HTML bundles are provided, ensure DevServer options are ready
@@ -803,13 +803,9 @@ pub fn fromJS(
             if (id.isUndefinedOrNull()) {
                 args.allow_hot = false;
             } else {
-                const id_str = try id.toSlice(
-                    global,
-                    bun.default_allocator,
-                );
-
+                const id_str = try id.toUTF8Bytes(global, bun.default_allocator);
                 if (id_str.len > 0) {
-                    args.id = (id_str.cloneIfNeeded(bun.default_allocator) catch unreachable).slice();
+                    args.id = id_str;
                 } else {
                     args.allow_hot = false;
                 }
@@ -915,31 +911,32 @@ pub fn fromJS(
                 args.ssl_config = null;
             } else if (tls.jsType().isArray()) {
                 var value_iter = try tls.arrayIterator(global);
-                if (value_iter.len == 1) {
-                    return global.throwInvalidArguments("tls option expects at least 1 tls object", .{});
-                }
-                while (try value_iter.next()) |item| {
-                    var ssl_config = try SSLConfig.fromJS(vm, global, item) orelse {
-                        if (global.hasException()) {
-                            return error.JSError;
-                        }
+                if (value_iter.len == 0) {
+                    // Empty TLS array means no TLS - this is valid
+                } else {
+                    while (try value_iter.next()) |item| {
+                        var ssl_config = try SSLConfig.fromJS(vm, global, item) orelse {
+                            if (global.hasException()) {
+                                return error.JSError;
+                            }
 
-                        // Backwards-compatibility; we ignored empty tls objects.
-                        continue;
-                    };
+                            // Backwards-compatibility; we ignored empty tls objects.
+                            continue;
+                        };
 
-                    if (args.ssl_config == null) {
-                        args.ssl_config = ssl_config;
-                    } else {
-                        if (ssl_config.server_name == null or std.mem.span(ssl_config.server_name).len == 0) {
-                            defer ssl_config.deinit();
-                            return global.throwInvalidArguments("SNI tls object must have a serverName", .{});
-                        }
-                        if (args.sni == null) {
-                            args.sni = bun.BabyList(SSLConfig).initCapacity(bun.default_allocator, value_iter.len - 1) catch bun.outOfMemory();
-                        }
+                        if (args.ssl_config == null) {
+                            args.ssl_config = ssl_config;
+                        } else {
+                            if ((ssl_config.server_name orelse "")[0] == 0) {
+                                defer ssl_config.deinit();
+                                return global.throwInvalidArguments("SNI tls object must have a serverName", .{});
+                            }
+                            if (args.sni == null) {
+                                args.sni = bun.handleOom(bun.BabyList(SSLConfig).initCapacity(bun.default_allocator, value_iter.len - 1));
+                            }
 
-                        args.sni.?.push(bun.default_allocator, ssl_config) catch bun.outOfMemory();
+                            bun.handleOom(args.sni.?.append(bun.default_allocator, ssl_config));
+                        }
                     }
                 }
             } else {

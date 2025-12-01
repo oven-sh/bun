@@ -334,35 +334,35 @@ pub fn hasToCss(comptime T: type) bool {
     };
 }
 
-pub inline fn toCss(comptime T: type, this: *const T, comptime W: type, dest: *Printer(W)) PrintErr!void {
+pub inline fn toCss(comptime T: type, this: *const T, dest: *Printer) PrintErr!void {
     if (@typeInfo(T) == .pointer) {
         const TT = std.meta.Child(T);
-        return toCss(TT, this.*, W, dest);
+        return toCss(TT, this.*, dest);
     }
     if (@typeInfo(T) == .optional) {
         const TT = std.meta.Child(T);
 
         if (this.*) |*val| {
-            return toCss(TT, val, W, dest);
+            return toCss(TT, val, dest);
         }
         return;
     }
     if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
         switch (result.list) {
             .array_list => {
-                return css.to_css.fromList(result.child, this.items, W, dest);
+                return css.to_css.fromList(result.child, this.items, dest);
             },
             .baby_list => @compileError("TODO"),
             .small_list => @compileError("TODO"),
         }
     }
     return switch (T) {
-        f32 => CSSNumberFns.toCss(this, W, dest),
-        CSSInteger => CSSIntegerFns.toCss(this, W, dest),
-        CustomIdent => CustomIdentFns.toCss(this, W, dest),
-        DashedIdent => DashedIdentFns.toCss(this, W, dest),
-        Ident => IdentFns.toCss(this, W, dest),
-        else => T.toCss(this, W, dest),
+        f32 => CSSNumberFns.toCss(this, dest),
+        CSSInteger => CSSIntegerFns.toCss(this, dest),
+        CustomIdent => CustomIdentFns.toCss(this, dest),
+        DashedIdent => DashedIdentFns.toCss(this, dest),
+        Ident => IdentFns.toCss(this, dest),
+        else => T.toCss(this, dest),
     };
 }
 
@@ -446,7 +446,7 @@ pub inline fn deepClone(comptime T: type, this: *const T, allocator: Allocator) 
             return bun.create(allocator, TT, deepClone(TT, this.*, allocator));
         }
         if (comptime tyinfo.pointer.size == .slice) {
-            var slc = allocator.alloc(tyinfo.pointer.child, this.len) catch bun.outOfMemory();
+            var slc = bun.handleOom(allocator.alloc(tyinfo.pointer.child, this.len));
             if (comptime bun.meta.isSimpleCopyType(tyinfo.pointer.child) or tyinfo.pointer.child == []const u8) {
                 @memcpy(slc, this.*);
             } else {
@@ -469,9 +469,7 @@ pub inline fn deepClone(comptime T: type, this: *const T, allocator: Allocator) 
     if (comptime bun.meta.looksLikeListContainerType(T)) |result| {
         return switch (result.list) {
             .array_list => css.deepClone(result.child, allocator, this),
-            .baby_list => {
-                return bun.BabyList(result.child).deepClone2(this, allocator);
-            },
+            .baby_list => this.deepCloneInfallible(allocator),
             .small_list => this.deepClone(allocator),
         };
     }
@@ -485,7 +483,7 @@ pub inline fn deepClone(comptime T: type, this: *const T, allocator: Allocator) 
         @compileError(@typeName(T) ++ " does not have a deepClone() function");
     }
 
-    return T.deepClone(this, allocator);
+    return this.deepClone(allocator);
 }
 
 pub inline fn tryFromAngle(comptime T: type, angle: Angle) ?T {

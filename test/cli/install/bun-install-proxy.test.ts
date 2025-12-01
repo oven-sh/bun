@@ -1,29 +1,12 @@
 import { beforeAll, it } from "bun:test";
-import { exec, execSync } from "child_process";
+import { exec } from "child_process";
 import { rm } from "fs/promises";
-import { bunEnv, bunExe, isLinux, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, dockerExe, isDockerEnabled, tempDirWithFiles } from "harness";
 import { join } from "path";
 import { promisify } from "util";
 const execAsync = promisify(exec);
-const dockerCLI = Bun.which("docker") as string;
+const dockerCLI = dockerExe() as string;
 const SQUID_URL = "http://127.0.0.1:3128";
-function isDockerEnabled(): boolean {
-  if (!dockerCLI) {
-    return false;
-  }
-
-  // TODO: investigate why its not starting on Linux arm64
-  if (isLinux && process.arch === "arm64") {
-    return false;
-  }
-
-  try {
-    const info = execSync(`${dockerCLI} info`, { stdio: ["ignore", "pipe", "inherit"] });
-    return info.toString().indexOf("Server Version:") !== -1;
-  } catch {
-    return false;
-  }
-}
 if (isDockerEnabled()) {
   beforeAll(async () => {
     async function isSquidRunning() {

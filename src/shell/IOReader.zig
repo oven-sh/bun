@@ -35,12 +35,23 @@ pub fn refSelf(this: *IOReader) *IOReader {
     return this;
 }
 
+pub fn memoryCost(this: *const IOReader) usize {
+    var size: usize = @sizeOf(IOReader);
+    size += this.buf.allocatedSlice().len;
+    size += this.readers.memoryCost();
+    return size;
+}
+
 pub fn eventLoop(this: *IOReader) jsc.EventLoopHandle {
     return this.evtloop;
 }
 
-pub fn loop(this: *IOReader) *bun.uws.Loop {
-    return this.evtloop.loop();
+pub fn loop(this: *IOReader) *bun.Async.Loop {
+    if (comptime bun.Environment.isWindows) {
+        return this.evtloop.loop().uv_loop;
+    } else {
+        return this.evtloop.loop();
+    }
 }
 
 pub fn init(fd: bun.FileDescriptor, evtloop: jsc.EventLoopHandle) *IOReader {
@@ -52,7 +63,7 @@ pub fn init(fd: bun.FileDescriptor, evtloop: jsc.EventLoopHandle) *IOReader {
         .concurrent_task = jsc.EventLoopTask.fromEventLoop(evtloop),
         .async_deinit = .{},
     });
-    log("IOReader(0x{x}, fd={}) create", .{ @intFromPtr(this), fd });
+    log("IOReader(0x{x}, fd={f}) create", .{ @intFromPtr(this), fd });
 
     if (bun.Environment.isPosix) {
         this.reader.flags.close_handle = false;
@@ -89,7 +100,7 @@ pub fn start(this: *IOReader) Yield {
 /// Only does things on windows
 pub inline fn setReading(this: *IOReader, reading: bool) void {
     if (bun.Environment.isWindows) {
-        log("IOReader(0x{x}) setReading({any})", .{ @intFromPtr(this), reading });
+        log("IOReader(0x{x}) setReading({})", .{ @intFromPtr(this), reading });
         this.is_reading = reading;
     }
 }
@@ -124,7 +135,7 @@ pub fn removeReader(this: *IOReader, reader_: anytype) void {
 
 pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadState) bool {
     var this: *IOReader = @ptrCast(@alignCast(ptr));
-    log("IOReader(0x{x}, fd={}) onReadChunk(chunk_len={d}, has_more={s})", .{ @intFromPtr(this), this.fd, chunk.len, @tagName(has_more) });
+    log("IOReader(0x{x}, fd={f}) onReadChunk(chunk_len={d}, has_more={s})", .{ @intFromPtr(this), this.fd, chunk.len, @tagName(has_more) });
     this.setReading(false);
 
     var i: usize = 0;
@@ -159,6 +170,7 @@ pub fn onReadChunk(ptr: *anyopaque, chunk: []const u8, has_more: bun.io.ReadStat
 }
 
 pub fn onReaderError(this: *IOReader, err: bun.sys.Error) void {
+    log("IOReader(0x{x}.onReaderError({f}) ", .{ @intFromPtr(this), err });
     this.setReading(false);
     this.err = err.toShellSystemError();
     for (this.readers.slice()) |r| {
@@ -193,7 +205,7 @@ fn asyncDeinitCallback(this: *@This()) void {
                 this.reader.closeImpl(false);
             }
         } else {
-            log("IOReader(0x{x}) __deinit fd={}", .{ @intFromPtr(this), this.fd });
+            log("IOReader(0x{x}) __deinit fd={f}", .{ @intFromPtr(this), this.fd });
             this.fd.close();
         }
     }
@@ -221,6 +233,14 @@ pub const IOReaderChildPtr = struct {
             .ptr = ChildPtrRaw.init(p),
             // .ptr = @ptrCast(p),
         };
+    }
+
+    pub fn memoryCost(this: IOReaderChildPtr) usize {
+        if (this.ptr.is(Interpreter.Builtin.Cat)) {
+            // TODO:
+            return @sizeOf(Interpreter.Builtin.Cat);
+        }
+        return 0;
     }
 
     /// Return true if the child should be deleted

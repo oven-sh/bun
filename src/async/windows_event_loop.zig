@@ -3,7 +3,7 @@ pub const Loop = uv.Loop;
 pub const KeepAlive = struct {
     status: Status = .inactive,
 
-    const log = Output.scoped(.KeepAlive, false);
+    const log = Output.scoped(.KeepAlive, .visible);
 
     const Status = enum { active, inactive, done };
 
@@ -121,7 +121,7 @@ pub const FilePoll = struct {
     pub const Flags = Posix.FilePoll.Flags;
     pub const Owner = Posix.FilePoll.Owner;
 
-    const log = Output.scoped(.FilePoll, false);
+    const log = Output.scoped(.FilePoll, .visible);
 
     pub inline fn isActive(this: *const FilePoll) bool {
         return this.flags.contains(.has_incremented_poll_count);
@@ -305,7 +305,7 @@ pub const FilePoll = struct {
         pending_free_head: ?*FilePoll = null,
         pending_free_tail: ?*FilePoll = null,
 
-        const log = Output.scoped(.FilePoll, false);
+        const log = Output.scoped(.FilePoll, .visible);
 
         pub fn init() Store {
             return .{
@@ -395,10 +395,10 @@ pub const Closer = struct {
         }
     }
 
-    fn onClose(req: *uv.fs_t) callconv(.C) void {
+    fn onClose(req: *uv.fs_t) callconv(.c) void {
         var closer: *Closer = @fieldParentPtr("io_request", req);
-        bun.assert(closer == @as(*Closer, @alignCast(@ptrCast(req.data.?))));
-        bun.sys.syslog("uv_fs_close({}) = {}", .{ bun.FD.fromUV(req.file.fd), req.result });
+        bun.assert(closer == @as(*Closer, @ptrCast(@alignCast(req.data.?))));
+        bun.sys.syslog("uv_fs_close({f}) = {f}", .{ bun.FD.fromUV(req.file.fd), req.result });
 
         if (comptime Environment.allow_assert) {
             if (closer.io_request.result.errEnum()) |err| {

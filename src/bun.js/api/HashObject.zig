@@ -13,7 +13,7 @@ pub const xxHash32 = hashWrap(struct {
     }
 });
 pub const xxHash64 = hashWrap(struct {
-    pub fn hash(seed: u32, bytes: []const u8) u64 {
+    pub fn hash(seed: u64, bytes: []const u8) u64 {
         // sidestep .hash taking in anytype breaking ArgTuple
         // downstream by forcing a type signature on the input
         return std.hash.XxHash64.hash(seed, bytes);
@@ -29,10 +29,10 @@ pub const xxHash3 = hashWrap(struct {
 pub const murmur32v2 = hashWrap(std.hash.murmur.Murmur2_32);
 pub const murmur32v3 = hashWrap(std.hash.murmur.Murmur3_32);
 pub const murmur64v2 = hashWrap(std.hash.murmur.Murmur2_64);
-pub const rapidhash = hashWrap(std.hash.RapidHash);
+pub const rapidhash = hashWrap(bun.deprecated.RapidHash);
 
 pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
-    const function = jsc.createCallback(globalThis, ZigString.static("hash"), 1, wyhash);
+    const function = jsc.JSFunction.create(globalThis, "hash", wyhash, 1, .{});
     const fns = comptime .{
         "wyhash",
         "adler32",
@@ -48,12 +48,7 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
         "rapidhash",
     };
     inline for (fns) |name| {
-        const value = jsc.createCallback(
-            globalThis,
-            ZigString.static(name),
-            1,
-            @field(HashObject, name),
-        );
+        const value = jsc.JSFunction.create(globalThis, name, @field(HashObject, name), 1, .{});
         function.put(globalThis, comptime ZigString.static(name), value);
     }
 

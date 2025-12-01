@@ -25,7 +25,7 @@ runs:
         echo "version=$LATEST" >> $GITHUB_OUTPUT
         echo "message=$MESSAGE" >> $GITHUB_OUTPUT
     - name: Create Pull Request
-      uses: peter-evans/create-pull-request@v4
+      uses: peter-evans/create-pull-request@v7
       with:
         add-paths: |
           CMakeLists.txt

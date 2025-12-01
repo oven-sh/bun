@@ -7,7 +7,12 @@ interval: u31 = 0,
 strong_this: jsc.Strong.Optional = .empty,
 flags: Flags = .{},
 
-const Flags = packed struct(u32) {
+/// Used by:
+/// - setTimeout
+/// - setInterval
+/// - setImmediate
+/// - AbortSignal.Timeout
+pub const Flags = packed struct(u32) {
     /// Whenever a timer is inserted into the heap (which happen on creation or refresh), the global
     /// epoch is incremented and the new epoch is set on the timer. For timers created by
     /// JavaScript, the epoch is used to break ties between timers scheduled for the same
@@ -16,6 +21,7 @@ const Flags = packed struct(u32) {
     /// the refreshed timer will be inserted at the end of a list, which makes it fire later.
     epoch: u25 = 0,
 
+    /// Kind does not include AbortSignal's timeout since it has no corresponding ID callback.
     kind: Kind = .setTimeout,
 
     // we do not allow the timer to be refreshed after we call clearInterval/clearTimeout
@@ -105,7 +111,7 @@ pub fn asyncID(this: *const TimerObjectInternals) u64 {
     return ID.asyncID(.{ .id = this.id, .kind = this.flags.kind.big() });
 }
 
-pub fn fire(this: *TimerObjectInternals, _: *const timespec, vm: *jsc.VirtualMachine) EventLoopTimer.Arm {
+pub fn fire(this: *TimerObjectInternals, _: *const timespec, vm: *jsc.VirtualMachine) void {
     const id = this.id;
     const kind = this.flags.kind.big();
     const async_id: ID = .{ .id = id, .kind = kind };
@@ -140,7 +146,7 @@ pub fn fire(this: *TimerObjectInternals, _: *const timespec, vm: *jsc.VirtualMac
         this.strong_this.deinit();
         this.deref();
 
-        return .disarm;
+        return;
     }
 
     var time_before_call: timespec = undefined;
@@ -222,8 +228,6 @@ pub fn fire(this: *TimerObjectInternals, _: *const timespec, vm: *jsc.VirtualMac
         }
     }
     vm.eventLoop().exit();
-
-    return .disarm;
 }
 
 fn convertToInterval(this: *TimerObjectInternals, global: *JSGlobalObject, timer: JSValue, repeat: JSValue) void {

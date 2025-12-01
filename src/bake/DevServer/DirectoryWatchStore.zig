@@ -47,6 +47,7 @@ pub fn trackResolutionFailure(store: *DirectoryWatchStore, import_source: []cons
         .json,
         .jsonc,
         .toml,
+        .yaml,
         .wasm,
         .napi,
         .base64,
@@ -93,21 +94,21 @@ fn insert(
     // TODO: watch the parent dir too.
     const dev = store.owner();
 
-    debug.log("DirectoryWatchStore.insert({}, {}, {})", .{
+    debug.log("DirectoryWatchStore.insert({f}, {f}, {f})", .{
         bun.fmt.quote(dir_name_to_watch),
         bun.fmt.quote(file_path),
         bun.fmt.quote(specifier),
     });
 
     if (store.dependencies_free_list.items.len == 0)
-        try store.dependencies.ensureUnusedCapacity(dev.allocator, 1);
+        try store.dependencies.ensureUnusedCapacity(dev.allocator(), 1);
 
-    const gop = try store.watches.getOrPut(dev.allocator, bun.strings.withoutTrailingSlashWindowsPath(dir_name_to_watch));
+    const gop = try store.watches.getOrPut(dev.allocator(), bun.strings.withoutTrailingSlashWindowsPath(dir_name_to_watch));
     const specifier_cloned = if (specifier[0] == '.' or std.fs.path.isAbsolute(specifier))
-        try dev.allocator.dupe(u8, specifier)
+        try dev.allocator().dupe(u8, specifier)
     else
-        try std.fmt.allocPrint(dev.allocator, "./{s}", .{specifier});
-    errdefer dev.allocator.free(specifier_cloned);
+        try std.fmt.allocPrint(dev.allocator(), "./{s}", .{specifier});
+    errdefer dev.allocator().free(specifier_cloned);
 
     if (gop.found_existing) {
         const dep = store.appendDepAssumeCapacity(.{
@@ -158,13 +159,13 @@ fn insert(
     } else .{ bun.invalid_fd, false };
     errdefer if (Watcher.requires_file_descriptors) if (owned_fd) fd.close();
     if (Watcher.requires_file_descriptors)
-        debug.log("-> fd: {} ({s})", .{
+        debug.log("-> fd: {f} ({s})", .{
             fd,
             if (owned_fd) "from dir cache" else "owned fd",
         });
 
-    const dir_name = try dev.allocator.dupe(u8, dir_name_to_watch);
-    errdefer dev.allocator.free(dir_name);
+    const dir_name = try dev.allocator().dupe(u8, dir_name_to_watch);
+    errdefer dev.allocator().free(dir_name);
 
     gop.key_ptr.* = bun.strings.withoutTrailingSlashWindowsPath(dir_name);
 
@@ -204,7 +205,7 @@ pub fn freeDependencyIndex(store: *DirectoryWatchStore, alloc: Allocator, index:
 pub fn freeEntry(store: *DirectoryWatchStore, alloc: Allocator, entry_index: usize) void {
     const entry = store.watches.values()[entry_index];
 
-    debug.log("DirectoryWatchStore.freeEntry({d}, {})", .{
+    debug.log("DirectoryWatchStore.freeEntry({d}, {f})", .{
         entry_index,
         entry.dir,
     });

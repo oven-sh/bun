@@ -74,8 +74,8 @@ fn onHandshake(this: *UpgradedDuplex, handshake_success: bool, ssl_error: uws.us
 
     this.ssl_error = .{
         .error_no = ssl_error.error_no,
-        .code = if (ssl_error.code == null or ssl_error.error_no == 0) "" else bun.default_allocator.dupeZ(u8, ssl_error.code[0..bun.len(ssl_error.code) :0]) catch bun.outOfMemory(),
-        .reason = if (ssl_error.reason == null or ssl_error.error_no == 0) "" else bun.default_allocator.dupeZ(u8, ssl_error.reason[0..bun.len(ssl_error.reason) :0]) catch bun.outOfMemory(),
+        .code = if (ssl_error.code == null or ssl_error.error_no == 0) "" else bun.handleOom(bun.default_allocator.dupeZ(u8, ssl_error.code[0..bun.len(ssl_error.code) :0])),
+        .reason = if (ssl_error.reason == null or ssl_error.error_no == 0) "" else bun.handleOom(bun.default_allocator.dupeZ(u8, ssl_error.reason[0..bun.len(ssl_error.reason) :0])),
     };
     this.handlers.onHandshake(this.handlers.ctx, handshake_success, ssl_error);
 }
@@ -230,7 +230,7 @@ fn onCloseJS(
     return .js_undefined;
 }
 
-pub fn onTimeout(this: *UpgradedDuplex) EventLoopTimer.Arm {
+pub fn onTimeout(this: *UpgradedDuplex) void {
     log("onTimeout", .{});
 
     const has_been_cleared = this.event_loop_timer.state == .CANCELLED or this.vm.scriptExecutionStatus() != .running;
@@ -239,12 +239,10 @@ pub fn onTimeout(this: *UpgradedDuplex) EventLoopTimer.Arm {
     this.event_loop_timer.heap = .{};
 
     if (has_been_cleared) {
-        return .disarm;
+        return;
     }
 
     this.handlers.onTimeout(this.handlers.ctx);
-
-    return .disarm;
 }
 
 pub fn from(
@@ -272,7 +270,6 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *jsc.JSGlobalObject) bun
                 null,
                 0,
                 onReceivedData,
-                false,
                 this,
             );
             dataCallback.ensureStillAlive();
@@ -292,7 +289,6 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *jsc.JSGlobalObject) bun
                 null,
                 0,
                 onReceivedData,
-                false,
                 this,
             );
             endCallback.ensureStillAlive();
@@ -312,7 +308,6 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *jsc.JSGlobalObject) bun
                 null,
                 0,
                 onWritable,
-                false,
                 this,
             );
             writableCallback.ensureStillAlive();
@@ -331,7 +326,6 @@ pub fn getJSHandlers(this: *UpgradedDuplex, globalThis: *jsc.JSGlobalObject) bun
                 null,
                 0,
                 onCloseJS,
-                false,
                 this,
             );
             closeCallback.ensureStillAlive();
@@ -478,7 +472,7 @@ pub fn deinit(this: *UpgradedDuplex) void {
     this.ssl_error = .{};
 }
 
-const log = bun.Output.scoped(.UpgradedDuplex, false);
+const log = bun.Output.scoped(.UpgradedDuplex, .visible);
 
 const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
 

@@ -91,6 +91,7 @@ pub const PackCommand = @import("./cli/pack_command.zig").PackCommand;
 pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
+pub const FuzzilliCommand = @import("./cli/fuzzilli_command.zig").FuzzilliCommand;
 
 pub const Arguments = @import("./cli/Arguments.zig");
 
@@ -458,6 +459,8 @@ pub const Command = struct {
             compile: bool = false,
             compile_target: Cli.CompileTarget = .{},
             compile_exec_argv: ?[]const u8 = null,
+            compile_autoload_dotenv: bool = true,
+            compile_autoload_bunfig: bool = true,
             windows: options.WindowsOptions = .{},
         };
 
@@ -624,6 +627,10 @@ pub const Command = struct {
             RootCommandMatcher.case("prune") => .ReservedCommand,
             RootCommandMatcher.case("list") => .PackageManagerCommand,
             RootCommandMatcher.case("why") => .WhyCommand,
+            RootCommandMatcher.case("fuzzilli") => if (bun.Environment.enable_fuzzilli)
+                .FuzzilliCommand
+            else
+                .AutoCommand,
 
             RootCommandMatcher.case("-e") => .AutoCommand,
 
@@ -933,6 +940,15 @@ pub const Command = struct {
                     try ExecCommand.exec(ctx);
                 } else Tag.printHelp(.ExecCommand, true);
             },
+            .FuzzilliCommand => {
+                if (bun.Environment.enable_fuzzilli) {
+                    const ctx = try Command.init(allocator, log, .FuzzilliCommand);
+                    try FuzzilliCommand.exec(ctx);
+                    return;
+                } else {
+                    return error.UnrecognizedCommand;
+                }
+            },
         }
     }
 
@@ -968,6 +984,7 @@ pub const Command = struct {
         PublishCommand,
         AuditCommand,
         WhyCommand,
+        FuzzilliCommand,
 
         /// Used by crash reports.
         ///
@@ -1005,6 +1022,7 @@ pub const Command = struct {
                 .PublishCommand => 'k',
                 .AuditCommand => 'A',
                 .WhyCommand => 'W',
+                .FuzzilliCommand => 'F',
             };
         }
 
@@ -1312,7 +1330,7 @@ pub const Command = struct {
                         \\  <d>$<r> <b><green>bun why<r> <blue>"@types/*"<r> <cyan>--depth<r> <blue>2<r>
                         \\  <d>$<r> <b><green>bun why<r> <blue>"*-lodash"<r> <cyan>--top<r>
                         \\
-                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/why<r>
+                        \\Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>
                         \\
                     ;
 
@@ -1320,7 +1338,7 @@ pub const Command = struct {
                     Output.flush();
                 },
                 else => {
-                    HelpCommand.printWithReason(.explicit);
+                    HelpCommand.printWithReason(.explicit, false);
                 },
             }
         }

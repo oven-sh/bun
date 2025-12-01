@@ -42,6 +42,7 @@ pub const ParamType = clap.Param(clap.Help);
 
 pub const base_params_ = (if (Environment.show_crash_trace) debug_params else [_]ParamType{}) ++ [_]ParamType{
     clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
+    clap.parseParam("--no-env-file                     Disable automatic loading of .env files") catch unreachable,
     clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
     clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
     clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
@@ -148,6 +149,10 @@ pub const build_only_params = [_]ParamType{
     clap.parseParam("--production                     Set NODE_ENV=production and enable minification") catch unreachable,
     clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production") catch unreachable,
     clap.parseParam("--compile-exec-argv <STR>       Prepend arguments to the standalone executable's execArgv") catch unreachable,
+    clap.parseParam("--compile-autoload-dotenv        Enable autoloading of .env files in standalone executable (default: true)") catch unreachable,
+    clap.parseParam("--no-compile-autoload-dotenv     Disable autoloading of .env files in standalone executable") catch unreachable,
+    clap.parseParam("--compile-autoload-bunfig        Enable autoloading of bunfig.toml in standalone executable (default: true)") catch unreachable,
+    clap.parseParam("--no-compile-autoload-bunfig     Disable autoloading of bunfig.toml in standalone executable") catch unreachable,
     clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
     clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
     clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
@@ -608,6 +613,10 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
     opts.env_files = args.options("--env-file");
     opts.extension_order = args.options("--extension-order");
 
+    if (args.flag("--no-env-file")) {
+        opts.disable_default_env_files = true;
+    }
+
     if (args.flag("--preserve-symlinks")) {
         opts.preserve_symlinks = true;
     }
@@ -1016,6 +1025,42 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Global.crash();
             }
             ctx.bundler_options.compile_exec_argv = compile_exec_argv;
+        }
+
+        // Handle --compile-autoload-dotenv flags
+        {
+            const has_positive = args.flag("--compile-autoload-dotenv");
+            const has_negative = args.flag("--no-compile-autoload-dotenv");
+
+            if (has_positive or has_negative) {
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--compile-autoload-dotenv requires --compile", .{});
+                    Global.crash();
+                }
+                if (has_positive and has_negative) {
+                    Output.errGeneric("Cannot use both --compile-autoload-dotenv and --no-compile-autoload-dotenv", .{});
+                    Global.crash();
+                }
+                ctx.bundler_options.compile_autoload_dotenv = has_positive;
+            }
+        }
+
+        // Handle --compile-autoload-bunfig flags
+        {
+            const has_positive = args.flag("--compile-autoload-bunfig");
+            const has_negative = args.flag("--no-compile-autoload-bunfig");
+
+            if (has_positive or has_negative) {
+                if (!ctx.bundler_options.compile) {
+                    Output.errGeneric("--compile-autoload-bunfig requires --compile", .{});
+                    Global.crash();
+                }
+                if (has_positive and has_negative) {
+                    Output.errGeneric("Cannot use both --compile-autoload-bunfig and --no-compile-autoload-bunfig", .{});
+                    Global.crash();
+                }
+                ctx.bundler_options.compile_autoload_bunfig = has_positive;
+            }
         }
 
         if (args.flag("--windows-hide-console")) {

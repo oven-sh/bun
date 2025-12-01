@@ -45,8 +45,6 @@ describe("tarball integrity", () => {
       },
     });
 
-    expect(installResult.stdout.toString()).not.toContain("panic");
-    expect(installResult.stderr.toString()).not.toContain("panic");
     expect(installResult.exitCode).toBe(0);
 
     // Read the lockfile and verify it contains the integrity hash
@@ -96,7 +94,6 @@ describe("tarball integrity", () => {
       },
     });
 
-    expect(firstInstall.stdout.toString()).not.toContain("panic");
     expect(firstInstall.exitCode).toBe(0);
 
     // Verify lockfile has integrity

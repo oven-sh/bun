@@ -21,7 +21,7 @@ pub export fn TextEncoder__encode8(
         const uint8array = jsc.JSValue.createUninitializedUint8Array(globalThis, result.written) catch return .zero;
         bun.assert(result.written <= buf.len);
         bun.assert(result.read == slice.len);
-        const array_buffer = uint8array.asArrayBuffer(globalThis) orelse return .zero;
+        const array_buffer = uint8array.asArrayBuffer(globalThis).?;
         bun.assert(result.written == array_buffer.len);
         @memcpy(array_buffer.byteSlice()[0..result.written], buf[0..result.written]);
         return uint8array;

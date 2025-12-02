@@ -22,15 +22,14 @@ error() {
 	if ! [ "$$" = "$pid" ]; then
 		kill -s TERM "$pid"
 	fi
-	exit 1
+	# Kill the shell. This used to be 'exit 1' but if the command is running inside a
+	# subshell, then only the subshell dies and the script keeps running uninterrupted.
+	kill $$
 }
 
 execute() {
-	local opts=$-
-	set -x
-	"$@"
-	{ local status=$?; set +x "$opts"; } 2> /dev/null
-	if [ "$status" -ne 0 ]; then
+	print "$ $@" >&2
+	if ! "$@"; then
 		error "Command failed: $@"
 	fi
 }
@@ -739,7 +738,7 @@ install_common_software() {
 			git \
 			unzip \
 			wget \
-			dnf-plugins-core
+			dnf-plugins-core \
 		;;
 	apk)
 		# https://pkgs.alpinelinux.org/packages
@@ -1307,6 +1306,12 @@ install_rust() {
 		create_directory "$HOME/.cargo/bin"
 		append_to_path "$HOME/.cargo/bin"
 		;;
+	amzn)
+		sh="$(require sh)"
+		rustup_script=$(download_file "https://sh.rustup.rs")
+		execute "$sh" -lc "$rustup_script -y --no-modify-path"
+		append_to_path "$home/.cargo/bin"
+		;;
 	*)
 		rust_home="/opt/rust"
 		create_directory "$rust_home"
@@ -1342,12 +1347,18 @@ install_docker() {
 			sysutils/docker-compose \
 		;;
 	*)
-		case "$distro-$release" in
-		amzn-2 | amzn-1)
-			execute_sudo amazon-linux-extras install docker
-			;;
-		amzn-* | alpine-*)
+		case "$distro" in
+		alpine)
 			install_packages docker docker-cli-compose
+			;;
+		amzn)
+			install_packages docker
+			local compose_bin=$(download_file https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m))
+			local compose_tmp=$(mktemp -d)
+			execute chmod +x "$compose_bin"
+			execute mv "$compose_bin" "$compose_tmp"
+			execute mv "$compose_tmp/docker-compose-linux-$(uname -m)" "$compose_tmp/docker-compose"
+			append_to_path "$compose_tmp"
 			;;
 		*)
 			sh="$(require sh)"
@@ -1443,6 +1454,9 @@ install_tailscale() {
 
 install_fuse_python() {
 	if ! [ "$os" = "linux" ]; then
+		return
+	fi
+	if [ "$distro" = "amzn" ]; then
 		return
 	fi
 

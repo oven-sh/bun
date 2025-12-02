@@ -1047,7 +1047,9 @@ install_build_essentials() {
 		;;
 	dnf | yum)
 		install_packages \
-			gcc-c++ \
+			gcc14-c++ \
+			gcc14-libstdc++-static \
+			gcc14-libatomic-static \
 			xz \
 			pkg-config \
 			golang

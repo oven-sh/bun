@@ -485,6 +485,22 @@ pub const String = extern struct {
         }
     }
 
+    pub fn inlineSlice(this: *const String) string {
+        bun.debugAssert(this.isInline());
+        return switch (this.bytes[0]) {
+            0 => "",
+            else => {
+                comptime var i: usize = 0;
+
+                inline while (i < this.bytes.len) : (i += 1) {
+                    if (this.bytes[i] == 0) return this.bytes[0..i];
+                }
+
+                return &this.bytes;
+            },
+        };
+    }
+
     pub const Builder = struct {
         len: usize = 0,
         cap: usize = 0,

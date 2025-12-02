@@ -5,7 +5,7 @@ description: Use Bun's built-in support for YAML files through both runtime APIs
 
 In Bun, YAML is a first-class citizen alongside JSON and TOML. You can:
 
-- Parse YAML strings with `Bun.YAML.parse`
+- Parse YAML strings with `Bun.YAML.parse` and stringify objects with `Bun.YAML.stringify`
 - `import` & `require` YAML files as modules at runtime (including hot reloading & watch mode support)
 - `import` & `require` YAML files in frontend apps via bun's bundler
 
@@ -23,9 +23,7 @@ Bun's YAML parser currently passes over 90% of the official YAML test suite. Whi
 
 Parse a YAML string into a JavaScript object.
 
-```ts
-import { YAML } from "bun";
-const text = `
+```txt
 name: John Doe
 age: 30
 email: john@example.com
@@ -33,16 +31,16 @@ hobbies:
   - reading
   - coding
   - hiking
-`;
+```
 
+```ts
+import { YAML } from "bun";
 const data = YAML.parse(text);
 console.log(data);
-// {
-//   name: "John Doe",
-//   age: 30,
-//   email: "john@example.com",
-//   hobbies: ["reading", "coding", "hiking"]
-// }
+```
+
+```txt
+{ name: "John Doe", age: 30, email: "john@example.com", hobbies: ["reading", "coding", "hiking"]}
 ```
 
 #### Multi-document YAML
@@ -121,6 +119,50 @@ try {
 }
 ```
 
+### `Bun.YAML.stringify()`
+
+Convert a JavaScript object into a YAML string.
+
+```ts
+import { YAML } from "bun";
+
+const obj = {
+  name: "John Doe",
+  age: 30,
+  email: "john@example.com",
+  hobbies: ["reading", "coding", "hiking"],
+};
+
+const yaml = Bun.YAML.stringify(obj, null, 2);
+console.log(yaml);
+// name: John Doe
+// age: 30
+// email: john@example.com
+// hobbies:
+//   - reading
+//   - coding
+//   - hiking
+```
+
+The signature is similar to `JSON.stringify()`:
+
+```ts
+Bun.YAML.stringify(value, replacer?, space?)
+```
+
+<Note>The `replacer` parameter is currently not implemented and has no effect.</Note>
+
+The `space` parameter controls indentation (default: 2). With `space: 0`, YAML outputs in compact flow style on a single line:
+
+```ts
+const compact = Bun.YAML.stringify(obj, null, 0);
+console.log(compact);
+```
+
+```txt
+{ name: "John Doe", age: 30, email: "john@example.com", hobbies: ["reading", "coding", "hiking"]}
+```
+
 ---
 
 ## Module Import
@@ -193,11 +235,35 @@ const { database, redis } = require("./config.yaml");
 console.log(database.port); // 5432
 ```
 
+### TypeScript
+
+Unlike JSON files, TypeScript doesn't automatically type YAML imports. Add type definitions by creating a `.d.ts` file with the same name as your YAML file:
+
+```ts config.yaml.d.ts icon="/icons/typescript.svg"
+const contents: {
+  database: {
+    host: string;
+    port: number;
+    name: string;
+  };
+  server: {
+    port: number;
+    timeout: number;
+  };
+  features: {
+    auth: boolean;
+    rateLimit: boolean;
+  };
+};
+
+export = contents;
+```
+
 ---
 
 ## Hot Reloading with YAML
 
-One of the most powerful features of Bun's YAML support is hot reloading. When you run your application with `bun --hot`, changes to YAML files are automatically detected and reloaded without closing connections
+One of the most powerful features of Bun's YAML support is hot reloading. When you run your application with `bun --hot`, changes to YAML files are automatically detected and reloaded without restarting your application or closing existing connections.
 
 ### Configuration Hot Reloading
 
@@ -434,6 +500,79 @@ if (parseConfig(migrations).autoRun === "true") {
   await runMigrations(db, migrations.directory);
 }
 ```
+
+### Generating YAML Files
+
+You can use `Bun.YAML.stringify()` to programmatically create YAML configuration files. It handles complex data structures including nested objects, arrays, and objects within arrays. When you reference the same object multiple times, YAML automatically creates anchors (`&`) and aliases (`*`) to avoid duplication:
+
+<CodeGroup>
+
+```ts generate-config.ts icon="/icons/typescript.svg"
+import { YAML } from "bun";
+
+const defaults = {
+  timeout: 30000,
+  retries: 3,
+};
+
+const config = {
+  defaults,
+  development: {
+    defaults,
+    host: "localhost",
+    port: 3000,
+  },
+  production: {
+    defaults,
+    host: "api.example.com",
+    port: 443,
+  },
+  servers: [
+    { name: "server1", url: "https://api1.example.com" },
+    { name: "server2", url: "https://api2.example.com" },
+  ],
+  features: {
+    enabled: ["auth", "logging", "metrics"],
+    disabled: ["experimental"],
+  },
+};
+
+// Generate readable YAML with 2-space indentation
+const yaml = Bun.YAML.stringify(config, null, 2);
+await Bun.write("config.yaml", yaml);
+
+// The output is valid YAML that parses back to the original object
+import { deepEqual } from "node:assert";
+deepEqual(config, Bun.YAML.parse(yaml));
+```
+
+```yaml output.yaml icon="file-code"
+defaults: &defaults
+  timeout: 30000
+  retries: 3
+development:
+  defaults: *defaults
+  host: localhost
+  port: 3000
+production:
+  defaults: *defaults
+  host: api.example.com
+  port: 443
+servers:
+  - name: server1
+    url: https://api1.example.com
+  - name: server2
+    url: https://api2.example.com
+features:
+  enabled:
+    - auth
+    - logging
+    - metrics
+  disabled:
+    - experimental
+```
+
+</CodeGroup>
 
 ### Bundler Integration
 

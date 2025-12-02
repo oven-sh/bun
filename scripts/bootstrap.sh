@@ -379,37 +379,6 @@ check_operating_system() {
 	esac
 }
 
-check_inside_docker() {
-	if ! [ "$os" = "linux" ]; then
-		return
-	fi
-	print "Checking if inside Docker..."
-
-	if [ -f "/.dockerenv" ]; then
-		docker=1
-	else
-		if [ -f "/proc/1/cgroup" ]; then
-			case "$(cat /proc/1/cgroup)" in
-			*/docker/*)
-				docker=1
-				;;
-			esac
-		fi
-
-		if [ -f "/proc/self/mountinfo" ]; then
-			case "$(cat /proc/self/mountinfo)" in
-			*/docker/*)
-				docker=1
-				;;
-			esac
-		fi
-	fi
-
-	if [ "$docker" = "1" ]; then
-		print "Docker: enabled"
-	fi
-}
-
 check_package_manager() {
 	print "Checking package manager..."
 
@@ -1174,10 +1143,17 @@ install_llvm() {
 		;;
 	esac
 
-	case "$os" in
-		freebsd)
+	case "$distro" in
+	freebsd)
 			# TODO: use llvm_version_exact
 			install_packages "devel/llvm$(llvm_version)"
+		;;
+	amzn)
+		install_packages \
+			"llvm$(llvm_version)" \
+			"clang$(llvm_version)" \
+			"lld$(llvm_version)" \
+			"compiler-rt$(llvm_version)" \
 		;;
 	esac
 }
@@ -1355,11 +1331,9 @@ install_docker() {
 		amzn)
 			install_packages docker
 			local compose_bin=$(download_file https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m))
-			local compose_tmp="$home/.local/bin"
-			create_directory "$compose_tmp"
 			execute_sudo chmod +x "$compose_bin"
-			execute_sudo mv "$compose_bin" "$compose_tmp"
-			execute_sudo mv "$compose_tmp/docker-compose-linux-$(uname -m)" "$compose_tmp/docker-compose"
+			execute_sudo mv "$compose_bin" "$(dirname $compose_bin)/docker-compose"
+			move_to_bin "$(dirname $compose_bin)/docker-compose"
 			;;
 		*)
 			sh="$(require sh)"
@@ -1432,10 +1406,6 @@ install_osxcross() {
 }
 
 install_tailscale() {
-	if [ "$docker" = "1" ]; then
-		return
-	fi
-
 	case "$os" in
 	linux)
 		sh="$(require sh)"
@@ -1791,7 +1761,6 @@ ensure_no_tmpfs() {
 main() {
 	check_features "$@"
 	check_operating_system
-	check_inside_docker
 	check_user
 	check_ulimit
 	check_package_manager

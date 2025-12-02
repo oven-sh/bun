@@ -1303,13 +1303,14 @@ install_rust() {
 		;;
 	freebsd)
 		install_packages lang/rust
-		create_directory "$HOME/.cargo/bin"
-		append_to_path "$HOME/.cargo/bin"
+		create_directory "$home/.cargo/bin"
+		append_to_path "$home/.cargo/bin"
 		;;
 	amzn)
 		sh="$(require sh)"
 		rustup_script=$(download_file "https://sh.rustup.rs")
 		execute "$sh" -lc "$rustup_script -y --no-modify-path"
+		create_directory "$home/.cargo/bin"
 		append_to_path "$home/.cargo/bin"
 		;;
 	*)
@@ -1354,11 +1355,11 @@ install_docker() {
 		amzn)
 			install_packages docker
 			local compose_bin=$(download_file https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m))
-			local compose_tmp=$(mktemp -d)
-			execute chmod +x "$compose_bin"
-			execute mv "$compose_bin" "$compose_tmp"
-			execute mv "$compose_tmp/docker-compose-linux-$(uname -m)" "$compose_tmp/docker-compose"
-			append_to_path "$compose_tmp"
+			local compose_tmp="$home/.local/bin"
+			create_directory "$compose_tmp"
+			execute_sudo chmod +x "$compose_bin"
+			execute_sudo mv "$compose_bin" "$compose_tmp"
+			execute_sudo mv "$compose_tmp/docker-compose-linux-$(uname -m)" "$compose_tmp/docker-compose"
 			;;
 		*)
 			sh="$(require sh)"

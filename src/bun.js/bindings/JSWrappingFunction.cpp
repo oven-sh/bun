@@ -24,7 +24,7 @@ JS_EXPORT_PRIVATE JSWrappingFunction* JSWrappingFunction::create(
     Zig::NativeFunctionPtr functionPointer,
     JSC::JSValue wrappedFnValue)
 {
-    JSC::JSFunction* wrappedFn = jsCast<JSC::JSFunction*>(wrappedFnValue.asCell());
+    JSC::JSObject* wrappedFn = wrappedFnValue.getObject();
     ASSERT(wrappedFn != nullptr);
 
     auto nameStr = symbolName->tag == BunStringTag::Empty ? WTF::emptyString() : symbolName->toWTFString();
@@ -75,9 +75,9 @@ extern "C" JSC::EncodedJSValue Bun__JSWrappingFunction__getWrappedFunction(
     Zig::GlobalObject* globalObject)
 {
     JSC::JSValue thisValue = JSC::JSValue::decode(thisValueEncoded);
-    JSWrappingFunction* thisObject = jsCast<JSWrappingFunction*>(thisValue.asCell());
+    JSWrappingFunction* thisObject = jsDynamicCast<JSWrappingFunction*>(thisValue.asCell());
     if (thisObject != nullptr) {
-        JSC::JSFunction* wrappedFn = thisObject->m_wrappedFn.get();
+        JSC::JSObject* wrappedFn = thisObject->m_wrappedFn.get();
         return JSC::JSValue::encode(wrappedFn);
     }
     return {};

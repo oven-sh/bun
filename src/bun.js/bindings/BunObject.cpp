@@ -48,6 +48,8 @@
 #include <netdb.h>
 #endif
 
+extern "C" size_t Bun__Feature__heap_snapshot;
+
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__lookup);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolve);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNS__resolveSrv);
@@ -597,6 +599,8 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
     vm.ensureHeapProfiler();
     auto& heapProfiler = *vm.heapProfiler();
     heapProfiler.clearSnapshots();
+
+    Bun__Feature__heap_snapshot += 1;
 
     JSValue arg0 = callFrame->argument(0);
     auto throwScope = DECLARE_THROW_SCOPE(vm);

@@ -1425,6 +1425,7 @@ pub const Formatter = struct {
         o, // o
         O, // O
         c, // c
+        j, // j
     };
 
     fn writeWithFormatting(
@@ -1466,6 +1467,7 @@ pub const Formatter = struct {
                         'O' => .O,
                         'd', 'i' => .i,
                         'c' => .c,
+                        'j' => .j,
                         '%' => {
                             // print up to and including the first %
                             const end = slice[0..i];
@@ -1624,6 +1626,16 @@ pub const Formatter = struct {
 
                         .c => {
                             // TODO: Implement %c
+                        },
+
+                        .j => {
+                            // JSON.stringify the value
+                            var str = bun.String.empty;
+                            defer str.deref();
+
+                            try next_value.jsonStringify(global, 0, &str);
+                            this.addForNewLine(str.length());
+                            writer.print("{f}", .{str});
                         },
                     }
                     if (this.remaining_values.len == 0) break;

@@ -62,4 +62,15 @@ describe("FFI error messages", () => {
       });
     }).toThrow(/myFunction.*ptr.*(linkSymbols|CFunction)/);
   });
+
+  test("linkSymbols with non-number ptr does not crash", () => {
+    expect(() => {
+      linkSymbols({
+        fn: {
+          // @ts-expect-error
+          ptr: "not a number",
+        },
+      });
+    }).toThrow('you must provide a "ptr" field with the memory address of the native function.');
+  });
 });

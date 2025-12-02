@@ -6,7 +6,7 @@ mode: center
 
 ## Extract links from a webpage
 
-Bun's [HTMLRewriter](https://bun.com/docs/api/html-rewriter) API can be used to efficiently extract links from HTML content. It works by chaining together CSS selectors to match the elements, text, and attributes you want to process. This is a simple example of how to extract links from a webpage. You can pass `.transform` a `Response`, `Blob`, or `string`.
+Bun's [HTMLRewriter](/runtime/html-rewriter) API can be used to efficiently extract links from HTML content. It works by chaining together CSS selectors to match the elements, text, and attributes you want to process. This is a simple example of how to extract links from a webpage. You can pass `.transform` a `Response`, `Blob`, or `string`.
 
 ```ts extract-links.ts icon="/icons/typescript.svg"
 async function extractLinks(url: string) {
@@ -37,6 +37,7 @@ await extractLinks("https://bun.com");
 
 When scraping websites, you often want to convert relative URLs (like `/docs`) to absolute URLs. Here's how to handle URL resolution:
 
+{/* prettier-ignore */}
 ```ts extract-links.ts icon="/icons/typescript.svg"
 async function extractLinksFromURL(url: string) {
   const response = await fetch(url);
@@ -47,13 +48,11 @@ async function extractLinksFromURL(url: string) {
       const href = el.getAttribute("href");
       if (href) {
         // Convert relative URLs to absolute // [!code ++]
-        try {
-          // [!code ++]
+        try { // [!code ++]
           const absoluteURL = new URL(href, url).href; // [!code ++]
-          links.add(absoluteURL); // [!code ++]
-        } catch {
-          // [!code ++]
-          links.add(href);
+          links.add(absoluteURL);
+        } catch { // [!code ++]
+          links.add(href); // [!code ++]
         } // [!code ++]
       }
     },
@@ -69,4 +68,4 @@ const websiteLinks = await extractLinksFromURL("https://example.com");
 
 ---
 
-See [Docs > API > HTMLRewriter](https://bun.com/docs/api/html-rewriter) for complete documentation on HTML transformation with Bun.
+See [Docs > API > HTMLRewriter](/runtime/html-rewriter) for complete documentation on HTML transformation with Bun.

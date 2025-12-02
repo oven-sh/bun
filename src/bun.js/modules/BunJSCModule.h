@@ -58,6 +58,8 @@
 #endif
 #endif
 
+extern "C" size_t Bun__Feature__heap_snapshot;
+
 using namespace JSC;
 using namespace WTF;
 using namespace WebCore;
@@ -732,6 +734,9 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging,
     JSLockHolder lock(vm);
     DeferTermination deferScope(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Bun__Feature__heap_snapshot += 1;
+
     String jsonString;
     {
         DeferGCForAWhile deferGC(vm); // Prevent concurrent GC from interfering with

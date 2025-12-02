@@ -1,0 +1,13 @@
+#!/bin/sh
+
+LOG_FILE="${TMPDIR:-/tmp}/bun.debug.build.log.$$"
+
+if bun run --silent build:debug > "$LOG_FILE" 2>&1; then
+  rm -f "$LOG_FILE"
+  exec ./build/debug/bun-debug "$@"
+else
+  status=$?
+  cat "$LOG_FILE"
+  rm -f "$LOG_FILE"
+  exit "$status"
+fi

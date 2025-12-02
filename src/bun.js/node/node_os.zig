@@ -38,7 +38,7 @@ pub fn cpus(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
         .linux => cpusImplLinux,
         .mac => cpusImplDarwin,
         .windows => cpusImplWindows,
-        else => @compileError("Unsupported OS"),
+        .wasm => @compileError("Unsupported OS"),
     };
 
     return cpusImpl(global) catch {
@@ -92,7 +92,7 @@ fn cpusImplLinux(globalThis: *jsc.JSGlobalObject) !jsc.JSValue {
             times.irq = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
 
             // Actually create the JS object representing the CPU
-            const cpu = jsc.JSValue.createEmptyObject(globalThis, 3);
+            const cpu = jsc.JSValue.createEmptyObject(globalThis, 1);
             cpu.put(globalThis, jsc.ZigString.static("times"), times.toValue(globalThis));
             try values.putIndex(globalThis, num_cpus, cpu);
 
@@ -452,7 +452,7 @@ pub fn loadavg(global: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
 pub const networkInterfaces = switch (Environment.os) {
     .linux, .mac => networkInterfacesPosix,
     .windows => networkInterfacesWindows,
-    else => @compileError("Unsupported OS"),
+    .wasm => @compileError("Unsupported OS"),
 };
 
 fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSValue {
@@ -511,7 +511,7 @@ fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSVal
         num_inet_interfaces += 1;
     }
 
-    var ret = jsc.JSValue.createEmptyObject(globalThis, 8);
+    var ret = jsc.JSValue.createEmptyObject(globalThis, 0);
 
     // Second pass through, populate each interface object
     it = interface_start;
@@ -522,7 +522,7 @@ fn networkInterfacesPosix(globalThis: *jsc.JSGlobalObject) bun.JSError!jsc.JSVal
         const addr = std.net.Address.initPosix(@alignCast(@as(*std.posix.sockaddr, @ptrCast(iface.ifa_addr))));
         const netmask = std.net.Address.initPosix(@alignCast(@as(*std.posix.sockaddr, @ptrCast(iface.ifa_netmask))));
 
-        var interface = jsc.JSValue.createEmptyObject(globalThis, 7);
+        var interface = jsc.JSValue.createEmptyObject(globalThis, 0);
 
         // address <string> The assigned IPv4 or IPv6 address
         // cidr <string> The assigned IPv4 or IPv6 address with the routing prefix in CIDR notation. If the netmask is invalid, this property is set to null.
@@ -787,7 +787,7 @@ pub fn release() bun.String {
             @memcpy(name_buffer[0..value.len], value);
             break :slice name_buffer[0..value.len];
         },
-        else => @compileError("unsupported os"),
+        .wasm => @compileError("unsupported os"),
     };
 
     return bun.String.cloneUTF8(value);
@@ -881,7 +881,7 @@ pub fn totalmem() u64 {
         .windows => {
             return libuv.uv_get_total_memory();
         },
-        else => @compileError("unsupported os"),
+        .wasm => @compileError("unsupported os"),
     }
 }
 
@@ -923,7 +923,7 @@ pub fn uptime(global: *jsc.JSGlobalObject) bun.JSError!f64 {
                 return @floatFromInt(info.uptime);
             return 0;
         },
-        else => @compileError("unsupported os"),
+        .wasm => @compileError("unsupported os"),
     }
 }
 
@@ -990,7 +990,7 @@ pub fn version() bun.JSError!bun.String {
             @memcpy(name_buffer[0..slice.len], slice);
             break :slice name_buffer[0..slice.len];
         },
-        else => @compileError("unsupported os"),
+        .wasm => @compileError("unsupported os"),
     };
 
     return bun.String.cloneUTF8(slice);

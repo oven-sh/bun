@@ -46,9 +46,12 @@ pub fn generateAllOrder(this: *Order, entries: []const *ExecutionEntry) bun.JSEr
     for (entries) |entry| {
         if (bun.Environment.ci_assert and entry.added_in_phase != .preload) bun.assert(entry.next == null);
         entry.next = null;
-        entry.skip_to = null;
+        entry.failure_skip_past = null;
         const sequences_start = this.sequences.items.len;
-        try this.sequences.append(.init(entry, null)); // add sequence to concurrentgroup
+        try this.sequences.append(.init(.{
+            .first_entry = entry,
+            .test_entry = null,
+        })); // add sequence to concurrentgroup
         const sequences_end = this.sequences.items.len;
         try this.groups.append(.init(sequences_start, sequences_end, this.groups.items.len + 1)); // add a new concurrentgroup to order
         this.previous_group_was_concurrent = false;
@@ -139,15 +142,20 @@ pub fn generateOrderTest(this: *Order, current: *ExecutionEntry) bun.JSError!voi
 
     // set skip_to values
     var index = list.first;
-    var skip_to = current.next;
+    var failure_skip_past: ?*ExecutionEntry = current;
     while (index) |entry| : (index = entry.next) {
-        if (entry == skip_to) skip_to = null;
-        entry.skip_to = skip_to; // we should consider matching skip_to in beforeAll to skip directly to the first afterAll from its own scope rather than skipping to the first afterAll from any scope
+        entry.failure_skip_past = failure_skip_past; // we could consider matching skip_to in beforeAll to skip directly to the first afterAll from its own scope rather than skipping to the first afterAll from any scope
+        if (entry == failure_skip_past) failure_skip_past = null;
     }
 
     // add these as a single sequence
     const sequences_start = this.sequences.items.len;
-    try this.sequences.append(.init(list.first, current)); // add sequence to concurrentgroup
+    try this.sequences.append(.init(.{
+        .first_entry = list.first,
+        .test_entry = current,
+        .retry_count = current.retry_count,
+        .repeat_count = current.repeat_count,
+    })); // add sequence to concurrentgroup
     const sequences_end = this.sequences.items.len;
     try appendOrExtendConcurrentGroup(this, current.base.concurrent, sequences_start, sequences_end); // add or extend the concurrent group
 }

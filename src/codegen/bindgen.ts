@@ -1455,7 +1455,7 @@ for (const [filename, { functions, typedefs }] of files) {
     const minArgCount = fn.variants.reduce((acc, vari) => Math.min(acc, vari.args.length), Number.MAX_SAFE_INTEGER);
     zig.line(`pub fn ${wrapperName}(global: *jsc.JSGlobalObject) callconv(jsc.conv) jsc.JSValue {`);
     zig.line(
-      `    return jsc.host_fn.NewRuntimeFunction(global, jsc.ZigString.static(${str(fn.name)}), ${minArgCount}, js${cap(fn.name)}, false, false, null);`,
+      `    return jsc.host_fn.NewRuntimeFunction(global, jsc.ZigString.static(${str(fn.name)}), ${minArgCount}, js${cap(fn.name)}, false, null);`,
     );
     zig.line(`}`);
   }

@@ -340,7 +340,7 @@ export class BunTestController implements vscode.Disposable {
       });
 
     const testRegex =
-      /\b(describe|test|it)(?:\.(?:skip|todo|failing|only))?(?:\.(?:if|todoIf|skipIf)\s*\([^)]*\))?(?:\.each\s*\([^)]*\))?\s*\(\s*(['"`])((?:\\\2|.)*?)\2\s*(?:,|\))/g;
+      /\b(describe|test|it)(?:\.(?:skip|todo|failing|only|concurrent|serial))*(?:\.(?:if|todoIf|skipIf|failingIf|concurrentIf|serialIf)\s*\([^)]*\))?(?:\.each\s*\([^)]*\))?\s*\(\s*(['"`])((?:\\\2|.)*?)\2\s*(?:,|\))/g;
 
     const stack: TestNode[] = [];
     const root: TestNode[] = [];
@@ -1391,7 +1391,7 @@ export class BunTestController implements vscode.Disposable {
     }
 
     const { bunCommand, testArgs } = this.getBunExecutionConfig();
-    const args = [...testArgs, ...testFiles];
+    const args = [bunCommand, ...testArgs, ...testFiles];
 
     if (!isIndividualTestRun) {
       args.push("--inspect-brk");
@@ -1416,14 +1416,14 @@ export class BunTestController implements vscode.Disposable {
     }
 
     const debugConfiguration: vscode.DebugConfiguration = {
-      args: args.slice(1),
+      args: args.slice(2),
       console: "integratedTerminal",
       cwd: "${workspaceFolder}",
       internalConsoleOptions: "neverOpen",
       name: "Bun Test Debug",
       program: args.at(1),
       request: "launch",
-      runtime: bunCommand,
+      runtime: args.at(0),
       type: "bun",
     };
 

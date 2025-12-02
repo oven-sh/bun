@@ -15,10 +15,7 @@ connection_timeout_ms: u32 = 0,
 /// After being connected, this is an idle timeout timer.
 timer: bun.api.Timer.EventLoopTimer = .{
     .tag = .MySQLConnectionTimeout,
-    .next = .{
-        .sec = 0,
-        .nsec = 0,
-    },
+    .next = .epoch,
 },
 
 /// This timer controls the maximum lifetime of a connection.
@@ -27,10 +24,7 @@ timer: bun.api.Timer.EventLoopTimer = .{
 max_lifetime_interval_ms: u32 = 0,
 max_lifetime_timer: bun.api.Timer.EventLoopTimer = .{
     .tag = .MySQLConnectionMaxLifetime,
-    .next = .{
-        .sec = 0,
-        .nsec = 0,
-    },
+    .next = .epoch,
 },
 
 pub const ref = RefCount.ref;
@@ -103,7 +97,7 @@ pub fn resetConnectionTimeout(this: *@This()) void {
         this.#connection.isProcessingData() or
         interval == 0) return;
 
-    this.timer.next = bun.timespec.msFromNow(@intCast(interval));
+    this.timer.next = bun.timespec.msFromNow(.allow_mocked_time, @intCast(interval));
     this.#vm.timer.insert(&this.timer);
 }
 
@@ -147,7 +141,7 @@ fn setupMaxLifetimeTimerIfNecessary(this: *@This()) void {
     if (this.max_lifetime_interval_ms == 0) return;
     if (this.max_lifetime_timer.state == .ACTIVE) return;
 
-    this.max_lifetime_timer.next = bun.timespec.msFromNow(@intCast(this.max_lifetime_interval_ms));
+    this.max_lifetime_timer.next = bun.timespec.msFromNow(.allow_mocked_time, @intCast(this.max_lifetime_interval_ms));
     this.#vm.timer.insert(&this.max_lifetime_timer);
 }
 pub fn constructor(globalObject: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.JSError!*@This() {

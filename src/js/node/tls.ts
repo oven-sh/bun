@@ -575,7 +575,7 @@ TLSSocket.prototype.getPeerFinished = function getPeerFinished() {
 };
 
 TLSSocket.prototype.isSessionReused = function isSessionReused() {
-  return !!this[ksession];
+  return this._handle?.isSessionReused?.() ?? false;
 };
 
 TLSSocket.prototype.renegotiate = function renegotiate(options, callback) {

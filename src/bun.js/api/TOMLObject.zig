@@ -3,11 +3,12 @@ pub fn create(globalThis: *jsc.JSGlobalObject) jsc.JSValue {
     object.put(
         globalThis,
         ZigString.static("parse"),
-        jsc.createCallback(
+        jsc.JSFunction.create(
             globalThis,
-            ZigString.static("parse"),
-            1,
+            "parse",
             parse,
+            1,
+            .{},
         ),
     );
 

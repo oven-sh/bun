@@ -154,7 +154,7 @@ pub fn fire(this: *TimerObjectInternals, _: *const timespec, vm: *jsc.VirtualMac
     if (kind != .setInterval) {
         this.strong_this.clearWithoutDeallocation();
     } else {
-        time_before_call = timespec.msFromNow(this.interval);
+        time_before_call = timespec.msFromNow(.allow_mocked_time, this.interval);
     }
     this_object.ensureStillAlive();
 
@@ -380,7 +380,7 @@ pub fn reschedule(this: *TimerObjectInternals, timer: JSValue, vm: *VirtualMachi
     // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L612
     if (!this.shouldRescheduleTimer(repeat, idle_timeout)) return;
 
-    const now = timespec.msFromNow(this.interval);
+    const now = timespec.msFromNow(.allow_mocked_time, this.interval);
     const was_active = this.eventLoopTimer().state == .ACTIVE;
     if (was_active) {
         vm.timer.remove(this.eventLoopTimer());

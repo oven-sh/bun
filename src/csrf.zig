@@ -291,7 +291,7 @@ pub fn csrf__generate_impl(globalObject: *jsc.JSGlobalObject, callframe: *jsc.Ca
     return encoding.toNodeEncoding().encodeWithMaxSize(globalObject, boring.EVP_MAX_MD_SIZE + 32, token_bytes);
 }
 
-pub const csrf__generate = jsc.toJSHostFn(csrf__generate_impl);
+pub const csrf__generate = csrf__generate_impl;
 
 /// JS binding function for verifying CSRF tokens
 /// First argument is token (required), second is options (optional)
@@ -377,7 +377,7 @@ pub fn csrf__verify_impl(globalObject: *jsc.JSGlobalObject, call_frame: *jsc.Cal
     return jsc.JSValue.jsBoolean(is_valid);
 }
 
-pub const csrf__verify = jsc.toJSHostFn(csrf__verify_impl);
+pub const csrf__verify = csrf__verify_impl;
 
 const hmac = @import("./hmac.zig");
 const std = @import("std");

@@ -1,0 +1,19 @@
+exclude:
+  paths:
+    - test
+    - scripts
+    - bench
+    - packages/bun-lambda
+    - packages/bun-release
+    - packages/bun-wasm
+    - packages/bun-vscode
+    - packages/bun-plugin-yaml
+    - packages/bun-plugin-svelte
+    - packages/bun-native-plugin-rs
+    - packages/bun-native-bundler-plugin-api
+    - packages/bun-inspector-protocol
+    - packages/bun-inspector-frontend
+    - packages/bun-error
+    - packages/bun-debug-adapter-protocol
+    - packages/bun-build-mdx-rs
+    - packages/@types/bun

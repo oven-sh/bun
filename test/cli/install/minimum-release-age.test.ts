@@ -2304,4 +2304,173 @@ linker = "${linker}"
       expect(stderr.toLowerCase()).toMatch(/no version|blocked|failed to resolve/);
     });
   });
+
+  describe("security scanner integration", () => {
+    // Helper to create common scanner configuration files
+    const createScannerConfig = (extraConfig = "", scannerImpl?: string) => {
+      // Normalize extraConfig to ensure proper newline separation
+      const normalizedExtra = extraConfig ? (extraConfig.endsWith("\n") ? extraConfig : extraConfig + "\n") : "";
+      return {
+        "bunfig.toml": `
+[install]
+cache = false
+registry = "${mockRegistryUrl}"
+${normalizedExtra}
+[install.security]
+scanner = "./scanner.ts"
+`,
+        "scanner.ts":
+          scannerImpl ??
+          `
+export const scanner = {
+  version: "1",
+  scan: async ({ packages }) => {
+    await Bun.write("./received-packages.json", JSON.stringify(packages, null, 2));
+    return [];
+  },
+};
+`,
+      };
+    };
+
+    test("only passes age-filtered packages to security scanner", async () => {
+      // This test verifies that when minimum-release-age filters a package,
+      // the security scanner receives only the filtered version (not the blocked newer versions)
+      using dir = tempDir("scanner-integration", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+        ...createScannerConfig(),
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+
+      // Read what packages the scanner received
+      const receivedPackagesFile = Bun.file(`${dir}/received-packages.json`);
+      expect(await receivedPackagesFile.exists()).toBe(true);
+
+      const receivedPackages = await receivedPackagesFile.json();
+
+      // Verify the scanner received the filtered version (2.1.0) not the blocked version (3.0.0)
+      const regularPkg = receivedPackages.find((p: { name: string }) => p.name === "regular-package");
+      expect(regularPkg).toBeDefined();
+      expect(regularPkg.version).toBe("2.1.0");
+    });
+
+    test("scanner receives correct version when stability check downgrades", async () => {
+      // Test that stability checks also affect what version the scanner sees
+      using dir = tempDir("scanner-stability", {
+        "package.json": JSON.stringify({
+          dependencies: { "bugfix-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+        ...createScannerConfig(),
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${1.8 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+
+      const receivedPackages = await Bun.file(`${dir}/received-packages.json`).json();
+
+      // With stability checks, should select 1.0.0 (stable) instead of unstable versions
+      const bugfixPkg = receivedPackages.find((p: { name: string }) => p.name === "bugfix-package");
+      expect(bugfixPkg).toBeDefined();
+      expect(bugfixPkg.version).toBe("1.0.0");
+    });
+
+    test("scanner can report advisory on age-filtered package", async () => {
+      // Test that the scanner can properly report security issues on the filtered package
+      const advisoryScannerImpl = `
+export const scanner = {
+  version: "1",
+  scan: async ({ packages }) => {
+    // Report a fatal advisory for the package we receive
+    const pkg = packages.find(p => p.name === "regular-package");
+    if (pkg && pkg.version === "2.1.0") {
+      return [{
+        package: "regular-package",
+        description: "Known vulnerability in version 2.1.0",
+        level: "fatal",
+        url: "https://example.com/advisory",
+      }];
+    }
+    return [];
+  },
+};
+`;
+      using dir = tempDir("scanner-advisory", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+        ...createScannerConfig("", advisoryScannerImpl),
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [exitCode, stdout, stderr] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
+      const output = stdout + stderr;
+
+      // The advisory message should be in the output
+      expect(output).toContain("Known vulnerability in version 2.1.0");
+      expect(output).toContain("Installation aborted due to fatal security advisories");
+      // Should fail due to fatal advisory
+      expect(exitCode).toBe(1);
+    });
+
+    test("excludes filter bypasses age check but scanner still sees package", async () => {
+      // Test that excluded packages bypass age filtering but are still scanned
+      using dir = tempDir("scanner-excludes", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+        ...createScannerConfig(`minimumReleaseAge = ${5 * SECONDS_PER_DAY}
+minimumReleaseAgeExcludes = ["regular-package"]
+`),
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+
+      const receivedPackages = await Bun.file(`${dir}/received-packages.json`).json();
+
+      // Since regular-package is excluded from age filtering, it should get 3.0.0 (latest)
+      const regularPkg = receivedPackages.find((p: { name: string }) => p.name === "regular-package");
+      expect(regularPkg).toBeDefined();
+      expect(regularPkg.version).toBe("3.0.0");
+    });
+  });
 });

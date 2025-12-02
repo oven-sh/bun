@@ -132,6 +132,7 @@ pub fn spawnMaybeSync(
     var maybe_ipc_mode: if (is_sync) void else ?IPC.Mode = if (is_sync) {} else null;
     var ipc_callback: JSValue = .zero;
     var extra_fds = std.array_list.Managed(bun.spawn.SpawnOptions.Stdio).init(bun.default_allocator);
+    defer extra_fds.deinit();
     var argv0: ?[*:0]const u8 = null;
     var ipc_channel: i32 = -1;
     var timeout: ?i32 = null;
@@ -710,7 +711,7 @@ pub fn spawnMaybeSync(
         // This must go before other things happen so that the exit handler is
         // registered before onProcessExit can potentially be called.
         if (timeout) |timeout_val| {
-            subprocess.event_loop_timer.next = bun.timespec.msFromNow(timeout_val);
+            subprocess.event_loop_timer.next = bun.timespec.msFromNow(.allow_mocked_time, timeout_val);
             globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
             subprocess.setEventLoopTimerRefd(true);
         }
@@ -839,7 +840,7 @@ pub fn spawnMaybeSync(
     // This ensures JavaScript timers don't fire and stdin/stdout from the main process aren't affected
     {
         var absolute_timespec = bun.timespec.epoch;
-        var now = bun.timespec.now();
+        var now = bun.timespec.now(.allow_mocked_time);
         var user_timespec: bun.timespec = if (timeout) |timeout_ms| now.addMs(timeout_ms) else absolute_timespec;
 
         // Support `AbortSignal.timeout`, but it's best-effort.
@@ -893,10 +894,10 @@ pub fn spawnMaybeSync(
             // The timeout check is done at the top of the loop
             switch (sync_loop.tickWithTimeout(if (has_timespec and !did_timeout) &absolute_timespec else null)) {
                 .completed => {
-                    now = bun.timespec.now();
+                    now = bun.timespec.now(.allow_mocked_time);
                 },
                 .timeout => {
-                    now = bun.timespec.now();
+                    now = bun.timespec.now(.allow_mocked_time);
                     const did_user_timeout = has_user_timespec and (absolute_timespec.eql(&user_timespec) or user_timespec.order(&now) == .lt);
 
                     if (did_user_timeout) {
@@ -948,7 +949,7 @@ pub fn spawnMaybeSync(
     const resultPid = jsc.JSValue.jsNumberFromInt32(subprocess.pid());
     subprocess.finalize();
 
-    const sync_value = jsc.JSValue.createEmptyObject(globalThis, 5 + @as(usize, @intFromBool(!signalCode.isEmptyOrUndefinedOrNull())));
+    const sync_value = jsc.JSValue.createEmptyObject(globalThis, 0);
     sync_value.put(globalThis, jsc.ZigString.static("exitCode"), exitCode);
     if (!signalCode.isEmptyOrUndefinedOrNull()) {
         sync_value.put(globalThis, jsc.ZigString.static("signalCode"), signalCode);

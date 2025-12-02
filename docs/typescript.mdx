@@ -15,7 +15,7 @@ At this point, you should be able to reference the `Bun` global in your TypeScri
 
 Bun supports things like top-level await, JSX, and extensioned `.ts` imports, which TypeScript doesn't allow by default. Below is a set of recommended `compilerOptions` for a Bun project, so you can use these features without seeing compiler warnings from TypeScript.
 
-```json tsconfig.json icon="file-code"
+```json tsconfig.json icon="file-json"
 {
   "compilerOptions": {
     // Environment setup & latest features
@@ -49,6 +49,6 @@ Bun supports things like top-level await, JSX, and extensioned `.ts` imports, wh
 
 If you run `bun init` in a new directory, this `tsconfig.json` will be generated for you. (The stricter flags are disabled by default.)
 
-```sh terminal 	icon="terminal"
+```sh terminal icon="terminal"
 bun init
 ```

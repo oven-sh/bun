@@ -8,4 +8,6 @@ export default [
   ["WritableStream", "JSWritableStream.h"],
   ["TransformStream", "JSTransformStream.h"],
   ["ArrayBuffer"],
+  ["CompressionStream", "JSCompressionStream.h"],
+  ["DecompressionStream", "JSDecompressionStream.h"],
 ];

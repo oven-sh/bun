@@ -86,11 +86,11 @@ import { Database } from "bun:sqlite";
 const strict = new Database(":memory:", { strict: true });
 
 // throws error because of the typo:
-const query = strict.query("SELECT $message;").all({ message: "Hello world" });
+const query = strict.query("SELECT $message;").all({ messag: "Hello world" });
 
 const notStrict = new Database(":memory:");
 // does not throw error:
-notStrict.query("SELECT $message;").all({ message: "Hello world" });
+notStrict.query("SELECT $message;").all({ messag: "Hello world" });
 ```
 
 ### Load via ES module import
@@ -172,12 +172,25 @@ const query = db.query(`select "Hello world" as message`);
 ```
 
 <Note>
- Use the `.prepare()` method to prepare a query _without_ caching it on the `Database` instance.
+**What does "cached" mean?**
 
-    ```ts
-    // compile the prepared statement
-    const query = db.prepare("SELECT * FROM foo WHERE bar = ?");
-    ```
+The caching refers to the **compiled prepared statement** (the SQL bytecode), not the query results. When you call `db.query()` with the same SQL string multiple times, Bun returns the same cached `Statement` object instead of recompiling the SQL.
+
+It is completely safe to reuse a cached statement with different parameter values:
+
+```ts
+const query = db.query("SELECT * FROM users WHERE id = ?");
+query.get(1); // ✓ Works
+query.get(2); // ✓ Also works - parameters are bound fresh each time
+query.get(3); // ✓ Still works
+```
+
+Use `.prepare()` instead of `.query()` when you want a fresh `Statement` instance that isn't cached, for example if you're dynamically generating SQL and don't want to fill the cache with one-off queries.
+
+```ts
+// compile the prepared statement without caching
+const query = db.prepare("SELECT * FROM foo WHERE bar = ?");
+```
 
 </Note>
 
@@ -190,7 +203,7 @@ SQLite supports [write-ahead log mode](https://www.sqlite.org/wal.html) (WAL) wh
 To enable WAL mode, run this pragma query at the beginning of your application:
 
 ```ts db.ts icon="/icons/typescript.svg"
-db.exec("PRAGMA journal_mode = WAL;");
+db.run("PRAGMA journal_mode = WAL;");
 ```
 
 <Accordion title="What is WAL mode?">
@@ -645,22 +658,33 @@ class Database {
           readonly?: boolean;
           create?: boolean;
           readwrite?: boolean;
+          safeIntegers?: boolean;
+          strict?: boolean;
         },
   );
 
-  query<Params, ReturnType>(sql: string): Statement<Params, ReturnType>;
+  query<ReturnType, ParamsType>(sql: string): Statement<ReturnType, ParamsType>;
+  prepare<ReturnType, ParamsType>(sql: string): Statement<ReturnType, ParamsType>;
   run(sql: string, params?: SQLQueryBindings): { lastInsertRowid: number; changes: number };
   exec = this.run;
+
+  transaction(insideTransaction: (...args: any) => void): CallableFunction & {
+    deferred: (...args: any) => void;
+    immediate: (...args: any) => void;
+    exclusive: (...args: any) => void;
+  };
+
+  close(throwOnError?: boolean): void;
 }
 
-class Statement<Params, ReturnType> {
-  all(params: Params): ReturnType[];
-  get(params: Params): ReturnType | undefined;
-  run(params: Params): {
+class Statement<ReturnType, ParamsType> {
+  all(...params: ParamsType[]): ReturnType[];
+  get(...params: ParamsType[]): ReturnType | null;
+  run(...params: ParamsType[]): {
     lastInsertRowid: number;
     changes: number;
   };
-  values(params: Params): unknown[][];
+  values(...params: ParamsType[]): unknown[][];
 
   finalize(): void; // destroy statement and clean up resources
   toString(): string; // serialize to SQL
@@ -671,7 +695,7 @@ class Statement<Params, ReturnType> {
   paramsCount: number; // the number of parameters expected by the statement
   native: any; // the native object representing the statement
 
-  as(Class: new () => ReturnType): this;
+  as<T>(Class: new (...args: any[]) => T): Statement<T, ParamsType>;
 }
 
 type SQLQueryBindings =

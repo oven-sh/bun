@@ -15,6 +15,6 @@ export default {
   CountQueuingStrategy,
   TextEncoderStream,
   TextDecoderStream,
-  CompressionStream: undefined,
-  DecompressionStream: undefined,
+  CompressionStream,
+  DecompressionStream,
 };

@@ -127,6 +127,8 @@ if (NOT ENABLE_ASAN)
   set(ENABLE_ZIG_ASAN OFF)
 endif()
 
+optionx(ENABLE_FUZZILLI BOOL "If fuzzilli support should be enabled" DEFAULT OFF)
+
 if(RELEASE AND LINUX AND CI AND NOT ENABLE_ASSERTIONS AND NOT ENABLE_ASAN)
   set(DEFAULT_LTO ON)
 else()

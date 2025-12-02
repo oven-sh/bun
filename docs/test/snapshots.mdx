@@ -32,8 +32,8 @@ your-project/
 
 The snapshot file contains:
 
-```txt title="snapshot file" icon="file-code"
-// Bun Snapshot v1, https://goo.gl/fbAQLP
+```ts title="__snapshots__/snap.test.ts.snap" icon="file-code"
+// Bun Snapshot v1, https://bun.com/docs/test/snapshots
 
 exports[`snap 1`] = `"foo"`;
 ```
@@ -400,7 +400,7 @@ tests/
 
 When snapshots fail, you'll see a diff:
 
-```text title="diff" icon="file-code"
+```diff title="diff" icon="file-code"
 - Expected
 + Received
 

@@ -1740,10 +1740,9 @@ declare module "bun" {
      * @default "esm"
      */
     format?: /**
-
-     * ECMAScript Module format
-     */
-    | "esm"
+       * ECMAScript Module format
+       */
+      | "esm"
       /**
        * CommonJS format
        * **Experimental**
@@ -1788,7 +1787,7 @@ declare module "bun" {
      * @see {@link outdir} required for `"linked"` maps
      * @see {@link publicPath} to customize the base url of linked source maps
      */
-    sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean;
+    sourcemap?: "none" | "linked" | "inline" | "external" | boolean;
 
     /**
      * package.json `exports` conditions used when resolving imports
@@ -1933,6 +1932,26 @@ declare module "bun" {
     execArgv?: string[];
     executablePath?: string;
     outfile?: string;
+    /**
+     * Whether to autoload .env files when the standalone executable runs
+     *
+     * Standalone-only: applies only when building/running the standalone executable.
+     *
+     * Equivalent CLI flags: `--compile-autoload-dotenv`, `--no-compile-autoload-dotenv`
+     *
+     * @default true
+     */
+    autoloadDotenv?: boolean;
+    /**
+     * Whether to autoload bunfig.toml when the standalone executable runs
+     *
+     * Standalone-only: applies only when building/running the standalone executable.
+     *
+     * Equivalent CLI flags: `--compile-autoload-bunfig`, `--no-compile-autoload-bunfig`
+     *
+     * @default true
+     */
+    autoloadBunfig?: boolean;
     windows?: {
       hideConsole?: boolean;
       icon?: string;
@@ -3297,10 +3316,10 @@ declare module "bun" {
   function color(
     input: ColorInput,
     outputFormat?: /**
-     * True color ANSI color string, for use in terminals
-     * @example \x1b[38;2;100;200;200m
-     */
-    | "ansi"
+       * True color ANSI color string, for use in terminals
+       * @example \x1b[38;2;100;200;200m
+       */
+      | "ansi"
       | "ansi-16"
       | "ansi-16m"
       /**
@@ -5631,11 +5650,17 @@ declare module "bun" {
       maxBuffer?: number;
     }
 
-    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable>
-      extends BaseOptions<In, Out, Err> {}
+    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
+      In,
+      Out,
+      Err
+    > {}
 
-    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable>
-      extends BaseOptions<In, Out, Err> {
+    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
+      In,
+      Out,
+      Err
+    > {
       /**
        * If true, stdout and stderr pipes will not automatically start reading
        * data. Reading will only begin when you access the `stdout` or `stderr`

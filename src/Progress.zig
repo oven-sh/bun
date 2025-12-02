@@ -71,7 +71,7 @@ pub const Node = struct {
     context: *Progress,
     parent: ?*Node,
     name: []const u8,
-    unit: []const u8 = "",
+    unit: enum { none, files, bytes } = .none,
     /// Must be handled atomically to be thread-safe.
     recently_updated_child: ?*Node = null,
     /// Must be handled atomically to be thread-safe. 0 means null.
@@ -326,16 +326,18 @@ fn refreshWithHeldLock(self: *Progress) void {
                 }
                 if (eti > 0) {
                     if (need_ellipse) self.bufWrite(&end, " ", .{});
-                    switch (node.unit.len == 0) {
-                        true => self.bufWrite(&end, "[{Bi:.2}/{Bi:.2}] ", .{ current_item, eti }),
-                        false => self.bufWrite(&end, "[{d}/{d}{s}] ", .{ current_item, eti, node.unit }),
+                    switch (node.unit) {
+                        .none => self.bufWrite(&end, "[{d}/{d}] ", .{ current_item, eti }),
+                        .files => self.bufWrite(&end, "[{d}/{d} files] ", .{ current_item, eti }),
+                        .bytes => self.bufWrite(&end, "[{Bi:.2}/{Bi:.2}] ", .{ current_item, eti }),
                     }
                     need_ellipse = false;
                 } else if (completed_items != 0) {
                     if (need_ellipse) self.bufWrite(&end, " ", .{});
-                    switch (node.unit.len == 0) {
-                        true => self.bufWrite(&end, "[{Bi:.2}] ", .{current_item}),
-                        false => self.bufWrite(&end, "[{d}{s}] ", .{ current_item, node.unit }),
+                    switch (node.unit) {
+                        .none => self.bufWrite(&end, "[{d}] ", .{current_item}),
+                        .files => self.bufWrite(&end, "[{d} files] ", .{current_item}),
+                        .bytes => self.bufWrite(&end, "[{Bi:.2}] ", .{current_item}),
                     }
                     need_ellipse = false;
                 }

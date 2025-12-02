@@ -533,15 +533,19 @@ describe("BunTestController (static file parser)", () => {
         test.todo("todo test", () => {});
         test.only("only test", () => {});
         test.failing("failing test", () => {});
+        test.concurrent("concurrent test", () => {});
+        test.serial("serial test", () => {});
       `;
 
       const result = parseTestBlocks(content);
 
-      expect(result).toHaveLength(4);
+      expect(result).toHaveLength(6);
       expect(result[0].name).toBe("skipped test");
       expect(result[1].name).toBe("todo test");
       expect(result[2].name).toBe("only test");
       expect(result[3].name).toBe("failing test");
+      expect(result[4].name).toBe("concurrent test");
+      expect(result[5].name).toBe("serial test");
     });
 
     test("should handle conditional tests", () => {
@@ -549,14 +553,41 @@ describe("BunTestController (static file parser)", () => {
         test.if(true)("conditional test", () => {});
         test.skipIf(false)("skip if test", () => {});
         test.todoIf(true)("todo if test", () => {});
+        test.failingIf(true)("failing if test", () => {});
+        test.concurrentIf(true)("concurrent if test", () => {});
+        test.serialIf(true)("serial if test", () => {});
       `;
 
       const result = parseTestBlocks(content);
 
-      expect(result).toHaveLength(3);
+      expect(result).toHaveLength(6);
       expect(result[0].name).toBe("conditional test");
       expect(result[1].name).toBe("skip if test");
       expect(result[2].name).toBe("todo if test");
+      expect(result[3].name).toBe("failing if test");
+      expect(result[4].name).toBe("concurrent if test");
+      expect(result[5].name).toBe("serial if test");
+    });
+
+    test("should handle describe modifiers", () => {
+      const content = `
+        describe.concurrent("concurrent describe", () => {
+          test("test in concurrent", () => {});
+        });
+        describe.serial("serial describe", () => {
+          test("test in serial", () => {});
+        });
+      `;
+
+      const result = parseTestBlocks(content);
+
+      expect(result).toHaveLength(2);
+      expect(result[0].name).toBe("concurrent describe");
+      expect(result[0].type).toBe("describe");
+      expect(result[0].children).toHaveLength(1);
+      expect(result[1].name).toBe("serial describe");
+      expect(result[1].type).toBe("describe");
+      expect(result[1].children).toHaveLength(1);
     });
 
     test("should ignore comments", () => {

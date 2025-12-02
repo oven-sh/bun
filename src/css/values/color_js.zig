@@ -286,7 +286,7 @@ pub fn jsFunctionColor(globalThis: *jsc.JSGlobalObject, callFrame: *jsc.CallFram
                                     return object;
                                 },
                                 .@"{rgb}" => {
-                                    const object = jsc.JSValue.createEmptyObject(globalThis, 4);
+                                    const object = jsc.JSValue.createEmptyObject(globalThis, 3);
                                     object.put(globalThis, "r", jsc.JSValue.jsNumber(rgba.red));
                                     object.put(globalThis, "g", jsc.JSValue.jsNumber(rgba.green));
                                     object.put(globalThis, "b", jsc.JSValue.jsNumber(rgba.blue));

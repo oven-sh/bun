@@ -24,7 +24,7 @@ pub const PosixLoop = extern struct {
         .mac => std.posix.system.kevent64_s,
         // TODO:
         .windows => *anyopaque,
-        else => @compileError("Unsupported OS"),
+        .wasm => @compileError("Unsupported OS"),
     };
 
     pub fn uncork(this: *PosixLoop) void {

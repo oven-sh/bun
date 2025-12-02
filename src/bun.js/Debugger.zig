@@ -30,6 +30,7 @@ var futex_atomic: std.atomic.Value(u32) = .init(0);
 
 pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
     const debugger = &(this.debugger orelse return);
+    bun.analytics.Features.debugger += 1;
     if (!debugger.must_block_until_connected) {
         return;
     }
@@ -50,7 +51,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
     // Sleep up to 30ms for automatic inspection.
     const wait_for_connection_delay_ms = 30;
 
-    var deadline: bun.timespec = if (debugger.wait_for_connection == .shortly) bun.timespec.now().addMs(wait_for_connection_delay_ms) else undefined;
+    var deadline: bun.timespec = if (debugger.wait_for_connection == .shortly) bun.timespec.now(.force_real_time).addMs(wait_for_connection_delay_ms) else undefined;
 
     if (comptime Environment.isWindows) {
         // TODO: remove this when tickWithTimeout actually works properly on Windows.
@@ -99,7 +100,7 @@ pub fn waitForDebuggerIfNecessary(this: *VirtualMachine) void {
                 if (comptime Environment.enable_logs)
                     log("waited: {D}", .{@as(i64, @truncate(std.time.nanoTimestamp() - bun.cli.start_time))});
 
-                const elapsed = bun.timespec.now();
+                const elapsed = bun.timespec.now(.force_real_time);
                 if (elapsed.order(&deadline) != .lt) {
                     debugger.poll_ref.unref(this);
                     log("Timed out waiting for the debugger", .{});

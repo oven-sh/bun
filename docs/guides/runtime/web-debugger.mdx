@@ -4,7 +4,7 @@ sidebarTitle: Web debugger
 mode: center
 ---
 
-Bun speaks the [WebKit Inspector Protocol](https://github.com/oven-sh/bun/blob/main/packages/bun-vscode/types/jsc.d.ts). To enable debugging when running code with Bun, use the `--inspect` flag. For demonstration purposes, consider the following simple web server.
+Bun speaks the [WebKit Inspector Protocol](https://github.com/oven-sh/bun/blob/main/packages/bun-inspector-protocol/src/protocol/jsc/index.d.ts). To enable debugging when running code with Bun, use the `--inspect` flag. For demonstration purposes, consider the following simple web server.
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.serve({

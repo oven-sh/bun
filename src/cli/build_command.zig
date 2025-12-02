@@ -440,6 +440,10 @@ pub const BuildCommand = struct {
                     ctx.bundler_options.windows,
                     ctx.bundler_options.compile_exec_argv orelse "",
                     null,
+                    .{
+                        .disable_default_env_files = !ctx.bundler_options.compile_autoload_dotenv,
+                        .disable_autoload_bunfig = !ctx.bundler_options.compile_autoload_bunfig,
+                    },
                 ) catch |err| {
                     Output.printErrorln("failed to create executable: {s}", .{@errorName(err)});
                     Global.exit(1);

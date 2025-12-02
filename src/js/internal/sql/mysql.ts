@@ -455,10 +455,11 @@ class PooledMySQLConnection {
   }
 }
 
-class MySQLAdapter
-  implements
-    DatabaseAdapter<PooledMySQLConnection, $ZigGeneratedClasses.MySQLConnection, $ZigGeneratedClasses.MySQLQuery>
-{
+class MySQLAdapter implements DatabaseAdapter<
+  PooledMySQLConnection,
+  $ZigGeneratedClasses.MySQLConnection,
+  $ZigGeneratedClasses.MySQLQuery
+> {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
 
   public readonly connections: PooledMySQLConnection[];

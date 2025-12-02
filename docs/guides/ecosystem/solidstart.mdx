@@ -4,63 +4,59 @@ sidebarTitle: "SolidStart with Bun"
 mode: center
 ---
 
-<Warning>
-  SolidStart currently relies on Node.js APIs that Bun does not yet implement. The guide below uses Bun to initialize a
-  project and install dependencies, but it uses Node.js to run the dev server.
-</Warning>
-
----
-
-Initialize a SolidStart app with `create-solid`.
+Initialize a SolidStart app with `create-solid`. You can specify the `--solidstart` flag to create a SolidStart project, and `--ts` for TypeScript support. When prompted for a template, select `basic` for a minimal starter app.
 
 ```sh terminal icon="terminal"
-bun create solid my-app
+bun create solid my-app --solidstart --ts
 ```
 
 ```txt
-create-solid version 0.2.31
-
-Welcome to the SolidStart setup wizard!
-
-There are definitely bugs and some feature might not work yet.
-If you encounter an issue, have a look at
-https://github.com/solidjs/solid-start/issues and open a new one,
-if it is not already tracked.
-
-✔ Which template do you want to use? › todomvc
-✔ Server Side Rendering? … yes
-✔ Use TypeScript? … yes
-cloned solidjs/solid-start#main to /path/to/my-app/.solid-start
-✔ Copied project files
+┌
+ Create-Solid v0.6.11
+│
+◇  Project Name
+│  my-app
+│
+◇  Which template would you like to use?
+│  basic
+│
+◇  Project created 🎉
+│
+◇  To get started, run: ─╮
+│                        │
+│  cd my-app             │
+│  bun install           │
+│  bun dev               │
+│                        │
+├────────────────────────╯
 ```
 
 ---
 
-As instructed by the `create-solid` CLI, let's install our dependencies.
+As instructed by the `create-solid` CLI, install the dependencies.
 
 ```sh terminal icon="terminal"
 cd my-app
 bun install
 ```
 
----
-
-Then run the development server.
+Then run the development server with `bun dev`.
 
 ```sh terminal icon="terminal"
-bun run dev
-# or, equivalently
-bunx solid-start dev
+bun dev
 ```
 
----
+```txt
+$ vinxi dev
+vinxi v0.5.8
+vinxi starting dev server
+
+  ➜ Local:    http://localhost:3000/
+  ➜ Network:  use --host to expose
+```
 
 Open [localhost:3000](http://localhost:3000). Any changes you make to `src/routes/index.tsx` will be hot-reloaded automatically.
 
-<Frame>
-  ![SolidStart demo app](https://github.com/oven-sh/bun/assets/3084745/1e8043c4-49d1-498c-9add-c1eaab6c7167)
-</Frame>
-
 ---
 
-Refer to the [SolidStart website](https://start.solidjs.com/getting-started/what-is-solidstart) for complete framework documentation.
+Refer to the [SolidStart website](https://docs.solidjs.com/solid-start) for complete framework documentation.

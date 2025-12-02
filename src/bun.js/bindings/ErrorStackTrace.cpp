@@ -680,10 +680,10 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
     return functionName;
 }
 
-String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, bool isInFinalizer, unsigned int* flags)
+String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, FinalizerSafety finalizerSafety, unsigned int* flags)
 {
     bool isConstructor = false;
-    if (isInFinalizer) {
+    if (finalizerSafety == FinalizerSafety::MustNotTriggerGC) {
 
         if (auto* callee = frame.callee()) {
             if (auto* object = callee->getObject()) {
@@ -763,8 +763,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
             isConstructor = true;
         }
 
-        // We cannot run this in FinalizeUnconditionally, as we cannot call getters there
-        if (!isInFinalizer) {
+        if (finalizerSafety == FinalizerSafety::NotInFinalizer) {
             auto codeType = codeblock->codeType();
             switch (codeType) {
             case JSC::CodeType::FunctionCode:

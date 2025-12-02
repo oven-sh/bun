@@ -1,4 +1,4 @@
-FROM debian:bookworm-slim AS build
+FROM debian:trixie-slim AS build
 
 # https://github.com/oven-sh/bun/releases
 ARG BUN_VERSION=latest
@@ -55,7 +55,7 @@ RUN apt-get update -qq \
     && which bun \
     && bun --version
 
-FROM gcr.io/distroless/base-nossl-debian11
+FROM gcr.io/distroless/base-nossl-debian13
 
 # Disable the runtime transpiler cache by default inside Docker containers.
 # On ephemeral containers, the cache is not useful
@@ -71,6 +71,7 @@ ENV PATH "${PATH}:/usr/local/bun-node-fallback-bin"
 
 # Temporarily use the `build`-stage image binaries to create a symlink:
 RUN --mount=type=bind,from=build,source=/usr/bin,target=/usr/bin \
+    --mount=type=bind,from=build,source=/etc/alternatives/which,target=/etc/alternatives/which \
     --mount=type=bind,from=build,source=/bin,target=/bin \
     --mount=type=bind,from=build,source=/usr/lib,target=/usr/lib \
     --mount=type=bind,from=build,source=/lib,target=/lib \

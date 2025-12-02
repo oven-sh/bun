@@ -87,22 +87,15 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                     }
 
                     // unrecognized command
-                    // if flag else arg
-                    if (arg_info.kind == .long or arg_info.kind == .short) {
-                        if (warn_on_unrecognized_flag) {
-                            Output.warn("unrecognized flag: {s}{s}\n", .{ if (arg_info.kind == .long) "--" else "-", name });
-                            Output.flush();
-                        }
-
-                        // continue parsing after unrecognized flag
-                        return parser.next();
-                    }
-
                     if (warn_on_unrecognized_flag) {
-                        Output.warn("unrecognized argument: {s}\n", .{name});
+                        if (maybe_value) |v| {
+                            Output.warn("unrecognized argument: --{s}={s}\n", .{ name, v });
+                        } else {
+                            Output.warn("unrecognized flag: --{s}\n", .{name});
+                        }
                         Output.flush();
                     }
-                    return null;
+                    return parser.next();
                 },
                 .short => return try parser.chainging(.{
                     .arg = arg,

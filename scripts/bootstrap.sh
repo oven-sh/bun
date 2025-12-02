@@ -1309,7 +1309,7 @@ install_rust() {
 	amzn)
 		sh="$(require sh)"
 		rustup_script=$(download_file "https://sh.rustup.rs")
-		execute "$sh" -lc "$rustup_script -y --no-modify-path"
+		execute_as_user "$sh" -lc "$rustup_script -y --no-modify-path"
 		create_directory "$home/.cargo/bin"
 		append_to_path "$home/.cargo/bin"
 		;;

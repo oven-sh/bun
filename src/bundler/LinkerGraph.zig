@@ -418,6 +418,7 @@ pub fn load(
 /// Transfers ownership of the AST to the graph allocator.
 /// This is valid only if all allocators are `MimallocArena`s.
 pub fn takeAstOwnership(this: *LinkerGraph) void {
+    if (!bun.use_mimalloc) return;
     const ast = this.ast.slice();
     const heap: bun.allocators.MimallocArena.Borrowed = .downcast(this.allocator);
     if (comptime !bun.collections.baby_list.safety_checks) return;

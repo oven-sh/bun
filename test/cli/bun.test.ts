@@ -11,6 +11,7 @@ describe("bun", () => {
         const { stdout } = spawnSync({
           cmd: [bunExe()],
           env: {
+            ...bunEnv,
             NO_COLOR: value,
           },
         });
@@ -23,12 +24,10 @@ describe("bun", () => {
       test.todo(`respects NO_COLOR=${JSON.stringify(value)} to enable color`, () => {
         const { stdout } = spawnSync({
           cmd: [bunExe()],
-          env:
-            value === undefined
-              ? {}
-              : {
-                  NO_COLOR: value,
-                },
+          env: {
+            ...bunEnv,
+            NO_COLOR: value,
+          },
         });
         expect(stdout.toString()).toMatch(/\u001b\[\d+m/);
       });
@@ -76,7 +75,7 @@ describe("bun", () => {
 
       const p = Bun.spawnSync({
         cmd: [bunExe(), "--config=" + path],
-        env: {},
+        env: bunEnv,
         stderr: "inherit",
       });
       try {

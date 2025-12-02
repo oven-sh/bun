@@ -593,6 +593,17 @@ fn getUserAgentHeader() picohttp.Header {
         Global.user_agent };
 }
 
+fn connectionHeaderIsKeepAlive(connection_value: string) ?bool {
+    // > Connection options are case-insensitive.
+    // https://datatracker.ietf.org/doc/html/rfc7230#section-6.1
+    return if (std.ascii.eqlIgnoreCase(connection_value, "close"))
+        false
+    else if (std.ascii.eqlIgnoreCase(connection_value, "keep-alive"))
+        true
+    else
+        null;
+}
+
 pub fn headerStr(this: *const HTTPClient, ptr: api.StringPointer) string {
     return this.header_buf[ptr.offset..][0..ptr.length];
 }
@@ -630,10 +641,8 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
             hashHeaderConst("Connection") => {
                 override_connection_header = true;
                 const connection_value = this.headerStr(header_values[i]);
-                if (std.ascii.eqlIgnoreCase(connection_value, "close")) {
-                    this.flags.disable_keepalive = true;
-                } else if (std.ascii.eqlIgnoreCase(connection_value, "keep-alive")) {
-                    this.flags.disable_keepalive = false;
+                if (connectionHeaderIsKeepAlive(connection_value)) |conn_mod| {
+                    this.state.flags.allow_keepalive = conn_mod;
                 }
             },
             hashHeaderConst("if-modified-since") => {
@@ -2283,12 +2292,8 @@ pub fn handleResponseMetadata(
             },
             hashHeaderConst("Connection") => {
                 if (response.status_code >= 200 and response.status_code <= 299) {
-                    // > Connection options are case-insensitive.
-                    // https://datatracker.ietf.org/doc/html/rfc7230#section-6.1
-                    if (strings.eqlCaseInsensitiveASCII(header.value, "close", true)) {
-                        this.state.flags.allow_keepalive = false;
-                    } else if (strings.eqlCaseInsensitiveASCII(header.value, "keep-alive", true)) {
-                        this.state.flags.allow_keepalive = true;
+                    if (connectionHeaderIsKeepAlive(header.value)) |conn_mod| {
+                        this.state.flags.allow_keepalive = conn_mod;
                     }
                 }
             },

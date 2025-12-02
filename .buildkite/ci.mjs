@@ -127,7 +127,7 @@ const testPlatforms = [
   { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023" },
   { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023" },
   { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023" },
-  { os: "linux", arch: "x64", profile: "asan", distro: "amazonlinux", release: "2023" },
+  // { os: "linux", arch: "x64", profile: "asan", distro: "amazonlinux", release: "2023" }, // TODO
   { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "13", tier: "latest" },

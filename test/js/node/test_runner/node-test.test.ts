@@ -52,6 +52,23 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  test("should support done callback for tests and hooks", async () => {
+    const { exitCode, stderr } = await runTests(["06-done-callback.js"]);
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should handle done callback error conditions", async () => {
+    const { exitCode, stderr } = await runTests(["07-done-callback-errors.js"]);
+    // Two tests should fail (error and promise+callback), one should pass (multiple calls is caught)
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("2 fail"),
+    });
+  });
 });
 
 async function runTests(filenames: string[]) {

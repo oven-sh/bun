@@ -752,6 +752,14 @@ pub const SecurityScanSubprocess = struct {
 
         const spawn_cwd = FileSystem.instance.top_level_dir;
 
+        if (comptime bun.Environment.isWindows) {
+            try this.spawnWindows(&argv, spawn_cwd);
+        } else {
+            try this.spawnPosix(&argv, spawn_cwd);
+        }
+    }
+
+    fn spawnPosix(this: *SecurityScanSubprocess, argv: *[5]?[*:0]const u8, spawn_cwd: []const u8) !void {
         // Create two pipes for IPC:
         // - fd 3: child writes response → parent reads (raw pipe)
         // - fd 4: parent writes JSON → child reads (socketpair, closed after write = EOF)
@@ -773,7 +781,7 @@ pub const SecurityScanSubprocess = struct {
             .extra_fds = &extra_fds,
         };
 
-        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(&argv), @ptrCast(std.os.environ.ptr))).unwrap();
+        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(argv), @ptrCast(std.os.environ.ptr))).unwrap();
 
         // Close the write end of the output pipe in the parent
         ipc_output_fds[1].close();
@@ -823,6 +831,77 @@ pub const SecurityScanSubprocess = struct {
         }
     }
 
+    fn spawnWindows(this: *SecurityScanSubprocess, argv: *[5]?[*:0]const u8, spawn_cwd: []const u8) !void {
+        const uv = bun.windows.libuv;
+
+        // On Windows, we use two libuv pipes for IPC:
+        // - fd 3: child writes response → parent reads (buffer pipe)
+        // - fd 4: parent writes JSON → child reads (ipc pipe)
+        const output_pipe = try bun.default_allocator.create(uv.Pipe);
+        errdefer bun.default_allocator.destroy(output_pipe);
+
+        const input_pipe = try bun.default_allocator.create(uv.Pipe);
+        errdefer bun.default_allocator.destroy(input_pipe);
+
+        const extra_fds = [_]bun.spawn.SpawnOptions.Stdio{
+            .{ .buffer = output_pipe }, // fd 3: child writes here
+            .{ .ipc = input_pipe }, // fd 4: parent writes JSON here
+        };
+
+        const spawn_options = bun.spawn.SpawnOptions{
+            .stdout = .inherit,
+            .stderr = .inherit,
+            .stdin = .inherit,
+            .cwd = spawn_cwd,
+            .extra_fds = &extra_fds,
+            .windows = .{
+                .loop = .{ .mini = &this.manager.event_loop.mini },
+            },
+        };
+
+        var spawned = try (try bun.spawn.spawnProcess(&spawn_options, @ptrCast(argv), @ptrCast(std.os.environ.ptr))).unwrap();
+
+        const result_output_pipe = spawned.extra_pipes.items[0].buffer;
+        const result_input_pipe = spawned.extra_pipes.items[1].buffer;
+
+        this.remaining_fds = 1;
+        try this.ipc_reader.startWithPipe(result_output_pipe).unwrap();
+
+        var process = spawned.toProcess(&this.manager.event_loop, false);
+        this.process = process;
+        process.setExitHandler(this);
+
+        const json_data_copy = try this.manager.allocator.dupe(u8, this.json_data);
+        const json_source = jsc.Subprocess.Source{
+            .blob = jsc.WebCore.Blob.Any.fromOwnedSlice(this.manager.allocator, json_data_copy),
+        };
+
+        const stdio_result = jsc.Subprocess.StdioResult{ .buffer = result_input_pipe };
+        this.stdin_writer = StaticPipeWriter.create(&this.manager.event_loop, this, stdio_result, json_source);
+        errdefer {
+            if (this.stdin_writer) |writer| {
+                writer.source.detach();
+                writer.deref();
+                this.stdin_writer = null;
+            }
+        }
+
+        switch (this.stdin_writer.?.start()) {
+            .err => |err| {
+                Output.errGeneric("Failed to start JSON pipe writer: {f}", .{err});
+                return error.JSONPipeWriterFailed;
+            },
+            .result => {},
+        }
+
+        switch (process.watchOrReap()) {
+            .err => {
+                return error.ProcessWatchFailed;
+            },
+            .result => {},
+        }
+    }
+
     pub fn isDone(this: *SecurityScanSubprocess) bool {
         return this.has_process_exited and this.remaining_fds == 0;
     }
@@ -840,7 +919,11 @@ pub const SecurityScanSubprocess = struct {
     }
 
     pub fn loop(this: *const SecurityScanSubprocess) *bun.Async.Loop {
-        return this.manager.event_loop.loop();
+        if (comptime bun.Environment.isWindows) {
+            return this.manager.event_loop.loop().uv_loop;
+        } else {
+            return this.manager.event_loop.loop();
+        }
     }
 
     pub fn onReaderDone(this: *SecurityScanSubprocess) void {

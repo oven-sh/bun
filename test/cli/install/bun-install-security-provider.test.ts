@@ -687,7 +687,7 @@ describe("Package Resolution", () => {
   });
 });
 
-describe("Large Payload via stdin", () => {
+describe("Large payload via ipc pipes", () => {
   let tgzTempDir: string;
 
   beforeAll(async () => {

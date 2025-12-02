@@ -116,5 +116,97 @@ for (let backend of ["api", "cli"] as const) {
           stdout: "process.env.BASE_URL\n$BASE_URL",
         },
       });
+    // import.meta.env tests
+    if (backend === "cli")
+      itBundled("import-meta-env/inline", {
+        env: {
+          VITE_FOO: "vite_bar",
+          VITE_BAZ: "vite_123",
+        },
+        backend: backend,
+        dotenv: "inline",
+        files: {
+          "/a.js": `
+        console.log(import.meta.env.VITE_FOO);
+        console.log(import.meta.env.VITE_BAZ);
+      `,
+        },
+        run: {
+          env: {
+            VITE_FOO: "vite_barz",
+            VITE_BAZ: "vite_123z",
+          },
+          stdout: "vite_bar\nvite_123\n",
+        },
+      });
+
+    itBundled("import-meta-env/disable", {
+      env: {
+        VITE_FOO: "vite_bar",
+        VITE_BAZ: "vite_123",
+      },
+      backend: backend,
+      dotenv: "disable",
+      files: {
+        "/a.js": `
+        console.log(import.meta.env.VITE_FOO);
+        console.log(import.meta.env.VITE_BAZ);
+      `,
+      },
+      run: {
+        stdout: "undefined\nundefined\n",
+      },
+    });
+
+    if (backend === "cli")
+      itBundled("import-meta-env/pattern-matching", {
+        env: {
+          VITE_PUBLIC_FOO: "vite_public_value",
+          VITE_PUBLIC_BAR: "vite_another_public",
+          VITE_PRIVATE_SECRET: "vite_secret_value",
+        },
+        dotenv: "VITE_PUBLIC_*",
+        backend: backend,
+        files: {
+          "/a.js": `
+        console.log(import.meta.env.VITE_PUBLIC_FOO);
+        console.log(import.meta.env.VITE_PUBLIC_BAR);
+        console.log(import.meta.env.VITE_PRIVATE_SECRET);
+      `,
+        },
+        run: {
+          env: {
+            VITE_PUBLIC_FOO: "VITE_BAD_FOO",
+            VITE_PUBLIC_BAR: "VITE_BAD_BAR",
+          },
+          stdout: "vite_public_value\nvite_another_public\nundefined\n",
+        },
+      });
+
+    // Test mixing process.env and import.meta.env
+    if (backend === "cli")
+      itBundled("mixed-env/inline", {
+        env: {
+          NODE_ENV: "production",
+          VITE_API_URL: "https://api.prod.com",
+        },
+        backend: backend,
+        dotenv: "inline",
+        files: {
+          "/a.js": `
+        console.log(process.env.NODE_ENV);
+        console.log(import.meta.env.VITE_API_URL);
+        console.log(import.meta.env.NODE_ENV);
+        console.log(process.env.VITE_API_URL);
+      `,
+        },
+        run: {
+          env: {
+            NODE_ENV: "development",
+            VITE_API_URL: "https://api.dev.com",
+          },
+          stdout: "production\nhttps://api.prod.com\nproduction\nhttps://api.prod.com\n",
+        },
+      });
   });
 }

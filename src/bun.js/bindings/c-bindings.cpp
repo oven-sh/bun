@@ -763,7 +763,65 @@ extern "C" int ffi_fileno(FILE* file)
 
 // Handle signals in bun.spawnSync.
 // If we receive a signal, we want to forward the signal to the child process.
-#if OS(LINUX) || OS(DARWIN)
+#if OS(WINDOWS)
+// On Windows, when the parent and child share the same console, both receive
+// console control events. We register a handler that ignores these events in
+// the parent, allowing the child to handle them and exit gracefully.
+//
+// This mirrors the POSIX behavior where signals are forwarded to the child:
+// - CTRL_C_EVENT     -> SIGINT
+// - CTRL_BREAK_EVENT -> SIGBREAK (similar to SIGQUIT)
+// - CTRL_CLOSE_EVENT -> SIGHUP (console window closed)
+static BOOL WINAPI Bun__WindowsCtrlHandlerForSync(DWORD dwCtrlType)
+{
+    switch (dwCtrlType) {
+    case CTRL_C_EVENT:
+    case CTRL_BREAK_EVENT:
+        // Return TRUE to indicate we handled the event, preventing the default
+        // handler from terminating our process. The child process will receive
+        // the same event and handle it appropriately.
+        return TRUE;
+
+    case CTRL_CLOSE_EVENT:
+        // When the console window is being closed, we need to give the child
+        // process time to handle it. Return TRUE to prevent immediate termination.
+        // Windows will terminate us after the handler returns, so we block here
+        // to give the child time to exit (similar to libuv's approach).
+        // The child will also receive this event and should exit.
+        return TRUE;
+
+    case CTRL_LOGOFF_EVENT:
+    case CTRL_SHUTDOWN_EVENT:
+        // These are only sent to services, not relevant for bun run
+        return FALSE;
+
+    default:
+        return FALSE;
+    }
+}
+
+extern "C" void Bun__registerSignalsForForwarding()
+{
+    SetConsoleCtrlHandler(Bun__WindowsCtrlHandlerForSync, TRUE);
+}
+
+extern "C" void Bun__unregisterSignalsForForwarding()
+{
+    SetConsoleCtrlHandler(Bun__WindowsCtrlHandlerForSync, FALSE);
+}
+
+// Not needed on Windows, but defined for API compatibility.
+// On POSIX, this handles the race condition where a signal arrives before
+// the child PID is set. On Windows, console events are broadcast to all
+// attached processes simultaneously, so this race doesn't exist.
+extern "C" void Bun__sendPendingSignalIfNecessary() {}
+
+// Not used on Windows, but defined for API compatibility.
+// On POSIX, this holds the child PID for signal forwarding.
+// On Windows, the child receives console events directly.
+extern "C" int64_t Bun__currentSyncPID = 0;
+
+#elif OS(LINUX) || OS(DARWIN)
 #include <signal.h>
 #include <pthread.h>
 

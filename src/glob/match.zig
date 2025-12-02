@@ -131,7 +131,7 @@ pub fn match(glob: []const u8, path: []const u8) MatchResult {
     // TODO: consider just returning a bool
     // return matched != negated;
     if (negated) {
-        return if (matched) .negate_match else .negate_no_match;
+        return if (matched) .negate_no_match else .negate_match;
     } else {
         return if (matched) .match else .no_match;
     }

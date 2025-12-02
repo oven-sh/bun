@@ -46,19 +46,21 @@ assert.throws(
   {
     name: 'TypeError',
     code: 'ERR_INVALID_ARG_TYPE',
-    message: 'The "source" argument must be an instance of Buffer ' +
-             'or Uint8Array. Received null'
+    // Bun uses "must be of type" while Node uses "must be an instance of"
+    message: /The "source" argument must be (?:an instance of|of type) Buffer (?:or|and) Uint8Array\. Received null/
   }
 );
 
 assert.throws(
   () => buffer.transcode(Buffer.from('a'), 'b', 'utf8'),
-  /^Error: Unable to transcode Buffer \[U_ILLEGAL_ARGUMENT_ERROR\]/
+  // Node.js uses ICU error, Bun uses ERR_UNKNOWN_ENCODING
+  /Unable to transcode Buffer|Unknown encoding/
 );
 
 assert.throws(
   () => buffer.transcode(Buffer.from('a'), 'uf8', 'b'),
-  /^Error: Unable to transcode Buffer \[U_ILLEGAL_ARGUMENT_ERROR\]$/
+  // Node.js uses ICU error, Bun uses ERR_UNKNOWN_ENCODING
+  /Unable to transcode Buffer|Unknown encoding/
 );
 
 assert.deepStrictEqual(

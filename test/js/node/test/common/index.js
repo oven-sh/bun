@@ -37,7 +37,7 @@ const { isModuleNamespaceObject } = require('util/types');
 const tmpdir = require('./tmpdir');
 const bits = ['arm64', 'loong64', 'mips', 'mipsel', 'ppc64', 'riscv64', 's390x', 'x64']
   .includes(process.arch) ? 64 : 32;
-const hasIntl = !!process.config.variables.v8_enable_i18n_support;
+const hasIntl = true; // Bun always has Intl support
 
 const {
   atob,

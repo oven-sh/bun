@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
 # How to use this script:
 # 1. Pick a module from node's standard library (e.g. 'assert', 'fs')
@@ -8,34 +8,40 @@
 
 i=0
 j=0
-
-if [ -z "$1" ]
-then
-  echo "Usage: $0 <module-name>"
-  exit 1
-fi
-
-case $1 in
-  -h|--help)
-    echo "Usage: $0 <module-name>"
-    echo "Run all unstaged parallel tests for a single module in node's standard library"
-    exit 0
-    ;;
-esac
+k=0
 
 export BUN_DEBUG_QUIET_LOGS=1
+export BUN_JSC_validateExceptionChecks=1
+export BUN_JSC_dumpSimulatedThrows=1
+export BUN_JSC_unexpectedExceptionStackTraceLimit=20
 
-for x in $(git ls-files test/js/node/test/parallel --exclude-standard --others | grep test-$1)
+trap 'echo "Interrupted by user"; exit 130' INT
+
+fails=()
+
+for x in $(git ls-files test/js/{node,bun}/test/{parallel,sequential} --exclude-standard | grep test-$1)
 do
   i=$((i+1))
   echo ./$x
-  if timeout 2 $PWD/build/debug/bun-debug ./$x
+  if timeout 5 $PWD/build/release/bun-profile ./$x
   then
+    echo $?
     j=$((j+1))
     git add $x
+  else
+    echo $?
+    k=$((k+1))
+    fails[${#fails[@]}]="$x"
   fi
-  echo
 done
 
 echo $i tests tested
 echo $j tests passed
+echo $k tests failed
+
+echo
+echo fails:
+for x in "${fails[@]}"
+do
+  echo -- $x
+done

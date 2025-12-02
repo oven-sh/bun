@@ -228,6 +228,24 @@ namespace uWS
             return std::string_view(nullptr, 0);
         }
 
+        std::pair<std::string_view, size_t> getHeaderAndCount(std::string_view lowerCasedHeader)
+        {
+            std::string_view found(nullptr, 0);
+            size_t count = 0;
+            if (bf.mightHave(lowerCasedHeader))
+            {
+                for (Header *h = headers; (++h)->key.length();)
+                {
+                    if (h->key.length() == lowerCasedHeader.length() && !strncmp(h->key.data(), lowerCasedHeader.data(), lowerCasedHeader.length()))
+                    {
+                        count += 1;
+                        if (found.data() == nullptr) found = h->value;
+                    }
+                }
+            }
+            return { found, count };
+        }
+
         struct TransferEncoding {
             bool has: 1 = false;
             bool chunked: 1 = false;
@@ -854,7 +872,8 @@ namespace uWS
             * the Transfer-Encoding overrides the Content-Length. Such a message might indicate an attempt
             * to perform request smuggling (Section 11.2) or response splitting (Section 11.1) and
             * ought to be handled as an error. */
-            const std::string_view contentLengthString = req->getHeader("content-length");
+            auto contentLengthStringAndCount = req->getHeaderAndCount("content-length");
+            const std::string_view contentLengthString = contentLengthStringAndCount.first;
             const auto contentLengthStringLen = contentLengthString.length();
 
             /* Check Transfer-Encoding header validity and conflicts */
@@ -872,6 +891,12 @@ namespace uWS
             req->querySeparator = (unsigned int) ((querySeparatorPtr ? querySeparatorPtr : req->headers->value.data() + req->headers->value.length()) - req->headers->value.data());
 
             // lets check if content len is valid before calling requestHandler
+            if (contentLengthStringAndCount.second > 1) {
+                /* Parser error */
+                /* "Content-Length: 2\r\nContent-Length: 4\r\n" evaluates to "Content-Length: 2, 4" so let's catch that early */
+                /* getHeader() only returns the first occurance of a header for performance */
+                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH);
+            }
             if(contentLengthStringLen) {
                 remainingStreamingBytes = toUnsignedInteger(contentLengthString);
                 if (remainingStreamingBytes == UINT64_MAX) [[unlikely]] {

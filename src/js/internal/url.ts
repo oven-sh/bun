@@ -19,6 +19,11 @@ function urlToHttpOptions(url) {
   return options;
 }
 
+function isURL(self) {
+  return Boolean(self?.href && self.protocol && self.auth === undefined && self.path === undefined);
+}
+
 export default {
   urlToHttpOptions,
+  isURL,
 };

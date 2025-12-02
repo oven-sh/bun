@@ -43,6 +43,7 @@ const {
   setServerIdleTimeout,
   setServerCustomOptions,
   getMaxHTTPHeaderSize,
+  kBunServer,
 } = require("internal/http");
 const NumberIsNaN = Number.isNaN;
 
@@ -85,7 +86,7 @@ function setCloseCallback(self, callback) {
 
 function assignSocketInternal(self, socket) {
   if (socket._httpMessage) {
-    throw $ERR_HTTP_SOCKET_ASSIGNED("Socket already assigned");
+    throw $ERR_HTTP_SOCKET_ASSIGNED();
   }
   socket._httpMessage = self;
   setCloseCallback(socket, onServerResponseClose);
@@ -548,6 +549,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         socket[kEnableStreaming](false);
 
         const http_res = new ResponseClass(http_req, {
+          [kBunServer]: true,
           [kHandle]: handle,
           [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
         });
@@ -754,6 +756,7 @@ function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPRespons
     }
   }
 }
+
 // uWS::HttpParserError
 enum HttpParserError {
   HTTP_PARSER_ERROR_NONE = 0,
@@ -768,18 +771,19 @@ enum HttpParserError {
   HTTP_PARSER_ERROR_INVALID_METHOD = 9,
   HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN = 10,
 }
+
 function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, rawPacket: ArrayBuffer) {
   const self = this as Server;
   let err;
   switch (errorCode) {
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH:
-      err = $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error");
+      err = $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error: Invalid Content-Length");
       break;
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING:
-      err = $HPE_INVALID_TRANSFER_ENCODING("Parse Error");
+      err = $HPE_INVALID_TRANSFER_ENCODING("Parse Error: Invalid Transfer-Encoding");
       break;
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_EOF:
-      err = $HPE_INVALID_EOF_STATE("Parse Error");
+      err = $HPE_INVALID_EOF_STATE("Parse Error: Invalid EOF");
       break;
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_METHOD:
       err = $HPE_INVALID_METHOD("Parse Error: Invalid method encountered");
@@ -1148,7 +1152,7 @@ function _writeHead(statusCode, reason, obj, response) {
           (response.chunkedEncoding !== true || response.hasHeader("content-length")) &&
           (response._trailer || response.hasHeader("trailer"))
         ) {
-          throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
+          throw $ERR_HTTP_TRAILER_INVALID();
         }
         // Headers in obj should override previous headers but still
         // allow explicit duplicates. To do so, we first remove any
@@ -1184,7 +1188,7 @@ function _writeHead(statusCode, reason, obj, response) {
       } else {
         response.removeHeader("content-length");
       }
-      throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
+      throw $ERR_HTTP_TRAILER_INVALID();
     }
   }
 
@@ -1195,7 +1199,7 @@ Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
 
 function ServerResponse(req, options): void {
   if (!(this instanceof ServerResponse)) return new ServerResponse(req, options);
-  OutgoingMessage.$call(this, options);
+  OutgoingMessage.$call(this, { [kBunServer]: true, ...options });
 
   this.useChunkedEncodingByDefault = true;
 
@@ -1297,6 +1301,7 @@ ServerResponse.prototype.writeProcessing = function (cb) {
 ServerResponse.prototype.writeContinue = function (cb) {
   this.socket[kHandle]?.response?.writeContinue();
   cb?.();
+  this._sent100 = true;
 };
 
 // This end method is actually on the OutgoingMessage prototype in Node.js
@@ -1410,6 +1415,7 @@ Object.defineProperty(ServerResponse.prototype, "writable", {
   get() {
     return !this._ended || !hasServerResponseFinished(this);
   },
+  set() {},
 });
 
 ServerResponse.prototype.write = function (chunk, encoding, callback) {
@@ -1519,8 +1525,6 @@ ServerResponse.prototype.detachSocket = function (socket) {
 };
 
 ServerResponse.prototype._implicitHeader = function () {
-  if (this.headersSent) return;
-  // @ts-ignore
   this.writeHead(this.statusCode);
 };
 
@@ -1573,18 +1577,19 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
 
 ServerResponse.prototype.writeHead = function (statusCode, statusMessage, headers) {
   if (this.headersSent) {
-    throw $ERR_HTTP_HEADERS_SENT("writeHead");
+    throw $ERR_HTTP_HEADERS_SENT("write");
   }
   _writeHead(statusCode, statusMessage, headers, this);
 
   this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
+  this._header = " "; // unused in our _http_server right now but it needs to be a truthy string after this point
 
   return this;
 };
 
 ServerResponse.prototype.assignSocket = function (socket) {
   if (socket._httpMessage) {
-    throw $ERR_HTTP_SOCKET_ASSIGNED("Socket already assigned");
+    throw $ERR_HTTP_SOCKET_ASSIGNED();
   }
   socket._httpMessage = this;
   socket.once("close", onServerResponseClose);
@@ -1894,6 +1899,7 @@ function ensureReadableStreamController(run) {
 }
 
 export default {
+  STATUS_CODES,
   Server,
   ServerResponse,
   kConnectionsCheckingInterval,

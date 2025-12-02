@@ -1,3 +1,4 @@
+// Hardcoded module "node:_http_agent"
 const EventEmitter = require("node:events");
 const { parseProxyConfigFromEnv, kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
 const { getLazy, kEmptyObject, once } = require("internal/shared");
@@ -14,7 +15,6 @@ function freeSocketErrorListener(err) {
   socket.emit("agentRemove");
 }
 
-type Agent = import("node:http").Agent;
 function Agent(options): void {
   if (!(this instanceof Agent)) return new Agent(options);
 
@@ -138,7 +138,7 @@ const net = getLazy(() => require("node:net"));
 
 Agent.defaultMaxSockets = Infinity;
 
-Agent.prototype.createConnection = function createConnection(...args) {
+Agent.prototype.createConnection = function (...args) {
   const normalized = net()._normalizeArgs(args);
   const options = normalized[0];
   const cb = normalized[1];
@@ -193,9 +193,6 @@ function handleSocketAfterProxy(err, req) {
 }
 
 Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */, localAddress /* legacy */) {
-  $debug("WARN: Agent.addRequest is a no-op");
-  return; // TODO:
-
   // Legacy API: addRequest(req, host, port, localAddress)
   if (typeof options === "string") {
     options = {

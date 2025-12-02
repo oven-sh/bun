@@ -1,59 +1,39 @@
+// Hardcoded module "node:http"
 const { validateInteger } = require("internal/validators");
 const { Agent, globalAgent } = require("node:_http_agent");
 const { ClientRequest } = require("node:_http_client");
-const { validateHeaderName, validateHeaderValue, parsers } = require("node:_http_common");
+const { methods, parsers } = require("node:_http_common");
 const { IncomingMessage } = require("node:_http_incoming");
-const { OutgoingMessage } = require("node:_http_outgoing");
-const { Server, ServerResponse } = require("node:_http_server");
-
-const { METHODS, STATUS_CODES, setMaxHTTPHeaderSize, getMaxHTTPHeaderSize } = require("internal/http");
-
-const { WebSocket, CloseEvent, MessageEvent } = globalThis;
+const { validateHeaderName, validateHeaderValue, OutgoingMessage } = require("node:_http_outgoing");
+const { _connectionListener, STATUS_CODES, Server, ServerResponse } = require("node:_http_server");
+const { getLazy } = require("internal/shared");
+const { getMaxHTTPHeaderSize } = require("internal/http");
 
 function createServer(options, callback) {
   return new Server(options, callback);
 }
 
-/**
- * Makes an HTTP request.
- * @param {string | URL} url
- * @param {HTTPRequestOptions} [options]
- * @param {Function} [cb]
- * @returns {ClientRequest}
- */
 function request(url, options, cb) {
   return new ClientRequest(url, options, cb);
 }
 
-/**
- * Makes a `GET` HTTP request.
- * @param {string | URL} url
- * @param {HTTPRequestOptions} [options]
- * @param {Function} [cb]
- * @returns {ClientRequest}
- */
 function get(url, options, cb) {
   const req = request(url, options, cb);
   req.end();
   return req;
 }
 
-const http_exports = {
+const exports = {
+  _connectionListener,
   Agent,
   Server,
-  METHODS,
+  METHODS: methods.toSorted(),
   STATUS_CODES,
   createServer,
   ServerResponse,
   IncomingMessage,
   request,
   get,
-  get maxHeaderSize() {
-    return getMaxHTTPHeaderSize();
-  },
-  set maxHeaderSize(value) {
-    setMaxHTTPHeaderSize(value);
-  },
   validateHeaderName,
   validateHeaderValue,
   setMaxIdleHTTPParsers(max) {
@@ -68,4 +48,12 @@ const http_exports = {
   MessageEvent,
 };
 
-export default http_exports;
+Object.defineProperty(exports, "maxHeaderSize", {
+  __proto__: null,
+  configurable: true,
+  enumerable: true,
+  // get: getLazy(() => getOptionValue("--max-http-header-size")),
+  get: getLazy(() => getMaxHTTPHeaderSize()),
+});
+
+export default exports;

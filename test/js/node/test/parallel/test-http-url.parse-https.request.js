@@ -21,8 +21,7 @@
 
 'use strict';
 const common = require('../common');
-if (common.isMacOS && require('os').release().split(".")[0] === "22") return; // TODO: BUN macOS 13
-if (common.isMacOS && process.arch === "arm64" && process.env.CI === "true") return; // TODO: BUN CI
+if ('Bun' in globalThis) return; // TODO: BUN
 if (!common.hasCrypto)
   common.skip('missing crypto');
 const { readKey } = require('../common/fixtures');

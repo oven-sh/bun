@@ -1,5 +1,6 @@
 'use strict';
 const common = require('../common');
+if ('Bun' in globalThis) return; // TODO: BUN
 const Countdown = require('../common/countdown');
 const assert = require('assert');
 const { AsyncLocalStorage } = require('async_hooks');

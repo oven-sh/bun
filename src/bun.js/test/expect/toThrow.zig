@@ -7,10 +7,10 @@ pub fn toThrow(this: *Expect, globalThis: *JSGlobalObject, callFrame: *CallFrame
     this.incrementExpectCallCounter();
 
     const expected_value: JSValue = brk: {
-        if (callFrame.argumentsCount() == 0) {
+        const value = arguments[0];
+        if (value.isUndefined()) {
             break :brk .zero;
         }
-        const value = arguments[0];
         if (value.isUndefinedOrNull() or !value.isObject() and !value.isString()) {
             var fmt = jsc.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
             return globalThis.throw("Expected value must be string or Error: {f}", .{value.toFmt(&fmt)});

@@ -140,7 +140,7 @@ pub const Linux = struct {
 
     pub fn init(event: PerfEvent) @This() {
         return .{
-            .start_time = bun.timespec.now().ns(),
+            .start_time = bun.timespec.now(.force_real_time).ns(),
             .event = event,
         };
     }
@@ -148,7 +148,7 @@ pub const Linux = struct {
     pub fn end(this: *const @This()) void {
         if (!isSupported()) return;
 
-        const duration = bun.timespec.now().ns() -| this.start_time;
+        const duration = bun.timespec.now(.force_real_time).ns() -| this.start_time;
 
         _ = Bun__linux_trace_emit(@tagName(this.event).ptr, @intCast(duration));
     }

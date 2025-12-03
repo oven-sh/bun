@@ -1480,6 +1480,7 @@ pub fn spawnProcessPosix(
                     if (!options.sync) {
                         try bun.sys.setNonblocking(duped).unwrap();
                     }
+                    try to_close_on_error.append(duped);
                     stdio.* = duped;
                     log("PTY {s}: duped master={d}", .{ if (i == 0) "stdin" else if (i == 1) "stdout" else "stderr", duped.native() });
                 }

@@ -69,10 +69,12 @@ pub fn getCandidatePackagePatterns(allocator: std.mem.Allocator, log: *bun.logge
         for (json_array.slice()) |expr| {
             switch (expr.data) {
                 .e_string => |pattern_expr| {
-                    const size = pattern_expr.data.len + "/package.json".len;
+                    // Strip leading slashes to treat workspace patterns as relative paths (npm compatibility)
+                    const workspace_pattern = strings.withoutLeadingSlash(pattern_expr.data);
+                    const size = workspace_pattern.len + "/package.json".len;
                     var pattern = try allocator.alloc(u8, size);
-                    @memcpy(pattern[0..pattern_expr.data.len], pattern_expr.data);
-                    @memcpy(pattern[pattern_expr.data.len..size], "/package.json");
+                    @memcpy(pattern[0..workspace_pattern.len], workspace_pattern);
+                    @memcpy(pattern[workspace_pattern.len..size], "/package.json");
 
                     try out_patterns.append(pattern);
                 },

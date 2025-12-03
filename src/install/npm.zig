@@ -872,13 +872,16 @@ pub const PackageVersion = extern struct {
     /// Unix timestamp when this version was published (0 if unknown)
     publish_timestamp_ms: f64 = 0,
 
+    /// Whether this version is marked as deprecated in the npm registry
+    deprecated: bool = false,
+
     pub fn allDependenciesBundled(this: *const PackageVersion) bool {
         return this.bundled_dependencies.isInvalid();
     }
 };
 
 comptime {
-    if (@sizeOf(Npm.PackageVersion) != 240) {
+    if (@sizeOf(Npm.PackageVersion) != 248) {
         @compileError(std.fmt.comptimePrint("Npm.PackageVersion has unexpected size {d}", .{@sizeOf(Npm.PackageVersion)}));
     }
 }
@@ -1498,6 +1501,7 @@ pub const PackageManifest = struct {
     ) ?FindVersionResult {
         var prev_package_blocked_from_age: ?*const PackageVersion = null;
         var best_version: ?FindResult = null;
+        var fallback_deprecated: ?FindResult = null;
 
         const current_timestamp_ms: f64 = @floatFromInt(@divTrunc(bun.start_time, std.time.ns_per_ms));
         const seven_days_ms: f64 = 7 * std.time.ms_per_day;
@@ -1509,6 +1513,18 @@ pub const PackageManifest = struct {
             const version = versions[i];
             if (group.satisfies(version, group_buf, this.string_buf)) {
                 const package = &packages[i];
+                
+                // Skip deprecated versions, but keep track as fallback
+                if (package.deprecated) {
+                    if (fallback_deprecated == null) {
+                        fallback_deprecated = .{
+                            .version = version,
+                            .package = package,
+                        };
+                    }
+                    continue;
+                }
+                
                 if (isPackageVersionTooRecent(package, minimum_release_age_ms)) {
                     if (newest_filtered.* == null) newest_filtered.* = version;
                     prev_package_blocked_from_age = package;
@@ -1564,6 +1580,19 @@ pub const PackageManifest = struct {
                 return .{ .found = result };
             }
         }
+        
+        // If we only found deprecated versions, return the best deprecated one
+        if (fallback_deprecated) |result| {
+            if (newest_filtered.*) |nf| {
+                return .{ .found_with_filter = .{
+                    .result = result,
+                    .newest_filtered = nf,
+                } };
+            } else {
+                return .{ .found = result };
+            }
+        }
+        
         return null;
     }
 
@@ -1646,6 +1675,9 @@ pub const PackageManifest = struct {
 
                 if (!strings.eql(actual_tag, expected_tag)) continue;
             }
+
+            // Skip deprecated versions
+            if (package.deprecated) continue;
 
             if (isPackageVersionTooRecent(package, min_age_ms)) {
                 prev_package_blocked_from_age = package;
@@ -1780,16 +1812,21 @@ pub const PackageManifest = struct {
 
         if (this.findByDistTag("latest")) |result| {
             if (group.satisfies(result.version, group_buf, this.string_buf)) {
-                if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
-                    if (left.version.order(result.version, group_buf, this.string_buf) == .eq) {
-                        // if prerelease, use latest if semver+tag match range exactly
+                // Skip deprecated latest version if possible
+                if (!result.package.deprecated) {
+                    if (group.flags.isSet(Semver.Query.Group.Flags.pre)) {
+                        if (left.version.order(result.version, group_buf, this.string_buf) == .eq) {
+                            // if prerelease, use latest if semver+tag match range exactly
+                            return result;
+                        }
+                    } else {
                         return result;
                     }
-                } else {
-                    return result;
                 }
             }
         }
+
+        var fallback_deprecated: ?FindResult = null;
 
         {
             // This list is sorted at serialization time.
@@ -1800,9 +1837,22 @@ pub const PackageManifest = struct {
                 const version = releases[i - 1];
 
                 if (group.satisfies(version, group_buf, this.string_buf)) {
+                    const package = &this.pkg.releases.values.get(this.package_versions)[i - 1];
+                    
+                    // Skip deprecated versions, but keep track of the first one as fallback
+                    if (package.deprecated) {
+                        if (fallback_deprecated == null) {
+                            fallback_deprecated = .{
+                                .version = version,
+                                .package = package,
+                            };
+                        }
+                        continue;
+                    }
+                    
                     return .{
                         .version = version,
-                        .package = &this.pkg.releases.values.get(this.package_versions)[i - 1],
+                        .package = package,
                     };
                 }
             }
@@ -1817,15 +1867,29 @@ pub const PackageManifest = struct {
                 // This list is sorted at serialization time.
                 if (group.satisfies(version, group_buf, this.string_buf)) {
                     const packages = this.pkg.prereleases.values.get(this.package_versions);
+                    const package = &packages[i - 1];
+                    
+                    // Skip deprecated versions, but keep track of the first one as fallback
+                    if (package.deprecated) {
+                        if (fallback_deprecated == null) {
+                            fallback_deprecated = .{
+                                .version = version,
+                                .package = package,
+                            };
+                        }
+                        continue;
+                    }
+                    
                     return .{
                         .version = version,
-                        .package = &packages[i - 1],
+                        .package = package,
                     };
                 }
             }
         }
 
-        return null;
+        // If we only found deprecated versions, return the best deprecated one
+        return fallback_deprecated;
     }
 
     const ExternalStringMapDeduper = std.HashMap(u64, ExternalStringList, IdentityContext(u64), 80);
@@ -2547,6 +2611,13 @@ pub const PackageManifest = struct {
                                 }
                             }
                         }
+                    }
+
+                    // Parse deprecated field
+                    if (prop.value.?.asProperty("deprecated")) |_| {
+                        // If the deprecated field exists (regardless of its value), mark as deprecated
+                        // npm marks packages as deprecated with either a string message or boolean true
+                        package_version.deprecated = true;
                     }
 
                     if (!parsed_version.version.tag.hasPre()) {

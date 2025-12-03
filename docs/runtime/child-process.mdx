@@ -117,7 +117,13 @@ Configure the output stream by passing one of the following values to `stdout/st
 
 ## Pseudo-terminal (PTY)
 
-Use `"pty"` to run a process in a pseudo-terminal, making it think it's running in an interactive terminal. This is useful for programs that change their behavior based on whether they're running in a TTY (e.g., colored output, interactive prompts).
+Use `"pty"` to spawn a process with a pseudo-terminal, making the child process believe it's running in an interactive terminal. This causes `process.stdout.isTTY` to be `true` in the child, which is useful for:
+
+- Getting colored output from CLI tools that detect TTY
+- Running interactive programs that require a terminal
+- Testing terminal-dependent behavior
+
+### Basic usage
 
 ```ts
 const proc = Bun.spawn(["ls", "--color=auto"], {
@@ -126,24 +132,94 @@ const proc = Bun.spawn(["ls", "--color=auto"], {
 
 // The child process sees process.stdout.isTTY === true
 const output = await proc.stdout.text();
-console.log(output); // colored output
+console.log(output); // includes ANSI color codes
 ```
 
-You can use PTY for stdin, stdout, and stderr. When multiple streams use PTY, they share the same underlying terminal:
+### Checking isTTY in child process
 
 ```ts
-const proc = Bun.spawn(["node", "-e", "console.log(process.stdout.isTTY, process.stdin.isTTY)"], {
-  stdin: "pty",
+const proc = Bun.spawn({
+  cmd: ["bun", "-e", "console.log('isTTY:', process.stdout.isTTY)"],
   stdout: "pty",
 });
 
 const output = await proc.stdout.text();
-console.log(output); // "true true"
+console.log(output); // "isTTY: true"
 ```
 
-<Note>
-  PTY is only supported on macOS and Linux. On Windows, passing `"pty"` will throw an error.
-</Note>
+### Multiple PTY streams
+
+You can use PTY for stdin, stdout, and/or stderr. When multiple streams use PTY, they share the same underlying pseudo-terminal:
+
+```ts
+const proc = Bun.spawn({
+  cmd: ["bun", "-e", `
+    console.log("stdout.isTTY:", process.stdout.isTTY);
+    console.log("stdin.isTTY:", process.stdin.isTTY);
+    console.log("stderr.isTTY:", process.stderr.isTTY);
+  `],
+  stdin: "pty",
+  stdout: "pty",
+  stderr: "pty",
+});
+
+const output = await proc.stdout.text();
+// stdout.isTTY: true
+// stdin.isTTY: true
+// stderr.isTTY: true
+```
+
+### Custom terminal dimensions
+
+Specify terminal width and height using the object syntax:
+
+```ts
+const proc = Bun.spawn({
+  cmd: ["bun", "-e", `
+    console.log("columns:", process.stdout.columns);
+    console.log("rows:", process.stdout.rows);
+  `],
+  stdout: {
+    type: "pty",
+    width: 120,  // columns
+    height: 40,  // rows
+  },
+});
+
+const output = await proc.stdout.text();
+// columns: 120
+// rows: 40
+```
+
+### Getting colored output from git, grep, etc.
+
+Many CLI tools detect whether they're running in a TTY and only emit colors when they are:
+
+```ts
+// Without PTY - no colors
+const noColor = Bun.spawn(["git", "status"], { stdout: "pipe" });
+console.log(await noColor.stdout.text()); // plain text
+
+// With PTY - colors enabled
+const withColor = Bun.spawn(["git", "status"], { stdout: "pty" });
+console.log(await withColor.stdout.text()); // includes ANSI color codes
+```
+
+### Platform support
+
+| Platform | PTY Support |
+|----------|-------------|
+| macOS    | ✅ Full support |
+| Linux    | ✅ Full support |
+| Windows  | ⚠️ Falls back to `"pipe"` (no TTY semantics) |
+
+On Windows, `"pty"` silently falls back to `"pipe"` behavior. The child process will see `process.stdout.isTTY` as `undefined`. This allows cross-platform code to work without errors, though TTY-dependent features won't work on Windows.
+
+### Limitations
+
+- **Not supported with `spawnSync`**: PTY requires asynchronous I/O. Using `"pty"` with `Bun.spawnSync()` will throw an error.
+- **Line endings**: PTY converts `\n` to `\r\n` on output (standard terminal behavior).
+- **No dynamic resize**: Terminal dimensions are set at spawn time and cannot be changed after.
 
 ## Exit handling
 

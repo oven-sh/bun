@@ -43,7 +43,6 @@ pub const Stdio = union(enum) {
         stdin_used_as_out,
         out_used_as_stdin,
         blob_used_as_out,
-        pty_not_supported,
         uv_pipe: bun.sys.E,
 
         pub fn toStr(this: *const @This()) []const u8 {
@@ -51,7 +50,6 @@ pub const Stdio = union(enum) {
                 .stdin_used_as_out => "Stdin cannot be used for stdout or stderr",
                 .out_used_as_stdin => "Stdout and stderr cannot be used for stdin",
                 .blob_used_as_out => "Blobs are immutable, and cannot be used for stdout/stderr",
-                .pty_not_supported => "PTY is not supported on Windows",
                 .uv_pipe => @panic("TODO"),
             };
         }
@@ -257,7 +255,7 @@ pub const Stdio = union(enum) {
                 .path => |pathlike| .{ .path = pathlike.slice() },
                 .inherit => .{ .inherit = {} },
                 .ignore => .{ .ignore = {} },
-                .pty => return .{ .err = .pty_not_supported },
+                .pty => .{ .buffer = bun.handleOom(bun.default_allocator.create(uv.Pipe)) }, // PTY falls back to pipe on Windows
 
                 .memfd => @panic("This should never happen"),
             },
@@ -361,10 +359,15 @@ pub const Stdio = union(enum) {
             } else if (str.eqlComptime("ipc")) {
                 out_stdio.* = Stdio{ .ipc = {} };
             } else if (str.eqlComptime("pty")) {
-                if (comptime Environment.isWindows) {
-                    return globalThis.throwInvalidArguments("PTY is not supported on Windows", .{});
+                if (is_sync) {
+                    return globalThis.throwInvalidArguments("PTY is not supported with spawnSync", .{});
                 }
-                out_stdio.* = Stdio{ .pty = .{} };
+                // On Windows, PTY falls back to pipe (no real PTY support)
+                if (comptime Environment.isWindows) {
+                    out_stdio.* = Stdio{ .pipe = {} };
+                } else {
+                    out_stdio.* = Stdio{ .pty = .{} };
+                }
             } else {
                 return globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'pipe', 'ignore', 'pty', Bun.file(pathOrFd), number, or null", .{});
             }
@@ -461,8 +464,13 @@ pub const Stdio = union(enum) {
                 if (type_val.isString()) {
                     const type_str = try type_val.getZigString(globalThis);
                     if (type_str.eqlComptime("pty")) {
+                        if (is_sync) {
+                            return globalThis.throwInvalidArguments("PTY is not supported with spawnSync", .{});
+                        }
+                        // On Windows, PTY falls back to pipe (no real PTY support)
                         if (comptime Environment.isWindows) {
-                            return globalThis.throwInvalidArguments("PTY is not supported on Windows", .{});
+                            out_stdio.* = Stdio{ .pipe = {} };
+                            return;
                         }
                         var pty_opts: PtyOptions = .{};
 

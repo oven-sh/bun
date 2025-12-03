@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 describe("Bun.spawn with PTY", () => {
   test("stdout: 'pty' makes process.stdout.isTTY true", async () => {
@@ -146,13 +146,22 @@ describe("Bun.spawn with PTY", () => {
   });
 });
 
-describe.if(isWindows)("Bun.spawn PTY on Windows", () => {
-  test("throws error when PTY is used on Windows", () => {
+describe("Bun.spawnSync with PTY", () => {
+  test("throws error when PTY is used with spawnSync", () => {
     expect(() => {
-      Bun.spawn({
+      Bun.spawnSync({
         cmd: ["echo", "test"],
         stdout: "pty",
       });
-    }).toThrow("PTY is not supported on Windows");
+    }).toThrow("PTY is not supported with spawnSync");
+  });
+
+  test("throws error when PTY object syntax is used with spawnSync", () => {
+    expect(() => {
+      Bun.spawnSync({
+        cmd: ["echo", "test"],
+        stdout: { type: "pty", width: 80, height: 24 },
+      });
+    }).toThrow("PTY is not supported with spawnSync");
   });
 });

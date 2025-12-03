@@ -110,7 +110,7 @@ function getInspectorHost() {
   }
 
   // Validate that the debug host includes a protocol
-  if (!inspectorHost.match(/^https?:\/\//)) {
+  if (!inspectorHost.match(/^https?:\/\//i)) {
     Bun.write(Bun.stderr, `Warning: BUN_INSPECTOR_HOST should include a protocol (http:// or https://). Got: ${inspectorHost}\n`);
     return DEFAULT_INSPECTOR_HOST
   }

@@ -44,7 +44,7 @@ console.log(text); // "const input = "hello world".repeat(400); ..."
 | `null`                   | **Default.** Provide no input to the subprocess                                                            |
 | `"pipe"`                 | Return a `FileSink` for fast incremental writing                                                           |
 | `"inherit"`              | Inherit the `stdin` of the parent process                                                                  |
-| `"pty"`                  | Use a pseudo-terminal (PTY). Child sees `process.stdin.isTTY === true`. Falls back to `"pipe"` on Windows. |
+| `"pty"`                  | Use a pseudo-terminal (PTY). Child sees `process.stdin.isTTY === true`. Falls back to `"pipe"` on Windows. Not supported with `spawnSync`. |
 | `Bun.file()`             | Read from the specified file                                                                               |
 | `TypedArray \| DataView` | Use a binary buffer as input                                                                               |
 | `Response`               | Use the response `body` as input                                                                           |
@@ -111,7 +111,7 @@ Configure the output stream by passing one of the following values to `stdout/st
 | `"pipe"`     | **Default for `stdout`.** Pipe the output to a `ReadableStream` on the returned `Subprocess` object         |
 | `"inherit"`  | **Default for `stderr`.** Inherit from the parent process                                                   |
 | `"ignore"`   | Discard the output                                                                                          |
-| `"pty"`      | Use a pseudo-terminal (PTY). Child sees `process.stdout.isTTY === true`. Falls back to `"pipe"` on Windows. |
+| `"pty"`      | Use a pseudo-terminal (PTY). Child sees `process.stdout.isTTY === true`. Falls back to `"pipe"` on Windows. Not supported with `spawnSync`. |
 | `Bun.file()` | Write to the specified file                                                                                 |
 | `number`     | Write to the file with the given file descriptor                                                            |
 
@@ -522,7 +522,7 @@ namespace SpawnOptions {
     | "pipe"
     | "inherit"
     | "ignore"
-    | "pty" // use a pseudo-terminal (macOS/Linux only)
+    | "pty" // use a pseudo-terminal (macOS/Linux only, falls back to "pipe" on Windows, not supported with spawnSync)
     | null // equivalent to "ignore"
     | undefined // to use default
     | BunFile
@@ -533,7 +533,7 @@ namespace SpawnOptions {
     | "pipe"
     | "inherit"
     | "ignore"
-    | "pty" // use a pseudo-terminal (macOS/Linux only)
+    | "pty" // use a pseudo-terminal (macOS/Linux only, falls back to "pipe" on Windows, not supported with spawnSync)
     | null // equivalent to "ignore"
     | undefined // to use default
     | BunFile

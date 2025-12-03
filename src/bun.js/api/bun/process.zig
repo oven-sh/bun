@@ -1118,11 +1118,14 @@ pub const PosixSpawnResult = struct {
     // ESRCH can happen when requesting the pidfd
     has_exited: bool = false,
 
-    pub fn close(this: *WindowsSpawnResult) void {
+    pub fn close(this: *PosixSpawnResult) void {
+        if (this.pty_master) |fd| {
+            fd.close();
+            this.pty_master = null;
+        }
         for (this.extra_pipes.items) |fd| {
             fd.close();
         }
-
         this.extra_pipes.clearAndFree();
     }
 
@@ -1570,6 +1573,13 @@ pub fn spawnProcessPosix(
             spawned.pid = pid;
             spawned.extra_pipes = extra_fds;
             extra_fds = std.array_list.Managed(bun.FileDescriptor).init(bun.default_allocator);
+
+            // Parent uses dup()'d copies of the PTY master for stdio/extra_fds;
+            // the original master FD is no longer needed and should be closed
+            // to avoid leaking one FD per PTY spawn.
+            if (pty_master) |fd| {
+                fd.close();
+            }
 
             if (comptime Environment.isLinux) {
                 // If it's spawnSync and we want to block the entire thread

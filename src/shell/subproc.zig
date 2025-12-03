@@ -221,12 +221,12 @@ pub const ShellSubprocess = struct {
                     return Writable{ .ignore = {} };
                 },
                 .readable_stream => {
-                    // The shell never uses this
-                    @panic("Unimplemented stdin readable_stream");
+                    // The shell never uses this - fall back to ignore
+                    return Writable{ .ignore = {} };
                 },
                 .pty => {
-                    // The shell never uses PTY directly
-                    @panic("Unimplemented stdin pty");
+                    // The shell never uses PTY directly - fall back to ignore
+                    return Writable{ .ignore = {} };
                 },
             }
         }

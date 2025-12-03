@@ -74,6 +74,12 @@ export default defineNuxtConfig({
 });
 ```
 
+Alternatively, you can set the preset via environment variable:
+
+```sh terminal icon="terminal"
+NITRO_PRESET=bun bun run build
+```
+
 <Note>
   Some packages provide Bun-specific exports that Nitro will not bundle correctly using the default preset. In this
   case, you need to use Bun preset so that the packages will work correctly in production builds.

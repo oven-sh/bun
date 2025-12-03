@@ -635,11 +635,15 @@ pub fn spawnMaybeSync(
         .stdout_maxbuf = subprocess.stdout_maxbuf,
     };
 
-    log("After subprocess init: stdout state={s}, stdin FD={?d}, stdout FD={?d}", .{
-        @tagName(subprocess.stdout),
-        if (spawned.stdin) |fd| fd.native() else null,
-        if (spawned.stdout) |fd| fd.native() else null,
-    });
+    if (comptime Environment.isPosix) {
+        log("After subprocess init: stdout state={s}, stdin FD={?d}, stdout FD={?d}", .{
+            @tagName(subprocess.stdout),
+            if (spawned.stdin) |fd| fd.native() else null,
+            if (spawned.stdout) |fd| fd.native() else null,
+        });
+    } else {
+        log("After subprocess init: stdout state={s}", .{@tagName(subprocess.stdout)});
+    }
 
     subprocess.process.setExitHandler(subprocess);
 

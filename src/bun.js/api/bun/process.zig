@@ -1531,7 +1531,13 @@ pub fn spawnProcessPosix(
                 // Use existing PTY slave (should have been created from primary stdio)
                 if (pty_slave) |slave| {
                     try actions.dup2(slave, fileno);
-                    try extra_fds.append(pty_master.?);
+                    // dup() the master FD so each extra_fd has its own FD for epoll
+                    const duped = try bun.sys.dup(pty_master.?).unwrap();
+                    if (!options.sync) {
+                        try bun.sys.setNonblocking(duped).unwrap();
+                    }
+                    try to_close_on_error.append(duped);
+                    try extra_fds.append(duped);
                 }
             },
         }

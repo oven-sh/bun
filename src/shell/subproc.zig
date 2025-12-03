@@ -178,8 +178,8 @@ pub const ShellSubprocess = struct {
                     .ipc, .capture => {
                         return Writable{ .ignore = {} };
                     },
-                    .pty, .readable_stream, .pipe => {
-                        // The shell never uses these for stdin in sync mode
+                    .pty => {
+                        // The shell never uses PTY directly for stdin
                         return Writable{ .ignore = {} };
                     },
                 }

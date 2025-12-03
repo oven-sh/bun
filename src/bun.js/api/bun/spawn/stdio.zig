@@ -476,6 +476,9 @@ pub const Stdio = union(enum) {
 
                         if (try value.get(globalThis, "width")) |width_val| {
                             if (!width_val.isUndefinedOrNull()) {
+                                if (!width_val.isNumber()) {
+                                    return globalThis.throwInvalidArguments("PTY width must be a number", .{});
+                                }
                                 const width = width_val.toInt32();
                                 if (width <= 0 or width > std.math.maxInt(u16)) {
                                     return globalThis.throwInvalidArguments("PTY width must be a positive integer <= 65535", .{});
@@ -486,6 +489,9 @@ pub const Stdio = union(enum) {
 
                         if (try value.get(globalThis, "height")) |height_val| {
                             if (!height_val.isUndefinedOrNull()) {
+                                if (!height_val.isNumber()) {
+                                    return globalThis.throwInvalidArguments("PTY height must be a number", .{});
+                                }
                                 const height = height_val.toInt32();
                                 if (height <= 0 or height > std.math.maxInt(u16)) {
                                     return globalThis.throwInvalidArguments("PTY height must be a positive integer <= 65535", .{});
@@ -501,7 +507,7 @@ pub const Stdio = union(enum) {
             }
         }
 
-        return globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'ignore', 'pty', or null", .{});
+        return globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'pipe', 'ignore', 'pty', Bun.file(pathOrFd), number, or null", .{});
     }
 
     pub fn extractBlob(stdio: *Stdio, globalThis: *jsc.JSGlobalObject, blob: jsc.WebCore.Blob.Any, i: i32) bun.JSError!void {

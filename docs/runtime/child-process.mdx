@@ -138,8 +138,7 @@ console.log(output); // includes ANSI color codes
 ### Checking isTTY in child process
 
 ```ts
-const proc = Bun.spawn({
-  cmd: ["bun", "-e", "console.log('isTTY:', process.stdout.isTTY)"],
+const proc = Bun.spawn(["bun", "-e", "console.log('isTTY:', process.stdout.isTTY)"], {
   stdout: "pty",
 });
 
@@ -152,16 +151,13 @@ console.log(output); // "isTTY: true"
 You can use PTY for stdin, stdout, and/or stderr. When multiple streams use PTY, they share the same underlying pseudo-terminal:
 
 ```ts
-const proc = Bun.spawn({
-  cmd: [
-    "bun",
-    "-e",
-    `
-    console.log("stdout.isTTY:", process.stdout.isTTY);
-    console.log("stdin.isTTY:", process.stdin.isTTY);
-    console.log("stderr.isTTY:", process.stderr.isTTY);
-  `,
-  ],
+const code = `
+  console.log("stdout.isTTY:", process.stdout.isTTY);
+  console.log("stdin.isTTY:", process.stdin.isTTY);
+  console.log("stderr.isTTY:", process.stderr.isTTY);
+`;
+
+const proc = Bun.spawn(["bun", "-e", code], {
   stdin: "pty",
   stdout: "pty",
   stderr: "pty",
@@ -178,15 +174,12 @@ const output = await proc.stdout.text();
 Specify terminal width and height using the object syntax:
 
 ```ts
-const proc = Bun.spawn({
-  cmd: [
-    "bun",
-    "-e",
-    `
-    console.log("columns:", process.stdout.columns);
-    console.log("rows:", process.stdout.rows);
-  `,
-  ],
+const code = `
+  console.log("columns:", process.stdout.columns);
+  console.log("rows:", process.stdout.rows);
+`;
+
+const proc = Bun.spawn(["bun", "-e", code], {
   stdout: {
     type: "pty",
     width: 120, // columns

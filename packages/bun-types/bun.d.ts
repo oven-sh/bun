@@ -5407,7 +5407,7 @@ declare module "bun" {
        * - `"ignore"`, `null`, `undefined`: The process will have no standard input (default)
        * - `"pipe"`: The process will have a new {@link FileSink} for standard input
        * - `"inherit"`: The process will inherit the standard input of the current process
-       * - `"pty"`: The process will use a pseudo-terminal (PTY). The child will see `process.stdin.isTTY === true`. Falls back to `"pipe"` on Windows.
+       * - `"pty"`: The process will use a pseudo-terminal (PTY). The child will see `process.stdin.isTTY === true`. Falls back to `"pipe"` on Windows. Not supported with `spawnSync`.
        * - `ArrayBufferView`, `Blob`, `Bun.file()`, `Response`, `Request`: The process will read from buffer/stream.
        * - `number`: The process will read from the file descriptor
        *
@@ -5416,7 +5416,7 @@ declare module "bun" {
        * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process will have no standard output/error
        * - `"inherit"`: The process will inherit the standard output/error of the current process
-       * - `"pty"`: The process will use a pseudo-terminal (PTY). The child will see `process.stdout.isTTY === true` / `process.stderr.isTTY === true`. Falls back to `"pipe"` on Windows.
+       * - `"pty"`: The process will use a pseudo-terminal (PTY). The child will see `process.stdout.isTTY === true` / `process.stderr.isTTY === true`. Falls back to `"pipe"` on Windows. Not supported with `spawnSync`.
        * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
        * - `number`: The process will write to the file descriptor
        *
@@ -5431,7 +5431,7 @@ declare module "bun" {
        * - `"ignore"`, `null`, `undefined`: The process will have no standard input
        * - `"pipe"`: The process will have a new {@link FileSink} for standard input
        * - `"inherit"`: The process will inherit the standard input of the current process
-       * - `"pty"`: The process will use a pseudo-terminal (PTY). The child will see `process.stdin.isTTY === true`. Falls back to `"pipe"` on Windows.
+       * - `"pty"`: The process will use a pseudo-terminal (PTY). The child will see `process.stdin.isTTY === true`. Falls back to `"pipe"` on Windows. Not supported with `spawnSync`.
        * - `ArrayBufferView`, `Blob`: The process will read from the buffer
        * - `number`: The process will read from the file descriptor
        *
@@ -5444,7 +5444,7 @@ declare module "bun" {
        * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process will have no standard output/error
        * - `"inherit"`: The process will inherit the standard output/error of the current process
-       * - `"pty"`: The process will use a pseudo-terminal (PTY). The child will see `process.stdout.isTTY === true`. Falls back to `"pipe"` on Windows.
+       * - `"pty"`: The process will use a pseudo-terminal (PTY). The child will see `process.stdout.isTTY === true`. Falls back to `"pipe"` on Windows. Not supported with `spawnSync`.
        * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
        * - `number`: The process will write to the file descriptor
        *
@@ -5457,7 +5457,7 @@ declare module "bun" {
        * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process will have no standard output/error
        * - `"inherit"`: The process will inherit the standard output/error of the current process
-       * - `"pty"`: The process will use a pseudo-terminal (PTY). The child will see `process.stderr.isTTY === true`. Falls back to `"pipe"` on Windows.
+       * - `"pty"`: The process will use a pseudo-terminal (PTY). The child will see `process.stderr.isTTY === true`. Falls back to `"pipe"` on Windows. Not supported with `spawnSync`.
        * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
        * - `number`: The process will write to the file descriptor
        *

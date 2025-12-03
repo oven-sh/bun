@@ -1114,9 +1114,28 @@ export fn Bun__runVirtualModule(globalObject: *JSGlobalObject, specifier_ptr: *c
     else
         specifier[@min(namespace.len + 1, specifier.len)..];
 
-    return globalObject.runOnLoadPlugins(bun.String.init(namespace), bun.String.init(after_namespace), .bun) catch {
+    const result = globalObject.runOnLoadPlugins(bun.String.init(namespace), bun.String.init(after_namespace), .bun) catch {
         return JSValue.zero;
     } orelse return .zero;
+
+    // Only add file to watcher if a plugin actually handled it (result is non-zero)
+    if (!result.isEmptyOrUndefinedOrNull()) {
+        // Add the file to the hot reloader's watch list if hot reloading is enabled
+        // and the file is in the "file" namespace (real filesystem files).
+        // This ensures that changes to files loaded through plugins trigger hot reloads.
+        const jsc_vm = globalObject.bunVM();
+        if (jsc_vm.isWatcherEnabled()) {
+            const is_file_namespace = namespace.len == 0 or bun.strings.eqlComptime(namespace, "file");
+            if (is_file_namespace and std.fs.path.isAbsolute(after_namespace)) {
+                if (!bun.strings.contains(after_namespace, "node_modules")) {
+                    const loader = jsc_vm.transpiler.options.loader(std.fs.path.extension(after_namespace));
+                    _ = jsc_vm.bun_watcher.addFileByPathSlow(after_namespace, loader);
+                }
+            }
+        }
+    }
+
+    return result;
 }
 
 fn getHardcodedModule(jsc_vm: *VirtualMachine, specifier: bun.String, hardcoded: HardcodedModule) ?ResolvedSource {

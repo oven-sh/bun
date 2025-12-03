@@ -122,10 +122,11 @@ export default function (
     if (debug.url) {
       const { protocol, href, host, pathname } = debug.url;
       if (!protocol.includes("unix")) {
+        const debugHost = process.env.BUN_DEBUG_HOST || 'https://debug.bun.sh'
         Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
         Bun.write(Bun.stderr, `Listening:\n  ${dim(href)}\n`);
         if (protocol.includes("ws")) {
-          Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}\n`);
+          Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(`${debugHost}/#${host}${pathname}`)}\n`);
         }
         Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
       }

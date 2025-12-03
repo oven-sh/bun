@@ -39,18 +39,19 @@ const text = await proc.stdout.text();
 console.log(text); // "const input = "hello world".repeat(400); ..."
 ```
 
-| Value                    | Description                                      |
-| ------------------------ | ------------------------------------------------ |
-| `null`                   | **Default.** Provide no input to the subprocess  |
-| `"pipe"`                 | Return a `FileSink` for fast incremental writing |
-| `"inherit"`              | Inherit the `stdin` of the parent process        |
-| `Bun.file()`             | Read from the specified file                     |
-| `TypedArray \| DataView` | Use a binary buffer as input                     |
-| `Response`               | Use the response `body` as input                 |
-| `Request`                | Use the request `body` as input                  |
-| `ReadableStream`         | Use a readable stream as input                   |
-| `Blob`                   | Use a blob as input                              |
-| `number`                 | Read from the file with a given file descriptor  |
+| Value                    | Description                                                              |
+| ------------------------ | ------------------------------------------------------------------------ |
+| `null`                   | **Default.** Provide no input to the subprocess                          |
+| `"pipe"`                 | Return a `FileSink` for fast incremental writing                         |
+| `"inherit"`              | Inherit the `stdin` of the parent process                                |
+| `"pty"`                  | Use a pseudo-terminal (PTY). Child sees `process.stdin.isTTY === true`   |
+| `Bun.file()`             | Read from the specified file                                             |
+| `TypedArray \| DataView` | Use a binary buffer as input                                             |
+| `Response`               | Use the response `body` as input                                         |
+| `Request`                | Use the request `body` as input                                          |
+| `ReadableStream`         | Use a readable stream as input                                           |
+| `Blob`                   | Use a blob as input                                                      |
+| `number`                 | Read from the file with a given file descriptor                          |
 
 The `"pipe"` option lets incrementally write to the subprocess's input stream from the parent process.
 
@@ -110,8 +111,39 @@ Configure the output stream by passing one of the following values to `stdout/st
 | `"pipe"`     | **Default for `stdout`.** Pipe the output to a `ReadableStream` on the returned `Subprocess` object |
 | `"inherit"`  | **Default for `stderr`.** Inherit from the parent process                                           |
 | `"ignore"`   | Discard the output                                                                                  |
+| `"pty"`      | Use a pseudo-terminal (PTY). Child sees `process.stdout.isTTY === true`                             |
 | `Bun.file()` | Write to the specified file                                                                         |
 | `number`     | Write to the file with the given file descriptor                                                    |
+
+## Pseudo-terminal (PTY)
+
+Use `"pty"` to run a process in a pseudo-terminal, making it think it's running in an interactive terminal. This is useful for programs that change their behavior based on whether they're running in a TTY (e.g., colored output, interactive prompts).
+
+```ts
+const proc = Bun.spawn(["ls", "--color=auto"], {
+  stdout: "pty",
+});
+
+// The child process sees process.stdout.isTTY === true
+const output = await proc.stdout.text();
+console.log(output); // colored output
+```
+
+You can use PTY for stdin, stdout, and stderr. When multiple streams use PTY, they share the same underlying terminal:
+
+```ts
+const proc = Bun.spawn(["node", "-e", "console.log(process.stdout.isTTY, process.stdin.isTTY)"], {
+  stdin: "pty",
+  stdout: "pty",
+});
+
+const output = await proc.stdout.text();
+console.log(output); // "true true"
+```
+
+<Note>
+  PTY is only supported on macOS and Linux. On Windows, passing `"pty"` will throw an error.
+</Note>
 
 ## Exit handling
 
@@ -413,6 +445,7 @@ namespace SpawnOptions {
     | "pipe"
     | "inherit"
     | "ignore"
+    | "pty" // use a pseudo-terminal (macOS/Linux only)
     | null // equivalent to "ignore"
     | undefined // to use default
     | BunFile
@@ -423,6 +456,7 @@ namespace SpawnOptions {
     | "pipe"
     | "inherit"
     | "ignore"
+    | "pty" // use a pseudo-terminal (macOS/Linux only)
     | null // equivalent to "ignore"
     | undefined // to use default
     | BunFile

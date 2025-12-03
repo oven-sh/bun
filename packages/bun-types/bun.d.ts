@@ -1740,9 +1740,9 @@ declare module "bun" {
      * @default "esm"
      */
     format?: /**
-       * ECMAScript Module format
-       */
-      | "esm"
+     * ECMAScript Module format
+     */
+    | "esm"
       /**
        * CommonJS format
        * **Experimental**
@@ -3316,10 +3316,10 @@ declare module "bun" {
   function color(
     input: ColorInput,
     outputFormat?: /**
-       * True color ANSI color string, for use in terminals
-       * @example \x1b[38;2;100;200;200m
-       */
-      | "ansi"
+     * True color ANSI color string, for use in terminals
+     * @example \x1b[38;2;100;200;200m
+     */
+    | "ansi"
       | "ansi-16"
       | "ansi-16m"
       /**
@@ -5335,6 +5335,7 @@ declare module "bun" {
       | "pipe"
       | "inherit"
       | "ignore"
+      | "pty"
       | null // equivalent to "ignore"
       | undefined // to use default
       | BunFile
@@ -5348,6 +5349,7 @@ declare module "bun" {
       | "pipe"
       | "inherit"
       | "ignore"
+      | "pty"
       | null // equivalent to "ignore"
       | undefined // to use default
       | BunFile
@@ -5405,14 +5407,16 @@ declare module "bun" {
        * - `"ignore"`, `null`, `undefined`: The process will have no standard input (default)
        * - `"pipe"`: The process will have a new {@link FileSink} for standard input
        * - `"inherit"`: The process will inherit the standard input of the current process
+       * - `"pty"`: The process will use a pseudo-terminal (PTY). The child will see `process.stdin.isTTY === true`. Not supported on Windows.
        * - `ArrayBufferView`, `Blob`, `Bun.file()`, `Response`, `Request`: The process will read from buffer/stream.
        * - `number`: The process will read from the file descriptor
        *
-       * For stdout and stdin you may pass:
+       * For stdout and stderr you may pass:
        *
        * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process will have no standard output/error
        * - `"inherit"`: The process will inherit the standard output/error of the current process
+       * - `"pty"`: The process will use a pseudo-terminal (PTY). The child will see `process.stdout.isTTY === true` / `process.stderr.isTTY === true`. Not supported on Windows.
        * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
        * - `number`: The process will write to the file descriptor
        *
@@ -5427,6 +5431,7 @@ declare module "bun" {
        * - `"ignore"`, `null`, `undefined`: The process will have no standard input
        * - `"pipe"`: The process will have a new {@link FileSink} for standard input
        * - `"inherit"`: The process will inherit the standard input of the current process
+       * - `"pty"`: The process will use a pseudo-terminal (PTY). The child will see `process.stdin.isTTY === true`. Not supported on Windows.
        * - `ArrayBufferView`, `Blob`: The process will read from the buffer
        * - `number`: The process will read from the file descriptor
        *
@@ -5439,6 +5444,7 @@ declare module "bun" {
        * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process will have no standard output/error
        * - `"inherit"`: The process will inherit the standard output/error of the current process
+       * - `"pty"`: The process will use a pseudo-terminal (PTY). The child will see `process.stdout.isTTY === true`. Not supported on Windows.
        * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
        * - `number`: The process will write to the file descriptor
        *
@@ -5451,6 +5457,7 @@ declare module "bun" {
        * - `"pipe"`, `undefined`: The process will have a {@link ReadableStream} for standard output/error
        * - `"ignore"`, `null`: The process will have no standard output/error
        * - `"inherit"`: The process will inherit the standard output/error of the current process
+       * - `"pty"`: The process will use a pseudo-terminal (PTY). The child will see `process.stderr.isTTY === true`. Not supported on Windows.
        * - `ArrayBufferView`: The process write to the preallocated buffer. Not implemented.
        * - `number`: The process will write to the file descriptor
        *
@@ -5650,17 +5657,11 @@ declare module "bun" {
       maxBuffer?: number;
     }
 
-    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
-      In,
-      Out,
-      Err
-    > {}
+    interface SpawnSyncOptions<In extends Writable, Out extends Readable, Err extends Readable>
+      extends BaseOptions<In, Out, Err> {}
 
-    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable> extends BaseOptions<
-      In,
-      Out,
-      Err
-    > {
+    interface SpawnOptions<In extends Writable, Out extends Readable, Err extends Readable>
+      extends BaseOptions<In, Out, Err> {
       /**
        * If true, stdout and stderr pipes will not automatically start reading
        * data. Reading will only begin when you access the `stdout` or `stderr`

@@ -1464,32 +1464,21 @@ pub fn spawnProcessPosix(
                 // The PTY pair was already created above
                 const slave = pty_slave.?;
                 try actions.dup2(slave, fileno);
-                // The parent gets the master side for I/O
-                // stdin (i=0) always gets the master FD for writing.
-                // For stdout (i=1) and stderr (i=2), only one can have a reader
-                // since they share the same underlying PTY master FD.
-                // stdout takes priority; stderr becomes ignore if stdout already has PTY.
-                if (i == 0) {
-                    // stdin always gets the master (for writing)
-                    stdio.* = pty_master;
-                    log("PTY stdin: master={?d}", .{if (pty_master) |m| m.native() else null});
-                } else if (i == 1) {
-                    // stdout always gets the master (for reading)
-                    stdio.* = pty_master;
-                    log("PTY stdout: master={?d}", .{if (pty_master) |m| m.native() else null});
+                // The parent gets the master side for I/O.
+                // Each stdio gets its own dup'd FD so they can register with epoll independently.
+                // stderr is ignored if stdout already has PTY (they share the same stream).
+                if (i == 2 and stdio_options[1] == .pty) {
+                    // stdout is also PTY, stderr becomes ignore (user reads both from stdout)
+                    stdio.* = null;
+                    log("PTY stderr: ignored (stdout has PTY)", .{});
                 } else {
-                    // stderr (i == 2): check if stdout already has PTY
-                    // If so, stderr shares the same stream (set to null -> ignore)
-                    if (stdio_options[1] == .pty) {
-                        // stdout is also PTY, stderr becomes ignore
-                        // User reads both from stdout
-                        stdio.* = null;
-                        log("PTY stderr: ignored (stdout has PTY)", .{});
-                    } else {
-                        // stdout is not PTY, stderr gets the master
-                        stdio.* = pty_master;
-                        log("PTY stderr: master={?d}", .{if (pty_master) |m| m.native() else null});
+                    // dup() the master FD so each stdio has its own FD for epoll
+                    const duped = try bun.sys.dup(pty_master.?).unwrap();
+                    if (!options.sync) {
+                        try bun.sys.setNonblocking(duped).unwrap();
                     }
+                    stdio.* = duped;
+                    log("PTY {s}: duped master={d}", .{ if (i == 0) "stdin" else if (i == 1) "stdout" else "stderr", duped.native() });
                 }
             },
         }

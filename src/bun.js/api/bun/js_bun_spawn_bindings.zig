@@ -1003,7 +1003,7 @@ pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, 
     }
 }
 
-const log = Output.scoped(.spawn_bindings, .visible);
+const log = Output.scoped(.spawn_bindings, .hidden);
 extern "C" const BUN_DEFAULT_PATH_FOR_SPAWN: [*:0]const u8;
 
 const IPC = @import("../../ipc.zig");

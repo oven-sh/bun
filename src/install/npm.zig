@@ -938,7 +938,8 @@ pub const PackageManifest = struct {
         // - v0.0.5: added bundled dependencies
         // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
         // - v0.0.7: added version publish times and extended manifest flag for minimum release age
-        pub const version = "bun-npm-manifest-cache-v0.0.7\n";
+        // - v0.0.8: added deprecated field for filtering out deprecated package versions
+        pub const version = "bun-npm-manifest-cache-v0.0.8\n";
         const header_bytes: string = "#!/usr/bin/env bun\n" ++ version;
 
         pub const sizes = blk: {

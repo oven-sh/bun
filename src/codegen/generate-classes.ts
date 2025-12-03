@@ -662,8 +662,9 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::call(JSC::JSGlobalObject* 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 ${
-  !obj.constructNeedsThis
-    ? `
+  obj.call
+    ? !obj.constructNeedsThis
+      ? `
     void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame);
 
     if (!ptr || scope.exception()) [[unlikely]] {
@@ -673,7 +674,7 @@ ${
     Structure* structure = globalObject->${className(typeName)}Structure();
     ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr);
 `
-    : `
+      : `
     Structure* structure = globalObject->${className(typeName)}Structure();
     ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, nullptr);
 
@@ -685,9 +686,15 @@ ${
 
     instance->m_ctx = ptr;
 `
+    : `
+    Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "${typeName} constructor cannot be invoked without 'new'"_s);
+    return JSValue::encode(JSC::jsUndefined());
+`
 }
 
-    RETURN_IF_EXCEPTION(scope, {});
+${
+  obj.call
+    ? `    RETURN_IF_EXCEPTION(scope, {});
   ${
     obj.estimatedSize
       ? `
@@ -696,7 +703,9 @@ ${
       : ""
   }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(instance));
+    RELEASE_AND_RETURN(scope, JSValue::encode(instance));`
+    : ""
+}
 }
 
 

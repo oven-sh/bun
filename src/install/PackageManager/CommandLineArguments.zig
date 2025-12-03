@@ -27,7 +27,7 @@ const shared_params = [_]ParamType{
     clap.parseParam("--save                                Save to package.json (true by default)") catch unreachable,
     clap.parseParam("--ca <STR>...                         Provide a Certificate Authority signing certificate") catch unreachable,
     clap.parseParam("--cafile <STR>                        The same as `--ca`, but is a file path to the certificate") catch unreachable,
-    clap.parseParam("--dry-run                             Don't install anything") catch unreachable,
+    clap.parseParam("--dry-run                             Perform a dry run without making changes") catch unreachable,
     clap.parseParam("--frozen-lockfile                     Disallow changes to lockfile") catch unreachable,
     clap.parseParam("-f, --force                           Always request the latest versions from the registry & reinstall all dependencies") catch unreachable,
     clap.parseParam("--cache-dir <PATH>                    Store & load cached data from a specific directory path") catch unreachable,
@@ -708,7 +708,7 @@ pub fn printHelp(subcommand: Subcommand) void {
                 \\  <d>$<r> <b><green>bun why<r> <blue>"@types/*"<r> <cyan>--depth<r> <blue>2<r>
                 \\  <d>$<r> <b><green>bun why<r> <blue>"*-lodash"<r> <cyan>--top<r>
                 \\
-                \\Full documentation is available at <magenta>https://bun.sh/docs/cli/why<r>.
+                \\Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
                 \\
             ;
 

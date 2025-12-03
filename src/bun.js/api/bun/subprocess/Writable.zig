@@ -154,7 +154,7 @@ pub const Writable = union(enum) {
                     return Writable{ .ignore = {} };
                 },
                 .pty => {
-                    // PTY falls back to pipe on Windows, but stdin with PTY is not commonly used
+                    // PTY stdin is not supported on Windows; return ignore
                     return Writable{ .ignore = {} };
                 },
             }

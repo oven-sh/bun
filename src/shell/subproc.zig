@@ -178,6 +178,10 @@ pub const ShellSubprocess = struct {
                     .ipc, .capture => {
                         return Writable{ .ignore = {} };
                     },
+                    .pty, .readable_stream, .pipe => {
+                        // The shell never uses these for stdin in sync mode
+                        return Writable{ .ignore = {} };
+                    },
                 }
             }
             switch (stdio) {
@@ -219,6 +223,10 @@ pub const ShellSubprocess = struct {
                 .readable_stream => {
                     // The shell never uses this
                     @panic("Unimplemented stdin readable_stream");
+                },
+                .pty => {
+                    // The shell never uses PTY directly
+                    @panic("Unimplemented stdin pty");
                 },
             }
         }
@@ -369,6 +377,7 @@ pub const ShellSubprocess = struct {
                     },
                     .capture => Readable{ .pipe = PipeReader.create(event_loop, process, result, shellio, out_type) },
                     .readable_stream => Readable{ .ignore = {} }, // Shell doesn't use readable_stream
+                    .pty => Readable{ .ignore = {} }, // Shell doesn't use PTY
                 };
             }
 
@@ -391,6 +400,7 @@ pub const ShellSubprocess = struct {
                 },
                 .capture => Readable{ .pipe = PipeReader.create(event_loop, process, result, shellio, out_type) },
                 .readable_stream => Readable{ .ignore = {} }, // Shell doesn't use readable_stream
+                .pty => Readable{ .ignore = {} }, // Shell doesn't use PTY
             };
         }
 

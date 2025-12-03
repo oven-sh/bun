@@ -221,6 +221,7 @@ pub const Tag = enum(u8) {
     mmap,
     munmap,
     open,
+    openpty,
     pread,
     pwrite,
     read,
@@ -4275,6 +4276,149 @@ pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptim
         return null;
     }
     return Wrapper.function;
+}
+
+// =============================================================================
+// PTY (Pseudo-Terminal) Support
+// =============================================================================
+
+/// Result of opening a PTY pair
+pub const PtyPair = struct {
+    master: bun.FileDescriptor,
+    slave: bun.FileDescriptor,
+};
+
+/// Window size structure for terminal dimensions
+pub const WinSize = extern struct {
+    ws_row: u16,
+    ws_col: u16,
+    ws_xpixel: u16 = 0,
+    ws_ypixel: u16 = 0,
+};
+
+// ioctl request codes for terminal operations
+pub const TIOCSWINSZ: c_ulong = if (Environment.isMac)
+    0x80087467 // macOS
+else if (Environment.isLinux)
+    0x5414 // Linux
+else
+    0;
+
+pub const TIOCSCTTY: c_int = if (Environment.isMac)
+    0x20007461 // macOS
+else if (Environment.isLinux)
+    0x540E // Linux
+else
+    0;
+
+pub const TIOCGWINSZ: c_ulong = if (Environment.isMac)
+    0x40087468 // macOS
+else if (Environment.isLinux)
+    0x5413 // Linux
+else
+    0;
+
+/// Opens a pseudo-terminal pair (master and slave)
+/// Returns the master and slave file descriptors
+pub fn openpty(winsize: ?*const WinSize) Maybe(PtyPair) {
+    if (comptime Environment.isWindows) {
+        @compileError("PTY is not supported on Windows");
+    }
+
+    // Use openpty() from libc which handles all the PTY setup
+    // On Linux it's in libutil, on macOS it's in libc
+    var master_fd: c_int = undefined;
+    var slave_fd: c_int = undefined;
+
+    // openpty is provided by libutil on Linux, libc on macOS
+    // Zig's std.c already links libutil on Linux when needed
+    const openpty_fn = @extern(*const fn (
+        amaster: *c_int,
+        aslave: *c_int,
+        name: ?[*:0]u8,
+        termp: ?*const anyopaque,
+        winp: ?*const WinSize,
+    ) callconv(.c) c_int, .{ .name = "openpty" });
+
+    const rc = openpty_fn(
+        &master_fd,
+        &slave_fd,
+        null, // name - we don't need the slave name
+        null, // termios - use defaults
+        winsize, // window size
+    );
+
+    log("openpty() = {d} (master={d}, slave={d})", .{ rc, master_fd, slave_fd });
+
+    if (rc != 0) {
+        return .{ .err = .{
+            .errno = @intCast(@intFromEnum(std.posix.errno(rc))),
+            .syscall = .openpty,
+        } };
+    }
+
+    return .{ .result = .{
+        .master = bun.FileDescriptor.fromNative(master_fd),
+        .slave = bun.FileDescriptor.fromNative(slave_fd),
+    } };
+}
+
+/// Sets the window size of a terminal
+pub fn setWinSize(fd: bun.FileDescriptor, winsize: *const WinSize) Maybe(void) {
+    if (comptime Environment.isWindows) {
+        @compileError("PTY is not supported on Windows");
+    }
+
+    const rc = std.c.ioctl(fd.cast(), @bitCast(TIOCSWINSZ), @intFromPtr(winsize));
+    log("ioctl({d}, TIOCSWINSZ, {d}x{d}) = {d}", .{ fd.cast(), winsize.ws_col, winsize.ws_row, rc });
+
+    if (rc != 0) {
+        return .{ .err = .{
+            .errno = @intCast(@intFromEnum(std.posix.errno(rc))),
+            .syscall = .ioctl,
+        } };
+    }
+
+    return .{ .result = {} };
+}
+
+/// Gets the window size of a terminal
+pub fn getWinSize(fd: bun.FileDescriptor) Maybe(WinSize) {
+    if (comptime Environment.isWindows) {
+        @compileError("PTY is not supported on Windows");
+    }
+
+    var winsize: WinSize = undefined;
+    const rc = std.c.ioctl(fd.cast(), @bitCast(TIOCGWINSZ), @intFromPtr(&winsize));
+    log("ioctl({d}, TIOCGWINSZ) = {d}", .{ fd.cast(), rc });
+
+    if (rc != 0) {
+        return .{ .err = .{
+            .errno = @intCast(@intFromEnum(std.posix.errno(rc))),
+            .syscall = .ioctl,
+        } };
+    }
+
+    return .{ .result = winsize };
+}
+
+/// Makes a file descriptor the controlling terminal for the calling process
+pub fn setControllingTerminal(fd: bun.FileDescriptor) Maybe(void) {
+    if (comptime Environment.isWindows) {
+        @compileError("PTY is not supported on Windows");
+    }
+
+    const rc = std.c.ioctl(fd.cast(), @bitCast(@as(c_ulong, @intCast(TIOCSCTTY))), @as(c_ulong, 0));
+    log("ioctl({d}, TIOCSCTTY, 0) = {d}", .{ fd.cast(), rc });
+
+    if (rc != 0) {
+        return .{ .err = .{
+            .errno = @intCast(@intFromEnum(std.posix.errno(rc))),
+            .syscall = .ioctl,
+        } };
+    }
+
+    return .{ .result = {} };
 }
 
 pub const umask = switch (Environment.os) {

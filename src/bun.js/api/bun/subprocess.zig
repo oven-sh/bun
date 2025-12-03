@@ -282,6 +282,7 @@ pub fn getStdin(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSVa
 }
 
 pub fn getStdout(this: *Subprocess, globalThis: *JSGlobalObject) bun.JSError!JSValue {
+    log("getStdout: subprocess={*}, stdout ptr={*}, stdout state={s}", .{ this, &this.stdout, @tagName(this.stdout) });
     this.observable_getters.insert(.stdout);
     // NOTE: ownership of internal buffers is transferred to the JSValue, which
     // gets cached on JSSubprocess (created via bindgen). This makes it

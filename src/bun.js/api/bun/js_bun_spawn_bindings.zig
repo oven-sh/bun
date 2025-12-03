@@ -635,6 +635,12 @@ pub fn spawnMaybeSync(
         .stdout_maxbuf = subprocess.stdout_maxbuf,
     };
 
+    log("After subprocess init: stdout state={s}, stdin FD={?d}, stdout FD={?d}", .{
+        @tagName(subprocess.stdout),
+        if (spawned.stdin) |fd| fd.native() else null,
+        if (spawned.stdout) |fd| fd.native() else null,
+    });
+
     subprocess.process.setExitHandler(subprocess);
 
     promise_for_stream.ensureStillAlive();
@@ -997,7 +1003,7 @@ pub fn appendEnvpFromJS(globalThis: *jsc.JSGlobalObject, object: *jsc.JSObject, 
     }
 }
 
-const log = Output.scoped(.Subprocess, .hidden);
+const log = Output.scoped(.spawn_bindings, .visible);
 extern "C" const BUN_DEFAULT_PATH_FOR_SPAWN: [*:0]const u8;
 
 const IPC = @import("../../ipc.zig");

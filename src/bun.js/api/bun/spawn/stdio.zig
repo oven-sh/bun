@@ -14,6 +14,16 @@ pub const Stdio = union(enum) {
     pipe,
     ipc,
     readable_stream: jsc.WebCore.ReadableStream,
+    /// Pseudo-terminal: creates a PTY master/slave pair for the spawned process.
+    /// The child gets the slave side, parent gets the master side for I/O.
+    pty: PtyOptions,
+
+    pub const PtyOptions = struct {
+        /// Terminal width in columns (default: 80)
+        width: u16 = 80,
+        /// Terminal height in rows (default: 24)
+        height: u16 = 24,
+    };
 
     const log = bun.sys.syslog;
 
@@ -33,6 +43,7 @@ pub const Stdio = union(enum) {
         stdin_used_as_out,
         out_used_as_stdin,
         blob_used_as_out,
+        pty_not_supported,
         uv_pipe: bun.sys.E,
 
         pub fn toStr(this: *const @This()) []const u8 {
@@ -40,6 +51,7 @@ pub const Stdio = union(enum) {
                 .stdin_used_as_out => "Stdin cannot be used for stdout or stderr",
                 .out_used_as_stdin => "Stdout and stderr cannot be used for stdin",
                 .blob_used_as_out => "Blobs are immutable, and cannot be used for stdout/stderr",
+                .pty_not_supported => "PTY is not supported on Windows",
                 .uv_pipe => @panic("TODO"),
             };
         }
@@ -192,6 +204,7 @@ pub const Stdio = union(enum) {
                 .path => |pathlike| .{ .path = pathlike.slice() },
                 .inherit => .{ .inherit = {} },
                 .ignore => .{ .ignore = {} },
+                .pty => |pty_opts| .{ .pty = .{ .width = pty_opts.width, .height = pty_opts.height } },
             },
         };
     }
@@ -244,6 +257,7 @@ pub const Stdio = union(enum) {
                 .path => |pathlike| .{ .path = pathlike.slice() },
                 .inherit => .{ .inherit = {} },
                 .ignore => .{ .ignore = {} },
+                .pty => return .{ .err = .pty_not_supported },
 
                 .memfd => @panic("This should never happen"),
             },
@@ -346,8 +360,13 @@ pub const Stdio = union(enum) {
                 out_stdio.* = Stdio{ .pipe = {} };
             } else if (str.eqlComptime("ipc")) {
                 out_stdio.* = Stdio{ .ipc = {} };
+            } else if (str.eqlComptime("pty")) {
+                if (comptime Environment.isWindows) {
+                    return globalThis.throwInvalidArguments("PTY is not supported on Windows", .{});
+                }
+                out_stdio.* = Stdio{ .pty = .{} };
             } else {
-                return globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'pipe', 'ignore', Bun.file(pathOrFd), number, or null", .{});
+                return globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'pipe', 'ignore', 'pty', Bun.file(pathOrFd), number, or null", .{});
             }
             return;
         } else if (value.isNumber()) {
@@ -436,7 +455,45 @@ pub const Stdio = union(enum) {
             return;
         }
 
-        return globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'ignore', or null", .{});
+        // Check for PTY object: { type: "pty", width?: number, height?: number }
+        if (value.isObject()) {
+            if (try value.getTruthy(globalThis, "type")) |type_val| {
+                if (type_val.isString()) {
+                    const type_str = try type_val.getZigString(globalThis);
+                    if (type_str.eqlComptime("pty")) {
+                        if (comptime Environment.isWindows) {
+                            return globalThis.throwInvalidArguments("PTY is not supported on Windows", .{});
+                        }
+                        var pty_opts: PtyOptions = .{};
+
+                        if (try value.get(globalThis, "width")) |width_val| {
+                            if (!width_val.isUndefinedOrNull()) {
+                                const width = width_val.toInt32();
+                                if (width <= 0 or width > std.math.maxInt(u16)) {
+                                    return globalThis.throwInvalidArguments("PTY width must be a positive integer <= 65535", .{});
+                                }
+                                pty_opts.width = @intCast(width);
+                            }
+                        }
+
+                        if (try value.get(globalThis, "height")) |height_val| {
+                            if (!height_val.isUndefinedOrNull()) {
+                                const height = height_val.toInt32();
+                                if (height <= 0 or height > std.math.maxInt(u16)) {
+                                    return globalThis.throwInvalidArguments("PTY height must be a positive integer <= 65535", .{});
+                                }
+                                pty_opts.height = @intCast(height);
+                            }
+                        }
+
+                        out_stdio.* = Stdio{ .pty = pty_opts };
+                        return;
+                    }
+                }
+            }
+        }
+
+        return globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'ignore', 'pty', or null", .{});
     }
 
     pub fn extractBlob(stdio: *Stdio, globalThis: *jsc.JSGlobalObject, blob: jsc.WebCore.Blob.Any, i: i32) bun.JSError!void {

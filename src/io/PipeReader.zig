@@ -94,7 +94,11 @@ const PosixBufferedReader = struct {
         memfd: bool = false,
         use_pread: bool = false,
         is_paused: bool = false,
-        _: u6 = 0,
+        /// True if reading from PTY master - treat EIO as EOF
+        is_pty: bool = false,
+        /// True if PTY reader shares FD with writer (can't poll separately)
+        pty_shared_fd: bool = false,
+        _: u4 = 0,
     };
 
     pub fn init(comptime Type: type) PosixBufferedReader {
@@ -156,6 +160,11 @@ const PosixBufferedReader = struct {
 
         if (flags.pollable) {
             if (flags.nonblocking) {
+                // PTY with shared FD can't use epoll (EEXIST), so treat it like
+                // a blocking pipe that uses poll() to check for data availability
+                if (flags.pty_shared_fd) {
+                    return .pipe;
+                }
                 return .nonblocking_pipe;
             }
 
@@ -270,6 +279,29 @@ const PosixBufferedReader = struct {
     }
 
     pub fn onError(this: *PosixBufferedReader, err: bun.sys.Error) void {
+        // For PTY, EIO is expected when the child exits (slave side closes).
+        // Treat it as a normal EOF.
+        if (this.flags.is_pty and err.getErrno() == .IO) {
+            this.closeWithoutReporting();
+            this.done();
+            return;
+        }
+        // For PTY with shared FD, EBADF means the writer closed the shared FD.
+        // Treat it as normal EOF - we're done reading.
+        // Don't try to close the FD - it's already closed by the writer.
+        if (this.flags.pty_shared_fd and err.getErrno() == .BADF) {
+            this.flags.close_handle = false; // Don't try to close - already closed
+            this.done();
+            return;
+        }
+        // For PTY, EEXIST during epoll registration means the FD is already registered
+        // (by the stdin writer which shares the same PTY master FD). This is not a fatal
+        // error - we just won't get poll notifications, but can still read.
+        // Set a flag so we know to use alternative reading mechanisms.
+        if (this.flags.is_pty and err.getErrno() == .EXIST) {
+            this.flags.pty_shared_fd = true;
+            return;
+        }
         this.vtable.onReaderError(err);
     }
 
@@ -379,7 +411,13 @@ const PosixBufferedReader = struct {
                         readFromBlockingPipeWithoutBlocking(this, buf, fd, 0, true);
                     },
                     .not_ready => {
-                        this.registerPoll();
+                        if (this.flags.pty_shared_fd) {
+                            // For PTY with shared FD, we can't use epoll.
+                            // Schedule a retry using a timer.
+                            this.schedulePtyRetryRead();
+                        } else {
+                            this.registerPoll();
+                        }
                     },
                 }
             },
@@ -621,6 +659,10 @@ const PosixBufferedReader = struct {
                     if (err.isRetry()) {
                         if (comptime file_type == .file) {
                             bun.Output.debugWarn("Received EAGAIN while reading from a file. This is a bug.", .{});
+                        } else if (parent.flags.pty_shared_fd) {
+                            // For PTY with shared FD, we can't poll (would get EEXIST).
+                            // Schedule a retry read after a short delay.
+                            parent.schedulePtyRetryRead();
                         } else {
                             parent.registerPoll();
                         }
@@ -677,6 +719,10 @@ const PosixBufferedReader = struct {
                     if (err.isRetry()) {
                         if (comptime file_type == .file) {
                             bun.Output.debugWarn("Received EAGAIN while reading from a file. This is a bug.", .{});
+                        } else if (parent.flags.pty_shared_fd) {
+                            // For PTY with shared FD, we can't poll (would get EEXIST).
+                            // Schedule a retry read after a short delay.
+                            parent.schedulePtyRetryRead();
                         } else {
                             parent.registerPoll();
                         }
@@ -695,6 +741,34 @@ const PosixBufferedReader = struct {
         }
 
         readBlockingPipe(parent, resizable_buffer, fd, size_hint, received_hup);
+    }
+
+    /// For PTY with shared FD, schedule a retry read using a timer.
+    /// This is needed because we can't use epoll (EEXIST error).
+    pub fn schedulePtyRetryRead(this: *PosixBufferedReader) void {
+        const event_loop = this.vtable.eventLoop().loop();
+        // Create a one-shot timer to retry the read after 1ms
+        const timer = uws.Timer.create(event_loop, this);
+        timer.set(this, &ptyRetryReadCallback, 1, 0); // 1ms delay, no repeat
+    }
+
+    fn ptyRetryReadCallback(timer: *uws.Timer) callconv(.c) void {
+        const this: *PosixBufferedReader = timer.as(*PosixBufferedReader);
+        timer.deinit(false);
+
+        if (this.isDone()) {
+            return;
+        }
+
+        // Check if the FD is still valid (might have been closed by writer cleanup)
+        const fd = this.getFd();
+        if (fd == bun.invalid_fd) {
+            this.done();
+            return;
+        }
+
+        // Retry the read
+        this.read();
     }
 
     comptime {
@@ -760,7 +834,7 @@ pub const WindowsBufferedReader = struct {
                 return Type.onReaderError(@as(*Type, @ptrCast(@alignCast(this))), err);
             }
             fn loop(this: *anyopaque) *Async.Loop {
-                return Type.loop(@as(*Type, @alignCast(@ptrCast(this))));
+                return Type.loop(@as(*Type, @ptrCast(@alignCast(this))));
             }
         };
         return .{
@@ -1268,3 +1342,4 @@ const bun = @import("bun");
 const Async = bun.Async;
 const jsc = bun.jsc;
 const uv = bun.windows.libuv;
+const uws = bun.uws;

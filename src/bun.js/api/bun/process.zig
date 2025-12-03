@@ -1004,6 +1004,13 @@ pub const PosixSpawnOptions = struct {
         pipe: bun.FileDescriptor,
         // TODO: remove this entry, it doesn't seem to be used
         dup2: struct { out: bun.jsc.Subprocess.StdioKind, to: bun.jsc.Subprocess.StdioKind },
+        /// Pseudo-terminal with optional window size configuration
+        pty: PtyConfig,
+
+        pub const PtyConfig = struct {
+            width: u16 = 80,
+            height: u16 = 24,
+        };
     };
 
     pub fn deinit(_: *const PosixSpawnOptions) void {
@@ -1104,6 +1111,9 @@ pub const PosixSpawnResult = struct {
     extra_pipes: std.array_list.Managed(bun.FileDescriptor) = std.array_list.Managed(bun.FileDescriptor).init(bun.default_allocator),
 
     memfds: [3]bool = .{ false, false, false },
+    /// PTY master file descriptor if PTY was requested for any stdio.
+    /// The child process has the slave side; parent uses this for I/O.
+    pty_master: ?bun.FileDescriptor = null,
 
     // ESRCH can happen when requesting the pidfd
     has_exited: bool = false,
@@ -1301,6 +1311,38 @@ pub fn spawnProcessPosix(
 
     var dup_stdout_to_stderr: bool = false;
 
+    // Check if any stdio uses PTY and create a single PTY pair if needed
+    var pty_slave: ?bun.FileDescriptor = null;
+    var pty_master: ?bun.FileDescriptor = null;
+
+    for (stdio_options) |opt| {
+        if (opt == .pty) {
+            // Create PTY pair with the configured window size
+            const winsize = bun.sys.WinSize{
+                .ws_col = opt.pty.width,
+                .ws_row = opt.pty.height,
+            };
+            const pty_pair = try bun.sys.openpty(&winsize).unwrap();
+
+            pty_master = pty_pair.master;
+            pty_slave = pty_pair.slave;
+
+            log("PTY created: master={d}, slave={d}", .{ pty_pair.master.native(), pty_pair.slave.native() });
+
+            // Track for cleanup
+            try to_close_at_end.append(pty_pair.slave);
+            try to_close_on_error.append(pty_pair.master);
+
+            // Set master to non-blocking for async operations
+            if (!options.sync) {
+                try bun.sys.setNonblocking(pty_pair.master).unwrap();
+            }
+
+            spawned.pty_master = pty_pair.master;
+            break;
+        }
+    }
+
     for (0..3) |i| {
         const stdio = stdios[i];
         const fileno = bun.FD.fromNative(@intCast(i));
@@ -1417,6 +1459,39 @@ pub fn spawnProcessPosix(
                 try actions.dup2(fd, fileno);
                 stdio.* = fd;
             },
+            .pty => {
+                // Use the slave side of the PTY for this stdio
+                // The PTY pair was already created above
+                const slave = pty_slave.?;
+                try actions.dup2(slave, fileno);
+                // The parent gets the master side for I/O
+                // stdin (i=0) always gets the master FD for writing.
+                // For stdout (i=1) and stderr (i=2), only one can have a reader
+                // since they share the same underlying PTY master FD.
+                // stdout takes priority; stderr becomes ignore if stdout already has PTY.
+                if (i == 0) {
+                    // stdin always gets the master (for writing)
+                    stdio.* = pty_master;
+                    log("PTY stdin: master={?d}", .{if (pty_master) |m| m.native() else null});
+                } else if (i == 1) {
+                    // stdout always gets the master (for reading)
+                    stdio.* = pty_master;
+                    log("PTY stdout: master={?d}", .{if (pty_master) |m| m.native() else null});
+                } else {
+                    // stderr (i == 2): check if stdout already has PTY
+                    // If so, stderr shares the same stream (set to null -> ignore)
+                    if (stdio_options[1] == .pty) {
+                        // stdout is also PTY, stderr becomes ignore
+                        // User reads both from stdout
+                        stdio.* = null;
+                        log("PTY stderr: ignored (stdout has PTY)", .{});
+                    } else {
+                        // stdout is not PTY, stderr gets the master
+                        stdio.* = pty_master;
+                        log("PTY stderr: master={?d}", .{if (pty_master) |m| m.native() else null});
+                    }
+                }
+            },
         }
     }
 
@@ -1462,6 +1537,13 @@ pub fn spawnProcessPosix(
                 try actions.dup2(fd, fileno);
 
                 try extra_fds.append(fd);
+            },
+            .pty => {
+                // Use existing PTY slave (should have been created from primary stdio)
+                if (pty_slave) |slave| {
+                    try actions.dup2(slave, fileno);
+                    try extra_fds.append(pty_master.?);
+                }
             },
         }
     }

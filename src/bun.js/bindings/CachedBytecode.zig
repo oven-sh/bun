@@ -2,6 +2,7 @@ pub const CachedBytecode = opaque {
     extern fn generateCachedModuleByteCodeFromSourceCode(sourceProviderURL: *bun.String, input_code: [*]const u8, inputSourceCodeSize: usize, outputByteCode: *?[*]u8, outputByteCodeSize: *usize, cached_bytecode: *?*CachedBytecode) bool;
     extern fn generateCachedCommonJSProgramByteCodeFromSourceCode(sourceProviderURL: *bun.String, input_code: [*]const u8, inputSourceCodeSize: usize, outputByteCode: *?[*]u8, outputByteCodeSize: *usize, cached_bytecode: *?*CachedBytecode) bool;
     extern fn generateCachedModuleByteCodeWithMetadata(sourceProviderURL: *bun.String, input_code: [*]const u8, inputSourceCodeSize: usize, outputByteCode: *?[*]u8, outputByteCodeSize: *usize, cached_bytecode: *?*CachedBytecode) bool;
+    extern fn validateCachedModuleMetadata(cacheData: [*]const u8, cacheSize: usize) bool;
 
     pub fn generateForESM(sourceProviderURL: *bun.String, input: []const u8) ?struct { []const u8, *CachedBytecode } {
         var this: ?*CachedBytecode = null;
@@ -25,6 +26,10 @@ pub const CachedBytecode = opaque {
         }
 
         return null;
+    }
+
+    pub fn validateMetadata(cache: []const u8) bool {
+        return validateCachedModuleMetadata(cache.ptr, cache.len);
     }
 
     pub fn generateForCJS(sourceProviderURL: *bun.String, input: []const u8) ?struct { []const u8, *CachedBytecode } {

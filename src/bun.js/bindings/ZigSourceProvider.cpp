@@ -256,6 +256,179 @@ static WTF::String readString(JSC::VM& vm, const uint8_t*& ptr)
     return result;
 }
 
+// Structure to hold deserialized module metadata
+struct DeserializedModuleMetadata {
+    struct ModuleRequest {
+        WTF::String specifier;
+        // Attributes omitted for now
+    };
+
+    struct ImportEntry {
+        uint32_t type; // 0=Single, 1=SingleTypeScript, 2=Namespace
+        WTF::String moduleRequest;
+        WTF::String importName;
+        WTF::String localName;
+    };
+
+    struct ExportEntry {
+        uint32_t type; // 0=Local, 1=Indirect, 2=Namespace
+        WTF::String exportName;
+        WTF::String moduleName;
+        WTF::String importName;
+        WTF::String localName;
+    };
+
+    Vector<ModuleRequest> requestedModules;
+    Vector<ImportEntry> importEntries;
+    Vector<ExportEntry> exportEntries;
+    Vector<WTF::String> starExports;
+    const uint8_t* bytecodeStart;
+    size_t bytecodeSize;
+};
+
+// Validate and deserialize cached module metadata
+// Returns nullptr if cache is invalid
+static std::optional<DeserializedModuleMetadata> deserializeCachedModuleMetadata(
+    JSC::VM& vm,
+    const uint8_t* cacheData,
+    size_t cacheSize)
+{
+    if (cacheSize < 8) // At least magic + version
+        return std::nullopt;
+
+    const uint8_t* ptr = cacheData;
+    const uint8_t* end = cacheData + cacheSize;
+
+    // Check magic number
+    uint32_t magic = readUint32(ptr);
+    if (magic != MODULE_CACHE_MAGIC)
+        return std::nullopt;
+
+    // Check version
+    uint32_t version = readUint32(ptr);
+    if (version != MODULE_CACHE_VERSION)
+        return std::nullopt;
+
+    DeserializedModuleMetadata metadata;
+
+    // Read requested modules
+    if (ptr + 4 > end) return std::nullopt;
+    uint32_t moduleCount = readUint32(ptr);
+    metadata.requestedModules.reserveInitialCapacity(moduleCount);
+
+    for (uint32_t i = 0; i < moduleCount; ++i) {
+        if (ptr >= end) return std::nullopt;
+        WTF::String specifier = readString(vm, ptr);
+
+        // Read has_attributes flag
+        if (ptr + 4 > end) return std::nullopt;
+        uint32_t hasAttributes = readUint32(ptr);
+
+        if (hasAttributes) {
+            // Skip attributes for now
+            if (ptr + 4 > end) return std::nullopt;
+            uint32_t attrCount = readUint32(ptr);
+            for (uint32_t j = 0; j < attrCount; ++j) {
+                if (ptr >= end) return std::nullopt;
+                readString(vm, ptr); // key
+                readString(vm, ptr); // value
+            }
+        }
+
+        metadata.requestedModules.append({ WTFMove(specifier) });
+    }
+
+    // Read import entries
+    if (ptr + 4 > end) return std::nullopt;
+    uint32_t importCount = readUint32(ptr);
+    metadata.importEntries.reserveInitialCapacity(importCount);
+
+    for (uint32_t i = 0; i < importCount; ++i) {
+        if (ptr + 4 > end) return std::nullopt;
+        uint32_t type = readUint32(ptr);
+
+        if (ptr >= end) return std::nullopt;
+        WTF::String moduleRequest = readString(vm, ptr);
+        WTF::String importName = readString(vm, ptr);
+        WTF::String localName = readString(vm, ptr);
+
+        metadata.importEntries.append({
+            type,
+            WTFMove(moduleRequest),
+            WTFMove(importName),
+            WTFMove(localName)
+        });
+    }
+
+    // Read export entries
+    if (ptr + 4 > end) return std::nullopt;
+    uint32_t exportCount = readUint32(ptr);
+    metadata.exportEntries.reserveInitialCapacity(exportCount);
+
+    for (uint32_t i = 0; i < exportCount; ++i) {
+        if (ptr + 4 > end) return std::nullopt;
+        uint32_t type = readUint32(ptr);
+
+        if (ptr >= end) return std::nullopt;
+        WTF::String exportName = readString(vm, ptr);
+        WTF::String moduleName = readString(vm, ptr);
+        WTF::String importName = readString(vm, ptr);
+        WTF::String localName = readString(vm, ptr);
+
+        metadata.exportEntries.append({
+            type,
+            WTFMove(exportName),
+            WTFMove(moduleName),
+            WTFMove(importName),
+            WTFMove(localName)
+        });
+    }
+
+    // Read star exports
+    if (ptr + 4 > end) return std::nullopt;
+    uint32_t starExportCount = readUint32(ptr);
+    metadata.starExports.reserveInitialCapacity(starExportCount);
+
+    for (uint32_t i = 0; i < starExportCount; ++i) {
+        if (ptr >= end) return std::nullopt;
+        metadata.starExports.append(readString(vm, ptr));
+    }
+
+    // Read bytecode size
+    if (ptr + 4 > end) return std::nullopt;
+    uint32_t bytecodeSize = readUint32(ptr);
+
+    if (ptr + bytecodeSize > end) return std::nullopt;
+
+    metadata.bytecodeStart = ptr;
+    metadata.bytecodeSize = bytecodeSize;
+
+    return metadata;
+}
+
+// Check if cached metadata is valid for given source
+extern "C" bool validateCachedModuleMetadata(
+    const uint8_t* cacheData,
+    size_t cacheSize)
+{
+    if (cacheSize < 8)
+        return false;
+
+    const uint8_t* ptr = cacheData;
+
+    // Check magic
+    uint32_t magic = readUint32(ptr);
+    if (magic != MODULE_CACHE_MAGIC)
+        return false;
+
+    // Check version
+    uint32_t version = readUint32(ptr);
+    if (version != MODULE_CACHE_VERSION)
+        return false;
+
+    return true;
+}
+
 // New function: Generate cached bytecode WITH module metadata
 extern "C" bool generateCachedModuleByteCodeWithMetadata(
     BunString* sourceProviderURL,

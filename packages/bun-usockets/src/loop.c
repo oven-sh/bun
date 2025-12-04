@@ -193,9 +193,15 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
         loop_data->low_prio_head = s->next;
         if (s->next) s->next->prev = 0;
         s->next = 0;
-
-        us_internal_socket_context_link_socket(0, s->context, s);
-        us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
+        int ssl = s->flags.is_ssl;
+        if (us_socket_is_closed(ssl, s)) {
+            s->flags.low_prio_state = 2;
+            us_socket_context_unref(ssl, s->context);
+            continue;
+        }
+        us_internal_socket_context_link_socket(ssl, s->context, s);
+        us_socket_context_unref(ssl, s->context);
+        us_poll_change(&s->p, us_socket_context(ssl, s)->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
 
         s->flags.low_prio_state = 2;
     }
@@ -347,6 +353,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.allow_half_open = listen_socket->s.flags.allow_half_open;
                         s->flags.is_paused = 0;
                         s->flags.is_ipc = 0;
+                        s->flags.is_closed = 0;
+                        s->flags.is_ssl = listen_socket->s.flags.is_ssl;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);

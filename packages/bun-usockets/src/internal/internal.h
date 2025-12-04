@@ -170,6 +170,8 @@ struct us_socket_flags {
     unsigned char low_prio_state: 2;
     /* If true, the socket should be read using readmsg to support receiving file descriptors */
     bool is_ipc: 1;
+    bool is_closed: 1;
+    bool is_ssl: 1;
 
 } __attribute__((packed));
 

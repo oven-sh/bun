@@ -78,7 +78,7 @@ pub const Targets = struct {
             }
         }
         return switch (target) {
-            .node, .bun => runtimeDefault(),
+            .node, .bun, .cloudflare => runtimeDefault(),
             .browser, .bun_macro, .bake_server_components_ssr => browserDefault(),
         };
     }

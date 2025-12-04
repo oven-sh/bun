@@ -52,6 +52,7 @@
     macro(gzipSync) \
     macro(indexOfLine) \
     macro(inflateSync) \
+    macro(isBodyStreaming) \
     macro(jest) \
     macro(listen) \
     macro(mmap) \

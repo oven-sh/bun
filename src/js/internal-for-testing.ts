@@ -218,3 +218,8 @@ export const hostedGitInfo = {
   parseUrl: $newZigFunction("hosted_git_info.zig", "TestingAPIs.jsParseUrl", 1),
   fromUrl: $newZigFunction("hosted_git_info.zig", "TestingAPIs.jsFromUrl", 1),
 };
+
+export const CachedBytecode = {
+  generateForESMWithMetadata: $newZigFunction("CachedBytecode.zig", "TestingAPIs.generateForESMWithMetadata", 2),
+  validateMetadata: $newZigFunction("CachedBytecode.zig", "TestingAPIs.validateMetadata", 1),
+};

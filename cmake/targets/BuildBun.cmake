@@ -1273,9 +1273,15 @@ if(LINUX)
     target_link_libraries(${bun} PUBLIC libatomic.so)
   endif()
 
-  target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicudata.a)
-  target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicui18n.a)
-  target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicuuc.a)
+  if(USE_WEBKIT_ICU)
+    target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicudata.a)
+    target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicui18n.a)
+    target_link_libraries(${bun} PRIVATE ${WEBKIT_LIB_PATH}/libicuuc.a)
+  else()
+    # Use system ICU libraries
+    find_package(ICU REQUIRED COMPONENTS data i18n uc)
+    target_link_libraries(${bun} PRIVATE ICU::data ICU::i18n ICU::uc)
+  endif()
 endif()
 
 if(WIN32)

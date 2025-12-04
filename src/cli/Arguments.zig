@@ -219,6 +219,7 @@ pub const test_only_params = [_]ParamType{
     clap.parseParam("--dots                           Enable dots reporter. Shorthand for --reporter=dots.") catch unreachable,
     clap.parseParam("--only-failures                  Only display test failures, hiding passing tests.") catch unreachable,
     clap.parseParam("--max-concurrency <NUMBER>        Maximum number of concurrent tests to execute at once. Default is 20.") catch unreachable,
+    clap.parseParam("--resolve-extensions <STR>...    Test file name suffixes to match. Defaults to ['.test', '_test', '.spec', '_spec'].") catch unreachable,
 };
 pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -565,6 +566,15 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.prettyErrorln("<red>error<r>: Invalid seed value: {s}", .{seed_str});
                 std.process.exit(1);
             };
+        }
+
+        if (args.options("--resolve-extensions").len > 0) {
+            const extensions = args.options("--resolve-extensions");
+            const patterns = try allocator.alloc(string, extensions.len);
+            for (extensions, 0..) |ext, i| {
+                patterns[i] = ext;
+            }
+            ctx.test_options.resolve_extensions = patterns;
         }
     }
 

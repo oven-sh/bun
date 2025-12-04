@@ -1,7 +1,7 @@
 // Test round-trip serialization and deserialization of ESM bytecode cache
 // This tests that we can serialize module metadata and deserialize it correctly
 
-import { CachedBytecode } from "bun:internal";
+import { CachedBytecode } from "bun:internal-for-testing";
 
 const testSource = `
 export const greeting = "Hello, World!";
@@ -15,15 +15,14 @@ console.log("Testing ESM bytecode cache round-trip...\n");
 
 // Test 1: Generate cache with metadata
 console.log("Step 1: Generating cached bytecode with metadata");
-const sourceURL = "file:///test-module.js";
-const cached = CachedBytecode.generateForESMWithMetadata(sourceURL, testSource);
+const sourceURL = "/test-module.js"; // Without file:// prefix
+const cacheData = CachedBytecode.generateForESMWithMetadata(sourceURL, testSource);
 
-if (!cached) {
+if (!cacheData || cacheData.byteLength === 0) {
   console.error("❌ Failed to generate cached bytecode");
   process.exit(1);
 }
 
-const [cacheData, bytecodeObj] = cached;
 console.log(`✅ Generated ${cacheData.byteLength} bytes of cache data\n`);
 
 // Test 2: Validate cache

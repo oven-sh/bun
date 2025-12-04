@@ -693,22 +693,8 @@ const Stringifier = struct {
                 '[',
                 ']',
                 ',',
-                => return true,
-
                 ':',
-                => {
-                    if (i + 1 < str.length()) {
-                        switch (str.charAt(i + 1)) {
-                            ' ',
-                            '\t',
-                            '\n',
-                            '\r',
-                            => return true,
-                            else => {},
-                        }
-                    }
-                    i += 1;
-                },
+                => return true,
 
                 '#',
                 '`',

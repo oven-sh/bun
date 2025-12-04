@@ -420,7 +420,13 @@ pub fn installIsolatedPackages(
         var public_hoisted: bun.StringArrayHashMap(void) = .init(manager.allocator);
         defer public_hoisted.deinit();
 
-        var hidden_hoisted: bun.StringArrayHashMap(void) = .init(manager.allocator);
+        // Track hoisted packages by name -> (pkg_id, entry_id) so we can detect version conflicts
+        // and un-hoist when multiple versions of the same package exist
+        const HoistedInfo = struct {
+            pkg_id: PackageID,
+            entry_id: Store.Entry.Id,
+        };
+        var hidden_hoisted: bun.StringArrayHashMap(HoistedInfo) = .init(manager.allocator);
         defer hidden_hoisted.deinit();
 
         // Second pass: Deduplicate nodes when the pkg_id and peer set match an existing entry.
@@ -516,6 +522,9 @@ pub fn installIsolatedPackages(
             var new_entry_parents: std.ArrayListUnmanaged(Store.Entry.Id) = try .initCapacity(lockfile.allocator, 1);
             new_entry_parents.appendAssumeCapacity(entry.entry_parent_id);
 
+            // entry_id is needed before we create the entry to track it in hidden_hoisted
+            const new_entry_id: Store.Entry.Id = .from(@intCast(store.len));
+
             const hoisted = hoisted: {
                 if (new_entry_dep_id == invalid_dependency_id) {
                     break :hoisted false;
@@ -523,14 +532,33 @@ pub fn installIsolatedPackages(
 
                 const dep_name = dependencies[new_entry_dep_id].name.slice(string_buf);
 
-                const hoist_pattern = manager.options.hoist_pattern orelse {
-                    const hoist_entry = try hidden_hoisted.getOrPut(dep_name);
-                    break :hoisted !hoist_entry.found_existing;
-                };
+                const should_check_hoist = if (manager.options.hoist_pattern) |hoist_pattern|
+                    hoist_pattern.isMatch(dep_name)
+                else
+                    true;
 
-                if (hoist_pattern.isMatch(dep_name)) {
-                    const hoist_entry = try hidden_hoisted.getOrPut(dep_name);
-                    break :hoisted !hoist_entry.found_existing;
+                if (!should_check_hoist) {
+                    break :hoisted false;
+                }
+
+                const hoist_entry = try hidden_hoisted.getOrPut(dep_name);
+                if (!hoist_entry.found_existing) {
+                    // First time seeing this package name - mark for hoisting
+                    hoist_entry.value_ptr.* = .{
+                        .pkg_id = pkg_id,
+                        .entry_id = new_entry_id,
+                    };
+                    break :hoisted true;
+                }
+
+                // Package name was already seen - check if it's the same version
+                const prev_info = hoist_entry.value_ptr.*;
+                if (prev_info.pkg_id != pkg_id) {
+                    // Different version! Un-hoist the previous entry and don't hoist this one.
+                    // This ensures consistent behavior: if multiple versions exist, none are hoisted.
+                    const entries = store.slice();
+                    const entry_hoisted = entries.items(.hoisted);
+                    entry_hoisted[prev_info.entry_id.get()] = false;
                 }
 
                 break :hoisted false;
@@ -544,7 +572,6 @@ pub fn installIsolatedPackages(
                 .hoisted = hoisted,
             };
 
-            const new_entry_id: Store.Entry.Id = .from(@intCast(store.len));
             try store.append(lockfile.allocator, new_entry);
 
             if (entry.entry_parent_id.tryGet()) |entry_parent_id| skip_adding_dependency: {

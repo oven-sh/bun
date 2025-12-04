@@ -1234,3 +1234,93 @@ test("runs lifecycle scripts correctly", async () => {
   expect(lifecyclePostinstallDir).toEqual(["lifecycle-postinstall"]);
   expect(allLifecycleScriptsDir).toEqual(["all-lifecycle-scripts"]);
 });
+
+describe("hidden hoisting with multiple versions", () => {
+  test("does not hoist packages when multiple versions exist (issue #25336)", async () => {
+    // When multiple versions of the same package exist in the dependency graph,
+    // neither should be hoisted to .bun/node_modules/ to avoid TypeScript
+    // resolving the wrong version through the fallback mechanism.
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "monorepo-multi-versions",
+          workspaces: ["packages/*"],
+        }),
+        // Workspace 1: uses @types/is-number@1.0.0
+        "packages/pkg-v1/package.json": JSON.stringify({
+          name: "pkg-v1",
+          version: "1.0.0",
+          dependencies: {
+            "@types/is-number": "1.0.0",
+          },
+        }),
+        // Workspace 2: uses @types/is-number@2.0.0
+        "packages/pkg-v2/package.json": JSON.stringify({
+          name: "pkg-v2",
+          version: "1.0.0",
+          dependencies: {
+            "@types/is-number": "2.0.0",
+          },
+        }),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    // Verify that pkg-v1 has @types/is-number@1.0.0
+    expect(
+      await file(join(packageDir, "packages/pkg-v1/node_modules/@types/is-number/package.json")).json(),
+    ).toMatchObject({
+      name: "@types/is-number",
+      version: "1.0.0",
+    });
+
+    // Verify that pkg-v2 has @types/is-number@2.0.0
+    expect(
+      await file(join(packageDir, "packages/pkg-v2/node_modules/@types/is-number/package.json")).json(),
+    ).toMatchObject({
+      name: "@types/is-number",
+      version: "2.0.0",
+    });
+
+    // The key fix: @types/is-number should NOT be hoisted to .bun/node_modules/
+    // because multiple versions exist. This prevents TypeScript from finding
+    // the wrong version through fallback resolution.
+    expect(existsSync(join(packageDir, "node_modules/.bun/node_modules/@types/is-number"))).toBeFalse();
+  });
+
+  test("hoists packages when only one version exists", async () => {
+    // When only one version of a package exists, it should be hoisted normally.
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "monorepo-single-version",
+          workspaces: ["packages/*"],
+        }),
+        // Both workspaces use the same version
+        "packages/pkg-a/package.json": JSON.stringify({
+          name: "pkg-a",
+          version: "1.0.0",
+          dependencies: {
+            "@types/is-number": "1.0.0",
+          },
+        }),
+        "packages/pkg-b/package.json": JSON.stringify({
+          name: "pkg-b",
+          version: "1.0.0",
+          dependencies: {
+            "@types/is-number": "1.0.0",
+          },
+        }),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    // When only one version exists, it should be hoisted to .bun/node_modules/
+    expect(existsSync(join(packageDir, "node_modules/.bun/node_modules/@types/is-number"))).toBeTrue();
+    expect(lstatSync(join(packageDir, "node_modules/.bun/node_modules/@types/is-number")).isSymbolicLink()).toBeTrue();
+  });
+});

@@ -71,7 +71,6 @@ Ref<AbortSignal> AbortSignal::timeout(ScriptExecutionContext& context, uint64_t 
     // This ensures the TimeoutError has a stack trace pointing to where timeout() was called
     if (auto* globalObject = context.jsGlobalObject()) {
         auto& vm = globalObject->vm();
-        JSC::JSObject* errorForStack = JSC::constructEmptyObject(globalObject);
         if (auto* errorInstance = JSC::jsDynamicCast<JSC::ErrorInstance*>(JSC::createError(globalObject, String()))) {
             errorInstance->captureStackTrace(vm, globalObject, 1);
             signal->m_timeoutCreationStack.setWeakly(errorInstance);
@@ -224,8 +223,11 @@ void AbortSignal::signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReas
     m_commonReason = reason;
 
     // Pass the captured stack trace if this is a timeout signal
-    JSValue capturedStack = m_timeoutCreationStack.getValue();
-    signalAbort(toJS(globalObject, reason, capturedStack.isObject() ? jsCast<JSC::JSObject*>(capturedStack) : nullptr));
+    JSC::JSObject* capturedStack = nullptr;
+    JSValue stackValue = m_timeoutCreationStack.getValue();
+    if (stackValue.isObject())
+        capturedStack = jsCast<JSC::JSObject*>(stackValue);
+    signalAbort(toJS(globalObject, reason, capturedStack));
 }
 
 void AbortSignal::cleanNativeBindings(void* ref)

@@ -429,7 +429,9 @@ bun build --compile ./index.ts --outfile mycli
 ```
 
 <Note>
-The database file must exist on disk when you run `bun build --compile`. The `embed: "true"` attribute tells the bundler to include the database contents inside the compiled executable. When running normally with `bun run`, the database file is loaded from disk just like a regular SQLite import.
+  The database file must exist on disk when you run `bun build --compile`. The `embed: "true"` attribute tells the
+  bundler to include the database contents inside the compiled executable. When running normally with `bun run`, the
+  database file is loaded from disk just like a regular SQLite import.
 </Note>
 
 In the compiled executable, the embedded database is read-write, but all changes are lost when the executable exits (since it's stored in memory).

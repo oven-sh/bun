@@ -157,7 +157,7 @@ pub fn postProcessJSChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chu
             const input = "// @bun @bytecode @bun-cjs\n" ++ cjs_entry_chunk;
             j.pushStatic(input);
             line_offset.advance(input);
-        } else if (ctx.c.options.generate_bytecode_cache) {
+        } else if (ctx.c.options.generate_bytecode_cache or (ctx.c.options.experimental_esm_bytecode_cache and output_format == .esm)) {
             j.pushStatic("// @bun @bytecode\n");
             line_offset.advance("// @bun @bytecode\n");
         } else if (output_format == .cjs) {

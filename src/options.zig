@@ -1803,6 +1803,7 @@ pub const BundleOptions = struct {
     ignore_dce_annotations: bool = false,
     emit_dce_annotations: bool = false,
     bytecode: bool = false,
+    experimental_esm_bytecode: bool = false,
 
     code_coverage: bool = false,
     debugger: bool = false,

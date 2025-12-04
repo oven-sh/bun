@@ -178,7 +178,7 @@ pub fn writeOutputFilesToDisk(
             .none => {},
         }
         const bytecode_output_file: ?options.OutputFile = brk: {
-            if (c.options.generate_bytecode_cache) {
+            if (c.options.generate_bytecode_cache or c.options.experimental_esm_bytecode_cache) {
                 const loader: Loader = if (chunk.entry_point.is_entry_point)
                     c.parse_graph.input_files.items(.loader)[
                         chunk.entry_point.source_index
@@ -195,7 +195,12 @@ pub fn writeOutputFilesToDisk(
 
                     defer source_provider_url.deref();
 
-                    if (jsc.CachedBytecode.generate(c.options.output_format, code_result.buffer, &source_provider_url)) |result| {
+                    const result_opt = if (c.options.experimental_esm_bytecode_cache and c.options.output_format == .esm)
+                        jsc.CachedBytecode.generateForESMWithMetadata(&source_provider_url, code_result.buffer)
+                    else
+                        jsc.CachedBytecode.generate(c.options.output_format, code_result.buffer, &source_provider_url);
+
+                    if (result_opt) |result| {
                         const source_provider_url_str = source_provider_url.toSlice(bun.default_allocator);
                         defer source_provider_url_str.deinit();
                         const bytecode, const cached_bytecode = result;

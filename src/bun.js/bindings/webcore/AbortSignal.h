@@ -55,7 +55,7 @@ enum class CommonAbortReason : uint8_t {
     ConnectionClosed,
 };
 
-JSC::JSValue toJS(JSC::JSGlobalObject*, CommonAbortReason);
+JSC::JSValue toJS(JSC::JSGlobalObject*, CommonAbortReason, JSC::JSObject* capturedStack = nullptr);
 
 typedef void* AbortSignalTimeout;
 
@@ -125,6 +125,7 @@ public:
     size_t memoryCost() const;
 
     AbortSignalTimeout getTimeout() const { return m_timeout; }
+    const JSValueInWrappedObject& timeoutCreationStack() const { return m_timeoutCreationStack; }
 
 private:
     enum class Aborted : bool {
@@ -189,6 +190,7 @@ private:
     std::atomic<uint32_t> pendingActivityCount { 0 };
     uint32_t m_algorithmIdentifier { 0 };
     AbortSignalTimeout m_timeout { nullptr };
+    JSValueInWrappedObject m_timeoutCreationStack; // Captured stack at AbortSignal.timeout() call site
     uint8_t m_flags { 0 };
 };
 

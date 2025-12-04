@@ -141,11 +141,10 @@ describe("AbortSignal.any()", () => {
 
             composite.addEventListener("abort", () => resolve(true));
 
-            const timeout = setTimeout(() => resolve(false), 100);
+            // Abort fires synchronously, so the event listener is called before abort() returns
             controller.abort();
 
             const result = await promise;
-            clearTimeout(timeout);
             expect(result).toBe(true);
         });
 

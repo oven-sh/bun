@@ -59,6 +59,8 @@ pub const JSBundler = struct {
             outfile: OwnedString = OwnedString.initEmpty(bun.default_allocator),
             autoload_dotenv: bool = true,
             autoload_bunfig: bool = true,
+            autoload_tsconfig: bool = false,
+            autoload_package_json: bool = false,
 
             pub fn fromJS(globalThis: *jsc.JSGlobalObject, config: jsc.JSValue, allocator: std.mem.Allocator, compile_target: ?CompileTarget) JSError!?CompileOptions {
                 var this = CompileOptions{
@@ -185,6 +187,14 @@ pub const JSBundler = struct {
 
                 if (try object.getBooleanLoose(globalThis, "autoloadBunfig")) |autoload_bunfig| {
                     this.autoload_bunfig = autoload_bunfig;
+                }
+
+                if (try object.getBooleanLoose(globalThis, "autoloadTsconfig")) |autoload_tsconfig| {
+                    this.autoload_tsconfig = autoload_tsconfig;
+                }
+
+                if (try object.getBooleanLoose(globalThis, "autoloadPackageJson")) |autoload_package_json| {
+                    this.autoload_package_json = autoload_package_json;
                 }
 
                 return this;

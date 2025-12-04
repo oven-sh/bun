@@ -443,6 +443,8 @@ pub const BuildCommand = struct {
                     .{
                         .disable_default_env_files = !ctx.bundler_options.compile_autoload_dotenv,
                         .disable_autoload_bunfig = !ctx.bundler_options.compile_autoload_bunfig,
+                        .disable_autoload_tsconfig = !ctx.bundler_options.compile_autoload_tsconfig,
+                        .disable_autoload_package_json = !ctx.bundler_options.compile_autoload_package_json,
                     },
                 ) catch |err| {
                     Output.printErrorln("failed to create executable: {s}", .{@errorName(err)});

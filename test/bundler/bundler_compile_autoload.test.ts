@@ -264,4 +264,70 @@ console.log("PRELOAD");
       setCwd: true,
     },
   });
+
+  // Test that autoloadTsconfig option works via JS API
+  itBundled("compile/AutoloadTsconfigOption", {
+    compile: {
+      autoloadTsconfig: true,
+    },
+    files: {
+      "/entry.ts": /* ts */ `
+        console.log("autoloadTsconfig: true");
+      `,
+    },
+    run: {
+      stdout: "autoloadTsconfig: true",
+      setCwd: true,
+    },
+  });
+
+  // Test that autoloadPackageJson option works via JS API
+  itBundled("compile/AutoloadPackageJsonOption", {
+    compile: {
+      autoloadPackageJson: true,
+    },
+    files: {
+      "/entry.js": /* js */ `
+        console.log("autoloadPackageJson: true");
+      `,
+    },
+    run: {
+      stdout: "autoloadPackageJson: true",
+      setCwd: true,
+    },
+  });
+
+  // Test CLI backend with autoloadTsconfig: true
+  itBundled("compile/AutoloadTsconfigCLI", {
+    compile: {
+      autoloadTsconfig: true,
+    },
+    backend: "cli",
+    files: {
+      "/entry.ts": /* ts */ `
+        console.log("CLI tsconfig");
+      `,
+    },
+    run: {
+      stdout: "CLI tsconfig",
+      setCwd: true,
+    },
+  });
+
+  // Test CLI backend with autoloadPackageJson: true
+  itBundled("compile/AutoloadPackageJsonCLI", {
+    compile: {
+      autoloadPackageJson: true,
+    },
+    backend: "cli",
+    files: {
+      "/entry.js": /* js */ `
+        console.log("CLI package.json");
+      `,
+    },
+    run: {
+      stdout: "CLI package.json",
+      setCwd: true,
+    },
+  });
 });

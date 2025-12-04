@@ -24,6 +24,11 @@ pub const TSConfigJSON = struct {
     base_url_for_paths: string = "",
 
     extends: string = "",
+
+    // Project references - array of paths to other tsconfig.json files
+    // https://www.typescriptlang.org/docs/handbook/project-references.html
+    references: []string = &[_]string{},
+
     // The verbatim values of "compilerOptions.paths". The keys are patterns to
     // match and the values are arrays of fallback paths to search. Each key and
     // each fallback path can optionally have a single "*" wildcard character.
@@ -157,6 +162,31 @@ pub const TSConfigJSON = struct {
                 }
             }
         }
+
+        // Parse "references" field
+        if (json.asProperty("references")) |references_prop| {
+            if (!source.path.isNodeModule()) handle_references: {
+                var array = references_prop.expr.asArray() orelse break :handle_references;
+                var references_list = std.ArrayList(string).init(allocator);
+                errdefer references_list.deinit();
+
+                while (array.next()) |*element| {
+                    // Each reference is an object with a "path" property
+                    if (element.asProperty("path")) |path_prop| {
+                        if (path_prop.expr.asString(allocator)) |path_str| {
+                            references_list.append(path_str) catch break :handle_references;
+                        }
+                    }
+                }
+
+                if (references_list.items.len > 0) {
+                    result.references = references_list.toOwnedSlice() catch &[_]string{};
+                } else {
+                    references_list.deinit();
+                }
+            }
+        }
+
         var has_base_url = false;
 
         // Parse "compilerOptions"

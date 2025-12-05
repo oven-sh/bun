@@ -46,6 +46,11 @@ describe("AbortSignal.timeout stack trace", () => {
             });
             expect.unreachable("Should have thrown");
         } catch (e: any) {
+            // Same DOMException assertions as first test for consistency
+            expect(e instanceof DOMException).toBe(true);
+            expect(e.name).toBe("TimeoutError");
+            expect(e.message).toBe("The operation timed out.");
+
             // Stack should reference this test file
             expect(e.stack).toInclude("abort-signal-timeout-stack.test.ts");
         }

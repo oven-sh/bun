@@ -19,6 +19,7 @@
 #include <JavaScriptCore/JSModuleRecord.h>
 #include <JavaScriptCore/Parser.h>
 #include <JavaScriptCore/Nodes.h>
+#include <JavaScriptCore/VariableEnvironment.h>
 
 namespace Zig {
 
@@ -73,6 +74,394 @@ extern "C" bool BunTest__shouldGenerateCodeCoverage(BunString sourceURL);
 extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, BunString* specifier);
 extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, BunString* specifier);
 
+// BMES format constants and helper functions
+static constexpr uint32_t MODULE_CACHE_MAGIC = 0x424D4553; // "BMES"
+static constexpr uint32_t MODULE_CACHE_VERSION = 3; // Version 3: includes VariableEnvironment and CodeFeatures
+
+// BMES v2 Header layout (16 bytes total):
+// [4 bytes: MAGIC] "BMES"
+// [4 bytes: VERSION] 2
+// [4 bytes: BYTECODE_OFFSET] offset from start of buffer to bytecode data
+// [4 bytes: BYTECODE_SIZE] size of bytecode data
+// ... metadata ...
+// [BYTECODE_SIZE bytes: BYTECODE_DATA]
+
+static constexpr size_t BMES_HEADER_SIZE = 16; // magic + version + offset + size
+
+// Quick bytecode extraction from BMES format - O(1) for v2, falls back to parsing for v1
+// Returns true if extraction was successful, and sets bytecodeStart/bytecodeSize
+static bool extractBytecodeFromBMES(
+    const uint8_t* cacheData,
+    size_t cacheSize,
+    const uint8_t*& bytecodeStart,
+    size_t& bytecodeSize)
+{
+    if (cacheSize < 8) return false;
+
+    // Read and validate magic
+    const uint8_t* ptr = cacheData;
+    uint32_t magic = static_cast<uint32_t>(ptr[0]) |
+                     (static_cast<uint32_t>(ptr[1]) << 8) |
+                     (static_cast<uint32_t>(ptr[2]) << 16) |
+                     (static_cast<uint32_t>(ptr[3]) << 24);
+    if (magic != MODULE_CACHE_MAGIC) return false;
+    ptr += 4;
+
+    // Read version
+    uint32_t version = static_cast<uint32_t>(ptr[0]) |
+                       (static_cast<uint32_t>(ptr[1]) << 8) |
+                       (static_cast<uint32_t>(ptr[2]) << 16) |
+                       (static_cast<uint32_t>(ptr[3]) << 24);
+    ptr += 4;
+
+    // Version 2 and 3: O(1) bytecode extraction using header offset
+    // Version 2 and 3 share the same header layout
+    if (version == 2 || version == 3) {
+        if (cacheSize < BMES_HEADER_SIZE) return false;
+
+        // Read bytecode offset
+        uint32_t bytecodeOffset = static_cast<uint32_t>(ptr[0]) |
+                                   (static_cast<uint32_t>(ptr[1]) << 8) |
+                                   (static_cast<uint32_t>(ptr[2]) << 16) |
+                                   (static_cast<uint32_t>(ptr[3]) << 24);
+        ptr += 4;
+
+        // Read bytecode size
+        bytecodeSize = static_cast<uint32_t>(ptr[0]) |
+                        (static_cast<uint32_t>(ptr[1]) << 8) |
+                        (static_cast<uint32_t>(ptr[2]) << 16) |
+                        (static_cast<uint32_t>(ptr[3]) << 24);
+
+        // Validate offset and size
+        if (bytecodeOffset + bytecodeSize > cacheSize) return false;
+
+        bytecodeStart = cacheData + bytecodeOffset;
+        return true;
+    }
+
+    // Version 1 fallback: parse through metadata to find bytecode (slow path)
+    if (version != 1) return false;
+
+    // Skip module requests
+    if (ptr + 4 > cacheData + cacheSize) return false;
+    uint32_t moduleRequestCount = static_cast<uint32_t>(ptr[0]) |
+                                   (static_cast<uint32_t>(ptr[1]) << 8) |
+                                   (static_cast<uint32_t>(ptr[2]) << 16) |
+                                   (static_cast<uint32_t>(ptr[3]) << 24);
+    ptr += 4;
+    for (uint32_t i = 0; i < moduleRequestCount; i++) {
+        if (ptr + 4 > cacheData + cacheSize) return false;
+        uint32_t specifierLen = static_cast<uint32_t>(ptr[0]) |
+                                 (static_cast<uint32_t>(ptr[1]) << 8) |
+                                 (static_cast<uint32_t>(ptr[2]) << 16) |
+                                 (static_cast<uint32_t>(ptr[3]) << 24);
+        ptr += 4 + specifierLen;
+        if (ptr + 4 > cacheData + cacheSize) return false;
+        uint32_t hasAttributes = static_cast<uint32_t>(ptr[0]) |
+                                  (static_cast<uint32_t>(ptr[1]) << 8) |
+                                  (static_cast<uint32_t>(ptr[2]) << 16) |
+                                  (static_cast<uint32_t>(ptr[3]) << 24);
+        ptr += 4;
+        if (hasAttributes) {
+            if (ptr + 4 > cacheData + cacheSize) return false;
+            uint32_t attrCount = static_cast<uint32_t>(ptr[0]) |
+                                  (static_cast<uint32_t>(ptr[1]) << 8) |
+                                  (static_cast<uint32_t>(ptr[2]) << 16) |
+                                  (static_cast<uint32_t>(ptr[3]) << 24);
+            ptr += 4;
+            for (uint32_t j = 0; j < attrCount; j++) {
+                if (ptr + 4 > cacheData + cacheSize) return false;
+                uint32_t keyLen = static_cast<uint32_t>(ptr[0]) |
+                                   (static_cast<uint32_t>(ptr[1]) << 8) |
+                                   (static_cast<uint32_t>(ptr[2]) << 16) |
+                                   (static_cast<uint32_t>(ptr[3]) << 24);
+                ptr += 4 + keyLen;
+                if (ptr + 4 > cacheData + cacheSize) return false;
+                uint32_t valLen = static_cast<uint32_t>(ptr[0]) |
+                                   (static_cast<uint32_t>(ptr[1]) << 8) |
+                                   (static_cast<uint32_t>(ptr[2]) << 16) |
+                                   (static_cast<uint32_t>(ptr[3]) << 24);
+                ptr += 4 + valLen;
+            }
+        }
+    }
+
+    // Skip import entries
+    if (ptr + 4 > cacheData + cacheSize) return false;
+    uint32_t importCount = static_cast<uint32_t>(ptr[0]) |
+                            (static_cast<uint32_t>(ptr[1]) << 8) |
+                            (static_cast<uint32_t>(ptr[2]) << 16) |
+                            (static_cast<uint32_t>(ptr[3]) << 24);
+    ptr += 4;
+    for (uint32_t i = 0; i < importCount; i++) {
+        ptr += 4; // type
+        for (int j = 0; j < 3; j++) { // moduleRequest, importName, localName
+            if (ptr + 4 > cacheData + cacheSize) return false;
+            uint32_t len = static_cast<uint32_t>(ptr[0]) |
+                            (static_cast<uint32_t>(ptr[1]) << 8) |
+                            (static_cast<uint32_t>(ptr[2]) << 16) |
+                            (static_cast<uint32_t>(ptr[3]) << 24);
+            ptr += 4 + len;
+        }
+    }
+
+    // Skip export entries
+    if (ptr + 4 > cacheData + cacheSize) return false;
+    uint32_t exportCount = static_cast<uint32_t>(ptr[0]) |
+                            (static_cast<uint32_t>(ptr[1]) << 8) |
+                            (static_cast<uint32_t>(ptr[2]) << 16) |
+                            (static_cast<uint32_t>(ptr[3]) << 24);
+    ptr += 4;
+    for (uint32_t i = 0; i < exportCount; i++) {
+        ptr += 4; // type
+        for (int j = 0; j < 4; j++) { // exportName, moduleName, importName, localName
+            if (ptr + 4 > cacheData + cacheSize) return false;
+            uint32_t len = static_cast<uint32_t>(ptr[0]) |
+                            (static_cast<uint32_t>(ptr[1]) << 8) |
+                            (static_cast<uint32_t>(ptr[2]) << 16) |
+                            (static_cast<uint32_t>(ptr[3]) << 24);
+            ptr += 4 + len;
+        }
+    }
+
+    // Skip star exports
+    if (ptr + 4 > cacheData + cacheSize) return false;
+    uint32_t starExportCount = static_cast<uint32_t>(ptr[0]) |
+                                (static_cast<uint32_t>(ptr[1]) << 8) |
+                                (static_cast<uint32_t>(ptr[2]) << 16) |
+                                (static_cast<uint32_t>(ptr[3]) << 24);
+    ptr += 4;
+    for (uint32_t i = 0; i < starExportCount; i++) {
+        if (ptr + 4 > cacheData + cacheSize) return false;
+        uint32_t len = static_cast<uint32_t>(ptr[0]) |
+                        (static_cast<uint32_t>(ptr[1]) << 8) |
+                        (static_cast<uint32_t>(ptr[2]) << 16) |
+                        (static_cast<uint32_t>(ptr[3]) << 24);
+        ptr += 4 + len;
+    }
+
+    // Read bytecode size and pointer
+    if (ptr + 4 > cacheData + cacheSize) return false;
+    bytecodeSize = static_cast<uint32_t>(ptr[0]) |
+                    (static_cast<uint32_t>(ptr[1]) << 8) |
+                    (static_cast<uint32_t>(ptr[2]) << 16) |
+                    (static_cast<uint32_t>(ptr[3]) << 24);
+    ptr += 4;
+
+    if (ptr + bytecodeSize > cacheData + cacheSize) return false;
+    bytecodeStart = ptr;
+
+    return true;
+}
+
+// Helper functions for reading serialized data
+static uint32_t readUint32(const uint8_t*& ptr)
+{
+    uint32_t value = static_cast<uint32_t>(ptr[0]) |
+                     (static_cast<uint32_t>(ptr[1]) << 8) |
+                     (static_cast<uint32_t>(ptr[2]) << 16) |
+                     (static_cast<uint32_t>(ptr[3]) << 24);
+    ptr += 4;
+    return value;
+}
+
+static WTF::String readString(JSC::VM& vm, const uint8_t*& ptr)
+{
+    uint32_t length = readUint32(ptr);
+    if (length == 0)
+        return WTF::String();
+    WTF::String result = WTF::String::fromUTF8(std::span(ptr, length));
+    ptr += length;
+    return result;
+}
+
+// Structure to hold deserialized module metadata
+struct DeserializedModuleMetadata {
+    struct ModuleRequest {
+        WTF::String specifier;
+        // Attributes omitted for now
+    };
+
+    struct ImportEntry {
+        uint32_t type; // 0=Single, 1=SingleTypeScript, 2=Namespace
+        WTF::String moduleRequest;
+        WTF::String importName;
+        WTF::String localName;
+    };
+
+    struct ExportEntry {
+        uint32_t type; // 0=Local, 1=Indirect, 2=Namespace
+        WTF::String exportName;
+        WTF::String moduleName;
+        WTF::String importName;
+        WTF::String localName;
+    };
+
+    struct VariableEntry {
+        WTF::String name;
+        uint32_t bits;
+    };
+
+    Vector<ModuleRequest> requestedModules;
+    Vector<ImportEntry> importEntries;
+    Vector<ExportEntry> exportEntries;
+    Vector<WTF::String> starExports;
+    Vector<VariableEntry> declaredVariables;
+    Vector<VariableEntry> lexicalVariables;
+    uint32_t codeFeatures = 0;
+    const uint8_t* bytecodeStart = nullptr;
+    size_t bytecodeSize = 0;
+};
+
+// Validate and deserialize cached module metadata
+// Returns std::nullopt if cache is invalid
+static std::optional<DeserializedModuleMetadata> deserializeCachedModuleMetadata(
+    JSC::VM& vm,
+    const uint8_t* cacheData,
+    size_t cacheSize)
+{
+    if (cacheSize < 16) // At least magic + version + bytecode_offset + bytecode_size
+        return std::nullopt;
+
+    const uint8_t* ptr = cacheData;
+    const uint8_t* end = cacheData + cacheSize;
+
+    // Check magic number
+    uint32_t magic = readUint32(ptr);
+    if (magic != MODULE_CACHE_MAGIC)
+        return std::nullopt;
+
+    // Check version
+    uint32_t version = readUint32(ptr);
+    if (version != MODULE_CACHE_VERSION)
+        return std::nullopt;
+
+    // Read bytecode offset and size from header (v3 format)
+    uint32_t bytecodeOffset = readUint32(ptr);
+    uint32_t bytecodeSize = readUint32(ptr);
+
+    DeserializedModuleMetadata metadata;
+    metadata.bytecodeSize = bytecodeSize;
+    metadata.bytecodeStart = cacheData + bytecodeOffset;
+
+    // Read requested modules
+    if (ptr + 4 > end) return std::nullopt;
+    uint32_t moduleCount = readUint32(ptr);
+    metadata.requestedModules.reserveInitialCapacity(moduleCount);
+
+    for (uint32_t i = 0; i < moduleCount; ++i) {
+        if (ptr >= end) return std::nullopt;
+        WTF::String specifier = readString(vm, ptr);
+
+        // Read has_attributes flag
+        if (ptr + 4 > end) return std::nullopt;
+        uint32_t hasAttributes = readUint32(ptr);
+
+        if (hasAttributes) {
+            // Skip attributes for now
+            if (ptr + 4 > end) return std::nullopt;
+            uint32_t attrCount = readUint32(ptr);
+            for (uint32_t j = 0; j < attrCount; ++j) {
+                if (ptr >= end) return std::nullopt;
+                readString(vm, ptr); // key
+                readString(vm, ptr); // value
+            }
+        }
+
+        metadata.requestedModules.append({ WTFMove(specifier) });
+    }
+
+    // Read import entries
+    if (ptr + 4 > end) return std::nullopt;
+    uint32_t importCount = readUint32(ptr);
+    metadata.importEntries.reserveInitialCapacity(importCount);
+
+    for (uint32_t i = 0; i < importCount; ++i) {
+        if (ptr + 4 > end) return std::nullopt;
+        uint32_t type = readUint32(ptr);
+
+        if (ptr >= end) return std::nullopt;
+        WTF::String moduleRequest = readString(vm, ptr);
+        WTF::String importName = readString(vm, ptr);
+        WTF::String localName = readString(vm, ptr);
+
+        metadata.importEntries.append({
+            type,
+            WTFMove(moduleRequest),
+            WTFMove(importName),
+            WTFMove(localName)
+        });
+    }
+
+    // Read export entries
+    if (ptr + 4 > end) return std::nullopt;
+    uint32_t exportCount = readUint32(ptr);
+    metadata.exportEntries.reserveInitialCapacity(exportCount);
+
+    for (uint32_t i = 0; i < exportCount; ++i) {
+        if (ptr + 4 > end) return std::nullopt;
+        uint32_t type = readUint32(ptr);
+
+        if (ptr >= end) return std::nullopt;
+        WTF::String exportName = readString(vm, ptr);
+        WTF::String moduleName = readString(vm, ptr);
+        WTF::String importName = readString(vm, ptr);
+        WTF::String localName = readString(vm, ptr);
+
+        metadata.exportEntries.append({
+            type,
+            WTFMove(exportName),
+            WTFMove(moduleName),
+            WTFMove(importName),
+            WTFMove(localName)
+        });
+    }
+
+    // Read star exports
+    if (ptr + 4 > end) return std::nullopt;
+    uint32_t starExportCount = readUint32(ptr);
+    metadata.starExports.reserveInitialCapacity(starExportCount);
+
+    for (uint32_t i = 0; i < starExportCount; ++i) {
+        if (ptr >= end) return std::nullopt;
+        metadata.starExports.append(readString(vm, ptr));
+    }
+
+    // Read declared variables (v3+)
+    if (ptr + 4 > end) return std::nullopt;
+    uint32_t declaredVarCount = readUint32(ptr);
+    metadata.declaredVariables.reserveInitialCapacity(declaredVarCount);
+
+    for (uint32_t i = 0; i < declaredVarCount; ++i) {
+        if (ptr >= end) return std::nullopt;
+        WTF::String name = readString(vm, ptr);
+        if (ptr + 4 > end) return std::nullopt;
+        uint32_t bits = readUint32(ptr);
+        metadata.declaredVariables.append({ WTFMove(name), bits });
+    }
+
+    // Read lexical variables (v3+)
+    if (ptr + 4 > end) return std::nullopt;
+    uint32_t lexicalVarCount = readUint32(ptr);
+    metadata.lexicalVariables.reserveInitialCapacity(lexicalVarCount);
+
+    for (uint32_t i = 0; i < lexicalVarCount; ++i) {
+        if (ptr >= end) return std::nullopt;
+        WTF::String name = readString(vm, ptr);
+        if (ptr + 4 > end) return std::nullopt;
+        uint32_t bits = readUint32(ptr);
+        metadata.lexicalVariables.append({ WTFMove(name), bits });
+    }
+
+    // Read code features (v3+)
+    if (ptr + 4 > end) return std::nullopt;
+    metadata.codeFeatures = readUint32(ptr);
+
+    // bytecodeStart and bytecodeSize are already set from header
+
+    return metadata;
+}
+
 Ref<SourceProvider> SourceProvider::create(
     Zig::GlobalObject* globalObject,
     ResolvedSource& resolvedSource,
@@ -104,6 +493,97 @@ Ref<SourceProvider> SourceProvider::create(
                 // no-op, for bun build --compile.
             };
             const auto destructor = resolvedSource.needsDeref ? destructorPtr : destructorNoOp;
+
+            uint8_t* bytecodeData = resolvedSource.bytecode_cache;
+            size_t bytecodeSize = resolvedSource.bytecode_cache_size;
+
+            // Check if this is BMES format (ESM bytecode with metadata)
+            // BMES format starts with magic number 0x424D4553 ("BMES")
+            const uint8_t* extractedBytecodeStart = nullptr;
+            size_t extractedBytecodeSize = 0;
+            if (extractBytecodeFromBMES(bytecodeData, bytecodeSize, extractedBytecodeStart, extractedBytecodeSize)) {
+                // This is BMES format - use zero-copy approach
+                // Keep the original buffer alive, use span pointing to bytecode section
+                // The destructor will free the original BMES buffer when the bytecode is no longer needed
+
+                // Store the original buffer pointer for the destructor
+                uint8_t* originalBuffer = bytecodeData;
+                bool needsDeref = resolvedSource.needsDeref;
+
+                // Create a destructor that frees the original BMES buffer (not the span pointer)
+                WTF::Function<void(const void*)> bmesDestructor = needsDeref
+                    ? WTF::Function<void(const void*)>([originalBuffer](const void*) {
+                        mi_free(originalBuffer);
+                    })
+                    : WTF::Function<void(const void*)>([](const void*) {
+                        // no-op for bun build --compile
+                    });
+
+                // Create CachedBytecode with span pointing directly into BMES buffer
+                Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(
+                    std::span<uint8_t>(const_cast<uint8_t*>(extractedBytecodeStart), extractedBytecodeSize),
+                    WTFMove(bmesDestructor), {});
+
+                auto provider = adoptRef(*new SourceProvider(
+                    globalObject->isThreadLocalDefaultGlobalObject ? globalObject : nullptr,
+                    resolvedSource,
+                    string.isNull() ? *StringImpl::empty() : *string.impl(),
+                    JSC::SourceTaintedOrigin::Untainted,
+                    toSourceOrigin(sourceURLString, isBuiltin),
+                    sourceURLString.impl(), TextPosition(),
+                    sourceType));
+                provider->m_cachedBytecode = WTFMove(bytecode);
+
+                // Also deserialize module metadata from BMES v3+
+                auto deserializedMetadata = deserializeCachedModuleMetadata(globalObject->vm(), bytecodeData, bytecodeSize);
+                if (deserializedMetadata) {
+                    // Convert DeserializedModuleMetadata to CachedModuleMetadata
+                    CachedModuleMetadata cachedMetadata;
+                    cachedMetadata.requestedModules.reserveInitialCapacity(deserializedMetadata->requestedModules.size());
+                    for (const auto& req : deserializedMetadata->requestedModules) {
+                        cachedMetadata.requestedModules.append({ req.specifier });
+                    }
+
+                    cachedMetadata.importEntries.reserveInitialCapacity(deserializedMetadata->importEntries.size());
+                    for (const auto& entry : deserializedMetadata->importEntries) {
+                        cachedMetadata.importEntries.append({
+                            entry.type,
+                            entry.moduleRequest,
+                            entry.importName,
+                            entry.localName
+                        });
+                    }
+
+                    cachedMetadata.exportEntries.reserveInitialCapacity(deserializedMetadata->exportEntries.size());
+                    for (const auto& entry : deserializedMetadata->exportEntries) {
+                        cachedMetadata.exportEntries.append({
+                            entry.type,
+                            entry.exportName,
+                            entry.moduleName,
+                            entry.importName,
+                            entry.localName
+                        });
+                    }
+
+                    cachedMetadata.starExports = WTFMove(deserializedMetadata->starExports);
+
+                    cachedMetadata.declaredVariables.reserveInitialCapacity(deserializedMetadata->declaredVariables.size());
+                    for (const auto& entry : deserializedMetadata->declaredVariables) {
+                        cachedMetadata.declaredVariables.append({ entry.name, entry.bits });
+                    }
+
+                    cachedMetadata.lexicalVariables.reserveInitialCapacity(deserializedMetadata->lexicalVariables.size());
+                    for (const auto& entry : deserializedMetadata->lexicalVariables) {
+                        cachedMetadata.lexicalVariables.append({ entry.name, entry.bits });
+                    }
+
+                    cachedMetadata.codeFeatures = deserializedMetadata->codeFeatures;
+
+                    provider->m_cachedModuleMetadata = WTFMove(cachedMetadata);
+                }
+
+                return provider;
+            }
 
             Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size), destructor, {});
             auto provider = adoptRef(*new SourceProvider(
@@ -214,8 +694,7 @@ static JSC::VM& getVMForBytecodeCache()
 // [4 bytes: BYTECODE_SIZE]
 // [BYTECODE_SIZE bytes: BYTECODE_DATA]
 
-static constexpr uint32_t MODULE_CACHE_MAGIC = 0x424D4553; // "BMES"
-static constexpr uint32_t MODULE_CACHE_VERSION = 1;
+// MODULE_CACHE_MAGIC and MODULE_CACHE_VERSION are defined at the top of this file
 
 static void writeUint32(Vector<uint8_t>& buffer, uint32_t value)
 {
@@ -236,177 +715,8 @@ static void writeString(Vector<uint8_t>& buffer, const WTF::String& str)
     buffer.appendVector(Vector<uint8_t>(std::span(reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length())));
 }
 
-static uint32_t readUint32(const uint8_t*& ptr)
-{
-    uint32_t value = static_cast<uint32_t>(ptr[0]) |
-                     (static_cast<uint32_t>(ptr[1]) << 8) |
-                     (static_cast<uint32_t>(ptr[2]) << 16) |
-                     (static_cast<uint32_t>(ptr[3]) << 24);
-    ptr += 4;
-    return value;
-}
-
-static WTF::String readString(JSC::VM& vm, const uint8_t*& ptr)
-{
-    uint32_t length = readUint32(ptr);
-    if (length == 0)
-        return WTF::String();
-    WTF::String result = WTF::String::fromUTF8(std::span(ptr, length));
-    ptr += length;
-    return result;
-}
-
-// Structure to hold deserialized module metadata
-struct DeserializedModuleMetadata {
-    struct ModuleRequest {
-        WTF::String specifier;
-        // Attributes omitted for now
-    };
-
-    struct ImportEntry {
-        uint32_t type; // 0=Single, 1=SingleTypeScript, 2=Namespace
-        WTF::String moduleRequest;
-        WTF::String importName;
-        WTF::String localName;
-    };
-
-    struct ExportEntry {
-        uint32_t type; // 0=Local, 1=Indirect, 2=Namespace
-        WTF::String exportName;
-        WTF::String moduleName;
-        WTF::String importName;
-        WTF::String localName;
-    };
-
-    Vector<ModuleRequest> requestedModules;
-    Vector<ImportEntry> importEntries;
-    Vector<ExportEntry> exportEntries;
-    Vector<WTF::String> starExports;
-    const uint8_t* bytecodeStart;
-    size_t bytecodeSize;
-};
-
-// Validate and deserialize cached module metadata
-// Returns nullptr if cache is invalid
-static std::optional<DeserializedModuleMetadata> deserializeCachedModuleMetadata(
-    JSC::VM& vm,
-    const uint8_t* cacheData,
-    size_t cacheSize)
-{
-    if (cacheSize < 8) // At least magic + version
-        return std::nullopt;
-
-    const uint8_t* ptr = cacheData;
-    const uint8_t* end = cacheData + cacheSize;
-
-    // Check magic number
-    uint32_t magic = readUint32(ptr);
-    if (magic != MODULE_CACHE_MAGIC)
-        return std::nullopt;
-
-    // Check version
-    uint32_t version = readUint32(ptr);
-    if (version != MODULE_CACHE_VERSION)
-        return std::nullopt;
-
-    DeserializedModuleMetadata metadata;
-
-    // Read requested modules
-    if (ptr + 4 > end) return std::nullopt;
-    uint32_t moduleCount = readUint32(ptr);
-    metadata.requestedModules.reserveInitialCapacity(moduleCount);
-
-    for (uint32_t i = 0; i < moduleCount; ++i) {
-        if (ptr >= end) return std::nullopt;
-        WTF::String specifier = readString(vm, ptr);
-
-        // Read has_attributes flag
-        if (ptr + 4 > end) return std::nullopt;
-        uint32_t hasAttributes = readUint32(ptr);
-
-        if (hasAttributes) {
-            // Skip attributes for now
-            if (ptr + 4 > end) return std::nullopt;
-            uint32_t attrCount = readUint32(ptr);
-            for (uint32_t j = 0; j < attrCount; ++j) {
-                if (ptr >= end) return std::nullopt;
-                readString(vm, ptr); // key
-                readString(vm, ptr); // value
-            }
-        }
-
-        metadata.requestedModules.append({ WTFMove(specifier) });
-    }
-
-    // Read import entries
-    if (ptr + 4 > end) return std::nullopt;
-    uint32_t importCount = readUint32(ptr);
-    metadata.importEntries.reserveInitialCapacity(importCount);
-
-    for (uint32_t i = 0; i < importCount; ++i) {
-        if (ptr + 4 > end) return std::nullopt;
-        uint32_t type = readUint32(ptr);
-
-        if (ptr >= end) return std::nullopt;
-        WTF::String moduleRequest = readString(vm, ptr);
-        WTF::String importName = readString(vm, ptr);
-        WTF::String localName = readString(vm, ptr);
-
-        metadata.importEntries.append({
-            type,
-            WTFMove(moduleRequest),
-            WTFMove(importName),
-            WTFMove(localName)
-        });
-    }
-
-    // Read export entries
-    if (ptr + 4 > end) return std::nullopt;
-    uint32_t exportCount = readUint32(ptr);
-    metadata.exportEntries.reserveInitialCapacity(exportCount);
-
-    for (uint32_t i = 0; i < exportCount; ++i) {
-        if (ptr + 4 > end) return std::nullopt;
-        uint32_t type = readUint32(ptr);
-
-        if (ptr >= end) return std::nullopt;
-        WTF::String exportName = readString(vm, ptr);
-        WTF::String moduleName = readString(vm, ptr);
-        WTF::String importName = readString(vm, ptr);
-        WTF::String localName = readString(vm, ptr);
-
-        metadata.exportEntries.append({
-            type,
-            WTFMove(exportName),
-            WTFMove(moduleName),
-            WTFMove(importName),
-            WTFMove(localName)
-        });
-    }
-
-    // Read star exports
-    if (ptr + 4 > end) return std::nullopt;
-    uint32_t starExportCount = readUint32(ptr);
-    metadata.starExports.reserveInitialCapacity(starExportCount);
-
-    for (uint32_t i = 0; i < starExportCount; ++i) {
-        if (ptr >= end) return std::nullopt;
-        metadata.starExports.append(readString(vm, ptr));
-    }
-
-    // Read bytecode size
-    if (ptr + 4 > end) return std::nullopt;
-    uint32_t bytecodeSize = readUint32(ptr);
-
-    if (ptr + bytecodeSize > end) return std::nullopt;
-
-    metadata.bytecodeStart = ptr;
-    metadata.bytecodeSize = bytecodeSize;
-
-    return metadata;
-}
-
 // Check if cached metadata is valid for given source
+// Only accepts v3 format (with VariableEnvironment and CodeFeatures)
 extern "C" bool validateCachedModuleMetadata(
     const uint8_t* cacheData,
     size_t cacheSize)
@@ -421,15 +731,16 @@ extern "C" bool validateCachedModuleMetadata(
     if (magic != MODULE_CACHE_MAGIC)
         return false;
 
-    // Check version
+    // Check version - only accept v3
     uint32_t version = readUint32(ptr);
-    if (version != MODULE_CACHE_VERSION)
+    if (version != 3)
         return false;
 
     return true;
 }
 
 // New function: Generate cached bytecode WITH module metadata
+// Uses BMES v2 format with bytecode offset in header for O(1) extraction
 extern "C" bool generateCachedModuleByteCodeWithMetadata(
     BunString* sourceProviderURL,
     const Latin1Character* inputSourceCode,
@@ -476,13 +787,35 @@ extern "C" bool generateCachedModuleByteCodeWithMetadata(
 
     JSModuleRecord* moduleRecord = *result;
 
-    // Serialize module metadata
+    // Generate bytecode first to know its size
+    UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = recursivelyGenerateUnlinkedCodeBlockForModuleProgram(
+        vm, sourceCode, StrictModeLexicallyScopedFeature, JSParserScriptMode::Module,
+        {}, parserError, EvalContextType::None
+    );
+
+    if (parserError.isValid() || !unlinkedCodeBlock)
+        return false;
+
+    auto key = sourceCodeKeyForSerializedModule(vm, sourceCode);
+    RefPtr<CachedBytecode> bytecodeCache = encodeCodeBlock(vm, key, unlinkedCodeBlock);
+
+    if (!bytecodeCache)
+        return false;
+
+    // BMES v2 Format:
+    // [4 bytes: MAGIC] [4 bytes: VERSION] [4 bytes: BYTECODE_OFFSET] [4 bytes: BYTECODE_SIZE]
+    // [... metadata ...]
+    // [BYTECODE_SIZE bytes: BYTECODE_DATA]
+
     Vector<uint8_t> metadataBuffer;
     metadataBuffer.reserveInitialCapacity(4096);
 
-    // Write magic and version
+    // Write header - offset and size will be filled in later
     writeUint32(metadataBuffer, MODULE_CACHE_MAGIC);
-    writeUint32(metadataBuffer, MODULE_CACHE_VERSION);
+    writeUint32(metadataBuffer, MODULE_CACHE_VERSION);  // Version 2
+    size_t offsetPosition = metadataBuffer.size();
+    writeUint32(metadataBuffer, 0);  // Placeholder for bytecode offset
+    writeUint32(metadataBuffer, static_cast<uint32_t>(bytecodeCache->span().size()));  // Bytecode size
 
     // Serialize requested modules
     const auto& requestedModules = moduleRecord->requestedModules();
@@ -533,23 +866,45 @@ extern "C" bool generateCachedModuleByteCodeWithMetadata(
         writeString(metadataBuffer, *moduleName);
     }
 
-    // Generate bytecode
-    UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = recursivelyGenerateUnlinkedCodeBlockForModuleProgram(
-        vm, sourceCode, StrictModeLexicallyScopedFeature, JSParserScriptMode::Module,
-        {}, parserError, EvalContextType::None
-    );
+    // Serialize declared variables (from ModuleProgramNode)
+    const auto& declaredVars = moduleProgramNode->varDeclarations();
+    writeUint32(metadataBuffer, declaredVars.size());
+    for (const auto& entry : declaredVars) {
+        writeString(metadataBuffer, String(entry.key.get()));
+        writeUint32(metadataBuffer, entry.value.bits());
+    }
 
-    if (parserError.isValid() || !unlinkedCodeBlock)
-        return false;
+    // Serialize lexical variables (from ModuleProgramNode)
+    const auto& lexicalVars = moduleProgramNode->lexicalVariables();
+    writeUint32(metadataBuffer, lexicalVars.size());
+    for (const auto& entry : lexicalVars) {
+        writeString(metadataBuffer, String(entry.key.get()));
+        writeUint32(metadataBuffer, entry.value.bits());
+    }
 
-    auto key = sourceCodeKeyForSerializedModule(vm, sourceCode);
-    RefPtr<CachedBytecode> bytecodeCache = encodeCodeBlock(vm, key, unlinkedCodeBlock);
+    // Serialize code features
+    writeUint32(metadataBuffer, static_cast<uint32_t>(moduleProgramNode->features()));
 
-    if (!bytecodeCache)
-        return false;
+    // Align bytecode offset to 8-byte boundary for JSC's CachedBytecode requirements
+    size_t currentSize = metadataBuffer.size();
+    size_t alignedOffset = (currentSize + 7) & ~static_cast<size_t>(7);
+    size_t paddingNeeded = alignedOffset - currentSize;
 
-    // Write bytecode size and data
-    writeUint32(metadataBuffer, bytecodeCache->span().size());
+    // Add padding bytes
+    for (size_t i = 0; i < paddingNeeded; ++i) {
+        metadataBuffer.append(0);
+    }
+
+    // Record bytecode offset (now aligned to 8-byte boundary)
+    uint32_t bytecodeOffset = static_cast<uint32_t>(metadataBuffer.size());
+
+    // Write bytecode offset back into header
+    metadataBuffer[offsetPosition] = static_cast<uint8_t>(bytecodeOffset & 0xFF);
+    metadataBuffer[offsetPosition + 1] = static_cast<uint8_t>((bytecodeOffset >> 8) & 0xFF);
+    metadataBuffer[offsetPosition + 2] = static_cast<uint8_t>((bytecodeOffset >> 16) & 0xFF);
+    metadataBuffer[offsetPosition + 3] = static_cast<uint8_t>((bytecodeOffset >> 24) & 0xFF);
+
+    // Append bytecode data
     metadataBuffer.appendVector(Vector<uint8_t>(bytecodeCache->span()));
 
     // Create final cached bytecode
@@ -776,6 +1131,147 @@ int SourceProvider::readCache(JSC::VM& vm, const JSC::SourceCode& sourceCode)
 extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider)
 {
     return Bun::toStringView(provider->source());
+}
+
+JSC::JSModuleRecord* SourceProvider::createModuleRecordFromCache(
+    JSC::JSGlobalObject* globalObject,
+    const JSC::Identifier& moduleKey)
+{
+    if (!m_cachedModuleMetadata.has_value()) {
+        return nullptr;
+    }
+
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    const auto& metadata = m_cachedModuleMetadata.value();
+
+    // Helper lambda to set VariableEnvironmentEntry bits
+    // Set flags individually to be compatible with both prebuilt and local JSC
+    auto setEntryBits = [](JSC::VariableEnvironmentEntry& varEntry, uint32_t bits) {
+        // These bit positions match VariableEnvironmentEntry::Traits enum
+        if (bits & (1 << 0)) varEntry.setIsCaptured();
+        if (bits & (1 << 1)) varEntry.setIsConst();
+        if (bits & (1 << 2)) varEntry.setIsVar();
+        if (bits & (1 << 3)) varEntry.setIsLet();
+        if (bits & (1 << 4)) varEntry.setIsExported();
+        if (bits & (1 << 5)) varEntry.setIsImported();
+        if (bits & (1 << 6)) varEntry.setIsImportedNamespace();
+        if (bits & (1 << 7)) varEntry.setIsFunction();
+        if (bits & (1 << 8)) varEntry.setIsParameter();
+        if (bits & (1 << 9)) varEntry.setIsSloppyModeHoistedFunction();
+        if (bits & (1 << 10)) varEntry.setIsPrivateField();
+        if (bits & (1 << 11)) varEntry.setIsPrivateMethod();
+        if (bits & (1 << 12)) varEntry.setIsPrivateGetter();
+        if (bits & (1 << 13)) varEntry.setIsPrivateSetter();
+    };
+
+    // Build VariableEnvironment for declared variables
+    JSC::VariableEnvironment declaredVariables;
+    for (const auto& entry : metadata.declaredVariables) {
+        auto identifier = JSC::Identifier::fromString(vm, entry.name);
+        auto result = declaredVariables.add(identifier);
+        setEntryBits(result.iterator->value, entry.bits);
+    }
+
+    // Build VariableEnvironment for lexical variables
+    JSC::VariableEnvironment lexicalVariables;
+    for (const auto& entry : metadata.lexicalVariables) {
+        auto identifier = JSC::Identifier::fromString(vm, entry.name);
+        auto result = lexicalVariables.add(identifier);
+        setEntryBits(result.iterator->value, entry.bits);
+    }
+
+    // Create SourceCode
+    JSC::SourceCode sourceCode(this, 0, source().length(), 0, 0);
+
+    // Get the structure for JSModuleRecord
+    JSC::Structure* moduleRecordStructure = globalObject->moduleRecordStructure();
+    if (!moduleRecordStructure) {
+        return nullptr;
+    }
+
+    // Create JSModuleRecord
+    JSC::JSModuleRecord* moduleRecord = JSC::JSModuleRecord::create(
+        globalObject,
+        vm,
+        moduleRecordStructure,
+        moduleKey,
+        sourceCode,
+        declaredVariables,
+        lexicalVariables,
+        static_cast<JSC::CodeFeatures>(metadata.codeFeatures)
+    );
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    if (!moduleRecord) {
+        return nullptr;
+    }
+
+    // Add requested modules
+    for (const auto& request : metadata.requestedModules) {
+        auto specifier = JSC::Identifier::fromString(vm, request.specifier);
+        moduleRecord->appendRequestedModule(specifier, nullptr);
+    }
+
+    // Add import entries
+    for (const auto& entry : metadata.importEntries) {
+        JSC::AbstractModuleRecord::ImportEntry importEntry;
+        switch (entry.type) {
+        case 0:
+            importEntry.type = JSC::AbstractModuleRecord::ImportEntryType::Single;
+            break;
+        case 1:
+#if USE(BUN_JSC_ADDITIONS)
+            importEntry.type = JSC::AbstractModuleRecord::ImportEntryType::SingleTypeScript;
+            break;
+#else
+            importEntry.type = JSC::AbstractModuleRecord::ImportEntryType::Single;
+            break;
+#endif
+        case 2:
+        default:
+            importEntry.type = JSC::AbstractModuleRecord::ImportEntryType::Namespace;
+            break;
+        }
+        // Use empty identifier for null strings to avoid crash
+        importEntry.moduleRequest = entry.moduleRequest.isNull() ? JSC::Identifier() : JSC::Identifier::fromString(vm, entry.moduleRequest);
+        importEntry.importName = entry.importName.isNull() ? JSC::Identifier() : JSC::Identifier::fromString(vm, entry.importName);
+        importEntry.localName = entry.localName.isNull() ? JSC::Identifier() : JSC::Identifier::fromString(vm, entry.localName);
+        moduleRecord->addImportEntry(importEntry);
+    }
+
+    // Add export entries
+    for (const auto& entry : metadata.exportEntries) {
+        JSC::AbstractModuleRecord::ExportEntry exportEntry;
+        // Use empty identifier for null strings to avoid crash
+        auto exportName = entry.exportName.isNull() ? JSC::Identifier() : JSC::Identifier::fromString(vm, entry.exportName);
+        auto moduleName = entry.moduleName.isNull() ? JSC::Identifier() : JSC::Identifier::fromString(vm, entry.moduleName);
+        auto importName = entry.importName.isNull() ? JSC::Identifier() : JSC::Identifier::fromString(vm, entry.importName);
+        auto localName = entry.localName.isNull() ? JSC::Identifier() : JSC::Identifier::fromString(vm, entry.localName);
+
+        switch (entry.type) {
+        case 0:
+            exportEntry = JSC::AbstractModuleRecord::ExportEntry::createLocal(exportName, localName);
+            break;
+        case 1:
+            exportEntry = JSC::AbstractModuleRecord::ExportEntry::createIndirect(exportName, importName, moduleName);
+            break;
+        case 2:
+        default:
+            exportEntry = JSC::AbstractModuleRecord::ExportEntry::createNamespace(exportName, moduleName);
+            break;
+        }
+        moduleRecord->addExportEntry(exportEntry);
+    }
+
+    // Add star exports
+    for (const auto& specifier : metadata.starExports) {
+        auto identifier = JSC::Identifier::fromString(vm, specifier);
+        moduleRecord->addStarExportEntry(identifier);
+    }
+
+    return moduleRecord;
 }
 
 }; // namespace Zig

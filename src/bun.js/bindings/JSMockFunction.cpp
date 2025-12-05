@@ -28,8 +28,6 @@
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
 
-BUN_DECLARE_HOST_FUNCTION(JSMock__jsUseFakeTimers);
-BUN_DECLARE_HOST_FUNCTION(JSMock__jsUseRealTimers);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsNow);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsSetSystemTime);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsRestoreAllMocks);
@@ -380,6 +378,9 @@ public:
                 if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target)) {
                     moduleNamespaceObject->overrideExportValue(moduleNamespaceObject->globalObject(), this->spyIdentifier, implValue);
                 }
+            } else if (auto index = parseIndex(this->spyIdentifier)) {
+                // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
+                target->putDirectIndex(globalObject(), *index, implValue, this->spyAttributes, PutDirectIndexLikePutDirect);
             } else {
                 target->putDirect(this->vm(), this->spyIdentifier, implValue, this->spyAttributes);
             }
@@ -1418,16 +1419,22 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
 using namespace Bun;
 using namespace JSC;
 
-// This is a stub. Exists so that the same code can be run in Jest
-BUN_DEFINE_HOST_FUNCTION(JSMock__jsUseFakeTimers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
-{
-    return JSValue::encode(callframe->thisValue());
-}
-
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsUseRealTimers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     globalObject->overridenDateNow = -1;
     return JSValue::encode(callframe->thisValue());
+}
+
+// Helper function for Zig to set the overriden Date.now() time
+extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__setOverridenDateNow(JSC::JSGlobalObject* globalObject, double time_ms)
+{
+    globalObject->overridenDateNow = time_ms;
+}
+
+// Helper function for Zig to get the current Unix epoch time in milliseconds
+extern "C" [[ZIG_EXPORT(nothrow)]] double JSMock__getCurrentUnixTimeMs()
+{
+    return WTF::WallTime::now().secondsSinceEpoch().milliseconds();
 }
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsNow, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
@@ -1528,6 +1535,9 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
+            } else if (auto index = parseIndex(propertyKey)) {
+                // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
+                object->putDirectIndex(globalObject, *index, mock, attributes, PutDirectIndexLikePutDirect);
             } else {
                 object->putDirect(vm, propertyKey, mock, attributes);
             }
@@ -1544,6 +1554,9 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
+            } else if (auto index = parseIndex(propertyKey)) {
+                // For indexed properties, set the mock directly instead of wrapping in GetterSetter
+                object->putDirectIndex(globalObject, *index, mock, attributes, PutDirectIndexLikePutDirect);
             } else {
                 object->putDirectAccessor(globalObject, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes);
             }

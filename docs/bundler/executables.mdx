@@ -118,7 +118,7 @@ These constants are embedded directly into your compiled binary at build time, p
 
 <Note>
   For comprehensive examples and advanced patterns, see the [Build-time constants
-  guide](https://bun.com/guides/runtime/build-time-constants).
+  guide](/guides/runtime/build-time-constants).
 </Note>
 
 ---
@@ -179,6 +179,35 @@ bun build --compile --compile-exec-argv="--smol --user-agent=MyBot" ./app.ts --o
 ```ts app.ts icon="/icons/typescript.svg"
 // In the compiled app
 console.log(process.execArgv); // ["--smol", "--user-agent=MyBot"]
+```
+
+---
+
+## Disabling automatic config loading
+
+By default, standalone executables look for `.env` and `bunfig.toml` files in the directory where the executable is run. You can disable this behavior at build time for deterministic execution regardless of the user's working directory.
+
+```bash icon="terminal" terminal
+# Disable .env loading
+bun build --compile --no-compile-autoload-dotenv ./app.ts --outfile myapp
+
+# Disable bunfig.toml loading
+bun build --compile --no-compile-autoload-bunfig ./app.ts --outfile myapp
+
+# Disable both
+bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig ./app.ts --outfile myapp
+```
+
+You can also configure this via the JavaScript API:
+
+```ts
+await Bun.build({
+  entrypoints: ["./app.ts"],
+  compile: {
+    autoloadDotenv: false, // Disable .env loading
+    autoloadBunfig: false, // Disable bunfig.toml loading
+  },
+});
 ```
 
 ---
@@ -259,12 +288,12 @@ console.log(`Server running at http://localhost:${server.port}`);
   </head>
   <body>
     <h1>Hello World</h1>
-    <script src="./app.js"></script>
+    <script src="./app.ts"></script>
   </body>
 </html>
 ```
 
-```ts app.js icon="file-code"
+```ts app.ts icon="file-code"
 console.log("Hello from the client!");
 ```
 
@@ -383,7 +412,9 @@ const bytes = await file(icon).arrayBuffer();
 
 ### Embed SQLite databases
 
-If your application wants to embed a SQLite database, set `type: "sqlite"` in the import attribute and the `embed` attribute to `"true"`.
+If your application wants to embed a SQLite database into the compiled executable, set `type: "sqlite"` in the import attribute and the `embed` attribute to `"true"`.
+
+The database file must already exist on disk. Then, import it in your code:
 
 ```ts index.ts icon="/icons/typescript.svg"
 import myEmbeddedDb from "./my.db" with { type: "sqlite", embed: "true" };
@@ -391,7 +422,19 @@ import myEmbeddedDb from "./my.db" with { type: "sqlite", embed: "true" };
 console.log(myEmbeddedDb.query("select * from users LIMIT 1").get());
 ```
 
-This database is read-write, but all changes are lost when the executable exits (since it's stored in memory).
+Finally, compile it into a standalone executable:
+
+```bash terminal icon="terminal"
+bun build --compile ./index.ts --outfile mycli
+```
+
+<Note>
+  The database file must exist on disk when you run `bun build --compile`. The `embed: "true"` attribute tells the
+  bundler to include the database contents inside the compiled executable. When running normally with `bun run`, the
+  database file is loaded from disk just like a regular SQLite import.
+</Note>
+
+In the compiled executable, the embedded database is read-write, but all changes are lost when the executable exits (since it's stored in memory).
 
 ### Embed N-API Addons
 

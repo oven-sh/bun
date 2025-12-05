@@ -107,7 +107,9 @@ Bun supports the following loaders:
 
 ### `telemetry`
 
-The `telemetry` field permit to enable/disable the analytics records. Bun records bundle timings (so we can answer with data, "is Bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it's not a lot of data. By default the telemetry is enabled. Equivalent of `DO_NOT_TRACK` env variable.
+The `telemetry` field is used to enable/disable analytics. By default, telemetry is enabled. This is equivalent to the `DO_NOT_TRACK` environment variable.
+
+Currently we do not collect telemetry and this setting is only used for enabling/disabling anonymous crash reports, but in the future we plan to collect information like which Bun APIs are used most or how long `bun build` takes.
 
 ```toml title="bunfig.toml" icon="settings"
 telemetry = false
@@ -452,8 +454,8 @@ To configure the directory where Bun installs globally installed binaries and CL
 Environment variable: `BUN_INSTALL_BIN`
 
 ```toml title="bunfig.toml" icon="settings"
-# where globally-installed package bins are linked
 [install]
+# where globally-installed package bins are linked
 globalBinDir = "~/.bun/bin"
 ```
 
@@ -584,6 +586,32 @@ editor = "code"
 # - "vim","vi"
 # - "emacs"
 ```
+
+### `install.security.scanner`
+
+Configure a security scanner to scan packages for vulnerabilities before installation.
+
+First, install a security scanner from npm:
+
+```bash terminal icon="terminal"
+bun add -d @acme/bun-security-scanner
+```
+
+Then configure it in your `bunfig.toml`:
+
+```toml bunfig.toml icon="settings"
+[install.security]
+scanner = "@acme/bun-security-scanner"
+```
+
+When a security scanner is configured:
+
+- Auto-install is automatically disabled for security
+- Packages are scanned before installation
+- Installation is cancelled if fatal issues are found
+- Security warnings are displayed during installation
+
+Learn more about [using and writing security scanners](/pm/security-scanner-api).
 
 ### `install.minimumReleaseAge`
 

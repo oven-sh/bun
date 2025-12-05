@@ -1049,6 +1049,7 @@ pub const FetchTasklet = struct {
             fetch_options.redirect_type,
             .{
                 .http_proxy = proxy,
+                .proxy_headers = fetch_options.proxy_headers,
                 .hostname = fetch_options.hostname,
                 .signals = fetch_tasklet.signals,
                 .unix_socket_path = fetch_options.unix_socket_path,
@@ -1222,6 +1223,7 @@ pub const FetchTasklet = struct {
         verbose: http.HTTPVerboseLevel = .none,
         redirect_type: FetchRedirect = FetchRedirect.follow,
         proxy: ?ZigURL = null,
+        proxy_headers: ?Headers = null,
         url_proxy_buffer: []const u8 = "",
         signal: ?*jsc.WebCore.AbortSignal = null,
         globalThis: ?*JSGlobalObject,

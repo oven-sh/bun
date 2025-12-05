@@ -92,6 +92,10 @@
     "machine:linux:amazonlinux": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=linux --distro=amazonlinux --release=2023",
     "machine:windows:2019": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=windows --release=2019",
     "machine:freebsd": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=freebsd --release=14.3",
+    "machine:macos:13": "./scripts/machine.mjs ssh --cloud=tart --arch=arm64 --os=darwin --distro=macos --release=13",
+    "machine:macos:14": "./scripts/machine.mjs ssh --cloud=tart --arch=arm64 --os=darwin --distro=macos --release=14",
+    "machine:macos:15": "./scripts/machine.mjs ssh --cloud=tart --arch=arm64 --os=darwin --distro=macos --release=15",
+    "machine:macos:26": "./scripts/machine.mjs ssh --cloud=tart --arch=arm64 --os=darwin --distro=macos --release=26",
     "sync-webkit-source": "bun ./scripts/sync-webkit-source.ts"
   }
 }

@@ -1,5 +1,5 @@
 import { inspect } from "node:util";
-import { isPrivileged, spawnSafe, which } from "./utils.mjs";
+import { isPrivileged, spawnSafe, spawnScp, spawnSshSafe, which } from "./utils.mjs";
 
 /**
  * @link https://tart.run/
@@ -48,6 +48,7 @@ export const tart = {
       throw new Error(`Unsupported platform: ${inspect(platform)}`);
     }
     const distros = {
+      "26": "tahoe",
       "15": "sequoia",
       "14": "sonoma",
       "13": "ventura",
@@ -83,14 +84,14 @@ export const tart = {
    * @returns {Promise<TartVm | undefined>}
    */
   async getVm(name) {
-    const result = await this.spawn(["get", name], {
-      json: true,
-      throwOnError: error => !/does not exist/i.test(inspect(error)),
+    return new Promise(async resolve => {
+      const result = await this.spawn(["get", name], {
+        json: true,
+        throwOnError: error => !/does not exist/i.test(inspect(error)),
+      });
+      if (!result) resolve(undefined);
+      else resolve({ Name: name, ...result });
     });
-    return {
-      Name: name,
-      ...result,
-    };
   },
 
   /**
@@ -265,6 +266,15 @@ export const tart = {
       await spawnRdp({ ...connectOptions });
     };
 
+    const snapshot = async tag => {
+      // https://tart.run/integrations/vm-management/#working-with-a-remote-oci-container-registry
+      // https://tart.run/integrations/vm-management/#pushing-a-local-image
+      // https://tart.run/integrations/buildkite/
+      // tart push ${name} ghcr.io/oven-sh/macos-${major_version}-tart-base:${tag}
+      // TODO: push to ghcr and return that full remote_image_name:tag
+      return tag;
+    };
+
     const close = async () => {
       await this.deleteVm(name);
     };
@@ -274,8 +284,10 @@ export const tart = {
       id: name,
       spawn: exec,
       spawnSafe: execSafe,
+      rdp,
       attach,
       upload,
+      snapshot,
       close,
       [Symbol.asyncDispose]: close,
     };

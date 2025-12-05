@@ -1164,7 +1164,44 @@ pub const Transpiler = struct {
                                     var path_buf2: bun.PathBuffer = undefined;
                                     @memcpy(path_buf2[0..path.text.len], path.text);
                                     path_buf2[path.text.len..][0..bun.bytecode_extension.len].* = bun.bytecode_extension.*;
-                                    const bytecode = bun.sys.File.toSourceAt(dirname_fd.unwrapValid() orelse bun.FD.cwd(), path_buf2[0 .. path.text.len + bun.bytecode_extension.len], bun.default_allocator, .{}).asValue() orelse break :brk default_value;
+
+                                    const dir_fd = dirname_fd.unwrapValid() orelse bun.FD.cwd();
+                                    // Add null terminator for bytecode path
+                                    path_buf2[path.text.len + bun.bytecode_extension.len] = 0;
+                                    const bytecode_path: [:0]const u8 = path_buf2[0 .. path.text.len + bun.bytecode_extension.len :0];
+
+                                    // Check timestamps: if source file is newer than bytecode cache, invalidate cache
+                                    // This ensures the cache is regenerated when source changes
+                                    // Create null-terminated source path
+                                    var source_path_buf: bun.PathBuffer = undefined;
+                                    @memcpy(source_path_buf[0..path.text.len], path.text);
+                                    source_path_buf[path.text.len] = 0;
+                                    const source_path: [:0]const u8 = source_path_buf[0..path.text.len :0];
+
+                                    const source_stat = bun.sys.fstatat(dir_fd, source_path);
+                                    const bytecode_stat = bun.sys.fstatat(dir_fd, bytecode_path);
+
+                                    if (source_stat == .result and bytecode_stat == .result) {
+                                        const source_mtime = source_stat.result.mtime();
+                                        const bytecode_mtime = bytecode_stat.result.mtime();
+
+                                        // Compare timestamps: if source is newer than bytecode by more than 1 second, skip cache
+                                        // We use 1 second tolerance because bytecode is written just before the source file
+                                        // during Bun.build, so there can be sub-second timing differences
+                                        // (source_mtime > bytecode_mtime + 1 second)
+                                        if (source_mtime.sec > bytecode_mtime.sec + 1 or
+                                            (source_mtime.sec == bytecode_mtime.sec + 1 and source_mtime.nsec > bytecode_mtime.nsec))
+                                        {
+                                            break :brk default_value;
+                                        }
+                                    } else {
+                                        // If we can't stat one of the files, skip cache
+                                        if (bytecode_stat == .err) {
+                                            break :brk default_value;
+                                        }
+                                    }
+
+                                    const bytecode = bun.sys.File.toSourceAt(dir_fd, bytecode_path, bun.default_allocator, .{}).asValue() orelse break :brk default_value;
                                     if (bytecode.contents.len == 0) {
                                         break :brk default_value;
                                     }

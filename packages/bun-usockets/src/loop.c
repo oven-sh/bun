@@ -119,6 +119,7 @@ void us_internal_loop_unlink(struct us_loop_t *loop, struct us_socket_context_t 
             context->next->prev = context->prev;
         }
     }
+    context->next = context->prev = 0;
 }
 
 /* This functions should never run recursively */
@@ -193,8 +194,14 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
         loop_data->low_prio_head = s->next;
         if (s->next) s->next->prev = 0;
         s->next = 0;
-
+        // if (us_socket_is_closed(0, s)) {
+        //     s->flags.low_prio_state = 2;
+        //     us_socket_context_unref(0, s->context);
+        //     continue;
+        // }
         us_internal_socket_context_link_socket(0, s->context, s);
+        //TODO: ssl flag is important when unrefing the context
+        // us_socket_context_unref(0, s->context);
         us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
 
         s->flags.low_prio_state = 2;
@@ -346,6 +353,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.low_prio_state = 0;
                         s->flags.allow_half_open = listen_socket->s.flags.allow_half_open;
                         s->flags.is_paused = 0;
+                        s->flags.is_closed = 0;
                         s->flags.is_ipc = 0;
 
                         /* We always use nodelay */

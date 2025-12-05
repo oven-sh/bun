@@ -325,7 +325,7 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop, struct 
     int num_entries_possibly_remaining = 1;
 #else
     /* Ready polls may contain same poll twice under kqueue, as one poll may hold two filters */
-    int num_entries_possibly_remaining = 2;//((old_events & LIBUS_SOCKET_READABLE) ? 1 : 0) + ((old_events & LIBUS_SOCKET_WRITABLE) ? 1 : 0);
+    int num_entries_possibly_remaining = 2;
 #endif
 
     /* Todo: for kqueue if we track things in us_change_poll it is possible to have a fast path with no seeking in cases of:
@@ -377,22 +377,28 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
 }
 #endif
 
-struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, unsigned int ext_size) {
-    int events = us_poll_events(p);
+struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, unsigned int old_ext_size, unsigned int ext_size) {
+    
+    unsigned int old_size = sizeof(struct us_poll_t) + old_ext_size;
+    unsigned int new_size = sizeof(struct us_poll_t) + ext_size;
+    if(new_size <= old_size) return p;
     
 
-    struct us_poll_t *new_p = us_realloc(p, sizeof(struct us_poll_t) + ext_size);
-    if (p != new_p) {
+
+    struct us_poll_t *new_p = us_calloc(1, new_size);
+    memcpy(new_p, p, old_size < new_size ? old_size : new_size);
+    
+    int events = us_poll_events(p);
 #ifdef LIBUS_USE_EPOLL
-        /* Hack: forcefully update poll by stripping away already set events */
-        new_p->state.poll_type = us_internal_poll_type(new_p);
-        us_poll_change(new_p, loop, events);
+    /* Hack: forcefully update poll by stripping away already set events */
+    new_p->state.poll_type = us_internal_poll_type(new_p);
+    us_poll_change(new_p, loop, events);
 #else
-        /* Forcefully update poll by resetting them with new_p as user data */
-        kqueue_change(loop->fd, new_p->state.fd, 0, LIBUS_SOCKET_WRITABLE | LIBUS_SOCKET_READABLE, new_p);
-#endif      /* This is needed for epoll also (us_change_poll doesn't update the old poll) */
-        us_internal_loop_update_pending_ready_polls(loop, p, new_p, events, events);
-    }
+    /* Forcefully update poll by resetting them with new_p as user data */
+    kqueue_change(loop->fd, new_p->state.fd, 0, LIBUS_SOCKET_WRITABLE | LIBUS_SOCKET_READABLE, new_p);
+#endif
+    /* This is needed for epoll also (us_change_poll doesn't update the old poll) */
+    us_internal_loop_update_pending_ready_polls(loop, p, new_p, events, events);
 
     return new_p;
 }
@@ -444,7 +450,7 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
         kqueue_change(loop->fd, p->state.fd, old_events, events, p);
 #endif
         /* Set all removed events to null-polls in pending ready poll list */
-        // us_internal_loop_update_pending_ready_polls(loop, p, p, old_events, events);
+        us_internal_loop_update_pending_ready_polls(loop, p, p, old_events, events);
     }
 }
 

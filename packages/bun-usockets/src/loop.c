@@ -193,9 +193,17 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
         loop_data->low_prio_head = s->next;
         if (s->next) s->next->prev = 0;
         s->next = 0;
+        int ssl = s->flags.is_tls;
+        
+        if(us_socket_is_closed(ssl, s)) {
+            s->flags.low_prio_state = 2;    
+            us_socket_context_unref(ssl, s->context);
+            return;
+        }
 
-        us_internal_socket_context_link_socket(0, s->context, s);
-        us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
+        us_internal_socket_context_link_socket(ssl, s->context, s);
+        us_socket_context_unref(ssl, s->context);
+        us_poll_change(&s->p, us_socket_context(ssl, s)->loop, us_poll_events(&s->p) | LIBUS_SOCKET_READABLE);
 
         s->flags.low_prio_state = 2;
     }
@@ -347,6 +355,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.allow_half_open = listen_socket->s.flags.allow_half_open;
                         s->flags.is_paused = 0;
                         s->flags.is_ipc = 0;
+                        s->flags.is_closed = 0;
+                        s->flags.adopted = 0;
+                        s->flags.is_tls = listen_socket->s.flags.is_tls;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -354,7 +365,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         us_internal_socket_context_link_socket(0, listen_socket->s.context, s);
 
                         listen_socket->s.context->on_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
-
+                        /* After socket adoption, track the new socket; the old one becomes invalid */
+                        if(s && s->flags.adopted && s->prev) {
+                            s = s->prev;
+                        }
                         /* Exit accept loop if listen socket was closed in on_open handler */
                         if (us_socket_is_closed(0, &listen_socket->s)) {
                             break;
@@ -377,6 +391,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 loop->data.last_write_failed = 0;
 
                 s = s->context->on_writable(s);
+                /* After socket adoption, track the new socket; the old one becomes invalid */
+                if(s && s->flags.adopted && s->prev) {
+                    s = s->prev;
+                }
 
                 if (!s || us_socket_is_closed(0, s)) {
                     return;
@@ -468,6 +486,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                     if (length > 0) {
                         s = s->context->on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+                        /* After socket adoption, track the new socket; the old one becomes invalid */
+                        if(s && s->flags.adopted && s->prev) {
+                            s = s->prev;
+                        }
                         // loop->num_ready_polls isn't accessible on Windows.
                         #ifndef WIN32
                         // rare case: we're reading a lot of data, there's more to be read, and either:

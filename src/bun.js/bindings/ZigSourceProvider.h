@@ -8,6 +8,8 @@ class Structure;
 class Identifier;
 class SourceCodeKey;
 class SourceProvider;
+class JSModuleRecord;
+class VariableEnvironment;
 } // namespace JSC
 
 #include <JavaScriptCore/CachedBytecode.h>
@@ -15,10 +17,48 @@ class SourceProvider;
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/SourceProvider.h>
 #include <JavaScriptCore/Structure.h>
+#include <optional>
 
 namespace Zig {
 
 class GlobalObject;
+
+// Cached module metadata for ESM bytecode cache
+// This structure holds the deserialized import/export information
+// that allows skipping the ModuleAnalyzeMode parsing phase
+struct CachedModuleMetadata {
+    struct ModuleRequest {
+        WTF::String specifier;
+    };
+
+    struct ImportEntry {
+        uint32_t type; // 0=Single, 1=SingleTypeScript, 2=Namespace
+        WTF::String moduleRequest;
+        WTF::String importName;
+        WTF::String localName;
+    };
+
+    struct ExportEntry {
+        uint32_t type; // 0=Local, 1=Indirect, 2=Namespace
+        WTF::String exportName;
+        WTF::String moduleName;
+        WTF::String importName;
+        WTF::String localName;
+    };
+
+    struct VariableEntry {
+        WTF::String name;
+        uint32_t bits; // VariableEnvironmentEntry bits
+    };
+
+    Vector<ModuleRequest> requestedModules;
+    Vector<ImportEntry> importEntries;
+    Vector<ExportEntry> exportEntries;
+    Vector<WTF::String> starExports;
+    Vector<VariableEntry> declaredVariables;
+    Vector<VariableEntry> lexicalVariables;
+    uint32_t codeFeatures;
+};
 
 void forEachSourceProvider(WTF::Function<void(JSC::SourceID)>);
 JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL);
@@ -50,6 +90,16 @@ public:
         return m_cachedBytecode.copyRef();
     };
 
+    // ESM bytecode cache support - virtual overrides from JSC::SourceProvider
+    bool hasCachedModuleMetadata() const override
+    {
+        return m_cachedModuleMetadata.has_value();
+    }
+
+    JSC::JSModuleRecord* createModuleRecordFromCache(
+        JSC::JSGlobalObject* globalObject,
+        const JSC::Identifier& moduleKey) override;
+
     void updateCache(const UnlinkedFunctionExecutable* executable, const SourceCode&, CodeSpecializationKind kind, const UnlinkedFunctionCodeBlock* codeBlock);
     void cacheBytecode(const BytecodeCacheGenerator& generator);
     void commitCachedBytecode();
@@ -73,6 +123,7 @@ private:
 
     Zig::GlobalObject* m_globalObject;
     RefPtr<JSC::CachedBytecode> m_cachedBytecode;
+    std::optional<CachedModuleMetadata> m_cachedModuleMetadata;
     Ref<WTF::StringImpl> m_source;
     unsigned m_hash = 0;
 };

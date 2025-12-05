@@ -523,6 +523,8 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
 
     auto resolveSpecifier = [&]() -> void {
         JSC::SourceOrigin sourceOrigin = callframe->callerSourceOrigin(vm);
+        if (sourceOrigin.isNull())
+            return;
         const URL& url = sourceOrigin.url();
 
         if (specifier.startsWith("file:"_s)) {

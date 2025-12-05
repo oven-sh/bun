@@ -1555,9 +1555,20 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         auto* gp2 = jsDynamicCast<JSC::JSGlobalProxy*, JSCell>(c2);
         return gp1->target()->m_globalThis == gp2->target()->m_globalThis;
     }
-    default: {
+    case NumberObjectType:
+    case BooleanObjectType: {
+        // Number and Boolean wrapper objects must be the same type and have the same internal value
+        if (c1Type != c2Type) return false;
+        JSValue val1 = jsCast<JSWrapperObject*>(c1)->internalValue();
+        JSValue val2 = jsCast<JSWrapperObject*>(c2)->internalValue();
+        bool same = JSC::sameValue(globalObject, val1, val2);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!same) return false;
+        // Fall through to check own properties
         break;
     }
+    default:
+        break;
     }
     return std::nullopt;
 }

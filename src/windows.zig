@@ -3478,6 +3478,7 @@ pub const ENABLE_PROCESSED_OUTPUT = 0x0001;
 
 pub extern fn SetStdHandle(nStdHandle: u32, hHandle: *anyopaque) u32;
 pub extern fn GetConsoleOutputCP() u32;
+pub extern fn GetConsoleCP() u32;
 pub extern "kernel32" fn SetConsoleCP(wCodePageID: std.os.windows.UINT) callconv(.winapi) std.os.windows.BOOL;
 
 pub const DeleteFileOptions = struct {

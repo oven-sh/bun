@@ -36,12 +36,17 @@ const WEBKIT_RELEASE_DIR_LTO = join(WEBKIT_BUILD_DIR, "ReleaseLTO");
 // Homebrew prefix detection
 const HOMEBREW_PREFIX = IS_ARM64 ? "/opt/homebrew/" : "/usr/local/";
 
-// Compiler detection
+// Compiler detection - use PATH environment variable to safely find executables
 function findExecutable(names: string[]): string | null {
+  const pathEnv = process.env.PATH || "";
+  const paths = pathEnv.split(":");
+  
   for (const name of names) {
-    const result = spawnSync("which", [name], { encoding: "utf8" });
-    if (result.status === 0) {
-      return result.stdout.trim();
+    for (const dir of paths) {
+      const fullPath = join(dir, name);
+      if (existsSync(fullPath)) {
+        return fullPath;
+      }
     }
   }
   return null;
@@ -152,21 +157,44 @@ const getBuildEnv = () => {
   return env;
 };
 
-// Run a command with proper error handling
-function runCommand(command: string, args: string[], options: any = {}) {
-  console.log(`Running: ${command} ${args.join(" ")}`);
-  const result = spawnSync(command, args, {
+// Run cmake configure command with proper error handling
+function runCmakeConfigure(flags: string[], sourceDir: string, buildDir: string, env: any) {
+  const args = [...flags, sourceDir, buildDir];
+  console.log(`Running: cmake ${args.join(" ")}`);
+  const result = spawnSync("cmake", args, {
     stdio: "inherit",
-    ...options,
+    cwd: buildDir,
+    env,
   });
 
   if (result.error) {
-    console.error(`Failed to execute command: ${result.error.message}`);
+    console.error(`Failed to execute cmake: ${result.error.message}`);
     process.exit(1);
   }
 
   if (result.status !== 0) {
-    console.error(`Command failed with exit code ${result.status}`);
+    console.error(`cmake configure failed with exit code ${result.status}`);
+    process.exit(result.status || 1);
+  }
+}
+
+// Run cmake build command with proper error handling
+function runCmakeBuild(buildDir: string, buildType: string, env: any) {
+  const args = ["--build", buildDir, "--config", buildType, "--target", "jsc"];
+  console.log(`Running: cmake ${args.join(" ")}`);
+  const result = spawnSync("cmake", args, {
+    stdio: "inherit",
+    cwd: buildDir,
+    env,
+  });
+
+  if (result.error) {
+    console.error(`Failed to execute cmake build: ${result.error.message}`);
+    process.exit(1);
+  }
+
+  if (result.status !== 0) {
+    console.error(`cmake build failed with exit code ${result.status}`);
     process.exit(result.status || 1);
   }
 }
@@ -191,19 +219,13 @@ function buildJSC() {
 
   // Configure with CMake
   console.log("\n📦 Configuring with CMake...");
-  runCommand("cmake", [...cmakeFlags, WEBKIT_DIR, buildDir], {
-    cwd: buildDir,
-    env,
-  });
+  runCmakeConfigure(cmakeFlags, WEBKIT_DIR, buildDir, env);
 
   // Build with CMake
   console.log("\n🔨 Building JSC...");
   const buildType = buildConfig === "debug" ? "Debug" : buildConfig === "lto" ? "Release" : "RelWithDebInfo";
 
-  runCommand("cmake", ["--build", buildDir, "--config", buildType, "--target", "jsc"], {
-    cwd: buildDir,
-    env,
-  });
+  runCmakeBuild(buildDir, buildType, env);
 
   console.log(`\n✅ JSC build completed successfully!`);
   console.log(`Build output: ${buildDir}`);

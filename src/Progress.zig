@@ -329,7 +329,13 @@ fn refreshWithHeldLock(self: *Progress) void {
                     switch (node.unit) {
                         .none => self.bufWrite(&end, "[{d}/{d}] ", .{ current_item, eti }),
                         .files => self.bufWrite(&end, "[{d}/{d} files] ", .{ current_item, eti }),
-                        .bytes => self.bufWrite(&end, "[{Bi:.2}/{Bi:.2}] ", .{ current_item, eti }),
+                        .bytes => {
+                            self.bufWrite(&end, "[", .{});
+                            self.bufWrite(&end, "{f}", .{bun.fmt.commaNumber(current_item)});
+                            self.bufWrite(&end, "/", .{});
+                            self.bufWrite(&end, "{f}", .{bun.fmt.commaNumber(eti)});
+                            self.bufWrite(&end, "] ", .{});
+                        },
                     }
                     need_ellipse = false;
                 } else if (completed_items != 0) {
@@ -337,7 +343,11 @@ fn refreshWithHeldLock(self: *Progress) void {
                     switch (node.unit) {
                         .none => self.bufWrite(&end, "[{d}] ", .{current_item}),
                         .files => self.bufWrite(&end, "[{d} files] ", .{current_item}),
-                        .bytes => self.bufWrite(&end, "[{Bi:.2}] ", .{current_item}),
+                        .bytes => {
+                            self.bufWrite(&end, "[", .{});
+                            self.bufWrite(&end, "{f}", .{bun.fmt.commaNumber(current_item)});
+                            self.bufWrite(&end, "] ", .{});
+                        },
                     }
                     need_ellipse = false;
                 }

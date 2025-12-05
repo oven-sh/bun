@@ -87,6 +87,9 @@ async function build(args) {
     flag.startsWith("-D") ? [`${flag}=${value}`] : [flag, value],
   );
 
+  try {
+    await Bun.file(buildPath + "/CMakeCache.txt").delete();
+  } catch (e) {}
   await startGroup("CMake Configure", () => spawn("cmake", generateArgs, { env }));
 
   const envPath = resolve(buildPath, ".env");

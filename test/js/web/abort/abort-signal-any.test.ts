@@ -85,17 +85,19 @@ describe("AbortSignal.any()", () => {
     });
 
     describe("reason propagation", () => {
-        test("should propagate the reason from the aborting signal", () => {
-            const controller1 = new AbortController();
-            const controller2 = new AbortController();
+        // Table-driven tests for different reason types per coderabbitai suggestion
+        const reasonCases = [
+            { name: "Error", reason: new Error("custom abort reason") },
+            { name: "string", reason: "string reason" },
+            { name: "object", reason: { code: 42, message: "custom object" } },
+        ];
 
+        test.each(reasonCases)("should propagate $name reasons", ({ reason }) => {
+            const controller = new AbortController();
             // @ts-ignore
-            const composite = AbortSignal.any([controller1.signal, controller2.signal]);
-
-            const customReason = new Error("custom abort reason");
-            controller1.abort(customReason);
-
-            expect(composite.reason).toBe(customReason);
+            const composite = AbortSignal.any([controller.signal]);
+            controller.abort(reason);
+            expect(composite.reason).toBe(reason);
         });
 
         test("should use DOMException for default abort reason", () => {
@@ -107,27 +109,6 @@ describe("AbortSignal.any()", () => {
 
             expect(composite.reason).toBeInstanceOf(DOMException);
             expect(composite.reason.name).toBe("AbortError");
-        });
-
-        test("should propagate string reasons", () => {
-            const controller = new AbortController();
-            // @ts-ignore
-            const composite = AbortSignal.any([controller.signal]);
-
-            controller.abort("string reason");
-
-            expect(composite.reason).toBe("string reason");
-        });
-
-        test("should propagate object reasons", () => {
-            const controller = new AbortController();
-            // @ts-ignore
-            const composite = AbortSignal.any([controller.signal]);
-
-            const objectReason = { code: 42, message: "custom object" };
-            controller.abort(objectReason);
-
-            expect(composite.reason).toBe(objectReason);
         });
     });
 

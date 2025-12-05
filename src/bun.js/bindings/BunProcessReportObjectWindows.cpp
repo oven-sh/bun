@@ -36,8 +36,6 @@ using namespace JSC;
 // External functions
 extern "C" EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*);
 
-
-
 JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Process* process)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);

@@ -198,7 +198,7 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
         if(us_socket_is_closed(ssl, s)) {
             s->flags.low_prio_state = 2;    
             us_socket_context_unref(ssl, s->context);
-            return;
+            continue;
         }
 
         us_internal_socket_context_link_socket(ssl, s->context, s);
@@ -251,6 +251,7 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
     /* Free all closed sockets (maybe it is better to reverse order?) */
     for (struct us_socket_t *s = loop->data.closed_head; s; ) {
         struct us_socket_t *next = s->next;
+        s->prev = s->next = 0;
         us_poll_free((struct us_poll_t *) s, loop);
         s = next;
     }

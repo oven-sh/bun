@@ -5398,18 +5398,21 @@ pub fn NewParser_(
             };
         }
 
-        pub fn isDotDefineMatch(noalias p: *P, expr: Expr, parts: []const string) bool {
+        /// Check if an expression matches a dot define pattern like "process.env.NODE_ENV".
+        /// When `allow_optional_chain` is true, expressions like `process?.env?.NODE_ENV` will also match.
+        /// This should only be true when we're substituting a value (the optional chain becomes irrelevant).
+        /// When just setting flags like `can_be_removed_if_unused`, optional chains should NOT match
+        /// because the chain itself has observable behavior (checking if the object exists).
+        pub fn isDotDefineMatch(noalias p: *P, expr: Expr, parts: []const string, allow_optional_chain: bool) bool {
             switch (expr.data) {
                 .e_dot => |ex| {
                     if (parts.len > 1) {
-                        if (ex.optional_chain != null) {
+                        if (!allow_optional_chain and ex.optional_chain != null) {
                             return false;
                         }
-
-                        // Intermediates must be dot expressions
                         const last = parts.len - 1;
                         const is_tail_match = strings.eql(parts[last], ex.name);
-                        return is_tail_match and p.isDotDefineMatch(ex.target, parts[0..last]);
+                        return is_tail_match and p.isDotDefineMatch(ex.target, parts[0..last], allow_optional_chain);
                     }
                 },
                 .e_import_meta => {
@@ -5421,13 +5424,12 @@ pub fn NewParser_(
                 // the intent is to handle people using this form instead of E.Dot. So we really only want to do this if the accessor can also be an identifier
                 .e_index => |index| {
                     if (parts.len > 1 and index.index.data == .e_string and index.index.data.e_string.isUTF8()) {
-                        if (index.optional_chain != null) {
+                        if (!allow_optional_chain and index.optional_chain != null) {
                             return false;
                         }
-
                         const last = parts.len - 1;
                         const is_tail_match = strings.eql(parts[last], index.index.data.e_string.slice(p.allocator));
-                        return is_tail_match and p.isDotDefineMatch(index.target, parts[0..last]);
+                        return is_tail_match and p.isDotDefineMatch(index.target, parts[0..last], allow_optional_chain);
                     }
                 },
                 .e_identifier => |ex| {

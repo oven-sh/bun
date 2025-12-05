@@ -1,58 +1,58 @@
 import { expect, test, describe } from "bun:test";
 
 describe("AbortSignal.timeout stack trace", () => {
-    test("should include stack trace pointing to where AbortSignal.timeout() was called", async () => {
-        // This test verifies fix for issue #25182
-        // The stack trace should point to where AbortSignal.timeout() was called,
-        // not just where the timeout was triggered internally
+  test("should include stack trace pointing to where AbortSignal.timeout() was called", async () => {
+    // This test verifies fix for issue #25182
+    // The stack trace should point to where AbortSignal.timeout() was called,
+    // not just where the timeout was triggered internally
 
-        async function myFunction() {
-            const signal = AbortSignal.timeout(50);
-            // Wait for the abort event - no fallback timeout needed
-            await new Promise<never>((_, reject) => {
-                signal.addEventListener('abort', () => {
-                    reject(signal.reason);
-                });
-            });
-        }
+    async function myFunction() {
+      const signal = AbortSignal.timeout(50);
+      // Wait for the abort event - no fallback timeout needed
+      await new Promise<never>((_, reject) => {
+        signal.addEventListener("abort", () => {
+          reject(signal.reason);
+        });
+      });
+    }
 
-        try {
-            await myFunction();
-            expect.unreachable("Should have thrown");
-        } catch (e: any) {
-            expect(e instanceof DOMException).toBe(true);
-            expect(e.name).toBe("TimeoutError");
-            expect(e.message).toBe("The operation timed out.");
+    try {
+      await myFunction();
+      expect.unreachable("Should have thrown");
+    } catch (e: any) {
+      expect(e instanceof DOMException).toBe(true);
+      expect(e.name).toBe("TimeoutError");
+      expect(e.message).toBe("The operation timed out.");
 
-            // The stack trace should include 'myFunction' 
-            // since that's where AbortSignal.timeout() was called
-            const stack = e.stack;
-            expect(stack).toBeDefined();
-            expect(typeof stack).toBe("string");
+      // The stack trace should include 'myFunction'
+      // since that's where AbortSignal.timeout() was called
+      const stack = e.stack;
+      expect(stack).toBeDefined();
+      expect(typeof stack).toBe("string");
 
-            // Check that stack trace includes the calling function
-            // This is the key fix - previously this would be empty or only have internals
-            expect(stack).toInclude("myFunction");
-        }
-    });
+      // Check that stack trace includes the calling function
+      // This is the key fix - previously this would be empty or only have internals
+      expect(stack).toInclude("myFunction");
+    }
+  });
 
-    test("stack trace should include the test file name", async () => {
-        const signal = AbortSignal.timeout(10);
+  test("stack trace should include the test file name", async () => {
+    const signal = AbortSignal.timeout(10);
 
-        // Wait for the abort event directly - no fallback timeout
-        try {
-            await new Promise<never>((_, reject) => {
-                signal.addEventListener('abort', () => reject(signal.reason));
-            });
-            expect.unreachable("Should have thrown");
-        } catch (e: any) {
-            // Same DOMException assertions as first test for consistency
-            expect(e instanceof DOMException).toBe(true);
-            expect(e.name).toBe("TimeoutError");
-            expect(e.message).toBe("The operation timed out.");
+    // Wait for the abort event directly - no fallback timeout
+    try {
+      await new Promise<never>((_, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason));
+      });
+      expect.unreachable("Should have thrown");
+    } catch (e: any) {
+      // Same DOMException assertions as first test for consistency
+      expect(e instanceof DOMException).toBe(true);
+      expect(e.name).toBe("TimeoutError");
+      expect(e.message).toBe("The operation timed out.");
 
-            // Stack should reference this test file
-            expect(e.stack).toInclude("abort-signal-timeout-stack.test.ts");
-        }
-    });
+      // Stack should reference this test file
+      expect(e.stack).toInclude("abort-signal-timeout-stack.test.ts");
+    }
+  });
 });

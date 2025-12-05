@@ -85,29 +85,34 @@ async function getDevServerURL() {
   return baseUrl;
 }
 
-beforeAll(async () => {
-  copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
+beforeAll(
+  async () => {
+    copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 
-  const install = Bun.spawnSync([bunExe(), "i"], {
-    cwd: root,
-    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, ".bun-install") },
-    stdout: "inherit",
-    stderr: "inherit",
-    stdin: "inherit",
-  });
-  if (!install.success) {
-    const reason = install.signalCode || `code ${install.exitCode}`;
-    throw new Error(`Failed to install dependencies: ${reason}`);
-  }
+    const install = Bun.spawnSync([bunExe(), "i"], {
+      cwd: root,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, ".bun-install") },
+      stdout: "inherit",
+      stderr: "inherit",
+      stdin: "inherit",
+    });
+    if (!install.success) {
+      const reason = install.signalCode || `code ${install.exitCode}`;
+      throw new Error(`Failed to install dependencies: ${reason}`);
+    }
 
-  try {
-    await getDevServerURL();
-  } catch (e) {
-    console.error("Failed to start dev server :/");
-    dev_server?.kill?.();
-    dev_server = undefined;
-  }
-});
+    try {
+      await getDevServerURL();
+    } catch (e) {
+      console.error("Failed to start dev server :/");
+      dev_server?.kill?.();
+      dev_server = undefined;
+    }
+  },
+  {
+    timeout: 10 * 1000,
+  },
+);
 
 afterAll(() => {
   if (dev_server_pid) {

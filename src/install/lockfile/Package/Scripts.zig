@@ -259,7 +259,8 @@ pub const Scripts = extern struct {
         resolution: *const Resolution,
     ) !?Package.Scripts.List {
         if (this.hasAny()) {
-            const add_node_gyp_rebuild_script = if (lockfile.hasTrustedDependency(folder_name) and
+            // Only allow default trusted dependencies for npm packages
+            const add_node_gyp_rebuild_script = if (lockfile.hasTrustedDependency(folder_name, resolution.tag == .npm) and
                 this.install.isEmpty() and
                 this.preinstall.isEmpty())
             brk: {

@@ -1083,6 +1083,15 @@ declare module "bun" {
     readonly hostname: string | undefined;
 
     /**
+     * The protocol the server is listening on.
+     *
+     * - "http" for normal servers
+     * - "https" when TLS is enabled
+     * - null for unix sockets or when unavailable
+     */
+    readonly protocol: "http" | "https" | null;
+
+    /**
      * Is the server running in development mode?
      *
      * In development mode, `Bun.serve()` returns rendered error messages with

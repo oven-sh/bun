@@ -237,18 +237,8 @@ function onHmrLoadError(event: Event | string, source?: string, lineno?: number,
 }
 
 window.addEventListener("error", event => {
-  // In rare cases the error property might be null
-  // but it's unlikely that both error and message are gone
-  const value = event.error || event.message;
-  if (!value) {
-    console.log(
-      "[Bun] The HMR client detected a runtime error, but no useful value was found. Below is the full error event:",
-    );
-    console.log(event);
-  }
-  onRuntimeError(value, true, false);
+  onRuntimeError(event.error, true, false);
 });
-
 window.addEventListener("unhandledrejection", event => {
   onRuntimeError(event.reason, true, true);
 });

@@ -212,6 +212,21 @@ pub const S3Credentials = struct {
                 if (try opts.getOptionalEnum(globalObject, "storageClass", StorageClass)) |storage_class| {
                     new_credentials.storage_class = storage_class;
                 }
+
+                if (try opts.getTruthyComptime(globalObject, "contentDisposition")) |js_value| {
+                    if (!js_value.isEmptyOrUndefinedOrNull()) {
+                        if (js_value.isString()) {
+                            const str = try bun.String.fromJS(js_value, globalObject);
+                            defer str.deref();
+                            if (str.tag != .Empty and str.tag != .Dead) {
+                                new_credentials._contentDispositionSlice = str.toUTF8(bun.default_allocator);
+                                new_credentials.content_disposition = new_credentials._contentDispositionSlice.?.slice();
+                            }
+                        } else {
+                            return globalObject.throwInvalidArgumentTypeValue("contentDisposition", "string", js_value);
+                        }
+                    }
+                }
             }
         }
         return new_credentials;
@@ -1108,6 +1123,7 @@ pub const S3CredentialsWithOptions = struct {
     options: MultiPartUploadOptions = .{},
     acl: ?ACL = null,
     storage_class: ?StorageClass = null,
+    content_disposition: ?[]const u8 = null,
     /// indicates if the credentials have changed
     changed_credentials: bool = false,
     /// indicates if the virtual hosted style is used
@@ -1118,6 +1134,7 @@ pub const S3CredentialsWithOptions = struct {
     _endpointSlice: ?jsc.ZigString.Slice = null,
     _bucketSlice: ?jsc.ZigString.Slice = null,
     _sessionTokenSlice: ?jsc.ZigString.Slice = null,
+    _contentDispositionSlice: ?jsc.ZigString.Slice = null,
 
     pub fn deinit(this: *@This()) void {
         if (this._accessKeyIdSlice) |slice| slice.deinit();
@@ -1126,6 +1143,7 @@ pub const S3CredentialsWithOptions = struct {
         if (this._endpointSlice) |slice| slice.deinit();
         if (this._bucketSlice) |slice| slice.deinit();
         if (this._sessionTokenSlice) |slice| slice.deinit();
+        if (this._contentDispositionSlice) |slice| slice.deinit();
     }
 };
 

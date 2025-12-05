@@ -59,9 +59,9 @@ set(BUN_DEPENDENCIES
   Mimalloc
   TinyCC
   Zlib
+  Zstd
   LibArchive # must be loaded after zlib
   HdrHistogram # must be loaded after zlib
-  Zstd
 )
 
 include(CloneZstd)

@@ -44,9 +44,8 @@ pub const BufferReadStream = struct {
         // // lib.archive_read_set_switch_callback(this.archive, this.archive_s);
         // _ = lib.archive_read_set_callback_data(this.archive, this);
 
-        _ = this.archive.readSupportFormatTar();
-        _ = this.archive.readSupportFormatGnutar();
-        _ = this.archive.readSupportFilterGzip();
+        _ = this.archive.readSupportFormatAll();
+        _ = this.archive.readSupportFilterAll();
 
         // Ignore zeroed blocks in the archive, which occurs when multiple tar archives
         // have been concatenated together.

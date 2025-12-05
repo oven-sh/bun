@@ -30,14 +30,14 @@ afterEach(async () => {
 });
 
 plugin({
-  title: "svelte loader",
+  name: "svelte loader",
   setup(builder) {
     builder.onLoad({ filter: /\.svelte(\?[^.]+)?$/ }, ({ path }) => {
       try {
         const source = readFileSync(path.substring(0, path.includes("?") ? path.indexOf("?") : path.length), "utf-8");
 
         const result = compile(source, {
-          filetitle: path,
+          filename: path,
           generate: "client",
           dev: false,
         });
@@ -77,7 +77,7 @@ Add an example `.svelte` file in your project.
   let count = initialCount;
 </script>
 
-<button on:click="{()" ="">(count += 1)}>+1</button>
+<button on:click={() => count++}>+1</button>
 ```
 
 ---

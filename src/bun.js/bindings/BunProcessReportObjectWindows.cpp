@@ -5,6 +5,7 @@
 #include "BunProcess.h"
 #include "ZigGlobalObject.h"
 #include "FormatStackTraceForJS.h"
+#include "wtf-bindings.h"
 #include "headers.h" // For Bun__Process__createExecArgv and other exports
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSObject.h"
@@ -35,22 +36,7 @@ using namespace JSC;
 // External functions
 extern "C" EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*);
 
-// Helper function to convert time to ISO string
-static void toISOString(JSC::VM& vm, double time, char* buffer)
-{
-    time_t seconds = static_cast<time_t>(time / 1000);
-    int milliseconds = static_cast<int>(time) % 1000;
-    struct tm* timeinfo = gmtime(&seconds);
 
-    sprintf(buffer, "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",
-        timeinfo->tm_year + 1900,
-        timeinfo->tm_mon + 1,
-        timeinfo->tm_mday,
-        timeinfo->tm_hour,
-        timeinfo->tm_min,
-        timeinfo->tm_sec,
-        milliseconds);
-}
 
 JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Process* process)
 {

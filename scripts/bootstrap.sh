@@ -1145,7 +1145,7 @@ install_build_essentials() {
 }
 
 llvm_version_exact() {
-	print "19.1.7"
+	print "20.1.8"
 }
 
 llvm_version() {
@@ -1222,7 +1222,7 @@ install_gcc() {
 		;;
 	esac
 
-	llvm_v="19"
+	llvm_v="20"
 
 	append_to_profile "export CC=clang-${llvm_v}"
 	append_to_profile "export CXX=clang++-${llvm_v}"

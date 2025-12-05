@@ -47,8 +47,8 @@ function findExecutable(names: string[]): string | null {
   return null;
 }
 
-const CC = findExecutable(["clang-19", "clang"]) || "clang";
-const CXX = findExecutable(["clang++-19", "clang++"]) || "clang++";
+const CC = findExecutable(["clang-20", "clang"]) || "clang";
+const CXX = findExecutable(["clang++-20", "clang++"]) || "clang++";
 
 // Build directory based on config
 const getBuildDir = (config: BuildConfig) => {

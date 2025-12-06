@@ -47,6 +47,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSMockFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAsyncContextFrame;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMockWithImplementationCleanupData;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSnapshotSerializers;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForProcessObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForInternalModuleRegistry;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForErrorCodeCache;

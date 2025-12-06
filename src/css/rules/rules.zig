@@ -204,6 +204,9 @@ pub fn CssRuleList(comptime AtRule: type) type {
                         if (rules.items.len > 0 and rules.items[rules.items.len - 1] == .supports) {
                             var last_rule = &rules.items[rules.items.len - 1].supports;
                             if (last_rule.condition.eql(&supp.condition)) {
+                                bun.handleOom(last_rule.rules.v.appendSlice(context.allocator, supp.rules.v.items));
+                                supp.rules.v.clearRetainingCapacity();
+                                try last_rule.minify(context, parent_is_unused);
                                 continue;
                             }
                         }

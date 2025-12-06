@@ -634,6 +634,12 @@ pub const PathLike = union(enum) {
                 return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);
             }
             const normal = path_handler.normalizeStringBuf(s, b, true, .windows, false);
+            // If the normalized path is still relative (like "."), resolve it to an absolute path
+            if (!std.fs.path.isAbsoluteWindows(normal)) {
+                const cwd_path = std.posix.getcwd(buf) catch @panic("Error getting cwd");
+                const resolved = path_handler.joinAbsStringBuf(cwd_path, b, &.{normal}, .windows);
+                return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), resolved);
+            }
             return strings.toKernel32Path(@alignCast(std.mem.bytesAsSlice(u16, buf)), normal);
         }
 

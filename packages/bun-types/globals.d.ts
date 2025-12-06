@@ -14,12 +14,6 @@ declare module "bun" {
       ? {}
       : import("node:stream/web").DecompressionStream;
 
-    /**
-     * Compression formats supported by Bun's CompressionStream and DecompressionStream.
-     * Bun extends the standard web formats with brotli and zstd support.
-     */
-    type CompressionFormat = "gzip" | "deflate" | "deflate-raw" | "brotli" | "zstd";
-
     type LibPerformanceOrNodePerfHooksPerformance = LibDomIsLoaded extends true ? {} : import("perf_hooks").Performance;
     type LibEmptyOrPerformanceEntry = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceEntry;
     type LibEmptyOrPerformanceMark = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceMark;
@@ -86,6 +80,30 @@ declare var WritableStream: Bun.__internal.UseLibDomIfAvailable<
   {
     prototype: WritableStream;
     new <W = any>(underlyingSink?: Bun.UnderlyingSink<W>, strategy?: QueuingStrategy<W>): WritableStream<W>;
+  }
+>;
+
+/**
+ * Compression formats supported by Bun's CompressionStream and DecompressionStream.
+ * Bun extends the standard web formats with brotli and zstd support.
+ */
+type CompressionFormat = "gzip" | "deflate" | "deflate-raw" | "brotli" | "zstd";
+
+interface CompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebCompressionStream {}
+declare var CompressionStream: Bun.__internal.UseLibDomIfAvailable<
+  "CompressionStream",
+  {
+    prototype: CompressionStream;
+    new (format: CompressionFormat): CompressionStream;
+  }
+>;
+
+interface DecompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebDecompressionStream {}
+declare var DecompressionStream: Bun.__internal.UseLibDomIfAvailable<
+  "DecompressionStream",
+  {
+    prototype: DecompressionStream;
+    new (format: CompressionFormat): DecompressionStream;
   }
 >;
 
@@ -283,24 +301,6 @@ declare var Event: {
   readonly BUBBLING_PHASE: 3;
   new (type: string, eventInitDict?: Bun.EventInit): Event;
 };
-
-interface CompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebCompressionStream {}
-declare var CompressionStream: Bun.__internal.UseLibDomIfAvailable<
-  "CompressionStream",
-  {
-    prototype: CompressionStream;
-    new (format: Bun.__internal.CompressionFormat): CompressionStream;
-  }
->;
-
-interface DecompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebDecompressionStream {}
-declare var DecompressionStream: Bun.__internal.UseLibDomIfAvailable<
-  "DecompressionStream",
-  {
-    prototype: DecompressionStream;
-    new (format: Bun.__internal.CompressionFormat): DecompressionStream;
-  }
->;
 
 interface EventTarget {
   /**

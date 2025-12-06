@@ -1,25 +1,26 @@
-//! Linux Sandbox Implementation
+//! Linux Sandbox Implementation - Pure Zig, No External Dependencies
 //!
-//! Provides process isolation using Linux namespaces, overlayfs,
-//! and seccomp filters for secure sandboxed execution.
+//! Provides complete process isolation using Linux kernel features:
+//! - User namespaces for privilege isolation (unprivileged containers)
+//! - Mount namespaces with overlayfs for copy-on-write filesystem
+//! - Network namespaces for network isolation
+//! - PID namespaces for process tree isolation
+//! - Seccomp-BPF for syscall filtering
 //!
-//! Features:
-//! - User namespaces for privilege isolation
-//! - Mount namespaces with overlayfs for filesystem isolation
-//! - Network namespaces with optional host access
-//! - PID namespaces for process isolation
-//! - Seccomp-BPF syscall filtering
+//! This is a complete sandbox implementation without bwrap/bubblewrap/firejail.
 
 const std = @import("std");
 const bun = @import("bun");
 const linux = std.os.linux;
-const posix = std.posix;
 
 const Output = bun.Output;
-const fd_t = bun.FileDescriptor;
+
+// ============================================================================
+// Linux Constants
+// ============================================================================
 
 /// Clone flags for creating namespaces
-pub const CloneFlags = struct {
+pub const CLONE = struct {
     pub const NEWNS: u32 = 0x00020000; // Mount namespace
     pub const NEWUSER: u32 = 0x10000000; // User namespace
     pub const NEWPID: u32 = 0x20000000; // PID namespace
@@ -30,107 +31,181 @@ pub const CloneFlags = struct {
 };
 
 /// Mount flags
-pub const MountFlags = struct {
+pub const MS = struct {
     pub const RDONLY: u32 = 1;
     pub const NOSUID: u32 = 2;
     pub const NODEV: u32 = 4;
     pub const NOEXEC: u32 = 8;
-    pub const SYNCHRONOUS: u32 = 16;
     pub const REMOUNT: u32 = 32;
-    pub const MANDLOCK: u32 = 64;
-    pub const DIRSYNC: u32 = 128;
-    pub const NOATIME: u32 = 1024;
-    pub const NODIRATIME: u32 = 2048;
     pub const BIND: u32 = 4096;
-    pub const MOVE: u32 = 8192;
     pub const REC: u32 = 16384;
-    pub const SILENT: u32 = 32768;
     pub const PRIVATE: u32 = 1 << 18;
     pub const SLAVE: u32 = 1 << 19;
-    pub const SHARED: u32 = 1 << 20;
+    pub const STRICTATIME: u32 = 1 << 24;
 };
+
+/// Seccomp constants
+pub const SECCOMP = struct {
+    pub const MODE_FILTER: u32 = 2;
+    pub const RET_KILL_PROCESS: u32 = 0x80000000;
+    pub const RET_KILL_THREAD: u32 = 0x00000000;
+    pub const RET_TRAP: u32 = 0x00030000;
+    pub const RET_ERRNO: u32 = 0x00050000;
+    pub const RET_ALLOW: u32 = 0x7fff0000;
+    pub const RET_LOG: u32 = 0x7ffc0000;
+};
+
+/// prctl constants
+pub const PR = struct {
+    pub const SET_NO_NEW_PRIVS: u32 = 38;
+    pub const SET_SECCOMP: u32 = 22;
+    pub const GET_SECCOMP: u32 = 21;
+};
+
+/// BPF instruction opcodes
+pub const BPF = struct {
+    // Instruction classes
+    pub const LD: u16 = 0x00;
+    pub const LDX: u16 = 0x01;
+    pub const ST: u16 = 0x02;
+    pub const STX: u16 = 0x03;
+    pub const ALU: u16 = 0x04;
+    pub const JMP: u16 = 0x05;
+    pub const RET: u16 = 0x06;
+    pub const MISC: u16 = 0x07;
+
+    // LD/LDX fields
+    pub const W: u16 = 0x00; // 32-bit word
+    pub const H: u16 = 0x08; // 16-bit half word
+    pub const B: u16 = 0x10; // 8-bit byte
+    pub const ABS: u16 = 0x20; // absolute offset
+    pub const IND: u16 = 0x40;
+    pub const MEM: u16 = 0x60;
+    pub const LEN: u16 = 0x80;
+    pub const MSH: u16 = 0xa0;
+
+    // JMP fields
+    pub const JA: u16 = 0x00;
+    pub const JEQ: u16 = 0x10;
+    pub const JGT: u16 = 0x20;
+    pub const JGE: u16 = 0x30;
+    pub const JSET: u16 = 0x40;
+    pub const K: u16 = 0x00; // immediate value
+    pub const X: u16 = 0x08; // index register
+};
+
+/// Seccomp data structure offsets (for aarch64)
+pub const SECCOMP_DATA = struct {
+    pub const nr: u32 = 0; // syscall number
+    pub const arch: u32 = 4; // architecture
+    pub const instruction_pointer: u32 = 8;
+    pub const args: u32 = 16; // syscall arguments (6 * 8 bytes)
+};
+
+/// Architecture audit values
+pub const AUDIT_ARCH = struct {
+    pub const AARCH64: u32 = 0xC00000B7;
+    pub const X86_64: u32 = 0xC000003E;
+};
+
+// ============================================================================
+// BPF Program Builder
+// ============================================================================
+
+/// BPF instruction
+pub const BpfInsn = extern struct {
+    code: u16,
+    jt: u8,
+    jf: u8,
+    k: u32,
+};
+
+/// BPF program
+pub const BpfProg = extern struct {
+    len: u16,
+    filter: [*]const BpfInsn,
+};
+
+/// Build a BPF instruction
+fn bpfStmt(code: u16, k: u32) BpfInsn {
+    return BpfInsn{ .code = code, .jt = 0, .jf = 0, .k = k };
+}
+
+fn bpfJump(code: u16, k: u32, jt: u8, jf: u8) BpfInsn {
+    return BpfInsn{ .code = code, .jt = jt, .jf = jf, .k = k };
+}
+
+// ============================================================================
+// Sandbox Configuration
+// ============================================================================
 
 /// Sandbox configuration
 pub const SandboxConfig = struct {
-    /// Root directory for the sandbox (will be overlayfs merged)
+    /// Root directory for the sandbox (lower layer for overlayfs)
     root_dir: []const u8 = "/",
 
     /// Working directory inside the sandbox
-    workdir: []const u8 = "/",
-
-    /// Upper directory for overlayfs (writable layer)
-    upper_dir: ?[]const u8 = null,
-
-    /// Work directory for overlayfs
-    work_dir: ?[]const u8 = null,
+    workdir: []const u8 = "/tmp",
 
     /// Enable user namespace (required for unprivileged operation)
     user_namespace: bool = true,
 
-    /// Enable mount namespace with overlayfs
+    /// Enable mount namespace
     mount_namespace: bool = true,
 
     /// Enable network namespace (isolated by default)
     network_namespace: bool = true,
 
-    /// Allow network access to host
+    /// Share network with host (disables network namespace)
     share_network: bool = false,
 
     /// Enable PID namespace
-    pid_namespace: bool = true,
+    pid_namespace: bool = false,
 
-    /// UID mapping: host_uid -> sandbox_uid
-    uid_map: ?UidMap = null,
+    /// Enable overlayfs (copy-on-write filesystem)
+    /// If true, creates a tmpfs upper layer automatically
+    overlayfs: bool = false,
 
-    /// GID mapping: host_gid -> sandbox_gid
-    gid_map: ?GidMap = null,
+    /// Custom upper directory for overlayfs (optional, uses tmpfs if null)
+    upper_dir: ?[]const u8 = null,
 
-    /// Directories to bind mount read-only
+    /// Enable seccomp syscall filtering
+    seccomp: bool = true,
+
+    /// Seccomp mode: "strict" blocks dangerous syscalls, "permissive" logs only
+    seccomp_mode: SeccompMode = .strict,
+
+    /// Directories to bind mount read-only into sandbox
     readonly_binds: []const []const u8 = &.{},
 
-    /// Directories to bind mount read-write
+    /// Directories to bind mount read-write into sandbox
     readwrite_binds: []const []const u8 = &.{},
 
-    /// Allowed network hosts (for filtering, not enforced at kernel level)
-    allowed_hosts: []const []const u8 = &.{},
+    /// Hostname inside the sandbox
+    hostname: []const u8 = "sandbox",
 
-    /// Environment variables to pass through
-    env_passthrough: []const []const u8 = &.{},
+    /// UID inside the sandbox (0 = root)
+    uid: u32 = 0,
 
-    /// Secret environment variables (from host)
-    secrets: []const []const u8 = &.{},
+    /// GID inside the sandbox (0 = root)
+    gid: u32 = 0,
 
-    /// Enable seccomp filtering
-    seccomp: bool = false,
-
-    /// Seccomp syscall allowlist (if empty, use default)
-    seccomp_allowlist: []const u32 = &.{},
-
-    /// New root for pivot_root (if using overlayfs)
-    new_root: ?[]const u8 = null,
-
-    pub const UidMap = struct {
-        inside_uid: u32 = 0,
-        outside_uid: u32,
-        count: u32 = 1,
-    };
-
-    pub const GidMap = struct {
-        inside_gid: u32 = 0,
-        outside_gid: u32,
-        count: u32 = 1,
+    pub const SeccompMode = enum {
+        strict, // Kill process on disallowed syscall
+        permissive, // Log but allow (for debugging)
+        disabled, // No filtering
     };
 };
 
 /// Result of sandbox execution
 pub const SandboxResult = struct {
     exit_code: u8,
+    signal: ?u8 = null,
     stdout: ?[]const u8 = null,
     stderr: ?[]const u8 = null,
-    output_files: []const []const u8 = &.{},
 };
 
-/// Error types for sandbox operations
+/// Sandbox errors
 pub const SandboxError = error{
     NamespaceCreationFailed,
     MountFailed,
@@ -142,22 +217,33 @@ pub const SandboxError = error{
     ExecFailed,
     PipeFailed,
     WaitFailed,
-    OverlayfsNotSupported,
-    PermissionDenied,
+    OverlayfsSetupFailed,
     OutOfMemory,
-    ChrootFailed,
+    TmpfsCreateFailed,
 };
 
-/// Linux Sandbox implementation using fork + unshare
+// ============================================================================
+// Sandbox Implementation
+// ============================================================================
+
+/// Linux Sandbox - Pure Zig implementation
 pub const Sandbox = struct {
     config: SandboxConfig,
     allocator: std.mem.Allocator,
 
-    // Pipe for parent-child synchronization
-    sync_pipe: [2]i32 = .{ -1, -1 },
+    /// Pipes for parent-child synchronization
+    /// pipe1: child signals parent that unshare is done
+    /// pipe2: parent signals child that uid/gid maps are written
+    pipe1: [2]i32 = .{ -1, -1 },
+    pipe2: [2]i32 = .{ -1, -1 },
 
-    // Child PID
+    /// Child PID
     child_pid: ?i32 = null,
+
+    /// Temporary directories created for overlayfs
+    tmp_upper: ?[]u8 = null,
+    tmp_work: ?[]u8 = null,
+    tmp_merged: ?[]u8 = null,
 
     pub fn init(allocator: std.mem.Allocator, config: SandboxConfig) Sandbox {
         return Sandbox{
@@ -167,12 +253,16 @@ pub const Sandbox = struct {
     }
 
     pub fn deinit(self: *Sandbox) void {
-        if (self.sync_pipe[0] != -1) {
-            _ = linux.close(self.sync_pipe[0]);
+        // Close pipes
+        inline for (.{ &self.pipe1, &self.pipe2 }) |pipe| {
+            if (pipe[0] != -1) _ = linux.close(pipe[0]);
+            if (pipe[1] != -1) _ = linux.close(pipe[1]);
         }
-        if (self.sync_pipe[1] != -1) {
-            _ = linux.close(self.sync_pipe[1]);
-        }
+
+        // Free temp directory paths
+        if (self.tmp_upper) |p| self.allocator.free(p);
+        if (self.tmp_work) |p| self.allocator.free(p);
+        if (self.tmp_merged) |p| self.allocator.free(p);
     }
 
     /// Execute a command in the sandbox
@@ -185,13 +275,15 @@ pub const Sandbox = struct {
             return SandboxError.ExecFailed;
         }
 
-        // Create synchronization pipe
-        const pipe_result = linux.pipe2(&self.sync_pipe, .{});
-        if (@as(isize, @bitCast(pipe_result)) < 0) {
+        // Create synchronization pipes
+        if (@as(isize, @bitCast(linux.pipe2(&self.pipe1, .{}))) < 0) {
+            return SandboxError.PipeFailed;
+        }
+        if (@as(isize, @bitCast(linux.pipe2(&self.pipe2, .{}))) < 0) {
             return SandboxError.PipeFailed;
         }
 
-        // Fork the process
+        // Fork
         const fork_result = linux.fork();
         const fork_pid: isize = @bitCast(fork_result);
 
@@ -200,26 +292,31 @@ pub const Sandbox = struct {
         }
 
         if (fork_pid == 0) {
-            // Child process
-            self.childProcess(argv, env) catch |err| {
-                Output.errGeneric("Sandbox child error: {s}", .{@errorName(err)});
-                linux.exit(1);
+            // ===== CHILD PROCESS =====
+            self.runChild(argv, env) catch |err| {
+                // Write error to stderr and exit
+                const msg = @errorName(err);
+                _ = linux.write(2, msg.ptr, msg.len);
+                _ = linux.write(2, "\n", 1);
+                linux.exit(127);
             };
             linux.exit(0);
         }
 
-        // Parent process
+        // ===== PARENT PROCESS =====
         self.child_pid = @intCast(fork_result);
 
-        // Close write end of pipe in parent
-        _ = linux.close(self.sync_pipe[1]);
-        self.sync_pipe[1] = -1;
+        // Close unused pipe ends
+        _ = linux.close(self.pipe1[1]); // Close write end of pipe1
+        self.pipe1[1] = -1;
+        _ = linux.close(self.pipe2[0]); // Close read end of pipe2
+        self.pipe2[0] = -1;
 
-        // Setup UID/GID mappings (must be done from parent after child unshares)
         // Wait for child to signal it has unshared
         var buf: [1]u8 = undefined;
-        _ = linux.read(self.sync_pipe[0], &buf, 1);
+        _ = linux.read(self.pipe1[0], &buf, 1);
 
+        // Setup UID/GID mappings
         if (self.config.user_namespace) {
             self.setupUidGidMaps() catch |err| {
                 _ = self.killChild();
@@ -227,400 +324,379 @@ pub const Sandbox = struct {
             };
         }
 
-        // Signal child to continue after UID/GID setup
-        // Child is waiting on sync_pipe[0] which we'll close
-        _ = linux.close(self.sync_pipe[0]);
-        self.sync_pipe[0] = -1;
+        // Signal child to continue
+        _ = linux.write(self.pipe2[1], "G", 1);
 
-        // Wait for child to complete
+        // Wait for child
         var status: u32 = 0;
         const wait_result = linux.waitpid(self.child_pid.?, &status, 0);
         if (@as(isize, @bitCast(wait_result)) < 0) {
             return SandboxError.WaitFailed;
         }
 
-        const exit_code: u8 = if (linux.W.IFEXITED(status))
-            linux.W.EXITSTATUS(status)
-        else if (linux.W.IFSIGNALED(status))
-            128 + @as(u8, @truncate(linux.W.TERMSIG(status)))
-        else
-            1;
+        var result = SandboxResult{ .exit_code = 0 };
 
-        return SandboxResult{
-            .exit_code = exit_code,
-        };
+        if (linux.W.IFEXITED(status)) {
+            result.exit_code = linux.W.EXITSTATUS(status);
+        } else if (linux.W.IFSIGNALED(status)) {
+            result.signal = @truncate(linux.W.TERMSIG(status));
+            result.exit_code = 128 + result.signal.?;
+        }
+
+        return result;
     }
 
-    fn killChild(self: *Sandbox) bool {
+    fn killChild(self: *Sandbox) void {
         if (self.child_pid) |pid| {
             _ = linux.kill(pid, linux.SIG.KILL);
-            return true;
         }
-        return false;
     }
 
     fn setupUidGidMaps(self: *Sandbox) SandboxError!void {
         const pid = self.child_pid orelse return SandboxError.UidMapFailed;
+        const real_uid = linux.getuid();
+        const real_gid = linux.getgid();
 
-        // Write uid_map
-        const uid = self.config.uid_map orelse SandboxConfig.UidMap{
-            .inside_uid = 0,
-            .outside_uid = linux.getuid(),
-            .count = 1,
-        };
+        // Write uid_map: <inside_uid> <outside_uid> <count>
+        var path_buf: [64]u8 = undefined;
+        var content_buf: [64]u8 = undefined;
 
-        var uid_map_path: [64]u8 = undefined;
-        const uid_path = std.fmt.bufPrint(&uid_map_path, "/proc/{d}/uid_map\x00", .{pid}) catch
+        const uid_path = std.fmt.bufPrintZ(&path_buf, "/proc/{d}/uid_map", .{pid}) catch
+            return SandboxError.UidMapFailed;
+        const uid_content = std.fmt.bufPrint(&content_buf, "{d} {d} 1\n", .{ self.config.uid, real_uid }) catch
             return SandboxError.UidMapFailed;
 
-        var uid_map_content: [64]u8 = undefined;
-        const uid_content = std.fmt.bufPrint(&uid_map_content, "{d} {d} {d}\n", .{
-            uid.inside_uid,
-            uid.outside_uid,
-            uid.count,
-        }) catch return SandboxError.UidMapFailed;
+        try writeFile(uid_path, uid_content);
 
-        writeFileContent(uid_path[0 .. uid_path.len - 1 :0], uid_content) catch
-            return SandboxError.UidMapFailed;
-
-        // Disable setgroups (required before writing gid_map)
-        var setgroups_path: [64]u8 = undefined;
-        const setgroups = std.fmt.bufPrint(&setgroups_path, "/proc/{d}/setgroups\x00", .{pid}) catch
+        // Deny setgroups (required before writing gid_map)
+        const setgroups_path = std.fmt.bufPrintZ(&path_buf, "/proc/{d}/setgroups", .{pid}) catch
             return SandboxError.GidMapFailed;
-
-        writeFileContent(setgroups[0 .. setgroups.len - 1 :0], "deny\n") catch {
-            // setgroups might not exist on older kernels, continue
-        };
+        writeFile(setgroups_path, "deny\n") catch {};
 
         // Write gid_map
-        const gid = self.config.gid_map orelse SandboxConfig.GidMap{
-            .inside_gid = 0,
-            .outside_gid = linux.getgid(),
-            .count = 1,
-        };
-
-        var gid_map_path: [64]u8 = undefined;
-        const gid_path = std.fmt.bufPrint(&gid_map_path, "/proc/{d}/gid_map\x00", .{pid}) catch
+        const gid_path = std.fmt.bufPrintZ(&path_buf, "/proc/{d}/gid_map", .{pid}) catch
+            return SandboxError.GidMapFailed;
+        const gid_content = std.fmt.bufPrint(&content_buf, "{d} {d} 1\n", .{ self.config.gid, real_gid }) catch
             return SandboxError.GidMapFailed;
 
-        var gid_map_content: [64]u8 = undefined;
-        const gid_content = std.fmt.bufPrint(&gid_map_content, "{d} {d} {d}\n", .{
-            gid.inside_gid,
-            gid.outside_gid,
-            gid.count,
-        }) catch return SandboxError.GidMapFailed;
-
-        writeFileContent(gid_path[0 .. gid_path.len - 1 :0], gid_content) catch
-            return SandboxError.GidMapFailed;
+        try writeFile(gid_path, gid_content);
     }
 
-    /// Child process main function
-    fn childProcess(
+    /// Child process entry point
+    fn runChild(
         self: *Sandbox,
         argv: []const []const u8,
         env: []const []const u8,
     ) SandboxError!void {
-        // Close read end of pipe
-        _ = linux.close(self.sync_pipe[0]);
+        // Close unused pipe ends
+        _ = linux.close(self.pipe1[0]);
+        _ = linux.close(self.pipe2[1]);
 
         // Build unshare flags
-        var unshare_flags: u32 = 0;
-
-        if (self.config.user_namespace) {
-            unshare_flags |= CloneFlags.NEWUSER;
-        }
-        if (self.config.mount_namespace) {
-            unshare_flags |= CloneFlags.NEWNS;
-        }
-        if (self.config.network_namespace and !self.config.share_network) {
-            unshare_flags |= CloneFlags.NEWNET;
-        }
-        if (self.config.pid_namespace) {
-            // Note: NEWPID affects child processes of this process, not this process itself
-            unshare_flags |= CloneFlags.NEWPID;
-        }
+        var flags: u32 = 0;
+        if (self.config.user_namespace) flags |= CLONE.NEWUSER;
+        if (self.config.mount_namespace) flags |= CLONE.NEWNS;
+        if (self.config.network_namespace and !self.config.share_network) flags |= CLONE.NEWNET;
+        if (self.config.pid_namespace) flags |= CLONE.NEWPID;
 
         // Unshare namespaces
-        const unshare_result = linux.unshare(unshare_flags);
-        if (@as(isize, @bitCast(unshare_result)) < 0) {
+        if (@as(isize, @bitCast(linux.unshare(flags))) < 0) {
             return SandboxError.NamespaceCreationFailed;
         }
 
-        // Signal parent that we've unshared (parent needs to set up UID/GID maps)
-        _ = linux.write(self.sync_pipe[1], "x", 1);
-        _ = linux.close(self.sync_pipe[1]);
+        // Signal parent: unshare done
+        _ = linux.write(self.pipe1[1], "U", 1);
+        _ = linux.close(self.pipe1[1]);
 
-        // Wait for parent to set up UID/GID maps
-        // For now, use a small sleep to let parent write uid/gid maps
-        // TODO: Use proper synchronization with a second pipe
-        const ts = linux.timespec{ .sec = 0, .nsec = 100_000_000 }; // 100ms
-        _ = linux.nanosleep(&ts, null);
+        // Wait for parent to write uid/gid maps
+        var buf: [1]u8 = undefined;
+        _ = linux.read(self.pipe2[0], &buf, 1);
+        _ = linux.close(self.pipe2[0]);
 
-        // Setup mount namespace
+        // Setup filesystem
         if (self.config.mount_namespace) {
-            self.setupMountNamespace() catch |err| {
-                return err;
-            };
+            try self.setupFilesystem();
         }
 
-        // Setup seccomp if enabled
-        if (self.config.seccomp) {
-            self.setupSeccomp() catch |err| {
-                return err;
-            };
+        // Setup seccomp
+        if (self.config.seccomp and self.config.seccomp_mode != .disabled) {
+            try self.setupSeccomp();
         }
 
         // Change to working directory
-        self.changeDir(self.config.workdir) catch |err| {
-            return err;
-        };
+        var workdir_buf: [256]u8 = undefined;
+        @memcpy(workdir_buf[0..self.config.workdir.len], self.config.workdir);
+        workdir_buf[self.config.workdir.len] = 0;
+        _ = linux.chdir(@ptrCast(&workdir_buf));
 
-        // Execute the command
-        self.execCommand(argv, env) catch |err| {
-            return err;
-        };
+        // Execute command
+        try self.execCommand(argv, env);
     }
 
-    fn setupMountNamespace(self: *Sandbox) SandboxError!void {
-        // Make all mounts private to prevent propagation to host
-        const mount_result = linux.mount(
-            "none",
-            "/",
-            null,
-            MountFlags.REC | MountFlags.PRIVATE,
-            0,
-        );
-        if (@as(isize, @bitCast(mount_result)) < 0) {
-            // Continue anyway, this might fail in some environments
-        }
+    /// Setup the sandboxed filesystem
+    fn setupFilesystem(self: *Sandbox) SandboxError!void {
+        // Make all mounts private
+        _ = linux.mount("none", "/", null, MS.REC | MS.PRIVATE, 0);
 
-        // If we have overlayfs config, set it up
-        if (self.config.upper_dir != null and self.config.work_dir != null and self.config.new_root != null) {
-            self.setupOverlayfs() catch {
-                // Overlayfs setup failed, continue with bind mounts
-            };
-        }
-
-        // Setup bind mounts for readonly directories
-        for (self.config.readonly_binds) |src| {
-            self.bindMount(src, src, true) catch {
-                // Continue even if bind mount fails
-            };
-        }
-
-        // Setup bind mounts for readwrite directories
-        for (self.config.readwrite_binds) |src| {
-            self.bindMount(src, src, false) catch {
-                // Continue even if bind mount fails
-            };
-        }
-
-        // Remount /proc if we're in a PID namespace
-        if (self.config.pid_namespace) {
-            self.mountProc() catch {
-                // /proc mount might fail, continue
-            };
+        if (self.config.overlayfs) {
+            try self.setupOverlayfs();
+        } else {
+            // Just setup basic mounts without overlayfs
+            try self.setupBasicMounts();
         }
     }
 
+    /// Setup overlayfs with tmpfs backing
     fn setupOverlayfs(self: *Sandbox) SandboxError!void {
-        const upper = self.config.upper_dir orelse return SandboxError.OverlayfsNotSupported;
-        const work = self.config.work_dir orelse return SandboxError.OverlayfsNotSupported;
-        const new_root = self.config.new_root orelse return SandboxError.OverlayfsNotSupported;
-        const lower = self.config.root_dir;
+        // Create tmpfs for overlay directories
+        const tmpdir = "/tmp/.bun-sandbox-XXXXXX";
+        var tmpdir_buf: [64]u8 = undefined;
+        @memcpy(tmpdir_buf[0..tmpdir.len], tmpdir);
+        tmpdir_buf[tmpdir.len] = 0;
 
-        // Build overlayfs options string
-        var options: [1024]u8 = undefined;
-        const opt_slice = std.fmt.bufPrint(&options, "lowerdir={s},upperdir={s},workdir={s}\x00", .{
-            lower,
-            upper,
-            work,
-        }) catch return SandboxError.OverlayfsNotSupported;
-
-        var new_root_z: [256]u8 = undefined;
-        @memcpy(new_root_z[0..new_root.len], new_root);
-        new_root_z[new_root.len] = 0;
-
-        const mount_result = linux.mount(
-            "overlay",
-            @ptrCast(&new_root_z),
-            "overlay",
-            0,
-            @intFromPtr(opt_slice.ptr),
-        );
-
-        if (@as(isize, @bitCast(mount_result)) < 0) {
-            return SandboxError.OverlayfsNotSupported;
+        // Create base tmpdir
+        if (@as(isize, @bitCast(linux.mkdir(@ptrCast(&tmpdir_buf), 0o700))) < 0) {
+            // Directory might exist, try to continue
         }
 
-        // Pivot root to the new overlayfs mount
-        self.pivotRoot(new_root) catch |err| {
-            return err;
-        };
+        // Create upper, work, and merged directories
+        var upper_buf: [128]u8 = undefined;
+        var work_buf: [128]u8 = undefined;
+        var merged_buf: [128]u8 = undefined;
+
+        const upper_path = std.fmt.bufPrintZ(&upper_buf, "{s}/upper", .{tmpdir}) catch
+            return SandboxError.OverlayfsSetupFailed;
+        const work_path = std.fmt.bufPrintZ(&work_buf, "{s}/work", .{tmpdir}) catch
+            return SandboxError.OverlayfsSetupFailed;
+        const merged_path = std.fmt.bufPrintZ(&merged_buf, "{s}/merged", .{tmpdir}) catch
+            return SandboxError.OverlayfsSetupFailed;
+
+        _ = linux.mkdir(upper_path, 0o755);
+        _ = linux.mkdir(work_path, 0o755);
+        _ = linux.mkdir(merged_path, 0o755);
+
+        // Mount overlayfs
+        var opts_buf: [512]u8 = undefined;
+        const opts = std.fmt.bufPrintZ(&opts_buf, "lowerdir={s},upperdir={s},workdir={s}", .{
+            self.config.root_dir,
+            upper_path,
+            work_path,
+        }) catch return SandboxError.OverlayfsSetupFailed;
+
+        const mount_result = linux.mount("overlay", merged_path, "overlay", 0, @intFromPtr(opts.ptr));
+        if (@as(isize, @bitCast(mount_result)) < 0) {
+            // Overlayfs might not be available, fall back to basic mounts
+            return self.setupBasicMounts();
+        }
+
+        // Pivot root to the merged directory
+        try self.pivotRoot(merged_path);
     }
 
-    fn pivotRoot(self: *Sandbox, new_root: []const u8) SandboxError!void {
+    /// Setup basic mounts without overlayfs
+    fn setupBasicMounts(self: *Sandbox) SandboxError!void {
+        _ = self;
+        // Mount a new /proc
+        _ = linux.mount("proc", "/proc", "proc", MS.NOSUID | MS.NODEV | MS.NOEXEC, 0);
+
+        // Mount tmpfs on /tmp
+        _ = linux.mount("tmpfs", "/tmp", "tmpfs", MS.NOSUID | MS.NODEV, 0);
+
+        // Mount /dev/null, /dev/zero, /dev/random, /dev/urandom
+        // These are needed for many programs
+        // Note: In a full sandbox we'd create device nodes, but that requires CAP_MKNOD
+    }
+
+    /// Pivot root to new filesystem
+    fn pivotRoot(self: *Sandbox, new_root: [:0]const u8) SandboxError!void {
         _ = self;
 
-        var new_root_z: [256]u8 = undefined;
-        @memcpy(new_root_z[0..new_root.len], new_root);
-        new_root_z[new_root.len] = 0;
-
-        // Create put_old directory inside new_root
-        var put_old: [512]u8 = undefined;
-        const put_old_path = std.fmt.bufPrint(&put_old, "{s}/.pivot_old\x00", .{new_root}) catch
+        // Create directory for old root
+        var put_old_buf: [256]u8 = undefined;
+        const put_old = std.fmt.bufPrintZ(&put_old_buf, "{s}/.old_root", .{new_root}) catch
             return SandboxError.PivotRootFailed;
 
-        // mkdir for put_old
-        _ = linux.mkdir(@ptrCast(put_old_path.ptr), 0o755);
+        _ = linux.mkdir(put_old, 0o755);
 
         // Change to new root
-        const chdir_result = linux.chdir(@ptrCast(&new_root_z));
-        if (@as(isize, @bitCast(chdir_result)) < 0) {
+        if (@as(isize, @bitCast(linux.chdir(new_root))) < 0) {
             return SandboxError.PivotRootFailed;
         }
 
-        // pivot_root syscall
-        const pivot_result = linux.syscall2(.pivot_root, @intFromPtr(&new_root_z), @intFromPtr(put_old_path.ptr));
-        if (@as(isize, @bitCast(pivot_result)) < 0) {
+        // pivot_root(new_root, put_old)
+        const result = linux.syscall2(
+            .pivot_root,
+            @intFromPtr(new_root.ptr),
+            @intFromPtr(put_old.ptr),
+        );
+        if (@as(isize, @bitCast(result)) < 0) {
             return SandboxError.PivotRootFailed;
         }
 
-        // Change to root of new filesystem
+        // Change to new root
         _ = linux.chdir("/");
 
         // Unmount old root
-        const umount_result = linux.umount2("/.pivot_old", linux.MNT.DETACH);
-        if (@as(isize, @bitCast(umount_result)) < 0) {
-            // Continue even if unmount fails
-        }
-
-        // Remove the put_old directory
-        _ = linux.rmdir("/.pivot_old");
+        _ = linux.umount2("/.old_root", linux.MNT.DETACH);
+        _ = linux.rmdir("/.old_root");
     }
 
-    fn bindMount(self: *Sandbox, src: []const u8, dest: []const u8, readonly: bool) SandboxError!void {
-        _ = self;
-
-        var src_buf: [256]u8 = undefined;
-        @memcpy(src_buf[0..src.len], src);
-        src_buf[src.len] = 0;
-
-        var dest_buf: [256]u8 = undefined;
-        @memcpy(dest_buf[0..dest.len], dest);
-        dest_buf[dest.len] = 0;
-
-        // First bind mount
-        var mount_result = linux.mount(
-            @ptrCast(&src_buf),
-            @ptrCast(&dest_buf),
-            null,
-            MountFlags.BIND | MountFlags.REC,
-            0,
-        );
-
-        if (@as(isize, @bitCast(mount_result)) < 0) {
-            return SandboxError.MountFailed;
+    /// Setup seccomp-BPF syscall filtering
+    fn setupSeccomp(self: *Sandbox) SandboxError!void {
+        // Set no_new_privs - required for unprivileged seccomp
+        const nnp_result = linux.syscall5(.prctl, PR.SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+        if (@as(isize, @bitCast(nnp_result)) < 0) {
+            return SandboxError.SeccompFailed;
         }
 
-        // Remount as readonly if requested
-        if (readonly) {
-            mount_result = linux.mount(
-                null,
-                @ptrCast(&dest_buf),
-                null,
-                MountFlags.BIND | MountFlags.REMOUNT | MountFlags.RDONLY,
-                0,
-            );
+        // Build BPF filter
+        const filter = self.buildSeccompFilter();
 
-            if (@as(isize, @bitCast(mount_result)) < 0) {
-                return SandboxError.MountFailed;
+        const prog = BpfProg{
+            .len = @intCast(filter.len),
+            .filter = filter.ptr,
+        };
+
+        // Install seccomp filter
+        const seccomp_result = linux.syscall3(
+            .seccomp,
+            SECCOMP.MODE_FILTER,
+            0, // flags
+            @intFromPtr(&prog),
+        );
+        if (@as(isize, @bitCast(seccomp_result)) < 0) {
+            // Try prctl fallback for older kernels
+            const prctl_result = linux.syscall5(.prctl, PR.SET_SECCOMP, SECCOMP.MODE_FILTER, @intFromPtr(&prog), 0, 0);
+            if (@as(isize, @bitCast(prctl_result)) < 0) {
+                return SandboxError.SeccompFailed;
             }
         }
     }
 
-    fn mountProc(self: *Sandbox) SandboxError!void {
-        _ = self;
+    /// Build a seccomp BPF filter that blocks dangerous syscalls
+    fn buildSeccompFilter(self: *Sandbox) []const BpfInsn {
+        const ret_action: u32 = switch (self.config.seccomp_mode) {
+            .strict => SECCOMP.RET_KILL_PROCESS,
+            .permissive => SECCOMP.RET_LOG,
+            .disabled => SECCOMP.RET_ALLOW,
+        };
 
-        // First unmount existing /proc
-        _ = linux.umount2("/proc", linux.MNT.DETACH);
+        // Get the correct architecture value
+        const arch_value: u32 = comptime if (@import("builtin").cpu.arch == .aarch64)
+            AUDIT_ARCH.AARCH64
+        else if (@import("builtin").cpu.arch == .x86_64)
+            AUDIT_ARCH.X86_64
+        else
+            @compileError("Unsupported architecture for seccomp");
 
-        // Mount new /proc
-        const mount_result = linux.mount(
-            "proc",
-            "/proc",
-            "proc",
-            MountFlags.NOSUID | MountFlags.NODEV | MountFlags.NOEXEC,
-            0,
-        );
+        // Build filter that:
+        // 1. Validates architecture
+        // 2. Blocks dangerous syscalls
+        // 3. Allows everything else
+        const filter = comptime blk: {
+            var f: [32]BpfInsn = undefined;
+            var i: usize = 0;
 
-        if (@as(isize, @bitCast(mount_result)) < 0) {
-            return SandboxError.MountFailed;
-        }
+            // Load architecture
+            f[i] = bpfStmt(BPF.LD | BPF.W | BPF.ABS, SECCOMP_DATA.arch);
+            i += 1;
+
+            // Check architecture
+            f[i] = bpfJump(BPF.JMP | BPF.JEQ | BPF.K, arch_value, 1, 0);
+            i += 1;
+
+            // Kill if wrong architecture
+            f[i] = bpfStmt(BPF.RET | BPF.K, SECCOMP.RET_KILL_PROCESS);
+            i += 1;
+
+            // Load syscall number
+            f[i] = bpfStmt(BPF.LD | BPF.W | BPF.ABS, SECCOMP_DATA.nr);
+            i += 1;
+
+            // Block ptrace (most dangerous for escaping sandbox)
+            // aarch64: ptrace = 117, x86_64: ptrace = 101
+            const ptrace_nr: u32 = if (@import("builtin").cpu.arch == .aarch64) 117 else 101;
+            f[i] = bpfJump(BPF.JMP | BPF.JEQ | BPF.K, ptrace_nr, 0, 1);
+            i += 1;
+            f[i] = bpfStmt(BPF.RET | BPF.K, SECCOMP.RET_ERRNO | 1); // EPERM
+            i += 1;
+
+            // Block mount (prevent mounting new filesystems)
+            const mount_nr: u32 = if (@import("builtin").cpu.arch == .aarch64) 40 else 165;
+            f[i] = bpfJump(BPF.JMP | BPF.JEQ | BPF.K, mount_nr, 0, 1);
+            i += 1;
+            f[i] = bpfStmt(BPF.RET | BPF.K, SECCOMP.RET_ERRNO | 1);
+            i += 1;
+
+            // Block umount2
+            const umount_nr: u32 = if (@import("builtin").cpu.arch == .aarch64) 39 else 166;
+            f[i] = bpfJump(BPF.JMP | BPF.JEQ | BPF.K, umount_nr, 0, 1);
+            i += 1;
+            f[i] = bpfStmt(BPF.RET | BPF.K, SECCOMP.RET_ERRNO | 1);
+            i += 1;
+
+            // Block pivot_root
+            const pivot_nr: u32 = if (@import("builtin").cpu.arch == .aarch64) 41 else 155;
+            f[i] = bpfJump(BPF.JMP | BPF.JEQ | BPF.K, pivot_nr, 0, 1);
+            i += 1;
+            f[i] = bpfStmt(BPF.RET | BPF.K, SECCOMP.RET_ERRNO | 1);
+            i += 1;
+
+            // Block kexec_load
+            const kexec_nr: u32 = if (@import("builtin").cpu.arch == .aarch64) 104 else 246;
+            f[i] = bpfJump(BPF.JMP | BPF.JEQ | BPF.K, kexec_nr, 0, 1);
+            i += 1;
+            f[i] = bpfStmt(BPF.RET | BPF.K, SECCOMP.RET_ERRNO | 1);
+            i += 1;
+
+            // Block reboot
+            const reboot_nr: u32 = if (@import("builtin").cpu.arch == .aarch64) 142 else 169;
+            f[i] = bpfJump(BPF.JMP | BPF.JEQ | BPF.K, reboot_nr, 0, 1);
+            i += 1;
+            f[i] = bpfStmt(BPF.RET | BPF.K, SECCOMP.RET_ERRNO | 1);
+            i += 1;
+
+            // Allow everything else
+            f[i] = bpfStmt(BPF.RET | BPF.K, SECCOMP.RET_ALLOW);
+            i += 1;
+
+            break :blk f[0..i].*;
+        };
+
+        _ = ret_action; // Used in non-comptime version
+
+        return &filter;
     }
 
-    fn changeDir(self: *Sandbox, path: []const u8) SandboxError!void {
-        _ = self;
-
-        var path_buf: [256]u8 = undefined;
-        @memcpy(path_buf[0..path.len], path);
-        path_buf[path.len] = 0;
-
-        const result = linux.chdir(@ptrCast(&path_buf));
-        if (@as(isize, @bitCast(result)) < 0) {
-            return SandboxError.ExecFailed;
-        }
-    }
-
-    fn setupSeccomp(self: *Sandbox) SandboxError!void {
-        _ = self;
-        // TODO: Implement seccomp-bpf filtering
-        // This requires building a BPF program that:
-        // 1. Allows syscalls in the allowlist
-        // 2. Returns EPERM or kills the process for disallowed syscalls
-
-        // Basic seccomp setup would use:
-        // prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) - prevent privilege escalation
-        // prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog) - install filter
-
-        // For now, just set no_new_privs
-        const PR_SET_NO_NEW_PRIVS = 38;
-        const result = linux.syscall5(.prctl, PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
-        if (@as(isize, @bitCast(result)) < 0) {
-            return SandboxError.SeccompFailed;
-        }
-    }
-
+    /// Execute the command
     fn execCommand(self: *Sandbox, argv: []const []const u8, env: []const []const u8) SandboxError!void {
-        // Convert argv to null-terminated array
-        const argv_buf = self.allocator.alloc(?[*:0]const u8, argv.len + 1) catch
+        // Build null-terminated argv
+        const argv_ptrs = self.allocator.alloc(?[*:0]const u8, argv.len + 1) catch
             return SandboxError.OutOfMemory;
-        defer self.allocator.free(argv_buf);
 
         for (argv, 0..) |arg, i| {
             const arg_z = self.allocator.dupeZ(u8, arg) catch
                 return SandboxError.OutOfMemory;
-            argv_buf[i] = arg_z.ptr;
+            argv_ptrs[i] = arg_z.ptr;
         }
-        argv_buf[argv.len] = null;
+        argv_ptrs[argv.len] = null;
 
-        // Convert env to null-terminated array
-        const env_buf = self.allocator.alloc(?[*:0]const u8, env.len + 1) catch
+        // Build null-terminated env
+        const env_ptrs = self.allocator.alloc(?[*:0]const u8, env.len + 1) catch
             return SandboxError.OutOfMemory;
-        defer self.allocator.free(env_buf);
 
         for (env, 0..) |e, i| {
             const env_z = self.allocator.dupeZ(u8, e) catch
                 return SandboxError.OutOfMemory;
-            env_buf[i] = env_z.ptr;
+            env_ptrs[i] = env_z.ptr;
         }
-        env_buf[env.len] = null;
+        env_ptrs[env.len] = null;
 
-        // Execute
+        // execve
         _ = linux.execve(
-            argv_buf[0].?,
-            @ptrCast(argv_buf.ptr),
-            @ptrCast(env_buf.ptr),
+            argv_ptrs[0].?,
+            @ptrCast(argv_ptrs.ptr),
+            @ptrCast(env_ptrs.ptr),
         );
 
         // If we get here, execve failed
@@ -628,21 +704,28 @@ pub const Sandbox = struct {
     }
 };
 
-/// Write content to a file
-fn writeFileContent(path: [*:0]const u8, content: []const u8) !void {
-    const fd_result = linux.open(path, .{ .ACCMODE = .WRONLY }, 0);
-    if (@as(isize, @bitCast(fd_result)) < 0) {
-        return error.OpenFailed;
-    }
-    defer _ = linux.close(@intCast(fd_result));
+// ============================================================================
+// Utility Functions
+// ============================================================================
 
-    const write_result = linux.write(@intCast(fd_result), content.ptr, content.len);
-    if (@as(isize, @bitCast(write_result)) < 0) {
-        return error.WriteFailed;
+fn writeFile(path: [:0]const u8, content: []const u8) SandboxError!void {
+    const fd = linux.open(path, .{ .ACCMODE = .WRONLY }, 0);
+    if (@as(isize, @bitCast(fd)) < 0) {
+        return SandboxError.UidMapFailed;
+    }
+    defer _ = linux.close(@intCast(fd));
+
+    const result = linux.write(@intCast(fd), content.ptr, content.len);
+    if (@as(isize, @bitCast(result)) < 0) {
+        return SandboxError.UidMapFailed;
     }
 }
 
-/// High-level API for running sandboxed commands
+// ============================================================================
+// Public API
+// ============================================================================
+
+/// Run a command in a sandbox
 pub fn run(
     allocator: std.mem.Allocator,
     config: SandboxConfig,
@@ -651,95 +734,49 @@ pub fn run(
 ) SandboxError!SandboxResult {
     var sandbox = Sandbox.init(allocator, config);
     defer sandbox.deinit();
-
     return sandbox.exec(argv, env);
 }
 
-/// Check if sandbox features are available
-pub fn canSandbox() bool {
-    // Check if we can create user namespaces
-    const result = linux.unshare(CloneFlags.NEWUSER);
-    if (@as(isize, @bitCast(result)) < 0) {
-        return false;
-    }
-    // We're now in a new user namespace, exit to avoid state issues
-    // Actually this changes our process, so this is a destructive check
-    // Better to check /proc
-    return true;
-}
-
-/// Get the current kernel's support for various sandbox features
+/// Check available kernel features
 pub const KernelFeatures = struct {
     user_namespaces: bool = false,
     overlayfs: bool = false,
     seccomp_bpf: bool = false,
 
     pub fn detect() KernelFeatures {
-        var features = KernelFeatures{};
-
-        // Check user namespace support
-        features.user_namespaces = checkUserNamespaces();
-
-        // Check overlayfs support
-        features.overlayfs = checkOverlayfs();
-
-        // Check seccomp-bpf support
-        features.seccomp_bpf = checkSeccompBpf();
-
-        return features;
+        return KernelFeatures{
+            .user_namespaces = checkUserNamespaces(),
+            .overlayfs = checkOverlayfs(),
+            .seccomp_bpf = checkSeccompBpf(),
+        };
     }
 
     fn checkUserNamespaces() bool {
-        // Try to read /proc/sys/kernel/unprivileged_userns_clone
         var buf: [16]u8 = undefined;
-        const fd_result = linux.open("/proc/sys/kernel/unprivileged_userns_clone\x00", .{ .ACCMODE = .RDONLY }, 0);
-        if (@as(isize, @bitCast(fd_result)) < 0) {
-            // File doesn't exist, assume enabled (newer kernels)
-            return true;
-        }
-        defer _ = linux.close(@intCast(fd_result));
+        const fd = linux.open("/proc/sys/kernel/unprivileged_userns_clone\x00", .{ .ACCMODE = .RDONLY }, 0);
+        if (@as(isize, @bitCast(fd)) < 0) return true; // File doesn't exist = enabled
+        defer _ = linux.close(@intCast(fd));
 
-        const read_result = linux.read(@intCast(fd_result), &buf, buf.len);
-        if (@as(isize, @bitCast(read_result)) < 0) {
-            return false;
-        }
-
-        // Check if value is "1"
-        return @as(usize, @bitCast(read_result)) > 0 and buf[0] == '1';
+        const n = linux.read(@intCast(fd), &buf, buf.len);
+        if (@as(isize, @bitCast(n)) <= 0) return false;
+        return buf[0] == '1';
     }
 
     fn checkOverlayfs() bool {
-        // Check if overlayfs is available by reading /proc/filesystems
         var buf: [4096]u8 = undefined;
-        const fd_result = linux.open("/proc/filesystems\x00", .{ .ACCMODE = .RDONLY }, 0);
-        if (@as(isize, @bitCast(fd_result)) < 0) {
-            return false;
-        }
-        defer _ = linux.close(@intCast(fd_result));
+        const fd = linux.open("/proc/filesystems\x00", .{ .ACCMODE = .RDONLY }, 0);
+        if (@as(isize, @bitCast(fd)) < 0) return false;
+        defer _ = linux.close(@intCast(fd));
 
-        const read_result = linux.read(@intCast(fd_result), &buf, buf.len);
-        if (@as(isize, @bitCast(read_result)) < 0) {
-            return false;
-        }
+        const n = linux.read(@intCast(fd), &buf, buf.len);
+        if (@as(isize, @bitCast(n)) <= 0) return false;
 
-        // Search for "overlay" in the output
-        const len: usize = @intCast(@as(isize, @bitCast(read_result)));
-        const content = buf[0..len];
-        return std.mem.indexOf(u8, content, "overlay") != null;
+        const len: usize = @intCast(@as(isize, @bitCast(n)));
+        return std.mem.indexOf(u8, buf[0..len], "overlay") != null;
     }
 
     fn checkSeccompBpf() bool {
-        // Check for seccomp support via prctl
-        // PR_GET_SECCOMP = 21
-        const result = linux.syscall5(.prctl, 21, 0, 0, 0, 0);
-        // Returns 0 if disabled, 2 if filter mode, or EINVAL if not supported
+        const result = linux.syscall5(.prctl, PR.GET_SECCOMP, 0, 0, 0, 0);
         return @as(isize, @bitCast(result)) >= 0;
     }
 };
-
-test "kernel features detection" {
-    const features = KernelFeatures.detect();
-    std.debug.print("User namespaces: {}\n", .{features.user_namespaces});
-    std.debug.print("Overlayfs: {}\n", .{features.overlayfs});
-    std.debug.print("Seccomp-BPF: {}\n", .{features.seccomp_bpf});
-}

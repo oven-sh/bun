@@ -72,10 +72,12 @@ pub const SandboxCommand = struct {
         }
 
         // Parse options and find the command
-        // Format: bun sandbox exec [--no-net] [--no-mount] -- command args...
-        var no_network = false;
+        // Format: bun sandbox exec [options] -- command args...
+        var share_network = false;
         var no_mount = false;
-        var workdir: []const u8 = ".";
+        var enable_seccomp = true;
+        var enable_overlayfs = false;
+        var workdir: []const u8 = "/tmp";
         var cmd_start: usize = 2; // Skip "sandbox" and "exec"
 
         var i: usize = 2;
@@ -84,10 +86,14 @@ pub const SandboxCommand = struct {
             if (strings.eqlComptime(arg, "--")) {
                 cmd_start = i + 1;
                 break;
-            } else if (strings.eqlComptime(arg, "--no-net")) {
-                no_network = true;
+            } else if (strings.eqlComptime(arg, "--share-net")) {
+                share_network = true;
             } else if (strings.eqlComptime(arg, "--no-mount")) {
                 no_mount = true;
+            } else if (strings.eqlComptime(arg, "--no-seccomp")) {
+                enable_seccomp = false;
+            } else if (strings.eqlComptime(arg, "--overlayfs")) {
+                enable_overlayfs = true;
             } else if (strings.eqlComptime(arg, "--workdir") or strings.eqlComptime(arg, "-C")) {
                 i += 1;
                 if (i < ctx.positionals.len) {
@@ -102,6 +108,12 @@ pub const SandboxCommand = struct {
 
         if (cmd_start >= ctx.positionals.len) {
             Output.print("error: No command specified. Usage: bun sandbox exec [options] -- <command> [args...]\n", .{});
+            Output.print("\nOptions:\n", .{});
+            Output.print("  --share-net     Share network with host (default: isolated)\n", .{});
+            Output.print("  --no-mount      Disable mount namespace\n", .{});
+            Output.print("  --no-seccomp    Disable seccomp syscall filtering\n", .{});
+            Output.print("  --overlayfs     Enable overlayfs copy-on-write filesystem\n", .{});
+            Output.print("  -C, --workdir   Set working directory inside sandbox\n", .{});
             Global.exit(1);
         }
 
@@ -127,10 +139,12 @@ pub const SandboxCommand = struct {
             .workdir = workdir,
             .user_namespace = true,
             .mount_namespace = !no_mount,
-            .network_namespace = !no_network,
-            .share_network = no_network, // If --no-net is not set, share network
-            .pid_namespace = false, // Disable for simplicity
-            .seccomp = false,
+            .network_namespace = !share_network,
+            .share_network = share_network,
+            .pid_namespace = false,
+            .overlayfs = enable_overlayfs,
+            .seccomp = enable_seccomp,
+            .seccomp_mode = .strict,
         };
 
         Output.prettyln("<b>Running in sandbox:<r> ", .{});

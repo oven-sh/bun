@@ -2390,6 +2390,8 @@ extern "C" napi_status napi_typeof(napi_env env, napi_value val,
             return napi_clear_last_error(env);
 
         case JSC::ObjectType:
+        case JSC::StringObjectType:
+        case JSC::DerivedStringObjectType:
             if (JSC::jsDynamicCast<Bun::NapiExternal*>(value)) {
                 *result = napi_external;
                 return napi_clear_last_error(env);
@@ -2401,8 +2403,6 @@ extern "C" napi_status napi_typeof(napi_env env, napi_value val,
         case JSC::HeapBigIntType:
             *result = napi_bigint;
             return napi_clear_last_error(env);
-        case JSC::DerivedStringObjectType:
-        case JSC::StringObjectType:
         case JSC::StringType:
             *result = napi_string;
             return napi_clear_last_error(env);

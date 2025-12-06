@@ -120,9 +120,7 @@ pub const TestingAPIs = struct {
             return jsc.JSValue.jsNull();
         };
 
-        const cache_data = result[0];
-        const cache_obj = result[1];
-        _ = cache_obj;
+        const cache_data, _ = result;
 
         // Create a Uint8Array for the cache data (without copying)
         return try jsc.ArrayBuffer.createUint8Array(global, cache_data);

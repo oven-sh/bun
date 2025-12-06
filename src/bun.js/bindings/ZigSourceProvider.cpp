@@ -78,17 +78,17 @@ extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, SourceProvider*
 static constexpr uint32_t MODULE_CACHE_MAGIC = 0x424D4553; // "BMES"
 static constexpr uint32_t MODULE_CACHE_VERSION = 3; // Version 3: includes VariableEnvironment and CodeFeatures
 
-// BMES v2 Header layout (16 bytes total):
+// BMES v3 Header layout (16 bytes total):
 // [4 bytes: MAGIC] "BMES"
-// [4 bytes: VERSION] 2
+// [4 bytes: VERSION] 3
 // [4 bytes: BYTECODE_OFFSET] offset from start of buffer to bytecode data
 // [4 bytes: BYTECODE_SIZE] size of bytecode data
-// ... metadata ...
+// ... metadata (includes VariableEnvironment and CodeFeatures) ...
 // [BYTECODE_SIZE bytes: BYTECODE_DATA]
 
 static constexpr size_t BMES_HEADER_SIZE = 16; // magic + version + offset + size
 
-// Quick bytecode extraction from BMES format - O(1) for v2, falls back to parsing for v1
+// Quick bytecode extraction from BMES format - O(1) for v2/v3
 // Returns true if extraction was successful, and sets bytecodeStart/bytecodeSize
 static bool extractBytecodeFromBMES(
     const uint8_t* cacheData,
@@ -139,119 +139,8 @@ static bool extractBytecodeFromBMES(
         return true;
     }
 
-    // Version 1 fallback: parse through metadata to find bytecode (slow path)
-    if (version != 1) return false;
-
-    // Skip module requests
-    if (ptr + 4 > cacheData + cacheSize) return false;
-    uint32_t moduleRequestCount = static_cast<uint32_t>(ptr[0]) |
-                                   (static_cast<uint32_t>(ptr[1]) << 8) |
-                                   (static_cast<uint32_t>(ptr[2]) << 16) |
-                                   (static_cast<uint32_t>(ptr[3]) << 24);
-    ptr += 4;
-    for (uint32_t i = 0; i < moduleRequestCount; i++) {
-        if (ptr + 4 > cacheData + cacheSize) return false;
-        uint32_t specifierLen = static_cast<uint32_t>(ptr[0]) |
-                                 (static_cast<uint32_t>(ptr[1]) << 8) |
-                                 (static_cast<uint32_t>(ptr[2]) << 16) |
-                                 (static_cast<uint32_t>(ptr[3]) << 24);
-        ptr += 4 + specifierLen;
-        if (ptr + 4 > cacheData + cacheSize) return false;
-        uint32_t hasAttributes = static_cast<uint32_t>(ptr[0]) |
-                                  (static_cast<uint32_t>(ptr[1]) << 8) |
-                                  (static_cast<uint32_t>(ptr[2]) << 16) |
-                                  (static_cast<uint32_t>(ptr[3]) << 24);
-        ptr += 4;
-        if (hasAttributes) {
-            if (ptr + 4 > cacheData + cacheSize) return false;
-            uint32_t attrCount = static_cast<uint32_t>(ptr[0]) |
-                                  (static_cast<uint32_t>(ptr[1]) << 8) |
-                                  (static_cast<uint32_t>(ptr[2]) << 16) |
-                                  (static_cast<uint32_t>(ptr[3]) << 24);
-            ptr += 4;
-            for (uint32_t j = 0; j < attrCount; j++) {
-                if (ptr + 4 > cacheData + cacheSize) return false;
-                uint32_t keyLen = static_cast<uint32_t>(ptr[0]) |
-                                   (static_cast<uint32_t>(ptr[1]) << 8) |
-                                   (static_cast<uint32_t>(ptr[2]) << 16) |
-                                   (static_cast<uint32_t>(ptr[3]) << 24);
-                ptr += 4 + keyLen;
-                if (ptr + 4 > cacheData + cacheSize) return false;
-                uint32_t valLen = static_cast<uint32_t>(ptr[0]) |
-                                   (static_cast<uint32_t>(ptr[1]) << 8) |
-                                   (static_cast<uint32_t>(ptr[2]) << 16) |
-                                   (static_cast<uint32_t>(ptr[3]) << 24);
-                ptr += 4 + valLen;
-            }
-        }
-    }
-
-    // Skip import entries
-    if (ptr + 4 > cacheData + cacheSize) return false;
-    uint32_t importCount = static_cast<uint32_t>(ptr[0]) |
-                            (static_cast<uint32_t>(ptr[1]) << 8) |
-                            (static_cast<uint32_t>(ptr[2]) << 16) |
-                            (static_cast<uint32_t>(ptr[3]) << 24);
-    ptr += 4;
-    for (uint32_t i = 0; i < importCount; i++) {
-        ptr += 4; // type
-        for (int j = 0; j < 3; j++) { // moduleRequest, importName, localName
-            if (ptr + 4 > cacheData + cacheSize) return false;
-            uint32_t len = static_cast<uint32_t>(ptr[0]) |
-                            (static_cast<uint32_t>(ptr[1]) << 8) |
-                            (static_cast<uint32_t>(ptr[2]) << 16) |
-                            (static_cast<uint32_t>(ptr[3]) << 24);
-            ptr += 4 + len;
-        }
-    }
-
-    // Skip export entries
-    if (ptr + 4 > cacheData + cacheSize) return false;
-    uint32_t exportCount = static_cast<uint32_t>(ptr[0]) |
-                            (static_cast<uint32_t>(ptr[1]) << 8) |
-                            (static_cast<uint32_t>(ptr[2]) << 16) |
-                            (static_cast<uint32_t>(ptr[3]) << 24);
-    ptr += 4;
-    for (uint32_t i = 0; i < exportCount; i++) {
-        ptr += 4; // type
-        for (int j = 0; j < 4; j++) { // exportName, moduleName, importName, localName
-            if (ptr + 4 > cacheData + cacheSize) return false;
-            uint32_t len = static_cast<uint32_t>(ptr[0]) |
-                            (static_cast<uint32_t>(ptr[1]) << 8) |
-                            (static_cast<uint32_t>(ptr[2]) << 16) |
-                            (static_cast<uint32_t>(ptr[3]) << 24);
-            ptr += 4 + len;
-        }
-    }
-
-    // Skip star exports
-    if (ptr + 4 > cacheData + cacheSize) return false;
-    uint32_t starExportCount = static_cast<uint32_t>(ptr[0]) |
-                                (static_cast<uint32_t>(ptr[1]) << 8) |
-                                (static_cast<uint32_t>(ptr[2]) << 16) |
-                                (static_cast<uint32_t>(ptr[3]) << 24);
-    ptr += 4;
-    for (uint32_t i = 0; i < starExportCount; i++) {
-        if (ptr + 4 > cacheData + cacheSize) return false;
-        uint32_t len = static_cast<uint32_t>(ptr[0]) |
-                        (static_cast<uint32_t>(ptr[1]) << 8) |
-                        (static_cast<uint32_t>(ptr[2]) << 16) |
-                        (static_cast<uint32_t>(ptr[3]) << 24);
-        ptr += 4 + len;
-    }
-
-    // Read bytecode size and pointer
-    if (ptr + 4 > cacheData + cacheSize) return false;
-    bytecodeSize = static_cast<uint32_t>(ptr[0]) |
-                    (static_cast<uint32_t>(ptr[1]) << 8) |
-                    (static_cast<uint32_t>(ptr[2]) << 16) |
-                    (static_cast<uint32_t>(ptr[3]) << 24);
-    ptr += 4;
-
-    if (ptr + bytecodeSize > cacheData + cacheSize) return false;
-    bytecodeStart = ptr;
-
-    return true;
+    // Unknown version
+    return false;
 }
 
 // Helper functions for reading serialized data
@@ -739,8 +628,8 @@ extern "C" bool validateCachedModuleMetadata(
     return true;
 }
 
-// New function: Generate cached bytecode WITH module metadata
-// Uses BMES v2 format with bytecode offset in header for O(1) extraction
+// Generate cached bytecode WITH module metadata
+// Uses BMES v3 format with bytecode offset in header for O(1) extraction
 extern "C" bool generateCachedModuleByteCodeWithMetadata(
     BunString* sourceProviderURL,
     const Latin1Character* inputSourceCode,
@@ -802,9 +691,9 @@ extern "C" bool generateCachedModuleByteCodeWithMetadata(
     if (!bytecodeCache)
         return false;
 
-    // BMES v2 Format:
+    // BMES v3 Format:
     // [4 bytes: MAGIC] [4 bytes: VERSION] [4 bytes: BYTECODE_OFFSET] [4 bytes: BYTECODE_SIZE]
-    // [... metadata ...]
+    // [... metadata (includes VariableEnvironment and CodeFeatures) ...]
     // [BYTECODE_SIZE bytes: BYTECODE_DATA]
 
     Vector<uint8_t> metadataBuffer;
@@ -812,7 +701,7 @@ extern "C" bool generateCachedModuleByteCodeWithMetadata(
 
     // Write header - offset and size will be filled in later
     writeUint32(metadataBuffer, MODULE_CACHE_MAGIC);
-    writeUint32(metadataBuffer, MODULE_CACHE_VERSION);  // Version 2
+    writeUint32(metadataBuffer, MODULE_CACHE_VERSION);  // Version 3
     size_t offsetPosition = metadataBuffer.size();
     writeUint32(metadataBuffer, 0);  // Placeholder for bytecode offset
     writeUint32(metadataBuffer, static_cast<uint32_t>(bytecodeCache->span().size()));  // Bytecode size

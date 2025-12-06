@@ -111,17 +111,45 @@ pub const FFI = struct {
                 switch (this.*) {
                     .file => {
                         current_file_for_errors.* = this.file;
-                        state.addFile(this.file) catch return error.CompilationError;
+                        try addFileOrString(state, this.file);
                         current_file_for_errors.* = "";
                     },
                     .files => {
                         for (this.files.items) |file| {
                             current_file_for_errors.* = file;
-                            state.addFile(file) catch return error.CompilationError;
+                            try addFileOrString(state, file);
                             current_file_for_errors.* = "";
                         }
                     },
                 }
+            }
+
+            fn addFileOrString(state: *TCC.State, file_path: [:0]const u8) !void {
+                // Check if this is a bundled file from the standalone executable
+                if (bun.StandaloneModuleGraph.isBunStandaloneFilePath(file_path)) {
+                    if (bun.StandaloneModuleGraph.get()) |graph| {
+                        if (graph.find(file_path)) |file| {
+                            // For bundled files, compile the source string directly
+                            // We need to ensure it's null-terminated for TCC
+                            const contents = file.contents;
+                            if (contents.len > 0) {
+                                // Check if already null-terminated
+                                if (contents[contents.len - 1] == 0) {
+                                    state.compileString(contents[0 .. contents.len - 1 :0]) catch return error.CompilationError;
+                                } else {
+                                    // Need to allocate a null-terminated copy
+                                    const nt_contents = bun.handleOom(bun.default_allocator.dupeZ(u8, contents));
+                                    defer bun.default_allocator.free(nt_contents);
+                                    state.compileString(nt_contents) catch return error.CompilationError;
+                                }
+                                return;
+                            }
+                        }
+                    }
+                }
+
+                // For regular files, use addFile as before
+                state.addFile(file_path) catch return error.CompilationError;
             }
         };
 

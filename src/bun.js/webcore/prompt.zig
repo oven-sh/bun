@@ -459,6 +459,8 @@ pub const prompt = struct {
         // Handle interactive TTY input for non-Windows systems.
         if ((comptime !Environment.isWindows) and bun.c.isatty(bun.FD.stdin().native()) == 1 and bun.c.isatty(bun.FD.stdout().native()) == 1) {
             const original_ttymode = Bun__ttySetMode(bun.FD.stdin().native(), 1);
+            if (original_ttymode == -1) return .null;
+
             const stdin_fd = bun.FD.stdin().native();
 
             const LoopResult = enum {
@@ -470,8 +472,8 @@ pub const prompt = struct {
 
             var pending_sigint = false;
 
-            var input = std.ArrayList(u8).init(allocator);
-            defer input.deinit();
+            var input = std.ArrayList(u8).empty;
+            defer input.deinit(allocator);
             var cursor_index: usize = 0;
             var prompt_width: usize = 0;
             var last_cursor_row: usize = 0;
@@ -586,9 +588,9 @@ pub const prompt = struct {
                     }
                 } else {
                     // Handle batch paste by temporarily setting stdin to non-blocking mode.
-                    var batch = std.ArrayList(u8).init(allocator);
-                    defer batch.deinit();
-                    try batch.append(first_byte);
+                    var batch = std.ArrayList(u8).empty;
+                    defer batch.deinit(allocator);
+                    try batch.append(allocator, first_byte);
 
                     batch_read_block: {
                         if (setBlocking(stdin_fd, false)) {
@@ -605,10 +607,9 @@ pub const prompt = struct {
                                 if (err == error.WouldBlock or err == error.FileBusy) {
                                     break; // Batch paste complete
                                 }
-                                loop_result = .Error; // Propagate I/O error
                                 break :batch_read_block;
                             };
-                            try batch.append(next_byte);
+                            try batch.append(allocator, next_byte);
                         }
                     }
 
@@ -616,7 +617,7 @@ pub const prompt = struct {
                     for (batch.items) |b| {
                         switch (b) {
                             std.ascii.control_code.ht => {
-                                try input.insert(cursor_index, b);
+                                try input.insert(allocator, cursor_index, b);
                                 cursor_index += 1;
                             },
                             // Check for exit control codes that might be part of a paste.
@@ -628,7 +629,7 @@ pub const prompt = struct {
 
                             // Handle standard printable characters and UTF-8 bytes.
                             else => {
-                                try input.insert(cursor_index, b);
+                                try input.insert(allocator, cursor_index, b);
                                 cursor_index += 1;
                             },
                         }
@@ -677,10 +678,6 @@ pub const prompt = struct {
         }
 
         var input = std.array_list.Managed(u8).initCapacity(allocator, 2048) catch {
-        var input = std.ArrayList(u8).initCapacity(allocator, 2048) catch {
-            // 8. Let result be null if the user aborts, or otherwise the string
-            //    that the user responded with.
-            return .null;
             return .null; // Out of memory
         };
         defer input.deinit();

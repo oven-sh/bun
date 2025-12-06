@@ -153,6 +153,8 @@ template<> void JSReadableStreamDOMConstructor::initializeProperties(VM& vm, JSD
     m_originalName.set(vm, this, nameString);
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     putDirect(vm, vm.propertyNames->prototype, JSReadableStream::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    // Add static ReadableStream.from() method per WHATWG Streams spec
+    putDirectBuiltinFunction(vm, &globalObject, vm.propertyNames->builtinNames().fromPublicName(), readableStreamReadableStreamFromCodeGenerator(vm), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function);
 }
 
 template<> FunctionExecutable* JSReadableStreamDOMConstructor::initializeExecutable(VM& vm)

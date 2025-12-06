@@ -92,6 +92,7 @@ pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
 pub const FuzzilliCommand = @import("./cli/fuzzilli_command.zig").FuzzilliCommand;
+pub const SandboxCommand = @import("./cli/sandbox_command.zig").SandboxCommand;
 
 pub const Arguments = @import("./cli/Arguments.zig");
 
@@ -607,6 +608,7 @@ pub const Command = struct {
             RootCommandMatcher.case("help") => .HelpCommand,
 
             RootCommandMatcher.case("exec") => .ExecCommand,
+            RootCommandMatcher.case("sandbox") => .SandboxCommand,
 
             RootCommandMatcher.case("outdated") => .OutdatedCommand,
             RootCommandMatcher.case("publish") => .PublishCommand,
@@ -949,6 +951,10 @@ pub const Command = struct {
                     return error.UnrecognizedCommand;
                 }
             },
+            .SandboxCommand => {
+                const ctx = try Command.init(allocator, log, .SandboxCommand);
+                try SandboxCommand.exec(ctx);
+            },
         }
     }
 
@@ -985,6 +991,7 @@ pub const Command = struct {
         AuditCommand,
         WhyCommand,
         FuzzilliCommand,
+        SandboxCommand,
 
         /// Used by crash reports.
         ///
@@ -1023,6 +1030,7 @@ pub const Command = struct {
                 .AuditCommand => 'A',
                 .WhyCommand => 'W',
                 .FuzzilliCommand => 'F',
+                .SandboxCommand => 'S',
             };
         }
 
@@ -1334,6 +1342,9 @@ pub const Command = struct {
 
                     Output.pretty(intro_text, .{});
                     Output.flush();
+                },
+                .SandboxCommand => {
+                    SandboxCommand.printHelp();
                 },
                 else => {
                     HelpCommand.printWithReason(.explicit, false);

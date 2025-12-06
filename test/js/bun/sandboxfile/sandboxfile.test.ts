@@ -30,23 +30,6 @@ SECRET STRIPE_API_KEY
 `,
       });
 
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
-          const { parse } = require("${String(dir)}/Sandboxfile.parser.js");
-          // This is a placeholder - the actual parsing will be done in Zig
-          console.log("Sandboxfile found at:", "${String(dir)}/Sandboxfile");
-        `,
-        ],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-        stdout: "pipe",
-      });
-
-      // For now, just verify the file can be read
       const file = Bun.file(`${String(dir)}/Sandboxfile`);
       const content = await file.text();
 
@@ -90,102 +73,6 @@ RUN npm install
       expect(content).toContain("WORKDIR /app");
     });
 
-    test("handles multiple RUN commands", async () => {
-      using dir = tempDir("sandboxfile-multi-run", {
-        Sandboxfile: `FROM host
-WORKDIR .
-RUN apt-get update
-RUN apt-get install -y curl
-RUN bun install
-`,
-      });
-
-      const file = Bun.file(`${String(dir)}/Sandboxfile`);
-      const content = await file.text();
-
-      expect(content).toContain("RUN apt-get update");
-      expect(content).toContain("RUN apt-get install -y curl");
-      expect(content).toContain("RUN bun install");
-    });
-
-    test("handles multiple SERVICE declarations", async () => {
-      using dir = tempDir("sandboxfile-multi-service", {
-        Sandboxfile: `FROM host
-WORKDIR .
-SERVICE postgres PORT=5432 docker compose up postgres
-SERVICE redis PORT=6379 redis-server
-SERVICE minio PORT=9000 docker compose up minio
-`,
-      });
-
-      const file = Bun.file(`${String(dir)}/Sandboxfile`);
-      const content = await file.text();
-
-      expect(content).toContain("SERVICE postgres PORT=5432");
-      expect(content).toContain("SERVICE redis PORT=6379");
-      expect(content).toContain("SERVICE minio PORT=9000");
-    });
-
-    test("handles multiple OUTPUT paths", async () => {
-      using dir = tempDir("sandboxfile-multi-output", {
-        Sandboxfile: `FROM host
-WORKDIR .
-OUTPUT src/
-OUTPUT tests/
-OUTPUT package.json
-OUTPUT bun.lockb
-`,
-      });
-
-      const file = Bun.file(`${String(dir)}/Sandboxfile`);
-      const content = await file.text();
-
-      expect(content).toContain("OUTPUT src/");
-      expect(content).toContain("OUTPUT tests/");
-      expect(content).toContain("OUTPUT package.json");
-      expect(content).toContain("OUTPUT bun.lockb");
-    });
-
-    test("handles multiple NET (allowed hosts)", async () => {
-      using dir = tempDir("sandboxfile-multi-net", {
-        Sandboxfile: `FROM host
-WORKDIR .
-NET registry.npmjs.org
-NET api.stripe.com
-NET api.github.com
-NET *.amazonaws.com
-`,
-      });
-
-      const file = Bun.file(`${String(dir)}/Sandboxfile`);
-      const content = await file.text();
-
-      expect(content).toContain("NET registry.npmjs.org");
-      expect(content).toContain("NET api.stripe.com");
-      expect(content).toContain("NET api.github.com");
-      expect(content).toContain("NET *.amazonaws.com");
-    });
-
-    test("handles multiple SECRET declarations", async () => {
-      using dir = tempDir("sandboxfile-multi-secret", {
-        Sandboxfile: `FROM host
-WORKDIR .
-SECRET STRIPE_API_KEY
-SECRET DATABASE_URL
-SECRET AWS_ACCESS_KEY_ID
-SECRET AWS_SECRET_ACCESS_KEY
-`,
-      });
-
-      const file = Bun.file(`${String(dir)}/Sandboxfile`);
-      const content = await file.text();
-
-      expect(content).toContain("SECRET STRIPE_API_KEY");
-      expect(content).toContain("SECRET DATABASE_URL");
-      expect(content).toContain("SECRET AWS_ACCESS_KEY_ID");
-      expect(content).toContain("SECRET AWS_SECRET_ACCESS_KEY");
-    });
-
     test("handles comments and empty lines", async () => {
       using dir = tempDir("sandboxfile-comments", {
         Sandboxfile: `# This is a Sandboxfile for a web application
@@ -199,9 +86,6 @@ RUN bun install
 
 # Development server configuration
 DEV PORT=3000 bun run dev
-
-# Database service
-SERVICE db PORT=5432 docker compose up postgres
 `,
       });
 
@@ -212,142 +96,162 @@ SERVICE db PORT=5432 docker compose up postgres
       expect(content).toContain("FROM host");
       expect(content).toContain("RUN bun install");
     });
+  });
 
-    test("handles DEV without optional parameters", async () => {
-      using dir = tempDir("sandboxfile-dev-minimal", {
-        Sandboxfile: `FROM host
-WORKDIR .
-DEV npm start
-`,
+  describe("CLI", () => {
+    test("sandbox --help shows usage", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "sandbox", "--help"],
+        env: bunEnv,
+        stderr: "pipe",
+        stdout: "pipe",
       });
 
-      const file = Bun.file(`${String(dir)}/Sandboxfile`);
-      const content = await file.text();
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(content).toContain("DEV npm start");
+      expect(stdout + stderr).toContain("Usage: bun sandbox");
+      expect(stdout + stderr).toContain("--dry-run");
+      expect(stdout + stderr).toContain("--test");
     });
 
-    test("handles DEV with only PORT", async () => {
-      using dir = tempDir("sandboxfile-dev-port-only", {
-        Sandboxfile: `FROM host
-WORKDIR .
-DEV PORT=8080 bun run dev
-`,
+    test("sandbox without Sandboxfile shows error", async () => {
+      using dir = tempDir("sandboxfile-missing", {});
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "sandbox"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
       });
 
-      const file = Bun.file(`${String(dir)}/Sandboxfile`);
-      const content = await file.text();
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(content).toContain("DEV PORT=8080");
+      expect(stderr).toContain("Sandboxfile not found");
+      expect(exitCode).toBe(1);
     });
 
-    test("handles DEV with only WATCH", async () => {
-      using dir = tempDir("sandboxfile-dev-watch-only", {
+    test("sandbox --dry-run validates Sandboxfile", async () => {
+      using dir = tempDir("sandboxfile-dryrun", {
         Sandboxfile: `FROM host
 WORKDIR .
-DEV WATCH=src/**/*.ts bun run dev
+RUN echo "setup"
+TEST echo "test passed"
 `,
       });
 
-      const file = Bun.file(`${String(dir)}/Sandboxfile`);
-      const content = await file.text();
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "sandbox", "--dry-run"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
 
-      expect(content).toContain("DEV WATCH=src/**/*.ts");
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("Parsed Sandboxfile");
+      expect(stderr).toContain("FROM: host");
+      expect(stderr).toContain("Sandboxfile is valid");
+      expect(exitCode).toBe(0);
     });
 
-    test("handles TEST directive", async () => {
-      using dir = tempDir("sandboxfile-test", {
+    test("sandbox runs RUN commands", async () => {
+      using dir = tempDir("sandboxfile-run", {
         Sandboxfile: `FROM host
 WORKDIR .
-TEST bun test
+RUN echo "hello from sandbox" > output.txt
 `,
       });
 
-      const file = Bun.file(`${String(dir)}/Sandboxfile`);
-      const content = await file.text();
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "sandbox"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
 
-      expect(content).toContain("TEST bun test");
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("RUN echo");
+      expect(exitCode).toBe(0);
+
+      // Verify the file was created
+      const outputFile = Bun.file(`${String(dir)}/output.txt`);
+      const outputContent = await outputFile.text();
+      expect(outputContent.trim()).toBe("hello from sandbox");
     });
 
-    test("handles LOGS directive", async () => {
-      using dir = tempDir("sandboxfile-logs", {
+    test("sandbox runs TEST commands", async () => {
+      using dir = tempDir("sandboxfile-test-cmd", {
         Sandboxfile: `FROM host
 WORKDIR .
-LOGS logs/*.log
-LOGS /var/log/app/*
+TEST echo "tests passed"
 `,
       });
 
-      const file = Bun.file(`${String(dir)}/Sandboxfile`);
-      const content = await file.text();
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "sandbox", "--test"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
 
-      expect(content).toContain("LOGS logs/*.log");
-      expect(content).toContain("LOGS /var/log/app/*");
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("TEST echo");
+      expect(stderr).toContain("tests passed");
+      expect(exitCode).toBe(0);
     });
 
-    test("full real-world example", async () => {
-      using dir = tempDir("sandboxfile-fullexample", {
-        Sandboxfile: `# Production-ready Sandboxfile for a SaaS application
-
-FROM host
+    test("sandbox fails on RUN command failure", async () => {
+      using dir = tempDir("sandboxfile-fail", {
+        Sandboxfile: `FROM host
 WORKDIR .
-
-# Setup
-RUN bun install
-RUN bun run db:migrate
-
-# Development
-DEV PORT=3000 WATCH=src/**,lib/** bun run dev
-
-# Services
-SERVICE postgres PORT=5432 docker compose up postgres
-SERVICE redis PORT=6379 docker compose up redis
-SERVICE worker PORT=0 bun run worker
-
-# Testing
-TEST bun test
-
-# Outputs
-OUTPUT src/
-OUTPUT lib/
-OUTPUT package.json
-OUTPUT bun.lockb
-OUTPUT prisma/
-
-# Logs
-LOGS logs/*
-LOGS .next/server/logs/*
-
-# Network access
-NET registry.npmjs.org
-NET api.stripe.com
-NET api.openai.com
-NET *.supabase.co
-
-# Secrets
-SECRET DATABASE_URL
-SECRET STRIPE_SECRET_KEY
-SECRET OPENAI_API_KEY
+RUN exit 1
 `,
       });
 
-      const file = Bun.file(`${String(dir)}/Sandboxfile`);
-      const content = await file.text();
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "sandbox"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
 
-      // Verify all major sections are present
-      expect(content).toContain("FROM host");
-      expect(content).toContain("WORKDIR .");
-      expect(content).toContain("RUN bun install");
-      expect(content).toContain("RUN bun run db:migrate");
-      expect(content).toContain("DEV PORT=3000 WATCH=src/**,lib/** bun run dev");
-      expect(content).toContain("SERVICE postgres PORT=5432");
-      expect(content).toContain("SERVICE redis PORT=6379");
-      expect(content).toContain("SERVICE worker PORT=0");
-      expect(content).toContain("TEST bun test");
-      expect(content).toContain("OUTPUT src/");
-      expect(content).toContain("LOGS logs/*");
-      expect(content).toContain("NET registry.npmjs.org");
-      expect(content).toContain("SECRET DATABASE_URL");
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("Setup failed");
+      expect(exitCode).toBe(1);
+    });
+
+    test("sandbox sets BUN_SANDBOX environment variable", async () => {
+      using dir = tempDir("sandboxfile-env", {
+        Sandboxfile: `FROM host
+WORKDIR .
+RUN echo $BUN_SANDBOX > sandbox_env.txt
+`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "sandbox"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(exitCode).toBe(0);
+
+      // Verify the environment variable was set
+      const envFile = Bun.file(`${String(dir)}/sandbox_env.txt`);
+      const envContent = await envFile.text();
+      expect(envContent.trim()).toBe("1");
     });
   });
 });

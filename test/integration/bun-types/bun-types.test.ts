@@ -526,6 +526,26 @@ describe("@types/bun integration test", () => {
         "message": "Property 'blob' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
       },
       {
+        code: 2345,
+        line: "streams.ts:63:66",
+        message: "Argument of type '\"brotli\"' is not assignable to parameter of type 'CompressionFormat'.",
+      },
+      {
+        code: 2345,
+        line: "streams.ts:63:113",
+        message: "Argument of type '\"brotli\"' is not assignable to parameter of type 'CompressionFormat'.",
+      },
+      {
+        code: 2345,
+        line: "streams.ts:64:66",
+        message: "Argument of type '\"zstd\"' is not assignable to parameter of type 'CompressionFormat'.",
+      },
+      {
+        code: 2345,
+        line: "streams.ts:64:111",
+        message: "Argument of type '\"zstd\"' is not assignable to parameter of type 'CompressionFormat'.",
+      },
+      {
         code: 2353,
         line: "websocket.ts:25:5",
         message: "Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.",

@@ -330,11 +330,10 @@ fn refreshWithHeldLock(self: *Progress) void {
                         .none => self.bufWrite(&end, "[{d}/{d}] ", .{ current_item, eti }),
                         .files => self.bufWrite(&end, "[{d}/{d} files] ", .{ current_item, eti }),
                         .bytes => {
-                            self.bufWrite(&end, "[", .{});
-                            self.bufWrite(&end, "{f}", .{bun.fmt.commaNumber(current_item)});
-                            self.bufWrite(&end, "/", .{});
-                            self.bufWrite(&end, "{f}", .{bun.fmt.commaNumber(eti)});
-                            self.bufWrite(&end, "] ", .{});
+                            self.bufWrite(&end, "[{f}/{f}] ", .{
+                                bun.fmt.commaNumber(current_item),
+                                bun.fmt.commaNumber(eti),
+                            });
                         },
                     }
                     need_ellipse = false;
@@ -344,9 +343,9 @@ fn refreshWithHeldLock(self: *Progress) void {
                         .none => self.bufWrite(&end, "[{d}] ", .{current_item}),
                         .files => self.bufWrite(&end, "[{d} files] ", .{current_item}),
                         .bytes => {
-                            self.bufWrite(&end, "[", .{});
-                            self.bufWrite(&end, "{f}", .{bun.fmt.commaNumber(current_item)});
-                            self.bufWrite(&end, "] ", .{});
+                            self.bufWrite(&end, "[{f}] ", .{
+                                bun.fmt.commaNumber(current_item),
+                            });
                         },
                     }
                     need_ellipse = false;

@@ -77,7 +77,7 @@ pub fn watchDir(this: *INotifyWatcher, pathname: [:0]const u8) bun.sys.Maybe(Eve
     bun.assert(this.loaded);
     const old_count = this.watch_count.fetchAdd(1, .release);
     defer if (old_count == 0) Futex.wake(&this.watch_count, 10);
-    const watch_dir_mask = IN.EXCL_UNLINK | IN.DELETE | IN.DELETE_SELF | IN.CREATE | IN.MOVE_SELF | IN.ONLYDIR | IN.MOVED_TO;
+    const watch_dir_mask = IN.EXCL_UNLINK | IN.DELETE | IN.DELETE_SELF | IN.CREATE | IN.MOVE_SELF | IN.ONLYDIR | IN.MOVED_TO | IN.MODIFY;
     const rc = system.inotify_add_watch(this.fd.cast(), pathname, watch_dir_mask);
     log("inotify_add_watch({f}) = {}", .{ this.fd, rc });
     return bun.sys.Maybe(EventListIndex).errnoSysP(rc, .watch, pathname) orelse
@@ -361,7 +361,7 @@ pub fn watchEventFromInotifyEvent(event: *align(1) const INotifyWatcher.Event, i
     return .{
         .op = .{
             .delete = (event.mask & IN.DELETE_SELF) > 0 or (event.mask & IN.DELETE) > 0,
-            .rename = (event.mask & IN.MOVE_SELF) > 0,
+            .rename = (event.mask & IN.MOVE_SELF) > 0 or (event.mask & IN.CREATE) > 0,
             .move_to = (event.mask & IN.MOVED_TO) > 0,
             .write = (event.mask & IN.MODIFY) > 0,
         },

@@ -412,7 +412,9 @@ const bytes = await file(icon).arrayBuffer();
 
 ### Embed SQLite databases
 
-If your application wants to embed a SQLite database, set `type: "sqlite"` in the import attribute and the `embed` attribute to `"true"`.
+If your application wants to embed a SQLite database into the compiled executable, set `type: "sqlite"` in the import attribute and the `embed` attribute to `"true"`.
+
+The database file must already exist on disk. Then, import it in your code:
 
 ```ts index.ts icon="/icons/typescript.svg"
 import myEmbeddedDb from "./my.db" with { type: "sqlite", embed: "true" };
@@ -420,7 +422,19 @@ import myEmbeddedDb from "./my.db" with { type: "sqlite", embed: "true" };
 console.log(myEmbeddedDb.query("select * from users LIMIT 1").get());
 ```
 
-This database is read-write, but all changes are lost when the executable exits (since it's stored in memory).
+Finally, compile it into a standalone executable:
+
+```bash terminal icon="terminal"
+bun build --compile ./index.ts --outfile mycli
+```
+
+<Note>
+  The database file must exist on disk when you run `bun build --compile`. The `embed: "true"` attribute tells the
+  bundler to include the database contents inside the compiled executable. When running normally with `bun run`, the
+  database file is loaded from disk just like a regular SQLite import.
+</Note>
+
+In the compiled executable, the embedded database is read-write, but all changes are lost when the executable exits (since it's stored in memory).
 
 ### Embed N-API Addons
 

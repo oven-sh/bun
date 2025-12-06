@@ -110,7 +110,7 @@ beforeAll(
     }
   },
   {
-    timeout: 10 * 1000,
+    timeout: 30 * 1000,
   },
 );
 

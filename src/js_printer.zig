@@ -353,6 +353,27 @@ pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer,
     try writer.writeAll("\"");
 }
 
+/// Writes a quoted string for console output, choosing the best quote character
+/// to minimize escaping. Supports latin1 and utf8 encodings (use JSON path for UTF-16).
+pub fn writeQuotedString(input: []const u8, comptime Writer: type, writer: Writer, comptime encoding: strings.Encoding) !void {
+    comptime {
+        if (encoding != .latin1 and encoding != .utf8) {
+            @compileError("writeQuotedString only supports latin1 and utf8 encodings; use JSON path for UTF-16");
+        }
+    }
+    // Reuse existing bestQuoteCharForString which counts quotes in a single pass
+    const quote_char = bestQuoteCharForString(u8, input, false);
+    if (quote_char == '\'') {
+        try writer.writeAll("'");
+        try writePreQuotedString(input, Writer, writer, '\'', false, false, encoding);
+        try writer.writeAll("'");
+    } else {
+        try writer.writeAll("\"");
+        try writePreQuotedString(input, Writer, writer, '"', false, false, encoding);
+        try writer.writeAll("\"");
+    }
+}
+
 pub const SourceMapHandler = struct {
     ctx: *anyopaque,
     callback: Callback,

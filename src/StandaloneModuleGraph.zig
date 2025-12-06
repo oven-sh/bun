@@ -296,7 +296,9 @@ pub const StandaloneModuleGraph = struct {
     pub const Flags = packed struct(u32) {
         disable_default_env_files: bool = false,
         disable_autoload_bunfig: bool = false,
-        _padding: u30 = 0,
+        disable_autoload_tsconfig: bool = false,
+        disable_autoload_package_json: bool = false,
+        _padding: u28 = 0,
     };
 
     const trailer = "\n---- Bun! ----\n";

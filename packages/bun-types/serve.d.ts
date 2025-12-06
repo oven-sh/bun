@@ -446,7 +446,7 @@ declare module "bun" {
     closeOnBackpressureLimit?: boolean;
 
     /**
-     * Sets the the number of seconds to wait before timing out a connection
+     * Sets the number of seconds to wait before timing out a connection
      * due to no messages or pings.
      *
      * @default 120
@@ -758,7 +758,7 @@ declare module "bun" {
       ipv6Only?: boolean;
 
       /**
-       * Sets the the number of seconds to wait before timing out a connection
+       * Sets the number of seconds to wait before timing out a connection
        * due to inactivity.
        *
        * @default 10

@@ -185,7 +185,7 @@ pub const Animation = struct {
                 }
 
                 if (!this.fill_mode.eql(&AnimationFillMode.default()) or
-                    (!bun.strings.eqlCaseInsensitiveASCII(name_str, "none") and css.parse_utility.parseString(dest.allocator, AnimationFillMode, name_str, AnimationFillMode.parse).isOk()))
+                    (!bun.strings.eqlCaseInsensitiveASCII(name_str, "none") and css.parse_utility.parseString(dest.allocator).isOk()))
                 {
                     try this.fill_mode.toCss(dest);
                     try dest.writeChar(' ');
@@ -256,13 +256,13 @@ pub const AnimationName = union(enum) {
                 }
 
                 // CSS-wide keywords and `none` cannot remove quotes
-                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "none") or
-                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "initial") or
-                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "inherit") or
-                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "unset") or
-                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "default") or
-                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "revert") or
-                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "revert-layer"))
+                if (bun.strings.eqlCaseInsensitiveASCII(s, "none") or
+                    bun.strings.eqlCaseInsensitiveASCII(s, "initial") or
+                    bun.strings.eqlCaseInsensitiveASCII(s, "inherit") or
+                    bun.strings.eqlCaseInsensitiveASCII(s, "unset") or
+                    bun.strings.eqlCaseInsensitiveASCII(s, "default") or
+                    bun.strings.eqlCaseInsensitiveASCII(s, "revert") or
+                    bun.strings.eqlCaseInsensitiveASCII(s, "revert-layer"))
                 {
                     css.serializer.serializeString(s, dest) catch return dest.addFmtError();
                     return;

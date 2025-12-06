@@ -108,13 +108,13 @@ pub const KeyframesName = union(enum) {
             .ident => |s| {
                 // todo_stuff.match_ignore_ascii_case
                 // CSS-wide keywords without quotes throws an error.
-                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "none") or
-                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "initial") or
-                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "inherit") or
-                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "unset") or
-                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "default") or
-                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "revert") or
-                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "revert-layer"))
+                if (bun.strings.eqlCaseInsensitiveASCII(s, "none") or
+                    bun.strings.eqlCaseInsensitiveASCII(s, "initial") or
+                    bun.strings.eqlCaseInsensitiveASCII(s, "inherit") or
+                    bun.strings.eqlCaseInsensitiveASCII(s, "unset") or
+                    bun.strings.eqlCaseInsensitiveASCII(s, "default") or
+                    bun.strings.eqlCaseInsensitiveASCII(s, "revert") or
+                    bun.strings.eqlCaseInsensitiveASCII(s, "revert-layer"))
                 {
                     return .{ .err = input.newUnexpectedTokenError(.{ .ident = s }) };
                 } else {
@@ -138,13 +138,13 @@ pub const KeyframesName = union(enum) {
             .custom => |s| {
                 // todo_stuff.match_ignore_ascii_case
                 // CSS-wide keywords and `none` cannot remove quotes.
-                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "none") or
-                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "initial") or
-                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "inherit") or
-                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "unset") or
-                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "default") or
-                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "revert") or
-                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(s, "revert-layer"))
+                if (bun.strings.eqlCaseInsensitiveASCII(s, "none") or
+                    bun.strings.eqlCaseInsensitiveASCII(s, "initial") or
+                    bun.strings.eqlCaseInsensitiveASCII(s, "inherit") or
+                    bun.strings.eqlCaseInsensitiveASCII(s, "unset") or
+                    bun.strings.eqlCaseInsensitiveASCII(s, "default") or
+                    bun.strings.eqlCaseInsensitiveASCII(s, "revert") or
+                    bun.strings.eqlCaseInsensitiveASCII(s, "revert-layer"))
                 {
                     css.serializer.serializeString(s, dest) catch return dest.addFmtError();
                 } else {

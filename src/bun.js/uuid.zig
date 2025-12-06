@@ -205,13 +205,13 @@ pub const UUID5 = struct {
         pub const x500: *const [16]u8 = &.{ 0x6b, 0xa7, 0xb8, 0x14, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8 };
 
         pub fn get(namespace: []const u8) ?*const [16]u8 {
-            if (bun.strings.eqlCaseInsensitiveASCII(namespace, "dns", true)) {
+            if (bun.strings.eqlCaseInsensitiveASCII(namespace, "dns")) {
                 return dns;
-            } else if (bun.strings.eqlCaseInsensitiveASCII(namespace, "url", true)) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII(namespace, "url")) {
                 return url;
-            } else if (bun.strings.eqlCaseInsensitiveASCII(namespace, "oid", true)) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII(namespace, "oid")) {
                 return oid;
-            } else if (bun.strings.eqlCaseInsensitiveASCII(namespace, "x500", true)) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII(namespace, "x500")) {
                 return x500;
             }
 

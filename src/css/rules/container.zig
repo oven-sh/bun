@@ -18,10 +18,10 @@ pub const ContainerName = struct {
         };
 
         // todo_stuff.match_ignore_ascii_case;
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("none", ident.v) or
-            bun.strings.eqlCaseInsensitiveASCIIICheckLength("and", ident.v) or
-            bun.strings.eqlCaseInsensitiveASCIIICheckLength("not", ident.v) or
-            bun.strings.eqlCaseInsensitiveASCIIICheckLength("or", ident.v))
+        if (bun.strings.eqlCaseInsensitiveASCII("none", ident.v) or
+            bun.strings.eqlCaseInsensitiveASCII("and", ident.v) or
+            bun.strings.eqlCaseInsensitiveASCII("not", ident.v) or
+            bun.strings.eqlCaseInsensitiveASCII("or", ident.v))
             return .{ .err = input.newUnexpectedTokenError(.{ .ident = ident.v }) };
 
         return .{ .result = ContainerName{ .v = ident } };

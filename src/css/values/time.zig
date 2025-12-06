@@ -54,9 +54,9 @@ pub const Time = union(Tag) {
         };
         switch (token.*) {
             .dimension => |*dim| {
-                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("s", dim.unit)) {
+                if (bun.strings.eqlCaseInsensitiveASCII("s", dim.unit)) {
                     return .{ .result = .{ .seconds = dim.num.value } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("ms", dim.unit)) {
+                } else if (bun.strings.eqlCaseInsensitiveASCII("ms", dim.unit)) {
                     return .{ .result = .{ .milliseconds = dim.num.value } };
                 } else {
                     return .{ .err = location.newUnexpectedTokenError(css.Token{ .ident = dim.unit }) };
@@ -110,9 +110,9 @@ pub const Time = union(Tag) {
         switch (token.*) {
             .dimension => |*dim| {
                 // todo_stuff.match_ignore_ascii_case
-                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("s", dim.unit)) {
+                if (bun.strings.eqlCaseInsensitiveASCII("s", dim.unit)) {
                     return .{ .result = .{ .seconds = dim.num.value } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("ms", dim.unit)) {
+                } else if (bun.strings.eqlCaseInsensitiveASCII("ms", dim.unit)) {
                     return .{ .result = .{ .milliseconds = dim.num.value } };
                 }
             },

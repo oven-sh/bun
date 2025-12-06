@@ -212,7 +212,7 @@ pub const Transform = union(enum) {
             struct {
                 fn parse(closure: Closure, i: *css.Parser) css.Result(Transform) {
                     const location = i.currentSourceLocation();
-                    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "matrix")) {
+                    if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "matrix")) {
                         const a = switch (css.CSSNumberFns.parse(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
@@ -243,7 +243,7 @@ pub const Transform = union(enum) {
                             .err => |ee| return .{ .err = ee },
                         };
                         return .{ .result = .{ .matrix = .{ .a = a, .b = b, .c = c, .d = d, .e = e, .f = f } } };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "matrix3d")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "matrix3d")) {
                         const m11 = switch (css.CSSNumberFns.parse(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
@@ -341,7 +341,7 @@ pub const Transform = union(enum) {
                             .m43 = m43,
                             .m44 = m44,
                         } } };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "translate")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "translate")) {
                         const x = switch (LengthPercentage.parse(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
@@ -359,25 +359,25 @@ pub const Transform = union(enum) {
                         } else {
                             return .{ .result = .{ .translate = .{ .x = x, .y = LengthPercentage.zero() } } };
                         }
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "translatex")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "translatex")) {
                         const x = switch (LengthPercentage.parse(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
                         };
                         return .{ .result = .{ .translate_x = x } };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "translatey")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "translatey")) {
                         const y = switch (LengthPercentage.parse(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
                         };
                         return .{ .result = .{ .translate_y = y } };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "translatez")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "translatez")) {
                         const z = switch (Length.parse(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
                         };
                         return .{ .result = .{ .translate_z = z } };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "translate3d")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "translate3d")) {
                         const x = switch (LengthPercentage.parse(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
@@ -393,7 +393,7 @@ pub const Transform = union(enum) {
                             .err => |e| return .{ .err = e },
                         };
                         return .{ .result = .{ .translate_3d = .{ .x = x, .y = y, .z = z } } };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "scale")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "scale")) {
                         const x = switch (NumberOrPercentage.parse(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
@@ -411,25 +411,25 @@ pub const Transform = union(enum) {
                         } else {
                             return .{ .result = .{ .scale = .{ .x = x, .y = x.deepClone(i.allocator()) } } };
                         }
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "scalex")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "scalex")) {
                         const x = switch (NumberOrPercentage.parse(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
                         };
                         return .{ .result = .{ .scale_x = x } };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "scaley")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "scaley")) {
                         const y = switch (NumberOrPercentage.parse(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
                         };
                         return .{ .result = .{ .scale_y = y } };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "scalez")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "scalez")) {
                         const z = switch (NumberOrPercentage.parse(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
                         };
                         return .{ .result = .{ .scale_z = z } };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "scale3d")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "scale3d")) {
                         const x = switch (NumberOrPercentage.parse(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
@@ -445,31 +445,31 @@ pub const Transform = union(enum) {
                             .err => |e| return .{ .err = e },
                         };
                         return .{ .result = .{ .scale_3d = .{ .x = x, .y = y, .z = z } } };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "rotate")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "rotate")) {
                         const angle = switch (Angle.parseWithUnitlessZero(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
                         };
                         return .{ .result = .{ .rotate = angle } };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "rotatex")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "rotatex")) {
                         const angle = switch (Angle.parseWithUnitlessZero(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
                         };
                         return .{ .result = .{ .rotate_x = angle } };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "rotatey")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "rotatey")) {
                         const angle = switch (Angle.parseWithUnitlessZero(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
                         };
                         return .{ .result = .{ .rotate_y = angle } };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "rotatez")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "rotatez")) {
                         const angle = switch (Angle.parseWithUnitlessZero(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
                         };
                         return .{ .result = .{ .rotate_z = angle } };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "rotate3d")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "rotate3d")) {
                         const x = switch (css.CSSNumberFns.parse(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
@@ -490,7 +490,7 @@ pub const Transform = union(enum) {
                             .err => |e| return .{ .err = e },
                         };
                         return .{ .result = .{ .rotate_3d = .{ .x = x, .y = y, .z = z, .angle = angle } } };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "skew")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "skew")) {
                         const x = switch (Angle.parseWithUnitlessZero(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
@@ -508,19 +508,19 @@ pub const Transform = union(enum) {
                         } else {
                             return .{ .result = .{ .skew = .{ .x = x, .y = Angle{ .deg = 0.0 } } } };
                         }
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "skewx")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "skewx")) {
                         const angle = switch (Angle.parseWithUnitlessZero(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
                         };
                         return .{ .result = .{ .skew_x = angle } };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "skewy")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "skewy")) {
                         const angle = switch (Angle.parseWithUnitlessZero(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
                         };
                         return .{ .result = .{ .skew_y = angle } };
-                    } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "perspective")) {
+                    } else if (bun.strings.eqlCaseInsensitiveASCII(closure.function, "perspective")) {
                         const len = switch (Length.parse(i)) {
                             .result => |v| v,
                             .err => |e| return .{ .err = e },
@@ -1016,11 +1016,11 @@ pub const Rotate = struct {
                     .result => |v| v,
                     .err => |e| return .{ .err = e },
                 };
-                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "x")) {
+                if (bun.strings.eqlCaseInsensitiveASCII(ident, "x")) {
                     return .{ .result = .{ .x = 1.0, .y = 0.0, .z = 0.0 } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "y")) {
+                } else if (bun.strings.eqlCaseInsensitiveASCII(ident, "y")) {
                     return .{ .result = .{ .x = 0.0, .y = 1.0, .z = 0.0 } };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "z")) {
+                } else if (bun.strings.eqlCaseInsensitiveASCII(ident, "z")) {
                     return .{ .result = .{ .x = 0.0, .y = 0.0, .z = 1.0 } };
                 }
                 return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };

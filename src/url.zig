@@ -1201,7 +1201,7 @@ pub const FormData = struct {
 
                 const key = line[0..colon];
                 var value = if (line.len > colon + 1) line[colon + 1 ..] else "";
-                if (strings.eqlCaseInsensitiveASCII(key, "content-disposition", true)) {
+                if (strings.eqlCaseInsensitiveASCII(key, "content-disposition")) {
                     value = strings.trim(value, " ");
                     if (strings.hasPrefixComptime(value, "form-data;")) {
                         value = value["form-data;".len..];
@@ -1234,9 +1234,9 @@ pub const FormData = struct {
                             value = value[@min(i + 1, value.len)..];
                         }
 
-                        if (strings.eqlCaseInsensitiveASCII(eql_key, "name", true)) {
+                        if (strings.eqlCaseInsensitiveASCII(eql_key, "name")) {
                             name = subslicer.sub(field_value).value();
-                        } else if (strings.eqlCaseInsensitiveASCII(eql_key, "filename", true)) {
+                        } else if (strings.eqlCaseInsensitiveASCII(eql_key, "filename")) {
                             filename = subslicer.sub(field_value).value();
                             is_file = true;
                         }
@@ -1251,7 +1251,7 @@ pub const FormData = struct {
                             break;
                         }
                     }
-                } else if (value.len > 0 and field.content_type.isEmpty() and strings.eqlCaseInsensitiveASCII(key, "content-type", true)) {
+                } else if (value.len > 0 and field.content_type.isEmpty() and strings.eqlCaseInsensitiveASCII(key, "content-type")) {
                     field.content_type = subslicer.sub(strings.trim(value, "; \t")).value();
                 }
             }

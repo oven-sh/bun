@@ -829,10 +829,10 @@ fn ScopedLogger(comptime tagname: []const u8, comptime visibility: Visibility) t
                 really_disable.store(really_disable.load(.monotonic) or val, .monotonic);
             } else {
                 for (bun.argv) |arg| {
-                    if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-" ++ tagname, true)) {
+                    if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-" ++ tagname)) {
                         really_disable.store(false, .monotonic);
                         break;
-                    } else if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-all", true)) {
+                    } else if (strings.eqlCaseInsensitiveASCII(arg, comptime "--debug-all")) {
                         really_disable.store(false, .monotonic);
                         break;
                     }

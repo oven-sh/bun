@@ -876,7 +876,7 @@ pub const UnresolvedColor = union(enum) {
     ) Result(UnresolvedColor) {
         var parser = ComponentParser.new(false);
         // css.todo_stuff.match_ignore_ascii_case
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(f, "rgb")) {
+        if (bun.strings.eqlCaseInsensitiveASCII(f, "rgb")) {
             const Closure = struct {
                 options: *const css.ParserOptions,
                 parser: *ComponentParser,
@@ -911,7 +911,7 @@ pub const UnresolvedColor = union(enum) {
                 .parser = &parser,
             };
             return input.parseNestedBlock(UnresolvedColor, &closure, Closure.parsefn);
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(f, "hsl")) {
+        } else if (bun.strings.eqlCaseInsensitiveASCII(f, "hsl")) {
             const Closure = struct {
                 options: *const css.ParserOptions,
                 parser: *ComponentParser,
@@ -946,7 +946,7 @@ pub const UnresolvedColor = union(enum) {
                 .parser = &parser,
             };
             return input.parseNestedBlock(UnresolvedColor, &closure, Closure.parsefn);
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(f, "light-dark")) {
+        } else if (bun.strings.eqlCaseInsensitiveASCII(f, "light-dark")) {
             const Closure = struct {
                 options: *const css.ParserOptions,
                 parser: *ComponentParser,
@@ -1519,18 +1519,18 @@ pub const CustomPropertyName = union(enum) {
 
 pub fn tryParseColorToken(f: []const u8, state: *const css.ParserState, input: *css.Parser) ?CssColor {
     // css.todo_stuff.match_ignore_ascii_case
-    if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(f, "rgb") or
-        bun.strings.eqlCaseInsensitiveASCIIICheckLength(f, "rgba") or
-        bun.strings.eqlCaseInsensitiveASCIIICheckLength(f, "hsl") or
-        bun.strings.eqlCaseInsensitiveASCIIICheckLength(f, "hsla") or
-        bun.strings.eqlCaseInsensitiveASCIIICheckLength(f, "hwb") or
-        bun.strings.eqlCaseInsensitiveASCIIICheckLength(f, "lab") or
-        bun.strings.eqlCaseInsensitiveASCIIICheckLength(f, "lch") or
-        bun.strings.eqlCaseInsensitiveASCIIICheckLength(f, "oklab") or
-        bun.strings.eqlCaseInsensitiveASCIIICheckLength(f, "oklch") or
-        bun.strings.eqlCaseInsensitiveASCIIICheckLength(f, "color") or
-        bun.strings.eqlCaseInsensitiveASCIIICheckLength(f, "color-mix") or
-        bun.strings.eqlCaseInsensitiveASCIIICheckLength(f, "light-dark"))
+    if (bun.strings.eqlCaseInsensitiveASCII(f, "rgb") or
+        bun.strings.eqlCaseInsensitiveASCII(f, "rgba") or
+        bun.strings.eqlCaseInsensitiveASCII(f, "hsl") or
+        bun.strings.eqlCaseInsensitiveASCII(f, "hsla") or
+        bun.strings.eqlCaseInsensitiveASCII(f, "hwb") or
+        bun.strings.eqlCaseInsensitiveASCII(f, "lab") or
+        bun.strings.eqlCaseInsensitiveASCII(f, "lch") or
+        bun.strings.eqlCaseInsensitiveASCII(f, "oklab") or
+        bun.strings.eqlCaseInsensitiveASCII(f, "oklch") or
+        bun.strings.eqlCaseInsensitiveASCII(f, "color") or
+        bun.strings.eqlCaseInsensitiveASCII(f, "color-mix") or
+        bun.strings.eqlCaseInsensitiveASCII(f, "light-dark"))
     {
         const s = input.state();
         input.reset(state);

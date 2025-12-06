@@ -473,11 +473,11 @@ pub fn parseQueryCondition(
         switch (tok.*) {
             .open_paren => break :brk .{ false, false },
             .ident => |ident| {
-                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "not")) break :brk .{ true, false };
+                if (bun.strings.eqlCaseInsensitiveASCII(ident, "not")) break :brk .{ true, false };
             },
             .function => |f| {
                 if (flags.allow_style and
-                    bun.strings.eqlCaseInsensitiveASCIIICheckLength(f, "style"))
+                    bun.strings.eqlCaseInsensitiveASCII(f, "style"))
                 {
                     break :brk .{ false, true };
                 }
@@ -576,7 +576,7 @@ pub fn parseParensOrFunction(
         .open_paren => return parseParenBlock(QueryCondition, input, flags),
         .function => |f| {
             if (flags.allow_style and
-                bun.strings.eqlCaseInsensitiveASCIIICheckLength(f, "style"))
+                bun.strings.eqlCaseInsensitiveASCII(f, "style"))
             {
                 return QueryCondition.parseStyleQuery(input);
             }

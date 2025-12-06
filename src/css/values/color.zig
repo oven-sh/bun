@@ -256,9 +256,9 @@ pub const CssColor = union(enum) {
                 } };
             },
             .ident => |value| {
-                if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(value, "currentcolor")) {
+                if (bun.strings.eqlCaseInsensitiveASCII(value, "currentcolor")) {
                     return .{ .result = .current_color };
-                } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(value, "transparent")) {
+                } else if (bun.strings.eqlCaseInsensitiveASCII(value, "transparent")) {
                     return .{ .result = .{
                         .rgba = RGBA.transparent(),
                     } };
@@ -2705,25 +2705,25 @@ const RelativeComponentParser = struct {
         ident: []const u8,
         allowed_types: ChannelType,
     ) ?f32 {
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, this.names[0]) and
+        if (bun.strings.eqlCaseInsensitiveASCII(ident, this.names[0]) and
             bits.intersects(ChannelType, allowed_types, this.types[0]))
         {
             return this.components[0];
         }
 
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, this.names[1]) and
+        if (bun.strings.eqlCaseInsensitiveASCII(ident, this.names[1]) and
             bits.intersects(ChannelType, allowed_types, this.types[1]))
         {
             return this.components[1];
         }
 
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, this.names[2]) and
+        if (bun.strings.eqlCaseInsensitiveASCII(ident, this.names[2]) and
             bits.intersects(ChannelType, allowed_types, this.types[2]))
         {
             return this.components[2];
         }
 
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "alpha") and allowed_types.percentage) {
+        if (bun.strings.eqlCaseInsensitiveASCII(ident, "alpha") and allowed_types.percentage) {
             return this.components[3];
         }
 
@@ -2813,36 +2813,36 @@ pub fn parsePredefinedRelative(
     if (_from) |from| {
         parser.from = set_from: {
             // todo_stuff.match_ignore_ascii_case
-            if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("srgb", colorspace)) {
+            if (bun.strings.eqlCaseInsensitiveASCII("srgb", colorspace)) {
                 break :set_from RelativeComponentParser.new(
                     if (SRGB.tryFromCssColor(from)) |v| v.resolveMissing() else return .{ .err = input.newCustomError(css.ParserError.invalid_value) },
                 );
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("srgb-linear", colorspace)) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII("srgb-linear", colorspace)) {
                 break :set_from RelativeComponentParser.new(
                     if (SRGBLinear.tryFromCssColor(from)) |v| v.resolveMissing() else return .{ .err = input.newCustomError(css.ParserError.invalid_value) },
                 );
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("display-p3", colorspace)) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII("display-p3", colorspace)) {
                 break :set_from RelativeComponentParser.new(
                     if (P3.tryFromCssColor(from)) |v| v.resolveMissing() else return .{ .err = input.newCustomError(css.ParserError.invalid_value) },
                 );
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("a98-rgb", colorspace)) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII("a98-rgb", colorspace)) {
                 break :set_from RelativeComponentParser.new(
                     if (A98.tryFromCssColor(from)) |v| v.resolveMissing() else return .{ .err = input.newCustomError(css.ParserError.invalid_value) },
                 );
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("prophoto-rgb", colorspace)) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII("prophoto-rgb", colorspace)) {
                 break :set_from RelativeComponentParser.new(
                     if (ProPhoto.tryFromCssColor(from)) |v| v.resolveMissing() else return .{ .err = input.newCustomError(css.ParserError.invalid_value) },
                 );
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("rec2020", colorspace)) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII("rec2020", colorspace)) {
                 break :set_from RelativeComponentParser.new(
                     if (Rec2020.tryFromCssColor(from)) |v| v.resolveMissing() else return .{ .err = input.newCustomError(css.ParserError.invalid_value) },
                 );
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("xyz-d50", colorspace)) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII("xyz-d50", colorspace)) {
                 break :set_from RelativeComponentParser.new(
                     if (XYZd50.tryFromCssColor(from)) |v| v.resolveMissing() else return .{ .err = input.newCustomError(css.ParserError.invalid_value) },
                 );
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("xyz", colorspace) or
-                bun.strings.eqlCaseInsensitiveASCIIICheckLength("xyz-d65", colorspace))
+            } else if (bun.strings.eqlCaseInsensitiveASCII("xyz", colorspace) or
+                bun.strings.eqlCaseInsensitiveASCII("xyz-d65", colorspace))
             {
                 break :set_from RelativeComponentParser.new(
                     if (XYZd65.tryFromCssColor(from)) |v| v.resolveMissing() else return .{ .err = input.newCustomError(css.ParserError.invalid_value) },

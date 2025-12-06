@@ -839,7 +839,7 @@ pub const Loader = enum(u8) {
             slice = slice[1..];
         }
 
-        return names.getWithEql(slice, strings.eqlCaseInsensitiveASCIIICheckLength);
+        return names.getWithEql(slice, strings.eqlCaseInsensitiveASCII);
     }
 
     pub fn supportsClientEntryPoint(this: Loader) bool {

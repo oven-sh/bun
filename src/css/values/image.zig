@@ -215,9 +215,9 @@ pub const ImageSet = struct {
         };
         const vendor_prefix = vendor_prefix: {
             // todo_stuff.match_ignore_ascii_case
-            if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("image-set", f)) {
+            if (bun.strings.eqlCaseInsensitiveASCII("image-set", f)) {
                 break :vendor_prefix VendorPrefix{ .none = true };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("-webkit-image-set", f)) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII("-webkit-image-set", f)) {
                 break :vendor_prefix VendorPrefix{ .webkit = true };
             } else return .{ .err = location.newUnexpectedTokenError(.{ .ident = f }) };
         };

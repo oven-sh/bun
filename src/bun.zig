@@ -830,7 +830,7 @@ pub fn getenvZAnyCase(key: [:0]const u8) ?[]const u8 {
     for (std.os.environ) |lineZ| {
         const line = sliceTo(lineZ, 0);
         const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
-        if (strings.eqlCaseInsensitiveASCII(line[0..key_end], key, true)) {
+        if (strings.eqlCaseInsensitiveASCII(line[0..key_end], key)) {
             return line[@min(key_end + 1, line.len)..];
         }
     }
@@ -940,7 +940,7 @@ pub const CaseInsensitiveASCIIStringContext = struct {
     }
 
     pub fn eql(_: @This(), a: []const u8, b: []const u8, _: usize) bool {
-        return strings.eqlCaseInsensitiveASCIIICheckLength(a, b);
+        return strings.eqlCaseInsensitiveASCII(a, b);
     }
 
     pub fn pre(input: []const u8) Prehashed {
@@ -961,7 +961,7 @@ pub const CaseInsensitiveASCIIStringContext = struct {
         }
 
         pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
-            return strings.eqlCaseInsensitiveASCIIICheckLength(a, b);
+            return strings.eqlCaseInsensitiveASCII(a, b);
         }
     };
 };
@@ -1016,7 +1016,7 @@ pub const StringHashMapContext = struct {
         }
 
         pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
-            return strings.eqlCaseInsensitiveASCIIICheckLength(a, b);
+            return strings.eqlCaseInsensitiveASCII(a, b);
         }
     };
 };

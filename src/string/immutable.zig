@@ -53,7 +53,7 @@ pub fn containsT(comptime T: type, self: []const T, str: []const T) callconv(bun
 pub fn containsCaseInsensitiveASCII(self: string, str: string) callconv(bun.callconv_inline) bool {
     var start: usize = 0;
     while (start + str.len <= self.len) {
-        if (eqlCaseInsensitiveASCIIIgnoreLength(self[start..][0..str.len], str)) {
+        if (eqlCaseInsensitiveASCII(self[start..][0..str.len], str)) {
             return true;
         }
         start += 1;
@@ -743,7 +743,7 @@ pub fn isUtf8CharBoundary(c: u8) bool {
 }
 
 pub fn startsWithCaseInsensitiveAscii(self: string, prefix: string) bool {
-    return self.len >= prefix.len and eqlCaseInsensitiveASCII(self[0..prefix.len], prefix, false);
+    return self.len >= prefix.len and eqlCaseInsensitiveASCII(self[0..prefix.len], prefix);
 }
 
 pub fn startsWithGeneric(comptime T: type, self: []const T, str: []const T) bool {
@@ -968,35 +968,17 @@ pub fn eqlComptimeCheckLenWithType(comptime Type: type, a: []const Type, comptim
     return eqlComptimeCheckLenWithKnownType(comptime Type, a, if (@typeInfo(@TypeOf(b)) != .pointer) &b else b, comptime check_len);
 }
 
-pub fn eqlCaseInsensitiveASCIIIgnoreLength(
-    a: string,
-    b: string,
-) bool {
-    return eqlCaseInsensitiveASCII(a, b, false);
-}
-
-pub fn eqlCaseInsensitiveASCIIICheckLength(
-    a: string,
-    b: string,
-) bool {
-    return eqlCaseInsensitiveASCII(a, b, true);
-}
-
-pub fn eqlCaseInsensitiveASCII(a: string, b: string, comptime check_len: bool) bool {
-    if (comptime check_len) {
-        if (a.len != b.len) return false;
-        if (a.len == 0) return true;
-    }
-
-    bun.unsafeAssert(b.len > 0);
-    bun.unsafeAssert(a.len > 0);
-
-    return bun.c.strncasecmp(a.ptr, b.ptr, a.len) == 0;
+/// Case insensitive equality check for ASCII strings.
+///
+/// Note that this function performs bound checks, but is marked as inline, so the caller may also
+/// perform bounds checks without a performance penalty.
+pub inline fn eqlCaseInsensitiveASCII(a: string, b: string) bool {
+    return std.ascii.eqlIgnoreCase(a, b);
 }
 
 pub fn eqlCaseInsensitiveT(comptime T: type, a: []const T, b: []const u8) bool {
+    if (comptime T == u8) return eqlCaseInsensitiveASCII(a, b);
     if (a.len != b.len or a.len == 0) return false;
-    if (comptime T == u8) return eqlCaseInsensitiveASCIIIgnoreLength(a, b);
 
     for (a, b) |c, d| {
         switch (c) {

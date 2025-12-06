@@ -630,7 +630,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
             hashHeaderConst("Connection") => {
                 override_connection_header = true;
                 const connection_value = this.headerStr(header_values[i]);
-                if (std.ascii.eqlIgnoreCase(connection_value, "close")) {
+                if (bun.strings.eqlCaseInsensitiveASCII(connection_value, "close")) {
                     this.flags.disable_keepalive = true;
                 } else if (std.ascii.eqlIgnoreCase(connection_value, "keep-alive")) {
                     this.flags.disable_keepalive = false;
@@ -655,7 +655,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
             },
             hashHeaderConst("Upgrade") => {
                 const value = this.headerStr(header_values[i]);
-                if (!std.ascii.eqlIgnoreCase(value, "h2") and !std.ascii.eqlIgnoreCase(value, "h2c")) {
+                if (!bun.strings.eqlCaseInsensitiveASCII(value, "h2") and !bun.strings.eqlCaseInsensitiveASCII(value, "h2c")) {
                     this.flags.upgrade_state = .pending;
                 }
             },
@@ -2405,7 +2405,7 @@ pub fn handleResponseMetadata(
                             const normalized_url_str = try normalized_url.toOwnedSlice(bun.default_allocator);
 
                             const new_url = URL.parse(normalized_url_str);
-                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
+                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin));
                             this.url = new_url;
                             this.redirect = normalized_url_str;
                         } else if (strings.hasPrefixComptime(location, "//")) {
@@ -2445,7 +2445,7 @@ pub fn handleResponseMetadata(
                             const normalized_url_str = try normalized_url.toOwnedSlice(bun.default_allocator);
 
                             const new_url = URL.parse(normalized_url_str);
-                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin), true);
+                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(new_url.origin), strings.withoutTrailingSlash(this.url.origin));
                             this.url = new_url;
                             this.redirect = normalized_url_str;
                         } else {
@@ -2465,7 +2465,7 @@ pub fn handleResponseMetadata(
                                 return error.RedirectURLTooLong;
                             };
                             this.url = URL.parse(new_url);
-                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(this.url.origin), strings.withoutTrailingSlash(original_url.origin), true);
+                            is_same_origin = strings.eqlCaseInsensitiveASCII(strings.withoutTrailingSlash(this.url.origin), strings.withoutTrailingSlash(original_url.origin));
                             this.redirect = new_url;
                         }
                     }

@@ -457,11 +457,11 @@ pub const FontStyle = union(enum) {
             .err => |e| return .{ .err = e },
         };
         // todo_stuff.match_ignore_ascii_case
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("normal", ident)) {
+        if (bun.strings.eqlCaseInsensitiveASCII("normal", ident)) {
             return .{ .result = .normal };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("italic", ident)) {
+        } else if (bun.strings.eqlCaseInsensitiveASCII("italic", ident)) {
             return .{ .result = .italic };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("oblique", ident)) {
+        } else if (bun.strings.eqlCaseInsensitiveASCII("oblique", ident)) {
             const angle = input.tryParse(Angle.parse, .{}).unwrapOr(FontStyle.defaultObliqueAngle());
             return .{ .result = .{ .oblique = angle } };
         } else {

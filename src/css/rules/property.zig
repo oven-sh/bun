@@ -147,26 +147,26 @@ pub const PropertyRuleDeclarationParser = struct {
             //     return switch (field) {
             //         .syntax => |syntax| {
 
-            if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("syntax", name)) {
+            if (bun.strings.eqlCaseInsensitiveASCII("syntax", name)) {
                 const syntax = switch (SyntaxString.parse(input)) {
                     .result => |vv| vv,
                     .err => |e| return .{ .err = e },
                 };
                 this.syntax = syntax;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("inherits", name)) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII("inherits", name)) {
                 const location = input.currentSourceLocation();
                 const ident = switch (input.expectIdent()) {
                     .result => |vv| vv,
                     .err => |e| return .{ .err = e },
                 };
-                const inherits = if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("true", ident))
+                const inherits = if (bun.strings.eqlCaseInsensitiveASCII("true", ident))
                     true
-                else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("false", ident))
+                else if (bun.strings.eqlCaseInsensitiveASCII("false", ident))
                     false
                 else
                     return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
                 this.inherits = inherits;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength("initial-value", name)) {
+            } else if (bun.strings.eqlCaseInsensitiveASCII("initial-value", name)) {
                 // Buffer the value into a string. We will parse it later.
                 const start = input.position();
                 while (input.next().isOk()) {}

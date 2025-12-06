@@ -307,7 +307,7 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
                                 // infinity
                                 if (slice.len < 8) return error.UnsupportedArrayFormat;
 
-                                if (bun.strings.eqlCaseInsensitiveASCII(slice[0..8], "Infinity", false)) {
+                                if (bun.strings.eqlCaseInsensitiveASCII(slice[0..8], "Infinity")) {
                                     if (arrayType == .date_array or arrayType == .timestamp_array or arrayType == .timestamptz_array) {
                                         try array.append(bun.default_allocator, SQLDataCell{ .tag = .date, .value = .{ .date = std.math.inf(f64) } });
                                     } else {
@@ -373,7 +373,7 @@ fn parseArray(bytes: []const u8, bigint: bool, comptime arrayType: types.Tag, gl
                                             is_infinity = true;
                                             const element = if (is_negative) slice[1..] else slice;
                                             if (element.len < 8) return error.UnsupportedArrayFormat;
-                                            if (bun.strings.eqlCaseInsensitiveASCII(element[0..8], "Infinity", false)) {
+                                            if (bun.strings.eqlCaseInsensitiveASCII(element[0..8], "Infinity")) {
                                                 if (arrayType == .date_array or arrayType == .timestamp_array or arrayType == .timestamptz_array) {
                                                     try array.append(bun.default_allocator, SQLDataCell{ .tag = .date, .value = .{ .date = if (is_negative) -std.math.inf(f64) else std.math.inf(f64) } });
                                                 } else {
@@ -593,7 +593,7 @@ pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, 
                     else => unreachable,
                 }
             } else {
-                if (bun.strings.eqlCaseInsensitiveASCII(bytes, "NULL", true)) {
+                if (bun.strings.eqlCaseInsensitiveASCII(bytes, "NULL")) {
                     return SQLDataCell{ .tag = .null, .value = .{ .null = 0 } };
                 }
                 var str = bun.String.init(bytes);

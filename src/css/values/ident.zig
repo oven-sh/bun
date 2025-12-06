@@ -275,12 +275,12 @@ pub const CustomIdent = struct {
             .err => |e| return .{ .err = e },
         };
         // css.todo_stuff.match_ignore_ascii_case
-        const valid = !(bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "initial") or
-            bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "inherit") or
-            bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "unset") or
-            bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "default") or
-            bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "revert") or
-            bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "revert-layer"));
+        const valid = !(bun.strings.eqlCaseInsensitiveASCII(ident, "initial") or
+            bun.strings.eqlCaseInsensitiveASCII(ident, "inherit") or
+            bun.strings.eqlCaseInsensitiveASCII(ident, "unset") or
+            bun.strings.eqlCaseInsensitiveASCII(ident, "default") or
+            bun.strings.eqlCaseInsensitiveASCII(ident, "revert") or
+            bun.strings.eqlCaseInsensitiveASCII(ident, "revert-layer"));
 
         if (!valid) return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
         return .{ .result = .{ .v = ident } };

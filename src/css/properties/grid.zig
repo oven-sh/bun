@@ -247,11 +247,11 @@ pub const TrackBreadth = union(enum) {
             .err => |e| return .{ .err = e },
         };
 
-        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "auto")) {
+        if (bun.strings.eqlCaseInsensitiveASCII(ident, "auto")) {
             return .{ .result = .auto };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "min-content")) {
+        } else if (bun.strings.eqlCaseInsensitiveASCII(ident, "min-content")) {
             return .{ .result = .min_content };
-        } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "max-content")) {
+        } else if (bun.strings.eqlCaseInsensitiveASCII(ident, "max-content")) {
             return .{ .result = .max_content };
         }
 
@@ -266,7 +266,7 @@ pub const TrackBreadth = union(enum) {
         };
 
         if (token == .dimension) {
-            if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(token.dimension.unit, "fr") and token.dimension.value >= 0.0) {
+            if (bun.strings.eqlCaseInsensitiveASCII(token.dimension.unit, "fr") and token.dimension.value >= 0.0) {
                 return .{ .result = token.dimension.value };
             }
         }

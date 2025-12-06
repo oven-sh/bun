@@ -169,7 +169,7 @@ pub fn from(fetch_headers_ref: ?*FetchHeaders, allocator: std.mem.Allocator, opt
     var names = sliced.items(.name);
     var values = sliced.items(.value);
     if (fetch_headers_ref) |headers_ref|
-        headers_ref.copyTo(names.ptr, values.ptr, headers.buf.items.ptr);
+        headers_ref.copyTo(names, values, headers.buf.items);
 
     // TODO: maybe we should send Content-Type header first instead of last?
     if (needs_content_type) {

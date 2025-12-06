@@ -217,9 +217,15 @@ struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,
 /* If we update our block position we have to update the uv_poll data to point
  * to us */
 struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop,
-                                 unsigned int ext_size) {
+                                 unsigned int old_ext_size, unsigned int ext_size) {
 
-  struct us_poll_t *new_p = realloc(p, sizeof(struct us_poll_t) + ext_size);
+  unsigned int old_size = sizeof(struct us_poll_t) + old_ext_size;
+  unsigned int new_size = sizeof(struct us_poll_t) + ext_size;
+  if(new_size <= old_size) return p;
+
+  struct us_poll_t *new_p = calloc(1, new_size);
+  memcpy(new_p, p, old_size < new_size ? old_size : new_size);
+
   new_p->uv_p->data = new_p;
 
   return new_p;

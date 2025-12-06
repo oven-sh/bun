@@ -1855,15 +1855,16 @@ void us_internal_ssl_socket_shutdown(struct us_internal_ssl_socket_t *s) {
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_adopt_socket(
     struct us_internal_ssl_socket_context_t *context,
-    struct us_internal_ssl_socket_t *s, int ext_size) {
+    struct us_internal_ssl_socket_t *s, int old_ext_size, int ext_size) {
   // todo: this is completely untested
+  int new_old_ext_size = sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + old_ext_size;
   int new_ext_size = ext_size;
   if (ext_size != -1) {
     new_ext_size = sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) + ext_size;
   }
   return (struct us_internal_ssl_socket_t *)us_socket_context_adopt_socket(
       0, &context->sc, &s->s,
-      new_ext_size);
+      new_old_ext_size, new_ext_size);
 }
 
 struct us_internal_ssl_socket_t *
@@ -2040,6 +2041,7 @@ struct us_socket_t *us_socket_upgrade_to_tls(us_socket_r s, us_socket_context_r 
   struct us_internal_ssl_socket_t *socket =
       (struct us_internal_ssl_socket_t *)us_socket_context_adopt_socket(
           0, new_context, s,
+          sizeof(void*),
           (sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t)) + sizeof(void*));
   socket->ssl = NULL;
   socket->ssl_write_wants_read = 0;
@@ -2058,7 +2060,7 @@ struct us_socket_t *us_socket_upgrade_to_tls(us_socket_r s, us_socket_context_r 
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
     struct us_socket_t *s, struct us_bun_socket_context_options_t options,
-    struct us_socket_events_t events, int socket_ext_size) {
+    struct us_socket_events_t events, int old_socket_ext_size, int socket_ext_size) {
   /* Cannot wrap a closed socket */
   if (us_socket_is_closed(0, s)) {
     return NULL;
@@ -2163,6 +2165,7 @@ us_socket_context_on_socket_connect_error(
   struct us_internal_ssl_socket_t *socket =
       (struct us_internal_ssl_socket_t *)us_socket_context_adopt_socket(
           0, context, s,
+          old_socket_ext_size,
           sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
               socket_ext_size);
   socket->ssl = NULL;

@@ -14,6 +14,12 @@ declare module "bun" {
       ? {}
       : import("node:stream/web").DecompressionStream;
 
+    /**
+     * Compression formats supported by Bun's CompressionStream and DecompressionStream.
+     * Bun extends the standard web formats with brotli and zstd support.
+     */
+    type CompressionFormat = "gzip" | "deflate" | "deflate-raw" | "brotli" | "zstd";
+
     type LibPerformanceOrNodePerfHooksPerformance = LibDomIsLoaded extends true ? {} : import("perf_hooks").Performance;
     type LibEmptyOrPerformanceEntry = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceEntry;
     type LibEmptyOrPerformanceMark = LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceMark;
@@ -278,28 +284,22 @@ declare var Event: {
   new (type: string, eventInitDict?: Bun.EventInit): Event;
 };
 
-/**
- * Unimplemented in Bun
- */
 interface CompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebCompressionStream {}
-/**
- * Unimplemented in Bun
- */
 declare var CompressionStream: Bun.__internal.UseLibDomIfAvailable<
   "CompressionStream",
-  typeof import("node:stream/web").CompressionStream
+  {
+    prototype: CompressionStream;
+    new (format: Bun.__internal.CompressionFormat): CompressionStream;
+  }
 >;
 
-/**
- * Unimplemented in Bun
- */
-interface DecompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebCompressionStream {}
-/**
- * Unimplemented in Bun
- */
+interface DecompressionStream extends Bun.__internal.LibEmptyOrNodeStreamWebDecompressionStream {}
 declare var DecompressionStream: Bun.__internal.UseLibDomIfAvailable<
   "DecompressionStream",
-  typeof import("node:stream/web").DecompressionStream
+  {
+    prototype: DecompressionStream;
+    new (format: Bun.__internal.CompressionFormat): DecompressionStream;
+  }
 >;
 
 interface EventTarget {

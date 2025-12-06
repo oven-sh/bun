@@ -10,9 +10,18 @@ const { parseLockfile } = install_test_helpers;
 
 expect.extend({ toMatchNodeModulesAt });
 
+// Chrome for Testing doesn't support arm64 yet
+// https://github.com/GoogleChromeLabs/chrome-for-testing/issues/1
+// https://github.com/puppeteer/puppeteer/issues/7740
+const puppeteer_unsupported = process.platform === "linux" && process.arch === "arm64";
+
+// https://github.com/oven-sh/bun/issues/11255
+const shouldSkip = puppeteer_unsupported || (isWindows && isCI);
+
 let root = tmpdirSync();
 
 beforeAll(async () => {
+  if (shouldSkip) return;
   await rm(root, { recursive: true, force: true });
   await cp(join(import.meta.dir, "../"), root, { recursive: true, force: true });
   await rm(join(root, ".next"), { recursive: true, force: true });
@@ -86,6 +95,7 @@ async function getDevServerURL() {
 }
 
 beforeAll(async () => {
+  if (shouldSkip) return;
   copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 
   const install = Bun.spawnSync([bunExe(), "i"], {
@@ -116,14 +126,7 @@ afterAll(() => {
   }
 });
 
-// Chrome for Testing doesn't support arm64 yet
-//
-// https://github.com/GoogleChromeLabs/chrome-for-testing/issues/1
-// https://github.com/puppeteer/puppeteer/issues/7740
-const puppeteer_unsupported = process.platform === "linux" && process.arch === "arm64";
-
-// https://github.com/oven-sh/bun/issues/11255
-test.skipIf(puppeteer_unsupported || (isWindows && isCI))(
+test.skipIf(shouldSkip)(
   "hot reloading works on the client (+ tailwind hmr)",
   async () => {
     expect(dev_server).not.toBeUndefined();

@@ -1,9 +1,9 @@
 import assert from "assert";
+import { which } from "bun";
 import { copyFileSync } from "fs";
 import { join } from "path";
 import type { ConsoleMessage, Page } from "puppeteer";
 import { launch } from "puppeteer";
-import { which } from "bun";
 const root = join(import.meta.dir, "../");
 
 copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
@@ -25,7 +25,8 @@ const b = await launch({
   // Inherit the stdout and stderr of the browser process.
   dumpio: true,
   // Prefer to use a pipe to connect to the browser, instead of a WebSocket.
-  pipe: true,
+  // On macOS, pipe mode can cause "TargetCloseError: Protocol error (Target.setDiscoverTargets): Target closed"
+  pipe: process.platform !== "darwin",
   // Disable timeouts.
   timeout: 0,
   protocolTimeout: 0,

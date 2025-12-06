@@ -1481,6 +1481,42 @@ pub fn size(bytes: anytype, opts: SizeFormatter.Options) SizeFormatter {
     };
 }
 
+/// Format a number with thousand separators (commas)
+pub const CommaNumberFormatter = struct {
+    value: usize,
+
+    pub fn format(self: CommaNumberFormatter, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        if (self.value == 0) {
+            return writer.writeAll("0");
+        }
+
+        // First, convert the number to a string
+        var buf: [32]u8 = undefined;
+        const num_str = std.fmt.bufPrint(&buf, "{d}", .{self.value}) catch unreachable;
+
+        // Then, insert commas from right to left
+        const len = num_str.len;
+        var written: usize = 0;
+        var remaining = len % 3;
+        if (remaining == 0) remaining = 3;
+
+        // Write the first group (may be 1, 2, or 3 digits)
+        try writer.writeAll(num_str[0..remaining]);
+        written += remaining;
+
+        // Write the remaining groups with commas
+        while (written < len) {
+            try writer.writeByte(',');
+            try writer.writeAll(num_str[written..written + 3]);
+            written += 3;
+        }
+    }
+};
+
+pub fn commaNumber(value: usize) CommaNumberFormatter {
+    return .{ .value = value };
+}
+
 const lower_hex_table = [_]u8{
     '0',
     '1',

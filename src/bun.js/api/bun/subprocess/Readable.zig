@@ -1,3 +1,5 @@
+const log = Output.scoped(.Readable, .hidden);
+
 pub const Readable = union(enum) {
     fd: bun.FileDescriptor,
     memfd: bun.FileDescriptor,
@@ -57,7 +59,8 @@ pub const Readable = union(enum) {
             }
         }
 
-        return switch (stdio) {
+        log("Readable.init: stdio={s}, result={?d}, subprocess={*}, stdout state={s}", .{ @tagName(stdio), if (comptime Environment.isPosix) (if (result) |r| r.native() else null) else @as(?c_int, null), process, @tagName(process.stdout) });
+        const readable = switch (stdio) {
             .inherit => Readable{ .inherit = {} },
             .ignore, .ipc, .path => Readable{ .ignore = {} },
             .fd => |fd| if (Environment.isPosix) Readable{ .fd = result.? } else Readable{ .fd = fd },
@@ -67,10 +70,22 @@ pub const Readable = union(enum) {
             .array_buffer, .blob => Output.panic("TODO: implement ArrayBuffer & Blob support in Stdio readable", .{}),
             .capture => Output.panic("TODO: implement capture support in Stdio readable", .{}),
             .readable_stream => Readable{ .ignore = {} }, // ReadableStream is handled separately
+            .pty => if (Environment.isPosix and result == null) blk: {
+                // When stdout and stderr both use PTY, they share the same master FD.
+                // stderr's result will be null - ignore it since stdout handles reading.
+                log("PTY with null result -> ignore", .{});
+                break :blk Readable{ .ignore = {} };
+            } else blk: {
+                log("PTY with result -> creating pipe reader", .{});
+                break :blk Readable{ .pipe = PipeReader.createForPty(event_loop, process, result, max_size) }; // PTY master - use read() not recv()
+            },
         };
+        log("Readable.init returning: {s}", .{@tagName(readable)});
+        return readable;
     }
 
-    pub fn onClose(this: *Readable, _: ?bun.sys.Error) void {
+    pub fn onClose(this: *Readable, err: ?bun.sys.Error) void {
+        log("onClose called, current state={s}, err={?s}", .{ @tagName(this.*), if (err) |e| @tagName(e.getErrno()) else null });
         this.* = .closed;
     }
 
@@ -116,6 +131,7 @@ pub const Readable = union(enum) {
 
     pub fn toJS(this: *Readable, globalThis: *jsc.JSGlobalObject, exited: bool) bun.JSError!JSValue {
         _ = exited; // autofix
+        log("Readable.toJS: this={*}, state={s}", .{ this, @tagName(this.*) });
         switch (this.*) {
             // should only be reachable when the entire output is buffered.
             .memfd => return this.toBufferedValue(globalThis),
@@ -139,6 +155,7 @@ pub const Readable = union(enum) {
                 return jsc.WebCore.ReadableStream.fromOwnedSlice(globalThis, own, 0);
             },
             else => {
+                log("Readable.toJS returning undefined for state={s}", .{@tagName(this.*)});
                 return .js_undefined;
             },
         }

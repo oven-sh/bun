@@ -94,7 +94,9 @@ const PosixBufferedReader = struct {
         memfd: bool = false,
         use_pread: bool = false,
         is_paused: bool = false,
-        _: u6 = 0,
+        /// True if reading from PTY master - treat EIO as EOF
+        is_pty: bool = false,
+        _: u5 = 0,
     };
 
     pub fn init(comptime Type: type) PosixBufferedReader {
@@ -270,6 +272,13 @@ const PosixBufferedReader = struct {
     }
 
     pub fn onError(this: *PosixBufferedReader, err: bun.sys.Error) void {
+        // For PTY, EIO is expected when the child exits (slave side closes).
+        // Treat it as a normal EOF.
+        if (this.flags.is_pty and err.getErrno() == .IO) {
+            this.closeWithoutReporting();
+            this.done();
+            return;
+        }
         this.vtable.onReaderError(err);
     }
 
@@ -760,7 +769,7 @@ pub const WindowsBufferedReader = struct {
                 return Type.onReaderError(@as(*Type, @ptrCast(@alignCast(this))), err);
             }
             fn loop(this: *anyopaque) *Async.Loop {
-                return Type.loop(@as(*Type, @alignCast(@ptrCast(this))));
+                return Type.loop(@as(*Type, @ptrCast(@alignCast(this))));
             }
         };
         return .{

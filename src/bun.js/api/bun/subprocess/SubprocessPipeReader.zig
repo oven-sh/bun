@@ -14,6 +14,8 @@ state: union(enum) {
     err: bun.sys.Error,
 } = .{ .pending = {} },
 stdio_result: StdioResult,
+/// True if this is a PTY master (character device, not socket - use read() not recv())
+is_pty: bool = false,
 pub const IOReader = bun.io.BufferedReader;
 pub const Poll = IOReader;
 
@@ -34,12 +36,21 @@ pub fn detach(this: *PipeReader) void {
 }
 
 pub fn create(event_loop: *jsc.EventLoop, process: *Subprocess, result: StdioResult, limit: ?*MaxBuf) *PipeReader {
+    return createWithOptions(event_loop, process, result, limit, false);
+}
+
+pub fn createForPty(event_loop: *jsc.EventLoop, process: *Subprocess, result: StdioResult, limit: ?*MaxBuf) *PipeReader {
+    return createWithOptions(event_loop, process, result, limit, true);
+}
+
+fn createWithOptions(event_loop: *jsc.EventLoop, process: *Subprocess, result: StdioResult, limit: ?*MaxBuf, is_pty: bool) *PipeReader {
     var this = bun.new(PipeReader, .{
         .ref_count = .init(),
         .process = process,
         .reader = IOReader.init(@This()),
         .event_loop = event_loop,
         .stdio_result = result,
+        .is_pty = is_pty,
     });
     MaxBuf.addToPipereader(limit, &this.reader.maxbuf);
     if (Environment.isWindows) {
@@ -63,6 +74,13 @@ pub fn start(this: *PipeReader, process: *Subprocess, event_loop: *jsc.EventLoop
         return this.reader.startWithCurrentPipe();
     }
 
+    // Set PTY flag BEFORE start() so that onError can check it during registerPoll()
+    if (comptime Environment.isPosix) {
+        if (this.is_pty) {
+            this.reader.flags.is_pty = true;
+        }
+    }
+
     switch (this.reader.start(this.stdio_result.?, true)) {
         .err => |err| {
             return .{ .err = err };
@@ -70,8 +88,11 @@ pub fn start(this: *PipeReader, process: *Subprocess, event_loop: *jsc.EventLoop
         .result => {
             if (comptime Environment.isPosix) {
                 const poll = this.reader.handle.poll;
-                poll.flags.insert(.socket);
-                this.reader.flags.socket = true;
+                // PTY is a character device, not a socket - use read() not recv()
+                if (!this.is_pty) {
+                    poll.flags.insert(.socket);
+                    this.reader.flags.socket = true;
+                }
                 this.reader.flags.nonblocking = true;
                 this.reader.flags.pollable = true;
                 poll.flags.insert(.nonblocking);
@@ -167,6 +188,13 @@ pub fn toBuffer(this: *PipeReader, globalThis: *jsc.JSGlobalObject) jsc.JSValue 
 }
 
 pub fn onReaderError(this: *PipeReader, err: bun.sys.Error) void {
+    // For PTY, EIO is expected when the child exits (slave side closes).
+    // Treat it as a normal EOF, not an error.
+    if (this.is_pty and err.getErrno() == .IO) {
+        this.onReaderDone();
+        return;
+    }
+
     if (this.state == .done) {
         bun.default_allocator.free(this.state.done);
     }

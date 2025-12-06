@@ -725,7 +725,7 @@ pub const JestPrettyFormat = struct {
                         if (name_str.len > 0 and !name_str.eqlComptime("Object")) {
                             writer.print("{f} ", .{name_str});
                         } else {
-                            try value.getPrototype(globalThis).getNameProperty(globalThis, &name_str);
+                            try (try value.getPrototype(globalThis)).getNameProperty(globalThis, &name_str);
                             if (name_str.len > 0 and !name_str.eqlComptime("Object")) {
                                 writer.print("{f} ", .{name_str});
                             }

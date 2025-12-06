@@ -209,6 +209,9 @@ pub const ExtractData = struct {
         path: string = "",
         buf: []u8 = "",
     } = null,
+    /// Integrity hash computed from the tarball bytes during extraction.
+    /// Used for remote and local tarballs to verify integrity on subsequent installs.
+    computed_integrity: Integrity = .{},
 };
 
 pub const DependencyInstallContext = struct {
@@ -272,6 +275,7 @@ pub const VersionSlice = external.VersionSlice;
 pub const Dependency = @import("./dependency.zig");
 pub const Behavior = @import("./dependency.zig").Behavior;
 
+pub const Integrity = @import("./integrity.zig").Integrity;
 pub const Lockfile = @import("./lockfile.zig");
 pub const PatchedDep = Lockfile.PatchedDep;
 

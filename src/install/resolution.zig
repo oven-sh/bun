@@ -100,6 +100,372 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
             };
         }
 
+        const FromYarnBerryLockfileError = OOM || error{InvalidYarnBerryLockfile};
+
+        /// Parse Yarn Berry resolution: "package@protocol:details" or "package@protocol:details::metadata"
+        pub fn fromYarnBerryLockfile(res_str: []const u8, string_buf: *String.Buf) FromYarnBerryLockfileError!Resolution {
+            const at_idx = strings.lastIndexOfChar(res_str, '@') orelse return error.InvalidYarnBerryLockfile;
+            var protocol_part = res_str[at_idx + 1 ..];
+
+            // Extract __archiveUrl from ::metadata if present (custom registry URLs)
+            var archive_url: ?[]const u8 = null;
+            if (strings.indexOf(protocol_part, "::__archiveUrl=")) |archive_idx| {
+                const encoded_url = protocol_part[archive_idx + "::__archiveUrl=".len ..];
+                protocol_part = protocol_part[0..archive_idx];
+                archive_url = encoded_url;
+            } else if (strings.indexOf(protocol_part, "::")) |idx| {
+                protocol_part = protocol_part[0..idx];
+            }
+
+            // npm:version
+            if (strings.withoutPrefixIfPossibleComptime(protocol_part, "npm:")) |version_str| {
+                const version_literal = try string_buf.append(version_str);
+                const parsed = Semver.Version.parse(version_literal.sliced(string_buf.bytes.items));
+                if (!parsed.valid or parsed.version.major == null or parsed.version.minor == null or parsed.version.patch == null) {
+                    return error.InvalidYarnBerryLockfile;
+                }
+
+                // Use custom registry URL if present
+                var url: String = .{};
+                if (archive_url) |encoded| {
+                    var decoded_buf: [2048]u8 = undefined;
+                    var decoded_stream = std.io.fixedBufferStream(&decoded_buf);
+                    const decoded_len = PercentEncoding.decode(@TypeOf(decoded_stream).Writer, decoded_stream.writer(), encoded) catch 0;
+                    if (decoded_len > 0) {
+                        url = try string_buf.append(decoded_buf[0..decoded_len]);
+                    }
+                }
+
+                return This.init(.{ .npm = .{ .version = parsed.version.min(), .url = url } });
+            }
+
+            // link:path -> symlink
+            if (strings.withoutPrefixIfPossibleComptime(protocol_part, "link:")) |path| {
+                return This.init(.{ .symlink = try string_buf.append(path) });
+            }
+
+            // file:path -> folder
+            if (strings.withoutPrefixIfPossibleComptime(protocol_part, "file:")) |path| {
+                return This.init(.{ .folder = try string_buf.append(path) });
+            }
+
+            // portal:path -> folder
+            if (strings.withoutPrefixIfPossibleComptime(protocol_part, "portal:")) |path| {
+                return This.init(.{ .folder = try string_buf.append(path) });
+            }
+
+            // github:owner/repo#ref
+            if (strings.withoutPrefixIfPossibleComptime(protocol_part, "github:")) |github_spec| {
+                return This.init(.{ .github = try Repository.parseAppendGithub(github_spec, string_buf) });
+            }
+
+            // git:url or git+protocol:url
+            if (strings.hasPrefixComptime(protocol_part, "git:") or strings.hasPrefixComptime(protocol_part, "git+")) {
+                return This.init(.{ .git = try Repository.parseAppendGit(protocol_part, string_buf) });
+            }
+
+            // https://.../*.git#... -> git resolution (github, gitlab, bitbucket, etc.)
+            if (strings.hasPrefixComptime(protocol_part, "https:") or strings.hasPrefixComptime(protocol_part, "http:")) {
+                if (strings.indexOf(protocol_part, ".git")) |git_idx| {
+                    const after_git = protocol_part[git_idx + ".git".len ..];
+                    const committish = strings.withoutPrefixIfPossibleComptime(after_git, "#commit=") orelse
+                        strings.withoutPrefixIfPossibleComptime(after_git, "#") orelse "";
+                    if (committish.len > 0) {
+                        const repo_url = protocol_part[0 .. git_idx + ".git".len];
+                        // GitHub: convert to github:owner/repo#commit format
+                        if (strings.withoutPrefixIfPossibleComptime(repo_url, "https://github.com/")) |path| {
+                            if (strings.indexOfChar(path, '/')) |slash_idx| {
+                                const owner = path[0..slash_idx];
+                                const repo = path[slash_idx + 1 .. path.len - ".git".len];
+                                const short_commit = shortCommit(committish);
+                                var resolved_buf: [256]u8 = undefined;
+                                const resolved_str = std.fmt.bufPrint(&resolved_buf, "{s}-{s}-{s}", .{ owner, repo, short_commit }) catch "";
+                                return This.init(.{ .github = .{
+                                    .owner = try string_buf.append(owner),
+                                    .repo = try string_buf.append(repo),
+                                    .committish = try string_buf.append(committish),
+                                    .resolved = if (resolved_str.len > 0) try string_buf.append(resolved_str) else .{},
+                                } });
+                            }
+                        }
+                        // Non-GitHub (gitlab, bitbucket, etc.): git+url#commit format
+                        return This.init(.{ .git = .{
+                            .repo = try string_buf.append(repo_url),
+                            .committish = try string_buf.append(committish),
+                            .resolved = try string_buf.append(committish),
+                        } });
+                    }
+                }
+                return This.init(.{ .remote_tarball = try string_buf.append(protocol_part) });
+            }
+
+            // Fallback: bare version without protocol (Yarn 2.x lockfiles v4/v5)
+            // e.g. "lodash@4.17.21" instead of "lodash@npm:4.17.21"
+            const version_literal = try string_buf.append(protocol_part);
+            const parsed = Semver.Version.parse(version_literal.sliced(string_buf.bytes.items));
+            if (parsed.valid and parsed.version.major != null and parsed.version.minor != null and parsed.version.patch != null) {
+                return This.init(.{ .npm = .{ .version = parsed.version.min(), .url = .{} } });
+            }
+
+            return error.InvalidYarnBerryLockfile;
+        }
+
+        fn extractPackageName(spec: []const u8) []const u8 {
+            const at_idx = if (strings.hasPrefixComptime(spec, "@"))
+                strings.indexOfChar(spec[1..], '@')
+            else
+                strings.indexOfChar(spec, '@');
+
+            if (at_idx) |idx| {
+                if (strings.hasPrefixComptime(spec, "@")) {
+                    return spec[0 .. idx + 1];
+                }
+                return spec[0..idx];
+            }
+
+            return spec;
+        }
+
+        fn shortCommit(committish: []const u8) []const u8 {
+            return if (committish.len > 7) committish[0..7] else committish;
+        }
+
+        fn appendShortCommit(committish: []const u8, buf: *String.Buf) !String {
+            return try buf.append(shortCommit(committish));
+        }
+
+        fn isDefaultRegistry(url: []const u8) bool {
+            return strings.containsComptime(url, "registry.yarnpkg.com") or
+                strings.containsComptime(url, "registry.npmjs.org");
+        }
+
+        pub fn fromYarnV1Spec(
+            first_spec: []const u8,
+            resolved: []const u8,
+            version: []const u8,
+            string_buf: *String.Buf,
+        ) FromYarnBerryLockfileError!struct { Resolution, String, u64 } {
+            const is_github_spec = strings.containsComptime(first_spec, "@github:");
+            const is_git_spec = strings.containsComptime(first_spec, "@git+");
+            const is_tarball_url_spec = strings.containsComptime(first_spec, "@http");
+
+            const real_name = blk: {
+                if (strings.containsComptime(first_spec, "@npm:")) {
+                    if (strings.hasPrefixComptime(first_spec, "@")) {
+                        if (strings.indexOfChar(first_spec, '@')) |first_at| {
+                            const after_first_at = first_spec[first_at + 1 ..];
+                            if (strings.indexOfChar(after_first_at, '@')) |second_at_in_substr| {
+                                const second_at = first_at + 1 + second_at_in_substr;
+                                if (strings.hasPrefixComptime(first_spec[second_at..], "@npm:")) {
+                                    const real_spec = first_spec[second_at + "@npm:".len ..];
+                                    const real_pkg_name = extractPackageName(real_spec);
+                                    break :blk real_pkg_name;
+                                }
+                            }
+                        }
+                    } else {
+                        if (strings.indexOfChar(first_spec, '@')) |at_pos| {
+                            const after_at = first_spec[at_pos + 1 ..];
+                            if (strings.hasPrefixComptime(after_at, "npm:")) {
+                                const real_spec = first_spec[at_pos + "@npm:".len ..];
+                                const real_pkg_name = extractPackageName(real_spec);
+                                break :blk real_pkg_name;
+                            }
+                        }
+                    }
+                }
+                break :blk extractPackageName(first_spec);
+            };
+
+            var real_name_hash = String.Builder.stringHash(real_name);
+            var real_name_string = try string_buf.appendWithHash(real_name, real_name_hash);
+
+            var res: Resolution = undefined;
+
+            if (is_github_spec) {
+                const at_github_idx = strings.indexOf(first_spec, "@github:") orelse {
+                    return error.InvalidYarnBerryLockfile;
+                };
+                const github_spec = first_spec[at_github_idx + "@github:".len ..];
+                var repo = try Repository.parseAppendGithub(github_spec, string_buf);
+
+                if (repo.committish.isEmpty() and resolved.len > 0) {
+                    if (Resolution.fromPnpmLockfile(resolved, string_buf)) |resolved_res| {
+                        if (resolved_res.tag == .github) {
+                            repo.committish = resolved_res.value.github.committish;
+                        }
+                    } else |_| {}
+                }
+
+                if (repo.committish.len() > 0) {
+                    const committish = repo.committish.slice(string_buf.bytes.items);
+                    repo.committish = try appendShortCommit(committish, string_buf);
+                }
+
+                res = .init(.{ .github = repo });
+                const alias_name = first_spec[0..at_github_idx];
+                real_name_hash = String.Builder.stringHash(alias_name);
+                real_name_string = try string_buf.appendWithHash(alias_name, real_name_hash);
+            } else if (is_git_spec) {
+                const at_git_idx = strings.indexOf(first_spec, "@git+") orelse {
+                    return error.InvalidYarnBerryLockfile;
+                };
+                const git_spec = first_spec[at_git_idx + 1 ..];
+
+                if (strings.containsComptime(git_spec, "github.com")) {
+                    const github_com_idx = strings.indexOf(git_spec, "github.com/") orelse {
+                        return error.InvalidYarnBerryLockfile;
+                    };
+                    var path = git_spec[github_com_idx + "github.com/".len ..];
+
+                    if (strings.hasPrefixComptime(path, "git+")) {
+                        path = path["git+".len..];
+                    }
+
+                    var hash_idx: usize = 0;
+                    var slash_idx: usize = 0;
+                    for (path, 0..) |c, i| {
+                        switch (c) {
+                            '/' => slash_idx = i,
+                            '#' => {
+                                hash_idx = i;
+                                break;
+                            },
+                            else => {},
+                        }
+                    }
+
+                    const owner = path[0..slash_idx];
+                    var repo_part = if (hash_idx == 0) path[slash_idx + 1 ..] else path[slash_idx + 1 .. hash_idx];
+
+                    if (strings.hasSuffixComptime(repo_part, ".git")) {
+                        repo_part = repo_part[0 .. repo_part.len - 4];
+                    }
+
+                    var repo_result: Repository = .{
+                        .owner = try string_buf.append(owner),
+                        .repo = try string_buf.append(repo_part),
+                    };
+
+                    if (hash_idx != 0) {
+                        const committish = path[hash_idx + 1 ..];
+                        repo_result.committish = try appendShortCommit(committish, string_buf);
+                    } else if (resolved.len > 0) {
+                        if (strings.indexOfChar(resolved, '#')) |resolved_hash_idx| {
+                            const committish = resolved[resolved_hash_idx + 1 ..];
+                            repo_result.committish = try appendShortCommit(committish, string_buf);
+                        }
+                    }
+
+                    res = .init(.{ .github = repo_result });
+                    const alias_name = first_spec[0..at_git_idx];
+                    real_name_hash = String.Builder.stringHash(alias_name);
+                    real_name_string = try string_buf.appendWithHash(alias_name, real_name_hash);
+                } else {
+                    const repo = try Repository.parseAppendGit(git_spec, string_buf);
+                    res = .init(.{ .git = repo });
+                    const alias_name = first_spec[0..at_git_idx];
+                    real_name_hash = String.Builder.stringHash(alias_name);
+                    real_name_string = try string_buf.appendWithHash(alias_name, real_name_hash);
+                }
+            } else if (is_tarball_url_spec) {
+                const at_http_idx = strings.indexOf(first_spec, "@http") orelse {
+                    return error.InvalidYarnBerryLockfile;
+                };
+                const url_after_at = first_spec[at_http_idx + 1 ..];
+
+                if (strings.indexOf(url_after_at, "/-/")) |dash_slash_idx| {
+                    const before_dash_slash = url_after_at[0..dash_slash_idx];
+                    if (strings.lastIndexOfChar(before_dash_slash, '/')) |last_slash| {
+                        const real_pkg_name_from_url = before_dash_slash[last_slash + 1 ..];
+                        real_name_hash = String.Builder.stringHash(real_pkg_name_from_url);
+                        real_name_string = try string_buf.appendWithHash(real_pkg_name_from_url, real_name_hash);
+                    } else {
+                        const real_pkg_name_from_spec = first_spec[0..at_http_idx];
+                        real_name_hash = String.Builder.stringHash(real_pkg_name_from_spec);
+                        real_name_string = try string_buf.appendWithHash(real_pkg_name_from_spec, real_name_hash);
+                    }
+                } else {
+                    const real_pkg_name_from_spec = first_spec[0..at_http_idx];
+                    real_name_hash = String.Builder.stringHash(real_pkg_name_from_spec);
+                    real_name_string = try string_buf.appendWithHash(real_pkg_name_from_spec, real_name_hash);
+                }
+                const version_str = try string_buf.append(version);
+                const parsed = Semver.Version.parse(version_str.sliced(string_buf.bytes.items));
+
+                if (!parsed.valid or parsed.version.major == null or parsed.version.minor == null or parsed.version.patch == null) {
+                    return error.InvalidYarnBerryLockfile;
+                }
+
+                res = .init(.{ .npm = .{
+                    .version = parsed.version.min(),
+                    .url = try string_buf.append(url_after_at),
+                } });
+            } else if (resolved.len == 0) {
+                if (strings.containsComptime(first_spec, "@file:")) {
+                    const at_file_idx = strings.indexOf(first_spec, "@file:") orelse {
+                        return error.InvalidYarnBerryLockfile;
+                    };
+                    const path = first_spec[at_file_idx + "@file:".len ..];
+                    if (strings.hasSuffixComptime(path, ".tgz") or strings.hasSuffixComptime(path, ".tar.gz")) {
+                        res = .init(.{ .local_tarball = try string_buf.append(path) });
+                    } else {
+                        res = .init(.{ .folder = try string_buf.append(path) });
+                    }
+                } else {
+                    return error.InvalidYarnBerryLockfile;
+                }
+            } else if (isDefaultRegistry(resolved) and
+                (strings.hasPrefixComptime(resolved, "https://") or
+                    strings.hasPrefixComptime(resolved, "http://")))
+            {
+                const version_str = try string_buf.append(version);
+                const parsed = Semver.Version.parse(version_str.sliced(string_buf.bytes.items));
+
+                if (!parsed.valid) {
+                    return error.InvalidYarnBerryLockfile;
+                }
+
+                res = .init(.{ .npm = .{
+                    .version = parsed.version.min(),
+                    .url = .{},
+                } });
+            } else {
+                res = Resolution.fromPnpmLockfile(resolved, string_buf) catch {
+                    return error.InvalidYarnBerryLockfile;
+                };
+
+                switch (res.tag) {
+                    .github => {
+                        var repo = res.value.github;
+                        if (repo.committish.len() > 0) {
+                            const committish = repo.committish.slice(string_buf.bytes.items);
+                            repo.committish = try appendShortCommit(committish, string_buf);
+                            res = .init(.{ .github = repo });
+                        }
+                        const repo_name = repo.repo.slice(string_buf.bytes.items);
+                        real_name_hash = String.Builder.stringHash(repo_name);
+                        real_name_string = repo.repo;
+                    },
+                    .git => {
+                        const repo = res.value.git;
+                        var repo_name = repo.repo.slice(string_buf.bytes.items);
+                        if (strings.hasSuffixComptime(repo_name, ".git")) {
+                            repo_name = repo_name[0 .. repo_name.len - 4];
+                        }
+                        if (strings.lastIndexOfChar(repo_name, '/')) |slash| {
+                            repo_name = repo_name[slash + 1 ..];
+                        }
+                        real_name_hash = String.Builder.stringHash(repo_name);
+                        real_name_string = try string_buf.appendWithHash(repo_name, real_name_hash);
+                    },
+                    else => {},
+                }
+            }
+
+            return .{ res, real_name_string, real_name_hash };
+        }
+
         const FromPnpmLockfileError = OOM || error{InvalidPnpmLockfile};
 
         pub fn fromPnpmLockfile(res_str: []const u8, string_buf: *String.Buf) FromPnpmLockfileError!Resolution {
@@ -540,6 +906,7 @@ pub fn ResolutionType(comptime SemverIntType: type) type {
 const string = []const u8;
 
 const std = @import("std");
+const PercentEncoding = @import("../url.zig").PercentEncoding;
 const Repository = @import("./repository.zig").Repository;
 const VersionedURLType = @import("./versioned_url.zig").VersionedURLType;
 

@@ -75,20 +75,12 @@ pub fn deinit(this: *Headers) void {
     this.entries.deinit(this.allocator);
     this.buf.clearAndFree(this.allocator);
 }
-pub fn getContentType(this: *const Headers) ?[]const u8 {
-    if (this.entries.len == 0 or this.buf.items.len == 0) {
-        return null;
-    }
-    const header_entries = this.entries.slice();
-    const header_names = header_entries.items(.name);
-    const header_values = header_entries.items(.value);
 
-    for (header_names, 0..header_names.len) |name, i| {
-        if (bun.strings.eqlCaseInsensitiveASCII(this.asStr(name), "content-type", true)) {
-            return this.asStr(header_values[i]);
-        }
-    }
-    return null;
+pub fn getContentDisposition(this: *const Headers) ?[]const u8 {
+    return this.get("content-disposition");
+}
+pub fn getContentType(this: *const Headers) ?[]const u8 {
+    return this.get("content-type");
 }
 pub fn asStr(this: *const Headers, ptr: api.StringPointer) []const u8 {
     return if (ptr.offset + ptr.length <= this.buf.items.len)

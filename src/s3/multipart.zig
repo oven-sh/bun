@@ -115,6 +115,7 @@ pub const MultiPartUpload = struct {
     path: []const u8,
     proxy: []const u8,
     content_type: ?[]const u8 = null,
+    content_disposition: ?[]const u8 = null,
     upload_id: []const u8 = "",
     uploadid_buffer: bun.MutableString = .{ .allocator = bun.default_allocator, .list = .{} },
 
@@ -276,6 +277,11 @@ pub const MultiPartUpload = struct {
                 bun.default_allocator.free(ct);
             }
         }
+        if (this.content_disposition) |cd| {
+            if (cd.len > 0) {
+                bun.default_allocator.free(cd);
+            }
+        }
         this.credentials.deref();
         this.uploadid_buffer.deinit();
         for (this.multipart_etags.items) |tag| {
@@ -301,6 +307,7 @@ pub const MultiPartUpload = struct {
                         .proxy_url = this.proxyUrl(),
                         .body = this.buffered.slice(),
                         .content_type = this.content_type,
+                        .content_disposition = this.content_disposition,
                         .acl = this.acl,
                         .storage_class = this.storage_class,
                     }, .{ .upload = @ptrCast(&singleSendUploadResponse) }, this);
@@ -589,6 +596,7 @@ pub const MultiPartUpload = struct {
                 .body = "",
                 .search_params = "?uploads=",
                 .content_type = this.content_type,
+                .content_disposition = this.content_disposition,
                 .acl = this.acl,
                 .storage_class = this.storage_class,
             }, .{ .download = @ptrCast(&startMultiPartRequestResult) }, this);
@@ -665,6 +673,7 @@ pub const MultiPartUpload = struct {
                 .proxy_url = this.proxyUrl(),
                 .body = this.buffered.slice(),
                 .content_type = this.content_type,
+                .content_disposition = this.content_disposition,
                 .acl = this.acl,
                 .storage_class = this.storage_class,
             }, .{ .upload = @ptrCast(&singleSendUploadResponse) }, this) catch {}; // TODO: properly propagate exception upwards

@@ -1301,6 +1301,7 @@ pub fn Bun__fetch_(
                 credentialsWithOptions.acl,
                 credentialsWithOptions.storage_class,
                 if (headers) |h| (h.getContentType()) else null,
+                if (headers) |h| h.getContentDisposition() else null,
                 proxy_url,
                 @ptrCast(&Wrapper.resolve),
                 s3_stream,

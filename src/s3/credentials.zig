@@ -1094,16 +1094,15 @@ pub const S3Credentials = struct {
             result._headers[result._headers_len] = .{ .name = "x-amz-security-token", .value = session_token_value };
             result._headers_len += 1;
         }
-
-        // if (content_disposition) |cd| {
-        //     const content_disposition_value = bun.handleOom(bun.default_allocator.dupe(u8, cd));
-        //     result.content_disposition = content_disposition_value;
-        //     result._headers[result._headers_len] = .{ .name = "Content-Disposition", .value = content_disposition_value };
-        //     result._headers_len += 1;
-        // }
-
         if (storage_class) |storage_class_value| {
             result._headers[result._headers_len] = .{ .name = "x-amz-storage-class", .value = storage_class_value };
+            result._headers_len += 1;
+        }
+
+        if (content_disposition) |cd| {
+            const content_disposition_value = bun.handleOom(bun.default_allocator.dupe(u8, cd));
+            result.content_disposition = content_disposition_value;
+            result._headers[result._headers_len] = .{ .name = "content-disposition", .value = content_disposition_value };
             result._headers_len += 1;
         }
 

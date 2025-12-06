@@ -34,18 +34,12 @@
 
 namespace WebCore {
 
-static MessagePortChannelProviderImpl* globalProvider;
-
 MessagePortChannelProvider& MessagePortChannelProvider::singleton()
 {
     // TODO: I think this assertion is relevant. Bun will call this on the Worker's thread
     // ASSERT(isMainThread());
-    static std::once_flag onceFlag;
-    std::call_once(onceFlag, [] {
-        if (!globalProvider)
-            globalProvider = new MessagePortChannelProviderImpl;
-    });
-
+    // Intentionally leak to avoid destructor ordering issues during program exit
+    static MessagePortChannelProviderImpl* globalProvider = new MessagePortChannelProviderImpl;
     return *globalProvider;
 }
 

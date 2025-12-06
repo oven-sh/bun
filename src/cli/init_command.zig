@@ -228,7 +228,6 @@ pub const InitCommand = struct {
         const @"tsconfig.json" = @embedFile("init/tsconfig.default.json");
         const @"README.md" = @embedFile("init/README.default.md");
         const @"README2.md" = @embedFile("init/README2.default.md");
-        const @"README-tanstack.md" = @embedFile("init/README-tanstack.default.md");
 
         /// Create a new asset file, overriding anything that already exists. Known
         /// assets will have their contents pre-populated; otherwise the file will be empty.
@@ -381,10 +380,6 @@ pub const InitCommand = struct {
                     auto_yes = true;
                 } else if ((template == .react_blank and prev_flag_was_react and strings.eqlComptime(arg, "shadcn") or strings.eqlComptime(arg, "--react=shadcn")) or strings.eqlComptime(arg, "r=shadcn")) {
                     template = .react_tailwind_shadcn;
-                    prev_flag_was_react = false;
-                    auto_yes = true;
-                } else if ((template == .react_blank and prev_flag_was_react and strings.eqlComptime(arg, "tanstack") or strings.eqlComptime(arg, "--react=tanstack")) or strings.eqlComptime(arg, "r=tanstack")) {
-                    template = .react_tanstack;
                     prev_flag_was_react = false;
                     auto_yes = true;
                 } else {
@@ -590,14 +585,12 @@ pub const InitCommand = struct {
                             default,
                             tailwind,
                             shadcn_tailwind,
-                            tanstack,
 
                             pub fn fmt(self: @This()) []const u8 {
                                 return switch (self) {
                                     .default => "<blue>Default (blank)<r>",
                                     .tailwind => "<magenta>TailwindCSS<r>",
                                     .shadcn_tailwind => "<green>Shadcn + TailwindCSS<r>",
-                                    .tanstack => "<yellow>TanStack Start<r>",
                                 };
                             }
                         });
@@ -606,7 +599,6 @@ pub const InitCommand = struct {
                             .default => .react_blank,
                             .tailwind => .react_tailwind,
                             .shadcn_tailwind => .react_tailwind_shadcn,
-                            .tanstack => .react_tanstack,
                         };
                     },
                     .blank => template = .blank,
@@ -621,7 +613,7 @@ pub const InitCommand = struct {
         }
 
         switch (template) {
-            inline .react_blank, .react_tailwind, .react_tailwind_shadcn, .react_tanstack => |t| {
+            inline .react_blank, .react_tailwind, .react_tailwind_shadcn => |t| {
                 try t.@"write files and run `bun dev`"(alloc);
                 return;
             },
@@ -799,7 +791,7 @@ pub const InitCommand = struct {
 
         switch (template) {
             .blank, .typescript_library => {
-                Template.createAgentRule(template);
+                Template.createAgentRule();
 
                 if (package_json_file != null and !did_load_package_json) {
                     Output.prettyln(" + <r><d>package.json<r>", .{});
@@ -918,24 +910,6 @@ const DependencyGroup = struct {
         } ++ tailwind.dependencies[0..tailwind.dependencies.len].*,
         .devDependencies = &[_]DependencyNeeded{} ++ tailwind.devDependencies[0..tailwind.devDependencies.len].*,
     };
-
-    pub const tanstack = DependencyGroup{
-        .dependencies = &[_]DependencyNeeded{
-            .{ .name = "@tailwindcss/vite", .version = "^4.1.17" },
-            .{ .name = "@tanstack/react-router", .version = "^1.135.2" },
-            .{ .name = "@tanstack/react-start", .version = "^1.135.2" },
-            .{ .name = "react", .version = "^19.2.0" },
-            .{ .name = "react-dom", .version = "^19.2.0" },
-            .{ .name = "tailwindcss", .version = "^4.1.17" },
-        },
-        .devDependencies = &[_]DependencyNeeded{
-            .{ .name = "@types/react", .version = "^19.2.3" },
-            .{ .name = "@types/react-dom", .version = "^19.2.3" },
-            .{ .name = "@vitejs/plugin-react", .version = "^5.1.0" },
-            .{ .name = "vite", .version = "^7.2.2" },
-            .{ .name = "vite-tsconfig-paths", .version = "^5.1.4" },
-        } ++ blank.devDependencies[0..1].*,
-    };
 };
 
 const Template = enum {
@@ -943,7 +917,6 @@ const Template = enum {
     react_blank,
     react_tailwind,
     react_tailwind_shadcn,
-    react_tanstack,
     typescript_library,
     const TemplateFile = struct {
         path: [:0]const u8,
@@ -958,7 +931,7 @@ const Template = enum {
     }
     pub fn isReact(this: Template) bool {
         return switch (this) {
-            .react_blank, .react_tailwind, .react_tailwind_shadcn, .react_tanstack => true,
+            .react_blank, .react_tailwind, .react_tailwind_shadcn => true,
             else => false,
         };
     }
@@ -986,7 +959,6 @@ const Template = enum {
             .react_blank => DependencyGroup.react,
             .react_tailwind => DependencyGroup.tailwind,
             .react_tailwind_shadcn => DependencyGroup.shadcn,
-            .react_tanstack => DependencyGroup.tanstack,
             .typescript_library => DependencyGroup.blank,
         };
     }
@@ -997,7 +969,6 @@ const Template = enum {
             .react_blank => "bun-react-template",
             .react_tailwind => "bun-react-tailwind-template",
             .react_tailwind_shadcn => "bun-react-tailwind-shadcn-template",
-            .react_tanstack => "bun-tanstack-start-template",
         };
     }
     pub fn scripts(this: Template) []const []const u8 {
@@ -1015,16 +986,13 @@ const Template = enum {
                 "build",
                 "NODE_ENV=production bun .",
             },
-            .react_tanstack => &.{ "dev", "bun --bun vite dev", "build", "bun --bun vite build", "serve", "bun --bun vite preview" },
         };
 
         return s;
     }
 
     const agent_rule = @embedFile("../init/rule.md");
-    const agent_rule_tanstack = @embedFile("../init/rule-tanstack.md");
     const cursor_rule = TemplateFile{ .path = ".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc", .contents = agent_rule };
-    const cursor_rule_tanstack = TemplateFile{ .path = ".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc", .contents = agent_rule_tanstack };
     const cursor_rule_path_to_claude_md = "../../CLAUDE.md";
 
     fn isClaudeCodeInstalled() bool {
@@ -1044,12 +1012,12 @@ const Template = enum {
         return bun.which(pathbuffer, bun.env_var.PATH.get() orelse return false, bun.fs.FileSystem.instance.top_level_dir, "claude") != null;
     }
 
-    pub fn createAgentRule(this: Template) void {
+    pub fn createAgentRule() void {
         var @"create CLAUDE.md" = Template.isClaudeCodeInstalled() and
             // Never overwrite CLAUDE.md
             !bun.sys.exists("CLAUDE.md");
 
-        if (this.getCursorRule()) |template_file| {
+        if (Template.getCursorRule()) |template_file| {
             var did_create_agent_rule = false;
 
             // If both Cursor & Claude is installed, make the cursor rule a
@@ -1085,13 +1053,9 @@ const Template = enum {
         // If cursor is not installed but claude code is installed, then create the CLAUDE.md.
         if (@"create CLAUDE.md") {
             // In this case, the frontmatter from the cursor rule is not helpful so let's trim it out.
-            const rule_to_use = switch (this) {
-                .react_tanstack => agent_rule_tanstack,
-                else => agent_rule,
-            };
-            const end_of_frontmatter = if (bun.strings.lastIndexOf(rule_to_use, "---\n")) |start| start + "---\n".len else 0;
+            const end_of_frontmatter = if (bun.strings.lastIndexOf(agent_rule, "---\n")) |start| start + "---\n".len else 0;
 
-            InitCommand.Assets.createNew("CLAUDE.md", rule_to_use[end_of_frontmatter..]) catch {};
+            InitCommand.Assets.createNew("CLAUDE.md", agent_rule[end_of_frontmatter..]) catch {};
         }
     }
 
@@ -1128,12 +1092,9 @@ const Template = enum {
 
         return false;
     }
-    fn getCursorRule(this: Template) ?*const TemplateFile {
+    fn getCursorRule() ?*const TemplateFile {
         if (isCursorInstalled()) {
-            return switch (this) {
-                .react_tanstack => &cursor_rule_tanstack,
-                else => &cursor_rule,
-            };
+            return &cursor_rule;
         }
 
         return null;
@@ -1207,36 +1168,17 @@ const Template = enum {
         };
     };
 
-    const ReactTanstack = struct {
-        const files: []const TemplateFile = &.{
-            .{ .path = "package.json", .contents = @embedFile("../init/react-tanstack/package.json") },
-            .{ .path = "tsconfig.json", .contents = @embedFile("../init/react-tanstack/tsconfig.json") },
-            .{ .path = "vite.config.ts", .contents = @embedFile("../init/react-tanstack/vite.config.ts") },
-            .{ .path = "styles.css", .contents = @embedFile("../init/react-tanstack/styles.css") },
-            .{ .path = "README.md", .contents = InitCommand.Assets.@"README-tanstack.md" },
-            .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
-            .{ .path = "src/router.tsx", .contents = @embedFile("../init/react-tanstack/src/router.tsx") },
-            .{ .path = "src/routes/__root.tsx", .contents = @embedFile("../init/react-tanstack/src/routes/__root.tsx") },
-            .{ .path = "src/routes/index.tsx", .contents = @embedFile("../init/react-tanstack/src/routes/index.tsx") },
-            .{ .path = "src/routes/stats.tsx", .contents = @embedFile("../init/react-tanstack/src/routes/stats.tsx") },
-            .{ .path = "src/routeTree.gen.ts", .contents = @embedFile("../init/react-tanstack/src/routeTree.gen.ts") },
-            .{ .path = "public/header.webp", .contents = @embedFile("../init/react-tanstack/public/header.webp") },
-            .{ .path = "public/favicon.ico", .contents = @embedFile("../init/react-tanstack/public/favicon.ico") },
-        };
-    };
-
     pub fn files(this: Template) []const TemplateFile {
         return switch (this) {
             .react_blank => ReactBlank.files,
             .react_tailwind => ReactTailwind.files,
             .react_tailwind_shadcn => ReactShadcn.files,
-            .react_tanstack => ReactTanstack.files,
             else => &.{.{ &.{}, &.{} }},
         };
     }
 
     pub fn @"write files and run `bun dev`"(comptime this: Template, allocator: std.mem.Allocator) !void {
-        this.createAgentRule();
+        Template.createAgentRule();
 
         inline for (comptime this.files()) |file| {
             const path = file.path;
@@ -1276,21 +1218,9 @@ const Template = enum {
 
         _ = try install.spawnAndWait();
 
-        var cwd_buf: bun.PathBuffer = undefined;
-        const cwd_path = switch (bun.sys.getcwd(&cwd_buf)) {
-            .result => |p| p,
-            .err => |e| {
-                Output.err(e, "failed to get current working directory", .{});
-                Global.exit(1);
-            },
-        };
-        const dir_name = std.fs.path.basename(cwd_path);
-
         Output.prettyln(
             \\
             \\✨ New project configured!
-            \\
-            \\<d>cd {s}<r>
             \\
             \\<b><cyan>Development<r><d> - full-stack dev server with hot reload<r>
             \\
@@ -1306,7 +1236,7 @@ const Template = enum {
             \\
             \\<blue>Happy bunning! 🐇<r>
             \\
-        , .{dir_name});
+        , .{});
 
         Output.flush();
     }

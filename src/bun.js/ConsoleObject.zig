@@ -1096,6 +1096,8 @@ pub const Formatter = struct {
         MapIterator,
         SetIterator,
         Set,
+        Generator,
+        AsyncGenerator,
         BigInt,
         Symbol,
 
@@ -1330,6 +1332,8 @@ pub const Formatter = struct {
                     .MapIterator => .MapIterator,
                     .SetIterator => .SetIterator,
                     .WeakSet, JSValue.JSType.Set => .Set,
+                    .Generator => .Generator,
+                    .AsyncGenerator => .AsyncGenerator,
                     .JSDate => .JSON,
                     .JSPromise => .Promise,
 
@@ -2819,6 +2823,12 @@ pub const Formatter = struct {
                     this.writeIndent(Writer, writer_) catch {};
                 }
                 writer.writeAll("}");
+            },
+            .Generator => {
+                writer.writeAll("Object [Generator] {}");
+            },
+            .AsyncGenerator => {
+                writer.writeAll("Object [AsyncGenerator] {}");
             },
             .SetIterator => {
                 const prev_quote_strings = this.quote_strings;

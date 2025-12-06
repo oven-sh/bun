@@ -119,10 +119,8 @@
           pkgs.xorg.libxshmfence
           pkgs.gdk-pixbuf
         ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-          # macOS specific dependencies
-          pkgs.darwin.apple_sdk.frameworks.CoreFoundation
-          pkgs.darwin.apple_sdk.frameworks.CoreServices
-          pkgs.darwin.apple_sdk.frameworks.Security
+          # macOS specific dependencies - use latest supported Apple SDK
+          pkgs.apple-sdk
         ];
 
       in

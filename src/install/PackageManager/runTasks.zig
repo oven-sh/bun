@@ -666,19 +666,33 @@ pub fn runTasks(
                                 switch (version.tag) {
                                     .git => {
                                         version.value.git.package_name = pkg.name;
+                                        try manager.processDependencyListItem(dep, &any_root, install_peer);
                                     },
                                     .github => {
                                         version.value.github.package_name = pkg.name;
+                                        try manager.processDependencyListItem(dep, &any_root, install_peer);
                                     },
                                     .tarball => {
                                         version.value.tarball.package_name = pkg.name;
+                                        try manager.processDependencyListItem(dep, &any_root, install_peer);
                                     },
 
                                     // `else` is reachable if this package is from `overrides`. Version in `lockfile.buffer.dependencies`
-                                    // will still have the original.
-                                    else => {},
+                                    // will still have the original (e.g., npm semver like "^14.14.1" overridden with "github:...").
+                                    // In this case, we can directly assign the resolution since we just extracted this package.
+                                    else => {
+                                        switch (dep) {
+                                            .root_dependency => {
+                                                assignRootResolution(manager, id, package_id);
+                                                any_root = true;
+                                            },
+                                            .dependency => {
+                                                assignResolution(manager, id, package_id);
+                                            },
+                                            else => {},
+                                        }
+                                    },
                                 }
-                                try manager.processDependencyListItem(dep, &any_root, install_peer);
                             },
                             else => {
                                 // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
@@ -1122,3 +1136,5 @@ const PackageManager = bun.install.PackageManager;
 const Options = PackageManager.Options;
 const PackageInstaller = PackageManager.PackageInstaller;
 const ProgressStrings = PackageManager.ProgressStrings;
+const assignResolution = PackageManager.assignResolution;
+const assignRootResolution = PackageManager.assignRootResolution;

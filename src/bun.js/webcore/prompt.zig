@@ -429,11 +429,13 @@ pub const prompt = struct {
         const has_default = arguments.len >= 2;
         const default_value = if (has_default) arguments[1] else .null;
 
+        var message_slice: []const u8 = undefined;
         if (has_message) {
             const message = try arguments[0].toSlice(globalObject, allocator);
             defer message.deinit();
+            message_slice = message.slice();
 
-            output.writeAll(message.slice()) catch {
+            output.writeAll(message_slice) catch {
                 return .null; // Failed to show message
             };
         }
@@ -442,11 +444,13 @@ pub const prompt = struct {
             return .null; // Failed to show prompt
         };
 
+        var default_string_slice: []const u8 = undefined;
         if (has_default) {
             const default_string = try arguments[1].toSlice(globalObject, allocator);
             defer default_string.deinit();
+            default_string_slice = default_string.slice();
 
-            output.print("[{s}] ", .{default_string.slice()}) catch {
+            output.print("[{s}] ", .{default_string_slice}) catch {
                 return .null; // Failed to show default value
             };
         }
@@ -485,17 +489,12 @@ pub const prompt = struct {
 
             // Calculate initial prompt width.
             if (has_message) {
-                const message = try arguments[0].toSlice(globalObject, allocator);
-                defer message.deinit();
-                prompt_width += columnWidth(message.slice());
+                prompt_width += columnWidth(message_slice);
             }
             prompt_width += columnWidth(if (has_message) " " else "Prompt ");
 
             if (has_default) {
-                const default_string = try arguments[1].toSlice(globalObject, allocator);
-                defer default_string.deinit();
-
-                prompt_width += columnWidth("[") + columnWidth(default_string.slice()) + columnWidth("] ");
+                prompt_width += columnWidth("[") + columnWidth(default_string_slice) + columnWidth("] ");
             }
 
             // Deferred cleanup: restore terminal settings and print a newline.

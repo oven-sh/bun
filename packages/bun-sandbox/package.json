@@ -1,0 +1,23 @@
+{
+  "name": "bun-sandbox",
+  "version": "0.1.0",
+  "description": "Sandboxfile runtime for agent sandboxes",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "bin": {
+    "bun-sandbox": "src/cli.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "bun x tsc --noEmit"
+  },
+  "keywords": [
+    "sandbox",
+    "agent",
+    "bun"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

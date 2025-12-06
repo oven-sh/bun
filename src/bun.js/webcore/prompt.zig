@@ -172,17 +172,12 @@ pub const prompt = struct {
             const old_cursor_index = cursor_index.*;
             const prev_codepoint_start = utf8Prev(input.items, old_cursor_index);
 
-            if (prev_codepoint_start) |start| {
-                var i: usize = 0;
-                while (i < old_cursor_index - start) : (i += 1) {
-                    _ = input.orderedRemove(start);
-                }
-                cursor_index.* = start;
-            } else {
-                // Fallback: delete one byte if invalid UTF-8
-                _ = input.orderedRemove(old_cursor_index - 1);
-                cursor_index.* -= 1;
+            const start = prev_codepoint_start.?;
+            var i: usize = 0;
+            while (i < old_cursor_index - start) : (i += 1) {
+                _ = input.orderedRemove(start);
             }
+            cursor_index.* = start;
         }
     }
 

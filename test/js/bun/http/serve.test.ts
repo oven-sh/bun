@@ -2189,3 +2189,15 @@ it.concurrent("#20283", async () => {
   // there should be no cookies and the clone should have succeeded
   expect(json).toEqual({ cookies: {}, clonedCookies: {} });
 });
+
+it.concurrent("should not use 100% CPU when idle", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "bun-websocket-cpu-fixture.js")],
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "inherit",
+    stdin: "inherit",
+  });
+  const code = await proc.exited;
+  expect(code).toBe(0);
+});

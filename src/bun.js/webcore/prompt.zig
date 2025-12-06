@@ -463,7 +463,7 @@ pub const prompt = struct {
         };
 
         // Handle interactive TTY input for non-Windows systems.
-        if ((comptime !Environment.isWindows) and bun.c.isatty(bun.FD.stdin().native()) == 1) {
+        if ((comptime !Environment.isWindows) and bun.c.isatty(bun.FD.stdin().native()) == 1 and bun.c.isatty(bun.FD.stdout().native()) == 1) {
             const original_ttymode = Bun__ttySetMode(bun.FD.stdin().native(), 1);
             const stdin_fd = bun.FD.stdin().native();
 

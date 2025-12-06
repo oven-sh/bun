@@ -92,6 +92,7 @@ pub const AuditCommand = @import("./cli/audit_command.zig").AuditCommand;
 pub const InitCommand = @import("./cli/init_command.zig").InitCommand;
 pub const WhyCommand = @import("./cli/why_command.zig").WhyCommand;
 pub const FuzzilliCommand = @import("./cli/fuzzilli_command.zig").FuzzilliCommand;
+pub const SandboxCommand = @import("./cli/sandbox_command.zig").SandboxCommand;
 
 pub const Arguments = @import("./cli/Arguments.zig");
 
@@ -632,6 +633,8 @@ pub const Command = struct {
             else
                 .AutoCommand,
 
+            RootCommandMatcher.case("sandbox") => .SandboxCommand,
+
             RootCommandMatcher.case("-e") => .AutoCommand,
 
             else => .AutoCommand,
@@ -656,6 +659,7 @@ pub const Command = struct {
         "x",
         "repl",
         "info",
+        "sandbox",
     };
 
     const reject_list = default_completions_list ++ [_]string{
@@ -949,6 +953,16 @@ pub const Command = struct {
                     return error.UnrecognizedCommand;
                 }
             },
+            .SandboxCommand => {
+                const ctx = try Command.init(allocator, log, .SandboxCommand);
+
+                if (ctx.positionals.len > 1) {
+                    try SandboxCommand.exec(ctx);
+                } else {
+                    SandboxCommand.printHelp();
+                }
+                return;
+            },
         }
     }
 
@@ -985,6 +999,7 @@ pub const Command = struct {
         AuditCommand,
         WhyCommand,
         FuzzilliCommand,
+        SandboxCommand,
 
         /// Used by crash reports.
         ///
@@ -1023,6 +1038,7 @@ pub const Command = struct {
                 .AuditCommand => 'A',
                 .WhyCommand => 'W',
                 .FuzzilliCommand => 'F',
+                .SandboxCommand => 'S',
             };
         }
 
@@ -1334,6 +1350,9 @@ pub const Command = struct {
 
                     Output.pretty(intro_text, .{});
                     Output.flush();
+                },
+                .SandboxCommand => {
+                    SandboxCommand.printHelp();
                 },
                 else => {
                     HelpCommand.printWithReason(.explicit, false);

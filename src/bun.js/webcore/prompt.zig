@@ -676,11 +676,15 @@ pub const prompt = struct {
         };
 
         if (first_byte == '\n') {
+            if (!has_default) return bun.String.empty.toJS(globalObject);
             return default_value;
         } else if (first_byte == '\r') {
             const second = reader.readByte() catch return .null;
             second_byte = second;
-            if (second == '\n') return default_value;
+            if (second == '\n') {
+                if (!has_default) return bun.String.empty.toJS(globalObject);
+                return default_value;
+            }
         }
 
         var input = std.array_list.Managed(u8).initCapacity(allocator, 2048) catch {
